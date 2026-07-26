@@ -827,9 +827,8 @@ fn _get_itemprop_value(el: &lol_html::html_content::Element) -> Option<String> {
             None  // lol_html 2.x: Element has no text accessor; use text! handler instead
         }
         // Empty-self-closing or void elements
-        "br" | "hr" | "input" | "embed" | "param" | "track" | "source" |
-        "wbr" | "keygen" | "area" | "base" | "col" | "command" |
-        "link" | "meta" => None,
+        "br" | "hr" | "input" | "embed" | "param" | "track" |
+        "wbr" | "keygen" | "base" | "col" | "command" => None,
         _ => None  // lol_html 2.x: no Element text accessor
     }
 }

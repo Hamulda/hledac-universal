@@ -163,7 +163,7 @@ impl PyAIMDController {
                         return (f64::from_bits(window_bits), active);
                     }
                     // At threshold — need to update window (slow path)
-                    current += 1; // value we just successfully stored
+                    // Increment was already applied via swap; nothing to do here.
                     break;
                 }
                 Err(prev) => {

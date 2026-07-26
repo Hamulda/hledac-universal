@@ -29,7 +29,6 @@
 //! PyO3 =0.28.2 — `py.allow_threads()` IS available (lesson #1985: 0.29 removed it)
 
 use pyo3::prelude::*;
-use std::collections::HashMap;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LMDB helpers — direct Python lmdb calls without caching
@@ -222,10 +221,10 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
     let prefix = b"dht_node:".to_vec();
 
     let txn = env.getattr("begin")?.call1((false,))?;
-    let mut cursor = txn.call_method0("cursor")?;
+    let cursor = txn.call_method0("cursor")?;
 
     let py_iter = cursor.call_method0("iter")?;
-    let mut rust_iter = py_iter.try_iter()?;
+    let rust_iter = py_iter.try_iter()?;
     let mut out = Vec::with_capacity(limit.min(1000));
 
     for item in rust_iter {
@@ -259,11 +258,11 @@ pub fn lmdb_dht_count_dht_nodes<'py>(
     let prefix = b"dht_node:".to_vec();
 
     let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
-    let mut cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
+    let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
     let mut count = 0;
 
     let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
-    let mut rust_iter = py_iter.try_iter()?;
+    let rust_iter = py_iter.try_iter()?;
     for item in rust_iter {
         let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
         let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
@@ -293,11 +292,11 @@ pub fn lmdb_dht_clear_dht_nodes<'py>(
     {
         // Collect keys first (can't delete while iterating cursor)
         let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
-        let mut cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
+        let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
         let mut to_delete: Vec<Vec<u8>> = Vec::new();
 
         let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
-        let mut rust_iter = py_iter.try_iter()?;
+        let rust_iter = py_iter.try_iter()?;
         for item in rust_iter {
             let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
             let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
@@ -372,10 +371,10 @@ pub fn lmdb_dht_scan_all_nodes<'py>(
     let neigh_prefix = b"neighbors:".to_vec();
 
     let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
-    let mut cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
+    let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
 
     let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
-    let mut rust_iter = py_iter.try_iter()?;
+    let rust_iter = py_iter.try_iter()?;
     let mut out: Vec<Vec<u8>> = Vec::with_capacity(limit.min(1000));
 
     for item in rust_iter {
@@ -684,7 +683,7 @@ pub fn lmdb_async_scan_prefix<'py>(
                 Ok(i) => i,
                 Err(_) => return Ok(results),
             };
-            let mut rust_iter = match py_iter.try_iter() {
+            let rust_iter = match py_iter.try_iter() {
                 Ok(iter) => iter,
                 Err(_) => return Ok(results),
             };

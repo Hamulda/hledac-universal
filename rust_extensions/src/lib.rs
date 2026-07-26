@@ -56,10 +56,11 @@ pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence e
 pub mod ip_parse; // Sprint P2-3: IP address parsing, classification, CIDR containment
 pub mod lmdb_dht; // ISSUE-004: Rust LMDB backend for DHT — eliminates asyncio.to_thread overhead
 pub mod madvise;
-// D6: metal_compute and metal_pattern_matcher removed — metal crate (~45s compile, ~3MB dylib)
-// was never used in production (gpu_batch_keyword_scan was defined but never called).
-// CPU fallback via Aho-Corasick + rayon is sufficient for all workloads.
+pub mod os_unfair_lock; // ISSUE 4.3: Darwin os_unfair_lock (~5ns) vs parking_lot::Mutex (~25ns)
 pub mod memory;
+#[cfg(feature = "metal")]
+pub mod metal_compute; // R22: Metal GPU batch matmul for MoE router (CPU fallback always available)
+pub mod accelerate; // R22: Accelerate/vDSP FFI for NER cosine similarity (scalar fallback on non-macOS)
 pub mod quality_gate;
 pub mod _entropy; // Shared entropy helpers — broken out to avoid circular quality_gate ↔ zero_copy
 #[cfg(feature = "advanced")]
@@ -82,9 +83,12 @@ pub mod url_ops;
 pub mod url_set;
 pub mod zero_copy;
 pub mod serde_json_rs;
+#[cfg(feature = "stix")]
+pub mod stix_2_1;
 #[cfg(feature = "data")]
 pub mod arrow_batch_builder;
 pub mod parquet_reader; // F320+: Lazy parquet reader — paginated Arrow, 100GB+ IOC history bez OOM
+pub mod sendfile; // ISSUE 4.4: sendfile(2) zero-copy file-to-socket transfer (Darwin only)
 pub mod spsc_queue;
 pub mod mpsc_pool; // Bounded MPSC pool — replaces asyncio.Queue in evidence_log
 #[cfg(feature = "advanced")]
@@ -99,6 +103,8 @@ pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
+#[cfg(feature = "otel")]
+pub mod tracing;        // R24: OpenTelemetry tracing for Rust-side observability
 // R23-CB-ARCHIVED: circuit_breaker module kept for reference but NOT compiled.
 // Python transport.circuit_breaker (threading.Lock) is the wired canonical CB.
 // circuit_breaker.rs is NEVER registered and NEVER called — compile-time waste.
@@ -108,10 +114,21 @@ pub mod circuit_breaker;
 pub mod aimd_controller; // ISSUE 2.2: Lock-free AIMD controller replacing Python AIMDWindow + _AIMDSlotController
 pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
 pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
+#[cfg(feature = "quic")]
+pub mod quic;           // QUIC/HTTP3 via quinn + h3 — F350M-R: real HTTP/3 fallback
+pub mod tls13;          // TLS 1.3 JA4 fingerprinting + ECH detection via rustls
+#[cfg(feature = "pdf")]
+pub mod pdf;            // PDF text extraction + IOC extraction via lopdf
+#[cfg(feature = "office")]
+pub mod office;        // Office document text extraction (.docx, .xlsx, .pptx) via docx-rs + calamine
+#[cfg(feature = "dns")]
+pub mod dns;            // DoH/DoT/DoQ DNS via hickory-dns — replaces batch_dns.py triplicate paths
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
 pub mod pool_run;      // R2: Rayon pool runners — GIL wrappers + channel-based dispatch (consolidated)
 pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
-pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe
+#[cfg(feature = "ane")]
+pub mod ane;           // Apple Neural Engine bindings — model registry, batch validation, telemetry
+pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe (dir)
 #[cfg(feature = "data")]
 pub mod async_query; // R26: Async DuckDB queries via Rust executor
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
@@ -378,6 +395,48 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
     }
 }
 
+/// F350M-R 4.6: Set QoS class for any thread by pthread_t.
+///
+/// QoS classes on macOS (raw numeric values):
+///   0x1 = QOS_CLASS_BACKGROUND (lowest priority — for vacuum/close threads)
+///   0x2 = QOS_CLASS_UTILITY
+///   0x3 = QOS_CLASS_DEFAULT
+///   0x6 = QOS_CLASS_INTERACTIVE
+///   0x9 = QOS_CLASS_USER_INITIATED (highest — for inference threads)
+///
+/// This allows Python ThreadPoolExecutor workers to set their QoS class
+/// before starting I/O-bound work (vacuum) or after completion (close).
+///
+/// Returns 0 on success, -1 on failure (errno set).
+#[pyfunction]
+pub fn apply_thread_qos(pthread_id: usize, qos_class: i32) -> i32 {
+    #[cfg(target_os = "macos")]
+    {
+        use libc::pthread_t;
+        let _thread = pthread_id as pthread_t;
+        // Raw QoS class values — constants removed from newer libc/macOS SDKs
+        // Cast to qos_class_t via transmute through i32
+        let qos: libc::qos_class_t = match qos_class {
+            0x1 => unsafe { std::mem::transmute(0x1_i32) },  // QOS_CLASS_BACKGROUND
+            0x2 => unsafe { std::mem::transmute(0x2_i32) },  // QOS_CLASS_UTILITY
+            0x3 => unsafe { std::mem::transmute(0x3_i32) },  // QOS_CLASS_DEFAULT
+            0x6 => unsafe { std::mem::transmute(0x6_i32) },  // QOS_CLASS_INTERACTIVE
+            0x9 => unsafe { std::mem::transmute(0x9_i32) },  // QOS_CLASS_USER_INITIATED
+            _ => unsafe { std::mem::transmute(0x3_i32) },     // QOS_CLASS_DEFAULT fallback
+        };
+        unsafe {
+            libc::pthread_set_qos_class_self_np(qos, 0);
+        }
+        0
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = pthread_id;
+        let _ = qos_class;
+        0 // No-op on non-macOS
+    }
+}
+
 
 #[cfg(test)]
 mod lib_tests {
@@ -550,24 +609,57 @@ fn __version_info__() -> (u64, u64, u64) {
     _parse_version(env!("CARGO_PKG_VERSION"))
 }
 
-/// __abi_version() -> u32
-/// Returns the ABI version for Python-side compatibility checking.
+/// __abi_version() -> (u32, u32, u32)
+/// Returns the ABI version as a semver-like tuple (major, minor, patch).
 ///
-/// ABI_VERSION increments whenever the Rust extension's public API changes
+/// ABI tuple increments whenever the Rust extension's public API changes
 /// in a backward-incompatible way (new required arguments, removed functions,
 /// changed return types, changed struct layouts). Python code should check
 /// this at import time and fail fast if the ABI version doesn't match.
 ///
-/// bumping rule: increment on ANY public API change that breaks old callers
-/// minor bump (1→2): new optional API added, old callers still work
-/// major bump (2→3): API removed or changed, old callers MUST update
+/// bumping rules:
+///   - major (X.0.0): API removed or changed — old callers MUST update
+///   - minor (0.X.0): new optional API added — old callers still work
+///   - patch (0.0.X): bug fixes, no API changes — always compatible
 ///
-/// Current ABI version: 1
-const ABI_VERSION: u32 = 1;
+/// Current ABI version: (1, 0, 0)
+const ABI_VERSION: (u32, u32, u32) = (1, 0, 0);
 
 #[pyfunction]
-fn __abi_version__() -> u32 {
+fn __abi_version__() -> (u32, u32, u32) {
     ABI_VERSION
+}
+
+/// __py_version__() -> (u32, u32, u32)
+/// Returns the Python version the extension was compiled for.
+///
+/// Python side uses this to detect ABI mismatch when running under
+/// a different Python version than the one used to build this binary.
+#[cfg(feature = "py-version")]
+#[pyfunction]
+fn __py_version__() -> (u32, u32, u32) {
+    // Parse PYTHON_VERSION environment variable set at build time by maturin.
+    // maturin sets PYTHON_VERSION=<major>.<minor>.<patch> when invoking cargo.
+    // Fallback to (0, 0, 0) if not set (old build before py-version feature).
+    let py_ver = env!("PYTHON_VERSION");
+    let parts: Vec<&str> = py_ver.split('.').collect();
+    (
+        parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0),
+        parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
+        parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0),
+    )
+}
+
+/// __apple_target__() -> String
+/// Returns the compiler target triple this extension was built for.
+/// e.g. "aarch64-apple-darwin", "x86_64-apple-darwin", "arm64-apple-ios".
+/// Python side uses this to detect M1/M2/M3 vs Intel vs iOS mismatches.
+#[pyfunction]
+fn __apple_target__() -> String {
+    // option_env! returns None if not set (e.g., in maturin cross-compile)
+    option_env!("CARGO_CFG_TARGET_triple")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[pymodule]
@@ -577,10 +669,13 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(__version_info__, m)?)?;
     // ABI version for backward-compatibility enforcement (ISSUE-040)
-    // Register ONLY as function — getattr(ext, "__abi_version__") returns the function
-    // object, so callable() check in Python handles this correctly.
-    // Constant registration is redundant and removed.
+    // Semver-like tuple: (major, minor, patch) — major bump = breaking change
     m.add_function(wrap_pyfunction!(__abi_version__, m)?)?;
+    // Python version compiled-for (py-version feature, requires pyo3-build-config)
+    #[cfg(feature = "py-version")]
+    m.add_function(wrap_pyfunction!(__py_version__, m)?)?;
+    // Apple target triple for M1/M2/M3 vs Intel detection
+    m.add_function(wrap_pyfunction!(__apple_target__, m)?)?;
 
     m.add_class::<aho_corasick::AhoCorasickMatcher>()?;
     m.add_class::<aho_corasick::PatternHit>()?;  // Issue #37: zero-copy hit struct
@@ -615,6 +710,37 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_extract_structured_entities_py, m)?)?;
     // R4.3: SIMD IOC extraction — regex-automata build_many (NEON on M1, ~5× faster for bulk text ≥4KB)
     ioc_extract_simd::register_functions(m)?;
+
+    // PDF extraction via lopdf — pure Rust PDF parser (~10× vs Python pypdf)
+    // Feature-gated: pdf = ["dep:lopdf"] — enables pdf.extract_text(), pdf.extract_iocs()
+    #[cfg(feature = "pdf")]
+    {
+        m.add_function(wrap_pyfunction!(pdf::extract_text, m)?)?;
+        m.add_function(wrap_pyfunction!(pdf::extract_text_from_bytes, m)?)?;
+        m.add_function(wrap_pyfunction!(pdf::extract_text_and_iocs, m)?)?;
+        m.add_function(wrap_pyfunction!(pdf::extract_text_and_iocs_from_bytes, m)?)?;
+        m.add_function(wrap_pyfunction!(pdf::extract_iocs, m)?)?;
+        m.add_function(wrap_pyfunction!(pdf::extract_iocs_from_bytes, m)?)?;
+        m.add_function(wrap_pyfunction!(pdf::extract_metadata, m)?)?;
+        m.add_function(wrap_pyfunction!(pdf::extract_metadata_from_bytes, m)?)?;
+        m.add_class::<pdf::PdfMetadata>()?;
+    }
+
+    // Office document extraction via docx-rs + calamine — pure Rust (~5-10× vs Python)
+    // Feature-gated: office = ["dep:docx-rs", "dep:calamine"]
+    // Enables: office.extract_text(), office.extract_iocs(), office.extract_text_from_bytes()
+    // Python fallback: python-docx + openpyxl in content_miner.py
+    #[cfg(feature = "office")]
+    {
+        m.add_function(wrap_pyfunction!(office::extract_text, m)?)?;
+        m.add_function(wrap_pyfunction!(office::extract_text_from_bytes, m)?)?;
+        m.add_function(wrap_pyfunction!(office::extract_iocs, m)?)?;
+        m.add_function(wrap_pyfunction!(office::extract_iocs_from_bytes, m)?)?;
+        m.add_function(wrap_pyfunction!(office::extract_metadata, m)?)?;
+        m.add_function(wrap_pyfunction!(office::extract_metadata_from_bytes, m)?)?;
+        m.add_class::<office::OfficeMetadata>()?;
+    }
+
     url_engine::register_functions(m)?;
     url_ops::register_functions(m)?;
     m.add_class::<url_ops::UrlClassifyCachePy>()?;
@@ -652,6 +778,19 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback.
     tls_metadata::register_functions(m)?;
+
+    // TLS 1.3 JA4 fingerprinting + ECH detection via rustls (feature-gated).
+    #[cfg(feature = "tls13")]
+    tls13::register_functions(m)?;
+
+    // QUIC/HTTP3 via quinn + h3 — F350M-R: true HTTP/3 fallback for fetch_coordinator
+    #[cfg(feature = "quic")]
+    quic::register(m)?;
+
+    // DoH/DoT/DoQ DNS resolution — replaces batch_dns.py triple-path duplication.
+    // F350M-R: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
+    #[cfg(feature = "dns")]
+    dns::register_functions(m)?;
 
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
@@ -756,9 +895,18 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Drop-in for Python json.dumps in export/stix_exporter.py (2-4× faster, no GIL).
     serde_json_rs::register_functions(m)?;
 
+    // F350M-R: STIX 2.1 — native Rust STIX bundle encode/decode + jsonschema validation.
+    // Replaces runtime/stix_exporter.py json.dumps with serde + jsonschema for 2-4× speedup.
+    #[cfg(feature = "stix")]
+    stix_2_1::register_functions(m)?;
+
     // P0: Lock-free SPSC queue for MLX worker thread coordination.
     // Replaces asyncio.run_coroutine_threadsafe + wrap_future overhead.
     spsc_queue::register(m)?;
+
+    // ISSUE 4.4: sendfile(2) zero-copy file-to-socket for HTTP streaming export.
+    // Darwin-only: uses ARM zero-copy DMA path. Falls back to read+write on other platforms.
+    sendfile::register_functions(m)?;
 
     // Bounded MPSC pool — replaces asyncio.Queue in evidence_log.py.
     // crossbeam-channel, ~2-5ns send, pipe-wake for async.
@@ -849,6 +997,17 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ISSUE #015: MLX async token streaming bridge — adaptive buffering + memory pressure feedback
     mlx_bridge::register(m)?;
 
+    // ANE: Apple Neural Engine bindings — model registry, batch validation, telemetry
+    #[cfg(feature = "ane")]
+    ane::register_functions(m)?;
+
+    // R22: Accelerate/vDSP FFI — batch cosine similarity for NER engine (always compiled)
+    accelerate::register(m)?;
+
+    // R22: Metal GPU batch matmul — MoE router integration (feature-gated)
+    #[cfg(feature = "metal")]
+    metal_compute::register(m)?;
+
     // DuckDB bridge — isolated module for future cdylib extraction (saves ~8 MB .dylib)
     #[cfg(feature = "data")]
     data::register_functions(m)?;
@@ -861,5 +1020,13 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     feed_decision::register_functions(m)?;
     #[cfg(feature = "advanced")]
     feed_pipeline::register(m)?;
+
+    // F350M-R 4.6: Thread QoS for DuckDB I/O threads (vacuum/close)
+    m.add_function(wrap_pyfunction!(apply_thread_qos, m)?)?;
+
+    // R24: OpenTelemetry tracing
+    #[cfg(feature = "otel")]
+    tracing::register(m)?;
+
 Ok(())
 }

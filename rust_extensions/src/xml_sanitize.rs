@@ -7,9 +7,7 @@
 // Standard XML predefined entities (&amp; &lt; &gt; &quot; &apos;) and numeric
 // character references (&#NNN; &#xHHH;) are preserved untouched.
 
-use memchr::memchr;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
 use rayon::prelude::*;
 
 use crate::gil::release_gil;

@@ -99,6 +99,44 @@ def madv_nocache_on_path(path: str | os.PathLike) -> bool:
     return madvise_lmdb_mmap(path, advice=1)  # MADV_NOCACHE
 
 
+# QoS class constants for apply_thread_qos
+QOS_CLASS_BACKGROUND: int = 0x1
+QOS_CLASS_UTILITY: int = 0x2
+QOS_CLASS_DEFAULT: int = 0x3
+QOS_CLASS_INTERACTIVE: int = 0x5
+QOS_CLASS_USER_INITIATED: int = 0x9
+
+
+def apply_thread_qos(qos_class: int) -> bool:
+    """
+    F350M-R 4.6: Set QoS class for the current thread.
+
+    QoS classes on macOS:
+        0x1 = QOS_CLASS_BACKGROUND — lowest priority (vacuum/close threads)
+        0x2 = QOS_CLASS_UTILITY
+        0x3 = QOS_CLASS_DEFAULT
+        0x5 = QOS_CLASS_INTERACTIVE
+        0x9 = QOS_CLASS_USER_INITIATED — highest priority (inference threads)
+
+    Uses Rust apply_thread_qos(pthread_id=0, qos_class) where 0 means current thread.
+    Falls back silently on non-macOS or if unavailable.
+
+    Args:
+        qos_class: QoS class constant (e.g. QOS_CLASS_BACKGROUND for vacuum).
+
+    Returns:
+        True if QoS was set successfully, False otherwise.
+    """
+    try:
+        from hledac.universal.core.rust_backend import rust
+        if rust.is_available:
+            # 0 = current thread
+            return rust.apply_thread_qos(0, qos_class) == 0
+    except Exception:
+        pass
+    return False
+
+
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     """
     Apply F_NOCACHE flag to file descriptor for large downloads.

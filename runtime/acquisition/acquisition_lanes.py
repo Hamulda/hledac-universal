@@ -2,33 +2,26 @@
 runtime/acquisition/acquisition_lanes.py
 
 Async acquisition lane runners — run_enabled_acquisition_lanes() and variants.
-Extracted from acquisition_strategy.py (original L3764-5282).
 
-NOTE: This module is a STUB for the refactoring. The actual lane runner
-implementation remains in acquisition_strategy.py during the transition period.
+Canonical implementation moved to runtime/scheduler/lanes/__init__.py (correct: each
+lane calls store.async_ingest_findings_batch directly and populates accepted_findings).
 
-MODERNIZATION (Issue #18):
-  - Lane runners stay in acquisition_strategy.py during migration (complex async closures)
-  - This module provides the public interface and delegates to the original
-
-MIGRATION STATUS:
-  - Full implementation pending: lane runners are closures that capture complex state
-  - Will be migrated in Issue #19 after acquisition_strategy.py is cleaned up
+This module delegates to runtime.scheduler.lanes (not acquisition_strategy.py, which
+has the broken pattern where the outer caller does the ingest and backfills
+accepted_findings after the gather).
 """
 
 
-from typing import Any
+from typing import Any, AsyncIterator
 
-# Re-export the actual implementation from acquisition_strategy.py (during transition)
-# This is a temporary shim - real implementation will be extracted in Issue #19
-_acquisition_strategy = None
+_scheduler_lanes = None
 
 
-def _get_original():
-    global _acquisition_strategy
-    if _acquisition_strategy is None:
-        import hledac.universal.runtime.acquisition_strategy as _acquisition_strategy
-    return _acquisition_strategy
+def _get_scheduler_lanes():
+    global _scheduler_lanes
+    if _scheduler_lanes is None:
+        import hledac.universal.runtime.scheduler.lanes as _scheduler_lanes
+    return _scheduler_lanes
 
 
 async def run_enabled_acquisition_lanes(
@@ -42,11 +35,12 @@ async def run_enabled_acquisition_lanes(
     """
     Run all enabled optional acquisition lanes.
 
-    NOTE: Delegates to acquisition_strategy.run_enabled_acquisition_lanes()
-    during the transition period. Will be fully extracted in Issue #19.
+    Delegates to runtime/scheduler/lanes/__init__.py::run_enabled_acquisition_lanes
+    where each lane runner calls store.async_ingest_findings_batch directly and
+    populates accepted_findings in the returned AcquisitionLaneOutcome.
     """
-    orig = _get_original()
-    return await orig.run_enabled_acquisition_lanes(
+    lanes = _get_scheduler_lanes()
+    return await lanes.run_enabled_acquisition_lanes(
         snapshot=snapshot,
         query=query,
         store=store,
@@ -66,15 +60,16 @@ async def run_enabled_acquisition_lanes_streaming(
     graph_accumulator: Any = None,
     min_finished: int = 0,
     on_lane_complete: Any = None,  # Callable[[AcquisitionLaneOutcome], None] | None
-):
+) -> AsyncIterator[tuple]:
     """
     Run enabled acquisition lanes with streaming results.
 
-    NOTE: Delegates to acquisition_strategy.run_enabled_acquisition_lanes_streaming()
-    during the transition period.
+    Delegates to runtime/scheduler/lanes/__init__.py::run_enabled_acquisition_lanes_streaming
+    (AsyncGenerator). Uses `yield from` to proxy the async generator correctly — the caller
+    iterates this shim directly with `async for`.
     """
-    orig = _get_original()
-    return await orig.run_enabled_acquisition_lanes_streaming(
+    lanes = _get_scheduler_lanes()
+    async for outcome in lanes.run_enabled_acquisition_lanes_streaming(
         snapshot=snapshot,
         query=query,
         store=store,
@@ -84,4 +79,5 @@ async def run_enabled_acquisition_lanes_streaming(
         graph_accumulator=graph_accumulator,
         min_finished=min_finished,
         on_lane_complete=on_lane_complete,
-    )
+    ):
+        yield outcome

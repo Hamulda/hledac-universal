@@ -55,7 +55,7 @@ logger = logging.getLogger("hledac.universal.knowledge.duckdb_migrator")
 
 _MIGRATIONS_DIR: Path = Path(__file__).parent / "duckdb_migrations"
 _SCHEMA_VERSION_TABLE: str = "schema_version"
-_CURRENT_SCHEMA_VERSION: int = 2  # highest migration number
+_CURRENT_SCHEMA_VERSION: int = 3  # highest migration number
 
 
 # ---------------------------------------------------------------------------

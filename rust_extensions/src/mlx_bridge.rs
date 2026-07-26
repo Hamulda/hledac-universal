@@ -47,7 +47,6 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use rayon::prelude::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -476,10 +475,8 @@ pub fn batch_tokenize_(
     py: Python<'_>,
     tokenizers: Vec<Py<PyAny>>,
     prompts: Vec<String>,
-    add_special_tokens: bool,
+    _add_special_tokens: bool,
 ) -> PyResult<Bound<'_, PyList>> {
-    use rayon::prelude::*;
-
     if tokenizers.is_empty() || prompts.is_empty() {
         return Ok(PyList::empty(py));
     }

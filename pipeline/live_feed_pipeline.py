@@ -43,6 +43,8 @@ import typing
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
+from core.rust_backend import get_accel
+
 import httpx  # F4XX: replaces aiohttp in wayback fallback seam
 import msgspec
 
@@ -568,212 +570,6 @@ def _classify_fallback_decision(
             wasted=False,
             helpful=False,
         )
-
-
-def diagnose_feed_signal_stage(
-    entries_seen: int,
-    entries_with_empty_assembled_text: int,
-    entries_scanned: int,
-    entries_with_hits: int,
-    findings_built_pre_store: int,
-    patterns_configured: int,
-    findings_lost_to_dedup_total: int = 0,
-) -> str:
-    """
-    Diagnose which stage the signal is lost at.
-
-    Returns one of:
-      empty_registry           — no patterns configured at all
-      empty_fetch              — no entries arrived at all
-      content_empty            — entries arrived but assembled text was empty (all tiers title_only or no_content)
-      no_pattern_hits          — entries with text arrived but no pattern matched
-      no_pattern_hits_with_content — entries with content, no hits (substance tier above title_only)
-      findings_build_loss      — hits existed but all were deduped away
-      prestore_findings_present — findings exist pre-store
-      unknown                  — counters not yet populated
-
-    Findings-build loss is now distinguishable from pure no-hits:
-      - no_pattern_hits_with_content: text was scanned, substance was present, no hits arrived
-      - findings_build_loss: hits arrived but were filtered by per-entry dedup
-    """
-    if patterns_configured == 0:
-        return "empty_registry"
-    if entries_seen == 0:
-        return "empty_fetch"
-    if entries_with_empty_assembled_text > 0 and entries_scanned == 0:
-        return "content_empty"
-    if entries_scanned == 0:
-        return "no_pattern_hits"
-    if findings_built_pre_store == 0 and findings_lost_to_dedup_total > 0:
-        # Had hits but they were all lost to dedup — distinct from no-hits-with-content
-        return "findings_build_loss"
-    if entries_with_hits == 0:
-        # Entries had content (scanned) but no hits arrived
-        return "no_pattern_hits_with_content"
-    if findings_built_pre_store > 0:
-        return "prestore_findings_present"
-    return "unknown"
-
-
-# Sprint F150I: feed economics verdict helpers
-
-
-def _compute_feed_branch_hint(
-    feed_signal_present: bool,
-    fallback_useful: int,
-    fallback_waste: int,
-    findings_rich: int,
-    findings_fallback: int,
-    entries_with_hits: int,
-) -> str:
-    """
-    Compute a hint for next sprint about feed branch quality.
-    """
-    if entries_with_hits == 0:
-        return "unknown"
-    if feed_signal_present and fallback_waste == 0:
-        return "feed_strong"
-    if feed_signal_present and fallback_waste > 0 and fallback_useful == 0:
-        return "feed_weak"
-    if fallback_useful > 0 and findings_fallback > 0:
-        return "fallback_valuable"
-    if feed_signal_present or fallback_useful > 0:
-        return "mixed"
-    return "unknown"
-
-
-def _compute_feed_economics_verdict(
-    feed_signal_present: bool,
-    fallback_useful: int,
-    fallback_waste: int,
-    findings_rich: int,
-    findings_fallback: int,
-) -> tuple[str, int, int, int, int]:
-    """
-    Compute condensed economics verdict for the run.
-    Returns (verdict_tag, feed_signal_int, fallback_useful, fallback_waste, feed_signal_quality).
-    verdict_tag: "feed_lean" | "fallback_lean" | "balanced" | "no_signal"
-    """
-    total_findings = findings_rich + findings_fallback
-    if total_findings == 0:
-        return ("no_signal", int(feed_signal_present), fallback_useful, fallback_waste, 0)
-
-    rich_ratio = findings_rich / total_findings if total_findings > 0 else 0.0
-    waste_ratio = fallback_waste / (fallback_useful + fallback_waste) if (fallback_useful + fallback_waste) > 0 else 0.0
-
-    if rich_ratio >= 0.7:
-        verdict_tag = "feed_lean"
-    elif rich_ratio <= 0.3:
-        verdict_tag = "fallback_lean"
-    else:
-        verdict_tag = "balanced"
-
-    # Signal quality: 0-100 based on feed-native hit rate and waste ratio
-    quality = int(rich_ratio * 100 * (1.0 - waste_ratio * 0.5))
-
-    return (verdict_tag, int(feed_signal_present), fallback_useful, fallback_waste, quality)
-
-
-# Sprint F150J: dict-style additive feed branch verdict
-
-
-def _compute_feed_branch_verdict(
-    feed_signal_present: bool,
-    fallback_useful: int,
-    fallback_waste: int,
-    findings_rich: int,
-    findings_fallback: int,
-    squandered_high_usefulness: int,
-    metadata_strong_but_content_weak: int,
-    low_trust_feed_hits: int,
-    total_entries_with_hits: int,
-    entries_seen: int,
-    feed_native_yield_ratio: float,
-    fallback_value_ratio: float,
-) -> dict[str, Any]:
-    """
-    Compute a rich dict-style verdict for feed branch economics.
-
-    Provides actionable signals for scheduler/exporter:
-    - feed-native yield vs fallback yield breakdown
-    - wasted high-usefulness entries count
-    - unnecessary fallback count
-    - whether feed branch corroborates or burns fetch budget
-    - next action recommendation
-    - confidence annotation
-    """
-    total_findings = findings_rich + findings_fallback
-    verdict: dict[str, Any] = {
-        "verdict_tag": "no_signal",
-        "feed_native_yield": findings_rich,
-        "fallback_yield": findings_fallback,
-        "total_yield": total_findings,
-        "squandered_high_usefulness_entries": squandered_high_usefulness,
-        "unnecessary_fallbacks": fallback_waste,
-        "useful_fallbacks": fallback_useful,
-        "feed_corroborates": feed_signal_present and fallback_useful > 0,
-        "feed_burns_budget": fallback_waste > 0 and findings_rich == 0,
-        "feed_next_action": "unknown",
-        "feed_confidence_note": "",
-        "feed_confidence_score": 0,
-        "feed_native_yield_ratio": feed_native_yield_ratio,
-        "fallback_value_ratio": fallback_value_ratio,
-        "high_usefulness_waste_rate": 0.0,
-        "metadata_strong_content_weak": metadata_strong_but_content_weak,
-        "low_trust_feed_hits": low_trust_feed_hits,
-        "entries_with_hits": total_entries_with_hits,
-        "entries_seen": entries_seen,
-    }
-
-    if total_findings == 0:
-        verdict["verdict_tag"] = "no_signal"
-        verdict["feed_next_action"] = "reassess_feed"
-        verdict["feed_confidence_note"] = "no findings in either branch"
-        verdict["feed_confidence_score"] = 0
-        return verdict
-
-    # Waste rate for high-usefulness entries
-    fallback_useful + fallback_waste
-    if squandered_high_usefulness + fallback_waste > 0:
-        waste_denom = squandered_high_usefulness + fallback_waste
-        verdict["high_usefulness_waste_rate"] = fallback_waste / waste_denom
-
-    # Verdict tag
-    rich_ratio = feed_native_yield_ratio
-    if rich_ratio >= 0.7:
-        verdict["verdict_tag"] = "feed_lean"
-    elif rich_ratio <= 0.3:
-        verdict["verdict_tag"] = "fallback_lean"
-    else:
-        verdict["verdict_tag"] = "balanced"
-
-    # Feed corroborates: feed had hits AND fallback contributed something
-    verdict["feed_corroborates"] = feed_signal_present and fallback_useful > 0
-    # Feed burns budget: waste > 0 AND feed contributed nothing
-    verdict["feed_burns_budget"] = fallback_waste > 0 and findings_rich == 0
-
-    # Next action
-    if not feed_signal_present and fallback_useful == 0:
-        verdict["feed_next_action"] = "reassess_feed"
-        verdict["feed_confidence_note"] = "neither branch produced signal"
-    elif verdict["feed_burns_budget"]:
-        verdict["feed_next_action"] = "fallback_more"
-        verdict["feed_confidence_note"] = "feed burns budget; rely on fallback"
-    elif verdict["feed_corroborates"]:
-        verdict["feed_next_action"] = "continue_feed"
-        verdict["feed_confidence_note"] = "both branches contribute; feed is valuable"
-    elif feed_signal_present and fallback_useful == 0:
-        verdict["feed_next_action"] = "continue_feed"
-        verdict["feed_confidence_note"] = "feed-native only; fallback not needed"
-    else:
-        verdict["feed_next_action"] = "reassess_feed"
-        verdict["feed_confidence_note"] = "mixed signals; review feed quality"
-
-    # Confidence score
-    confidence = int(rich_ratio * 100 * (1.0 - verdict["high_usefulness_waste_rate"] * 0.5))
-    verdict["feed_confidence_score"] = max(0, min(100, confidence))
-
-    return verdict
 
 
 def _compute_feed_next_action_and_confidence(
@@ -2944,7 +2740,8 @@ async def async_run_live_feed_pipeline(
         )
 
     # Sprint 8AU + F160A: compute signal stage diagnosis with findings_build_loss tracking
-    signal_stage = diagnose_feed_signal_stage(
+    # F350M-R: diagnose_signal_stage routes to Rust feed_stage_diagnose (AccelBackend)
+    signal_stage = diagnose_signal_stage(
         entries_seen=entries_seen,
         entries_with_empty_assembled_text=entries_with_empty_assembled_text,
         entries_scanned=entries_scanned,
@@ -3021,7 +2818,7 @@ async def async_run_live_feed_pipeline(
         fallback_waste_count=_fallback_waste_count,
         findings_from_rich_feed=_findings_from_rich_feed,
         findings_from_fallback=_findings_from_fallback,
-        feed_branch_hint=_compute_feed_branch_hint(
+        feed_branch_hint=compute_feed_branch_hint(
             _feed_branch_signal_present,
             _fallback_useful_count,
             _fallback_waste_count,
@@ -3029,7 +2826,7 @@ async def async_run_live_feed_pipeline(
             _findings_from_fallback,
             entries_with_hits,
         ),
-        feed_economics_verdict=_compute_feed_economics_verdict(
+        feed_economics_verdict=compute_feed_economics_verdict(
             _feed_branch_signal_present,
             _fallback_useful_count,
             _fallback_waste_count,
@@ -3043,7 +2840,7 @@ async def async_run_live_feed_pipeline(
         feed_native_yield_ratio=(_findings_from_rich_feed / max(1, _findings_from_rich_feed + _findings_from_fallback)),
         feed_next_action=_next_action_and_note[0],
         feed_confidence_note=_next_action_and_note[1],
-        feed_branch_verdict=_compute_feed_branch_verdict(
+        feed_branch_verdict=compute_feed_branch_verdict(
             _feed_branch_signal_present,
             _fallback_useful_count,
             _fallback_waste_count,

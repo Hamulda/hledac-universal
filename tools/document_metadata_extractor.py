@@ -606,6 +606,38 @@ class _DocumentMetadataExtractor:
         """Extract from DOCX with FOCA-style revision history and fonts."""
         result: dict[str, Any] = {'format': 'docx'}
 
+        # R-21: Try Rust docx-rs first (~5-10× faster than python-docx)
+        try:
+            from rust_extensions import office as rust_office
+            rust_meta = rust_office.extract_metadata_from_bytes(content, "docx")
+            result['title'] = rust_meta.title
+            result['subject'] = rust_meta.subject
+            result['author'] = rust_meta.author
+            result['creator'] = rust_meta.last_modified_by
+            result['last_modified_by'] = rust_meta.last_modified_by
+            result['revision'] = rust_meta.revision
+            result['company'] = rust_meta.company
+            result['keywords'] = rust_meta.keywords
+            result['category'] = rust_meta.category
+            result['comments'] = rust_meta.comments
+            result['template'] = rust_meta.template
+            result['manager'] = rust_meta.manager
+            result['total_editing_time'] = rust_meta.total_editing_time
+            # Rust metadata extracted — add extended props + text extraction via ZIP
+            result.update(self._extract_docx_extended_props(content))
+            result['embedded_fonts'] = []
+            result['revision_history'] = self._extract_docx_revisions(content)[:MAX_REVISIONS]
+            internal_paths = self._find_internal_paths_from_docx_zip(content)
+            result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+            result['has_macros'] = self._check_docx_macros(content)
+            if result['has_macros'] and OLEVB_AVAILABLE:
+                result['macro_analysis'] = self._analyze_macros_olevba(content, 'docm')
+            result['gps_coords'] = []
+            result['page_count'] = 0
+            return result
+        except Exception:
+            pass
+
         if not DOCX_AVAILABLE:
             return self._extract_docx_fallback(content, result)
 
@@ -764,6 +796,39 @@ class _DocumentMetadataExtractor:
         """Extract from XLSX with embedded fonts."""
         result: dict[str, Any] = {'format': 'xlsx'}
 
+        # R-21: Try Rust calamine first (~5-10× faster than openpyxl)
+        try:
+            from rust_extensions import office as rust_office
+            rust_meta = rust_office.extract_metadata_from_bytes(content, "xlsx")
+            result['title'] = rust_meta.title
+            result['subject'] = rust_meta.subject
+            result['author'] = rust_meta.author
+            result['creator'] = rust_meta.author
+            result['last_modified_by'] = rust_meta.last_modified_by
+            result['company'] = rust_meta.company
+            result['keywords'] = rust_meta.keywords
+            result['category'] = rust_meta.category
+            result['comments'] = rust_meta.comments
+            result['revision'] = rust_meta.revision
+            result['sheet_count'] = rust_meta.sheet_count
+            result['page_count'] = rust_meta.page_count
+            result['total_editing_time'] = rust_meta.total_editing_time
+            result['template'] = rust_meta.template
+            result['manager'] = rust_meta.manager
+            # Rust metadata extracted successfully — add extended props + cell scan
+            result.update(self._extract_xlsx_extended_props(content))
+            internal_paths = self._find_internal_paths_from_xlsx_zip(content)
+            result['internal_paths'] = list(set(internal_paths))[:MAX_INTERNAL_PATHS]
+            result['embedded_fonts'] = []
+            result['has_macros'] = self._check_docx_macros(content)
+            if result['has_macros'] and OLEVB_AVAILABLE:
+                result['macro_analysis'] = self._analyze_macros_olevba(content, 'xlsm')
+            result['gps_coords'] = []
+            return result
+        except Exception:
+            pass
+
+        # Fallback to openpyxl
         if not OPENPYXL_AVAILABLE:
             return self._extract_xlsx_fallback(content, result)
 
@@ -859,27 +924,49 @@ class _DocumentMetadataExtractor:
         """Extract from PPTX with speaker notes and hidden slides."""
         result: dict[str, Any] = {'format': 'pptx'}
 
+        # R-21: Try Rust docx-rs first (~5-10× faster)
+        try:
+            from rust_extensions import office as rust_office
+            rust_meta = rust_office.extract_metadata_from_bytes(content, "pptx")
+            result['title'] = rust_meta.title
+            result['subject'] = rust_meta.subject
+            result['author'] = rust_meta.author
+            result['creator'] = rust_meta.last_modified_by
+            result['last_modified_by'] = rust_meta.last_modified_by
+            result['company'] = rust_meta.company
+            result['keywords'] = rust_meta.keywords
+            result['category'] = rust_meta.category
+            result['comments'] = rust_meta.comments
+            result['revision'] = rust_meta.revision
+            result['slide_count'] = rust_meta.slide_count
+            result['template'] = rust_meta.template
+            result['manager'] = rust_meta.manager
+            result['total_editing_time'] = rust_meta.total_editing_time
+        except Exception:
+            pass
+
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
                 names = zf.namelist()
 
                 if 'docProps/core.xml' in names:
                     core_xml = zf.read('docProps/core.xml').decode('utf-8', errors='ignore')
-                    result['author'] = self._extract_xml_value(core_xml, 'dc:creator')
-                    result['last_modified_by'] = self._extract_xml_value(core_xml, 'cp:lastModifiedBy')
-                    result['title'] = self._extract_xml_value(core_xml, 'dc:title')
-                    result['subject'] = self._extract_xml_value(core_xml, 'dc:subject')
+                    result.setdefault('author', self._extract_xml_value(core_xml, 'dc:creator'))
+                    result.setdefault('last_modified_by', self._extract_xml_value(core_xml, 'cp:lastModifiedBy'))
+                    result.setdefault('title', self._extract_xml_value(core_xml, 'dc:title'))
+                    result.setdefault('subject', self._extract_xml_value(core_xml, 'dc:subject'))
 
                 if 'docProps/app.xml' in names:
                     app_xml = zf.read('docProps/app.xml').decode('utf-8', errors='ignore')
-                    result['company'] = self._extract_xml_value(app_xml, 'Company')
-                    result['template_path'] = self._extract_xml_value(app_xml, 'Template')
+                    result.setdefault('company', self._extract_xml_value(app_xml, 'Company'))
+                    result.setdefault('template_path', self._extract_xml_value(app_xml, 'Template'))
 
                 result['speaker_notes'] = self._extract_pptx_speaker_notes(zf, names)
                 result['hidden_slides'] = self._extract_pptx_hidden_slides(zf, names)
 
-                slide_count = len([n for n in names if re.match(r'ppt/slides/slide\d+\.xml', n)])
-                result['slide_count'] = slide_count
+                if 'slide_count' not in result:
+                    slide_count = len([n for n in names if re.match(r'ppt/slides/slide\d+\.xml', n)])
+                    result['slide_count'] = slide_count
 
                 internal_paths = []
                 for name in names:
@@ -1312,6 +1399,44 @@ class _DocumentMetadataExtractor:
             matches = pattern.findall(text)
             paths.update(matches)
         return list(paths)
+
+    def _find_internal_paths_from_xlsx_zip(self, content: bytes) -> list[str]:
+        """Extract internal paths from XLSX cell values without loading openpyxl.
+
+        Uses zipfile directly to read sharedStrings.xml for fast cell text extraction.
+        """
+        paths = []
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                if 'xl/sharedStrings.xml' in zf.namelist():
+                    xml_data = zf.read('xl/sharedStrings.xml').decode('utf-8', errors='ignore')
+                    # Extract text content between <t> tags
+                    for match in re.finditer(r'<t[^>]*>([^<]*)</t>', xml_data):
+                        text = match.group(1)
+                        if text:
+                            paths.extend(self._find_internal_paths(text))
+        except Exception:
+            pass
+        return paths
+
+    def _find_internal_paths_from_docx_zip(self, content: bytes) -> list[str]:
+        """Extract internal paths from DOCX text without loading python-docx.
+
+        Uses zipfile directly to read document.xml for fast text extraction.
+        """
+        paths = []
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                if 'word/document.xml' in zf.namelist():
+                    xml_data = zf.read('word/document.xml').decode('utf-8', errors='ignore')
+                    # Extract text content between <w:t> tags
+                    for match in re.finditer(r'<w:t[^>]*>([^<]*)</w:t>', xml_data):
+                        text = match.group(1)
+                        if text:
+                            paths.extend(self._find_internal_paths(text))
+        except Exception:
+            pass
+        return paths
 
 
 def _exif_to_float(val):

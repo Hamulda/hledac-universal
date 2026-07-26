@@ -1668,7 +1668,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.open_source_collectors import get_open_source_collectors
+                from hledac.universal.recon.open_source_collectors import get_open_source_collectors
                 collector = get_open_source_collectors()
                 results = await collector.gather_all(query)
                 accepted = 0

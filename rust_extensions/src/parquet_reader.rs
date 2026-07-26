@@ -115,19 +115,27 @@ pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f
                     Err(_) => break,
                 };
 
-                for val in arr.iter() {
+                let mut arr_iter = match arr.try_iter() {
+                    Ok(i) => i,
+                    Err(_) => break,
+                };
+                while let Some(val) = arr_iter.next() {
+                    let val = match val {
+                        Ok(v) => v,
+                        Err(_) => break,
+                    };
                     count += 1;
-                    if let Some(ts_val) = val.extract::<f64>().ok() {
+                    if let Ok(ts_val) = val.extract::<f64>() {
                         min_ts = Some(min_ts.map_or(ts_val, |m| m.min(ts_val)));
                         max_ts = Some(max_ts.map_or(ts_val, |m| m.max(ts_val)));
                     }
                 }
-            }
 
-            if count > 0 {
-                results.push((rg_idx, min_ts.unwrap_or(0.0), max_ts.unwrap_or(0.0), count));
-            } else {
-                results.push((rg_idx, 0.0, 0.0, 0));
+                if count > 0 {
+                    results.push((rg_idx, min_ts.unwrap_or(0.0), max_ts.unwrap_or(0.0), count));
+                } else {
+                    results.push((rg_idx, 0.0, 0.0, 0));
+                }
             }
         }
 

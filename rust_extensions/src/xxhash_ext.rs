@@ -120,7 +120,7 @@ const XXHASH_ZC_PARALLEL_THRESHOLD: usize = 64;
 /// Returns PyValueError if batch is empty, too large, or total bytes exceed limit.
 fn validate_bytes_batch<'py>(
     items: &Bound<'py, pyo3::types::PyList>,
-    py: Python<'py>,
+    _py: Python<'py>,
 ) -> PyResult<usize> {
     let n = items.len();
     if n == 0 {

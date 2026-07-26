@@ -96,7 +96,7 @@ impl TokenBucketState {
     /// Refill tokens to full capacity
     fn refill(&self) {
         // Reset tokens to capacity
-        let prev = self.tokens.swap(self.capacity, Ordering::AcqRel);
+        let _prev = self.tokens.swap(self.capacity, Ordering::AcqRel);
         // Wake up waiters: send one notification per refilled token
         // (waiters count down from capacity, so we send all capacity tokens)
         for _ in 0..self.capacity {

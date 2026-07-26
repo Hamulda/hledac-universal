@@ -198,15 +198,18 @@ class ScorecardBuilder:
                         for f in findings_iterable:
                             src = getattr(f, "source_type", None) or "unknown"
                             source_yield_val[src] = source_yield_val.get(src, 0) + 1
+                            ioc_val += 1
+                            accepted_val += 1
                 except (AttributeError, TypeError, RuntimeError):
                     pass
-            # Fallback: accepted_count z store
+            # Fallback: accepted_count + ioc_count z store
             store = self._store
             if store is not None and hasattr(store, "get_dedup_runtime_status"):
                 try:
                     dedup = store.get_dedup_runtime_status()
                     if not source_yield_val:
                         accepted_val = dedup.get("accepted_count", 0)
+                        ioc_val = dedup.get("ioc_count", 0)
                 except (AttributeError, RuntimeError):
                     pass
             return accepted_val, ioc_val, source_yield_val

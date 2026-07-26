@@ -882,6 +882,117 @@ class GitHubGistSidecarAdapter(BaseSidecarAdapter):
         return terms[:10]
 
 
+# ── JA4 TLS Fingerprint Collector Sidecar (F350M-R) ────────────────────────────
+
+@SidecarRegistry.register("ja4_collector")
+class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
+    """
+    F350M-R: JA4 TLS fingerprint collector — server-side TCP fingerprinting.
+
+    Performs TLS handshake to extract JA4 (Salesforce) fingerprint from target
+    servers. JA4 = 13-char TCP fingerprint derived from TLS ClientHello.
+    ECH (Encrypted Client Hello) detection included.
+
+    Uses Rust tls13 module (rustls) for <1ms fingerprint extraction.
+    Falls back to Python ssl analysis when Rust unavailable.
+
+    Env: HLEDAC_ENABLE_JA4_COLLECTOR=1
+    RAM: 30MB budget
+    Priority: 5 (active reconnaissance tier)
+
+    Integration:
+        - recon/network_reconnaissance.py: SSLAnalyzer.ja4_fingerprint()
+        - Rust tls13 module: rust.tls.connect_and_ja4() + ja4_from_client_hello()
+    """
+
+    sidecar_id: str = "ja4_collector"
+    env_gate: str = "HLEDAC_ENABLE_JA4_COLLECTOR"
+    ram_budget_mb: int = 30
+    priority: int = 5
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """
+        Extract JA4 fingerprints from domain IOC values in findings.
+
+        Returns list of findings with JA4 fingerprint data attached.
+        """
+        from hledac.universal.recon.network_reconnaissance import SSLAnalyzer
+
+        # Extract domains from findings
+        domains = self._extract_domains(ctx)
+        if not domains:
+            return []
+
+        # Limit for M1 safety (max 20 concurrent connections)
+        domains = domains[:20]
+
+        try:
+            ssl = SSLAnalyzer()
+            results = await ssl.batch_ja4(
+                [(d, 443) for d in domains],
+                timeout_ms=5000,
+            )
+
+            findings = []
+            for result in results:
+                ja4 = result.get('ja4', '')
+                if ja4 and ja4 != 'unknown':
+                    findings.append({
+                        'source_type': 'ja4_fingerprint',
+                        'query': ctx.query,
+                        'sprint_id': ctx.sprint_id,
+                        'ioc_type': 'ja4_fingerprint',
+                        'ioc_value': ja4,
+                        'title': f"JA4: {result.get('host', 'unknown')} — TLS {result.get('tls_version', '?')}",
+                        'confidence': 0.9,
+                        'payload_text': (
+                            f"JA4={ja4} TLS={result.get('tls_version', '?')} "
+                            f"ECH={'yes' if result.get('ech_detected') else 'no'} "
+                            f"ALPN={result.get('alpn', 'none')}"
+                        ),
+                        'extra_data': {
+                            'host': result.get('host', ''),
+                            'port': result.get('port', 443),
+                            'ech_detected': result.get('ech_detected', False),
+                            'tls_version': result.get('tls_version', ''),
+                            'server_ciphers': result.get('server_ciphers', []),
+                            'alpn': result.get('alpn', ''),
+                            'cert_verified': result.get('cert_verified', False),
+                        },
+                    })
+
+            return findings
+
+        except Exception:
+            logger.debug("JA4CollectorSidecarAdapter.run: fail-soft", exc_info=True)
+            return []
+
+    def _extract_domains(self, ctx: SidecarContext) -> list[str]:
+        """Extract domain IOC values from findings."""
+        domains: list[str] = []
+        for finding in ctx.findings:
+            ioc_type = getattr(finding, 'ioc_type', '')
+            ioc_value = getattr(finding, 'ioc_value', '')
+
+            # Accept domain types
+            if ioc_type in ('domain', 'hostname', 'url', 'fqdn'):
+                if ioc_value and len(ioc_value) < 253:
+                    domains.append(ioc_value)
+            # Accept URL-like values
+            elif ioc_value and ('://' in ioc_value or '@' not in ioc_value):
+                # Simple domain extraction from URL
+                from urllib.parse import urlparse
+                try:
+                    if '://' in ioc_value:
+                        parsed = urlparse(ioc_value)
+                        if parsed.netloc:
+                            domains.append(parsed.netloc.split(':')[0].split('@')[-1])
+                except Exception:
+                    pass
+
+        return list(dict.fromkeys(domains))  # Dedupe preserve order
+
+
 @SidecarRegistry.register("whois")
 class WhoisSidecarAdapter(BaseSidecarAdapter):
     """

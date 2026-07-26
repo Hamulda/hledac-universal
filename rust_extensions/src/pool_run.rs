@@ -38,13 +38,11 @@ use rayon::ThreadPool;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::thread;
-use std::any::Any;
 use std::time::Duration;
 
 // Use parking_lot: no poisoning (panic in one thread won't poison the mutex),
 // ~2x faster than std::sync::Mutex, and .lock() returns Guard directly (no Result).
 // This prevents unwrap() panics from propagating as Rust panics across the PyO3 FFI boundary.
-use parking_lot::{Condvar, Mutex};
 
 use crossbeam_channel::{bounded, Sender, Receiver};
 
@@ -188,7 +186,7 @@ fn run_mixed_dispatcher_loop(rx: Arc<Receiver<WorkItem>>) {
 }
 
 /// Execute a single work item: cooperative cancellation check, GIL-acquire, call Python func.
-fn execute_work_item<F>(work: WorkItem, pool_fn: F)
+fn execute_work_item<F>(work: WorkItem, _pool_fn: F)
 where
     F: Fn() -> &'static ThreadPool,
 {
@@ -330,7 +328,7 @@ pub fn rayon_submit_channel_(
 
     // Return pointer to SharedTask — Python passes this to rayon_join_channel
     let ptr = Box::into_raw(Box::new(shared)) as usize;
-    Ok(ptr.into_py(py))
+    Ok(ptr.into_pyobject(py).unwrap().into())
 }
 
 // ---------------------------------------------------------------------------
@@ -408,18 +406,18 @@ pub fn rayon_join_channel_(
 
         let result = shared.result.lock().take();
         return match result {
-            Some(Ok(py_obj)) => Ok(py_obj.into_py(py)),
+            Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
             Some(Err(err)) => Err(err),
-            None => Ok(py.None().into()),
+            None => Ok(py.None().into_pyobject(py).unwrap().into()),
         };
     }
 
     let result = (*guard).take();
 
     match result {
-        Some(Ok(py_obj)) => Ok(py_obj.into_py(py)),
+        Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
         Some(Err(err)) => Err(err),
-        None => Ok(py.None().into()),
+        None => Ok(py.None().into_pyobject(py).unwrap().into()),
     }
 }
 

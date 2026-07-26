@@ -749,10 +749,60 @@ class MetadataExtractor:
             metadata = await self._extract_image(content_bytes, metadata)
         elif content_type in ['application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']:
             metadata = await self._extract_docx(content_bytes, metadata)
+        elif content_type in ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel']:
+            metadata = await self._extract_xlsx(content_bytes, metadata)
+        elif content_type in ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.ms-powerpoint']:
+            metadata = await self._extract_pptx(content_bytes, metadata)
         return metadata
 
     async def _extract_pdf(self, content_bytes: bytes, metadata: ExtractedMetadata) -> ExtractedMetadata:
-        """Extract metadata from PDF."""
+        """Extract metadata from PDF.
+
+        Strategy:
+        1. Try Rust lopdf via hledac_rust_extensions (fast, pure Rust)
+        2. Fallback to PyMuPDF (fitz) if Rust is unavailable
+        """
+        # Try Rust PDF extraction first (feature-gated, ~10× faster than Python pypdf)
+        _rust_pdf_available = False
+        try:
+            import hledac_rust_extensions
+            if hasattr(hledac_rust_extensions, 'pdf'):
+                _rust_pdf_available = True
+        except (ImportError, AttributeError):
+            pass
+
+        if _rust_pdf_available:
+            try:
+                import asyncio
+
+                def _extract_rust():
+                    # Single-pass: extract text + IOCs together (avoids 2× PDF parsing)
+                    text, ioc_list = hledac_rust_extensions.pdf.extract_text_and_iocs_from_bytes(content_bytes)
+                    return text, len(ioc_list)
+
+                loop = asyncio.get_running_loop()
+                text, ioc_count = await asyncio.to_thread(_extract_rust)
+                text_preview = text[:2000] if text else ''
+                logger.debug(f"[METADATA] Rust PDF extracted: {ioc_count} IOCs, preview length: {len(text_preview)}")
+                return ExtractedMetadata(
+                    content_type=metadata.content_type,
+                    file_size=metadata.file_size,
+                    title=metadata.title,
+                    author=metadata.author,
+                    creation_date=metadata.creation_date,
+                    modification_date=metadata.modification_date,
+                    page_count=metadata.page_count,
+                    keywords=metadata.keywords,
+                    entities=metadata.entities,
+                    gps_coords=metadata.gps_coords,
+                    timeline_events=metadata.timeline_events,
+                    extracted_text_preview=text_preview,
+                )
+            except Exception as e:
+                logger.debug(f"[METADATA] Rust PDF extraction failed, falling back to PyMuPDF: {e}")
+                # Fall through to PyMuPDF fallback
+
+        # PyMuPDF fallback
         if not self._check_pymupdf():
             return metadata
         try:
@@ -762,22 +812,40 @@ class MetadataExtractor:
             def _extract():
                 doc = fitz.open(stream=content_bytes, filetype='pdf')
                 meta = doc.metadata
-                result = {'title': meta.get('title'), 'author': meta.get('author'), 'creation_date': meta.get('creationDate'), 'modification_date': meta.get('modDate'), 'page_count': len(doc), 'keywords': meta.get('keywords', '').split(',') if meta.get('keywords') else [], 'text_preview': ''}
-                if doc:
-                    text = doc[0].get_text()[:2000]
-                    result['text_preview'] = text
+                result = {
+                    'title': meta.get('title'),
+                    'author': meta.get('author'),
+                    'creation_date': meta.get('creationDate'),
+                    'modification_date': meta.get('modDate'),
+                    'page_count': len(doc),
+                    'keywords': meta.get('keywords', '').split(',') if meta.get('keywords') else [],
+                    'text_preview': '',
+                }
+                # Extract all pages, not just first one
+                if len(doc) > 0:
+                    text_parts = [doc[i].get_text() for i in range(len(doc))]
+                    text = ''.join(text_parts)
+                    result['text_preview'] = text[:2000]
                 doc.close()
                 return result
             loop = asyncio.get_running_loop()
             result = await asyncio.to_thread(_extract)
-            metadata.title = result['title']
-            metadata.author = result['author']
-            metadata.creation_date = result['creation_date']
-            metadata.modification_date = result['modification_date']
-            metadata.page_count = result['page_count']
-            metadata.keywords = result['keywords']
-            metadata.extracted_text_preview = result['text_preview']
-            logger.debug(f"[METADATA] Extracted PDF: {metadata.title or 'no title'}, {metadata.page_count} pages")
+            logger.debug(f"[METADATA] Extracted PDF: {result['title'] or 'no title'}, {result['page_count']} pages")
+            # Return new instance with all fields
+            return ExtractedMetadata(
+                content_type=metadata.content_type,
+                file_size=metadata.file_size,
+                title=result['title'],
+                author=result['author'],
+                creation_date=result['creation_date'],
+                modification_date=result['modification_date'],
+                page_count=result['page_count'],
+                keywords=result['keywords'],
+                entities=metadata.entities,
+                gps_coords=metadata.gps_coords,
+                timeline_events=metadata.timeline_events,
+                extracted_text_preview=result['text_preview'],
+            )
         except Exception as e:
             logger.warning(f'PDF metadata extraction failed: {e}')
         return metadata
@@ -826,8 +894,175 @@ class MetadataExtractor:
         return d + m / 60.0 + s / 3600.0
 
     async def _extract_docx(self, content_bytes: bytes, metadata: ExtractedMetadata) -> ExtractedMetadata:
-        """Extract metadata from DOCX (placeholder - would need python-docx)."""
+        """Extract metadata from DOCX/XLSX/PPTX.
+
+        Strategy:
+        1. Try Rust office extraction via hledac_rust_extensions (fast, pure Rust)
+        2. Fallback to python-docx/openpyxl if Rust is unavailable
+        """
+        # Try Rust office extraction first (feature-gated, ~5-10× faster than Python)
+        _rust_office_available = False
+        try:
+            import hledac_rust_extensions
+            if hasattr(hledac_rust_extensions, 'office'):
+                _rust_office_available = True
+        except (ImportError, AttributeError):
+            pass
+
+        if _rust_office_available:
+            try:
+                import asyncio
+
+                def _extract_rust():
+                    # Returns (text, ioc_count) or raises
+                    text = hledac_rust_extensions.office.extract_text_from_bytes(content_bytes, "docx")
+                    ioc_list = hledac_rust_extensions.office.extract_iocs_from_bytes(content_bytes, "docx")
+                    return text, len(ioc_list)
+
+                loop = asyncio.get_running_loop()
+                text, ioc_count = await asyncio.to_thread(_extract_rust)
+                text_preview = text[:2000] if text else ''
+                logger.debug(f"[METADATA] Rust DOCX extracted: {ioc_count} IOCs, preview length: {len(text_preview)}")
+                return msgspec.replace(metadata, extracted_text_preview=text_preview)
+            except Exception as e:
+                logger.debug(f"[METADATA] Rust DOCX extraction failed, falling back to python-docx: {e}")
+                # Fall through to python-docx fallback
+
+        # python-docx fallback
+        try:
+            import asyncio
+            import docx
+
+            def _extract():
+                doc = docx.Document(io.BytesIO(content_bytes))
+                text_parts = []
+                for para in doc.paragraphs:
+                    if para.text.strip():
+                        text_parts.append(para.text)
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            if cell.text.strip():
+                                text_parts.append(cell.text)
+                return ' '.join(text_parts)
+
+            loop = asyncio.get_running_loop()
+            text = await asyncio.to_thread(_extract)
+            text_preview = text[:2000] if text else ''
+            return msgspec.replace(metadata, extracted_text_preview=text_preview)
+        except Exception as e:
+            logger.debug(f"[METADATA] DOCX extraction failed: {e}")
         return metadata
+
+    async def _extract_xlsx(self, content_bytes: bytes, metadata: ExtractedMetadata) -> ExtractedMetadata:
+        """Extract metadata from XLSX.
+
+        Strategy:
+        1. Try Rust office extraction via hledac_rust_extensions (fast, pure Rust)
+        2. Fallback to openpyxl if Rust is unavailable
+        """
+        _rust_office_available = False
+        try:
+            import hledac_rust_extensions
+            if hasattr(hledac_rust_extensions, 'office'):
+                _rust_office_available = True
+        except (ImportError, AttributeError):
+            pass
+
+        if _rust_office_available:
+            try:
+                import asyncio
+
+                def _extract_rust():
+                    text = hledac_rust_extensions.office.extract_text_from_bytes(content_bytes, "xlsx")
+                    ioc_list = hledac_rust_extensions.office.extract_iocs_from_bytes(content_bytes, "xlsx")
+                    return text, len(ioc_list)
+
+                loop = asyncio.get_running_loop()
+                text, ioc_count = await asyncio.to_thread(_extract_rust)
+                text_preview = text[:2000] if text else ''
+                logger.debug(f"[METADATA] Rust XLSX extracted: {ioc_count} IOCs, preview length: {len(text_preview)}")
+                return msgspec.replace(metadata, extracted_text_preview=text_preview)
+            except Exception as e:
+                logger.debug(f"[METADATA] Rust XLSX extraction failed, falling back to openpyxl: {e}")
+
+        # openpyxl fallback
+        try:
+            import asyncio
+            import openpyxl
+
+            def _extract():
+                wb = openpyxl.load_workbook(io.BytesIO(content_bytes), read_only=True, data_only=True)
+                text_parts = []
+                for sheet in wb.worksheets:
+                    for row in sheet.iter_rows(max_row=100):
+                        for cell in row:
+                            if cell.value and isinstance(cell.value, str):
+                                text_parts.append(cell.value)
+                wb.close()
+                return ' '.join(text_parts)
+
+            loop = asyncio.get_running_loop()
+            text = await asyncio.to_thread(_extract)
+            text_preview = text[:2000] if text else ''
+            return msgspec.replace(metadata, extracted_text_preview=text_preview)
+        except Exception as e:
+            logger.debug(f"[METADATA] XLSX extraction failed: {e}")
+            return metadata
+
+    async def _extract_pptx(self, content_bytes: bytes, metadata: ExtractedMetadata) -> ExtractedMetadata:
+        """Extract metadata from PPTX.
+
+        Strategy:
+        1. Try Rust office extraction via hledac_rust_extensions (fast, pure Rust)
+        2. Fallback to python-pptx if Rust is unavailable
+        """
+        _rust_office_available = False
+        try:
+            import hledac_rust_extensions
+            if hasattr(hledac_rust_extensions, 'office'):
+                _rust_office_available = True
+        except (ImportError, AttributeError):
+            pass
+
+        if _rust_office_available:
+            try:
+                import asyncio
+
+                def _extract_rust():
+                    text = hledac_rust_extensions.office.extract_text_from_bytes(content_bytes, "pptx")
+                    ioc_list = hledac_rust_extensions.office.extract_iocs_from_bytes(content_bytes, "pptx")
+                    return text, len(ioc_list)
+
+                loop = asyncio.get_running_loop()
+                text, ioc_count = await asyncio.to_thread(_extract_rust)
+                text_preview = text[:2000] if text else ''
+                logger.debug(f"[METADATA] Rust PPTX extracted: {ioc_count} IOCs, preview length: {len(text_preview)}")
+                return msgspec.replace(metadata, extracted_text_preview=text_preview)
+            except Exception as e:
+                logger.debug(f"[METADATA] Rust PPTX extraction failed, falling back to python-pptx: {e}")
+
+        # python-pptx fallback
+        try:
+            import asyncio
+            from pptx import Presentation
+
+            def _extract():
+                prs = Presentation(io.BytesIO(content_bytes))
+                text_parts = []
+                for slide in prs.slides:
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text") and shape.text.strip():
+                            text_parts.append(shape.text)
+                return ' '.join(text_parts)
+
+            loop = asyncio.get_running_loop()
+            text = await asyncio.to_thread(_extract)
+            text_preview = text[:2000] if text else ''
+            return msgspec.replace(metadata, extracted_text_preview=text_preview)
+        except Exception as e:
+            logger.debug(f"[METADATA] PPTX extraction failed: {e}")
+            return metadata
 import ast
 import hashlib
 import os

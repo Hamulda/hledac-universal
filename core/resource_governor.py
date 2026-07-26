@@ -31,7 +31,7 @@ import threading
 import time
 from collections.abc import Callable
 from enum import Enum, StrEnum
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 import msgspec
 
 _KT = TypeVar("_KT")
@@ -59,6 +59,72 @@ class UMAState(StrEnum):
     WARN = "warn"
     CRITICAL = "critical"
     EMERGENCY = "emergency"
+
+
+class PressureState(StrEnum):
+    """
+    Canonical memory pressure state for Hledac Universal.
+
+    F350M-R: Unified pressure state replacing PressureState from the now-archived
+    core/uma_governor.py. Values map to UMAState string literals for
+    serialization (DuckDB, JSON, LMDB).
+
+    F350M-R Migration:
+        - core/uma_governor.PressureState merged here as canonical
+        - UMAStateToPressureState / pressure_state_to_uma_state mappings added
+        - core/uma_governor.py → backward-compat re-export stub
+    """
+
+    NORMAL = "normal"
+    ELEVATED = "elevated"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+# Mapping from UMAState to PressureState
+UMAStateToPressureState: dict[str, PressureState] = {
+    "ok": PressureState.NORMAL,
+    "soft_warn": PressureState.ELEVATED,
+    "warn": PressureState.HIGH,
+    "critical": PressureState.CRITICAL,
+    "emergency": PressureState.CRITICAL,
+}
+
+# Reverse mapping
+PressureStateToUMAState: dict[PressureState, str] = {
+    PressureState.NORMAL: "ok",
+    PressureState.ELEVATED: "soft_warn",
+    PressureState.HIGH: "warn",
+    PressureState.CRITICAL: "critical",
+}
+
+
+def uma_state_to_pressure_state(uma_state: str) -> PressureState:
+    """Convert UMAState string to canonical PressureState."""
+    if uma_state not in UMAStateToPressureState:
+        raise ValueError(f"Unknown UMAState value: {uma_state!r}")
+    return UMAStateToPressureState[uma_state]
+
+
+def pressure_state_to_uma_state(pressure_state: PressureState) -> str:
+    """Convert PressureState to UMAState string."""
+    return PressureStateToUMAState[pressure_state]
+
+
+class UMAGovernor(Protocol):  # type: ignore[explicit-any]
+    """Protocol for UMA memory pressure governors (mirrors core/uma_governor.UMAGovernor)."""
+
+    async def get_pressure(self) -> "PressureState": ...  # type: ignore[empty-body]
+
+    def telemetry(self) -> dict[str, Any]: ...  # type: ignore[empty-body]
+
+    def release_memory(self) -> None:
+        """Release reclaimable memory pages. Called at CRITICAL/EMERGENCY UMA state."""
+        ...
+
+    def apply_madvise_to_file(self, path: str, advice: int = 1) -> bool:
+        """Apply madvise to a memory-mapped file. Returns True on success."""
+        ...
 
 
 from hledac.universal.core.locks import LockCategory, register_lock
@@ -871,6 +937,120 @@ class M1ResourceGovernor:
             _apply_gc_thresholds(decision.uma_state)
         except Exception:
             pass
+        # F350M-R: Apply madvise to all mmap handles at CRITICAL/EMERGENCY
+        if decision.uma_state in (UMAState.CRITICAL, UMAState.EMERGENCY):
+            self.apply_madvise_critical()
+
+    def apply_madvise_critical(self) -> None:
+        """
+        F350M-R 4.5: Apply MADV_FREE_REUSABLE to all known mmap handles.
+
+        Called automatically at CRITICAL/EMERGENCY UMA state to propagate
+        memory pressure to the kernel for DuckDB/LMDB page cache regions.
+
+        Uses:
+        - madvise_lmdb_mmap() from Rust for MAP_NOCACHE on primary .mdb/.duckdb files
+        - madvise_on_mmap_region() for LMDB sub-DBs with known paths
+        - malloc_zone_pressure_relief() for heap memory
+
+        Always-on, fail-safe — errors are logged but never propagate.
+        """
+        try:
+            self._apply_madvise_to_duckdb_paths()
+        except Exception:
+            pass
+        try:
+            self._apply_madvise_to_lmdb_paths()
+        except Exception:
+            pass
+        try:
+            self._malloc_zone_pressure_relief()
+        except Exception:
+            pass
+
+    def _apply_madvise_to_duckdb_paths(self) -> None:
+        """Apply MADV_NOCACHE to all DuckDB database file paths."""
+        # F350M-R-A1: Use lightweight class registry instead of gc.get_objects()
+        try:
+            from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+            from hledac.universal.tools.file_cache import madvise_lmdb_mmap
+
+            for store in list(DuckDBShadowStore._instances):
+                path = getattr(store, "_db_path", None)
+                if path and str(path) != ":memory:":
+                    try:
+                        madvise_lmdb_mmap(str(path), advice=1)  # MADV_NOCACHE
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _apply_madvise_to_lmdb_paths(self) -> None:
+        """Apply MADV_NOCACHE to all LMDB environment paths."""
+        _lmdb_paths: list[str] = []
+        # Collect known LMDB paths from module-level singletons
+        try:
+            from hledac.universal.knowledge.sprint_seeds_store import _LMDB_PATH as _SEEDS_LMDB
+            if _SEEDS_LMDB:
+                _lmdb_paths.append(str(_SEEDS_LMDB))
+        except Exception:
+            pass
+        try:
+            from hledac.universal.knowledge.ioc_dedup_adapter import _IOC_DEDUP_LMDB_PATH
+            if _IOC_DEDUP_LMDB_PATH:
+                _lmdb_paths.append(str(_IOC_DEDUP_LMDB_PATH))
+        except Exception:
+            pass
+        try:
+            from hledac.universal.paths import LMDB_ROOT
+            unified = LMDB_ROOT / "unified_cache.lmdb"
+            if unified.exists():
+                _lmdb_paths.append(str(unified))
+        except Exception:
+            pass
+        # Apply madvise to each collected path
+        for path in _lmdb_paths:
+            try:
+                from hledac.universal.tools.file_cache import madvise_lmdb_mmap
+                madvise_lmdb_mmap(path, advice=1)  # MADV_NOCACHE
+            except Exception:
+                pass
+
+    def _malloc_zone_pressure_relief(self) -> None:
+        """Release malloc fragmented pages on M1 8GB UMA."""
+        try:
+            import ctypes
+            # E fix: use_errno=True so errors are captured (no longer discarded)
+            libc = ctypes.CDLL("libc.dylib", use_errno=True)
+            libc.malloc_zone_pressure_relief.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+            libc.malloc_zone_pressure_relief.restype = None
+            result = libc.malloc_zone_pressure_relief(None, 0)
+            if result != 0:
+                import errno
+                logger.warning(
+                    "malloc_zone_pressure_relief returned %d (errno=%s)",
+                    result,
+                    errno.errorcode.get(ctypes.get_errno(), "unknown"),
+                )
+        except Exception:
+            pass
+
+    def apply_madvise_to_file(self, path: str, advice: int = 1) -> bool:
+        """
+        F350M-R 4.5: Apply madvise to a specific file path.
+
+        Args:
+            path: File path to apply madvise to
+            advice: 0=MADV_FREE_REUSABLE, 1=MADV_NOCACHE (default)
+
+        Returns:
+            True if applied successfully, False otherwise.
+        """
+        try:
+            from hledac.universal.tools.file_cache import madvise_lmdb_mmap
+            return madvise_lmdb_mmap(str(path), advice=advice)
+        except Exception:
+            return False
 
     class SidecarAdmission(msgspec.Struct, frozen=True):
         """Sidecar admission result. Migrated from @dataclass → msgspec.Struct."""

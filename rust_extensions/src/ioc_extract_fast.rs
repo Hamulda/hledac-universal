@@ -25,6 +25,10 @@ use std::collections::HashSet;
 
 use crate::gil::release_gil;
 
+// R24: tracing instrumentation — conditionally compiled when tracing feature is enabled
+#[cfg(feature = "otel")]
+use tracing::instrument;
+
 /// Maximum texts per batch (M1 8GB memory guard)
 const BATCH_MAX_TEXTS: usize = 1000;
 
@@ -373,6 +377,7 @@ pub fn batch_extract_structured_entities(
 ///
 /// Replaces Python 25× re.finditer() post-pass in match_text().
 /// Returns Vec of (start, end, value, label) sorted by start offset.
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(text_len = text.len())))]
 #[pyfunction]
 pub fn extract_structured_entities_py(text: &str) -> Vec<(usize, usize, String, String)> {
     extract_structured_entities(text)
@@ -382,6 +387,7 @@ pub fn extract_structured_entities_py(text: &str) -> Vec<(usize, usize, String, 
 ///
 /// M1 8GB: adaptive 1-2 threads, 1000 text batch limit.
 /// Returns Vec of Vec of (start, end, value, label).
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(batch_size = texts.len())))]
 #[pyfunction]
 pub fn batch_extract_structured_entities_py(
     texts: Vec<String>,
@@ -393,6 +399,7 @@ pub fn batch_extract_structured_entities_py(
 ///
 /// Single pass across all IOC patterns.
 /// Thread-safe, reuses compiled RegexSet.
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(text_len = text.len())))]
 #[pyfunction]
 pub fn ioc_extract_unified(text: &str) -> Vec<(String, String)> {
     extract_iocs_from_text(text)
@@ -401,6 +408,7 @@ pub fn ioc_extract_unified(text: &str) -> Vec<(String, String)> {
 /// Batch extract IOCs using unified regex engine + rayon parallelization.
 ///
 /// M1 8GB: limited to 2 workers, 1000 text batch limit.
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(batch_size = texts.len())))]
 #[pyfunction]
 pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)>> {
     if texts.is_empty() {
@@ -432,6 +440,7 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
 }
 
 /// Zero-copy batch IOC extractor — writes results directly into Python heap.
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(batch_size = texts.len())))]
 #[pyfunction]
 pub fn batch_ioc_extract_unified_python<'py>(
     texts: Vec<String>,

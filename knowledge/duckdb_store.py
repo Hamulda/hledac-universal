@@ -866,12 +866,26 @@ class RemoteParquetSource:
 
     def close(self) -> None:
         """Close DuckDB connection."""
+        # F350M-R-A3: Set BACKGROUND QoS for close — connection close is I/O bound
+        try:
+            from hledac.universal.tools.file_cache import apply_thread_qos, QOS_CLASS_BACKGROUND
+            apply_thread_qos(QOS_CLASS_BACKGROUND)
+        except Exception:  # noqa: BLE001 — best-effort; QoS hinting; non-critical
+            pass
         if self._conn is not None:
             try:
                 self._conn.close()
             except Exception:  # noqa: BLE001 — best-effort; connection close; non-critical
                 pass
             self._conn = None
+        # F350M-R-A1: Unregister from madvise registry
+        DuckDBShadowStore._instances.discard(self)
+        # Restore USER_INITIATED QoS after close
+        try:
+            from hledac.universal.tools.file_cache import apply_thread_qos, QOS_CLASS_USER_INITIATED
+            apply_thread_qos(QOS_CLASS_USER_INITIATED)
+        except Exception:  # noqa: BLE001 — best-effort; QoS hinting; non-critical
+            pass
 
     def __repr__(self) -> str:
         return (
@@ -1759,6 +1773,9 @@ def _duckdb_at_exit_shutdown(instance: DuckDBShadowStore) -> None:
 
 
 class DuckDBShadowStore:
+    # F350M-R-A1: Lightweight registry — avoids gc.get_objects() at CRITICAL/EMERGENCY
+    _instances: set["DuckDBShadowStore"] = set()
+
     __slots__ = (
         "_initialized",
         "_closed",
@@ -1851,6 +1868,8 @@ class DuckDBShadowStore:
         self._lazy: bool = lazy
         self._initialized: bool = False
         self._closed: bool = False
+        # F350M-R-A1: Register for madvise propagation (avoids gc.get_objects at CRITICAL)
+        DuckDBShadowStore._instances.add(self)
         self._db_path: Path | None = Path(db_path) if db_path is not None else None
         self._temp_dir: Path | None = Path(temp_dir) if temp_dir is not None else None
         self._memory_limit: str = _DUCKDB_MEMORY_LIMIT
@@ -2308,6 +2327,18 @@ class DuckDBShadowStore:
         conn.execute("PRAGMA threads = ?", [_validate_duckdb_threads(runtime["threads"])])
         conn.execute("PRAGMA enable_progress_bar=false")
         conn.execute("PRAGMA enable_object_cache=false")
+        # F350M-R: Load FTS5 + HNSW extensions for Phase 1 vector/FTS tables.
+        # Fail-soft — extensions may not be available in all builds; vector/FTS
+        # methods fall back to sequential/LIKE search gracefully.
+        for _ext_sql in (
+            "LOAD fts5",
+            "LOAD hnsw",
+            "INSTALL hnsw_cosine",
+        ):
+            try:
+                conn.execute(_ext_sql)
+            except Exception:  # noqa: BLE001 — best-effort; extension unavailable; non-critical
+                pass
         if not _is_memory_mode:
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
@@ -8505,15 +8536,43 @@ class DuckDBShadowStore:
         """Execute VACUUM ANALYZE synchronously on worker thread."""
         if self._db_path is None:
             return
-        duckdb = _get_duckdb()
-        tmp_conn = duckdb.connect(str(self._db_path), read_only=False)
+        # F350M-R 4.6: Set BACKGROUND QoS for vacuum thread — lowers priority
+        # F350M-R-A3: QoS restore MUST be in finally block — exception path bypassed otherwise
+        _restored_qos = False
+
+        def _restore_qos() -> None:
+            nonlocal _restored_qos
+            if _restored_qos:
+                return
+            try:
+                from hledac.universal.tools.file_cache import apply_thread_qos, QOS_CLASS_USER_INITIATED
+                apply_thread_qos(QOS_CLASS_USER_INITIATED)
+                _restored_qos = True
+            except Exception:  # noqa: BLE001 — best-effort; QoS hinting; non-critical
+                pass
+
         try:
-            tmp_conn.execute("SET memory_limit = '1GB'")
-            tmp_conn.execute("PRAGMA threads = 2")
-            tmp_conn.execute("SET preserve_insertion_order = false")
-            tmp_conn.execute("VACUUM")
-        finally:
-            tmp_conn.close()
+            try:
+                from hledac.universal.tools.file_cache import apply_thread_qos, QOS_CLASS_BACKGROUND
+                apply_thread_qos(QOS_CLASS_BACKGROUND)
+            except Exception:  # noqa: BLE001 — best-effort; QoS hinting; non-critical
+                pass
+            duckdb = _get_duckdb()
+            tmp_conn = duckdb.connect(str(self._db_path), read_only=False)
+            try:
+                tmp_conn.execute("SET memory_limit = '1GB'")
+                tmp_conn.execute("PRAGMA threads = 2")
+                tmp_conn.execute("SET preserve_insertion_order = false")
+                tmp_conn.execute("VACUUM")
+            finally:
+                try:
+                    tmp_conn.close()
+                except Exception:  # noqa: BLE001 — best-effort; connection close; non-critical
+                    pass
+                _restore_qos()  # A3: restore QoS even on VACUUM exception
+        except Exception:  # noqa: BLE001 — best-effort; vacuum failure; non-critical
+            _restore_qos()  # A3: restore QoS on outer exception too
+            raise
 
     async def async_vacuum_if_needed(self, threshold_bytes: int = 2 * 1024**3) -> bool:
         """
@@ -9444,6 +9503,666 @@ class DuckDBShadowStore:
                 break
             except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.debug(f"[P3-2] checkpoint loop error: {e}")
+
+    # ── FTS5: Full-Text Search ────────────────────────────────────────────────
+
+    async def fts_search_findings(
+        self,
+        query: str,
+        k: int = 20,
+        min_ts: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        FTS5 full-text search over canonical_findings.payload_text.
+
+        Uses DuckDB FTS5 extension for keyword/phrase search with ranking.
+        Falls back to LIKE-based search if FTS5 is unavailable.
+
+        Args:
+            query: FTS5 query string (supports AND, OR, phrase "quoted", prefix*)
+            k: Number of results to return (default 20)
+            min_ts: Optional minimum timestamp filter
+
+        Returns:
+            List of dicts: {chunk_id, content, score, source_type, ts}
+        """
+        await self.async_initialize_schema()
+        self.ensure_connected()
+
+        conn = self._conn
+        if conn is None:
+            return []
+
+        try:
+            # Try DuckDB FTS5 MATCH first
+            if min_ts is not None:
+                sql = """
+                    SELECT
+                        cf.id,
+                        cf.payload_text,
+                        cf.source_type,
+                        cf.ts,
+                        fts.rank,
+                        fts.score
+                    FROM findings_fts fts
+                    JOIN canonical_findings cf ON cf.rowid = fts.fts_rowid
+                    WHERE fts.query MATCH ?
+                      AND fts.ts >= ?
+                    ORDER BY fts.rank ASC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [query, min_ts, k]
+                ).fetchall()
+            else:
+                sql = """
+                    SELECT
+                        cf.id,
+                        cf.payload_text,
+                        cf.source_type,
+                        cf.ts,
+                        fts.rank,
+                        fts.score
+                    FROM findings_fts fts
+                    JOIN canonical_findings cf ON cf.rowid = fts.fts_rowid
+                    WHERE fts.query MATCH ?
+                    ORDER BY fts.rank ASC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [query, k]
+                ).fetchall()
+
+            return [
+                {
+                    "chunk_id": str(r[0]),
+                    "content": r[1] or "",
+                    "source_type": r[2],
+                    "ts": r[3],
+                    "rank": r[4],
+                    "score": r[5] if len(r) > 5 else 0.0,
+                }
+                for r in rows
+            ]
+
+        except Exception as e:  # noqa: BLE001 — FTS5 unavailable or query error
+            _logger.debug(f"[DUCKDB:FTS] FTS5 search failed, falling back to LIKE: {e}")
+            # Fallback: LIKE-based search
+            return await self._fts_fallback_search(query, k, min_ts)
+
+    async def _fts_fallback_search(
+        self,
+        query: str,
+        k: int = 20,
+        min_ts: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fallback FTS using LIKE when FTS5 extension is unavailable."""
+        conn = self._conn
+        if conn is None:
+            return []
+
+        try:
+            terms = query.strip().split()
+            like_pattern = "%" + "%".join(terms) + "%"
+
+            if min_ts is not None:
+                sql = """
+                    SELECT id, payload_text, source_type, ts
+                    FROM canonical_findings
+                    WHERE payload_text LIKE ?
+                      AND ts >= ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [like_pattern, min_ts, k]
+                ).fetchall()
+            else:
+                sql = """
+                    SELECT id, payload_text, source_type, ts
+                    FROM canonical_findings
+                    WHERE payload_text LIKE ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [like_pattern, k]
+                ).fetchall()
+
+            return [
+                {
+                    "chunk_id": str(r[0]),
+                    "content": r[1] or "",
+                    "source_type": r[2],
+                    "ts": r[3],
+                    "rank": idx,
+                    "score": 1.0,
+                }
+                for idx, r in enumerate(rows)
+            ]
+        except Exception as e:  # noqa: BLE001
+            _logger.debug(f"[DUCKDB:FTS] LIKE fallback failed: {e}")
+            return []
+
+    # ── FTS5: Entity observations ─────────────────────────────────────────────
+
+    async def fts_search_entities(
+        self,
+        query: str,
+        k: int = 20,
+        entity_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        FTS5 full-text search over entity_observations.entity_value.
+
+        Args:
+            query: FTS5 query string
+            k: Number of results (default 20)
+            entity_type: Optional entity type filter (e.g., 'domain', 'ipv4')
+
+        Returns:
+            List of dicts: {entity_value, entity_type, sprint_id, ts, rank}
+        """
+        await self.async_initialize_schema()
+        self.ensure_connected()
+
+        conn = self._conn
+        if conn is None:
+            return []
+
+        try:
+            if entity_type is not None:
+                sql = """
+                    SELECT
+                        eo.entity_value,
+                        eo.entity_type,
+                        eo.sprint_id,
+                        eo.ts,
+                        eft.rank
+                    FROM entity_fts eft
+                    JOIN entity_observations eo ON eo.rowid = eft.fts_rowid
+                    WHERE eft.entity_value MATCH ?
+                      AND eo.entity_type = ?
+                    ORDER BY eft.rank ASC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [query, entity_type, k]
+                ).fetchall()
+            else:
+                sql = """
+                    SELECT
+                        eo.entity_value,
+                        eo.entity_type,
+                        eo.sprint_id,
+                        eo.ts,
+                        eft.rank
+                    FROM entity_fts eft
+                    JOIN entity_observations eo ON eo.rowid = eft.fts_rowid
+                    WHERE eft.entity_value MATCH ?
+                    ORDER BY eft.rank ASC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [query, k]
+                ).fetchall()
+
+            return [
+                {
+                    "entity_value": str(r[0]),
+                    "entity_type": r[1],
+                    "sprint_id": r[2],
+                    "ts": r[3],
+                    "rank": r[4],
+                }
+                for r in rows
+            ]
+
+        except Exception as e:  # noqa: BLE001
+            _logger.debug(f"[DUCKDB:FTS] entity FTS search failed: {e}")
+            return []
+
+    # ── Vector: RAG Embeddings ─────────────────────────────────────────────────
+
+    async def upsert_rag_embeddings(
+        self,
+        chunks: list[dict[str, Any]],
+    ) -> int:
+        """
+        Batch upsert RAG document chunk embeddings.
+
+        Stores in rag_embeddings table with LIST<FLOAT> vectors.
+        Uses INSERT OR REPLACE for idempotent upserts.
+
+        Args:
+            chunks: List of dicts with keys:
+                - chunk_id: str (primary key)
+                - document_id: str
+                - content: str
+                - metadata: dict (serialized to JSON)
+                - embedding: list[float] (384-dim)
+                - created_at: float (unix timestamp)
+
+        Returns:
+            Number of chunks upserted.
+        """
+        if not chunks:
+            return 0
+
+        await self.async_initialize_schema()
+        self.ensure_connected()
+
+        conn = self._conn
+        if conn is None:
+            return 0
+
+        import json as _json
+
+        rows_inserted = 0
+        for chunk in chunks:
+            try:
+                embedding_list = chunk.get("embedding", [])
+                metadata_json = _json.dumps(chunk.get("metadata", {}))
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO rag_embeddings
+                    (chunk_id, document_id, content, metadata_json, embedding, embedding_dim, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        str(chunk["chunk_id"]),
+                        str(chunk["document_id"]),
+                        str(chunk.get("content", "")),
+                        metadata_json,
+                        embedding_list,
+                        len(embedding_list),
+                        float(chunk.get("created_at", 0.0)),
+                    ],
+                )
+                rows_inserted += 1
+            except Exception as e:  # noqa: BLE001 — best-effort per chunk
+                _logger.debug(f"[DUCKDB:VEC] upsert_rag_embeddings failed for {chunk.get('chunk_id','?')}: {e}")
+
+        return rows_inserted
+
+    async def vector_search_rag(
+        self,
+        query_vector: list[float],
+        k: int = 10,
+        document_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        ANN vector search over rag_embeddings using DuckDB HNSW.
+
+        Uses array_cosine_distance with HNSW index (or sequential scan fallback).
+        M1 8GB: bounded to k <= 100 to prevent runaway memory.
+
+        Args:
+            query_vector: 384-dim query embedding
+            k: Number of results (default 10, max 100)
+            document_id: Optional filter to specific document
+
+        Returns:
+            List of dicts: {chunk_id, document_id, content, metadata, distance}
+        """
+        await self.async_initialize_schema()
+        self.ensure_connected()
+
+        k = min(k, 100)  # M1 8GB safety cap
+        conn = self._conn
+        if conn is None:
+            return []
+
+        try:
+            if document_id is not None:
+                sql = """
+                    SELECT
+                        chunk_id,
+                        document_id,
+                        content,
+                        metadata_json,
+                        array_cosine_distance(embedding, ?) AS distance
+                    FROM rag_embeddings
+                    WHERE document_id = ?
+                    ORDER BY distance ASC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [query_vector, document_id, k]
+                ).fetchall()
+            else:
+                sql = """
+                    SELECT
+                        chunk_id,
+                        document_id,
+                        content,
+                        metadata_json,
+                        array_cosine_distance(embedding, ?) AS distance
+                    FROM rag_embeddings
+                    ORDER BY distance ASC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [query_vector, k]
+                ).fetchall()
+
+            import json as _json
+
+            return [
+                {
+                    "chunk_id": str(r[0]),
+                    "document_id": str(r[1]),
+                    "content": r[2] or "",
+                    "metadata": _json.loads(r[3]) if r[3] else {},
+                    "distance": float(r[4]) if r[4] is not None else 1.0,
+                }
+                for r in rows
+            ]
+
+        except Exception as e:  # noqa: BLE001 — HNSW unavailable or query error
+            _logger.debug(f"[DUCKDB:VEC] vector_search_rag failed: {e}")
+            return []
+
+    async def vector_search_rag_mmr(
+        self,
+        query_vector: list[float],
+        k: int = 10,
+        fetch_k: int = 50,
+        lambda_mult: float = 0.5,
+    ) -> list[dict[str, Any]]:
+        """
+        ANN search with Maximal Marginal Relevance (MMR) diversity.
+
+        Fetches fetch_k candidates, then reranks using MMR to balance
+        relevance (cosine similarity) with document diversity.
+
+        Args:
+            query_vector: 384-dim query embedding
+            k: Final number of results (after MMR, default 10)
+            fetch_k: Number of candidates to fetch before reranking (default 50)
+            lambda_mult: MMR diversity weight (0.0=all relevance, 1.0=all diversity)
+
+        Returns:
+            List of dicts: {chunk_id, document_id, content, distance}
+        """
+        await self.async_initialize_schema()
+        self.ensure_connected()
+
+        k = min(k, 100)
+        fetch_k = min(fetch_k, 200)  # cap for M1 8GB
+
+        # Fetch candidates
+        candidates = await self.vector_search_rag(query_vector, k=fetch_k)
+        if not candidates:
+            return []
+
+        if len(candidates) <= k:
+            return candidates
+
+        # MMR reranking
+        try:
+            from context_optimization.mmr import maximal_marginal_relevance
+
+            # Convert to numpy arrays for MMR
+            import numpy as np
+
+            vectors = []
+            ids = []
+            for c in candidates:
+                if c.get("embedding") is not None:
+                    vectors.append(np.array(c["embedding"], dtype=np.float32))
+                    ids.append(c["chunk_id"])
+                elif c.get("distance") is not None:
+                    vectors.append(
+                        np.array(query_vector, dtype=np.float32) * (1.0 - c["distance"])
+                    )
+                    ids.append(c["chunk_id"])
+
+            if not vectors:
+                return candidates[:k]
+
+            matrix = np.vstack(vectors)
+            query_vec = np.array(query_vector, dtype=np.float32)
+
+            # MMR indices
+            mmr_indices = maximal_marginal_relevance(
+                query_vec, matrix, k=k, lambda_mult=lambda_mult
+            )
+
+            return [candidates[i] for i in mmr_indices if i < len(candidates)]
+
+        except Exception as e:  # noqa: BLE001
+            _logger.debug(f"[DUCKDB:VEC] MMR reranking failed: {e}")
+            return candidates[:k]
+
+    # ── Vector: Entity Embeddings ──────────────────────────────────────────────
+
+    async def upsert_entity_embeddings(
+        self,
+        entities: list[dict[str, Any]],
+    ) -> int:
+        """
+        Batch upsert entity embeddings for identity resolution.
+
+        Args:
+            entities: List of dicts with keys:
+                - entity_id: str (primary key)
+                - entity_value: str
+                - entity_type: str (e.g., 'domain', 'ipv4', 'email')
+                - metadata: dict
+                - embedding: list[float] (384-dim)
+                - updated_at: float (unix timestamp)
+
+        Returns:
+            Number of entities upserted.
+        """
+        if not entities:
+            return 0
+
+        await self.async_initialize_schema()
+        self.ensure_connected()
+
+        conn = self._conn
+        if conn is None:
+            return 0
+
+        import json as _json
+
+        rows_inserted = 0
+        for entity in entities:
+            try:
+                embedding_list = entity.get("embedding", [])
+                metadata_json = _json.dumps(entity.get("metadata", {}))
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO entity_embeddings
+                    (entity_id, entity_value, entity_type, metadata_json, embedding, embedding_dim, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        str(entity["entity_id"]),
+                        str(entity["entity_value"]),
+                        str(entity.get("entity_type", "")),
+                        metadata_json,
+                        embedding_list,
+                        len(embedding_list),
+                        float(entity.get("updated_at", 0.0)),
+                    ],
+                )
+                rows_inserted += 1
+            except Exception as e:  # noqa: BLE001
+                _logger.debug(f"[DUCKDB:VEC] upsert_entity_embeddings failed for {entity.get('entity_id','?')}: {e}")
+
+        return rows_inserted
+
+    async def vector_search_entities(
+        self,
+        query_vector: list[float],
+        k: int = 10,
+        entity_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        ANN vector search over entity_embeddings.
+
+        Used for entity identity clustering and alias resolution.
+
+        Args:
+            query_vector: 384-dim query embedding
+            k: Number of results (default 10, max 100)
+            entity_type: Optional entity type filter
+
+        Returns:
+            List of dicts: {entity_id, entity_value, entity_type, metadata, distance}
+        """
+        await self.async_initialize_schema()
+        self.ensure_connected()
+
+        k = min(k, 100)
+        conn = self._conn
+        if conn is None:
+            return []
+
+        try:
+            if entity_type is not None:
+                sql = """
+                    SELECT
+                        entity_id,
+                        entity_value,
+                        entity_type,
+                        metadata_json,
+                        array_cosine_distance(embedding, ?) AS distance
+                    FROM entity_embeddings
+                    WHERE entity_type = ?
+                    ORDER BY distance ASC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [query_vector, entity_type, k]
+                ).fetchall()
+            else:
+                sql = """
+                    SELECT
+                        entity_id,
+                        entity_value,
+                        entity_type,
+                        metadata_json,
+                        array_cosine_distance(embedding, ?) AS distance
+                    FROM entity_embeddings
+                    ORDER BY distance ASC
+                    LIMIT ?
+                """
+                rows = await asyncio.to_thread(
+                    conn.execute, sql, [query_vector, k]
+                ).fetchall()
+
+            import json as _json
+
+            return [
+                {
+                    "entity_id": str(r[0]),
+                    "entity_value": str(r[1]),
+                    "entity_type": r[2],
+                    "metadata": _json.loads(r[3]) if r[3] else {},
+                    "distance": float(r[4]) if r[4] is not None else 1.0,
+                }
+                for r in rows
+            ]
+
+        except Exception as e:  # noqa: BLE001
+            _logger.debug(f"[DUCKDB:VEC] vector_search_entities failed: {e}")
+            return []
+
+    # ── Hybrid: FTS + Vector ───────────────────────────────────────────────────
+
+    async def hybrid_search_rag(
+        self,
+        query_text: str,
+        query_vector: list[float],
+        k: int = 10,
+        fts_weight: float = 0.4,
+        vec_weight: float = 0.6,
+    ) -> list[dict[str, Any]]:
+        """
+        Hybrid search combining FTS5 and vector ANN for RAG.
+
+        Fetches fts_k candidates and vec_k candidates, then merges
+        using Reciprocal Rank Fusion (RRF).
+
+        Args:
+            query_text: Text query for FTS5
+            query_vector: 384-dim embedding vector
+            k: Final number of results (default 10)
+            fts_weight: FTS contribution weight (default 0.4)
+            vec_weight: Vector contribution weight (default 0.6)
+
+        Returns:
+            List of dicts: {chunk_id, content, fts_score, vec_score, rrf_score}
+        """
+        await self.async_initialize_schema()
+        self.ensure_connected()
+
+        k_actual = min(k, 100)
+        fts_k = min(k_actual * 2, 50)
+        vec_k = min(k_actual * 2, 50)
+
+        # Parallel fetch
+        fts_task = self.fts_search_findings(query_text, k=fts_k)
+        vec_task = self.vector_search_rag(query_vector, k=vec_k)
+
+        fts_results, vec_results = await asyncio.gather(fts_task, vec_task)
+
+        if not fts_results and not vec_results:
+            return []
+
+        # Build candidate set
+        candidates: dict[str, dict[str, Any]] = {}
+        for r in fts_results:
+            cid = r["chunk_id"]
+            candidates[cid] = {
+                "chunk_id": cid,
+                "content": r["content"],
+                "source_type": r.get("source_type"),
+                "ts": r.get("ts"),
+                "fts_rank": r.get("rank", 0),
+                "fts_score": 1.0 / (r.get("rank", 0) + 1),
+                "vec_rank": None,
+                "vec_score": 0.0,
+                "vec_distance": None,
+            }
+        for r in vec_results:
+            cid = r["chunk_id"]
+            if cid in candidates:
+                candidates[cid]["vec_rank"] = r.get("rank", 0)
+                candidates[cid]["vec_score"] = 1.0 / (r.get("rank", 0) + 1)
+                candidates[cid]["vec_distance"] = r.get("distance")
+            else:
+                candidates[cid] = {
+                    "chunk_id": cid,
+                    "content": r["content"],
+                    "source_type": None,
+                    "ts": None,
+                    "fts_rank": None,
+                    "fts_score": 0.0,
+                    "vec_rank": r.get("rank", 0),
+                    "vec_score": 1.0 / (r.get("rank", 0) + 1),
+                    "vec_distance": r.get("distance"),
+                }
+
+        # Reciprocal Rank Fusion
+        rrf_k = 60  # standard RRF parameter
+        for cand in candidates.values():
+            rrf = 0.0
+            if cand["fts_score"] > 0:
+                rrf += fts_weight * (1.0 / (rrf_k + cand["fts_rank"]))
+            if cand["vec_score"] > 0:
+                rrf += vec_weight * (1.0 / (rrf_k + cand["vec_rank"]))
+            cand["rrf_score"] = rrf
+
+        sorted_candidates = sorted(
+            candidates.values(), key=lambda x: x["rrf_score"], reverse=True
+        )
+
+        return sorted_candidates[:k_actual]
 
 
 def create_owned_store() -> DuckDBShadowStore:

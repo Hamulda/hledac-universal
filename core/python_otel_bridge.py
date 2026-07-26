@@ -43,6 +43,8 @@ __all__ = [
     "configure_otel_bridge",
     "get_otel_bridge",
     "OtelBridge",
+    "start_rust_otlp_receiver",
+    "stop_rust_otlp_receiver",
 ]
 
 logger = logging.getLogger(__name__)

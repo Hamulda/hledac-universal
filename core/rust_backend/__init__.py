@@ -87,6 +87,8 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "graph", "hot_edges", "aho", "evidence", "madvise",
     "memory", "json", "spsc", "query", "text", "xml",
     "int_counter", "simd", "sprint_policies", "html", "metal",
+    # TLS 1.3 JA4 fingerprinting (rustls-based)
+    "tls",
     # misc is used for _TlsDomain backward-compat and html property routing
     "misc",
 )
@@ -132,6 +134,12 @@ if TYPE_CHECKING:
     from .int_counter import _PythonIntCounterDomain, _RustIntCounterDomain
     from .simd import _PythonSimdDomain, _RustSimdDomain
     from .sprint_policies import _PythonSprintPoliciesDomain, _RustSprintPoliciesDomain
+    from .pipeline_compose import PipelineComposeDomain, get_domain as _pipeline_compose_get_domain
+    from .signal_batch import SignalBatchDomain, get_domain as _signal_batch_get_domain
+    from .federated_qtable import FederatedQTableDomain, get_domain as _federated_qtable_get_domain
+    from .async_query import AsyncQueryDomain, get_domain as _async_query_get_domain
+    from .feed_decision import FeedDecisionDomain, get_domain as _feed_decision_get_domain
+    from .feed_pipeline import FeedPipelineDomain, get_domain as _feed_pipeline_get_domain
     from .misc import (
         _PythonHtmlDomain, _RustHtmlDomain,
     )
@@ -412,6 +420,86 @@ class AccelBackend:
     @property
     def sprint_policies(self) -> "_RustSprintPoliciesDomain | _PythonSprintPoliciesDomain":
         return self._get_domain("sprint_policies", _get_submodule("sprint_policies").get_sprint_policies_domain)
+
+    @property
+    def pipeline_compose(self) -> PipelineComposeDomain | None:
+        """Rust-backed pipeline operators (MAP/FILTER/FOLD/COUNT).
+
+        Zero-copy Arc staging, rayon parallelism, M1 8GB safe.
+        Returns None if hledac_rust_extensions is unavailable.
+        """
+        try:
+            return _pipeline_compose_get_domain()
+        except Exception:
+            return None
+
+    @property
+    def signal(self) -> SignalBatchDomain | None:
+        """NEON-accelerated signal aggregation (M1) or scalar fallback.
+
+        batch_compute_scores: F199A source quality scoring.
+        batch_aggregate_signals: weighted signal vector aggregation.
+        Returns None if hledac_rust_extensions is unavailable.
+        """
+        try:
+            return _signal_batch_get_domain()
+        except Exception:
+            return None
+
+    @property
+    def federated_qtable(self) -> FederatedQTableDomain | None:
+        """Rust Federated Q-Learning table for acquisition source prioritization.
+
+        Q(s,a) += alpha * (reward + gamma * max(Q(s',a'))) update.
+        rayon parallel batch, auto-eviction, bincode persistence.
+        Returns None if hledac_rust_extensions is unavailable.
+        """
+        try:
+            return _federated_qtable_get_domain()
+        except Exception:
+            return None
+
+    @property
+    def async_query(self) -> AsyncQueryDomain | None:
+        """Rust DuckDB async query functions.
+
+        rust_async_query: O(1) connection pool, lock-held-throughout.
+        rust_async_query_batch: rayon parallel N queries.
+        Returns None if hledac_rust_extensions is unavailable.
+        """
+        try:
+            return _async_query_get_domain()
+        except Exception:
+            return None
+
+    @property
+    def feed_decision(self) -> FeedDecisionDomain | None:
+        """Rust-backed feed signal classification — pure FSM functions.
+
+        feed_decision_classify: classify fallback decision outcome.
+        feed_stage_diagnose: diagnose which pipeline stage lost the signal.
+        feed_branch_hint: sprint hint about feed branch quality.
+        feed_economics_verdict: condensed economics verdict.
+        feed_branch_verdict: rich dict verdict for feed economics.
+        Returns None if hledac_rust_extensions is unavailable.
+        """
+        try:
+            return _feed_decision_get_domain()
+        except Exception:
+            return None
+
+    @property
+    def feed_pipeline(self) -> FeedPipelineDomain | None:
+        """Rust-backed RSS/Atom parse + scan + dedup pipeline.
+
+        feed_entry_pipeline: single feed parse+scan+dedup via Aho-Corasick.
+        feed_batch_pipeline: rayon-parallel multi-feed processing.
+        Returns None if hledac_rust_extensions is unavailable.
+        """
+        try:
+            return _feed_pipeline_get_domain()
+        except Exception:
+            return None
 
     @property
     def html(self) -> "_RustHtmlDomain | _PythonHtmlDomain":

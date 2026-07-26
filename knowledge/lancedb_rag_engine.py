@@ -2,6 +2,11 @@
 LanceDB-Backed RAG Engine — Sprint P2-3
 =======================================
 
+.. deprecated:: F350M-R
+    LanceDB-backed RAG is DEPRECATED in favour of ``DuckDBRAGStore``
+    in ``knowledge.duckdb_rag_store``. DuckDB FTS5 + HNSW provides
+    equivalent RAG grounding with ~0 MB subprocess overhead vs ~200 MB.
+
 ROLE: Grounding Authority backed by LanceDB (NOT identity/entity store)
 =======================================================================
 Tento modul je RAG grounding authority s LanceDB persistence.

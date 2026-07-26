@@ -48,7 +48,7 @@ pub fn get_process_rss_gib() -> f64 {
 pub fn get_total_memory_gib() -> f64 {
     #[cfg(target_os = "macos")]
     {
-        let mut size: libc::uint64_t = 0;
+        let mut size: u64 = 0;
         let mut len = std::mem::size_of_val(&size);
         if unsafe {
             libc::sysctlbyname(
@@ -79,6 +79,7 @@ pub fn get_available_memory_gib() -> f64 {
             / std::mem::size_of::<libc::integer_t>()) as libc::mach_msg_type_number_t;
         let ret = unsafe {
             libc::host_statistics64(
+                #[allow(deprecated)]
                 libc::mach_host_self(),
                 libc::HOST_VM_INFO64,
                 &mut vm_stat as *mut _ as *mut _,

@@ -31,15 +31,11 @@ use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use rayon::prelude::*;
 use regex::Regex;
 use std::fmt::Write as _;
 
 // Sprint F216R canonical URL normalizer (lives in url_engine.rs).
 use crate::url_engine;
-
-// Zero-copy batch validation (OOM prevention with 1% sampling)
-use crate::zero_copy::validate_batch;
 
 // Shared entropy helpers — broken out to break circular dep with zero_copy.rs
 use crate::_entropy::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD};

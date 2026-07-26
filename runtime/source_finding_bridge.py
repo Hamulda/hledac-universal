@@ -207,22 +207,6 @@ def _ts_from_wayback_timestamp(ts: str) -> float:
         return 0.0
 
 
-def _normalize_domain(domain: str) -> str:
-    """
-    Normalize a domain extracted from CT data.
-
-    Applies in order:
-      1. Strip wildcard prefix *.
-      2. Strip trailing dot
-      3. Lowercase
-    """
-    d = domain
-    d = _WILDCARD_RE.sub("", d)
-    d = _TRAILING_DOT_RE.sub("", d)
-    d = d.lower()
-    return d
-
-
 def _extract_domain_from_ct_hit(url: str, title: str) -> str | None:
     """
     Extract the domain/subdomain from a CT DiscoveryHit URL or title.

@@ -37,7 +37,7 @@ import threading
 from hledac.universal.utils.async_helpers import safe_create_task
 import msgspec
 from hledac.universal.core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, UMA_STATE_WARN, sample_uma_status
-from hledac.universal.core.uma_governor import PressureState, uma_state_to_pressure_state
+from hledac.universal.core.resource_governor import PressureState, uma_state_to_pressure_state
 try:
     from hledac_rust_extensions import sync_adaptive_state
 except Exception:

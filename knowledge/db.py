@@ -47,18 +47,22 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # Phase 1: DuckDB consolidation — LanceDB removal
 # ============================================================================
-
-# LanceDB was used for:
-# 1. Identity/entity resolution with vector search
-# 2. FTS for alias matching
-# 3. RAG embeddings
+#
+# MIGRATION STATUS (F350M-R, 2026-07):
+# ✅ COMPLETE: DuckDBRAGStore + DuckDBEntityStore (duckdb_rag_store.py)
+#   fully replace LanceDBIdentityStore, LanceDBRAGEngine, SemanticStore.
+#   Exported via knowledge/__init__.py as DuckDBRAGStore, DuckDBEntityStore,
+#   get_identity_store(), get_rag_store().
+#
+# ⚠️  INCOMPLETE: knowledge/vector_index.py still contains LanceDbIndex
+#   backend (get_vector_index factory). Phase 1 cleanup blocked by
+#   sqlite-vec IVF-PQ limitations (M1 8GB). When sqlite-vec gains
+#   IVF-PQ support OR HNSW is implemented in DuckDB, remove LanceDbIndex.
 #
 # DuckDB 1.4+ provides:
-# - Native vector index (CREATE INDEX ... USING VECTOR)
+# - Native HNSW index (CREATE INDEX ... USING HNSW)
 # - FTS5 extension (full-text search)
 # - Arrow integration (zero-copy)
-#
-# LanceDB can be removed once migration is complete.
 
 
 # ============================================================================

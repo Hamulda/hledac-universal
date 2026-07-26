@@ -60,6 +60,11 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     "DuckDBAuditStore": "knowledge.duckdb_audit_store",
     "CTLogCacheStore": "knowledge.duckdb_ct_cache_store",
     "ForensicsMetadataStore": "knowledge.duckdb_forensics_store",
+    # F350M-R Phase 2: Unified DuckDB-backed RAG + Identity (replaces LanceDB)
+    "DuckDBRAGStore": "knowledge.duckdb_rag_store",
+    "DuckDBEntityStore": "knowledge.duckdb_rag_store",
+    "get_identity_store": "knowledge.duckdb_rag_store",
+    "get_rag_store": "knowledge.duckdb_rag_store",
 }
 
 # Legacy compat — same names used by _LazyLegacyCompatModule

@@ -280,10 +280,8 @@ impl UnionFind {
 // Module registration
 // ---------------------------------------------------------------------------
 
-use pyo3::prelude::*;
-
-pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(group_similar_texts, m)?)?;
+pub fn register_functions(m: &pyo3::Bound<'_, pyo3::types::PyModule>) -> pyo3::PyResult<()> {
+    m.add_function(pyo3::wrap_pyfunction!(group_similar_texts, m)?)?;
     Ok(())
 }
 

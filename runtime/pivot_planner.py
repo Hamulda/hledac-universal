@@ -116,18 +116,6 @@ class PivotStats(msgspec.Struct):
         success_bonus = 1.0 + self.success_count * 0.1
         return base_score * time_decay * failure_penalty * success_bonus
 
-def _extract_domain_from_finding(finding: Any) -> str | None:
-    """Extract domain IOC from a finding. DEPRECATED: Use _extract_ioc_from_finding."""
-    payload = getattr(finding, 'payload_text', None) or ''
-    if isinstance(payload, str) and payload:
-        domain_match = re.search('(?:https?://)?([a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?)+)', payload)
-        if domain_match:
-            return domain_match.group(1).lower()
-    src = getattr(finding, 'source_type', '') or ''
-    if src in ('ip', 'ipv4', 'ipv6'):
-        return None
-    return None
-
 def _extract_ioc_from_finding(finding: Any) -> tuple[str | None, str | None]:
     """
     Extract IOC value and type from a finding.

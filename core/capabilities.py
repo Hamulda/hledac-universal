@@ -81,6 +81,8 @@ __all__ = [
     "PIEXIF",
     "DOCX",
     "MUTAGEN",
+    # R-21: Rust Office extraction (docx-rs + calamine)
+    "RUST_OFFICE",
     # Browser
     "NODRIVER",
     "CAMOUFOX",
@@ -211,6 +213,9 @@ FITZ = Capability("fitz", "fitz", install_hint="pip install pymupdf")
 PIEXIF = Capability("piexif", "piexif", install_hint="pip install piexif")
 DOCX = Capability("docx", "docx", install_hint="pip install python-docx")
 MUTAGEN = Capability("mutagen", "mutagen", install_hint="pip install mutagen")
+# R-21: Rust Office extraction (docx-rs + calamine) — feature-gated in rust_extensions
+# Checks for rust_extensions.office module which requires --features "office"
+RUST_OFFICE = Capability("rust_office", "rust_extensions.office", install_hint="maturin develop --features office")
 
 # Browser automation
 NODRIVER = Capability("nodriver", "nodriver", install_hint="pip install nodriver")

@@ -203,6 +203,7 @@ fn format_value_ref(val: duckdb::types::ValueRef<'_>) -> String {
         ValueRef::Array(_, idx) => format!("Array[{idx}]"),
         ValueRef::Map(_, idx) => format!("Map[{idx}]"),
         ValueRef::Union(_, idx) => format!("Union[{idx}]"),
+        _ => format!("<unknown:{:?}>", val),
     }
 }
 

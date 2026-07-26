@@ -144,7 +144,7 @@ pub fn serde_json_compact_sorted(json_str: &str) -> String {
 /// # Returns
 /// Compact JSON bytes — empty Vec<u8> on error (caller falls back to Python)
 #[pyfunction]
-pub fn serde_json_dumps_compact_bytes(data: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<Vec<u8>> {
+pub fn serde_json_dumps_compact_bytes(data: &Bound<'_, PyAny>, _py: Python<'_>) -> PyResult<Vec<u8>> {
     let json_str = match data.call_method0("__str__") {
         Ok(s) => s.extract::<String>().unwrap_or_default(),
         Err(_) => return Ok(Vec::new()),
@@ -169,7 +169,7 @@ pub fn serde_json_dumps_compact_bytes(data: &Bound<'_, PyAny>, py: Python<'_>) -
 /// # Returns
 /// Pretty-printed JSON bytes — empty Vec<u8> on error
 #[pyfunction]
-pub fn serde_json_dumps_pretty_bytes(data: &Bound<'_, PyAny>, sort_keys: bool, py: Python<'_>) -> PyResult<Vec<u8>> {
+pub fn serde_json_dumps_pretty_bytes(data: &Bound<'_, PyAny>, sort_keys: bool, _py: Python<'_>) -> PyResult<Vec<u8>> {
     let json_str = match data.call_method0("__str__") {
         Ok(s) => s.extract::<String>().unwrap_or_default(),
         Err(_) => return Ok(Vec::new()),

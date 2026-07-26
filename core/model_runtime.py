@@ -332,15 +332,23 @@ class ModelLifecycle:
                 with _lock:
                     gen_result: str = ""
                     try:
-                        gen_result = mlx_lm.generate(model, tokenizer, prompt=formatted, max_tokens=max_tokens, verbose=False)
+                        gen_result = mlx_lm.generate(
+                            model, tokenizer,
+                            prompt=formatted,
+                            max_tokens=max_tokens,
+                            kv_bits=4,          # F179C: KV cache 4-bit quantization (M1 8GB RAM budget)
+                            max_kv_size=8192,   # F179C: KV cache size cap
+                            verbose=False,
+                        )
                     finally:
-                        # Sprint 8UD B.2 + F179C: mx.eval([]) barrier before clear_cache
+                        # F179C: mx.eval([]) + gc.collect() + clear_cache (správné pořadí dle moe_router.py)
                         try:
                             import mlx.core as _mx
-                            if _mx.metal.is_available():
-                                _mx.eval([])  # F179C: settle lazy eval
-                                if hasattr(_mx, "clear_cache"):
-                                    _mx.clear_cache()
+                            if hasattr(_mx, "eval"):
+                                _mx.eval([])  # 1. settle lazy eval
+                            gc.collect()       # 2. reclaim Python memory BEFORE clear_cache
+                            if hasattr(_mx, "clear_cache"):
+                                _mx.clear_cache()  # 3. clear Metal cache
                         except Exception:  # noqa: BLE001
                             pass  # noqa: BLE001  # Non-fatal
                 return gen_result

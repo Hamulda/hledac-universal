@@ -4,6 +4,7 @@
 //! Called 1000+ times per sprint — Rust gives ~10x speedup over Python.
 
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 /// Minimum chars threshold for article fallback.
 const MIN_ARTICLE_FALLBACK_CHARS: i32 = 150;
@@ -17,7 +18,7 @@ pub fn feed_decision_classify(
     quality_band: &str,
     metadata_boost: bool,
     language_mismatch: bool,
-    article_fallback_used: bool,
+    _article_fallback_used: bool,
     article_fallback_attempted: bool,
     post_fallback_findings_count: i32,
     adapter_source_priority_bias: f64,
@@ -203,7 +204,7 @@ pub fn feed_branch_hint(
     feed_signal_present: bool,
     fallback_useful: i32,
     fallback_waste: i32,
-    findings_rich: i32,
+    _findings_rich: i32,
     findings_fallback: i32,
     entries_with_hits: i32,
 ) -> String {
@@ -278,6 +279,7 @@ pub fn feed_economics_verdict(
 /// Compute a rich dict-style verdict for feed branch economics.
 #[pyfunction]
 pub fn feed_branch_verdict(
+    py: Python<'_>,
     feed_signal_present: bool,
     fallback_useful: i32,
     fallback_waste: i32,
@@ -290,7 +292,7 @@ pub fn feed_branch_verdict(
     entries_seen: i32,
     feed_native_yield_ratio: f64,
     fallback_value_ratio: f64,
-) -> String {
+) -> Bound<'_, PyDict> {
     let total_findings = findings_rich + findings_fallback;
     let feed_corroborates = feed_signal_present && fallback_useful > 0;
     let feed_burns_budget = fallback_waste > 0 && findings_rich == 0;
@@ -303,7 +305,7 @@ pub fn feed_branch_verdict(
         )
     } else {
         let rich_ratio = feed_native_yield_ratio;
-        let (tag, action, note) = if rich_ratio >= 0.7 {
+        let (tag, _action, _note) = if rich_ratio >= 0.7 {
             ("feed_lean", "continue_feed", "feed-native dominant")
         } else if rich_ratio <= 0.3 {
             ("fallback_lean", "fallback_more", "fallback-dominant")
@@ -340,31 +342,28 @@ pub fn feed_branch_verdict(
         c as i32
     };
 
-    // Build JSON manually for PyO3 dict
-    let json = format!(
-        r#"{{"verdict_tag":"{}","feed_native_yield":{},"fallback_yield":{},"total_yield":{},"squandered_high_usefulness_entries":{},"unnecessary_fallbacks":{},"useful_fallbacks":{},"feed_corroborates":{},"feed_burns_budget":{},"feed_next_action":"{}","feed_confidence_note":"{}","feed_confidence_score":{},"feed_native_yield_ratio":{},"fallback_value_ratio":{},"high_usefulness_waste_rate":{},"metadata_strong_content_weak":{},"low_trust_feed_hits":{},"entries_with_hits":{},"entries_seen":{}}}"#,
-        verdict_tag,
-        findings_rich,
-        findings_fallback,
-        total_findings,
-        squandered_high_usefulness,
-        fallback_waste,
-        fallback_useful,
-        feed_corroborates,
-        feed_burns_budget,
-        next_action,
-        confidence_note,
-        confidence,
-        feed_native_yield_ratio,
-        fallback_value_ratio,
-        high_usefulness_waste_rate,
-        metadata_strong_but_content_weak,
-        low_trust_feed_hits,
-        total_entries_with_hits,
-        entries_seen,
-    );
-
-    json
+    // Return Python dict directly — no JSON roundtrip parsing in Python.
+    let dict = PyDict::new(py);
+    dict.set_item("verdict_tag", verdict_tag).unwrap();
+    dict.set_item("feed_native_yield", findings_rich).unwrap();
+    dict.set_item("fallback_yield", findings_fallback).unwrap();
+    dict.set_item("total_yield", total_findings).unwrap();
+    dict.set_item("squandered_high_usefulness_entries", squandered_high_usefulness).unwrap();
+    dict.set_item("unnecessary_fallbacks", fallback_waste).unwrap();
+    dict.set_item("useful_fallbacks", fallback_useful).unwrap();
+    dict.set_item("feed_corroborates", feed_corroborates).unwrap();
+    dict.set_item("feed_burns_budget", feed_burns_budget).unwrap();
+    dict.set_item("feed_next_action", next_action).unwrap();
+    dict.set_item("feed_confidence_note", confidence_note).unwrap();
+    dict.set_item("feed_confidence_score", confidence).unwrap();
+    dict.set_item("feed_native_yield_ratio", feed_native_yield_ratio).unwrap();
+    dict.set_item("fallback_value_ratio", fallback_value_ratio).unwrap();
+    dict.set_item("high_usefulness_waste_rate", high_usefulness_waste_rate).unwrap();
+    dict.set_item("metadata_strong_content_weak", metadata_strong_but_content_weak).unwrap();
+    dict.set_item("low_trust_feed_hits", low_trust_feed_hits).unwrap();
+    dict.set_item("entries_with_hits", total_entries_with_hits).unwrap();
+    dict.set_item("entries_seen", entries_seen).unwrap();
+    dict
 }
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {

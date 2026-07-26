@@ -33,6 +33,10 @@ use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
 
 use crate::gil::release_gil;
 
+// R24: tracing instrumentation — conditionally compiled when tracing feature is enabled
+#[cfg(feature = "otel")]
+use tracing::instrument;
+
 /// MADV_NOCACHE (Darwin value 11): prevent mmap pages from residing in
 /// the unified page cache — critical so BloomFilter bitmap pages do NOT
 /// count against Metal's memory budget on M1 8GB UMA.
@@ -162,6 +166,7 @@ impl BloomFilter {
     /// Add an item to the filter.
     /// Returns true if the item was NOT already in the filter (new entry).
     /// Returns false if the item was already present (duplicate).
+    #[cfg_attr(feature = "otel", instrument(skip_all, fields(item_len = item.len())))]
     fn add(&mut self, item: &str) -> bool {
         let indices = self.compute_indices(item);
         let mut is_new = false;
@@ -327,6 +332,7 @@ impl BloomFilter {
 ///
 /// NOTE: This is an ephemeral (stateless) check — the filter is discarded after.
 /// Use BloomFilter.add_batch() for persistent dedup.
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(item_count = items.len(), capacity)))]
 #[pyfunction]
 pub fn bloom_check_batch(items: Vec<String>, capacity: usize) -> Vec<bool> {
     if items.is_empty() {

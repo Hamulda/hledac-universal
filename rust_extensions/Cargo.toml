@@ -35,6 +35,46 @@ serde_json = "1"
 crossbeam-channel = "0.5"
 duckdb = { version = "1", optional = true }
 ipnetwork = "0.20"
+
+# R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
+# Python reads spans from stdout JSON — no opentelemetry dep conflicts
+tracing = { version = "0.1", optional = true, features = ["std"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json"], optional = true }
+
+# PDF extraction via lopdf — pure Rust PDF parser
+# Feature-gated: ~3MB additional compile, M1 8GB safe
+# Enables: pdf.extract_text(), pdf.extract_iocs(), pdf.extract_text_from_bytes()
+lopdf = { version = "0.34", optional = true }
+
+# Office documents — docx-rs + calamine + zip (for office feature)
+docx-rs = { version = "0.4", optional = true }
+calamine = { version = "0.26", default-features = false, features = ["default"], optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+
+# TLS 1.3 fingerprinting — JA4 + ECH detection
+# Feature-gated: ~2MB additional compile, M1 8GB safe
+# Enables: rust.tls.ja4_from_client_hello(), connect_and_ja4(), batch_ja4()
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
+hex = "0.4"
+
+# STIX 2.1 bundle encoding + jsonschema validation (for stix feature)
+# Feature-gated: ~2MB additional compile, M1 8GB safe
+# Enables: stix.encode(), stix.decode(), stix.validate()
+jsonschema = { version = "0.24", optional = true }
+
+# DNS resolution — DoH/DoT/DoQ via hickory-dns
+# Feature-gated: ~5MB additional compile, M1 8GB safe
+# Enables: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
+hickory = { package = "hickory-dns", version = "0.24", optional = true, features = ["resolver", "rustls"] }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "sync"] }
+
+# QUIC/HTTP3 via quinn + h3 (for http3 feature)
+# Feature-gated: ~8MB additional compile, M1 8GB safe
+# Enables: rust.quic.fetch() — true HTTP/3 over QUIC
+# M1 8GB: bounded to 3 concurrent connections, immediate memory release on drop
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "ring"], optional = true }
+h3 = { version = "0.0.8", default-features = false, optional = true }
+h3-quinn = { version = "0.0.10", optional = true }
 # ISSUE-014: Missing crates that were used but not declared
 bincode = { version = "2.0", features = ["derive", "serde"] }
 zstd = "0.13"
@@ -59,8 +99,6 @@ dirs = "5"
 
 [features]
 # Default = core + data (DuckDB wired) — standard Hledac build
-# Metal GPU removed D6: gpu_batch_keyword_scan() was never called in production.
-# CPU fallback via Aho-Corasick + rayon is sufficient for all workloads.
 default = ["core", "data"]
 
 # core: IOC extraction, URL ops, hashing, compression, HTML parsing
@@ -106,7 +144,16 @@ advanced = [
 ]
 
 # full: All features (development/CI only, ~3× compile time vs core-only)
-full = ["core", "data", "graph", "advanced"]
+full = ["core", "data", "graph", "advanced", "dns", "tls13", "pdf", "office", "quic", "ane", "stix", "metal", "otel"]
+
+# dns: DoH/DoT/DoQ DNS resolution via hickory-dns
+# Adds: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
+# M1 8GB: bounded cache (1024 hosts) + 50 concurrent queries
+# Feature-gated to avoid ~5MB compile overhead when not needed
+dns = [
+    "dep:hickory",
+    "dep:tokio",
+]
 
 # Individual module features — the actual gating is via #[cfg(feature)] in lib.rs.
 # Only stubs that are referenced by a composite feature need to stay here.
@@ -130,6 +177,67 @@ federated_qtable = [] # Referenced by advanced
 signal_batch = []     # Referenced by advanced
 dedup_bloom = []      # Referenced by advanced
 graph_cache = []      # Referenced by advanced
+ane = []              # Apple Neural Engine bindings (model registry, batch validation)
+metal = []            # R22: Metal GPU batch matmul for MoE router (stub, CPU fallback always available)
+
+# R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
+# Python reads spans from stdout JSON — no opentelemetry dep conflicts
+otel = [
+    "dep:tracing",
+    "dep:tracing-subscriber",
+]
+
+# py-version: Python version compiled-for (via pyo3-build-config intercept_version)
+# Adds: __py_version__() — enables Python version mismatch detection at runtime
+# Requires pyo3-build-config in build-dependencies (already declared)
+py-version = []
+
+# stix: STIX 2.1 bundle encoding + JSON Schema validation
+# Adds: stix.encode(), stix.decode(), stix.validate()
+# M1 8GB: ~2MB compile, serde_json + jsonschema
+# Python fallback: runtime/stix_exporter.py uses json.dumps when Rust unavailable
+stix = [
+    "dep:jsonschema",
+]
+
+# tls13: TLS 1.3 fingerprinting — JA4 + ECH detection via rustls
+# Adds: rust.tls.ja4_from_client_hello(), connect_and_ja4(), batch_ja4()
+# M1 8GB: ~2MB compile, ~50KB per connection
+# Feature-gated to avoid compile overhead when not needed
+tls13 = [
+    "dep:rustls",
+]
+
+# quic: QUIC/HTTP3 via quinn + h3
+# Adds: rust.quic.fetch() — true HTTP/3 over QUIC
+# M1 8GB: ~8MB compile, bounded to 3 concurrent connections
+# Fallback path when curl_cffi Alt-Svc H3 upgrade fails
+quic = [
+    "dep:quinn",
+    "dep:h3",
+    "dep:h3-quinn",
+]
+
+# pdf: PDF text extraction and IOC extraction via lopdf
+# Adds: pdf.extract_text(), pdf.extract_iocs(), pdf.extract_text_from_bytes()
+# M1 8GB: ~3MB compile, pure Rust, no external deps
+# Python fallback: PyMuPDF in content_miner.py and document_metadata_extractor.py
+pdf = [
+    "dep:lopdf",
+]
+
+# office: Office document text extraction (.docx, .xlsx, .pptx) via docx-rs + calamine
+# Adds: office.extract_text(), office.extract_iocs(), office.extract_text_from_bytes()
+# M1 8GB: ~5MB compile, pure Rust, no external deps
+# Python fallback: python-docx + openpyxl in content_miner.py
+office = [
+    "dep:docx-rs",
+    "dep:calamine",
+    "dep:zip",
+]
+
+# docx-rs: Pure Rust DOCX parser (no C dependencies)
+# calamine: Pure Rust Excel (.xlsx) and PowerPoint (.pptx) parser
 
 # ---------------------------------------------------------------------------
 # Build profiles

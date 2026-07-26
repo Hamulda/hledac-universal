@@ -260,6 +260,19 @@ except ImportError:
     ANE_AVAILABLE = False
     _CoreML = None
     _Foundation = None
+
+# Rust ANE module — model registry, batch validation, telemetry
+_RUST_ANE_AVAILABLE = False
+try:
+    import hledac_rust_extensions as _rust
+    if hasattr(_rust, 'ane'):
+        _RUST_ANE_AVAILABLE = True
+        _rust_ane = _rust.ane
+    else:
+        _rust_ane = None
+except ImportError:
+    _rust_ane = None
+
 try:
     import mlx.core as _mx
     from mlx_embeddings import load as _mlx_embeddings_load
@@ -386,6 +399,9 @@ class ANEEmbedder:
 
         CoreML→MLX migration: MLX is now the primary path. CoreML is only attempted
         if mlx-embeddings is unavailable (e.g. non-AppleSilicon).
+
+        Rust ANE integration: When Rust ane module is available, registers model
+        in the ANE model registry for hardware-aware scheduling.
         """
         if self._loaded or self._mlx_model is not None:
             return
@@ -395,6 +411,16 @@ class ANEEmbedder:
                 self._mlx_model, self._mlx_processor = _mlx_embeddings_load(model_path, lazy=False)
                 self._loaded = True
                 self._last_load_error = None
+
+                # Register in Rust ANE registry if available
+                if _RUST_ANE_AVAILABLE and _rust_ane is not None:
+                    try:
+                        _rust_ane.init()
+                        _rust_ane.load_model(self.model_name, str(self.coreml_path), self.hidden_dim, 512)
+                        logger.info(f'[ANE] Registered in Rust ANE registry: {self.model_name}')
+                    except Exception as rust_err:
+                        logger.debug(f'[ANE] Rust registry skipped: {rust_err}')
+
                 logger.info(f'ANEEmbedder loaded MLX: {model_path}')
                 return
             except Exception as e:
@@ -587,7 +613,8 @@ async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -
     """
     Semantic deduplication of findings using MLXEmbeddingManager.
 
-    MLX path: MLXEmbeddingManager batch embedding → cosine similarity matrix.
+    MLX path: MLXEmbeddingManager batch embedding → Rust SIMD cosine similarity.
+    Rust path: embeddings.reranker.batch_rerank() uses NEON/SSE3 SIMD on M1.
     Hash fallback: url+title hash (zero RAM, always works).
     """
     try:
@@ -595,7 +622,7 @@ async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -
         mgr = get_embedding_manager()
     except Exception:
         mgr = None
-    if mgr is None or not mgr._is_loaded:
+    if mgr is None or not mgr.is_loaded:
         seen: set[int] = set()
         out: list[dict] = []
         for f in findings:
@@ -607,9 +634,18 @@ async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -
     texts = [f"{f.get('title', '')} {f.get('snippet', '')}".strip()[:512] for f in findings]
     try:
         vecs = await asyncio.to_thread(mgr.encode, texts, 32, True)
-        norms = np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-09
-        vecs_n = vecs / norms
-        sim = vecs_n @ vecs_n.T
+        # Rust SIMD cosine: batch_rerank normalizes candidates in-place (O(N×D)),
+        # then computes dot products with query normalization per query (O(Q×N×D)).
+        # mgr.encode with normalize=True produces normalized vectors — Rust's extra
+        # normalization is idempotent so result is correct even if redundant.
+        try:
+            from embeddings.reranker import batch_rerank
+            sim = batch_rerank(vecs, vecs)  # (N, N) cosine similarity matrix
+        except Exception:
+            # Fallback: numpy normalization + matmul (CPU)
+            norms = np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-09
+            vecs_n = vecs / norms
+            sim = vecs_n @ vecs_n.T
         keep = [True] * len(findings)
         for i, finding_i in enumerate(findings):
             if not keep[i]:
@@ -624,27 +660,32 @@ async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -
 def rerank_findings_cosine(findings: list[dict], query: str, top_k: int=20) -> list[dict]:
     """
     Cosine similarity reranker over MLX embeddings.
-    Uses MLXEmbeddingManager singleton, fallback: confidence sort.
+    Uses Rust SIMD batch cosine from embeddings.reranker (NEON on M1).
+    Fallback: embeddings.reranker batch_rerank_topk() → Rust SIMD → top-k extraction.
     """
     try:
         from core.mlx_embeddings import get_embedding_manager
         mgr = get_embedding_manager()
-        if mgr is None or not mgr._is_loaded:
+        if mgr is None or not mgr.is_loaded:
             raise RuntimeError('MLXEmbeddingManager unavailable')
     except Exception:
         return sorted(findings, key=lambda x: x.get('confidence', 0.5), reverse=True)[:top_k]
     try:
-        corpus = [f"{f.get('title', '')} {f.get('snippet', '')}".strip()[:512] for f in findings[:200]]
+        from embeddings.reranker import batch_rerank_topk
+        # ISSUE-BIRD-EYE: cap corpus to 200, store original length for index mapping
+        capped_findings = findings[:200]
+        corpus = [f"{f.get('title', '')} {f.get('snippet', '')}".strip()[:512] for f in capped_findings]
         all_texts = [query[:512]] + corpus
         embeddings = mgr.encode(all_texts, batch_size=32, normalize=True)
-        q_vec = embeddings[0]
-        corp_vecs = embeddings[1:]
-        scored = []
-        for idx, f in enumerate(findings[:200]):
-            score = float(np.dot(q_vec, corp_vecs[idx]))
-            scored.append((score, f))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [f for _, f in scored[:top_k]]
+        # batch_rerank_topk: Rust SIMD cosine → rayon parallel top-K
+        # Returns (scores, indices) — scores[0] = query vs all corpus, indices = top-k positions
+        q_vecs = embeddings[0:1]  # shape (1, D) — single query
+        corp_vecs = embeddings[1:]  # shape (N, D) — corpus, N = len(corpus) ≤ 200
+        _, top_indices = batch_rerank_topk(q_vecs, corp_vecs, top_k=top_k)
+        top_indices_list = top_indices[0].tolist()  # flatten to list of ints
+        # CRITICAL FIX: indices are into capped_findings (first 200), not full findings list.
+        # Guard: idx < len(corpus) ensures we never index into uncapped range.
+        return [capped_findings[idx] for idx in top_indices_list if idx < len(corpus)]
     except Exception:
         return sorted(findings, key=lambda x: x.get('confidence', 0.5), reverse=True)[:top_k]
 _flashrank_reranker = None

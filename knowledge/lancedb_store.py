@@ -1,13 +1,21 @@
 """
 LanceDB Identity Store - Hybrid vector + FTS search for entity resolution.
 
+.. deprecated:: F350M-R
+    LanceDB-backed stores are DEPRECATED in favour of DuckDB-backed stores:
+    - ``DuckDBEntityStore`` in ``knowledge.duckdb_rag_store``
+    - ``DuckDBRAGStore`` in ``knowledge.duckdb_rag_store``
+    - ``get_identity_store()`` async factory in ``knowledge.duckdb_rag_store``
+
+    DuckDB FTS5 + HNSW provides equivalent functionality with:
+    - ~0 MB subprocess overhead vs ~200 MB for LanceDB
+    - M1 8GB native (no subprocess)
+
+    Migration: swap ``LanceDBIdentityStore`` → ``DuckDBEntityStore``.
+    Same API shape; seamless drop-in replacement.
+
 ROLE: Identity/Entity Store (NOT grounding authority)
 =====================================================
-Tento modul je identity/entity store pro entity resolution.
-NENÍ owner context grounding - to je rag_engine.
-NENÍ owner document retrieval - to je rag_engine HNSWVectorIndex.
-NENÍ owner primary vector search - to je rag_engine.
-
 Provides identity stitching capabilities using LanceDB with:
 - Vector embeddings for semantic similarity
 - Full-text search (FTS) for alias matching

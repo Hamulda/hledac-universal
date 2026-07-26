@@ -11,11 +11,14 @@
 
 use pyo3::prelude::*;
 use rayon::prelude::*;
-use std::hash::BuildHasherDefault;
 use url::Url;
 
 use super::adaptive_scheduler::get_adaptive_mixed_threshold;
 use blake3::Hasher;
+
+// R24: tracing instrumentation — conditionally compiled when tracing feature is enabled
+#[cfg(feature = "otel")]
+use tracing::instrument;
 
 // ahash: ~10× faster than FNV on M1 (hardware-accelerated on Apple Silicon)
 use ahash::AHashMap;
@@ -64,6 +67,7 @@ impl UrlKind {
 ///
 /// Fail-soft: never panics, never raises. Malformed/empty inputs return
 /// ("malformed", "") or ("empty", "") respectively.
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(url.len = url.len())))]
 #[pyfunction]
 pub fn classify_url(url: &str) -> (String, String) {
     let trimmed = url.trim();
@@ -146,6 +150,7 @@ pub fn xxh3_url_hash(url: &str) -> u64 {
 /// serial case where most URL classification occurs.
 ///
 /// Never panics — malformed entries get ("malformed", "") entries.
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(batch_size = urls.len())))]
 #[pyfunction]
 pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, String)> {
     let n = urls.len();
@@ -197,6 +202,7 @@ pub fn batch_classify(urls: &Bound<'_, pyo3::types::PyList>) -> Vec<(String, Str
 /// * Threading: mixed_pool(n) — adaptive 1-2 threads based on batch size.
 /// * Memory: O(n) for sort buffer, bounded by caller (scheduler URL set limit).
 /// * Fail-soft: malformed URLs get ("malformed", "") kind, never panics.
+#[cfg_attr(feature = "otel", instrument(skip_all, fields(url_count = urls.len())))]
 #[pyfunction]
 pub fn priority_classify_urls(
     urls: Vec<(String, f32)>,

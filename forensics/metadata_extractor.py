@@ -984,6 +984,30 @@ class UniversalMetadataExtractor:
         Returns:
             PDFMetadata object or None
         """
+        # R-21: Try Rust lopdf first (~10× faster than pypdf)
+        try:
+            from rust_extensions import pdf as rust_pdf
+            with open(file_path, 'rb') as f:
+                data = f.read()
+            rust_meta = rust_pdf.extract_metadata_from_bytes(data)
+            # Convert Rust PdfMetadata to Python PDFMetadata
+            metadata = PDFMetadata(
+                title=rust_meta.title,
+                author=rust_meta.author,
+                subject=rust_meta.subject,
+                creator=rust_meta.creator,
+                producer=rust_meta.producer,
+                creation_date=datetime.fromisoformat(rust_meta.creation_date) if rust_meta.creation_date else None,
+                modification_date=datetime.fromisoformat(rust_meta.modification_date) if rust_meta.modification_date else None,
+                num_pages=rust_meta.num_pages,
+                pdf_version=rust_meta.pdf_version,
+                is_encrypted=rust_meta.is_encrypted,
+            )
+            return metadata
+        except Exception:
+            pass
+
+        # Fallback to pypdf
         from core.capabilities import CAPS, PYPDF, PYPDF2
         pypdf_mod = CAPS.require(PYPDF)
         if pypdf_mod is None:

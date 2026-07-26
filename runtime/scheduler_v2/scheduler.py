@@ -3,13 +3,13 @@
 F350M-R / Issue SC-06.
 
 SC-06 refactor: scheduler.py slimmed to ~320 LOC.
-Bootstrap  → runtime/scheduler_v2/bootstrap.py (SprintBootstrap.run())
+Bootstrap  → runtime/scheduler_v2/_v2_init.py (V2Init.run() called in sprint_entrypoint.py)
 Inject shims → runtime/scheduler_v2/injector.py (Injector.apply() called at end of run())
 Synthesis    → runtime/scheduler_v2/synthesis.py (run_synthesis_sidecar())
 
 Wiring:
     run()
-      ├─ SprintBootstrap.run()   → service init
+      ├─ V2Init.run()             → service init (sprint_entrypoint.py)
       ├─ _run_prelude_and_first_cycle()
       ├─ _run_acquisition_loop()
       └─ _run_winddown()
@@ -108,33 +108,33 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     # ── Run ────────────────────────────────────────────────────────────────
 
     async def run(self, query: str) -> Any:
-        """Run the sprint — orchestrate prelude → acquisition → winddown phases."""
-        from runtime.scheduler_v2.bootstrap import SprintBootstrap
+        """Run the sprint — orchestrate prelude → acquisition → winddown phases.
+
+        Initialization is handled by V2Init.run() in sprint_entrypoint.py
+        before this method is called. All services (_duckdb_store, _governor,
+        _hermes_engine, _evidence_log, _lifecycle, etc.) are already wired.
+        """
         from runtime.scheduler_v2.injector import Injector
 
         _wall_clock_start = _time.monotonic()
         self._wall_clock_start = _wall_clock_start
-        self._cancel_event = asyncio.Event()
 
-        object.__setattr__(
-            self,
-            "_ctx",
-            SprintContext(
-                config=self._config,
-                query=query,
-                result=self._result,
-                ct_log_client=self._ct_log_client,
-                graph_service=self._ioc_graph,
-                cancel_event=self._cancel_event,
-            ),
-        )
+        if self._cancel_event is None:
+            self._cancel_event = asyncio.Event()
 
-        # Phase init: bootstrap services
-        bootstrap = SprintBootstrap(scheduler=self)
-        self._ctx = await bootstrap.run(query, _wall_clock_start, self._ctx)
-
-        # Backward-compat: delegate prewarm to bootstrap (tests patch this method)
-        self._hermes_prewarm_delegate = bootstrap._prewarm_hermes
+        if self._ctx is None:
+            object.__setattr__(
+                self,
+                "_ctx",
+                SprintContext(
+                    config=self._config,
+                    query=query,
+                    result=self._result,
+                    ct_log_client=self._ct_log_client,
+                    graph_service=self._ioc_graph,
+                    cancel_event=self._cancel_event,
+                ),
+            )
 
         # Phase prelude: run prelude lanes
         await self._run_prelude_and_first_cycle(query)
@@ -236,15 +236,11 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             scope=TaskScope.PRELUDE,
         )
 
-    # Backward-compat: _prewarm_hermes lives in SprintBootstrap but test patches this class.
-    # Delegates to bootstrap after run() sets _hermes_prewarm_delegate.
-    async def _prewarm_hermes(self) -> None:
-        _delegate = getattr(self, "_hermes_prewarm_delegate", None)
-        if _delegate is not None:
-            await _delegate()
-        else:
-            # Before run() or if bootstrap wasn't used — no-op (fail-safe)
-            pass
+    async def _prewarm_hermes(self, _query: str = "") -> None:
+        """No-op in V2 — Hermes prewarm is handled directly by V2Init._prewarm_hermes()
+        which is called from sprint_entrypoint.py before scheduler.run().
+        Kept as no-op for backward-compat with tests that patch this method."""
+        pass
 
     async def _async_prewarm_temporal(self) -> None:
         try:
@@ -424,7 +420,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 pass
 
             # F350M-R ISSUE-W5-A: close MemoryManager singleton — was never called.
-            # Track the task so we can cancel it on timeout/CancelledError.
+            # await within the timeout so we get graceful completion, not just cancellation.
             try:
                 from hledac.universal.memory import close_memory_manager
                 _t = asyncio.create_task(close_memory_manager())
@@ -455,6 +451,14 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                     _bg_tasks.append(_t3)
             except Exception:
                 pass
+
+            # Await all background tasks before the outer timeout fires.
+            # If any task raises, we catch and continue so the rest complete.
+            for _task in _bg_tasks:
+                try:
+                    await _task
+                except Exception:
+                    pass
 
             sys.stdout.write("[aclean] done\n")
             sys.stdout.flush()

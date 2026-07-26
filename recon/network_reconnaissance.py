@@ -420,6 +420,95 @@ class SSLAnalyzer:
         except ImportError:
             return SSLCertificate(subject={}, issuer={}, serial_number='unknown', not_before=datetime.now(UTC), not_after=datetime.now(UTC), fingerprint_sha256=hashlib.sha256(cert_der).hexdigest(), fingerprint_sha1=hashlib.sha256(cert_der).hexdigest(), version=3, san_domains=[], is_valid=True, days_until_expiry=365)
 
+    async def ja4_fingerprint(self, hostname: str, port: int=443, timeout_ms: int=5000) -> dict[str, Any] | None:
+        """
+        Extract JA4 TLS fingerprint from remote host.
+
+        Uses Rust tls13 module (rustls) when available, falls back to Python
+        ssl analysis for basic fingerprinting.
+
+        Args:
+            hostname: Host to connect to
+            port: Port (default 443)
+            timeout_ms: Connection timeout in milliseconds (default 5000)
+
+        Returns:
+            Dict with keys: ja4, ech_detected, tls_version, server_ciphers,
+            server_extensions, alpn, cert_verified, host, port
+            or None if connection fails
+        """
+        try:
+            # Try Rust tls13 module first (<1ms, accurate JA4)
+            try:
+                from core.rust_backend import rust as _rust
+                if hasattr(_rust, 'tls') and _rust.TLS13_AVAILABLE:
+                    result = _rust.tls.connect_and_ja4(hostname, port, timeout_ms=timeout_ms)
+                    result['host'] = hostname
+                    result['port'] = port
+                    return result
+            except Exception:
+                pass
+
+            # Fallback: Python ssl analysis (slower, less accurate)
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            async with asyncio.timeout(timeout_ms / 1000):
+                reader, writer = await asyncio.open_connection(hostname, port, ssl=context)
+            ssl_socket = writer.get_extra_info('ssl_object')
+            if not ssl_socket:
+                writer.close()
+                await writer.wait_closed()
+                return None
+
+            # Get TLS version
+            if hasattr(ssl_socket, 'version'):
+                tls_version = ssl_socket.version() or 'unknown'
+            else:
+                tls_version = 'unknown'
+
+            # Get cipher suite
+            cipher = ssl_socket.cipher()
+            server_ciphers = [cipher[0]] if cipher else []
+            server_extensions = []
+            alpn = ssl_socket.selected_alpn_protocol() if hasattr(ssl_socket, 'selected_alpn_protocol') else None
+
+            writer.close()
+            await writer.wait_closed()
+
+            return {
+                'host': hostname,
+                'port': port,
+                'ja4': '',  # Python ssl doesn't expose ClientHello for JA4
+                'ech_detected': False,
+                'tls_version': tls_version,
+                'server_ciphers': server_ciphers,
+                'server_extensions': server_extensions,
+                'alpn': alpn,
+                'cert_verified': False,
+                'error': '',
+            }
+        except Exception as e:
+            logger.debug(f'JA4 fingerprint failed for {hostname}:{port}: {e}')
+            return None
+
+    async def batch_ja4(self, hosts: list[tuple[str, int]], timeout_ms: int=5000) -> list[dict[str, Any]]:
+        """
+        Batch JA4 fingerprint for multiple hosts in parallel.
+
+        Args:
+            hosts: List of (hostname, port) tuples
+            timeout_ms: Connection timeout in milliseconds
+
+        Returns:
+            List of result dicts (same as ja4_fingerprint)
+        """
+        import asyncio
+
+        tasks = [self.ja4_fingerprint(host, port, timeout_ms) for host, port in hosts]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return [r for r in results if isinstance(r, dict)]
+
 class NetworkReconnaissance:
     """
     Main network reconnaissance engine.

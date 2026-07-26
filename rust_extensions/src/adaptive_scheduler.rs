@@ -26,7 +26,6 @@
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::cell::Cell;
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -330,6 +329,7 @@ pub fn sync_metal_memory_pressure_py(py: Python<'_>) -> usize {
 ///
 /// MLX-aware paths call `mixed_threshold()` directly; Python no longer needs to
 /// sync memory pressure state. Kept for backward compatibility only.
+#[allow(deprecated)]
 #[deprecated(since = "0.1.0", note = "Metal probing is now inline in mixed_threshold(); args are ignored")]
 #[pyfunction]
 pub fn sync_adaptive_state(_memory_pressure: u8, _cpu_saturation: u8) {

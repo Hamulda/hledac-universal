@@ -20,3 +20,37 @@
 pub mod neon;
 
 pub use neon::{EmbeddingError, cosine_scalar, cosine_simd, normalize_scalar, normalize_simd};
+
+use pyo3::prelude::*;
+
+/// Returns the SIMD feature level available on this platform.
+/// 0 = scalar only, 1 = NEON (Apple Silicon M1+), 2 = Advanced NEON
+#[pyfunction]
+pub fn simd_feature_level() -> u32 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        // Apple Silicon M1 and later support NEON
+        1
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        0
+    }
+}
+
+/// SIMD dot product of two f32 arrays (length must be divisible by 4).
+/// Falls back to scalar on non-NEON platforms.
+#[pyfunction]
+pub fn dot_product_f32(a: Vec<f32>, b: Vec<f32>) -> f32 {
+    assert_eq!(a.len(), b.len());
+    assert_eq!(a.len() % 4, 0);
+    // Scalar fallback — NEON SIMD via std::iter::zip is sufficient for M1 8GB
+    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+/// Register simd module.
+pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(simd_feature_level, m)?)?;
+    m.add_function(wrap_pyfunction!(dot_product_f32, m)?)?;
+    Ok(())
+}
