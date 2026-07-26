@@ -29,6 +29,11 @@ from hledac.universal.utils.async_helpers import (
     safe_create_task,
     parallel,
 )
+from runtime.scheduler_v2._task_registry import (
+    TaskScope,
+    get_task_registry,
+    safe_create_task_tracked,
+)
 
 # ── Pipeline Phase Types ─────────────────────────────────────────────────────────
 
@@ -260,17 +265,36 @@ class AcquisitionOrchestrator:
                     windup_entered = True
                     await self._flush_dedup(ctx)
 
-                    # Fire-and-forget IOC co-occurrence
-                    safe_create_task(
+                    # Fire-and-forget IOC co-occurrence — tracked in registry
+                    safe_create_task_tracked(
                         self._run_ioc_cooccurrence_sidecar(ctx, duckdb_store),
                         name="sprint:ioc_cooccurrence",
+                        scope=TaskScope.WINDUP,
                     )
 
-                    # Synthesis sidecar
-                    _synth_task = safe_create_task(
+                    # Synthesis sidecar — tracked in registry, awaited before return
+                    _synth_task = safe_create_task_tracked(
                         self._run_synthesis_sidecar(ctx, duckdb_store, _runner),
                         name="sprint:synthesis_windup",
+                        scope=TaskScope.WINDUP_SYNTHESIS,
                     )
+
+                    # ISSUE 2: store task in ctx._cycle so WinddownOrchestrator._await_synthesis
+                    # can retrieve it. Without this, _await_synthesis re-awaiting None is a no-op
+                    # and runner.close() races against the still-running synthesis task.
+                    ctx._cycle.synth_windup_task = _synth_task
+
+                    # ISSUE P1: await synthesis task before returning from windup.
+                    # Prevents "sprint concluded" race where runner.close() is called
+                    # while synthesis is still running (leaves ~2GB Hermes3 loaded on M1 8GB).
+                    try:
+                        async with asyncio.timeout(15.0):
+                            await _synth_task
+                    except asyncio.TimeoutError:
+                        _synth_task.cancel()
+                        log.debug("[F259] synthesis task timed out after 15s, cancelled")
+                    except Exception:
+                        pass  # fail-safe: synthesis errors are non-critical
 
                     # Epistemic gap advisory
                     await self._run_epistemic_gap_advisory(ctx, duckdb_store)
@@ -372,6 +396,14 @@ class AcquisitionOrchestrator:
                     continue
 
                 # ── Run one cycle ─────────────────────────────────────────────
+                # P6 FIX: aggressive mode now runs its 3 branches (feed/public/ct)
+                # in parallel via asyncio.TaskGroup — no longer sequential within
+                # the aggressive cycle body. The stable vs aggressive DISPATCHER
+                # itself runs sequentially (only one branch runs per cycle), but
+                # within aggressive mode the feed || public || ct parallelism is
+                # the win. Stable mode already had feed || public parallelism.
+                # RESULT: the _run_one_cycle() call is unchanged — it dispatches
+                # correctly; the P6 gain is inside aggressive's TaskGroup.
                 cycle_result = await self._run_one_cycle(ctx, ordered_sources, now_monotonic, duckdb_store)
 
                 if cycle_result.empty_work_items:
@@ -940,7 +972,7 @@ class AcquisitionOrchestrator:
             log.debug("[F259] Synthesis skipped -- no findings")
             return
         try:
-            from hledac.universal.brain.model_lifecycle import ModelLifecycle
+            from hledac.universal.core.model_runtime import ModelLifecycle
             from hledac.universal.brain.synthesis_runner import SynthesisRunner
         except ImportError as e:
             log.debug("[F259] SynthesisRunner import failed: %s", e)
@@ -1102,7 +1134,7 @@ class AcquisitionOrchestrator:
         Returns {'ok': bool, 'count': int}.
         """
         try:
-            from hledac.universal.runtime.sprint_entrypoint import run_ct_pivot
+            from hledac.universal.runtime.ct_pivot import run_ct_pivot
 
             _domain = query.strip()
             if not _domain:

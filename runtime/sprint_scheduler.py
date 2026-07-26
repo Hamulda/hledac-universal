@@ -46,6 +46,11 @@ def __getattr__(name: str):
         "_reset_advisory_log_dedup",
         "canonical_lane_name",
     }
+    # ── _LifecycleAdapter — renamed to SprintLifecycleAdapter in scheduler/core/ ─
+    if name == "_LifecycleAdapter":
+        from runtime.scheduler.core.lifecycle import SprintLifecycleAdapter
+        return SprintLifecycleAdapter
+
     if name in _v1_archived_names:
         from runtime import sprint_scheduler_v1_archived as _v1
 

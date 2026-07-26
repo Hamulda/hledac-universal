@@ -18,7 +18,11 @@ import time as _time
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.runtime.scheduler_v2._task_registry import (
+    TaskScope,
+    get_task_registry,
+    safe_create_task_tracked,
+)
 
 try:
     import orjson
@@ -119,8 +123,19 @@ class WinddownOrchestrator:
             for _exc in _eg.exceptions:
                 _parallel_errors.append(f'WINDDOWN_PARALLEL:{type(_exc).__name__}:{_exc}')
 
-        # Extract export results (set by _run_export_as_task via ctx.result)
-        _exp_result = getattr(ctx, '_export_result', None) or {}
+        # ISSUE F350M-R: Cancel all tracked tasks BEFORE Phase 2 synthesis/serial ops.
+        # TaskRegistry.cancel_all() sends CancelledError to all registered tasks,
+        # preventing them from racing against DuckDB close in Phase 4.
+        # cleanup_after_cancel() then reclaims MLX Metal cache on M1 8GB.
+        try:
+            _registry = get_task_registry()
+            await _registry.cancel_all(timeout=2.0)
+            await _registry.cleanup_after_cancel()
+        except Exception:
+            pass
+
+        # Extract export results (set by _run_export_as_task via ctx._cycle)
+        _exp_result = getattr(ctx._cycle, '_export_result', None) or {}
         export_paths = _exp_result.get('paths', [])
         export_errors = _parallel_errors + _exp_result.get('errors', [])
 
@@ -138,8 +153,7 @@ class WinddownOrchestrator:
         # Final cleanup
         self._maybe_launch_enhanced_research(ctx)
         # Note: sidecar_tasks removed from _CycleState — lives on SprintSchedulerV2 only
-        ctx._acquisition_plan = None
-        ctx._lifecycle = None
+        # ctx._cycle fields are intentionally NOT cleared — sprint is terminating
         _result.final_phase = ctx.runner.current_phase if ctx.runner else 'WINDDOWN'
 
         return WinddownPhaseResult(
@@ -152,11 +166,11 @@ class WinddownOrchestrator:
     async def _run_export_as_task(self, ctx: Any, lifecycle: Any, query: str) -> None:
         """Run export and store results in ctx._export_result for parallel retrieval.
 
-        This wraps _run_export for use in TaskGroup - stores results in ctx
+        This wraps _run_export for use in TaskGroup - stores results in ctx._cycle
         so the calling code can retrieve them after the TaskGroup completes.
         """
         _result = await self._run_export(ctx, lifecycle, query)
-        ctx._export_result = _result
+        ctx._cycle._export_result = _result
 
     async def _run_export(self, ctx: Any, lifecycle: Any, query: str) -> dict[str, Any]:
         """Run all four exporters + CTI + hypothesis. Returns {paths, errors}."""
@@ -249,11 +263,11 @@ class WinddownOrchestrator:
 
     async def _await_synthesis(self, ctx: Any) -> bool:
         """Await synthesis task launched during windup entry."""
-        _synth_task = getattr(ctx, '_synth_windup_task', None)
+        _synth_task = getattr(ctx._cycle, 'synth_windup_task', None)
         if _synth_task is not None:
             try:
                 await _synth_task
-                ctx._synth_windup_task = None
+                ctx._cycle.synth_windup_task = None
                 return True
             except Exception:
                 return False
@@ -286,19 +300,28 @@ class WinddownOrchestrator:
             try:
                 from hledac.universal.paths import LMDB_ROOT
                 _engine.save_graph(LMDB_ROOT / 'rel_discovery_graph.pkl')
-                self._sync_latent_relationships_to_graph(ctx)
+                await self._sync_latent_relationships_to_graph(ctx)
             except Exception:
                 pass
 
-    def _sync_latent_relationships_to_graph(self, ctx: Any) -> None:
-        """Sync latent NetworkX relationships → DuckPGQ with low confidence."""
+    async def _sync_latent_relationships_to_graph(self, ctx: Any) -> None:
+        """Sync latent NetworkX relationships → DuckPGQ with low confidence.
+
+        Awaits the batch upsert before returning to ensure no relationships
+        are lost when winddown ends.
+        """
         try:
             if ctx.graph_service and hasattr(ctx.graph_service, 'upsert_relationship_batch'):
                 _engine = getattr(ctx, '_rel_discovery_engine', None)
                 if _engine and hasattr(_engine, 'get_latent_relationships'):
                     rels = _engine.get_latent_relationships()
                     if rels:
-                        safe_create_task(ctx.graph_service.upsert_relationship_batch(rels))
+                        # Await the tracked task so relationships are persisted before winddown exits
+                        await safe_create_task_tracked(
+                            ctx.graph_service.upsert_relationship_batch(rels),
+                            name="winddown:upsert_relationship_batch",
+                            scope=TaskScope.WINDUP,
+                        )
         except Exception:
             pass
 
@@ -315,23 +338,31 @@ class WinddownOrchestrator:
         try:
             from hledac.universal.core.env_config import ENV
             if ENV.get_bool('HLEDAC_ENABLE_PRIVACY_LAYER'):
-                _privacy = getattr(ctx, '_privacy_layer', None)
+                _privacy = getattr(ctx._cycle, 'privacy_layer', None)
                 if not _privacy and hasattr(ctx, 'layer_manager'):
                     _privacy = getattr(ctx.layer_manager, 'privacy', None)
-                if _privacy and hasattr(ctx, '_privacy_context_id') and ctx._privacy_context_id:
-                    await _privacy.close_privacy_context(ctx._privacy_context_id)
+                if _privacy and hasattr(ctx._cycle, 'privacy_context_id') and ctx._cycle.privacy_context_id:
+                    await _privacy.close_privacy_context(ctx._cycle.privacy_context_id)
         except Exception:
             pass
 
     async def _run_sidecars(self, ctx: Any) -> None:
-        """Run all advisory steps via SidecarOrchestrator."""
+        """Run all advisory steps via SidecarOrchestrator.
+
+        Awaits the advisory runner task before returning so all sidecar
+        work completes during winddown.
+        """
         _so = getattr(ctx, '_sidecar_orchestrator', None)
         if _so is None and hasattr(ctx, 'sidecar_orchestrator'):
             _so = ctx.sidecar_orchestrator
         if _so and hasattr(_so, 'run_advisory_runner'):
             try:
-                task = safe_create_task(_so.run_advisory_runner())
-                task.add_done_callback(lambda t: None)
+                # Await so sidecar work completes before winddown exits
+                await safe_create_task_tracked(
+                    _so.run_advisory_runner(),
+                    name="winddown:advisory_runner",
+                    scope=TaskScope.WINDUP_SIDECAR,
+                )
             except Exception:
                 pass
 
@@ -371,7 +402,11 @@ class WinddownOrchestrator:
             pass
 
     async def _cancel_bg_tasks(self, ctx: Any) -> None:
-        """Cancel all background speculative tasks."""
+        """Cancel all background speculative tasks.
+
+        Uses asyncio.wait_for with 5s timeout (instead of parallel() with 300s default)
+        so winddown cannot be blocked by stuck cancelled tasks on M1 8GB.
+        """
         _bg_tasks = getattr(ctx, 'bg_tasks', None) or getattr(ctx, '_bg_tasks', None)
         if not _bg_tasks:
             return
@@ -379,8 +414,14 @@ class WinddownOrchestrator:
             t.cancel()
         if _bg_tasks:
             try:
-                from hledac.universal.utils.async_helpers import parallel
-                await parallel(list(_bg_tasks), policy="log", ctx='sprint_scheduler:winddown_bg')
+                await asyncio.wait_for(
+                    asyncio.gather(*_bg_tasks, return_exceptions=True),
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                for t in _bg_tasks:
+                    if not t.done():
+                        t.cancel()
             except Exception:
                 pass
             _bg_tasks.clear()

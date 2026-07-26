@@ -34,7 +34,7 @@ from ._models import (
     _get_crawl_bloom,
 )
 
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, parallel
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +92,84 @@ class StealthCrawler:
             except ImportError:
                 logger.warning("Neither curl_cffi nor httpx available")
 
+    async def search_async(
+        self, query: str, num_results: int = 10, source: str = "duckduckgo"
+    ) -> list[SearchResult]:
+        """
+        P9 FIX: Async parallel search using stealth scraping with multi-provider fallback.
+
+        All 3 providers run concurrently via asyncio.to_thread + parallel().
+        First provider to return non-empty results wins (fail-fast semantics).
+        This replaces the sequential sync approach which blocked the event loop.
+
+        Args:
+            query: Search query
+            num_results: Number of results to return
+            source: 'duckduckgo', 'google', 'brave', or 'all' (parallel all)
+
+        Returns:
+            List of SearchResult
+        """
+        try:
+            logger.info(f"Stealth async search: '{query}' (max {num_results} results)")
+
+            async def _run_provider(provider_name: str, provider_func) -> list[SearchResult]:
+                """Run a sync provider in thread pool, return empty list on failure."""
+                try:
+                    return await asyncio.to_thread(provider_func, query, num_results)
+                except Exception as exc:
+                    logger.debug(f"Provider {provider_name} failed: {exc}")
+                    return []
+
+            if source == "all":
+                # Parallel race: all 3 providers simultaneously, first non-empty wins
+                tasks = [
+                    _run_provider("duckduckgo", self._search_duckduckgo),
+                    _run_provider("brave", self._search_brave),
+                    _run_provider("google", self._search_google),
+                ]
+                # parallel(policy="first") — returns on first non-empty list
+                result = await parallel(
+                    tasks,
+                    policy="first",
+                    ctx="stealth_search:all",
+                )
+                return result if result else []
+
+            # Single provider with sequential fallback (legacy behavior preserved)
+            if source == "duckduckgo":
+                results = await _run_provider("duckduckgo", self._search_duckduckgo)
+                if not results:
+                    logger.info("DuckDuckGo returned no results, trying Brave...")
+                    results = await _run_provider("brave", self._search_brave)
+            elif source == "google":
+                results = await _run_provider("google", self._search_google)
+            elif source == "brave":
+                results = await _run_provider("brave", self._search_brave)
+            else:
+                results = []
+
+            if not results:
+                logger.info("Primary provider failed, trying Google as fallback...")
+                results = await _run_provider("google", self._search_google)
+
+            if results:
+                logger.info(f"Stealth async search returned {len(results)} results")
+            else:
+                logger.warning("No results from any search provider")
+            return results
+        except Exception as e:
+            logger.error(f"Stealth async search failed: {e}")
+            return []
+
     def search(
         self, query: str, num_results: int = 10, source: str = "duckduckgo"
     ) -> list[SearchResult]:
         """
         Search using stealth scraping with multi-provider fallback.
+
+        DEPRECATED: Use search_async() for async contexts.
+        This sync wrapper is kept for backward compatibility only.
 
         Args:
             query: Search query
@@ -107,29 +180,7 @@ class StealthCrawler:
             List of SearchResult
         """
         try:
-            logger.info(f"Stealth search: '{query}' (max {num_results} results)")
-            results = []
-            if source == "duckduckgo":
-                results = self._search_duckduckgo(query, num_results)
-                if not results:
-                    logger.info(
-                        "DuckDuckGo returned no results, trying Brave..."
-                    )
-                    results = self._search_brave(query, num_results)
-            elif source == "google":
-                results = self._search_google(query, num_results)
-            elif source == "brave":
-                results = self._search_brave(query, num_results)
-            if not results:
-                logger.info(
-                    "Primary and Brave failed, trying Google..."
-                )
-                results = self._search_google(query, num_results)
-            if results:
-                logger.info(f"Stealth search returned {len(results)} results")
-            else:
-                logger.warning("No results from any search provider")
-            return results
+            return asyncio.run(self.search_async(query, num_results, source))
         except Exception as e:
             logger.error(f"Stealth search failed: {e}")
             return []

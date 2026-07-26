@@ -1,0 +1,8 @@
+- DuckPGQGraph is an analytics donor (PGQL path queries, PageRank, shortest_path, community_detection), NOT a separate persistence layer — operates on DuckDB/Kuzu data
+- Storage Trinity comprises 4 components: DuckDB + LMDB + LanceDB + DuckPGQGraph (canonical data flows from DuckDB through PGQL analytics back to DuckDB)
+- GraphService implements singleton pattern with module-level _DUCKPGQ_GRAPH singleton accessed via _get_graph() facade
+- Analytics constants: MAX_GRAPH_ANALYTICS_NODES=500, MAX_GRAPH_ANALYTICS_TOP_K=10
+- GraphService uses __slots__ = ("_seen_iocs", "_seen_rels", "_relationship_callbacks") for memory efficiency
+- BUG-5 fix: async pattern resolved using get_running_loop + create_task for proper task scheduling
+- Critical shutdown ordering: DuckDB must be shut down before graph shutdown (ISSUE-5.1)
+- _RUST_IOC_DEDUP_AVAILABLE gates IocSet usage; tests mock via graph_service._get_graph patch

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import html.parser
 import logging
 import os
 import re
@@ -1259,73 +1258,6 @@ async def _get_uma_state() -> tuple[str, bool]:
 
 
 # -----------------------------------------------------------------------------
-# HTML extraction helpers
-# -----------------------------------------------------------------------------
-
-
-class _HTMLTextExtractor(html.parser.HTMLParser):
-    """
-    Lightweight HTMLParser that collects only text from body-level tags
-    and collapses whitespace. Fail-soft: never raises on malformed HTML.
-    """
-
-    __slots__ = ("_in_body", "_chunks", "_last_end")
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._in_body = False
-        self._chunks: list[str] = []
-        self._last_end = 0
-
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]  # noqa: ARG002
-    ) -> None:
-        if tag in ("body", "div", "p", "tr", "li", "article", "section", "main"):
-            if not self._chunks or self._chunks[-1] != " ":
-                self._chunks.append(" ")
-        elif tag in ("br", "hr"):
-            if self._chunks and self._chunks[-1] != " ":
-                self._chunks.append(" ")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in (
-            "body", "div", "p", "tr", "li", "article", "section", "main", "h1",
-            "h2", "h3", "h4", "h5", "h6", "ul", "ol",
-        ):
-            if self._chunks and self._chunks[-1] != " ":
-                self._chunks.append(" ")
-
-    def handle_data(self, data: str) -> None:
-        stripped = data.strip()
-        if stripped:
-            self._chunks.append(stripped)
-            if self._chunks[-1] != " ":
-                self._chunks.append(" ")
-
-    def get_text(self) -> str:
-        result = "".join(self._chunks)
-        # Collapse any runs of whitespace to single space
-        result = re.sub(r"\s+", " ", result).strip()
-        return result
-
-
-def _html_to_text(html_content: str) -> str:
-    """
-    Convert HTML to plain text using stdlib HTMLParser.
-    Runs in calling thread (caller is responsible for asyncio.to_thread).
-    """
-    try:
-        parser = _HTMLTextExtractor()
-        parser.feed(html_content)
-        text = parser.get_text()
-    except Exception:
-        # Defensive: fall back to stripping tags via regex
-        text = re.sub(r"<[^>]+>", " ", html_content)
-        text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-# -----------------------------------------------------------------------------
 # Finding ID helper
 # -----------------------------------------------------------------------------
 
@@ -2443,7 +2375,25 @@ async def _inject_commoncrawl_hits(
 
 
 # Sprint F193A: Onion discovery + scraping block
-_ONION_HIT_MAX = 5
+# B18 FIX: Adaptive cap based on available RAM.
+# M1 8GB UMA: hard cap 2 TOR circuits at <2GB available, 3 at 2-4GB, 4 at >4GB.
+# Each .onion fetch holds a TOR circuit for ~2-5s = ~512MB per concurrent circuit.
+def _get_onion_cap() -> int:
+    """Return adaptive .onion concurrency cap based on available system RAM."""
+    import psutil as _psutil
+    try:
+        _vm = _psutil.virtual_memory()
+        _avail_gib = _vm.available / (1024**3)
+        if _avail_gib < 2.0:
+            return 1  # extreme memory pressure
+        elif _avail_gib < 4.0:
+            return 2  # M1 8GB under load
+        else:
+            return 3  # headroom available
+    except Exception:
+        return 2  # safe default
+
+_ONION_HIT_MAX = 5  # legacy constant — use _get_onion_cap() at call time
 _ONION_CIRCUIT_FAIL_LIMIT = 3
 _onion_circuit_state = {"failures": 0, "opened_at": 0.0}
 _onion_circuit_lock = LazyAsyncioLock()
@@ -2453,7 +2403,6 @@ def _onion_circuit_is_open() -> bool:
     """Check if onion circuit breaker is open."""
     if _onion_circuit_state["failures"] < _ONION_CIRCUIT_FAIL_LIMIT:
         return False
-    import time
     if time.time() - _onion_circuit_state["opened_at"] >= 60.0:
         _onion_circuit_state["failures"] = 0
         _onion_circuit_state["opened_at"] = 0.0
@@ -2463,7 +2412,6 @@ def _onion_circuit_is_open() -> bool:
 
 def _onion_circuit_record_failure() -> None:
     """Record a failure in the onion circuit breaker."""
-    import time
     _onion_circuit_state["failures"] += 1
     if _onion_circuit_state["failures"] >= _ONION_CIRCUIT_FAIL_LIMIT:
         _onion_circuit_state["opened_at"] = time.time()
@@ -2502,7 +2450,9 @@ async def _inject_onion_hits(
     if not onion_urls:
         return 0
 
-    onion_urls = onion_urls[:_ONION_HIT_MAX]
+    # B18 FIX: use adaptive cap instead of hardcoded _ONION_HIT_MAX
+    _onion_cap = _get_onion_cap()
+    onion_urls = onion_urls[:_onion_cap]
 
     findings: list[CanonicalFinding] = []
     ts_now = time.time()
@@ -2543,6 +2493,7 @@ async def _inject_onion_hits(
     _result = await parallel(
         [_fetch_one_onion(url) for url in onion_urls],
         policy="collect",
+        concurrency=_onion_cap,
         ctx="onion_hits",
     )
     for finding in _result.ok:
@@ -2695,7 +2646,6 @@ async def async_run_live_public_pipeline(
 
     # P11: Initialize session ID for memory manager
     if session_id is None:
-        import hashlib
         session_id = hashlib.sha256(query.encode()).hexdigest()[:16]
 
     # P11: Load relevant RAG history from memory manager (if available)
@@ -4634,7 +4584,7 @@ async def async_run_live_public_pipeline(
                 if rss_gib > 5.5:
                     logger.debug("[SYNTHESIS] Skipped: RSS %.1fGiB > 5.5GiB", rss_gib)
                 else:
-                    from hledac.universal.brain.model_lifecycle import ModelLifecycle
+                    from hledac.universal.core.model_runtime import ModelLifecycle
                     from hledac.universal.brain.synthesis_runner import SynthesisRunner
 
                     # Build findings list from all_page_results
@@ -4683,9 +4633,6 @@ async def async_run_live_public_pipeline(
 
                         if report is not None:
                             # Add synthesis result as CanonicalFinding
-                            import hashlib
-                            import time as _time
-
                             from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
                             report_id = f"synth_{hashlib.md5(query.encode()).hexdigest()[:12]}"
@@ -4694,7 +4641,7 @@ async def async_run_live_public_pipeline(
                                 query=query,
                                 source_type="llm_synthesis",
                                 confidence=getattr(report, 'confidence', 0.7) or 0.7,
-                                ts=_time.time(),
+                                ts=time.time(),
                                 payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])} | {getattr(report, 'threat_summary', '')[:500]}",
                                 provenance=("synthesis", getattr(report, 'query', query)[:50]),
                             )

@@ -356,54 +356,10 @@ def _get_rust_batch_ioc_extract_python():
     return _rust_batch_ioc_extract_python_func
 
 
-# Rust parquet functions — strict imports
-try:
-    from hledac_rust_extensions import parquet_get_metadata as _parquet_get_metadata_func
-except ImportError:
-    _parquet_get_metadata_func = None
-
-try:
-    from hledac_rust_extensions import parquet_row_group_stats as _parquet_row_group_stats_func
-except ImportError:
-    _parquet_row_group_stats_func = None
-
-try:
-    from hledac_rust_extensions import parquet_read_row_group_ipc as _parquet_read_row_group_ipc_func
-except ImportError:
-    _parquet_read_row_group_ipc_func = None
-
-try:
-    from hledac_rust_extensions import parquet_iter_all_row_groups as _parquet_iter_all_row_groups_func
-except ImportError:
-    _parquet_iter_all_row_groups_func = None
-
-try:
-    from hledac_rust_extensions import parquet_read_table as _parquet_read_table_func
-except ImportError:
-    _parquet_read_table_func = None
-
-_RUST_PARQUET_AVAILABLE = _parquet_get_metadata_func is not None
-
-
-def _get_parquet_get_metadata():
-    return _parquet_get_metadata_func
-
-
-def _get_parquet_row_group_stats():
-    return _parquet_row_group_stats_func
-
-
-def _get_parquet_read_row_group_ipc():
-    return _parquet_read_row_group_ipc_func
-
-
-def _get_parquet_iter_all_row_groups():
-    return _parquet_iter_all_row_groups_func
-
-
-def _get_parquet_read_table():
-    return _parquet_read_table_func
-
+# R18 FIX: parquet_reader functions were imported but NEVER called.
+# Parquet row-group pagination was prepared but never wired in duckdb_store.py.
+# These remain in rust_extensions/src/parquet_reader.rs for future use if needed.
+# _RUST_PARQUET_AVAILABLE = False  # hardcoded — no callers exist
 
 def extract_iocs_from_texts(texts: list[str]):
     """

@@ -3175,20 +3175,37 @@ def compute_feed_dominance_score(
       dominant_feed_share_pct -- 0.0-100.0, from FeedSourceBatchRunResult
       total_feed_findings -- total accepted findings across all feed sources
       feed_sources_successful -- count of sources that returned without error
+
+    R9: Primary path uses Rust sprint_policies.compute_dominance()
+    (zero-allocation, no GIL). Pure-Python fallback preserved for fail-safe.
     """
     if total_feed_findings == 0:
         return 0.0
 
-    # Dominant-share component: 0=balanced(<=50%), 1=full dominance(100%)
-    # Linear from 50% -> 100% maps to 0.0 -> 1.0
-    _dom_component = max(0.0, (dominant_feed_share_pct - 50.0) / 50.0)
+    # R9: Try Rust fast path first (zero-allocation, no GIL).
+    # compute_dominance returns feed_dominance_ratio = feed/total.
+    # We re-use the same 60/40 weighted formula in Python but with Rust ratio.
+    try:
+        from hledac.universal.core.rust_backend import rust as _rust
+        if _rust.is_available:
+            _feed_accepted = int(total_feed_findings * dominant_feed_share_pct / 100.0)
+            _nonfeed_accepted = total_feed_findings - _feed_accepted
+            _rust_result = _rust.sprint_policies.compute_dominance(
+                total_feed_findings, _feed_accepted, _nonfeed_accepted,
+            )
+            _rust_ratio = _rust_result.get("feed_dominance_ratio", 0.0)
+            # Match pure-Python weighted formula: 60% ratio + 40% concentration
+            _source_count = max(1, feed_sources_successful)
+            _concentration_component = 1.0 / _source_count
+            _score = (_rust_ratio * 0.6) + (_concentration_component * 0.4)
+            return round(min(1.0, max(0.0, _score)), 3)
+    except Exception:
+        pass
 
-    # Concentration component: 1/source_count -- 1 source = max concentration (1.0)
-    # More sources = lower concentration = lower dominance score
+    # Fail-safe: pure Python fallback (original logic).
+    _dom_component = max(0.0, (dominant_feed_share_pct - 50.0) / 50.0)
     _source_count = max(1, feed_sources_successful)
     _concentration_component = 1.0 / _source_count
-
-    # Weighted combination: 60% dominant share, 40% concentration
     _score = (_dom_component * 0.6) + (_concentration_component * 0.4)
     return round(min(1.0, max(0.0, _score)), 3)
 

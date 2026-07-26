@@ -26,6 +26,17 @@ Usage:
         # same API — Python fallback transparently
         fingerprints = accel.quality.batch_dedup_fingerprints(texts)
 
+F350M-R (A3): Container-based force override:
+    from core.rust_backend import get_accel, set_container, RustForce
+    from core.container import get_global_container
+
+    # Sprint-scoped: force Python fallback for this sprint
+    container = get_global_container()
+    container.register('rust.force', factory=lambda: RustForce(python=True), scope='factory')
+    set_container(container)
+
+    accel = get_accel()  # will use Python fallback
+
 For testing:
     from core.rust_backend import reset_accel
     reset_accel()  # clear singleton and probe cache
@@ -41,6 +52,20 @@ import os
 import msgspec
 from typing import TYPE_CHECKING, Any
 
+__all__ = [
+    "AccelBackend",
+    "AccelInfo",
+    "RustForce",
+    "get_accel",
+    "set_container",
+    "reset_accel",
+    "ProbeResult",
+    # Backward compat
+    "rust",
+    "RustBackend",
+    "check_metal_availability",
+]
+
 # Eager imports — used at module level, must be available immediately
 from ._prober import force_python as _force_python
 from ._prober import force_rust as _force_rust
@@ -54,6 +79,7 @@ from ._prober import ProbeResult
 # ISSUE-4.1 fix: 150-300ms import overhead eliminated for submodules not used in a session.
 import importlib
 import sys
+from dataclasses import dataclass as _dataclass
 
 _SUBMODULE_NAMES: tuple[str, ...] = (
     "bloom", "hash", "ip", "ioc", "ioc_dedup", "quality",
@@ -146,6 +172,30 @@ class AccelInfo(msgspec.Struct, frozen=True, gc=False):
         return self.backend == "rust"
 
 
+@_dataclass(frozen=True, slots=True)
+class RustForce:
+    """
+    F350M-R: Canonical Rust-backend force override resolved at probe time.
+
+    Resolved priority (highest → lowest):
+      1. env HLEDAC_FORCE_RUST=1       → force_rust()
+      2. env HLEDAC_FORCE_PYTHON=1     → force_python()
+      3. container.get('rust.force')    → RustForce object
+      4. default                        → auto-probe
+
+    Container usage (A3 integration):
+        container.register('rust.force', factory=lambda: RustForce(python=False), scope='singleton')
+
+    For sprint-scoped override (bootstrap.py):
+        ctx.container.register('rust.force',
+            factory=lambda: RustForce(python=False),
+            scope='factory')
+    """
+
+    python: bool = False  # True = force Python fallback
+    rust: bool = False   # True = force Rust (warn if unavailable)
+
+
 class AccelBackend:
     """
     Lazy-resolving facade for Rust acceleration.
@@ -153,9 +203,12 @@ class AccelBackend:
     Probes the Rust extension exactly once on first access to any domain.
     All domains are accessible via properties — each triggers the probe
     on first call and caches the result behind a property.
+
+    F350M-R: Supports container-based force override via ServiceContainer.
+    Set container.get('rust.force') = RustForce(python=True/False) before first domain access.
     """
 
-    __slots__ = ("_probe_result", "_domains")
+    __slots__ = ("_probe_result", "_domains", "_container")
 
     def __new__(cls) -> "AccelBackend":
         # Singleton — one instance per process
@@ -170,6 +223,8 @@ class AccelBackend:
         self._probe_result: ProbeResult | None = None
         # Lazy domain cache — populated on first access to each property
         self._domains: dict[str, Any] = {}
+        # Container reference for rust.force resolution (set by set_container)
+        self._container: Any = None
 
     # -------------------------------------------------------------------------
     # Probe — one-time, cached
@@ -180,10 +235,43 @@ class AccelBackend:
         if self._probe_result is not None:
             return self._probe_result
 
+        # F350M-R: Container-based force resolution (A3 integration).
+        #
+        # Resolution order (first match wins):
+        #   1. env HLEDAC_FORCE_PYTHON=1  → force_python()
+        #   2. env HLEDAC_FORCE_RUST=1    → force_rust()
+        #   3. container.get('rust.force') → RustForce(python=True/False) — only if registered
+        #   4. default                     → auto-probe()
+        #
+        # Container is checked FIRST to populate the `force` variable, but env vars
+        # short-circuit before `force` is used. Bootstrap registers container ONLY
+        # when no env var is set, so in practice: env vars > container > auto-probe.
+        force: RustForce | None = None
+
+        # Peek container (lowest priority — env vars above win if set)
+        if self._container is not None:
+            try:
+                force = self._container.try_get("rust.force")
+            except Exception:
+                pass  # container not available or rust.force not registered
+
+        # 1-2. Env var override (backward compat — always-on, no toggles)
         if _FORCE_PYTHON:
             self._probe_result = _force_python()
         elif _FORCE_RUST:
             self._probe_result = _force_rust()
+        # 3. Container override (sprint-scoped, only if no env var matched)
+        elif force is not None:
+            if force.python:
+                logger.debug("[AccelBackend] Python fallback FORCED via container rust.force")
+                self._probe_result = _force_python()
+            elif force.rust:
+                logger.debug("[AccelBackend] Rust path FORCED via container rust.force")
+                self._probe_result = _force_rust()
+            else:
+                # Explicit RustForce() with both False → auto-probe
+                self._probe_result = _probe()
+        # 4. Default: auto-probe
         else:
             self._probe_result = _probe()
 
@@ -344,6 +432,17 @@ class AccelBackend:
         p = self._ensure_probe()
         return f"AccelBackend(backend={p.backend}, available={p.available})"
 
+    def set_container(self, container: Any) -> None:
+        """
+        F350M-R (A3): Attach ServiceContainer for rust.force resolution.
+
+        Call this BEFORE first domain access (bloom, hash, ioc, etc.)
+        to enable sprint-scoped force override via container.get('rust.force').
+
+        Idempotent: can be called multiple times; last container wins.
+        """
+        self._container = container
+
 
 # =============================================================================
 # Singleton instance
@@ -355,6 +454,24 @@ _accel_instance: AccelBackend | None = None
 def get_accel() -> AccelBackend:
     """Return the AccelBackend singleton (creating it on first call)."""
     return AccelBackend()
+
+
+def set_container(container: Any) -> None:
+    """
+    F350M-R (A3): Attach ServiceContainer for rust.force resolution.
+
+    Convenience wrapper around AccelBackend.set_container().
+
+    Usage (bootstrap.py):
+        from core.rust_backend import get_accel, set_container
+        from core.container import get_global_container
+
+        set_container(get_global_container())
+
+    Call this BEFORE first domain access (bloom, hash, ioc, etc.)
+    to enable sprint-scoped force override via container.get('rust.force').
+    """
+    get_accel().set_container(container)
 
 
 def reset_accel() -> None:
@@ -534,6 +651,10 @@ class _RustCompatShim:
         if raw_fn is not None:
             return _get_submodule("misc")._TlsDomain(raw_fn)
         return None
+
+    def set_container(self, container: Any) -> None:
+        """F350M-R (A3): Attach ServiceContainer for rust.force resolution."""
+        self._accel.set_container(container)
 
 
 _rust_compat_instance: "RustBackend | None" = None

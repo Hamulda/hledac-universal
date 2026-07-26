@@ -27,6 +27,10 @@ import msgspec
 
 from runtime.scheduler_v2.protocol import InitResult, SprintContext
 from hledac.universal.utils.async_helpers import parallel, safe_create_task
+from hledac.universal.runtime.scheduler_v2._task_registry import (
+    TaskScope,
+    safe_create_task_tracked,
+)
 
 
 class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
@@ -67,6 +71,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     _rel_discovery_engine: Any = None
 
     # ── Injectable services ─────────────────────────────────────────────────
+    _duckdb_store: Any = None  # Backward-compat for tests/legacy code
     _policy_manager: Any = None
     _prefetch_pipeline: Any = None
     _temporal_predictor: Any = None
@@ -224,7 +229,12 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         self._prewarm_temporal_predictor()
 
     def _prewarm_temporal_predictor(self) -> None:
-        safe_create_task(self._async_prewarm_temporal())
+        # Fire-and-forget prewarm tracked in registry so cancel_all() reaches it on winddown.
+        safe_create_task_tracked(
+            self._async_prewarm_temporal(),
+            name="prelude:temporal_prewarm",
+            scope=TaskScope.PRELUDE,
+        )
 
     # Backward-compat: _prewarm_hermes lives in SprintBootstrap but test patches this class.
     # Delegates to bootstrap after run() sets _hermes_prewarm_delegate.
@@ -334,9 +344,13 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         signal_value: float,
     ) -> None:
         """F203G: Record hypothesis feedback to DuckDB."""
-        _duckdb = self._ctx.duckdb_store if self._ctx else None
-        if _duckdb is None:
+        from runtime.scheduler_v2.protocol import InitResult
+
+        _duckdb_raw = self._ctx.duckdb_store if self._ctx else None
+        if _duckdb_raw is None:
             return
+        # Unwrap InitResult if present (msgspec field shadows property)
+        _duckdb = _duckdb_raw.value if isinstance(_duckdb_raw, InitResult) else _duckdb_raw
         try:
             import time as _t
             import uuid
@@ -378,6 +392,9 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         sys.stdout.write(f"[aclean] sprint_id={sprint_id}\n")
         sys.stdout.flush()
 
+        # Track fire-and-forget tasks so we can cancel them on timeout/cancel.
+        _bg_tasks: list[asyncio.Task[Any]] = []
+
         async def _do_aclose() -> None:
             if self._cancel_event is not None and not self._cancel_event.is_set():
                 self._cancel_event.set()
@@ -406,6 +423,39 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             except Exception:
                 pass
 
+            # F350M-R ISSUE-W5-A: close MemoryManager singleton — was never called.
+            # Track the task so we can cancel it on timeout/CancelledError.
+            try:
+                from hledac.universal.memory import close_memory_manager
+                _t = asyncio.create_task(close_memory_manager())
+                _bg_tasks.append(_t)
+            except Exception:
+                pass
+
+            # F350M-R: close all HTTP session pools (httpx, httpx-socks, curl_cffi).
+            # ct_pivot.py calls session_pool.httpx() — those sessions must be closed
+            # to avoid connection leaks. close_all() is idempotent and safe to call
+            # even if no sessions were opened.
+            try:
+                from hledac.universal.transport.session_pool import session_pool
+                _t2 = asyncio.create_task(session_pool.close_all())
+                _bg_tasks.append(_t2)
+            except Exception:
+                pass
+
+            # F350M-R: stop TorTransport singleton if one was started.
+            # ct_pivot.py creates a local TorTransport instance and calls stop() in
+            # its own finally block, but if that path never ran (crash, kill -9),
+            # the singleton may still be registered. Best-effort stop either way.
+            try:
+                from hledac.universal.transport.tor_transport import get_tor_transport_singleton
+                _tor = get_tor_transport_singleton()
+                if _tor is not None and hasattr(_tor, "stop"):
+                    _t3 = asyncio.create_task(_tor.stop())
+                    _bg_tasks.append(_t3)
+            except Exception:
+                pass
+
             sys.stdout.write("[aclean] done\n")
             sys.stdout.flush()
 
@@ -417,9 +467,17 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             reason = "timeout"
             sys.stdout.write(f"[aclean:{sprint_id}] force shutdown after {timeout_s}s\n")
             sys.stdout.flush()
+            # Cancel any outstanding fire-and-forget background tasks.
+            for _t in _bg_tasks:
+                if not _t.done():
+                    _t.cancel()
             await asyncio.sleep(1.0)
         except asyncio.CancelledError:
             reason = "force"
+            # Cancel any outstanding fire-and-forget background tasks.
+            for _t in _bg_tasks:
+                if not _t.done():
+                    _t.cancel()
             raise
         finally:
             elapsed_ms = (_time.monotonic() - start) * 1000

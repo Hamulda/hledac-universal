@@ -1,0 +1,6 @@
+- Coding conventions are documented in CLAUDE.md and .claude/CLAUDE.md, not in a dedicated docs/conventions/ directory
+- Naming convention: snake_case for all identifiers
+- Error handling: no bare except clauses allowed
+- Async patterns: asyncio.gather requires return_exceptions=True, no time.sleep in async code, no asyncio.run in ThreadPoolExecutor
+- Storage patterns: DuckDB writes via async_ingest_findings_batch, LMDB bulk operations use cursor.putmulti
+- Special patterns: mx.eval before clear_cache, RotatingBloomFilter for URL dedup, sidecars return [] on errors

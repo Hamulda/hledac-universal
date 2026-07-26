@@ -130,10 +130,12 @@ def _import_scheduler():
 
 async def _instantiate_scheduler(minimal_config, mock_lifecycle, mock_adapter):
     """Create scheduler instance with minimal mocking."""
+    from runtime.scheduler_v2.injector import Injector
+
     SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, _ct_log_client=None)
     # Inject minimal dependencies to allow run() to start
-    sched._duckdb_store = AsyncMock()
+    Injector.inject_duckdb_store(sched, AsyncMock())
     sched._duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=0)
     return sched
 
@@ -148,10 +150,12 @@ async def test_record_hypothesis_feedback_failsoft_does_not_crash(minimal_config
     verify: exception in store does NOT propagate (fail-safe pattern).
     """
 
+    from runtime.scheduler_v2.injector import Injector
+
     SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, _ct_log_client=None)
     # Inject mock store with broken async_record_hypothesis_feedback
-    sched._duckdb_store = mock_store
+    Injector.inject_duckdb_store(sched, mock_store)
     mock_store.async_record_hypothesis_feedback.side_effect = RuntimeError("DB write failed")
 
     # Call record_hypothesis_feedback — signature is (pivot_type, ioc_type, produced_count, accepted_count, signal_value)  # noqa: E501
@@ -604,9 +608,11 @@ async def test_real_async_feedback_recording_does_not_crash(minimal_config, mock
     L4954: Real async test — verify record_hypothesis_feedback pattern
     (exception in store does not propagate).
     """
+    from runtime.scheduler_v2.injector import Injector
+
     SprintScheduler = _import_scheduler()  # noqa: N806
     sched = SprintScheduler(minimal_config, _ct_log_client=None)
-    sched._duckdb_store = mock_store
+    Injector.inject_duckdb_store(sched, mock_store)
 
     # Create actual async function that simulates failure
     async def failing_store(*args, **kwargs):
@@ -631,7 +637,9 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(minimal_config, m
     Verify: after multiple fail-soft handlers, scheduler is still usable.
     This is the PRIMARY behavioral assertion — scheduler must not crash.
     """
-    SprintScheduler = _import_scheduler()  # noqa: N806
+    from runtime.scheduler_v2.injector import Injector
+
+    SprintScheduler = _import_scheduler()  # noqa: NSP
     sched = SprintScheduler(minimal_config, _ct_log_client=None)
 
     # Simulate degraded state
@@ -639,7 +647,7 @@ async def test_scheduler_healthy_after_multiple_failsoft_paths(minimal_config, m
     sched._rel_discovery_engine = None
     sched._hermes_engine = None
     sched._layer_manager = None
-    sched._duckdb_store = AsyncMock()
+    Injector.inject_duckdb_store(sched, AsyncMock())
     sched._duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=0)
 
     # Primary assertion: scheduler is still usable (not None)
@@ -959,7 +967,7 @@ class TestF11WindupFirstCycle:
 
         # S first_cycle_ran=False: should_enter_windup vrátí False (F290 block)
         assert lifecycle.first_cycle_ran is False
-        assert adapter.should_enter_windup is False, (
+        assert adapter.should_enter_windup() is False, (
             "should_enter_windup má být False při first_cycle_ran=False (F290 block)"
         )
 
@@ -972,7 +980,7 @@ class TestF11WindupFirstCycle:
         assert lifecycle.first_cycle_ran is True
         # S first_cycle_ran=True, F290 už neblokuje - zbytek závisí na čase
         # remaining=300s, windup_lead=180s → 300 > 180 → False
-        assert adapter.should_enter_windup is False
+        assert adapter.should_enter_windup() is False
 
     def test_f1_1_fallback_when_lc_adapter_is_none(self):
         """
@@ -1555,12 +1563,9 @@ class TestObservedRunReportSchema:
         msgspec.Struct class bodies across the whole project. This is a project-wide
         regression guard, not limited to ObservedRunReport.
         """
-        import hledac.universal.__main__ as main_module
-
-        # Derive the package root from the main module's file
-        main_file = main_module.__file__
-        assert main_file and main_file.endswith(".py")
-        root = Path(main_file).parent.parent  # hledac/universal/ -> hledac/
+        # Derive the package root from this test file's location:
+        # tests/test_sprint_scheduler.py → hledac/universal/ → hledac/
+        root = Path(__file__).parent.parent / "hledac"
 
         issues = _find_msgspec_struct_duplicates(root)
 

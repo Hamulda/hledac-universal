@@ -1,0 +1,3 @@
+- .brv/context-tree/testing/probe_tests/ directory is empty
+- Actual probe tests are located in tests/probe_p_e2_feed_pipeline/
+- Action required: either delete the empty KB directory or populate it with documentation referencing tests/probe_p_e2_feed_pipeline/

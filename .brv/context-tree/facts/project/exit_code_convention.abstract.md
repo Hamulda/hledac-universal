@@ -1,0 +1,1 @@
+Exit codes follow a structured convention (0=success, 1=runtime error, 2=config error, 3=programmer error, 130=SIGINT) with a __main__.py catch-all envelope and 6 regression tests verifying subprocess exit codes.

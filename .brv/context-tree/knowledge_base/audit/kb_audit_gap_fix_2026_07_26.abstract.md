@@ -1,0 +1,1 @@
+KB audit gap fix resolved 4 items: naming conventions exist in CLAUDE.md, exit codes documented with 6 tests in test_exit_codes.py, integrations remain scattered, and empty probe_tests directory flagged for deletion or population.

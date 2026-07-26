@@ -1,0 +1,1 @@
+Coding conventions are documented in CLAUDE.md and .claude/CLAUDE.md rather than a dedicated docs/conventions/ directory, covering snake_case naming, async patterns, and DuckDB/LMDB write patterns.

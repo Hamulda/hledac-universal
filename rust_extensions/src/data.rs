@@ -28,5 +28,8 @@ pub mod cache;
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     connection::register_functions(m)?;
     graph_traverse::register_functions(m)?;
+    // R4-FIX: data/cache.rs was defined but never registered.
+    // graph_cache::PyGraphLRUCache (in advanced feature) is the other TinyLFU cache.
+    cache::register_functions(m)?;
     Ok(())
 }

@@ -13,6 +13,13 @@ Design:
     - Lanes are standalone async functions (no self._xxx references)
     - PreludeOrchestrator.run() orchestrates the gather of all lanes
     - Lazy imports avoid M1 Metal init at import time
+
+ISSUE P2 FIX: All fire-and-forget ingest tasks are now tracked via
+TaskRegistry (safe_create_task_tracked). This guarantees:
+  1. Tasks are registered and can be awaited on winddown
+  2. On cancel_all(), all prelude ingest tasks receive CancelledError
+  3. No lost tasks if prelude finishes before ingest completes
+  4. M1 8GB: no orphan tasks holding references under memory pressure
 """
 import asyncio
 from dataclasses import dataclass
@@ -128,16 +135,20 @@ async def run_wayback_prelude_lane(query: str, result: Any, duckdb_store: Any, t
         _wb_acc = 0
         if _wb_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
             try:
-                # Fire-and-forget: safe_create_task runs ingest in background.
+                # Fire-and-forget: safe_create_task_tracked runs ingest in background.
+                # ISSUE P2 FIX: TaskRegistry tracks this task — guaranteed cleanup on winddown.
                 # Lane is not blocked; accepted_count is optimistic (graceful degradation).
-                from hledac.universal.utils.async_helpers import safe_create_task
+                from hledac.universal.runtime.scheduler_v2._task_registry import (
+                    TaskScope,
+                    safe_create_task_tracked,
+                )
                 async def _wb_ingest_bg():
                     try:
                         _ing = await duckdb_store.async_ingest_findings_batch(list(_wb_cands))
                         return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
                     except Exception:
                         return 0
-                safe_create_task(_wb_ingest_bg(), name='prelude:wayback_ingest')
+                safe_create_task_tracked(_wb_ingest_bg(), name='prelude:wayback_ingest', scope=TaskScope.PRELUDE)
                 _wb_acc = len(_wb_cands)  # Optimistic: all built candidates accepted
             except Exception:
                 _wb_acc = 0
@@ -157,17 +168,21 @@ async def run_pdns_prelude_lane(query: str, result: Any, duckdb_store: Any, time
         if _pdns_tel:
             result.passive_dns_advisory_clues_count = _pdns_tel.get('pdns_public_accepted', 0)
         # ISSUE #009 FIX: fire-and-forget ingest — don't block lane on DuckDB write.
+        # ISSUE P2 FIX: TaskRegistry tracks this task — guaranteed cleanup on winddown.
         _pdns_acc = 0
         if _pdns_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
             try:
-                from hledac.universal.utils.async_helpers import safe_create_task
+                from hledac.universal.runtime.scheduler_v2._task_registry import (
+                    TaskScope,
+                    safe_create_task_tracked,
+                )
                 async def _pdns_ingest_bg():
                     try:
                         _ing = await duckdb_store.async_ingest_findings_batch(list(_pdns_cands))
                         return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
                     except Exception:
                         return 0
-                safe_create_task(_pdns_ingest_bg(), name='prelude:pdns_ingest')
+                safe_create_task_tracked(_pdns_ingest_bg(), name='prelude:pdns_ingest', scope=TaskScope.PRELUDE)
                 _pdns_acc = len(_pdns_cands)
             except Exception:
                 pass
@@ -303,17 +318,21 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
         result.doh_cancelled_count = _cancelled_count
 
         if _all_cands:
-            # Fire-and-forget ingest
+            # Fire-and-forget ingest — ISSUE P2 FIX: TaskRegistry tracks this task.
             _doh_acc = 0
             if _all_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
                 try:
+                    from hledac.universal.runtime.scheduler_v2._task_registry import (
+                        TaskScope,
+                        safe_create_task_tracked,
+                    )
                     async def _doh_ingest_bg():
                         try:
                             _ing = await duckdb_store.async_ingest_findings_batch(list(_all_cands))
                             return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
                         except Exception:
                             return 0
-                    safe_create_task(_doh_ingest_bg(), name='prelude:doh_ingest')
+                    safe_create_task_tracked(_doh_ingest_bg(), name='prelude:doh_ingest', scope=TaskScope.PRELUDE)
                     _doh_acc = len(_all_cands)
                 except Exception:
                     pass

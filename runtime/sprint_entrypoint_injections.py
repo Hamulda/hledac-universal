@@ -105,15 +105,22 @@ def _evidence_log_factory(*, sprint_id: str) -> Any:
     return elog
 
 
-def _evidence_log_init(elog: Any, sprint_id: str, duration_s: float, windup_lead_s: float) -> None:
+def _evidence_log_init(elog: Any, sprint_id: str, query: str, duration_s: float, windup_lead_s: float) -> None:
     """Call async initialize() on EvidenceLog and record WARMUP event."""
     import asyncio
 
     try:
-        loop = asyncio.get_event_loop()
+        # Python 3.12+: get_running_loop() in async context, fallback to new_event_loop() for sync context.
+        # This pattern avoids the deprecated get_event_loop() in Python 3.14+.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
         if loop.is_running():
-            # Create a task and await it
-            asyncio.create_task(elog.initialize())
+            # Create a task and keep strong reference so it isn't GC'd
+            _task = asyncio.create_task(elog.initialize())
+            object.__setattr__(elog, "_init_task", _task)
         else:
             loop.run_until_complete(elog.initialize())
     except Exception:
@@ -125,6 +132,7 @@ def _evidence_log_init(elog: Any, sprint_id: str, duration_s: float, windup_lead
             payload={
                 "phase": "WARMUP",
                 "sprint_id": sprint_id,
+                "query": query,
                 "duration_s": duration_s,
                 "windup_lead_s": windup_lead_s,
             },
@@ -318,6 +326,7 @@ async def apply_injections(
     scheduler: Any,
     flags: Any,
     *,
+    query: str,
     sprint_id: str,
     sprint_duration_s: float,
     windup_lead_s: float,
@@ -388,7 +397,7 @@ async def apply_injections(
 
             # Special-case EvidenceLog: async initialize() + WARMUP event
             if inj.name == "evidence_log" and obj is not None:
-                _evidence_log_init(obj, sprint_id, sprint_duration_s, windup_lead_s)
+                _evidence_log_init(obj, sprint_id, query, sprint_duration_s, windup_lead_s)
 
             # For pipeline: inject both pipeline and predictor
             if inj.name == "prefetch_pipeline" and obj is not None:

@@ -2,36 +2,18 @@
   "version": "1.0.0",
   "generated_at": "2026-07-15T07:29:13.842870+00:00",
   "git_rev": "4855e651",
+  "note": "Pruned 2026-07-26: async_query, text_similarity (dead code), hnsw/lancedb_bridge/embedding_index (R20-ANN), sprint_policies/query_terms/ip_parse/xml_sanitize/xxhash_ext/content_hasher/rolling_hash/graph_lru (0 Python callers, 0 internal users). regex_lz4/parquet_reader registrations COMMENTED OUT in lib.rs (dead code).",
   "lib_rs_symbols": {
-    "query_terms": [
-      "scan_query_context",
-      "extract_payload_context"
-    ],
-    "aho_corasick": [
-      "AhoCorasickMatcher"
-    ],
     "bloom": [
       "BloomFilter",
       "bloom.register",
       "bloom_check_batch"
-    ],
-    "rolling_hash": [
-      "RollingHashEngine"
-    ],
-    "url_set": [
-      "MmapUrlSet",
-      "UrlSet"
     ],
     "dns_tunnel": [
       "dns_tunnel.register_functions"
     ],
     "ioc_extract": [
       "ioc_extract.register_functions"
-    ],
-    "ioc_extract_fast": [
-      "ioc_extract_unified",
-      "batch_ioc_extract_unified",
-      "batch_ioc_extract_unified_python"
     ],
     "ioc_extract_simd": [
       "ioc_extract_simd.register_functions"
@@ -46,30 +28,11 @@
     "ioc_dedup": [
       "ioc_dedup.register_class"
     ],
-    "ioc_cooccurrence_rs": [
-      "compute_cooccurrence_edges_py",
-      "batch_cooccurrence_edges_py"
-    ],
     "simhash_ext": [
       "simhash_ext.register_functions"
     ],
     "lsh_index": [
       "lsh_index.register_functions"
-    ],
-    "xxhash_ext": [
-      "content_hash_64",
-      "content_hash_hex",
-      "batch_content_hash",
-      "batch_content_hash_hex",
-      "batch_content_hash_parallel",
-      "batch_content_hash_hex_parallel",
-      "double_hash_64",
-      "batch_xxh3_64_bytes",
-      "StreamHasher64"
-    ],
-    "content_hasher": [
-      "batch_xxh3_64_hex",
-      "ContentHasher"
     ],
     "tls_metadata": [
       "tls_metadata.register_functions"
@@ -82,9 +45,6 @@
     ],
     "rate_limit": [
       "rate_limit.register_module"
-    ],
-    "sprint_policies": [
-      "sprint_policies.register"
     ],
     "int_counter_layout": [
       "int_counter_layout.register_functions"
@@ -101,22 +61,11 @@
     "text_norm": [
       "text_norm.register_functions"
     ],
-    "xml_sanitize": [
-      "sanitize_xml",
-      "batch_sanitize_xml"
-    ],
     "madvise": [
       "madvise.register_functions"
     ],
     "lmdb_dht": [
       "lmdb_dht.register_functions"
-    ],
-    "ip_parse": [
-      "parse_ip_fast",
-      "is_private_ip",
-      "is_public_ip",
-      "batch_ip_classify",
-      "cidr_contains"
     ],
     "compress": [
       "compress.register_functions",
@@ -155,23 +104,11 @@
     "arrow_batch_builder": [
       "arrow_batch_builder.register"
     ],
-    "regex_lz4": [
-      "regex_lz4.register"
-    ],
-    "parquet_reader": [
-      "parquet_reader.register"
-    ],
     "pool_run": [
       "pool_run.register_functions"
     ],
     "federated_qtable": [
       "federated_qtable.register"
-    ],
-    "lancedb_bridge": [
-      "PyHNSWBridge"
-    ],
-    "embedding_index": [
-      "PyHNSWIndex"
     ],
     "graph_cache": [
       "PyGraphLRUCache"
@@ -184,12 +121,6 @@
     ],
     "claims_extraction": [
       "claims_extraction.register_functions"
-    ],
-    "text_similarity": [
-      "text_similarity.register_functions"
-    ],
-    "async_query": [
-      "async_query.register"
     ],
     "pipeline_compose": [
       "pipeline_compose.register"
@@ -214,46 +145,20 @@
     ]
   },
   "all_lib_rs": [
-    "AhoCorasickMatcher",
     "BloomFilter",
-    "ContentHasher",
-    "MmapUrlSet",
     "PyDistributedBloomFilter",
     "PyGraphLRUCache",
-    "PyHNSWBridge",
-    "PyHNSWIndex",
-    "RollingHashEngine",
-    "StreamHasher64",
     "UrlClassifyCachePy",
-    "UrlSet",
     "adaptive_scheduler.register_functions",
     "arrow_batch_builder.register",
-    "async_query.register",
-    "batch_content_hash",
-    "batch_content_hash_hex",
-    "batch_content_hash_hex_parallel",
-    "batch_content_hash_parallel",
-    "batch_cooccurrence_edges_py",
-    "batch_ioc_extract_unified",
-    "batch_ioc_extract_unified_python",
-    "batch_ip_classify",
-    "batch_sanitize_xml",
-    "batch_xxh3_64_bytes",
-    "batch_xxh3_64_hex",
     "bloom.register",
     "bloom_check_batch",
-    "cidr_contains",
     "claims_extraction.register_functions",
     "collections.register_functions",
     "compress.register_functions",
-    "compute_cooccurrence_edges_py",
-    "content_hash_64",
-    "content_hash_hex",
     "crypto_accelerate.register_functions",
     "data.register_functions",
     "dns_tunnel.register_functions",
-    "double_hash_64",
-    "extract_payload_context",
     "federated_qtable.register",
     "feed_decision.register_functions",
     "feed_pipeline.register",
@@ -266,9 +171,6 @@
     "ioc_dedup.register_class",
     "ioc_extract.register_functions",
     "ioc_extract_simd.register_functions",
-    "ioc_extract_unified",
-    "is_private_ip",
-    "is_public_ip",
     "lmdb_dht.register_functions",
     "lsh_index.register_functions",
     "lz4_compress_jsonl_batch",
@@ -279,24 +181,17 @@
     "memory.register_functions",
     "mlx_bridge.register",
     "mpsc_pool.register",
-    "parquet_reader.register",
-    "parse_ip_fast",
     "pipeline_compose.register",
     "pool_run.register_functions",
     "quality_gate.register_functions",
     "rate_limit.register_module",
-    "regex_lz4.register",
-    "sanitize_xml",
-    "scan_query_context",
     "serde_json_rs.register_functions",
     "signal_batch.register_functions",
     "simd_similarity.register_functions",
     "simhash_ext.register_functions",
-    "sprint_policies.register",
     "spsc_queue.register",
     "telemetry_agg.register_functions",
     "text_norm.register_functions",
-    "text_similarity.register_functions",
     "tls_metadata.register_functions",
     "url_engine.register_functions",
     "url_ops.register_functions",

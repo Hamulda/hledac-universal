@@ -1,0 +1,6 @@
+- Storage trinity: DuckDB (analytics/queries), LMDB (in-memory KV store), LanceDB (vector/RAG storage)
+- MLX used for local LLM inference; Hermes3 for LLM brain
+- HTTP stack: curl_cffi (TLS), httpx (sync), aioquic (HTTP/3)
+- Transport layer includes Tor, I2P, SOCKS proxies
+- Rust PyO3 extensions for hot-path performance optimization
+- No dedicated docs/integrations/ directory exists; integrations scattered across core/, runtime/, storage/, brain/

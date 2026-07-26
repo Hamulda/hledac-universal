@@ -1059,6 +1059,12 @@ class DuckPGQGraph:
             self.con.close()
         except Exception as e:
             logger.debug(f'[GRAPH] close: con.close() failed: {e}')
+        # R12: Flush LRU cache and drop thread-local DuckDB connections in Rust
+        try:
+            from hledac_rust_extensions import drop_connections as _rust_drop_connections
+            _rust_drop_connections()
+        except Exception:
+            pass  # fail-soft: Rust layer unavailable
         # Release graph lock so other processes can acquire it
         if hasattr(self, '_lock_mgr') and self._lock_mgr is not None:
             try:
@@ -1066,6 +1072,18 @@ class DuckPGQGraph:
             except Exception as e:
                 logger.debug(f'[GRAPH] close: lock release failed: {e}')
         self._closed = True
+
+    def stats(self) -> dict:
+        """
+        R12 WIRE: DuckPGQGraph.stats() → Rust graph_traverse.graph_stats.
+
+        Returns node/edge counts for diagnostics. Delegates to module-level
+        _graph_stats() which uses thread-local DuckDB connection.
+
+        Returns:
+            dict: {nodes, edges, pgq_available}
+        """
+        return _graph_stats(self.db_path, self.con)
 
     async def buffer_ioc(self, ioc_type: str, value: str, confidence: float=1.0) -> None:
         """
@@ -1598,7 +1616,19 @@ class DuckPGQGraph:
             return out
 
     def _find_connected_base(self, value: str, max_hops: int) -> list[dict]:
-        """Core find_connected implementation — used by find_connected and find_connected_with_similarity."""
+        """Core find_connected implementation — used by find_connected and find_connected_with_similarity.
+
+        R12 WIRE: Tries Rust graph_traverse_single first (rayon thread-local conn),
+        falls back to DuckPGQ GRAPH_TABLE, then to recursive CTE.
+        """
+        # R12: Try Rust rayon path first — thread-local DuckDB conn, no GIL
+        try:
+            from hledac_rust_extensions import graph_traverse_single as _rust_traverse
+            result = _rust_traverse(self.db_path, value, max_hops)
+            if result is not None and len(result) > 0:
+                return list(result)
+        except Exception:
+            pass  # fail-soft: fall through to DuckPGQ
         if _DUCKPGQ_AVAILABLE:
             try:
                 sql = f'\n                    FROM GRAPH_TABLE(ioc_graph\n                        MATCH (a:ioc_nodes)\n                              -[e:ioc_edges*1..{max_hops}]->\n                              (b:ioc_nodes)\n                        WHERE a.value = ?\n                        COLUMNS (b.value, b.ioc_type, b.confidence, b.source)\n                    ) LIMIT 100\n                '
@@ -1783,8 +1813,25 @@ def _find_paths_between_iocs_sync(con, source_ioc: str, target_ioc: str, max_hop
         logger.warning(f'[GRAPH] _find_paths_between_iocs_sync failed: {e}')
         return []
 
-def _graph_stats(con) -> dict:
-    """Module-level stats helper (called by DuckPGQGraph.stats wrapper)."""
+def _graph_stats(db_path: str, con) -> dict:
+    """Module-level stats helper (called by DuckPGQGraph.stats wrapper).
+
+    R12 FIX: Uses Rust graph_traverse.graph_stats (thread-local conn, rayon)
+    when available, falls back to Python DuckDB queries.
+    """
+    # R12: Try Rust path first — thread-local DuckDB conn, rayon parallel
+    try:
+        from hledac_rust_extensions import graph_stats as _rust_stats
+
+        result = _rust_stats(db_path, 20)
+        if result is not None and isinstance(result, dict):
+            nodes = result.get('total_nodes', 0)
+            edges = result.get('total_edges', 0)
+            if nodes > 0 or edges > 0:
+                return {'nodes': nodes, 'edges': edges, 'pgq_available': _DUCKPGQ_AVAILABLE}
+    except Exception:
+        pass  # fail-soft: fall through to Python fallback
+    # Python fallback: direct DuckDB queries
     try:
         nodes_row = con.execute('SELECT COUNT(*) FROM ioc_nodes').fetchone()
         edges_row = con.execute('SELECT COUNT(*) FROM ioc_edges').fetchone()

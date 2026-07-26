@@ -87,14 +87,17 @@ class PrewarmDaemon:
         logger.info("[PREENABLE] daemon started (background thread)")
 
     def _thread_run(self) -> None:
-        """Entry point for background thread."""
+        """Entry point for background thread.
+
+        Uses asyncio.run() for Python 3.14+ compatibility. asyncio.run()
+        creates and manages its own event loop internally — the same pattern
+        used in memory_coordinator.py, multi_level_cache.py, prewarm_pool.py,
+        and embeddings/cache.py (all marked C7-FIX).
+        """
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(self._prewarm_all())
-            finally:
-                loop.close()
+            # C7-FIX: asyncio.run() replaces deprecated new_event_loop()/set_event_loop()
+            # pattern. Python 3.14+ emits DeprecationWarning for the old pattern.
+            asyncio.run(self._prewarm_all())
             self._done = True
             os.environ[_PREENABLE_DONE_MARKER] = "1"
             elapsed = _time.monotonic() - self._start_time
@@ -230,35 +233,22 @@ class PrewarmDaemon:
 
     def stop(self, timeout_s: float = 5.0) -> bool:
         """
-        Signal prewarm thread to stop and wait for graceful shutdown.
+        Wait for prewarm thread to complete (best-effort graceful shutdown).
 
-        F314: Added bounded stop with timeout — prewarm thread runs in
-        dedicated event loop that can be stopped via call_soon_threadsafe.
-        Unlike daemon=True which lets thread die with process, this provides
-        graceful cleanup during sprint teardown.
+        Note: With daemon=True, the thread is terminated when the main process
+        exits regardless. This method waits for natural completion within the
+        timeout — it cannot force-thread termination.
 
         Args:
             timeout_s: Maximum seconds to wait for thread termination.
 
         Returns:
-            True if thread stopped within timeout, False if timeout exceeded.
+            True if prewarm completed within timeout, False if timeout exceeded.
         """
         if not self._started or self._done:
             return True
 
-        # Signal the thread's event loop to stop
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.call_soon_threadsafe(loop.stop)
-            finally:
-                loop.close()
-        except Exception:  # noqa: BLE001
-            pass
-
-        # Wait for thread to terminate (daemon=True, so will die with process
-        # anyway, but this ensures cleanup completes within teardown window)
+        # Wait for natural completion (daemon thread can't be forcibly stopped)
         return self._done_event.wait(timeout_s)
 
 

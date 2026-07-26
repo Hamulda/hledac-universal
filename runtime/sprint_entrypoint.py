@@ -2084,6 +2084,7 @@ async def run_sprint(
     # STEP 4 F350M-R: Using SprintSchedulerV2 (greenfield rewrite)
     from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
     from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
+    from hledac.universal.runtime.scheduler_v2._v2_init import V2Init
 
     config = SprintSchedulerConfig(
         sprint_duration_s=float(duration_s),
@@ -2102,60 +2103,27 @@ async def run_sprint(
 
     scheduler = SprintSchedulerV2(_config=config, _flags=flags)
 
-    # Sprint F11C: Wire EvidenceLog — fail-safe, M1 8GB safe
-    _elog: EvidenceLog | None = None
-    try:
-        _elog = EvidenceLog(run_id=sprint_id, enable_persist=True)
-        # FIX: EvidenceLog async initialize() MUST be called to start SQLite flush worker.
-        # Without this, events go only to JSONL (sync path) but SQLite/batch write is broken.
-        await _elog.initialize()
-        scheduler.inject_evidence_log(_elog)
-
-        # Sprint F11C: Record WARMUP phase event in EvidenceLog
-        try:
-            _elog.create_event(
-                event_type="observation",
-                payload={
-                    "phase": "WARMUP",
-                    "sprint_id": sprint_id,
-                    "query": query,
-                    "duration_s": duration_s,
-                    "windup_lead_s": config.windup_lead_s,
-                },
-                confidence=1.0,
-            )
-        except Exception:  # noqa: BLE001
-            pass  # fail-safe: evidence events never block sprint
-    except Exception as _elog_err:
-        logger.warning(f"[F11C] EvidenceLog wiring failed (non-fatal): {_elog_err}")
-
-    # Sprint F153: Lifecycle receives explicit runtime params — duration authority propagated
-    _lifecycle = SprintLifecycleManager(
-        sprint_duration_s=float(duration_s),
-        windup_lead_s=config.windup_lead_s,
-    )
-    # ISSUE-008: Declarative injection — replaces 9 hand-written try/except blocks
-    # with a single structured loop.  See runtime/sprint_entrypoint_injections.py.
-    from runtime.sprint_entrypoint_injections import apply_injections
-
-    await apply_injections(
-        scheduler,
-        flags,
+    # A2-3: Unified init via V2Init.run() — replaces:
+    # EvidenceLog init + WARMUP event, SprintLifecycleManager creation,
+    # apply_injections, cancel_event wiring into scheduler.
+    _wall_clock_start = _phase_times.get("WARMUP", _phase_times["BOOT"])
+    _init = V2Init(scheduler)
+    await _init.run(
+        query,
+        _wall_clock_start,
+        ctx=None,  # V2Init builds its own SprintContext
+        cancel_event=_cancel_event,
+        flags=flags,
         sprint_id=sprint_id,
         sprint_duration_s=float(duration_s),
-        windup_lead_s=config.windup_lead_s,
+        windup_lead_s=_windup_lead_s,
         duckdb_store=store,
         rl_train_mode=rl_train_mode,
         logger=logger,
     )
 
-    # E2: Wire sprint cancel_event to EvidenceLog for lifecycle-bound shutdown.
-    # Ensures EvidenceLog workers exit cleanly when sprint lifecycle ends, even if
-    # aclose() is never called explicitly by the lifecycle TEARDOWN phase.
-    scheduler.inject_cancel_event(_cancel_event)
-
-    # F228F CRITICAL: duckdb_store already injected by apply_injections above.
-    # The explicit inject_duckdb_store(store) call is now handled inside apply_injections.
+    # A2-3: Retrieve EvidenceLog from scheduler (injected by V2Init._apply_injections)
+    _elog = scheduler._evidence_log.value if scheduler._evidence_log else None
 
     # Sprint F228F: Pre-run health check — verify critical dependencies
     # SprintScheduler is top architectural chokepoint (degree 398).
@@ -3321,40 +3289,9 @@ async def run_sprint(
 # =============================================================================
 
 
-async def run_ct_pivot(domain: str) -> None:
-    """Run CT log pivot for a single domain."""
-    # Sprint F500I: Lazy import — CTLogClient and TorTransport only needed for CT pivot
-    from hledac.universal.intel.ct_log_client import CTLogClient
-    from hledac.universal.transport.tor_transport import TorTransport
-
-    ct_client = CTLogClient(TOR_ROOT.parent / "cache" / "crt")
-    tor_transport = TorTransport()
-
-    tor_started = await tor_transport.start()
-    if tor_started:
-        logger.info("Tor ready for .onion fetches")
-    else:
-        logger.warning("Tor unavailable — .onion sources disabled")
-
-    try:
-        # F-01: session_pool.httpx() returns shared singleton
-        from hledac.universal.transport.session_pool import session_pool
-        sess = await session_pool.httpx()
-        result = await ct_client.pivot_domain(domain, sess)
-        print(f"\nCT LOG PIVOT: {result['domain']}")
-        print(f"  Cert count:  {result['cert_count']}")
-        print(f"  First cert: {result['first_cert']}")
-        print(f"  Last cert:  {result['last_cert']}")
-        print(f"  SAN domains: {len(result['san_names'])}")
-        for san in result["san_names"][:10]:
-            print(f"    {san}")
-        if result["san_names"] and len(result["san_names"]) > 10:
-            print(f"    ... (+{len(result['san_names']) - 10} more)")
-        print(f"  Issuers: {result['issuers']}")
-    finally:
-        await tor_transport.stop()
-        logger.info("CT pivot done, Tor stopped")
-
+# F350M-R: run_ct_pivot extracted to runtime/ct_pivot.py to break circular import.
+# Re-export from canonical location for backward compat (main() calls this directly).
+from hledac.universal.runtime.ct_pivot import run_ct_pivot
 
 async def run_semantic_pivot(query: str, top_k: int = 10) -> None:
     """

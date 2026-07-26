@@ -374,18 +374,28 @@ class TestSprintM10Coordinator:
         assert coord.get_default_backend() == InferenceBackend.MLX_INPROC
 
     def test_resolve_backend_per_request(self):
-        """_resolve_backend uses request.backend over default."""
+        """_resolve_backend uses request.backend over default.
+
+        A4: MLXCEL is no longer in _DEFAULT_BACKENDS (only MLX_INPROC).
+        When a request requests MLXCEL but it's not registered, _resolve_backend
+        logs a warning and falls back to MLx_inproc.
+        """
         coord = InferenceCoordinator()
         req = InferenceRequest(prompt="test", backend=InferenceBackend.MLXCEL)
         be = coord._resolve_backend(req)
-        assert isinstance(be, MlxcelBackend)
+        assert isinstance(be, MLXInProcBackend)
 
     def test_resolve_backend_env_default(self, mock_env_mlxcel):
-        """_resolve_backend falls back to env default when request.backend is None."""
+        """_resolve_backend falls back to mlx_inproc when MLXCEL not registered.
+
+        A4: Optional backends (mlxcel/coreml) must be explicitly registered.
+        HLEDAC_INFERENCE_BACKEND sets the *default*, but if the backend is not
+        in _backends dict, it still falls back to mlx_inproc.
+        """
         coord = InferenceCoordinator()
         req = InferenceRequest(prompt="test")
         be = coord._resolve_backend(req)
-        assert isinstance(be, MlxcelBackend)
+        assert isinstance(be, MLXInProcBackend)
 
     @pytest.mark.asyncio
     async def test_generate_delegates_to_backend(self, sample_request):

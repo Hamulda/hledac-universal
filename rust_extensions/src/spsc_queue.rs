@@ -76,6 +76,9 @@ pub struct SPSCQueuePair {
     /// Channel sender — lives in main thread (Python).
     /// Exposed to Python via `make_sender()`.
     _internal: InternalPair,
+    /// Stored receiver pointer — set by take_receiver(), retrieved by receiver_ptr().
+    /// Allows the Python adapter to get the pointer AFTER the worker thread starts.
+    _receiver_ptr: Option<usize>,
 }
 
 struct InternalPair {
@@ -168,6 +171,7 @@ impl SPSCQueuePair {
                 receiver: Some(receiver),
                 receiver_taken: false,
             },
+            _receiver_ptr: None,
         }
     }
 
@@ -196,7 +200,16 @@ impl SPSCQueuePair {
         // The receiver is !Send so it MUST stay in the worker thread.
         let receiver = self._internal.receiver.take().expect("receiver already taken");
         let ptr = Box::into_raw(Box::new(receiver));
-        ptr as usize
+        let raw = ptr as usize;
+        self._receiver_ptr = Some(raw);
+        raw
+    }
+
+    /// Return the stored receiver pointer after take_receiver() was called.
+    ///
+    /// Returns 0 if take_receiver() has not been called yet.
+    fn receiver_ptr(&self) -> usize {
+        self._receiver_ptr.unwrap_or(0)
     }
 }
 
@@ -210,6 +223,7 @@ impl SPSCQueuePair {
                 receiver: Some(receiver),
                 receiver_taken: false,
             },
+            _receiver_ptr: None,
         }
     }
 }

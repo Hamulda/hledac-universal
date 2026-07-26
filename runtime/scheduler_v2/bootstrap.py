@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import TYPE_CHECKING, Any
 
 from runtime.scheduler_v2.protocol import InitResult
@@ -48,6 +49,7 @@ class SprintBootstrap:
         self._sidecar_orchestrator: Any = None
         self._lifecycle: Any = None
         self._acquisition_plan: Any = None
+        self._container: Any = None
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -100,6 +102,12 @@ class SprintBootstrap:
         # Update ctx with per-cycle state + services
         # SC-05 FIX: duckdb_store ONLY in with_services() (InitResult-wrapped in SprintContext).
         # NOT in with_cycle() — _CycleState has no duckdb_store field.
+
+        # F350M-R: Register rust.force from env vars into sprint-scoped container.
+        # Resolution priority: env HLEDAC_FORCE_RUST/PYTHON → container → auto-probe.
+        _container = self._build_container()
+        object.__setattr__(self._scheduler, "_container", _container)
+
         _updated_ctx = ctx.with_cycle(
             wall_clock_start=wall_clock_start,
             lifecycle=_lifecycle_mgr,
@@ -114,6 +122,7 @@ class SprintBootstrap:
             evidence_log=_evidence_log,
             runner=_lifecycle_mgr,
             lifecycle=_lifecycle_mgr,
+            container=_container,
         )
         object.__setattr__(self._scheduler, "_ctx", _updated_ctx)
 
@@ -176,7 +185,7 @@ class SprintBootstrap:
             _logging.warning("[scheduler_v2] Governor init failed (%.1fms): %s", _elapsed, e)
             return InitResult.failure(str(e), _elapsed)
 
-    async def _init_hermes_engine(self, query: str) -> InitResult[Any]:
+    async def _init_hermes_engine(self, _query: str) -> InitResult[Any]:
         """Initialize Hermes3Engine (fail-soft)."""
         import time as _t
         import logging as _logging
@@ -214,7 +223,7 @@ class SprintBootstrap:
             _logging.warning("[scheduler_v2] EvidenceLog init failed (%.1fms): %s", _elapsed, e)
             return InitResult.failure(str(e), _elapsed)
 
-    async def _init_sidecar_orchestrator(self, query: str) -> InitResult[Any]:
+    async def _init_sidecar_orchestrator(self, _query: str) -> InitResult[Any]:
         """Initialize SidecarOrchestrator (fail-soft)."""
         import time as _t
         import logging as _logging
@@ -248,3 +257,45 @@ class SprintBootstrap:
                 await _engine.prepare()
         except Exception:
             pass  # fire-and-forget
+
+    # ── Container (A3) ─────────────────────────────────────────────────────────
+
+    def _build_container(self) -> Any:
+        """
+        F350M-R: Build sprint-scoped ServiceContainer with rust.force registered.
+
+        Resolution priority at probe time:
+          1. env HLEDAC_FORCE_RUST=1     → force_rust()
+          2. env HLEDAC_FORCE_PYTHON=1  → force_python()
+          3. container.get('rust.force') → RustForce(python=True/False)
+          4. default                    → auto-probe
+
+        Container is attached to AccelBackend via set_container() so that
+        rust.force is available before first domain access.
+        """
+        from core.container import ServiceContainer
+        from core.rust_backend import RustForce, set_container
+
+        _container = ServiceContainer()
+
+        # Register rust.force from env vars (sprint-scoped override)
+        _force_python_env = os.environ.get("HLEDAC_FORCE_PYTHON", "0") == "1"
+        _force_rust_env = os.environ.get("HLEDAC_FORCE_RUST", "0") == "1"
+        if _force_python_env:
+            _container.register(
+                "rust.force",
+                factory=lambda: RustForce(python=True),
+                scope="singleton",
+            )
+        elif _force_rust_env:
+            _container.register(
+                "rust.force",
+                factory=lambda: RustForce(rust=True),
+                scope="singleton",
+            )
+        # else: rust.force not registered → auto-probe at probe time
+
+        # Wire container into AccelBackend before any domain access
+        set_container(_container)
+
+        return _container

@@ -1,0 +1,1 @@
+git-stash-guard.sh is a synchronous PreToolUse hook that blocks 8 categories of destructive git commands (stash, reset --hard, force push, branch -D, etc.) and recommends using /checkpoint instead, validated by 36 coverage tests.

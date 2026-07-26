@@ -1,0 +1,1 @@
+DuckPGQGraph is an analytics engine (not persistence) providing PGQL path queries, PageRank, and shortest_path operations on DuckDB/Kuzu data within the Storage Trinity architecture.

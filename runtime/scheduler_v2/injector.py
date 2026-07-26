@@ -41,13 +41,33 @@ class Injector:
         """Inject a pre-initialized DuckDBShadowStore.
 
         SC-05 FIX: Single source of truth is ctx.duckdb_store (SprintContext field).
-        Writes to SprintContext via with_services(), NOT to scheduler._duckdb_store
-        (field removed) or _CycleState.with_cycle() (duckdb_store field removed).
-        """
-        from runtime.scheduler_v2.protocol import InitResult
+        Writes to SprintContext via with_services().
 
+        Also sets scheduler._duckdb_store for backward-compat with legacy tests
+        and external code that accesses it directly.
+        """
+        from runtime.scheduler_v2.protocol import InitResult, SprintContext
+
+        # Primary: store in SprintContext (canonical path)
         if scheduler._ctx:
             scheduler._ctx = scheduler._ctx.with_services(duckdb_store=InitResult.success(store, 0.0))
+        else:
+            # Fallback for tests that construct scheduler without run():
+            # Build a minimal SprintContext so duckdb_store is accessible
+            from runtime.scheduler_config import SprintSchedulerConfig
+            from runtime.scheduler_result import SprintSchedulerResult
+
+            minimal_ctx = SprintContext(
+                config=SprintSchedulerConfig(sprint_duration_s=60.0, cycle_sleep_s=10.0),
+                query="test",
+                result=SprintSchedulerResult(),
+                duckdb_store=InitResult.success(store, 0.0),
+            )
+            object.__setattr__(scheduler, "_ctx", minimal_ctx)
+
+        # Backward-compat: also set _duckdb_store directly on scheduler for
+        # legacy code and tests that access it without going through ctx
+        object.__setattr__(scheduler, "_duckdb_store", store)
 
     @staticmethod
     def inject_prefetch_oracle(scheduler: Any, oracle: Any) -> None:

@@ -75,15 +75,15 @@ core = [
 data = [
     "dep:duckdb",
     "arrow_batch_builder",
-    "async_query",
     "graph_traverse",
 ]
 
 
-# graph: Graph analytics (LSH index, hot edges) — no heavy deps, pure Rust
+# graph: Graph analytics (LSH index, hot edges, centrality) — no heavy deps, pure Rust
 graph = [
     "lsh_index",
     "hot_edges",
+    "graph_centrality",
 ]
 
 # advanced: Feed pipeline, federated learning, pattern matching
@@ -120,10 +120,10 @@ feed_decision = []    # Referenced by advanced; #[cfg(feature = "advanced")] in 
 pipeline_compose = [] # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 graph_traverse = []   # Referenced by data
 arrow_batch_builder = []  # Referenced by data
-async_query = []      # Referenced by data
 lsh_index = []        # Referenced by graph
 hot_edges = []         # Deprecated: module is hot_edges_rs, guarded by graph feature
 # NOTE: hot_edges_rs is the actual module name, hot_edges feature is legacy alias
+graph_centrality = [] # Referenced by graph — rayon-based parallel centrality
 duckdb = []           # Referenced by data
 feed_pipeline = []    # Referenced by advanced
 federated_qtable = [] # Referenced by advanced

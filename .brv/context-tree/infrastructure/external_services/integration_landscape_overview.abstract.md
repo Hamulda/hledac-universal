@@ -1,0 +1,1 @@
+External integrations including DuckDB/LMDB/LanceDB storage, MLX/Hermes3 AI, and curl_cffi/httpx/aioquic HTTP are scattered across core/runtime/storage/brain directories with no dedicated docs/integrations/ directory.

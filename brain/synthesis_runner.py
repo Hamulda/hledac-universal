@@ -55,7 +55,7 @@ except ImportError:
     _logger_msgspec.warning("msgspec not installed — JSON constrained generation disabled")
 
 if TYPE_CHECKING:
-    from .model_lifecycle import ModelLifecycle
+    from hledac.universal.core.model_runtime import ModelLifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -481,6 +481,105 @@ OSINT_JSON_SCHEMA: str = _msgspec_encode({
     "required": ["title", "summary", "threat_actors", "findings", "confidence", "timestamp"],
     "additionalProperties": False,
 }).decode()
+
+
+# ---------------------------------------------------------------------------
+# Issue #A5: SynthesisSession async context manager + SynthesisContext dataclass
+# Guarantees SynthesisRunner.cleanup() on all exit paths (exception, success, ImportError)
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class SynthesisContext:
+    """
+    Input context for SynthesisSession.
+
+    Fields:
+        query: Original sprint query string.
+        findings: List of finding dicts to synthesize.
+        lifecycle: Optional ModelLifecycle instance (for explicit unload).
+        force_synthesis: Always run synthesis even if disabled (default True).
+        max_findings: Optional cap on findings passed to synthesis.
+    """
+    query: str
+    findings: list
+    lifecycle: Any = None
+    force_synthesis: bool = True
+    max_findings: int | None = None
+
+
+class SynthesisSession:
+    """
+    Async context manager that wraps SynthesisRunner with guaranteed cleanup.
+
+    Guarantees:
+        - __aexit__ always calls runner.close() regardless of exit path
+        - lifecycle.unload() called before close (ensures MLX cleanup)
+        - Safe when runner was never created (ImportError path)
+
+    Usage:
+        synth_ctx = SynthesisContext(query="...", findings=[...])
+        async with SynthesisSession(synth_ctx) as session:
+            report = await session.synthesize_findings()
+    """
+
+    __slots__ = ("_ctx", "_runner", "_inited")
+
+    def __init__(self, ctx: SynthesisContext) -> None:
+        self._ctx = ctx
+        self._runner: Any = None
+        self._inited: bool = False
+
+    async def __aenter__(self) -> "SynthesisSession":
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        """Guaranteed cleanup — runs even when synthesize_findings raised."""
+        # Always attempt close if runner was injected OR lazily created
+        if self._runner is None:
+            # ImportError path — runner was never created, nothing to close
+            return
+        try:
+            await self._runner.close()  # type: ignore[union-attr]
+        except Exception as e:  # noqa: BLE001
+            pass
+
+    async def synthesize_findings(
+        self,
+        findings: list[dict] | None = None,
+        max_findings: int = 10,
+        force_synthesis: bool = False,
+    ) -> OSINTReport | None:
+        """
+        Lazily initialises runner and proxies to SynthesisRunner.synthesize_findings().
+
+        Args:
+            findings: Override findings list (default: use ctx.findings).
+            max_findings: Max findings to pass (default: 10).
+            force_synthesis: Override force_synthesis (default: False).
+        """
+        if not self._inited:
+            runner = SynthesisRunner(
+                query=self._ctx.query,
+                findings=self._ctx.findings,
+                force_synthesis=self._ctx.force_synthesis,
+            )
+            if self._ctx.lifecycle is not None:
+                runner._lifecycle = self._ctx.lifecycle
+            self._runner = runner
+            self._inited = True
+
+        _findings = findings if findings is not None else self._ctx.findings
+        _max = self._ctx.max_findings if self._ctx.max_findings is not None else max_findings
+
+        return await self._runner.synthesize_findings(
+            self._ctx.query,
+            _findings,
+            max_findings=_max,
+            force_synthesis=force_synthesis,
+        )
 
 
 # Sprint 8VF: flashrank singleton — loaded once, reused across sprint cycles
@@ -1288,7 +1387,8 @@ class SynthesisRunner:
                 await bandit.final_save()
             except Exception:  # noqa: BLE001
                 pass
-        gc.collect()
+        # Note: self._lifecycle.unload() above already calls mlx_cleanup_sync()
+        # which handles gc.collect() → mx.eval([]) → clear_cache() canonically.
 
     # ------------------------------------------------------------------
     # Issue #12.1 + #12.2: Helper methods for parallel discovery + async-safe rerank

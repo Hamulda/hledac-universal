@@ -281,6 +281,8 @@ class SprintContext(msgspec.Struct, frozen=True):
     'Cancellation event — set to cancel the sprint.'
     bg_tasks: set[asyncio.Task[Any]] = msgspec.field(default_factory=set)
     'Set of background asyncio.Task objects tracked by the scheduler.'
+    container: Any = None
+    'F350M-R: ServiceContainer for rust.force and other sprint-scoped services.'
     _cycle: _CycleState = msgspec.field(default_factory=_CycleState)
     'Per-cycle state — see _CycleState docstring.'
 
@@ -295,13 +297,18 @@ class SprintContext(msgspec.Struct, frozen=True):
 
         Convenience accessor for the common case of accessing the live store.
         Returns the store directly or None if not initialized.
+
+        Note: In a msgspec.Struct, a field and property with the same name cause
+        the field to shadow the property (field is returned directly). To handle
+        this, we detect whether the retrieved value is an InitResult (field) or
+        already the raw store (set directly), and unwrap accordingly.
         """
-        # Use object.__getattribute__ to read the 'duckdb_store' field
-        # (not the property) to avoid infinite recursion.
-        _init_result = object.__getattribute__(self, 'duckdb_store')
-        if _init_result is None:
-            return None
-        return _init_result.value if _init_result else None
+        _val = object.__getattribute__(self, 'duckdb_store')
+        # If it's an InitResult, unwrap it; otherwise return as-is (already raw)
+        if isinstance(_val, InitResult):
+            return _val.value if _val else None
+        # Already raw duckdb store (direct injection in tests)
+        return _val
 
     @property
     def is_terminal(self) -> bool:
@@ -319,13 +326,16 @@ class SprintContext(msgspec.Struct, frozen=True):
         """
         return cls(config=config, query=query, result=result, ct_log_client=ct_log_client, graph_service=graph_service)
 
-    def with_services(self, *, duckdb_store: InitResult[Any] | None=None, graph_service: Any=None, hermes_engine: InitResult[Any] | None=None, governor: InitResult[Any] | None=None, evidence_log: InitResult[Any] | None=None, runner: Any=None, lifecycle: Any=None) -> 'SprintContext':
+    def with_services(self, *, duckdb_store: InitResult[Any] | None=None, graph_service: Any=None, hermes_engine: InitResult[Any] | None=None, governor: InitResult[Any] | None=None, evidence_log: InitResult[Any] | None=None, runner: Any=None, lifecycle: Any=None, container: Any=None) -> 'SprintContext':
         """Return a new SprintContext with services initialized (type-safe).
 
         Each service field accepts an InitResult[T] (from fail-soft init) or None.
         Access the live object via result.value when result.ok is True.
+
+        F350M-R: container field wires ServiceContainer into SprintContext for
+        rust.force resolution in AccelBackend.
         """
-        return struct_replace(self, duckdb_store=duckdb_store, graph_service=graph_service, hermes_engine=hermes_engine, governor=governor, evidence_log=evidence_log, runner=runner, lifecycle=lifecycle)
+        return struct_replace(self, duckdb_store=duckdb_store, graph_service=graph_service, hermes_engine=hermes_engine, governor=governor, evidence_log=evidence_log, runner=runner, lifecycle=lifecycle, container=container)
 
     def with_cycle(self, **kwargs: Any) -> 'SprintContext':
         """Return a new SprintContext with updated per-cycle state.

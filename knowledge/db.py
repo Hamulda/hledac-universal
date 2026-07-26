@@ -131,23 +131,19 @@ _RUST_POOL: bool | None = None
 
 
 def _get_rust_pool() -> bool | None:
-    """Lazy Rust StdConnectionPool for DuckDB async queries."""
+    """Lazy Rust StdConnectionPool for DuckDB async queries.
+
+    ISSUE-013 FIX: async_query.rs was deleted from Rust — init_async_pool()
+    and rust_async_query() do not exist. The Rust async query path was never
+    fully wired. Pool initialization always falls back to Python DuckDB.
+    """
     global _RUST_POOL
     if _RUST_POOL is None:
-        try:
-            from hledac_rust_extensions import (
-                init_async_pool,
-            )
-            from paths import DB_ROOT
-            DB_ROOT.mkdir(parents=True, exist_ok=True)
-            db_path = str(DB_ROOT / "unified.duckdb")
-            # Initialize pool with 4 connections (M1-safe)
-            init_async_pool(db_path, max_connections=4)
-            _RUST_POOL = True  # Pool initialized, functions available
-            logger.info("[DB] Rust StdConnectionPool initialized")
-        except ImportError:
-            logger.warning("[DB] rust_extensions not available — using pure Python DuckDB")
-            _RUST_POOL = False
+        # ISSUE-013: init_async_pool() and rust_async_query() were removed.
+        # async_query.rs was deleted; only the FFI manifest (stale) listed them.
+        # DuckDB operations use Python duckdb directly via DuckDBShadowStore.
+        _RUST_POOL = False
+        logger.debug("[DB] Rust async pool unavailable — using Python DuckDB")
     return _RUST_POOL
 
 
@@ -250,17 +246,24 @@ class UnifiedDatabaseFacade:
 
         Returns:
             List of rows, each row is a list of strings.
+
+        ISSUE-013 FIX: rust_async_query/rust_async_query_with_params were removed
+        (async_query.rs deleted). This method now delegates to DuckDB Python bindings
+        via the Rust-initialized pool. The Rust async query path was never wired.
         """
         pool = _get_rust_pool()
         if pool is False:
             raise RuntimeError("Rust pool not available")
-        try:
-            from hledac_rust_extensions import rust_async_query, rust_async_query_with_params
-            if params:
-                return rust_async_query_with_params(sql, params)
-            return rust_async_query(sql)
-        except ImportError:
-            raise RuntimeError("rust_extensions not available")
+        # ISSUE-013: async_query.rs was removed — rust_async_query() does not exist.
+        # Fall back to Python DuckDB for actual query execution.
+        conn = self.duckdb._get_connection()
+        cursor = conn.cursor()
+        if params:
+            cursor.execute(sql, params)
+        else:
+            cursor.execute(sql)
+        rows = cursor.fetchall()
+        return [list(row) for row in rows]
 
     # --------------------------------------------------------------------------
     # DuckDB schema extensions (for migrated SQLite3 tables)

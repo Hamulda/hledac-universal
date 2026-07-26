@@ -31,12 +31,13 @@ pub mod regex_lz4; // LZ4-compressed pattern store for 10k+ patterns
 pub mod content_hasher;
 #[cfg(feature = "core")]
 pub mod crypto_accelerate;
-#[cfg(feature = "advanced")]
+// ISSUE-014: adaptive_scheduler is always compiled — used by always-compiled modules
+// (claims_extraction, health). Previously gated behind advanced feature.
 pub mod adaptive_scheduler;
 #[cfg(feature = "data")]
-pub mod async_query; // ISSUE-013: std::thread + rayon pool pro async Rust DuckDB queries
-#[cfg(feature = "data")]
 pub mod graph_traverse;
+#[cfg(feature = "graph")]
+pub mod graph_centrality;
 #[cfg(feature = "graph")]
 pub mod hot_edges_rs;
 pub mod html_parse;
@@ -55,10 +56,8 @@ pub mod madvise;
 // was never used in production (gpu_batch_keyword_scan was defined but never called).
 // CPU fallback via Aho-Corasick + rayon is sufficient for all workloads.
 pub mod memory;
-pub mod ip_parse;
 pub mod quality_gate;
 pub mod _entropy; // Shared entropy helpers — broken out to avoid circular quality_gate ↔ zero_copy
-pub mod rolling_hash;
 #[cfg(feature = "advanced")]
 pub mod signal_batch;
 #[cfg(feature = "advanced")]
@@ -73,11 +72,9 @@ pub mod feed_decision;
 pub mod feed_pipeline;
 #[cfg(feature = "advanced")]
 pub mod pipeline_compose; // Multi-stage pipeline operators via rayon
-pub mod xml_sanitize;
 pub mod url_engine;
 pub mod url_ops;
 pub mod url_set;
-pub mod xxhash_ext;
 pub mod zero_copy;
 pub mod serde_json_rs;
 #[cfg(feature = "data")]
@@ -88,19 +85,22 @@ pub mod mpsc_pool; // Bounded MPSC pool — replaces asyncio.Queue in evidence_l
 #[cfg(feature = "advanced")]
 pub mod federated_qtable; // ISSUE-23: Rust Q-table with rayon parallel batch updates
 pub mod simd; // ISSUE-023: Modular SIMD — NEON on M1, scalar fallback
-pub mod hnsw; // ISSUE-023: Unified HNSW module — index.rs + py_api.rs
 #[cfg(feature = "advanced")]
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
-#[cfg(feature = "advanced")]
+// dedup_bloom is always compiled — used by health (always compiled).
+// Previously gated behind advanced feature but health.rs calls dedup_bloom::global_stats().
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
 pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
-pub mod circuit_breaker; // ISSUE-5.1: Lock-free per-domain circuit breaker with AtomicU32 + parking_lot::RwLock
+// R23-CB-ARCHIVED: circuit_breaker module kept for reference but NOT compiled.
+// Python transport.circuit_breaker (threading.Lock) is the wired canonical CB.
+// circuit_breaker.rs is NEVER registered and NEVER called — compile-time waste.
+#[cfg(feature = "advanced")]
+pub mod circuit_breaker;
 #[cfg(feature = "data")]
 pub mod aimd_controller; // ISSUE 2.2: Lock-free AIMD controller replacing Python AIMDWindow + _AIMDSlotController
 pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
-pub mod sprint_policies;
 pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
 pub mod pool_run;      // R2: Rayon pool runners — GIL wrappers + channel-based dispatch (consolidated)
@@ -108,7 +108,9 @@ pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptiv
 pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe
 #[cfg(feature = "data")]
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
-pub mod text_similarity; // ISSUE-026: Parallel text similarity clustering for temporal archaeologist
+// ISSUE-026 + R25-DELETE: text_similarity.rs removed — SequenceMatcher in
+// metadata_dedup.py is sufficient for short-field comparison. Rust trigram
+// Jaccard (group_similar_texts) was never wired from Python.
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -565,9 +567,6 @@ fn __abi_version__() -> u32 {
 fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Expose package version for Python-side ABI compatibility checking (F275).
     // CARGO_PKG_VERSION is set by Cargo at compile time from Cargo.toml.
-    m.add_function(wrap_pyfunction!(query_terms::scan_query_context, m)?)?;
-    m.add_function(wrap_pyfunction!(query_terms::extract_payload_context, m)?)?;
-
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(__version_info__, m)?)?;
     // ABI version for backward-compatibility enforcement (ISSUE-040)
@@ -587,7 +586,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // P3-3: ephemeral batch Bloom filter check.
     #[cfg(feature = "bloom")]
     m.add_function(wrap_pyfunction!(bloom::bloom_check_batch, m)?)?;
-    m.add_class::<rolling_hash::RollingHashEngine>()?;
 
     // URL dedup via FNV-1a hashing — both in-memory and mmap-backed
     m.add_class::<url_set::MmapUrlSet>()?;
@@ -625,18 +623,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "graph")]
     lsh_index::register_functions(m)?;
 
-    // xxHash3-64 for non-cryptographic content hashing (dedup keys, cache IDs)
-    m.add_function(wrap_pyfunction!(xxhash_ext::content_hash_64, m)?)?;
-    m.add_function(wrap_pyfunction!(xxhash_ext::content_hash_hex, m)?)?;
-    m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash, m)?)?;
-    m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash_hex, m)?)?;
-    // F7.2: batch SIMD hashing — rayon-parallel for large batches (≥256 items)
-    m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash_parallel, m)?)?;
-    m.add_function(wrap_pyfunction!(xxhash_ext::batch_content_hash_hex_parallel, m)?)?;
-    m.add_function(wrap_pyfunction!(xxhash_ext::double_hash_64, m)?)?;
-    // ISSUE-005: batch_xxh3_64_bytes — zero-copy bytes-in, no UTF-8 decode, >5× pure-Python
-    m.add_function(wrap_pyfunction!(xxhash_ext::batch_xxh3_64_bytes, m)?)?;
-    m.add_class::<xxhash_ext::StreamHasher64>()?;
+    // xxHash3-64 removed — ISSUE-005 batch_xxh3_64_bytes migrated to content_hasher::batch_xxh3_64_hex
 
     // F320: batch xxh3-64 via rayon — parallel prompt cache fingerprinting (Apple Silicon NEON)
     #[cfg(feature = "advanced")]
@@ -652,7 +639,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
-    #[cfg(feature = "advanced")]
+    // adaptive_scheduler is always compiled — no feature gate needed
     adaptive_scheduler::register_functions(m)?;
     rate_limit::register_module(m)?;  // ISSUE #016: NVD token bucket rate limiter
     // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
@@ -755,13 +742,18 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "data")]
     arrow_batch_builder::register(m)?;
 
-    // F350+: LZ4-compressed pattern store for 10k+ patterns (M1 8GB RAM optimization).
-    #[cfg(feature = "advanced")]
-    regex_lz4::register(m)?;
+    // R17 FIX: regex_lz4::register(m) COMMENTED OUT — PyRegexLz4Store class registered
+    // but ZERO Python callers exist. No production path creates or uses this store.
+    // To re-enable: uncomment below (requires HLEDAC_BUILD=advanced).
+    // #[cfg(feature = "advanced")]
+    // regex_lz4::register(m)?;
 
-    // F320+: Lazy parquet reader — paginated Arrow Row-Group iterator.
-    // Enables 100GB+ IOC history reads without OOM on M1 8GB.
-    parquet_reader::register(m)?;
+    // R18 FIX: parquet_reader::register(m) COMMENTED OUT — 5 functions registered
+    // (parquet_get_metadata, parquet_row_group_stats, parquet_read_row_group_ipc,
+    // parquet_iter_all_row_groups, parquet_read_table) but ZERO Python call sites.
+    // Python-side getter functions (_get_parquet_*) existed but were never invoked.
+    // To re-enable: uncomment below (always compiled, no feature gate needed).
+    // parquet_reader::register(m)?;
 
     // R4.1 + R2: Rayon pool runners — GIL wrappers (cpu/io/mixed_pool_run)
     // + channel-based dispatch (rayon_submit_channel/join_channel/abort_channel).
@@ -775,18 +767,25 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // D6: metal_pattern_matcher removed — gpu_batch_keyword_scan() was never called in production.
     // CPU Aho-Corasick fallback in rust ioc_extract/ioc_extract_fast is sufficient.
 
-    // ISSUE-023: Rust HNSW ANN bridge for LanceDB — unified hnsw module.
-    // PyHNSWBridge: entity ID → node ID mapping for LanceDBIdentityStore
-    // PyHNSWIndex: low-level ANN index with save/load for MLX embeddings re-ranking
-    m.add_class::<hnsw::py_api::PyHNSWBridge>()?;
-    m.add_class::<hnsw::py_api::PyHNSWIndex>()?;
+    // R20-ANN-REMOVED: Rust HNSW ANN bridge for LanceDB — ARCHIVED 2026-07-26.
+    // PyHNSWIndex / PyHNSWBridge were NEVER wired to any Python caller (0 imports found).
+    // Active ANN stack: rag_engine.py → HNSWVectorIndex (usearch C++/Metal) + lancedb_store.py → LanceDB IVF_PQ.
+    // Rust hnsw/ module kept as dormant asset; re-add when DuckDB native vector index lands (ISSUE-023).
+    // m.add_class::<hnsw::py_api::PyHNSWBridge>()?;
+    // m.add_class::<hnsw::py_api::PyHNSWIndex>()?;
 
     // R4.4: TinyLFU LRU cache for cross-worker graph results.
     #[cfg(feature = "advanced")]
     m.add_class::<graph_cache::PyGraphLRUCache>()?;
 
+    // F320+: Parallel graph centrality via rayon (B8/B7 Rust acceleration).
+    // batch_centrality_all: all 5 metrics in single pass (degree/betweenness/closeness/eigenvector/pagerank).
+    // betweenness_batch: parallel Brandes for multiple source nodes.
+    #[cfg(feature = "graph")]
+    graph_centrality::register_functions(m)?;
+
     // R4.5: Distribuovaný BloomFilter s Count-Min Sketch.
-    #[cfg(feature = "advanced")]
+    // dedup_bloom is always compiled — no feature gate needed
     m.add_class::<dedup_bloom::PyDistributedBloomFilter>()?;
 
     // Issue #22: Health endpoint
@@ -796,23 +795,22 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Pre-compiled regexes via LazyLock, mixed_pool adaptive threading.
     claims_extraction::register_functions(m)?;
 
-    // ISSUE-5.1: Lock-free per-domain circuit breaker with AtomicU32 + parking_lot::RwLock.
-    // Replaces Python threading.Lock with Rust Atomics for M1 8GB high-concurrency safety.
-    circuit_breaker::register_functions(m)?;
+    // R23-CB-ARCHIVED: circuit_breaker — ARCHIVED 2026-07-26.
+    // R23-ROOT: Python transport/circuit_breaker.py uses threading.Lock (canonical CB — safe
+    // across asyncio.to_thread workers per surface_id=5257). Rust version existed as parallel
+    // alternative but was NEVER called from Python (0 call sites found).
+    // transport.circuit_breaker is the WIRED canonical implementation (fetch_coordinator,
+    // stealth_browser, sprint_entrypoint all use it).
+    // circuit_breaker::register_functions(m)?;
 
     // ISSUE 2.2: Lock-free AIMD controller — single AtomicU64 window,
     // replaces Python AIMDWindow + _AIMDSlotController duplication.
     #[cfg(feature = "data")]
     aimd_controller::register(m)?;
 
-    // ISSUE-026: Parallel text similarity clustering for temporal archaeologist.
-    // Rayon-parallel trigram Jaccard grouping — replaces O(n²) serial _group_similar_snapshots.
-    text_similarity::register_functions(m)?;
-
-    // ISSUE-013: Async Rust DuckDB queries via std::thread + rayon pool.
-    // rust_async_query() se volá z Python asyncio přes asyncio.to_thread().
-    #[cfg(feature = "data")]
-    async_query::register(m)?;
+    // ISSUE-013 + R26-DELETE: async_query.rs removed — IsolatedDuckDBExecutor
+    // (isolated_executors.py) is the single source for DuckDB async queries.
+    // rust_async_query() was never wired from Python.
 
     // ISSUE #014: Multi-stage pipeline operators via rayon — zero-copy Arc<T> between stages.
     // Replaces Python async Queue + dict overhead in sidecar_bus.py for 100+ events/sec.

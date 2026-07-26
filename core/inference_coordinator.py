@@ -422,6 +422,14 @@ class CoreMLBackend(IInferenceBackend):
 
 # ─── InferenceCoordinator ───────────────────────────────────────────────────────
 
+# Lean default: MLXInProc only (M1 8GB optimized).
+# Optional backends (mlxcel, coreml) must be explicitly registered.
+_DEFAULT_BACKENDS: dict[InferenceBackend, IInferenceBackend] = {
+    InferenceBackend.MLX_INPROC: MLXInProcBackend(),
+}
+
+# All registered backends (for explicit registration via backends= parameter).
+# Not used as default — only via explicit registration.
 _BACKENDS: dict[InferenceBackend, IInferenceBackend] = {
     InferenceBackend.MLX_INPROC: MLXInProcBackend(),
     InferenceBackend.MLXCEL: MlxcelBackend(),
@@ -453,15 +461,18 @@ class InferenceCoordinator:
         - Fallback: mlx_inproc (always-on default)
     """
 
-    __slots__ = ('_backends', '_default_backend')
+    __slots__ = ('_backends', '_default_backend', '_prompt_cache')
 
     def __init__(
         self,
         backends: dict[InferenceBackend, IInferenceBackend] | None = None,
         default_backend: InferenceBackend | None = None,
     ) -> None:
-        self._backends = backends or _BACKENDS
+        # Shallow copy — prevents test pollution from shared module-level dict
+        self._backends = dict(backends or _DEFAULT_BACKENDS)
         self._default_backend = default_backend or InferenceBackend.from_env()
+        # A4: Prompt LRU cache — 32 entries, xxh3/sha256 fingerprint
+        self._prompt_cache: OrderedDict[str, InferenceResponse] = OrderedDict()
         logger.info(
             "[IC] InferenceCoordinator initialized — default_backend=%s",
             self._default_backend.value,
@@ -486,20 +497,25 @@ class InferenceCoordinator:
 
     async def generate(self, request: InferenceRequest) -> InferenceResponse:
         """
-        Generate response (blocking) via the selected backend.
+        Generate response via the selected backend.
 
-        Args:
-            request: InferenceRequest with prompt and options
-
-        Returns:
-            InferenceResponse with text, tokens_generated, latency_ms
-
-        Raises:
-            InferenceError: if all backends fail
+        A4: Prompt cache — if same prompt+params were seen before (within the
+        32-entry LRU), return cached response in <5ms without calling the backend.
+        Cache key = xxh3(prompt|temperature|max_tokens|thinking).
         """
+        # A4: Check prompt cache first
+        cache_key = self._make_cache_key(request)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            logger.debug("[IC] prompt cache HIT: %s", cache_key[:20])
+            return cached
+
         be = self._resolve_backend(request)
         try:
-            return await be.generate(request)
+            response = await be.generate(request)
+            # A4: Store in cache (fire-and-forget)
+            self._cache_put(cache_key, response)
+            return response
         except InferenceError:
             raise
         except Exception as exc:
@@ -508,6 +524,54 @@ class InferenceCoordinator:
                 backend=request.effective_backend(),
                 cause=exc,
             ) from exc
+
+    # ─── Prompt Cache (A4) ────────────────────────────────────────────────────
+
+    def _make_cache_key(self, request: InferenceRequest) -> str:
+        """
+        Build xxh3 cache key from prompt + temperature + max_tokens + thinking.
+
+        Uses Rust batch_xxh3_64_bytes if available (zero-copy), otherwise
+        falls back to hashlib.sha256.
+        """
+        sig = f"{request.prompt!r}|{request.temperature}|{request.max_tokens}|{request.thinking}"
+        try:
+            from hledac.universal import rust_extensions
+
+            if hasattr(rust_extensions, "batch_xxh3_64_bytes"):
+                h = rust_extensions.batch_xxh3_64_bytes(sig.encode())
+                return f"xxh3:{h:016x}"
+        except Exception:
+            pass
+        import hashlib
+
+        return f"sha256:{hashlib.sha256(sig.encode()).hexdigest()[:32]}"
+
+    def _cache_get(self, key: str) -> InferenceResponse | None:
+        """LRU cache lookup. O(1) via OrderedDict.move_to_end."""
+        od = self._prompt_cache
+        if key not in od:
+            return None
+        od.move_to_end(key)  # mark as recently used
+        return od[key]
+
+    def _cache_put(self, key: str, response: InferenceResponse) -> None:
+        """LRU cache store with 32-entry bound."""
+        od = self._prompt_cache
+        if key in od:
+            od.move_to_end(key)
+            od[key] = response
+        else:
+            if len(od) >= 32:
+                od.popitem(last=False)  # evict LRU (oldest)
+            od[key] = response
+
+    def cache_stats(self) -> dict[str, Any]:
+        """Return prompt cache statistics."""
+        return {
+            "size": len(self._prompt_cache),
+            "max": 32,
+        }
 
     async def stream(self, request: InferenceRequest) -> AsyncIterator[Token]:
         """
@@ -743,6 +807,33 @@ class ModelPool:
         except Exception:
             pass
         logger.debug(f"[ModelPool] MLX cache cleared ({reason})")
+
+    def __del__(self) -> None:
+        """
+        Destructor — ensures MLX Metal cache is freed when ModelPool is GC'd.
+
+        M7 FIX: When ModelPool is garbage collected (e.g. memory pressure,
+        module reload), Python's refcount releases the model objects, but MLX
+        GPU memory is NOT automatically returned to the Metal allocator without
+        an explicit mx.eval([]) barrier + clear_cache() call.
+
+        This __del__ is fail-safe: swallows all exceptions since finalizers
+        run in an unpredictable state (interpreter shutdown, locks held).
+        GC of the _cache OrderedDict alone does NOT trigger mlx_cleanup_sync().
+        """
+        try:
+            if hasattr(self, "_cache") and self._cache:
+                # Clear cache dict first — this drops Python refs to model objects
+                self._cache.clear()
+                # Then force-eval + clear Metal cache
+                try:
+                    from hledac.universal.utils.mlx_cache import mlx_cleanup_sync
+                    mlx_cleanup_sync()
+                except Exception:
+                    pass
+        except Exception:
+            # Never raise from __del__ — interpreter shutdown is unpredictable
+            pass
 
 
 # Global singleton

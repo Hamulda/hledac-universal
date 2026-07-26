@@ -1,5 +1,33 @@
 //! Claims extraction — CPU-bound sentence splitting, polarity, and confidence.
 //!
+//! ## R22 Status: Deferred Pipeline Integration
+//!
+//! This module IS REGISTERED in lib.rs and COMPILES successfully, but has NO
+//! active Python callers in the current sprint workflow.
+//!
+//! Current state:
+//!   - `claims_coordinator.py` was archived (no active coordinator)
+//!   - `graph_rag._extract_claim()` uses Python SPO parsing (separate implementation)
+//!   - Rust `extract_claims()` provides sentence-level claim extraction with
+//!     polarity/confidence metadata — different purpose than SPO extraction
+//!
+//! Integration path (deferred):
+//!   1. Reactivate or create a claims coordinator that calls Rust extract_claims
+//!   2. Wire batch_extract_claims_python for high-throughput evidence processing
+//!   3. Use Rust claims in GraphRAG for enhanced temporal drift detection
+//!      (add polarity/confidence to drift events)
+//!
+//! ## API
+//!
+//!   extract_claims(text, title, summary, source_type, evidence_type)
+//!     → Vec<(claim_text, polarity, confidence, source, evidence_type)>
+//!
+//!   batch_extract_claims(texts: Vec<(text, title, summary, source_type, evidence_type)>)
+//!     → rayon-parallel for n >= adaptive_threshold or total_bytes >= 16KB
+//!
+//!   batch_extract_claims_python(texts, titles, summaries, source_types, evidence_types)
+//!     → PyO3 zero-copy for Python lists, single GIL acquisition
+//!
 //! Design invariants:
 //!   CLM.T1  No panics, fail-soft on errors
 //!   CLM.T2  Bounded: max text len 100KB, max batch 1000 sentences

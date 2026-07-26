@@ -77,29 +77,26 @@ async def main() -> None:
             continue
 
         try:
+            # Sprint B10 FIX: Batch inference — single GPU kernel launch for all texts.
+            # GLiNER.predict_entities(texts: list[str]) returns list[list[dict]] directly.
+            # Previously: for text in texts: predict_entities(text) — N× kernel launches.
+            batch_results: list[list[dict]] = gliner_model.predict_entities(texts, labels, threshold=threshold)
             results: list[list[dict]] = []
-
-            for text in texts:
-                if not text or not text.strip():
-                    results.append([])
-                    continue
-
-                try:
-                    entities = gliner_model.predict_entities(text, labels, threshold=threshold)
-                    result = [
-                        {
-                            "entity": e.get("text", ""),
-                            "label": e.get("label", ""),
-                            "span": (e.get("start", 0), e.get("end", 0)),
-                            "score": e.get("score", 0.0),
-                        }
-                        for e in entities
-                    ]
-                    results.append(result)
-                except Exception as e:
-                    results.append([{"error": str(e)}])
+            for ent_list in batch_results:
+                results.append([
+                    {
+                        "entity": e.get("text", ""),
+                        "label": e.get("label", ""),
+                        "span": (e.get("start", 0), e.get("end", 0)),
+                        "score": e.get("score", 0.0),
+                    }
+                    for e in ent_list
+                ])
 
             print(json.dumps({"success": True, "results": results}), flush=True)
+
+        except Exception as e:
+            print(json.dumps({"success": False, "error": str(e)}), flush=True)
 
         except Exception as e:
             print(json.dumps({"success": False, "error": str(e)}), flush=True)

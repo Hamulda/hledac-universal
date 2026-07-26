@@ -1,0 +1,1 @@
+DuckDB Shadow Store provides a 3-tier IOC fallback chain and facts hierarchy with DuckPGQGraph for IOC storage, featuring optimized chunk config (1024/4), RemoteParquetSource support, and safe M1 8GB settings via pressure-based thread/memory tuning.

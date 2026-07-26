@@ -187,6 +187,7 @@ dependencies = [
     "debugpy>=1.8.21",
     "pydantic-settings>=2.14.2",
     "structlog>=24.4.0",
+    "cyclopts>=4.22.2",
 ]
 
 [project.optional-dependencies]

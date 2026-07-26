@@ -1,0 +1,1 @@
+KB audit gap status update shows naming conventions and exit codes resolved in CLAUDE.md and test_exit_codes.py, while integrations documentation remains scattered and the empty probe_tests directory needs consolidation or removal.

@@ -25,8 +25,6 @@ import importlib
 import importlib.util
 import os
 import sys
-from importlib import import_module
-from typing import TYPE_CHECKING
 
 # Absolute path to the archived module
 _ARCHIVE_DIR = os.path.join(
@@ -66,10 +64,14 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    """PEP 562: delegate to archived module's dir()."""
-    if _archived_module is None:
-        # Trigger lazy load to get the module
-        __getattr__("__dir__")
+    """PEP 562: delegate to archived module's dir().
+
+    Without the recursion guard, calling dir() on the stub caused:
+        stub.__dir__() → archived.__dir__() → stub.__dir__() → ...
+
+    Fix: collect stub globals (cached re-exports) union archived dir().
+    """
+    names = set(globals().keys())
     if _archived_module is not None:
-        return dir(_archived_module)
-    return []
+        names |= set(dir(_archived_module))
+    return sorted(names)
