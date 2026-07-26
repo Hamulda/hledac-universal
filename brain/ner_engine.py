@@ -85,6 +85,7 @@ class _NERPersistentWorker:
             "_lock",
             "_proc",
             "_reader_task",
+            "_stderr_task",
             "_stderr_buffer",
             "_stdout_reader",
             "_stdin_lock",
@@ -105,6 +106,7 @@ class _NERPersistentWorker:
         self._started = False
         self._ready_event: asyncio.Event | None = None
         self._reader_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
         self._stderr_buffer: list[bytes] = []
         self._stdout_reader: asyncio.StreamReader | None = None
         self._response_queues: dict[int, asyncio.Queue[dict | None]] = {}
@@ -207,7 +209,7 @@ class _NERPersistentWorker:
                     if not self._closed:
                         logger.warning(f"NER worker stdout reader died: {e}")
 
-            asyncio.create_task(_read_stderr())
+            self._stderr_task = asyncio.create_task(_read_stderr())
             self._reader_task = asyncio.create_task(_read_stdout())
 
             # Wait for READY signal with timeout
@@ -237,6 +239,12 @@ class _NERPersistentWorker:
             if self._reader_task:
                 self._reader_task.cancel()
                 self._reader_task = None
+        except Exception:
+            pass
+        try:
+            if self._stderr_task:
+                self._stderr_task.cancel()
+                self._stderr_task = None
         except Exception:
             pass
         try:
@@ -317,6 +325,10 @@ class _NERPersistentWorker:
             self._reader_task.cancel()
             self._reader_task = None
 
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            self._stderr_task = None
+
         if self._proc:
             try:
                 self._proc.terminate()
@@ -333,6 +345,13 @@ class _NERPersistentWorker:
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
             self._reader_task = None
+
+        if self._stderr_task:
+            try:
+                await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self._stderr_task = None
 
         if self._proc:
             try:

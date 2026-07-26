@@ -27,11 +27,34 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any
 import numpy as np
 from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 logger = logging.getLogger(__name__)
+
+# ── Module-level cached ThreadPoolExecutor (SC-09 fix) ────────────────────────
+# Created lazy, shared across all DistillationEngine instances.
+# ThreadPoolExecutor is stateless for this use case — each task calls
+# self._get_chain_embedding which captures only self.embedding_model.
+# Lifecycle: created on first train() call, shutdown at process exit.
+_EMBED_EXECUTOR: ThreadPoolExecutor | None = None
+_EMBED_EXECUTOR_LOCK = Lock()
+
+
+def _get_embed_executor() -> ThreadPoolExecutor:
+    """Return the module-level cached embedding ThreadPoolExecutor."""
+    global _EMBED_EXECUTOR
+    with _EMBED_EXECUTOR_LOCK:
+        if _EMBED_EXECUTOR is None:
+            _EMBED_EXECUTOR = ThreadPoolExecutor(
+                max_workers=2,
+                thread_name_prefix="distill_embed",
+            )
+            logger.debug("[SC-09] Created module-level embed executor")
+        return _EMBED_EXECUTOR
+
 
 # Lazy-loaded mlx.nn module (avoids importing MLX at module load time)
 _mlx_nn_mod: Any = None
@@ -313,10 +336,9 @@ class DistillationEngine:
                 return {'loss': 0.0, 'accuracy': 0.0, 'n_examples': len(examples)}
             logger.info(f'Training on {len(examples)} examples for {n_epochs} epochs')
             loop = asyncio.get_running_loop()
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                embedding_tasks = [loop.run_in_executor(executor, self._get_chain_embedding, example.chain) for example in examples]
-                _emb_result = await parallel(embedding_tasks, policy="log", ctx='distillation_engine:391')
-                embeddings = _emb_result.ok
+            executor = _get_embed_executor()
+            embedding_tasks = [loop.run_in_executor(executor, self._get_chain_embedding, example.chain) for example in examples]
+            embeddings = await parallel(embedding_tasks, policy="log", ctx='distillation_engine:391')
             X_list = embeddings
             y_list = [example.score for example in examples]
             mx = get_mx()

@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 SHODAN_FREE_API: Final[str] = "https://api.shodan.io/shodan/host/search"
 # NOTE: SHODAN_LDNS_API, SHODAN_DNS_API, SHODAN_EXPLOIT_API not wired — future expansion
 SHODAN_RATE_LIMIT_QPH: Final[int] = 10  # queries per hour — update if API plan changes
-RATE_LIMIT_SLEEP: Final[float] = 360.0 / SHODAN_RATE_LIMIT_QPH  # 36s between requests
+RATE_LIMIT_SLEEP: Final[float] = 3600.0 / SHODAN_RATE_LIMIT_QPH  # 360s between requests (1 query/min for free tier)
 
 
 def _normalize_record(host: dict) -> dict:

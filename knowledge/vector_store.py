@@ -52,9 +52,9 @@ class VectorStore:
             return
         self._ensure_directory()
         try:
-            from knowledge.lancedb_pool import get_connection
+            import lancedb
             import pyarrow as pa
-            self._db = get_connection(str(_LANCEDB_ROOT))
+            self._db = lancedb.connect(str(_LANCEDB_ROOT))
             text_schema = pa.schema([pa.field('id', pa.string()), pa.field('vector', pa.list_(pa.float32(), _TEXT_DIM))])
             image_schema = pa.schema([pa.field('id', pa.string()), pa.field('vector', pa.list_(pa.float32(), _IMAGE_DIM))])
             try:

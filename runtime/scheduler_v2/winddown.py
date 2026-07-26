@@ -79,10 +79,10 @@ class WinddownOrchestrator:
             → _graceful_sidecar_shutdown()
             → _close_duckdb()
     """
-    __slots__ = ('_scheduler',)
+    __slots__ = ()
 
-    def __init__(self, scheduler: Any = None) -> None:
-        object.__setattr__(self, '_scheduler', scheduler)
+    def __init__(self) -> None:
+        pass
 
     async def run(self, ctx: Any, lifecycle: Any, query: str) -> WinddownPhaseResult:
         _t_winddown_start = _time.monotonic()

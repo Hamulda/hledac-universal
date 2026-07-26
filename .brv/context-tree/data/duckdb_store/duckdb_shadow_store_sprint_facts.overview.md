@@ -1,0 +1,6 @@
+- DuckDB Shadow Store implements a 3-tier facts hierarchy: (1) Sprint facts (sprint_delta, sprint_scorecard, source_hit_log), (2) Shadow findings (canonical_findings, shadow_runs), (3) Cross-sprint events (temporal_events, append-only)
+- Three independent graph attachment slots exist: _ioc_graph for analytics, _stix_graph for STIX synthesis, and _truth_write_graph for ACTIVE-phase buffered writes
+- F272 removed the DuckDB ioc_graph table; IOC storage now routes through DuckPGQGraph instead
+- Data flow: async_ingest_findings_batch -> graph attachments -> DuckPGQGraph or IOCGraph
+- Key dependencies: DuckPGQGraph for analytics queries, IOCGraph for truth, LanceDB for entity storage
+- ShadowStore project tag references both facts_tiers and graph_slots patterns

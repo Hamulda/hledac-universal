@@ -1,0 +1,6 @@
+- Mozilla neqo Rust QUIC engine integration planned via neqo-http3 crate with rustls TLS
+- Currently pending PyPI availability; stub returns False causing fallback to aioquic
+- Priority platform: arm64 darwin where rustls memory arenas release immediately on drop
+- Rust Connection drop automatically releases memory arenas (no manual cleanup needed)
+- PyO3 exposure: async fn neqo_fetch(url: &str, ...) -> PyResult<Vec<u8>>
+- Import path: from hledac.universal.rust_extensions import neqo_fetch

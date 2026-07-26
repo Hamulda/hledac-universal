@@ -60,11 +60,11 @@ import httpx
 logger = logging.getLogger(__name__)
 MAX_CACHE_SIZE = 1000
 try:
-    from compat.core_http import fetch_json, safe_fetch
+    from transport.http_utils import fetch_json, safe_fetch
     HTTP_UTILS_AVAILABLE = True
 except ImportError:
     HTTP_UTILS_AVAILABLE = False
-    logger.debug('hledac.core.http not available, using direct httpx')
+    logger.debug('transport.http_utils not available, using direct httpx')
 _circuit_breaker_module = None
 
 def _get_circuit_breaker_module():

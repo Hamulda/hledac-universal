@@ -1,0 +1,1 @@
+CycleResult is a frozen msgspec.Struct with 10 fields capturing cycle success, work item counts, branch results (feed/public/CT), and AIMD telemetry for monitoring.

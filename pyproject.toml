@@ -29,7 +29,6 @@ dependencies = [
     # aiohttp REMOVED F4XX: primary transport = curl_cffi (stealth, JA3).
     # httpx handles HTTP/2 natively (h2 bundled internally).
     # Tor/I2P use httpx-socks exclusively (connection_pool_manager.py, tor/i2p_transport).
-    # For development/testing only: uv sync --extra aiohttp-fallback
     "aiofiles>=25.1.0",
     # aioquic removed P1-3: lives in [http3] extra only (~50-80MB resident, M1 8GB opt-in).
     # uvloop 0.22+ (F3.4): Python 3.14+ M1 wheel available since June 2026.
@@ -52,15 +51,16 @@ dependencies = [
     #   (50–150 ms × N requests = 5–15 s overhead at 100+ requests).
     #   API is identical — AsyncProxyTransport.from_url(rdns=) is drop-in across 0.10–0.11.x.
     "httpx-socks>=0.11.0,<0.12.0",
-    # hishel<2.0.0: API stable in 1.x; upper bound prevents 2.x breaking changes
+    # hishel>=0.0.31,<2.0.0: RFC 9111 HTTP response cache — httpx integration for
+    #   browser-like caching (ETag, Last-Modified, Cache-Control). Opt-in via
+    #   HLEDAC_ENABLE_HTTP_CACHE=1. AsyncSqliteStorage backend (aiosqlite dep).
     "hishel>=0.0.31,<2.0.0",
-    "aiosqlite>=0.20.0",  # hishel dependency for AsyncSqliteStorage
+    "aiosqlite>=0.20.0",  # hishel AsyncSqliteStorage backend (RFC 9111 cache store)
     # ── Serialization ─────────────────────────────────────────────────────────
     "orjson>=3.10.0",
     # STABLE 2026-07: msgspec 0.21.1 je nejnovější funkční release pro Py 3.14 cp314t (nogil).
     # Všechna IPC schémata používají Struct(gc=False) pro minimální RAM footprint.
     "msgspec>=0.21.1,<0.22.0",
-    "msgpack>=1.1.2",
     # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
     "tenacity>=9.0.0",
     # ── Storage ───────────────────────────────────────────────────────────────
@@ -76,7 +76,6 @@ dependencies = [
     # Polars 1.43+: improved streaming engine for M1 8GB, streaming collect by default.
     "polars>=1.43.0,<2.0.0",
     "lmdb>=2.2.0",
-    "diskcache>=5.6.0",
     # ── MLX / Apple Silicon ───────────────────────────────────────────────────
     # NOTE: mlx + mlx-lm exact pins come from uv.lock; >= here allows range resolution.
     # MLX_ENABLE_MLX=1 gate in runtime.
@@ -105,7 +104,6 @@ dependencies = [
     "usearch>=2.25.3",
     "datasketch>=1.10.0",
     "python-dotenv>=1.0.0",
-    "cyclopts>=5.0.0a7,<6.0.0; python_full_version >= '3.14'",  # Python 3.14 max
     "rank-bm25>=0.2.2",
     # UPGRADE 2026-07-05: Extended upper bound to <0.20.0 for rustworkx 0.18+ support.
     "rustworkx>=0.17.1,<0.20.0",
@@ -131,6 +129,8 @@ dependencies = [
     "jinja2>=3.1.0",
     "markdown-it-py>=3.0.0",
     # ── Apple frameworks (PyObjC) ─────────────────────────────────────────────
+    # MOD-12: Central lazy import via core/frameworks (PEP 810) — lazy, never at startup.
+    # All deps already have sys_platform == 'darwin' marker.
     "pyobjc-framework-cocoa>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-vision>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-quartz>=12.2; sys_platform == 'darwin'",
@@ -143,7 +143,6 @@ dependencies = [
     "cryptography>=48.0.0",
     "pyzipper>=0.3.6",
     "stem>=1.8.0",
-    "liboqs-python>=0.15.0; platform_machine == 'arm64'",
     # ── Hashing / dedup / Bloom ───────────────────────────────────────────────
     "pyprobables>=0.7.0",
     # xxhash 3.x is stable. 4.x has breaking API changes (module restructure).
@@ -214,12 +213,6 @@ observability = [
     # CPU profiling (dev)
     "py-spy>=0.3.14",
 ]
-# F4XX: Legacy aiohttp fallback — NOT installed by default.
-# Only for development/testing when explicit aiohttp is required.
-# M1 8GB: saves ~25 MB RAM + 80 ms import time in default install.
-aiohttp-fallback = [
-    "aiohttp>=3.11.0",
-]
 # ── Optional ML extras ───────────────────────────────────────────────────────
 # Install with: uv sync --extra ml
 ml = [
@@ -235,6 +228,12 @@ ml = [
     "transformers>=5.10.2",
     # Re-ranker for semantic search
     "flashrank>=0.2.10",
+]
+# diskcache>=5.6.0: safetensors/model weights cache ONLY (LanceDB, embedding downloads).
+# NOT for URL caching — hishel (main deps) handles RFC 9111 HTTP response cache.
+# Namespace separation: diskcache "safetensors" namespace vs hishel "http" namespace.
+ml-diskcache = [
+    "diskcache>=5.6.0",  # safetensors/embedding weights cache (LanceDB, model downloads)
 ]
 # ── mlx-lm Architecture Note (F4XX) ─────────────────────────────────────────
 # WARNING: mlx-lm Python package (installed via [ml] extra above) is intended
@@ -686,7 +685,6 @@ allowed-unresolved-imports = [
     "pyvis",
     "mobileclip", "wasmtime", "spacy",
     "flashrank",
-    "liboqs",
     "gliner2", "gliner",
     "mlx_gliner2",
     "mlx_gliner2",

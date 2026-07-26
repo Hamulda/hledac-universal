@@ -1,0 +1,7 @@
+- Orchestrator supports two execution modes: stable (2-branch: FEED || PUBLIC) and aggressive (3-branch: FEED + PUBLIC + CT in TaskGroup)
+- Branch timeout calculation: max((remaining - _safety_floor) / 3, 5.0)
+- Adaptive max cycles formula: max(50, min(300, int((sprint_duration - windup_lead) / cycle_time_ema)))
+- Cycle flow: run() → check_deadline → pre_windup → drain_patterns → pressure_relief → windup_guard → run_one_cycle
+- AIMD telemetry sourced from ctx._cycle._aimd_telemetry or FetchCoordinator
+- Synthesis sidecar runs in WINDUP phase, gated by HLEDAC_ENABLE_HERMES_SYNTHESIS env variable
+- Windup lead time subtracted from sprint duration for adaptive cycle calculation

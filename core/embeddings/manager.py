@@ -346,11 +346,11 @@ _EMBED_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'mlx_embed'
 _EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _PREWARM_LOCK = threading.Lock()
 
-# F6: Re-export canonical MLXEmbeddingManager from core/mlx_embeddings.py
-# Eliminates duplicate 358-line class copy. Single Metal command queue =
-# no double model loads on M1 8GB. Backward-compat for existing callers.
+# A-07: Re-export canonical MLXEmbeddingManager from core/embeddings/legacy.py
+# Single Metal command queue = no double model loads on M1 8GB.
+# All embedding entry points now converge on one canonical source.
 
-from core.mlx_embeddings import (  # noqa: F401 — re-export for compat
+from core.embeddings.legacy import (  # noqa: F401 — re-export for compat
     MLXEmbeddingManager,
     get_mlx_embedder,
     get_embedding_manager,  # deprecated alias

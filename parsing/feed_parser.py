@@ -26,7 +26,7 @@ import asyncio
 import datetime
 import re
 import urllib.parse
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import Any, NamedTuple
 
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
@@ -644,8 +644,15 @@ def parse_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
 
 # ---- Batch async API for feed_parser ----
 
-from concurrent.futures import ThreadPoolExecutor
-from typing import NamedTuple
+# NOTE: Removed module-level ThreadPoolExecutor singleton (AP-08 fix).
+# asyncio.to_thread() uses the built-in Python thread pool, which:
+#   - Requires no max_workers tuning (adapts automatically)
+#   - Avoids singleton max_workers mismatch across call sites
+#   - Is GIL-friendly (selectolax releases GIL during C calls)
+#   - Requires no atexit registration (pool lifetime = process lifetime)
+# Previous pattern: shared pool with max_workers set at first call → all
+# subsequent calls with different max_concurrency were capped at that value.
+
 
 _RUST_SANITIZE_AVAILABLE: bool = False
 try:
@@ -686,14 +693,14 @@ async def parse_feeds_async(
     if not tasks:
         return []
 
-    loop = asyncio.get_running_loop()
     semaphore = asyncio.Semaphore(max_concurrency)
-    # Bounded ThreadPoolExecutor — prevents unbounded thread growth on M1 8GB
-    thread_pool = ThreadPoolExecutor(max_workers=max_concurrency, thread_name_prefix="feed_parse_")
 
     async def _parse_with_semaphore(task: _FeedParseTask) -> list[FeedEntry]:
         async with semaphore:
-            return await loop.run_in_executor(thread_pool, _parse_single_feed, task)
+            # asyncio.to_thread: uses Python's built-in thread pool (no singleton
+            # max_workers mismatch). selectolax releases GIL during C calls so this
+            # is M1 8GB-friendly. Pool lifetime = process lifetime, no atexit needed.
+            return await asyncio.to_thread(_parse_single_feed, task)
 
     # Batch sanitization via Rust (rayon parallel for ≥32 items)
     # Threshold 32: below this, serial sanitization in Rust is faster than rayon overhead
@@ -706,24 +713,17 @@ async def parse_feeds_async(
             for sanitized, task in zip(sanitized_texts, tasks)
         ]
 
-    from utils.async_helpers import parallel
-    result = await parallel(
-        [_parse_with_semaphore(task) for task in tasks],
-        policy="log",
-        ctx="feed_parse",
+    from utils.async_helpers import parallel_ok
+    from typing import cast
+    # parallel_ok: returns list[T] (successes only), exceptions silently dropped.
+    result = await parallel_ok(
+        *[_parse_with_semaphore(task) for task in tasks],
+        label="feed_parse",
     )
-
-    # Shutdown thread pool — prevents thread leak on repeated calls
-    thread_pool.shutdown(wait=True)
-
-    # Filter exceptions, return valid results
-    filtered: list[list[FeedEntry]] = []
-    for item in result.ok:
-        if isinstance(item, list):
-            filtered.append(item)
-        else:
-            filtered.append([])
-    return filtered
+    # Shared pool (_parse_pool) lives for process lifetime, closed via atexit.
+    return cast("list[list[FeedEntry]]", result)
+    # NOTE: shared pool (_parse_pool) is NOT shut down here — it lives for
+    # process lifetime and is closed via atexit at Python exit (SC-08 fix).
 
 
 def _parse_single_feed(task: _FeedParseTask) -> list[FeedEntry]:

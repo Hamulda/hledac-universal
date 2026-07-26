@@ -1,0 +1,6 @@
+- Hermetic tests using @pytest.fixture fresh_filter for test isolation
+- Tests cover: basic correctness (empty, single, intra-batch dups), filter mutation contract, edge cases, None filter fallback
+- First-seen URL wins ordering; filter.add called exactly once per surviving URL
+- Unparseable URLs kept but not added to filter; normalize=False skips URL normalization
+- Real-world scenario: 3 queries × 30 hosts × 20 pages = 1800 raw URLs collapses to 600 unique
+- Test file: tests/test_f_a5_url_dedup.py

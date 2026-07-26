@@ -1,0 +1,7 @@
+- Hermetic test pattern uses fresh_filter fixture providing per-test RotatingBloomFilterAdapter isolation to prevent singleton state leakage
+- dedupe_url_list returns tuple of (unique_urls, dropped_count) preserving first-seen order with "first wins" semantics
+- normalize=True (default) collapses HTTPS/HTTP and lowercases scheme/host before dedup; normalize=False preserves raw strings
+- Unparseable URLs are KEPT in output but NOT added to filter to prevent filter poisoning
+- None filter fallback performs in-list dedup without mutation; empty strings count as dropped URLs
+- 13 tests organized into 5 sections: Basic correctness (5), Filter mutation contract (2), Edge cases (3), None filter fallback (1), Real-world scenario (1)
+- Real-world test validates 1800 raw URLs from 3 queries producing 600 unique URLs

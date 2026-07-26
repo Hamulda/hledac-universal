@@ -1,0 +1,7 @@
+- DiscoveryResult is a frozen dataclass with slots; fields (query, url, title, snippet, source, source_type) cannot be modified after construction
+- RateLimiter implements token-bucket algorithm with burst_size ceiling and _refill_rate tokens per second replenishment
+- BaseDiscoveryMixin enforces abstract requirements at instantiation: subclasses MUST implement name, source_type, and _do_discover
+- Four discovery adapters with distinct rate limits: DuckDuckGo (60rpm/35s timeout), CRTsh (30rpm/8s), CirclPDNS (30rpm/8s), TVNews (20rpm/15s)
+- Test suite contains 6+ test classes covering frozen invariants, rate limiter behavior, abstract enforcement, and each adapter's health check
+- DuckDuckGoAdapter has 35s timeout (higher than base 8s) due to search API latency
+- Tests require pytest-asyncio with async test decorators for proper async/sync test execution

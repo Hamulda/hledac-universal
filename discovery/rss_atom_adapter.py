@@ -1201,6 +1201,68 @@ def merge_feed_sources(discovered: tuple[FeedDiscoveryHit, ...], seeds: tuple[Fe
             seen_urls[norm] = {'feed_url': hit.feed_url, 'label': label, 'origin': 'discovered', 'priority': 0}
     sorted_items = sorted(seen_urls.values(), key=lambda x: -x['priority'])
     return tuple((MergedFeedSource(feed_url=item['feed_url'], label=item['label'], origin=item['origin'], priority=item['priority']) for item in sorted_items))
+# AP-07: Fan-out orchestrator for runtime RSS/Atom feeds using parallel()
+async def async_fetch_all_runtime_feeds(
+    max_concurrent: int = 5,
+    max_entries_per_feed: int = 20,
+    timeout_s: float = 35.0,
+    max_bytes: int = 2_000_000,
+) -> tuple[FeedBatchResult, ...]:
+    """
+    AP-07 FIX: Fan-out orchestrator for runtime RSS/Atom feeds.
+
+    Fetches all curated_seed feeds from get_runtime_feed_seeds() concurrently
+    using parallel() with max_concurrent limit (default 5).
+
+    Args:
+        max_concurrent: Max concurrent feed fetches (default 5, M1 8GB safe).
+        max_entries_per_feed: Max entries per feed (default 20).
+        timeout_s: Per-feed timeout in seconds (default 35.0).
+        max_bytes: Max bytes per feed (default 2_000_000).
+
+    Returns:
+        Tuple of FeedBatchResult for each feed that was fetched.
+    """
+    from hledac.universal.utils.async_helpers import parallel
+
+    runtime_seeds = get_runtime_feed_seeds()
+
+    async def _fetch_one(seed: FeedSeed) -> FeedBatchResult:
+        try:
+            result = await async_fetch_feed_entries(
+                feed_url=seed.feed_url,
+                max_entries=max_entries_per_feed,
+                timeout_s=timeout_s,
+                max_bytes=max_bytes,
+            )
+            return result
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Fail-safe: return empty result on error
+            return FeedBatchResult(feed_url=seed.feed_url, entries=(), error="fetch_failed")
+
+    # Build coroutine list
+    coros = [_fetch_one(seed) for seed in runtime_seeds]
+
+    # Run with bounded concurrency via parallel()
+    try:
+        build = await parallel(
+            coros,
+            concurrency=max_concurrent,
+            policy="collect",
+            taskgroup=True,
+            ctx="rss_atom:fetch_all_runtime",
+        )
+        ok_results = build.ok
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        ok_results = []
+
+    return tuple(ok_results)
+
+
 from hledac.universal.utils.html_parse_pool import parse_html_links as _parse_html_links
 
 async def parse_html_async(html: str) -> list[dict]:

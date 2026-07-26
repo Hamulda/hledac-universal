@@ -1,0 +1,1 @@
+The acquisition orchestrator runs in stable (2-branch) or aggressive (3-branch) modes with adaptive max cycles calculated from sprint duration, and synthesis runs in the windup phase.

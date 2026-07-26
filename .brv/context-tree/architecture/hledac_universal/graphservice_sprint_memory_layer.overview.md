@@ -1,0 +1,7 @@
+- GraphService is a facade for cross-sprint entity memory with instance-isolated state (_seen_iocs, _seen_rels, _relationship_callbacks)
+- DuckPGQGraph backend is module-level lazy singleton via _get_graph(); module-level facade functions delegate to _DEFAULT_GRAPH_SERVICE
+- F226: Each GraphService instance owns only its instance-isolated state; DuckPGQGraph is shared singleton
+- Issue-5.1: shutdown_graph() properly closes DuckDB connections on termination
+- Constants: MAX_GRAPH_ANALYTICS_NODES=500, MAX_GRAPH_ANALYTICS_TOP_K=10
+- Unknown IOC types set to pending status not rejected (F320 requirement)
+- BUG-5: Must use asyncio.get_running_loop() not run_until_complete() for async fire-and-forget callbacks

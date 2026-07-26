@@ -98,10 +98,10 @@ class LanceDBRAGEngine:
     def _initialize(self) -> None:
         """Initialize LanceDB table synchronously."""
         try:
-            from knowledge.lancedb_pool import get_connection
+            import lancedb
             import pyarrow as pa
             Path(self.uri).parent.mkdir(parents=True, exist_ok=True)
-            self._db = get_connection(self.uri)
+            self._db = lancedb.connect(self.uri)
             self._table = self._db.create_table('documents', schema=pa.schema([pa.field('id', pa.string()), pa.field('content', pa.string()), pa.field('metadata', pa.string()), pa.field('embedding', pa.list_(pa.float32(), list_size=_EMBEDDING_DIM))]), exist_ok=True)
             if self._fts_enabled:
                 try:
@@ -128,7 +128,7 @@ class LanceDBRAGEngine:
             async with self._embedder_lock:
                 if self._embedder is None:
                     try:
-                        from compat.core_mlx_embeddings import get_embedding_manager
+                        from core.mlx_embeddings import get_embedding_manager
                         self._embedder = get_embedding_manager()
                     except Exception as e:
                         logger.debug(f'[LANCEDB:RAG] embedder init failed: {e}')

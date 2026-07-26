@@ -154,7 +154,7 @@ class SemanticStore:
         # This uses mlx_embeddings package via compat/core_mlx_embeddings shim
         self._mlx_embedder = None
         try:
-            from compat.core_mlx_embeddings import get_embedding_manager
+            from core.mlx_embeddings import get_embedding_manager
 
             self._mlx_embedder = get_embedding_manager()
             # Ensure loaded
@@ -182,10 +182,10 @@ class SemanticStore:
 
         # Open LanceDB (primary) — falls back to sqlite-vec on failure
         try:
-            from knowledge.lancedb_pool import get_connection
+            import lancedb
 
             db_path_str = str(self._db_path.expanduser())
-            self._db = get_connection(db_path_str)  # type: ignore[assignment]
+            self._db = lancedb.connect(db_path_str)
         except Exception as e:
             logger.warning("[SEMSTORE] LanceDB connect failed: %s", e)
             self._db = None

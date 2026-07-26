@@ -1,14 +1,14 @@
 ---
 title: HTTP/3 Lane Implementation
-summary: 'Two strategies: curl_cffi_opportunistic (default LRU-cached) + aioquic_stealth (opt-in QUIC). Concurrency cap 3, memory guard 5.5 GiB, Alt-Svc probing.'
+summary: 'HTTP/3 with 3 strategies: curl_cffi_opportunistic, neqo (M1), aioquic fallback, with LRU caching and memory guards'
 tags: []
 related: [architecture/hledac_universal/http_3_lane_and_public_fetcher.md]
 keywords: []
 createdAt: '2026-07-11T19:03:39.552Z'
-updatedAt: '2026-07-11T19:03:39.552Z'
+updatedAt: '2026-07-26T11:19:10.459Z'
 ---
 ## Reason
-Document HTTP/3 lane implementation from abstract context
+Documenting HTTP/3 lane architecture from codebase
 
 ## Raw Concept
 **Task:**
@@ -26,47 +26,31 @@ Document HTTP/3 lane implementation in transport/http3_lane.py
 - fetching/public_fetcher.py
 
 **Flow:**
-request -> detect dark web -> check Alt-Svc cache -> curl_cffi or aioquic -> response
+Alt-Svc detection -> opportunistic HTTP/3 -> neqo/aioquic fallback -> LRU cache
 
-**Timestamp:** 2026-07-11
+**Timestamp:** 2026-07-26
 
 **Patterns:**
-- `^h3[= "']` (flags: i) - Alt-Svc header parsing - accepts h3=, h3 ", h3=
+- `\.onion|\.i2p|\.b32\.i2p` - Dark web TLDs - HTTP/3 never attempted
 
 ## Narrative
 ### Structure
-Two strategies: curl_cffi_opportunistic (default, LRU cached) and aioquic_stealth (opt-in QUIC). Fail-soft invariants: always except Exception, return None on errors.
+Three HTTP/3 strategies: curl_cffi_opportunistic (default), NeqoRustlsTransportAdapter (M1 arm64 darwin), AioquicTransportAdapter (fallback). Cached per host with LRU bounded by M1_BOUNDS.http3_lru_max (512 default).
 
 ### Dependencies
-Requires curl_cffi >= 0.7. aioquic extra adds ~50-80 MB. psutil optional for memory guard.
+curl_cffi >= 0.7, neqo (pending PyPI), aioquic, psutil for RSS memory guard
 
 ### Highlights
-Bounded LRU (512), concurrency cap (3), memory guard (5.5 GiB), Alt-Svc probing. Dark web (.onion/.i2p/.b32.i2p) always skipped.
+Memory guard at 5.5 GiB RSS, max 3 concurrent, 8s timeout, 2s semaphore wait. Speculative Alt-Svc probe fires detached background HEAD probe.
 
 ### Rules
-Rule 1: No bare except: - always except Exception
-Rule 2: aioquic missing -> fall back to curl_cffi
-Rule 3: Any error -> return None, caller continues
-Rule 4: Dark web URLs always skip HTTP/3 lane
-Rule 5: Semaphore wait non-blocking with timeout
+Rule 1: Dark web TLDs (.onion, .i2p, .b32.i2p) never use HTTP/3
+Rule 2: neqo unavailable -> aioquic fallback -> curl_cffi_opportunistic
+Rule 3: No bare except: - always except Exception
+Rule 4: Cache overflow -> LRU eviction O(1) via OrderedDict
+Rule 5: Any error returns None, never propagates
 
 ### Examples
 is_dark_web_url("http://example.onion") -> True, skips H3
 http_version_for_curl_cffi("https://example.com") -> HttpVersion.v3 or None
 fetch_http3_aioquic(url, headers, 8.0) -> bytes | None
-
-## Facts
-- **http3_default_strategy**: curl_cffi_opportunistic strategy is default (no extra deps) [project]
-- **aioquic_extra**: aioquic_stealth requires [http3] extra [project]
-- **http3_cache_max**: LRU cache bounded to 512 entries (M1_BOUNDS.http3_lru_max) [project]
-- **http3_concurrency**: Concurrency capped at 3 (M1_BOUNDS.http3_concurrency_max) [project]
-- **http3_timeout**: Per-request timeout 8.0 seconds [project]
-- **http3_wait_timeout**: Semaphore wait timeout 2.0 seconds [project]
-- **http3_rss_block**: Memory guard at 5.5 GiB (M1_BOUNDS.fetch_soft_ceiling_gb) [project]
-- **http3_env_gate**: HLEDAC_ENABLE_HTTPX_H3=1 enables both strategies [project]
-- **dark_web_tlds**: Dark web TLDS skipped for H3: .onion, .i2p, .b32.i2p [project]
-- **aioquic_memory**: aioquic adds ~50-80 MB resident memory [project]
-- **probe_session**: Alt-Svc probe uses AsyncSession(max_clients=2) [project]
-- **probe_timeout**: Alt-Svc probe timeout 4.0 seconds [project]
-- **max_probe_tasks**: Max 16 concurrent probe tasks (_MAX_PROBE_TASKS) [project]
-- **extract_host_cache**: extract_host uses lru_cache(2048) [project]

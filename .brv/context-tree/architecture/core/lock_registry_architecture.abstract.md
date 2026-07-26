@@ -1,0 +1,1 @@
+The lock registry uses 8-category ascending priority ordering (METRICS→MPC) to prevent deadlocks with constant amortized acquisition time, and lazy-initializes asyncio locks to avoid import-time initialization.

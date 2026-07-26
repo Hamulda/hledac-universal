@@ -266,6 +266,10 @@ def build_runtime(
     configure_memory_for_sprint()
     start_malloc_pressure_relief()
 
+    # O-01: Initialize unified TelemetryContext for this sprint session
+    from hledac.universal.core.telemetry.context_state import init_telemetry_context
+    init_telemetry_context()
+
     # Pre-sprint checks (sync, fail-loud)
     from hledac.universal.core.__main__ import run_pre_sprint_checks
 

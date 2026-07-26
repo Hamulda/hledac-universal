@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 
+# AP-09 fix: batched yields — yield every N iterations instead of every iteration.
+# Rationale: await asyncio.sleep(0) every node creates ~1µs overhead per call.
+# Batched yields amortize the overhead while still yielding to the event loop.
+_YIELD_EVERY_COT = 4   # CoT: yield every 4 steps (typical max_steps 8-20)
+_YIELD_EVERY_TOT = 16  # ToT: yield every 16 child nodes (inner loop granularity)
+
 class ReasoningStrategy(Enum):
     """Available reasoning strategies."""
     CHAIN_OF_THOUGHT = 'cot'
@@ -153,12 +159,18 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         min_confidence = config['min_confidence']
         chain = ReasoningChain(chain_id=f'cot_{int(time.time())}')
         steps = []
+        steps_since_yield = 0
         for i in range(max_steps):
             step = ReasoningStep(step_id=f'step_{i}', description=f'Analysis step {i + 1}', reasoning=f"Based on the query '{query[:50]}...', analyzing aspect {i + 1}", conclusion=f'Conclusion for step {i + 1}', confidence=0.7 + 0.1 * (max_steps - i) / max_steps)
             steps.append(step)
             if step.confidence < min_confidence:
                 break
-            await asyncio.sleep(0)
+            # AP-09 fix: yield every _YIELD_EVERY_COT steps instead of every step.
+            # Typical max_steps=8-20, so this yields 2-5 times vs 8-20 times.
+            steps_since_yield += 1
+            if steps_since_yield >= _YIELD_EVERY_COT:
+                await asyncio.sleep(0)
+                steps_since_yield = 0
         chain.steps = steps
         chain.final_conclusion = steps[-1].conclusion if steps else 'No conclusion'
         chain.overall_confidence = sum((s.confidence for s in steps)) / len(steps) if steps else 0
@@ -175,6 +187,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         leaves = [root]
         best_path = []
         best_value = float('-inf')
+        nodes_since_yield = 0  # AP-09: count across all inner-loop iterations
         for depth in range(max_depth):
             new_leaves = []
             for leaf in leaves:
@@ -185,6 +198,12 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                     leaf.children.append(child.node_id)
                     nodes[child.node_id] = child
                     new_leaves.append(child)
+                    # AP-09 fix: yield every _YIELD_EVERY_TOT nodes in the inner loop
+                    # (vs the original pattern which had no yields at all in ToT).
+                    nodes_since_yield += 1
+                    if nodes_since_yield >= _YIELD_EVERY_TOT:
+                        await asyncio.sleep(0)
+                        nodes_since_yield = 0
                 leaf.expanded = True
             if len(new_leaves) > beam_width:
                 new_leaves.sort(key=lambda n: n.value_estimate, reverse=True)

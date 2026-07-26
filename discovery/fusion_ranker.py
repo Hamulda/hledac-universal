@@ -20,9 +20,75 @@ No numpy/pandas. M1-safe pure Python.
 
 import re
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunsplit as _urlunsplit
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
+
+
+# ---------------------------------------------------------------------------
+# URL normalisation helpers (copied from duckduckgo_adapter to avoid import
+# chain: fusion_ranker → duckduckgo_adapter → circuit_breaker → lock conflict)
+# AP-03: keeps fusion_ranker testable without triggering the lock registry
+# conflict that conftest's hermetic sys.modules cleanup causes.
+# ---------------------------------------------------------------------------
+
+_TRACKING_PARAM_PREFIXES: tuple[str, ...] = (
+    "utm_", "fbclid", "gclid", "msclkid", "dclid", "twclid", "at_",
+    "_ga", "_gl", "mc_cid", "mc_eid", "oly_enc_id", "oly_anon_id",
+    "ref_src", "ref_url", "source",
+)
+
+
+def _is_tracking_param(param: str) -> bool:
+    """Return True if query param is a known tracking/advertising identifier."""
+    p = param.lower()
+    return any(p == prefix or p.startswith(prefix) for prefix in _TRACKING_PARAM_PREFIXES)
+
+
+def _normalize_url_for_dedup(raw_url: str) -> str:
+    """Robust URL normalisation for deduplication (standalone, no external deps)."""
+    if not raw_url:
+        return ""
+    try:
+        parsed = urlparse(raw_url)
+        scheme = parsed.scheme.lower() if parsed.scheme else "https"
+        netloc = (parsed.netloc or "").lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        path = parsed.path
+        while "//" in path:
+            path = path.replace("//", "/")
+        segments = path.split("/")
+        resolved: list[str] = []
+        for seg in segments:
+            if seg == "" or seg == ".":
+                continue
+            if seg == "..":
+                if resolved:
+                    resolved.pop()
+            else:
+                resolved.append(seg)
+        path = ("/" + "/".join(resolved) if resolved else "/").lower()
+        if path.endswith("/") and len(path) > 1:
+            path = path.rstrip("/")
+        raw_params = [p.strip() for p in parsed.query.split("&") if p.strip()]
+        kept_params: list[str] = []
+        for p in raw_params:
+            key = p.split("=", 1)[0] if "=" in p else p
+            if not _is_tracking_param(key):
+                kept_params.append(p.lower())
+        query = "&".join(kept_params)
+        if query == "?":
+            query = ""
+        fragment = ""
+        return _urlunsplit((scheme, netloc, path, query, fragment))
+    except Exception:
+        lower = raw_url.lower()
+        if lower.startswith("www."):
+            lower = lower[4:]
+        if lower.endswith("/") and len(lower) > 1:
+            lower = lower.rstrip("/")
+        return lower
 
 
 # ---------------------------------------------------------------------------

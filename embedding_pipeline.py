@@ -110,7 +110,7 @@ class EmbeddingRouter:
             return mb
         except Exception as e:  # noqa: BLE001 — fail-soft: log and fallback to compat embedder
             logger.debug(f'[EMBED:ROUTER] ModernBERT sync load failed: {e}')
-        from compat.core_mlx_embeddings import get_mlx_embedder
+        from core.mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
 
     async def get_embedder(self):
@@ -131,7 +131,7 @@ class EmbeddingRouter:
             return mb
         except Exception as e:  # noqa: BLE001 — fail-soft: log and fallback to compat embedder
             logger.warning(f'[EMBED:ROUTER] ModernBERT load failed: {e}')
-        from compat.core_mlx_embeddings import get_mlx_embedder
+        from core.mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
 
     async def warmup(self):

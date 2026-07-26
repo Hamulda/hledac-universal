@@ -169,78 +169,14 @@ def _cmd_ct(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     """
-    Build the root ArgumentParser with subcommands.
+    Build the root ArgumentParser — delegates to core.cli.args.build_parser().
 
-    Supports TWO calling conventions:
-      Legacy flat (backward compat):  python -m hledac.universal --sprint 'query' ...
-      Modern subcommand (new):         python -m hledac.universal sprint --sprint 'query' ...
-
-    Architecture:
-        __main__.py:main()  →  this parser  →  dispatch to core.__main__.run_sprint()
-        canonical path: core.__main__.run_sprint() — NOT __main__._run_sprint_mode()
-
-    Dead legacy symbols retained in __main__.py for regression safety:
-        _run_sprint_mode, _run_async_main, run_warmup, _run_public_passive_once,
-        _run_observed_default_feed_batch_once
+    Canonical parser lives in ``core.cli.args.build_parser()``.
+    This function is kept for backward compatibility of existing callers.
     """
-    import argparse as _argparse
+    from hledac.universal.core.cli.args import build_parser as _canonical_build_parser
 
-    parser = _argparse.ArgumentParser(
-        description="Hledac Universal OSINT Runner",
-        add_help=False,
-    )
-
-    # Python 3.14 settings
-    try:
-        parser.suggest_on_error = True
-        parser.color = True
-    except AttributeError:
-        pass
-
-    # ------------------------------------------------------------------
-    # Legacy flat args (backward compat with existing tests + callers)
-    # ------------------------------------------------------------------
-    parser.add_argument("--sprint", metavar="QUERY", help="Run sprint with given query")
-    parser.add_argument("--duration", type=float, default=1800.0, metavar="SECS")
-    parser.add_argument("--windup-lead", type=float, default=None)
-    parser.add_argument("--export-dir", default=str(pathlib.Path.home() / ".hledac" / "reports"))
-    parser.add_argument("--vault", action="store_true")
-    parser.add_argument("--aggressive", action="store_true", default=True)
-    parser.add_argument("--no-aggressive", dest="aggressive", action="store_false")
-    parser.add_argument("--deep-probe", action="store_true")
-    parser.add_argument("--ui", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    parser.add_argument(
-        "--acquisition-profile",
-        type=str,
-        default="default",
-        choices=["default", "nonfeed_diagnostic", "deep_osint_m1"],
-    )
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument(
-        "--preset",
-        type=str,
-        default=None,
-        choices=["minimal", "osint", "recon", "research", "full"],
-    )
-    parser.add_argument("--list-presets", action="store_true")
-    parser.add_argument("--profile", action="store_true", default=False, help="Enable OTEL profiling (Issue #19)")
-
-    # ------------------------------------------------------------------
-    # Subcommands (modern syntax)
-    # ------------------------------------------------------------------
-    subparsers = parser.add_subparsers(dest="_subcommand", title="commands")
-
-    p_sprint = subparsers.add_parser("sprint", help="Run OSINT sprint")
-    _cmd_sprint(p_sprint)
-
-    p_pivot = subparsers.add_parser("pivot", help="Pivot search")
-    _cmd_pivot(p_pivot)
-
-    p_ct = subparsers.add_parser("ct", help="CT (certificate transparency) pivot")
-    _cmd_ct(p_ct)
-
-    return parser
+    return _canonical_build_parser()
 
 
 # --------------------------------------------------------------------------- #

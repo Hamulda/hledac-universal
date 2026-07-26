@@ -45,6 +45,18 @@ def is_providerless_enabled() -> bool:
     return _is_providerless_enabled()
 
 
+# AP-03: Cascade fusion mode — controls how concurrent DDG+HF+WB results are combined.
+#   "first_wins"  = legacy priority-based: DDG first, then HF, then WB (discards 2-of-3)
+#   "fuse_always" = always fuse all 3 via fusion_ranker (best recall)
+#   "fuse_on_empty" = fuse only when primary (DDG) returns empty (hybrid)
+_CASCADE_FUSION_MODE_VALUES = ("first_wins", "fuse_always", "fuse_on_empty")
+
+
+def _get_fusion_mode() -> str:
+    """Return current CASCADE_FUSION_MODE (always-on, call-time check)."""
+    return os.environ.get("CASCADE_FUSION_MODE", "first_wins").strip().lower()
+
+
 # ---------------------------------------------------------------------------
 # Cascade — fused concurrent mode
 # ---------------------------------------------------------------------------
@@ -303,8 +315,35 @@ async def _async_search_sequential(
     hf_r = _coerce(results[1], "historical_frontier", ("historical_frontier",), "historical")
     wb_r = _coerce(results[2], "wayback_cdx", ("wayback_cdx",), "archive")
 
+    # AP-03: Fusion mode — combine results from all 3 concurrent providers
+    # instead of discarding 2-of-3 with first-wins.
+    fusion_mode = _get_fusion_mode()
+
+    if fusion_mode == "fuse_always" or (
+        fusion_mode == "fuse_on_empty" and (not ddg_r.hits or ddg_r.error)
+    ):
+        # Import here to keep lazy import benefits — fusion_ranker already lazy
+        from hledac.universal.discovery.fusion_ranker import fuse_discovery_hits
+
+        provider_results = [ddg_r, hf_r, wb_r]
+        fused = fuse_discovery_hits(provider_results, max_results=max_results)
+
+        if fused.hits:
+            return DiscoveryBatchResult(
+                hits=fused.hits,
+                error=fused.error,
+                fallback_triggered=None,
+                provider_name="fusion",
+                provider_chain=fused.provider_chain,
+                source_family=fused.source_family,
+                elapsed_s=elapsed,
+                error_type=None,
+                provider_status_debug=getattr(fused, "provider_status_debug", None),
+            )
+        # Fusion returned empty — fall through to DHT last-resort
+
+    # Legacy first-wins (CASCADE_FUSION_MODE=first_wins or fuse_on_empty+DDG had hits)
     # Priority-based selection: DDG first, then HF, then WB, then DHT
-    # All providers ran concurrently so no time was wasted on timeouts
     if ddg_r.hits and not ddg_r.error:
         return DiscoveryBatchResult(
             hits=ddg_r.hits, error=ddg_r.error, fallback_triggered=None,

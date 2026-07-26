@@ -507,7 +507,7 @@ class LanceDBIdentityStore:
     async def _initialize_embedder(self) -> bool:
         """Initialize embedder: MLX/GPU → CoreML/ANE → Numpy fallback."""
         try:
-            from compat.core_mlx_embeddings import get_embedding_manager
+            from core.mlx_embeddings import get_embedding_manager
             self._mlx_embed_manager = get_embedding_manager()
             self._embedder = self._mlx_embed_manager
             self._embedder_type = 'mlx_gpu'
@@ -1244,10 +1244,10 @@ class LanceDBIdentityStore:
     def _initialize(self) -> None:
         """Initialize database and table (lazy — lancedb is opt-in via [ml] extra)."""
         try:
-            from knowledge.lancedb_pool import get_connection
+            import lancedb
             import pyarrow as pa
             Path(self.uri).parent.mkdir(parents=True, exist_ok=True)
-            self.db = get_connection(self.uri)
+            self.db = lancedb.connect(self.uri)
             self._table = self.db.create_table('entities', schema=pa.schema([pa.field('id', pa.string()), pa.field('embedding', pa.list_(pa.float32(), list_size=256)), pa.field('aliases', pa.list_(pa.string())), pa.field('first_seen', pa.timestamp('s')), pa.field('last_seen', pa.timestamp('s'))]), exist_ok=True)
             try:
                 list_indices_fn = getattr(self._table, 'list_indices', None)
@@ -1931,8 +1931,7 @@ class LanceDBAcademicStore:
         if db_path is None:
             db_path = str(LMDB_ROOT / 'academic_papers.lance')
         self._db_path = db_path
-        from knowledge.lancedb_pool import get_connection
-        self._db = get_connection(db_path)
+        self._db = lancedb.connect(db_path)
         self._table = None
         self._embedder = None
         self._embedder_backend: str | None = None

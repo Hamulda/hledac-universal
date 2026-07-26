@@ -591,7 +591,7 @@ async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -
     Hash fallback: url+title hash (zero RAM, always works).
     """
     try:
-        from compat.core_mlx_embeddings import get_embedding_manager
+        from core.mlx_embeddings import get_embedding_manager
         mgr = get_embedding_manager()
     except Exception:
         mgr = None
@@ -627,7 +627,7 @@ def rerank_findings_cosine(findings: list[dict], query: str, top_k: int=20) -> l
     Uses MLXEmbeddingManager singleton, fallback: confidence sort.
     """
     try:
-        from compat.core_mlx_embeddings import get_embedding_manager
+        from core.mlx_embeddings import get_embedding_manager
         mgr = get_embedding_manager()
         if mgr is None or not mgr._is_loaded:
             raise RuntimeError('MLXEmbeddingManager unavailable')

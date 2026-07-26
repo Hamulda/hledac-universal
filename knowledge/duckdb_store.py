@@ -3608,7 +3608,7 @@ class DuckDBShadowStore:
             return False
         if self._initialized:
             return True
-        from compat.core_mlx_embeddings import MLXEmbeddingManager
+        from core.mlx_embeddings import MLXEmbeddingManager
 
         _EMBEDDING_DIM = getattr(MLXEmbeddingManager, "EMBEDDING_DIM", 256)
         assert _EMBEDDING_DIM == 256, (

@@ -1,0 +1,1 @@
+The acquisition orchestrator terminates through five exit paths: hard_deadline, stop_requested, lifecycle_abort, max_cycles_reached, or normal terminal completion.

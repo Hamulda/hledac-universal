@@ -72,6 +72,7 @@ _RATE_LIMIT_SLEEP_S = 2.0
 _MAX_HITS = 50
 _COOLDOWN_DEFAULT_S = 300.0
 _MAX_COOLDOWN_KEYS = 64
+_CIRCL_LAST_CALL_TS: float | None = None
 from hledac.universal.security.passive_dns import _is_private_ip
 
 def _parse_pdns_line(line: str):
@@ -124,6 +125,21 @@ def _clear_cooldown(domain: str) -> None:
     """Clear cooldown for a domain on provider success."""
     _pdns_cooldown.pop(_normalize_domain(domain), None)
 
+async def _rate_limit_circl() -> None:
+    """
+    AP-04: Conditional rate limiting for CIRCL PDNS.
+
+    Uses timestamp-based approach: only sleeps if the rate limit window
+    hasn't elapsed since the last call. Pattern mirrors fediverse_adapter.py:93-103.
+    """
+    global _CIRCL_LAST_CALL_TS
+    now = time.monotonic()
+    if _CIRCL_LAST_CALL_TS is not None:
+        elapsed = now - _CIRCL_LAST_CALL_TS
+        if elapsed < _RATE_LIMIT_SLEEP_S:
+            await asyncio.sleep(_RATE_LIMIT_SLEEP_S - elapsed)
+    _CIRCL_LAST_CALL_TS = time.monotonic()
+
 async def async_search_circl_pdns(domain: str, max_results: int=50, timeout_s: float=5.0) -> DiscoveryBatchResult:
     """
     Search CIRCL PDNS for a domain — returns DiscoveryBatchResult.
@@ -157,7 +173,7 @@ async def async_search_circl_pdns(domain: str, max_results: int=50, timeout_s: f
     if in_cooldown:
         elapsed = time.monotonic() - start
         return DiscoveryBatchResult(hits=(), error='cooldown_active', error_type='cooldown_active', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
-    await asyncio.sleep(_RATE_LIMIT_SLEEP_S)
+    await _rate_limit_circl()
     session: httpx.AsyncClient | None = None
     try:
         session = await async_get_httpx_session()
@@ -247,7 +263,7 @@ async def call_circl_pdns(domain: str, timeout_s: float=5.0) -> tuple[DiscoveryB
             outcome = PDNSOutcome(attempted=True, query=domain_norm, result_count=0, error='replay_miss', duration_s=elapsed)
             result = DiscoveryBatchResult(hits=(), error='replay_miss', error_type='replay_miss', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=elapsed)
             return (result, outcome)
-    await asyncio.sleep(_RATE_LIMIT_SLEEP_S)
+    await _rate_limit_circl()
     session: httpx.AsyncClient | None = None
     raw_count = 0
     try:

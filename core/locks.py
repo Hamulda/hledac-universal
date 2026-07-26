@@ -167,7 +167,7 @@ def register_lock(
         category: LockCategory enum — kategorie locku podle funkce
         lock: threading.Lock() nebo threading.RLock() instance
         name: Unikátní identifier ve formátu "module._lock_name"
-              Např. "url_dedup._bloom_lock", "lancedb_pool._registry_lock"
+              Např. "url_dedup._bloom_lock"
 
     Raises:
         ValueError: Pokud lock s tímto name už existuje

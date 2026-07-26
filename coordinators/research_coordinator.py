@@ -210,7 +210,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """Initialize research subsystems with graceful degradation."""
         initialized_any = False
         try:
-            from compat.core_unified_ai_orchestrator import UnifiedAIOrchestrator
+            from brain.unified_research_bridge import UnifiedAIOrchestrator
             self._unified_orchestrator = UnifiedAIOrchestrator()
             if hasattr(self._unified_orchestrator, 'initialize'):
                 await self._unified_orchestrator.initialize()

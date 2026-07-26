@@ -10,11 +10,14 @@ Exports:
 
 from .client import CoreMLClient, CoreMLServiceError
 from .manager import CoreMLServiceManager
-from .models import (
+from .service import (
     BatchPredictRequest,
     BatchPredictResult,
+    ComputeUnit,
     ConvertRequest,
     ConvertResult,
+    EmbedRequest,
+    EmbedResult,
     HealthResult,
     ModelInfo,
     ModelsResult,
@@ -35,4 +38,7 @@ __all__ = [
     "BatchPredictRequest",
     "ModelInfo",
     "ModelsResult",
+    "ComputeUnit",
+    "EmbedRequest",
+    "EmbedResult",
 ]

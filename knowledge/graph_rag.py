@@ -142,7 +142,7 @@ class GraphRAGOrchestrator:
             async with self._embedder_lock:
                 if self._embedder is None:
                     try:
-                        from compat.core_mlx_embeddings import get_mlx_embedder
+                        from core.mlx_embeddings import get_mlx_embedder
                         self._embedder = get_mlx_embedder()
                         logger.debug('[EMBEDDER] graph_rag using shared MLXEmbeddingManager singleton')
                     except Exception as e:

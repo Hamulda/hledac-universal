@@ -55,7 +55,6 @@ logger = logging.getLogger(__name__)
 _sqlite_vec: Any = None
 _lancedb: Any = None
 _pyarrow: Any = None
-_lancedb_pool_get_connection: Any = None
 
 
 def _lazy_import_sqlite_vec() -> Any:
@@ -83,15 +82,6 @@ def _lazy_import_pyarrow() -> Any:
 
         _pyarrow = pa_lib
     return _pyarrow
-
-
-def _lazy_import_lancedb_pool() -> Any:
-    global _lancedb_pool_get_connection
-    if _lancedb_pool_get_connection is None:
-        from knowledge.lancedb_pool import get_connection
-
-        _lancedb_pool_get_connection = get_connection
-    return _lancedb_pool_get_connection
 
 
 # ---------------------------------------------------------------------------
@@ -446,7 +436,7 @@ class LanceDbIndex(VectorIndex):
         - Native FTS for hybrid search
         - Binary signature pre-filter
 
-    Uses LanceDB connection pool (knowledge/lancedb_pool.py).
+    Uses lancedb.connect() directly (LanceDBPool removed — MOD-05).
     """
 
     __slots__ = ("_db_path", "_db", "_table", "_table_name", "_dim", "_lancedb_has_fts", "_closed")
@@ -508,8 +498,8 @@ class LanceDbIndex(VectorIndex):
         if self._table is not None:
             return
 
-        get_conn = _lazy_import_lancedb_pool()
-        self._db = get_conn(str(self._db_path))
+        lancedb = _lazy_import_lancedb()
+        self._db = lancedb.connect(str(self._db_path))
 
         pa = _lazy_import_pyarrow()
 

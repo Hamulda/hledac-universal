@@ -774,3 +774,125 @@ def get_interpreter_stats() -> dict[str, Any]:
         Dict with availability info and pool statistics.
     """
     return {'pep734_available': _interpreters_available, 'python_version': sys.version_info[:2], 'max_interpreters': MAX_INTERPRETERS, 'pools': {'duckdb': {'available': _duckdb_pool.is_available if _duckdb_pool else False, 'pool_size': _duckdb_pool._pool._max_size if _duckdb_pool else 0}, 'mlx': {'available': _mlx_pool.is_available if _mlx_pool else False, 'pool_size': _mlx_pool._pool._max_size if _mlx_pool else 0}, 'evidence': {'available': _evidence_pool.is_available if _evidence_pool else False, 'pool_size': _evidence_pool._pool._max_size if _evidence_pool else 0}}}
+
+
+# ── IsolatedRuntime Factory (MOD-18) ────────────────────────────────────────────────────
+# Unified lazy-init factory for all PEP-734 interpreter pools.
+# Replaces 3 separate get_*_executor() functions with a single entry point.
+
+
+class IsolatedRuntime:
+    """
+    MOD-18: Unified lazy-init factory for PEP-734 isolated interpreter pools.
+
+    Single factory that lazily initializes all 3 executor pools:
+    - duckdb: IsolatedDuckDBExecutor (max_queries=4)
+    - mlx: IsolatedMLXExecutor (max_inference=2)
+    - evidence: IsolatedEvidenceBatchWriter (max_batch_workers=2)
+
+    Thread-safe: all initialization is guarded by a single lock.
+
+    Invariants:
+    - Always-on: no feature flags, available on Python 3.14+
+    - Bounded: each pool capped by MAX_INTERPRETERS
+    - Fail-safe: is_available reflects actual runtime availability
+
+    Use this factory instead of individual get_*_executor() functions.
+    The individual functions remain for backward compatibility.
+    """
+
+    __slots__ = tuple(('_duckdb', '_mlx', '_evidence', '_lock', '_initialized'))
+
+    def __init__(self) -> None:
+        self._duckdb: IsolatedDuckDBExecutor | None = None
+        self._mlx: IsolatedMLXExecutor | None = None
+        self._evidence: IsolatedEvidenceBatchWriter | None = None
+        self._lock = threading.Lock()
+        self._initialized = False
+
+    def _ensure_initialized(self) -> None:
+        """Lazily initialize all pools on first use (thread-safe)."""
+        if self._initialized:
+            return
+        with self._lock:
+            if self._initialized:
+                return
+            self._duckdb = IsolatedDuckDBExecutor()
+            self._mlx = IsolatedMLXExecutor()
+            self._evidence = IsolatedEvidenceBatchWriter()
+            self._initialized = True
+
+    @property
+    def duckdb(self) -> IsolatedDuckDBExecutor:
+        """Get DuckDB executor pool (lazy init)."""
+        self._ensure_initialized()
+        assert self._duckdb is not None
+        return self._duckdb
+
+    @property
+    def mlx(self) -> IsolatedMLXExecutor:
+        """Get MLX inference executor pool (lazy init)."""
+        self._ensure_initialized()
+        assert self._mlx is not None
+        return self._mlx
+
+    @property
+    def evidence(self) -> IsolatedEvidenceBatchWriter:
+        """Get evidence batch writer pool (lazy init)."""
+        self._ensure_initialized()
+        assert self._evidence is not None
+        return self._evidence
+
+    @property
+    def is_available(self) -> bool:
+        """Check if PEP-734 isolated execution is available at runtime."""
+        return _interpreters_available
+
+    def close(self) -> None:
+        """
+        Close all executor pools and release resources.
+
+        Thread-safe: uses lock to prevent concurrent close/initialization.
+        Idempotent: calling close() multiple times is safe.
+        """
+        with self._lock:
+            self._initialized = False
+            if self._duckdb is not None:
+                try:
+                    self._duckdb.close()
+                except Exception:
+                    pass
+                self._duckdb = None
+            if self._mlx is not None:
+                try:
+                    self._mlx.close()
+                except Exception:
+                    pass
+                self._mlx = None
+            if self._evidence is not None:
+                try:
+                    self._evidence.close()
+                except Exception:
+                    pass
+                self._evidence = None
+
+
+# ── Module-level IsolatedRuntime singleton ────────────────────────────────────────────
+
+_isolated_runtime: IsolatedRuntime | None = None
+
+
+def get_isolated_runtime() -> IsolatedRuntime:
+    """
+    Get or create the global IsolatedRuntime singleton.
+
+    MOD-18: Single entry point for all PEP-734 executor pools.
+    Thread-safe lazy initialization.
+
+    Returns:
+        IsolatedRuntime singleton instance.
+    """
+    global _isolated_runtime
+    if _isolated_runtime is None:
+        _isolated_runtime = IsolatedRuntime()
+    return _isolated_runtime

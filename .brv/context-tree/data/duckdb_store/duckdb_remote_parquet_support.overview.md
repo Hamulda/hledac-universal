@@ -1,0 +1,7 @@
+- DuckDB 1.5+ supports remote storage via ATTACH for S3 (CREATE SECRET), HTTPS (LOAD httpfs), Azure, GCS, and Postgres backends
+- RemoteParquetSource class wraps remote access with parameters: uri, source_type, credentials, alias, columns, batch_size, sql_where
+- iter_batches() yields zero-copy Arrow RecordBatches for efficient memory handling
+- to_polars_lazy() enables predicate filter pushdown against remote parquet files
+- iter_batches_async() leverages thread pool for concurrent batch retrieval
+- ParquetHistoryReader extends RemoteParquetSource with time-range filtering capabilities
+- Core dependencies: DuckDB 1.5+, pyarrow, polars

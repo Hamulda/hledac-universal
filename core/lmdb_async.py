@@ -270,6 +270,48 @@ async def lmdb_async_delete(env: Any, key: bytes) -> bool:
     return await asyncio.to_thread(_delete)
 
 
+async def lmdb_async_put_many(
+    env: Any,
+    items: list[tuple[bytes, bytes]],
+) -> int:
+    """
+    Async batch upsert via cursor.put_multi — single write transaction.
+
+    Uses env.begin(write=True) + cursor.put_multi() for optimal LMDB
+    write performance. This is the preferred batch insert method when
+    the Rust backend (lmdb_async_put_batch) is unavailable.
+
+    Args:
+        env: lmdb.Environment instance.
+        items: List of (key, value) tuples to upsert.
+
+    Returns:
+        Number of items written.
+    """
+    if not items:
+        return 0
+
+    if _use_rust_lmdb_async():
+        # Rust path: rayon parallel batch, GIL release
+        return _get_rust_backend().lmdb_async_put_many(env, items)
+
+    # Fallback: asyncio.to_thread() + cursor.put_multi
+    def _put_many() -> int:
+        count = 0
+        try:
+            with env.begin(write=True) as txn:
+                with txn.cursor() as cursor:
+                    for key, value in items:
+                        cursor.put(key, value)
+                        count += 1
+            return count
+        except Exception as exc:
+            logger.debug(f"[lmdb_async] put_many failed: {exc}")
+            return count
+
+    return await asyncio.to_thread(_put_many)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Context manager pro async LMDB environment lifecycle
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,6 +379,7 @@ __all__ = [
     "lmdb_async_put",
     "lmdb_async_get",
     "lmdb_async_put_batch",
+    "lmdb_async_put_many",
     "lmdb_async_get_many",
     "lmdb_async_scan_prefix",
     "lmdb_async_delete",

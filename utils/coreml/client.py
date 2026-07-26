@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any
 import httpx
-from .models import BatchPredictRequest, BatchPredictResult, ComputeUnit, ConvertRequest, ConvertResult, HealthResult, PredictRequest, PredictResult
+from .service import BatchPredictRequest, BatchPredictResult, ComputeUnit, ConvertRequest, ConvertResult, HealthResult, PredictRequest, PredictResult
 from utils.sync_bridge import run_sync_async
 logger = logging.getLogger('coreml-client')
 

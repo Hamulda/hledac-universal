@@ -1,0 +1,7 @@
+- CycleResult is a frozen msgspec.Struct with 10 fields for comprehensive cycle telemetry
+- Core status fields: cycle_ok (bool), empty_work_items (bool), aggressive_mode (bool), error
+- Feed results tuple: (ok: bool, count: int)
+- Public results tuple: (ok: bool, count: int, timeout: bool)
+- CT results tuple: (ok: bool, count: int)
+- AIMD metrics tracked: aimd_window, aimd_successes, aimd_failures
+- Frozen structure ensures immutability for safe cross-thread/cross-process telemetry sharing

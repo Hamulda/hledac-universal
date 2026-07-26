@@ -346,7 +346,7 @@ class SemanticDeduplicator(BaseDeduplicator):
     async def _load_model(self):
         """Load MLXEmbeddingManager first, then sentence-transformers fallback, then hash-based."""
         try:
-            from compat.core_mlx_embeddings import get_embedding_manager
+            from core.mlx_embeddings import get_embedding_manager
             self._embedding_model = get_embedding_manager()
             self._model_loaded = True
             self.logger.info(f'[DEDUP] Using shared MLXEmbeddingManager: {self._embedding_model.model_path}')

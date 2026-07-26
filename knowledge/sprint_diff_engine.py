@@ -321,7 +321,7 @@ class SprintDiffEngine:
 
             # Use MLXEmbeddingManager via compat for entity similarity
             try:
-                from compat.core_mlx_embeddings import get_embedding_manager
+                from core.mlx_embeddings import get_embedding_manager
                 _mgr = get_embedding_manager()
             except Exception:
                 _mgr = None

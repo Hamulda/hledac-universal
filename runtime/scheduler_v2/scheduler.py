@@ -306,7 +306,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             rel_discovery_engine=getattr(self, "_rel_discovery_engine", None),
         )
 
-        _orch = WinddownOrchestrator(scheduler=self)
+        _orch = WinddownOrchestrator()
         await _orch.run(ctx=self._ctx, lifecycle=self._lifecycle, query=query)
 
     # ── Critical inject methods (needed for aclose / tests) ─────────────────

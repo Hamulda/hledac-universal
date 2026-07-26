@@ -217,10 +217,10 @@ class _ANNIndex:
             return False
 
         try:
-            from knowledge.lancedb_pool import get_connection
+            import lancedb
 
             self._db_path.mkdir(parents=True, exist_ok=True)
-            self._db = get_connection(str(self._db_path))
+            self._db = lancedb.connect(str(self._db_path))
 
             # Try to open existing table
             try:

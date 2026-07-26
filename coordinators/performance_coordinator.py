@@ -26,7 +26,7 @@ import msgspec
 from typing import Any
 from weakref import ref
 try:
-    from compat.core_resilience import AgentExecutionError, CircuitBreakerOpenError
+    from hledac.core.resilience import AgentExecutionError, CircuitBreakerOpenError
 except ImportError:
 
     class AgentExecutionError(Exception):

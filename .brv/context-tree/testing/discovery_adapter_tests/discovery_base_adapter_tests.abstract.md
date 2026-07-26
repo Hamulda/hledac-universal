@@ -1,0 +1,1 @@
+Test suite validates DiscoveryResult frozen dataclass invariants, RateLimiter token-bucket algorithm, BaseDiscoveryMixin abstract enforcement, and four adapters (DuckDuckGo/CRTsh/CirclPDNS/TVNews) with distinct rate limits from 20-60rpm.

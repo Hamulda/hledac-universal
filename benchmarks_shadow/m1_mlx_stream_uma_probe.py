@@ -105,7 +105,7 @@ def main():
         sys.exit(1)
 
     try:
-        from compat.core_mlx_embeddings import get_mlx_embedder
+        from core.mlx_embeddings import get_mlx_embedder
 
         manager = get_mlx_embedder()
 

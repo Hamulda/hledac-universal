@@ -102,6 +102,9 @@ class InferenceRequest:
     thinking: bool = True
     adapter_path: str | None = None  # LoRA adapter, mlx_inproc only
     backend: InferenceBackend | None = None  # None = use env default
+    # M-10: Extended fields for constrained generation (xgrammar)
+    logits_processors: list[Any] | None = None  # xgrammar LogitsProcessor for JSON constrained output
+    prompt_tokens: list[int] | None = None  # Pre-tokenized prompt (avoids double encode)
 
     def effective_backend(self) -> InferenceBackend:
         return self.backend or InferenceBackend.from_env()
@@ -188,6 +191,8 @@ class MLXInProcBackend(IInferenceBackend):
                 system_msg=request.system_msg,
                 thinking=request.thinking,
                 adapter_path=request.adapter_path,
+                logits_processors=request.logits_processors,
+                prompt_tokens=request.prompt_tokens,
             )
             latency_ms = (time.monotonic() - t0) * 1000
             return InferenceResponse(

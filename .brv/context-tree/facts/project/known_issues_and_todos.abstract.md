@@ -1,0 +1,1 @@
+Eight tech debt items tracked including evidence_log busy_timeout (1s vs 30s), shodan rate formula (36 vs 360), DuckPGQGraph integration gap, neqo HTTP/3 pending, and unimplemented lock-free counter, acquisition prioritization, social identity detection, and domain filtering.

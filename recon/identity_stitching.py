@@ -1029,34 +1029,27 @@ class IdentityStitchingEngine:
         Get the identity graph with all profiles and matches.
 
         Returns:
-            igraph Graph with identity data (M1-optimized C-core)
+            NetworkX Graph as primary (declared dep); igraph as enhancement when available.
         """
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for graph operations')
         if self._identity_graph is not None:
             return self._identity_graph
-        ig = _get_ig()
-        graph = ig.Graph()
+        import networkx as nx
+        graph = nx.Graph()
         profile_ids_list = list(self._profiles.keys())
-        graph.add_vertices(len(profile_ids_list))
-        for i, profile_id in enumerate(profile_ids_list):
+        graph.add_nodes_from(profile_ids_list)
+        for profile_id in profile_ids_list:
             profile = self._profiles[profile_id]
-            graph.vs[i]['name'] = profile_id
-            graph.vs[i]['primary_name'] = profile.primary_name
-            graph.vs[i]['aliases'] = profile.aliases
-            graph.vs[i]['emails'] = profile.emails
-            graph.vs[i]['platforms'] = list(profile.get_platforms())
-            graph.vs[i]['confidence'] = profile.confidence
-        id_to_idx = {pid: i for i, pid in enumerate(profile_ids_list)}
+            graph.nodes[profile_id]['primary_name'] = profile.primary_name
+            graph.nodes[profile_id]['aliases'] = profile.aliases
+            graph.nodes[profile_id]['emails'] = profile.emails
+            graph.nodes[profile_id]['platforms'] = list(profile.get_platforms())
+            graph.nodes[profile_id]['confidence'] = profile.confidence
         matches = self.find_all_matches()
         for match in matches:
-            a_idx = id_to_idx.get(match.profile_a)
-            b_idx = id_to_idx.get(match.profile_b)
-            if a_idx is not None and b_idx is not None:
-                try:
-                    graph.add_edge(a_idx, b_idx, weight=match.match_score, confidence=match.confidence, signals=match.match_signals)
-                except Exception:
-                    pass
+            if match.profile_a in profile_ids_list and match.profile_b in profile_ids_list:
+                graph.add_edge(match.profile_a, match.profile_b, weight=match.match_score, confidence=match.confidence, signals=match.match_signals)
         self._identity_graph = graph
         self._stats['graphs_built'] += 1
         return graph
@@ -1066,18 +1059,17 @@ class IdentityStitchingEngine:
         Detect communities in the identity graph.
 
         Returns:
-            List of communities (sets of profile IDs) using igraph C-core
+            List of communities (sets of profile IDs) using NetworkX as primary.
         """
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for community detection')
         graph = self.get_identity_graph()
-        if graph.vcount() == 0:
+        if graph.number_of_nodes() == 0:
             return []
-        profile_ids_list = list(self._profiles.keys())
+        import networkx as nx
         communities = []
-        for component in graph.connected_components():
-            comm_set = {profile_ids_list[i] for i in component}
-            communities.append(comm_set)
+        for component in nx.connected_components(graph):
+            communities.append(set(component))
         return communities
 
     def to_entities_and_relationships(self, stitched_identities: list[StitchedIdentity] | None=None) -> tuple[list[Any], list[Any]]:

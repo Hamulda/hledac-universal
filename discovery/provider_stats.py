@@ -13,9 +13,9 @@ Persistence: DuckDB (canonical) or JSON snapshot, env-gated.
 
 No ML hot path. Pure Python. M1-safe.
 """
+import json
 import os
 import msgspec
-import msgspec.json as _json
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -140,9 +140,18 @@ class ProviderStats(msgspec.Struct):
         if total == 0:
             return 1.0
         return self.success_count / total
-PROVIDER_NAMES: tuple[str, ...] = ('ddg_mojeek', 'historical_frontier', 'wayback_cdx', 'feed_pivots', 'ct_pivots', 'commoncrawl_cdx')
-PROVIDER_COST_ESTIMATE: dict[str, float] = {'ddg_mojeek': 800.0, 'historical_frontier': 500.0, 'wayback_cdx': 600.0, 'feed_pivots': 300.0, 'ct_pivots': 400.0, 'commoncrawl_cdx': 1200.0}
-PROVIDER_CAPABILITIES: dict[str, dict[str, object]] = {'ddg_mojeek': {'production_enabled': True, 'is_stub': False, 'requires_context': False}, 'historical_frontier': {'production_enabled': True, 'is_stub': False, 'requires_context': False}, 'wayback_cdx': {'production_enabled': True, 'is_stub': False, 'requires_context': False}, 'commoncrawl_cdx': {'production_enabled': False, 'is_stub': True, 'requires_context': False, 'disabled_reason': 'adapter_not_implemented'}, 'feed_pivots': {'production_enabled': False, 'is_stub': True, 'requires_context': True, 'disabled_reason': 'pipeline_context_not_wired'}, 'ct_pivots': {'production_enabled': True, 'is_stub': False, 'requires_context': False, 'enabled_reason': 'F206AU_crtsh_adapter'}}
+PROVIDER_NAMES: tuple[str, ...] = ('ddg_mojeek', 'historical_frontier', 'wayback_cdx', 'feed_pivots', 'ct_pivots', 'commoncrawl_cdx', 'circl_pdns', 'tvnews')
+PROVIDER_COST_ESTIMATE: dict[str, float] = {'ddg_mojeek': 800.0, 'historical_frontier': 500.0, 'wayback_cdx': 600.0, 'feed_pivots': 300.0, 'ct_pivots': 400.0, 'commoncrawl_cdx': 1200.0, 'circl_pdns': 600.0, 'tvnews': 1500.0}
+PROVIDER_CAPABILITIES: dict[str, dict[str, object]] = {
+    'ddg_mojeek': {'production_enabled': True, 'is_stub': False, 'requires_context': False},
+    'historical_frontier': {'production_enabled': True, 'is_stub': False, 'requires_context': False},
+    'wayback_cdx': {'production_enabled': True, 'is_stub': False, 'requires_context': False},
+    'commoncrawl_cdx': {'production_enabled': False, 'is_stub': True, 'requires_context': False, 'disabled_reason': 'adapter_not_implemented'},
+    'feed_pivots': {'production_enabled': False, 'is_stub': True, 'requires_context': True, 'disabled_reason': 'pipeline_context_not_wired'},
+    'ct_pivots': {'production_enabled': True, 'is_stub': False, 'requires_context': False, 'enabled_reason': 'F206AU_crtsh_adapter'},
+    'circl_pdns': {'production_enabled': True, 'is_stub': False, 'requires_context': False, 'enabled_reason': 'AP-05_wired'},
+    'tvnews': {'production_enabled': True, 'is_stub': False, 'requires_context': False, 'enabled_reason': 'AP-05_wired'},
+}
 
 def is_production_provider(name: str) -> bool:
     """True if provider is production-enabled (not a quarantined stub)."""

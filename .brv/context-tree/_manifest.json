@@ -26,6 +26,20 @@
     },
     {
       "importance": 50,
+      "path": "architecture/core/context.md",
+      "tokens": 55,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/core/lock_registry_architecture.abstract.md",
+      "abstractTokens": 53,
+      "importance": 50,
+      "path": "architecture/core/lock_registry_architecture.md",
+      "tokens": 53,
+      "type": "context"
+    },
+    {
+      "importance": 50,
       "path": "architecture/hledac_universal/10-critical-invariants-govern-system-stability.md",
       "tokens": 364,
       "type": "context"
@@ -55,6 +69,22 @@
       "abstractTokens": 0,
       "importance": 50,
       "path": "architecture/hledac_universal/critical_invariants.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/duckdb_kuzu_dual_graph_architecture.abstract.md",
+      "abstractTokens": 49,
+      "importance": 50,
+      "path": "architecture/hledac_universal/duckdb_kuzu_dual_graph_architecture.md",
+      "tokens": 49,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/graphservice_sprint_memory_layer.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "architecture/hledac_universal/graphservice_sprint_memory_layer.md",
       "tokens": 0,
       "type": "context"
     },
@@ -133,17 +163,63 @@
       "type": "context"
     },
     {
+      "abstractPath": "architecture/runtime/acquisition_cycleresult_structure.abstract.md",
+      "abstractTokens": 41,
+      "importance": 50,
+      "path": "architecture/runtime/acquisition_cycleresult_structure.md",
+      "tokens": 41,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/runtime/acquisition_exit_paths.abstract.md",
+      "abstractTokens": 41,
+      "importance": 50,
+      "path": "architecture/runtime/acquisition_exit_paths.md",
+      "tokens": 41,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/runtime/acquisition_orchestrator_lifecycle.abstract.md",
+      "abstractTokens": 46,
+      "importance": 50,
+      "path": "architecture/runtime/acquisition_orchestrator_lifecycle.md",
+      "tokens": 46,
+      "type": "context"
+    },
+    {
+      "importance": 50,
+      "path": "architecture/runtime/context.md",
+      "tokens": 60,
+      "type": "context"
+    },
+    {
       "importance": 50,
       "path": "architecture/transport_layers/context.md",
       "tokens": 93,
       "type": "context"
     },
     {
+      "abstractPath": "architecture/transport_layers/http_3_configuration_constants.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "architecture/transport_layers/http_3_configuration_constants.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
       "abstractPath": "architecture/transport_layers/http_3_lane_implementation.abstract.md",
-      "abstractTokens": 64,
+      "abstractTokens": 47,
       "importance": 50,
       "path": "architecture/transport_layers/http_3_lane_implementation.md",
-      "tokens": 64,
+      "tokens": 47,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/transport_layers/http_3_neqo_integration_plan.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "architecture/transport_layers/http_3_neqo_integration_plan.md",
+      "tokens": 0,
       "type": "context"
     },
     {
@@ -167,6 +243,14 @@
       "type": "context"
     },
     {
+      "abstractPath": "data/duckdb_store/duckdb_remote_parquet_support.abstract.md",
+      "abstractTokens": 42,
+      "importance": 50,
+      "path": "data/duckdb_store/duckdb_remote_parquet_support.md",
+      "tokens": 42,
+      "type": "context"
+    },
+    {
       "abstractPath": "data/duckdb_store/duckdb_shadow_store.abstract.md",
       "abstractTokens": 61,
       "importance": 50,
@@ -180,6 +264,14 @@
       "importance": 50,
       "path": "data/duckdb_store/duckdb_shadow_store_extended.md",
       "tokens": 63,
+      "type": "context"
+    },
+    {
+      "abstractPath": "data/duckdb_store/duckdb_shadow_store_sprint_facts.abstract.md",
+      "abstractTokens": 51,
+      "importance": 50,
+      "path": "data/duckdb_store/duckdb_shadow_store_sprint_facts.md",
+      "tokens": 51,
       "type": "context"
     },
     {
@@ -205,14 +297,6 @@
       "type": "context"
     },
     {
-      "abstractPath": "data/duckdb_store/issue_032_write_serialization_fix.abstract.md",
-      "abstractTokens": 75,
-      "importance": 50,
-      "path": "data/duckdb_store/issue_032_write_serialization_fix.md",
-      "tokens": 75,
-      "type": "context"
-    },
-    {
       "abstractPath": "data/duckdb_store/query_cache_ioc_extraction.abstract.md",
       "abstractTokens": 48,
       "importance": 50,
@@ -229,49 +313,11 @@
       "type": "context"
     },
     {
-      "abstractPath": "facts/project/configuration_constants.abstract.md",
-      "abstractTokens": 56,
+      "abstractPath": "testing/discovery_adapters/discovery_adapter_tests.abstract.md",
+      "abstractTokens": 0,
       "importance": 50,
-      "path": "facts/project/configuration_constants.md",
-      "tokens": 56,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "facts/project/context.md",
-      "tokens": 67,
-      "type": "context"
-    },
-    {
-      "abstractPath": "facts/project/hashing_facade_issue_2.abstract.md",
-      "abstractTokens": 57,
-      "importance": 50,
-      "path": "facts/project/hashing_facade_issue_2.md",
-      "tokens": 57,
-      "type": "context"
-    },
-    {
-      "abstractPath": "facts/project/hledac_universal_claude_md.abstract.md",
-      "abstractTokens": 59,
-      "importance": 50,
-      "path": "facts/project/hledac_universal_claude_md.md",
-      "tokens": 59,
-      "type": "context"
-    },
-    {
-      "abstractPath": "facts/project/issue_0_2_curl_cffi_caps_invariants.abstract.md",
-      "abstractTokens": 42,
-      "importance": 50,
-      "path": "facts/project/issue_0_2_curl_cffi_caps_invariants.md",
-      "tokens": 42,
-      "type": "context"
-    },
-    {
-      "abstractPath": "facts/project/issue_2_3_rayon_dispatch_channel_fix.abstract.md",
-      "abstractTokens": 54,
-      "importance": 50,
-      "path": "facts/project/issue_2_3_rayon_dispatch_channel_fix.md",
-      "tokens": 54,
+      "path": "testing/discovery_adapters/discovery_adapter_tests.md",
+      "tokens": 0,
       "type": "context"
     },
     {
@@ -281,15 +327,23 @@
       "path": "testing/exit_codes/exit_code_testing.md",
       "tokens": 0,
       "type": "context"
+    },
+    {
+      "abstractPath": "testing/url_dedup/url_deduplication_tests.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "testing/url_dedup/url_deduplication_tests.md",
+      "tokens": 0,
+      "type": "context"
     }
   ],
-  "generated_at": "2026-07-24T21:07:46.105Z",
+  "generated_at": "2026-07-26T11:20:10.811Z",
   "lane_tokens": {
-    "contexts": 3971,
+    "contexts": 3982,
     "stubs": 0,
     "summaries": 1775
   },
-  "source_fingerprint": "a2724b72e101ec38cbbf2327d53ddb24e600127b0bc0832f4c370bc78bf18135",
-  "total_tokens": 5746,
+  "source_fingerprint": "b8a68d7f89d9a6060323c0089d5a0fc1db54872e6ac4bf41e079137a10fb1aa2",
+  "total_tokens": 5757,
   "version": 1
 }

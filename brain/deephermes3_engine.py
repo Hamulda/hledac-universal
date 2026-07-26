@@ -2147,7 +2147,7 @@ class DeepHermes3Engine:
         logger.debug(f'[LoRA] KV cache reduced: {current_size} → {reduced_size} (LoRA active)')
         return {**base_kv_kwargs, 'max_kv_size': reduced_size}
 
-    def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None, adapter_path: str | None=None, prompt_tokens: list[int] | None=None) -> tuple[str, Any]:
+    def _run_inference(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache=None, adapter_path: str | None=None, prompt_tokens: list[int] | None=None, logits_processors: list[Any] | None=None) -> tuple[str, Any]:
         """
         Run MLX inference synchronously in thread pool (Sprint 75).
 
@@ -2190,6 +2190,9 @@ class DeepHermes3Engine:
         from hledac.universal.core.mlx_inference_lock import _get_mlx_inference_lock
 
         generate_kwargs = self._build_generate_kwargs(formatted_prompt, temp, max_tok, prefix_cache, adapter_path=adapter_path, prompt_tokens=prompt_tokens)
+        # M-10: Add logits_processors for constrained JSON generation (xgrammar)
+        if logits_processors:
+            generate_kwargs['logits_processors'] = logits_processors
         # M-01: capture kv_cache for return — needed by caller for session cache store
         kv_cache_after = generate_kwargs.get('prompt_cache')
         _mlx_lock = _get_mlx_inference_lock()
@@ -2373,7 +2376,7 @@ class DeepHermes3Engine:
             return await safe_wait_for(loop.run_in_executor(self._inference_executor, lambda: fn(*args, **kwargs)), timeout=timeout, label='deephermes_executor')
 
     @_otel_instrumented('hermes.generate', component='mlx')
-    async def generate(self, prompt: str, temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, *, thinking: bool=True, adapter_path: str | None=None) -> str:
+    async def generate(self, prompt: str, temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, *, thinking: bool=True, adapter_path: str | None=None, logits_processors: list[Any] | None=None, prompt_tokens: list[int] | None=None) -> str:
         """
         Generovat text pomocí DeepHermes-3.
 
@@ -2389,6 +2392,9 @@ class DeepHermes3Engine:
                           and routes inference through it. KV cache is reduced
                           (8192→4096) to compensate for LoRA Metal SRAM footprint.
                           Pass None to use base model (default).
+            logits_processors: M-10: Optional xgrammar LogitsProcessor list for
+                             constrained JSON generation (e.g., outlines).
+            prompt_tokens: M-03: Pre-tokenized prompt to avoid double encode.
 
         Returns:
             Vygenerovaný text
@@ -2500,7 +2506,8 @@ class DeepHermes3Engine:
             # M-01: _run_inference returns (response, populated_kv_cache)
             # — store the populated cache, NOT the input prefix_cache
             # M-03: Pass prompt_tokens to avoid double encode
-            response, populated_kv = await self._submit_inference(timeout_s, self._run_inference, formatted_prompt, temp, max_tok, prefix_cache, adapter_path, gen_prompt_tokens)
+            # M-10: Pass logits_processors for constrained generation
+            response, populated_kv = await self._submit_inference(timeout_s, self._run_inference, formatted_prompt, temp, max_tok, prefix_cache, adapter_path, gen_prompt_tokens, logits_processors)
             if self._kv_cache_enabled and session_result is None:
                 try:
                     estimated_size = len(formatted_prompt) * 64

@@ -1,0 +1,7 @@
+- LockCategory enum defines 8 priority levels: METRICS(1) → CACHE(2) → CONFIG(3) → NETWORK(4) → CURSOR(5) → GRAPH(6) → WAL(7) → MPC(8)
+- Ascending acquisition order prevents cyclic dependencies and ensures constant amortized acquisition time
+- AsyncLockDCLP uses lazy initialization pattern - asyncio.Lock() created only after threading.Lock check
+- CRITICAL ISSUE-014: Never acquire asyncio.Lock() at module import time to prevent initialization race conditions
+- Rule: All locks within a group must share the same category for correct ordering
+- Recommended: Use Rust AtomicCounter (issue #5) for high-frequency lock-free counters
+- Key methods: register_lock() → acquire_in_order() → deadlock-free parallel acquisition

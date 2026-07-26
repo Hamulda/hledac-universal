@@ -451,3 +451,7 @@ class UmaWatchdog:
     def last_fired_level(self) -> str:
         """Return the last level that triggered a callback."""
         return self._last_fired_level
+
+
+# Canonical alias: Watchdog = UmaWatchdog (A-01 compat migration)
+Watchdog = UmaWatchdog

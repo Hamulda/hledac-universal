@@ -1,22 +1,19 @@
 """
-MessagePack serialization for LMDB storage.
+Serialization utilities for LMDB storage and data exchange.
 Sprint 45: High-performance binary serialization.
 Sprint 79a: orjson storage serialization with hash-chain compatibility.
+MOD-14: Replaced msgpack with orjson (zero-copy, native numpy support).
 """
 
 
 import json
 from typing import Any
 
-import msgpack
+import orjson
 import numpy as np
 
-try:
-    import orjson
-
-    ORJSON_AVAILABLE = True
-except ImportError:
-    ORJSON_AVAILABLE = False
+# orjson is always available - it's a core dependency
+ORJSON_AVAILABLE = True
 
 
 # ============================================================================
@@ -44,110 +41,68 @@ def serialize_canonical(obj: Any) -> bytes:
 
 
 # ============================================================================
-# Storage serialization (optimized with orjson, fallback to json)
+# Storage serialization (optimized with orjson - native numpy support)
 # ============================================================================
 
-if ORJSON_AVAILABLE:
-    # OPT_SORT_KEYS pro determinismus, OPT_APPEND_NEWLINE pro .jsonl formát
-    ORJSON_OPTIONS = orjson.OPT_SORT_KEYS | orjson.OPT_APPEND_NEWLINE
+# OPT_SORT_KEYS pro determinismus, OPT_APPEND_NEWLINE pro .jsonl formát
+ORJSON_STORAGE_OPTIONS = orjson.OPT_SORT_KEYS | orjson.OPT_APPEND_NEWLINE
 
-    def serialize_storage(obj: Any) -> bytes:
-        """
-        Serializace pro zápis do souboru (optimalizovaná orjson).
 
-        Args:
-            obj: Any serializable data
+def serialize_storage(obj: Any) -> bytes:
+    """
+    Serializace pro zápis do souboru (optimalizovaná orjson).
 
-        Returns:
-            UTF-8 encoded bytes with newline
-        """
-        return orjson.dumps(obj, option=ORJSON_OPTIONS)
+    Args:
+        obj: Any serializable data
 
-    def deserialize_storage(data: bytes | str) -> dict[str, Any]:
-        """
-        Deserializace dat ze souboru.
+    Returns:
+        UTF-8 encoded bytes with newline
+    """
+    return orjson.dumps(obj, option=ORJSON_STORAGE_OPTIONS)
 
-        Args:
-            data: bytes or str from file
 
-        Returns:
-            Decoded Python dict
-        """
-        return orjson.loads(data)
+def deserialize_storage(data: bytes | str) -> dict[str, Any]:
+    """
+    Deserializace dat ze souboru.
 
-else:
+    Args:
+        data: bytes or str from file
 
-    def serialize_storage(obj: Any) -> bytes:
-        """Fallback na json pro zápis."""
-        return json.dumps(
-            obj,
-            sort_keys=True,
-            separators=(',', ':'),
-            ensure_ascii=False,
-            default=str
-        ).encode('utf-8')
-
-    def deserialize_storage(data: bytes | str) -> dict[str, Any]:
-        """Fallback deserializace."""
-        if isinstance(data, bytes):
-            data = data.decode('utf-8')
-        return json.loads(data)
+    Returns:
+        Decoded Python dict
+    """
+    return orjson.loads(data)
 
 
 # ============================================================================
-# Original MessagePack functions (unchanged)
+# Binary serialization (optimized with orjson - native numpy support)
 # ============================================================================
 
 
 def pack(data: Any) -> bytes:
     """
-    Pack data with MessagePack, handle numpy arrays.
+    Pack data with orjson (native numpy support).
 
     Args:
         data: Any serializable data (dicts, lists, numpy arrays, primitives)
 
     Returns:
-        MessagePack encoded bytes
+        orjson encoded bytes
     """
-    return msgpack.packb(data, default=_encode_numpy)
+    return orjson.dumps(data, option=orjson.OPT_SERIALIZE_NUMPY)
 
 
 def unpack(data: bytes) -> Any:
     """
-    Unpack MessagePack data.
+    Unpack orjson data.
 
     Args:
-        data: MessagePack encoded bytes
+        data: orjson encoded bytes
 
     Returns:
         Decoded Python objects
     """
-    return msgpack.unpackb(data, object_hook=_decode_numpy)
-
-
-def _encode_numpy(obj: Any) -> Any:
-    """Encode numpy arrays to MessagePack-compatible format."""
-    if isinstance(obj, np.ndarray):
-        return {
-            '__numpy__': True,
-            'dtype': str(obj.dtype),
-            'shape': obj.shape,
-            'data': obj.tobytes().hex()  # Use hex for safe binary encoding
-        }
-    if isinstance(obj, np.integer):
-        return int(obj)
-    if isinstance(obj, np.floating):
-        return float(obj)
-    raise TypeError(f"Object of type {type(obj)} not serializable")
-
-
-def _decode_numpy(obj: dict) -> Any:
-    """Decode numpy arrays from MessagePack format."""
-    if '__numpy__' in obj:
-        data = bytes.fromhex(obj['data'])
-        arr = np.frombuffer(data, dtype=obj['dtype'])
-        return arr.reshape(obj['shape'])
-    return obj
+    return orjson.loads(data)
 
 
 # Sprint 45: Test helper functions
@@ -155,5 +110,5 @@ def estimate_size_reduction(data: dict) -> float:
     """Estimate size reduction compared to JSON."""
     import json
     json_size = len(json.dumps(data, default=str).encode())
-    msgpack_size = len(pack(data))
-    return msgpack_size / json_size if json_size > 0 else 1.0
+    packed_size = len(pack(data))
+    return packed_size / json_size if json_size > 0 else 1.0

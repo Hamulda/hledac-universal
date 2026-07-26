@@ -142,7 +142,7 @@ async def run_windup(
     all_findings = getattr(scheduler, "_all_findings", [])
     deduped = all_findings
     try:
-        from compat.core_mlx_embeddings import get_embedding_manager
+        from core.mlx_embeddings import get_embedding_manager
         from brain.ane_embedder import semantic_dedup_findings
         if all_findings:
             deduped = await semantic_dedup_findings(all_findings)

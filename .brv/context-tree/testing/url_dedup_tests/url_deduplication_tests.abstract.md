@@ -1,0 +1,1 @@
+Hermetic test suite verifies RotatingBloomFilterAdapter isolation via fresh_filter fixture, validates dedupe_url_list returns (unique_urls, dropped_count), and confirms unparseable URLs are kept without poisoning filter.

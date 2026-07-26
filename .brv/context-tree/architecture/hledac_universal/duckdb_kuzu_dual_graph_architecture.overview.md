@@ -1,0 +1,6 @@
+- Dual-graph architecture: IOCGraph (KuzuDB) serves as authoritative truth store, DuckPGQGraph (DuckDB) serves as analytics donor
+- GraphService acts as sprint memory layer seam between truth store and analytics donor
+- F272 changes: DuckDB ioc_graph table removed, IOC storage migrated to DuckPGQGraph, 3 independent locking strategies unified
+- DuckPGQGraph now handles buffer_ioc(), flush_buffers(), export_stix_bundle() operations
+- Additional dependencies: LanceDB for vector search, LMDB for hot-edges cache
+- Related architecture docs: sidecar_protocol_registry.md and duckpgqgraph_api.md

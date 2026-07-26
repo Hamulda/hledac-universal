@@ -1,0 +1,1 @@
+DuckDB Shadow Store implements a 3-tier facts hierarchy (sprint facts, shadow findings, cross-sprint events) with 3 independent graph attachment slots for analytics, STIX synthesis, and buffered writes.

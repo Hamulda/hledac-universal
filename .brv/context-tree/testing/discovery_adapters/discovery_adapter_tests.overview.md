@@ -1,0 +1,6 @@
+- TestDiscoveryResult validates frozen dataclass immutability and default values with __slots__
+- TestRateLimiter tests token bucket algorithm via async acquire() method
+- TestBaseDiscoveryMixinAbstractEnforcement ensures abstract class enforcement
+- Four concrete adapters tested: DuckDuckGo (60rpm), CRTsh (30rpm), CirclPDNS (30rpm), TVNews (20rpm)
+- Test file: tests/test_discovery_base.py using pytest.mark.asyncio and pytest.raises
+- DiscoveryResult is frozen dataclass, RateLimiter uses token bucket pattern

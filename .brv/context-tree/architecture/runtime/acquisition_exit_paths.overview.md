@@ -1,0 +1,7 @@
+- Five exit paths from acquisition orchestrator lifecycle
+- hard_deadline: _check_hard_deadline() returns False, indicating sprint time expired
+- stop_requested: ctx._stop_requested flag set by external coordinator
+- lifecycle_abort: _runner.abort_requested triggered for graceful shutdown
+- max_cycles_reached: cycles_started >= effective_max_cycles (adaptive calculation)
+- terminal: normal completion when all work items processed
+- effective_max_cycles uses same adaptive formula as orchestrator: max(50, min(300, int((sprint_duration - windup_lead) / cycle_time_ema)))

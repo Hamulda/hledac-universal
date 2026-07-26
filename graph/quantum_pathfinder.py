@@ -1704,8 +1704,8 @@ class DuckPGQGraph:
         if not values:
             return None
         try:
-            from knowledge.lancedb_pool import get_connection
-            ldb = get_connection("~/.hledac/lancedb")
+            import lancedb
+            ldb = lancedb.connect("~/.hledac/lancedb")
             if ldb is None:
                 logger.debug('[GRAPH] LanceDB unavailable for embedding fetch')
                 return None

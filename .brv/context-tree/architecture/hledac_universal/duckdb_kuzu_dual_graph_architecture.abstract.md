@@ -1,0 +1,1 @@
+Dual-graph architecture separates truth storage (IOCGraph/KuzuDB) from analytics (DuckPGQGraph/DuckDB), with GraphService acting as the seam layer between authoritative storage and analytics donor.

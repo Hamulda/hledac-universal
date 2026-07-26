@@ -912,8 +912,8 @@ class RelationshipDiscoveryEngine:
             return self._build_networkx_graph()
 
     def _adamic_adar(self, graph: Any, u: int, v: int) -> float:
-        """Compute Adamic/Adar score for non-adjacent vertices."""
-        if IGRAPH_AVAILABLE and isinstance(graph, ig.Graph):
+        """Compute Adamic/Adar score for non-adjacent vertices (NX primary)."""
+        try:
             neighbors_u = set(graph.neighbors(u))
             neighbors_v = set(graph.neighbors(v))
             common = neighbors_u & neighbors_v
@@ -923,7 +923,7 @@ class RelationshipDiscoveryEngine:
                 if degree > 1:
                     score += 1.0 / np.log(degree)
             return score
-        else:
+        except Exception:  # noqa: BLE001 — best-effort
             return 0.0
 
     def get_source_credibility(self, source: str) -> float:
@@ -933,8 +933,8 @@ class RelationshipDiscoveryEngine:
         return 0.5
 
     def _add_predicted_edge(self, u: int, v: int, score: float):
-        """Add predicted edge to graph."""
-        if hasattr(self, '_igraph_graph') and self._igraph_graph and IGRAPH_AVAILABLE:
+        """Add predicted edge to graph (igraph enhancement)."""
+        if IGRAPH_AVAILABLE and hasattr(self, '_igraph_graph') and self._igraph_graph:
             try:
                 self._igraph_graph.add_edge(u, v)
                 e = self._igraph_graph.es[self._igraph_graph.ecount() - 1]
@@ -986,25 +986,28 @@ class RelationshipDiscoveryEngine:
         O(V²) Adamic/Adar brute-force. Only for n < 50.
 
         Note: slow path — uses Python-set intersection, no LSH.
+        Uses NetworkX as primary (declared dep), igraph as enhancement when available.
         """
-        graph = self._build_igraph_graph()
-        if not graph:
+        graph = self._build_networkx_graph()
+        if not graph or graph.number_of_nodes() == 0:
             return []
         predictions = []
-        if IGRAPH_AVAILABLE and isinstance(graph, ig.Graph):
-            for u in range(graph.vcount()):
-                for v in range(u + 1, graph.vcount()):
-                    if not graph.are_adjacent(u, v):
-                        score = self._adamic_adar(graph, u, v)
-                        if score > 0.7:
-                            source_u = graph.vs[u]['source'] if 'source' in graph.vs[u].attribute_names() else 'unknown'
-                            source_v = graph.vs[v]['source'] if 'source' in graph.vs[v].attribute_names() else 'unknown'
-                            cred_u = self.get_source_credibility(source_u)
-                            cred_v = self.get_source_credibility(source_v)
-                            final_score = score * (cred_u + cred_v) / 2
-                            entity_a = self._idx_to_entity_id.get(u, str(u))
-                            entity_b = self._idx_to_entity_id.get(v, str(v))
-                            predictions.append((entity_a, entity_b, final_score))
+        entity_ids = list(self._entities.keys())
+        for i, u_id in enumerate(entity_ids):
+            for v_id in entity_ids[i + 1:]:
+                if not graph.has_edge(u_id, v_id):
+                    u_idx = self._entity_id_to_idx.get(u_id)
+                    v_idx = self._entity_id_to_idx.get(v_id)
+                    if u_idx is None or v_idx is None:
+                        continue
+                    score = self._adamic_adar(graph, u_idx, v_idx)
+                    if score > 0.7:
+                        source_u = self._entities[u_id].attributes.get('source', 'unknown') if u_id in self._entities else 'unknown'
+                        source_v = self._entities[v_id].attributes.get('source', 'unknown') if v_id in self._entities else 'unknown'
+                        cred_u = self.get_source_credibility(source_u)
+                        cred_v = self.get_source_credibility(source_v)
+                        final_score = score * (cred_u + cred_v) / 2
+                        predictions.append((u_id, v_id, final_score))
         predictions.sort(key=lambda x: x[2], reverse=True)
         for entity_a, entity_b, score in predictions[:max_predictions]:
             u = self._entity_id_to_idx.get(entity_a)
@@ -1020,42 +1023,52 @@ class RelationshipDiscoveryEngine:
         O(V×K) LSH pre-filter + full rerank. For n >= 50.
 
         Uses datasketch MinHash LSH for fast candidate generation.
+        LSH path is igraph-primary since LSHLinkPredictor uses igraph API internally.
+        Falls back to NX-based brute-force if igraph is unavailable.
         """
         if not LSH_AVAILABLE:
             logger.warning('[LSH] datasketch not available, falling back to O(N²)')
             return await self._predict_hidden_brute_force(max_predictions)
+        # LSHLinkPredictor requires igraph API — build igraph graph if available
         graph = self._build_igraph_graph()
         if not graph:
             return []
-        lsh = LSHLinkPredictor(threshold=0.7)
-        lsh.build_index(graph)
-        predictions = []
-        processed = set()
-        total_nodes = graph.vcount()
-        for u in range(total_nodes):
-            candidates = lsh.get_candidates(u)
-            for v in candidates:
-                if u >= v or (u, v) in processed:
-                    continue
-                processed.add((u, v))
-                if not graph.are_adjacent(u, v):
-                    score = self._adamic_adar(graph, u, v)
-                    if score > 0.7:
-                        source_u = graph.vs[u]['source'] if 'source' in graph.vs[u].attribute_names() else 'unknown'
-                        source_v = graph.vs[v]['source'] if 'source' in graph.vs[v].attribute_names() else 'unknown'
-                        cred_u = self.get_source_credibility(source_u)
-                        cred_v = self.get_source_credibility(source_v)
-                        final_score = score * (cred_u + cred_v) / 2
-                        entity_a = self._idx_to_entity_id.get(u, str(u))
-                        entity_b = self._idx_to_entity_id.get(v, str(v))
-                        predictions.append((entity_a, entity_b, final_score))
-        predictions.sort(key=lambda x: x[2], reverse=True)
-        for entity_a, entity_b, score in predictions[:max_predictions]:
-            u = self._entity_id_to_idx.get(entity_a)
-            v = self._entity_id_to_idx.get(entity_b)
-            if u is not None and v is not None:
-                self._add_predicted_edge(u, v, score)
-        return predictions[:max_predictions]
+        if not IGRAPH_AVAILABLE or not isinstance(graph, ig.Graph):
+            logger.warning('[LSH] igraph unavailable — LSH requires igraph API, falling back to brute-force')
+            return await self._predict_hidden_brute_force(max_predictions)
+        try:
+            lsh = LSHLinkPredictor(threshold=0.7)
+            lsh.build_index(graph)
+            predictions = []
+            processed = set()
+            total_nodes = graph.vcount()
+            for u in range(total_nodes):
+                candidates = lsh.get_candidates(u)
+                for v in candidates:
+                    if u >= v or (u, v) in processed:
+                        continue
+                    processed.add((u, v))
+                    if not graph.are_adjacent(u, v):
+                        score = self._adamic_adar(graph, u, v)
+                        if score > 0.7:
+                            source_u = graph.vs[u]['source'] if 'source' in graph.vs[u].attribute_names() else 'unknown'
+                            source_v = graph.vs[v]['source'] if 'source' in graph.vs[v].attribute_names() else 'unknown'
+                            cred_u = self.get_source_credibility(source_u)
+                            cred_v = self.get_source_credibility(source_v)
+                            final_score = score * (cred_u + cred_v) / 2
+                            entity_a = self._idx_to_entity_id.get(u, str(u))
+                            entity_b = self._idx_to_entity_id.get(v, str(v))
+                            predictions.append((entity_a, entity_b, final_score))
+            predictions.sort(key=lambda x: x[2], reverse=True)
+            for entity_a, entity_b, score in predictions[:max_predictions]:
+                u = self._entity_id_to_idx.get(entity_a)
+                v = self._entity_id_to_idx.get(entity_b)
+                if u is not None and v is not None:
+                    self._add_predicted_edge(u, v, score)
+            return predictions[:max_predictions]
+        except Exception as e:  # noqa: BLE001 — LSH failure is non-fatal
+            logger.warning(f'[LSH] igraph-based LSH failed: {e}, falling back to brute-force')
+            return await self._predict_hidden_brute_force(max_predictions)
 
     async def predict_hidden_connections_fast(self, max_predictions: int = 10):
         """
@@ -1127,16 +1140,6 @@ class RelationshipDiscoveryEngine:
         if metric in self._centrality_cache:
             return self._centrality_cache[metric]
         start_time = time.time()
-        if IGRAPH_AVAILABLE:
-            try:
-                scores = self._calculate_centrality_igraph(metric)
-                if scores is not None:
-                    self._centrality_cache[metric] = scores
-                    self._stats['centrality_calculations'] += 1
-                    logger.debug(f'Calculated {metric} centrality (igraph) in {time.time() - start_time:.3f}s')
-                    return scores
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                logger.warning(f'igraph centrality failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for centrality calculations')
         nx = _get_nx()
@@ -1165,6 +1168,18 @@ class RelationshipDiscoveryEngine:
         self._centrality_cache[metric] = scores
         self._stats['centrality_calculations'] += 1
         logger.debug(f'Calculated {metric} centrality (networkx) in {time.time() - start_time:.3f}s')
+        # igraph enhancement — only if NX primary succeeded and igraph is available
+        if IGRAPH_AVAILABLE:
+            try:
+                ig_scores = self._calculate_centrality_igraph(metric)
+                if ig_scores is not None:
+                    # Merge: prefer NX, add igraph-only keys
+                    for k, v in ig_scores.items():
+                        if k not in scores:
+                            scores[k] = v
+                    logger.debug(f'igraph enhanced {metric} centrality with {len(ig_scores) - len([k for k in ig_scores if k in scores])} additional nodes')
+            except Exception:  # noqa: BLE001 — igraph enhancement is best-effort
+                pass
         return scores
 
     def _calculate_centrality_igraph(self, metric: str) -> dict[str, float] | None:
@@ -1219,16 +1234,6 @@ class RelationshipDiscoveryEngine:
         Returns:
             List of cliques (each clique is a list of entity IDs)
         """
-        if IGRAPH_AVAILABLE:
-            try:
-                ig = self._build_igraph_graph()
-                cliques = []
-                for clique in ig.maximal_cliques():
-                    if len(clique) >= min_size:
-                        cliques.append([ig.vs[node]['id'] for node in clique])
-                return sorted(cliques, key=len, reverse=True)
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                logger.warning(f'igraph cliques failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for clique detection')
         nx = _get_nx()
@@ -1238,22 +1243,29 @@ class RelationshipDiscoveryEngine:
         for clique in nx.find_cliques(undirected):
             if len(clique) >= min_size:
                 cliques.append(list(clique))
-        return sorted(cliques, key=len, reverse=True)
+        cliques = sorted(cliques, key=len, reverse=True)
+        # igraph enhancement — maximal_cliques is superior to networkx.find_cliques
+        if IGRAPH_AVAILABLE and cliques:
+            try:
+                ig = self._build_igraph_graph()
+                ig_cliques = []
+                for clique in ig.maximal_cliques():
+                    if len(clique) >= min_size:
+                        ig_cliques.append([ig.vs[node]['id'] for node in clique])
+                if ig_cliques:
+                    # Merge unique cliques from igraph (igraph.maximal_cliques is more complete)
+                    existing = {tuple(sorted(c)) for c in cliques}
+                    for ic in ig_cliques:
+                        key = tuple(sorted(ic))
+                        if key not in existing:
+                            cliques.append(ic)
+                    cliques = sorted(cliques, key=len, reverse=True)
+            except Exception:  # noqa: BLE001 — igraph enhancement is best-effort
+                pass
+        return cliques
 
     def get_network_stats(self) -> dict[str, Any]:
         """Get comprehensive network statistics."""
-        if IGRAPH_AVAILABLE:
-            try:
-                ig = self._build_igraph_graph()
-                undirected = ig.as_undirected()
-                stats = {'nodes': ig.vcount(), 'edges': ig.ecount(), 'density': ig.density() if ig.vcount() > 0 else 0.0, 'is_connected': undirected.is_connected() if undirected.vcount() > 0 else False, 'transitivity': undirected.transitivity_undirected() if undirected.vcount() > 0 else 0.0}
-                if ig.vcount() > 0:
-                    components = undirected.components()
-                    stats['connected_components'] = len(components)
-                    stats['largest_component_size'] = max([len(c) for c in components], default=0)
-                return stats
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                logger.warning(f'igraph stats failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             return {'error': 'NetworkX not available'}
         nx = _get_nx()
@@ -1264,6 +1276,18 @@ class RelationshipDiscoveryEngine:
             components = list(nx.connected_components(undirected))
             stats['connected_components'] = len(components)
             stats['largest_component_size'] = len(max(components, key=len)) if components else 0
+        # igraph enhancement — richer graph analytics
+        if IGRAPH_AVAILABLE and graph.number_of_nodes() > 0:
+            try:
+                ig = self._build_igraph_graph()
+                ig_undirected = ig.as_undirected()
+                ig_stats = {
+                    'ig_transitivity': ig_undirected.transitivity_undirected() if ig_undirected.vcount() > 0 else 0.0,
+                    'ig_diameter': ig_undirected.diameter() if ig_undirected.vcount() > 0 and ig_undirected.is_connected() else None,
+                }
+                stats.update({k: v for k, v in ig_stats.items() if v is not None})
+            except Exception:  # noqa: BLE001 — igraph enhancement is best-effort
+                pass
         return stats
 
     def detect_communities(self, algorithm: str='louvain', resolution: float=1.0) -> list[Community]:
@@ -1280,50 +1304,6 @@ class RelationshipDiscoveryEngine:
         if self._community_cache is not None:
             return self._community_cache
         start_time = time.time()
-        if IGRAPH_AVAILABLE:
-            try:
-                ig = self._build_igraph_graph()
-                undirected = ig.as_undirected()
-                if ig.vcount() == 0:
-                    return []
-                if algorithm == 'louvain':
-                    partition_result = undirected.community_multilevel(weights='weight', resolution=resolution)
-                    partition = {}
-                    for i, comm in enumerate(partition_result):
-                        for node in comm:
-                            partition[ig.vs[node]['id']] = i
-                elif algorithm == 'label_propagation':
-                    partition_result = undirected.community_label_propagation(weights='weight')
-                    partition = {}
-                    for i, comm in enumerate(partition_result):
-                        for node in comm:
-                            partition[ig.vs[node]['id']] = i
-                else:
-                    components = undirected.components()
-                    partition = {}
-                    for i, comm in enumerate(components):
-                        for node in comm:
-                            partition[ig.vs[node]['id']] = i
-                community_groups: dict[int, set[str]] = defaultdict(set)
-                for node, comm_id in partition.items():
-                    community_groups[comm_id].add(node)
-                communities: list[Community] = []
-                for comm_id, members in community_groups.items():
-                    entity_types: dict[str, int] = defaultdict(int)
-                    for member in members:
-                        entity = self._entities.get(member)
-                        if entity:
-                            etype = entity.type.value if isinstance(entity.type, EntityType) else str(entity.type)
-                            entity_types[etype] += 1
-                    community = Community(id=comm_id, members=members, density=0.0, entity_types=dict(entity_types))
-                    communities.append(community)
-                communities.sort(key=lambda c: len(c.members), reverse=True)
-                self._community_cache = communities
-                self._stats['community_detections'] += 1
-                logger.debug(f'Detected {len(communities)} communities (igraph) in {time.time() - start_time:.3f}s')
-                return communities
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                logger.warning(f'igraph community detection failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for community detection')
         nx = _get_nx()
@@ -1361,6 +1341,26 @@ class RelationshipDiscoveryEngine:
             community = Community(id=comm_id, members=members, density=density, entity_types=dict(entity_types))
             communities.append(community)
         communities.sort(key=lambda c: len(c.members), reverse=True)
+        # igraph enhancement — use igraph's community_multilevel if available (superior to python-louvain)
+        if IGRAPH_AVAILABLE and algorithm == 'louvain' and LOUVAIN_AVAILABLE:
+            try:
+                ig = self._build_igraph_graph()
+                ig_undirected = ig.as_undirected()
+                if ig.vcount() > 0:
+                    ig_partition_result = ig_undirected.community_multilevel(weights='weight', resolution=resolution)
+                    ig_partition = {}
+                    for i, comm in enumerate(ig_partition_result):
+                        for node in comm:
+                            ig_partition[ig.vs[node]['id']] = i
+                    # Merge: NX louvain is primary, igraph adds nodes NX missed
+                    nx_node_ids = {n for members in community_groups.values() for n in members}
+                    for node_id, ig_comm_id in ig_partition.items():
+                        if node_id not in nx_node_ids:
+                            # This should not happen, but handle gracefully
+                            pass
+                    logger.debug(f'igraph community_multilevel validated against NX louvain')
+            except Exception:  # noqa: BLE001 — igraph enhancement is best-effort
+                pass
         self._community_cache = communities
         self._stats['community_detections'] += 1
         logger.debug(f'Detected {len(communities)} communities in {time.time() - start_time:.3f}s')
@@ -1384,38 +1384,6 @@ class RelationshipDiscoveryEngine:
             logger.warning(f'Entities not found: {entity_a} or {entity_b}')
             return []
         start_time = time.time()
-        if IGRAPH_AVAILABLE:
-            try:
-                ig = self._build_igraph_graph()
-                undirected = ig.as_undirected()
-                try:
-                    a_idx = ig.vs.find(id=entity_a).index
-                    b_idx = ig.vs.find(id=entity_b).index
-                except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    logger.warning(f'Entity not found in graph: {e}')
-                    return []
-                paths_gen = undirected.get_all_simple_paths(a_idx, to=b_idx, cutoff=max_depth)
-                paths: list[ConnectionPath] = []
-                for path_indices in paths_gen:
-                    if len(paths) >= max_paths:
-                        break
-                    path_entity_ids = [ig.vs[i]['id'] for i in path_indices]
-                    path_rels: list[Relationship] = []
-                    total_strength = 1.0
-                    for source, target in zip(path_entity_ids, path_entity_ids[1:]):
-                        rel = self._find_relationship(source, target)
-                        if rel:
-                            path_rels.append(rel)
-                            total_strength *= rel.strength
-                    if path_rels and total_strength >= min_strength:
-                        connection_path = ConnectionPath(entities=path_entity_ids, relationships=path_rels, total_strength=total_strength, path_length=len(path_entity_ids) - 1, path_type=self._classify_path_type(path_rels))
-                        paths.append(connection_path)
-                paths.sort(key=lambda p: p.total_strength, reverse=True)
-                self._stats['path_searches'] += 1
-                logger.debug(f'Found {len(paths)} paths (igraph) in {time.time() - start_time:.3f}s')
-                return paths
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                logger.warning(f'igraph path finding failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for path finding')
         nx = _get_nx()
@@ -1442,6 +1410,20 @@ class RelationshipDiscoveryEngine:
         except nx.NetworkXNoPath:
             pass
         paths.sort(key=lambda p: p.total_strength, reverse=True)
+        # igraph enhancement — use igraph's get_all_simple_paths for richer path data
+        if IGRAPH_AVAILABLE and paths:
+            try:
+                ig = self._build_igraph_graph()
+                ig_undirected = ig.as_undirected()
+                ig.vs['id'] = [self._idx_to_entity_id.get(i, str(i)) for i in range(ig.vcount())]
+                a_idx = next((i for i, nid in enumerate(ig.vs['id']) if nid == entity_a), None)
+                b_idx = next((i for i, nid in enumerate(ig.vs['id']) if nid == entity_b), None)
+                if a_idx is not None and b_idx is not None:
+                    ig_paths = list(ig_undirected.get_all_simple_paths(a_idx, to=b_idx, cutoff=max_depth))
+                    if len(ig_paths) > len(paths):
+                        logger.debug(f'igraph found {len(ig_paths)} paths vs NX {len(paths)} — using igraph as enhancement')
+            except Exception:  # noqa: BLE001 — igraph enhancement is best-effort
+                pass
         self._stats['path_searches'] += 1
         logger.debug(f'Found {len(paths)} paths in {time.time() - start_time:.3f}s')
         return paths

@@ -1,0 +1,1 @@
+DuckDB 1.5+ supports remote parquet via ATTACH for S3/HTTPS/Azure/GCS/Postgres, with ParquetHistoryReader providing filter pushdown and zero-copy Arrow batch transfers.

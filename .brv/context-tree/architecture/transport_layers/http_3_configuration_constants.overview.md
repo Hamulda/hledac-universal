@@ -1,0 +1,8 @@
+- http3_cache_max: 512 entries (M1_BOUNDS.http3_lru_max)
+- http3_concurrency_max: 3 simultaneous requests
+- http3_timeout_s: 8.0 seconds per request
+- http3_wait_timeout_s: 2.0 seconds for semaphore acquisition
+- http3_cache_ttl_s: 86400 seconds (M1_BOUNDS.http_cache_ttl_s)
+- http3_rss_block_gib: 5.5 GiB RSS memory threshold (M1_BOUNDS.fetch_soft_ceiling_gb)
+- max_probe_tasks: 16 concurrent speculative Alt-Svc probes
+- head_probe_timeout_s: 4.0 seconds for HEAD probe requests

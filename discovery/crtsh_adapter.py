@@ -24,7 +24,7 @@ from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.transport.circuit_breaker import checked_aiohttp_get, domain_breaker_check
 from .base import DiscoveryBatchResult, DiscoveryHit
 from hledac.universal.discovery.base import BaseDiscoveryMixin, DiscoveryResult
-__all__ = ['async_search_crtsh', 'call_crtsh', 'CTOutcome', 'CTProviderStatus']
+__all__ = ['call_crtsh', 'CTOutcome', 'CTProviderStatus']
 
 class CTProviderStatus(Enum):
     """F217D: Explicit CT provider status tags. F219E adds cooldown states."""
@@ -666,126 +666,13 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
         result = DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
         return (result, outcome)
 
-async def async_search_crtsh(query: str, max_results: int=20, timeout_s: float=8.0) -> DiscoveryBatchResult:
-    """
-    crt.sh Certificate Transparency search — no API key required.
-
-    Args:
-        query:       Search query string (domain or free-text).
-        max_results: Max hits to return (default 20, hard cap 50).
-        timeout_s:   HTTP timeout in seconds (default 8.0).
-
-    Returns:
-        DiscoveryBatchResult with CT-sourced subdomain hits.
-
-    Fail-soft:
-        - empty_query: no domain-like token found in query
-        - timeout: asyncio.TimeoutError
-        - http_429: rate limited
-        - http_403: blocked
-        - http_5xx: server error
-        - http_4xx: client error
-        - network_error: connection issue
-        - parse_error: crt.sh JSON unparseable
-        - provider_empty: no subdomains found
-        - provider_exception: unexpected exception
-        - circuit_breaker_open: domain temporarily blocked
-    """
-    start = time.monotonic()
-    try:
-        max_results = max(1, min(int(max_results), _MAX_HITS))
-    except (TypeError, ValueError):
-        max_results = 20
-    query = query.strip() if query else ''
-    if not query:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(hits=(), error='empty_query', error_type='invalid_query', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
-    domain_candidate = _extract_domain_from_query(query)
-    if domain_candidate is None:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(hits=(), error='no_domain_like_token', error_type='invalid_query', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
-    session: httpx.AsyncClient | None = None
-    try:
-        session = await async_get_httpx_session()
-        timeout = httpx.Timeout(min(timeout_s, _HTTP_TIMEOUT_S))
-        params = {'q': domain_candidate, 'output': 'json'}
-        try:
-            async with asyncio.timeout(timeout_s):
-                data, status, err = await checked_aiohttp_get(session, _CRTSH_URL, params=params, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=timeout, failure_kind='crtsh')
-                if err and err.startswith('circuit_breaker_open:'):
-                    logger.info(f'CT crt.sh circuit breaker open for {domain_candidate}, trying certspotter')
-                    data, status, err = await _fetch_certspotter_fallback(session, domain_candidate, timeout)
-                    if err:
-                        logger.info(f'CT certspotter failed for {domain_candidate}, trying crt.sh identity')
-                        identity_params = {'q': domain_candidate, 'output': 'json'}
-                        data, status, err = await checked_aiohttp_get(session, _CRTSH_URL, params=identity_params, headers={'User-Agent': 'Hledac/1.0 (research bot)'}, timeout=timeout, failure_kind='crtsh_identity')
-        except asyncio.CancelledError:
-            raise
-        elapsed = time.monotonic() - start
-        if err:
-            err_tag: str
-            if err.startswith('circuit_breaker_open:'):
-                err_tag = 'circuit_breaker_open'
-            elif err == 'timeout':
-                err_tag = 'timeout'
-            elif err == 'client_error':
-                err_tag = 'network_error'
-            else:
-                err_tag = 'network_error'
-            return DiscoveryBatchResult(hits=(), error=err, error_type=err_tag, provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
-        if status == 429:
-            return DiscoveryBatchResult(hits=(), error='rate_limited', error_type='http_429', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=time.monotonic() - start)
-        if status == 403:
-            return DiscoveryBatchResult(hits=(), error='captcha_or_blocked', error_type='http_403', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=time.monotonic() - start)
-        if status >= 500:
-            _enter_cooldown(domain_candidate, f'http_{status}', time.monotonic())
-            return DiscoveryBatchResult(hits=(), error=f'http_{status}', error_type='http_5xx', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=time.monotonic() - start)
-        if status >= 400:
-            return DiscoveryBatchResult(hits=(), error=f'http_{status}', error_type='http_4xx', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=time.monotonic() - start)
-        if not isinstance(data, list):
-            return DiscoveryBatchResult(hits=(), error='unexpected_response_format', error_type='parse_error', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=time.monotonic() - start)
-        seen_domains: set[str] = set()
-        hits: list[DiscoveryHit] = []
-        now = time.time()
-        for cert in data[:_MAX_CERTS]:
-            if not isinstance(cert, dict):
-                continue
-            name_value = cert.get('name_value', '')
-            if not name_value:
-                continue
-            for subdomain in name_value.split('\n'):
-                subdomain = subdomain.strip()
-                if not subdomain:
-                    continue
-                if _is_wildcard_only(subdomain):
-                    continue
-                if _is_private_domain(subdomain):
-                    continue
-                subdomain_lower = subdomain.lower()
-                if subdomain_lower in seen_domains:
-                    continue
-                if len(hits) >= max_results:
-                    break
-                seen_domains.add(subdomain_lower)
-                hits.append(DiscoveryHit(query=query, title=f'CT: {subdomain}', url=f'https://{subdomain}/', snippet=f'Certificate Transparency match via crt.sh — {subdomain}', source='crtsh', rank=len(hits), retrieved_ts=now, score=1.0 - len(hits) / max_results, reason='ct_subdomain', ct_name_value=name_value, ct_common_name=cert.get('common_name'), ct_issuer_name=cert.get('issuer_name'), ct_not_before=cert.get('not_before'), ct_not_after=cert.get('not_after'), ct_entry_timestamp=cert.get('entry_timestamp'), ct_serial_number=cert.get('serial_number')))
-            if len(hits) >= max_results:
-                break
-        elapsed = time.monotonic() - start
-        if not hits:
-            return DiscoveryBatchResult(hits=(), error='no_subdomains_found', error_type='provider_empty', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
-        return DiscoveryBatchResult(hits=tuple(hits), error=None, error_type='none', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        elapsed = time.monotonic() - start
-        logger.warning(f'[crtsh] unexpected error: {e}')
-        return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=elapsed)
 
 class CRTshAdapter(BaseDiscoveryMixin):
     """
     crt.sh Certificate Transparency adapter using BaseDiscoveryMixin infrastructure.
 
-    Wraps async_search_crtsh() as _do_discover().
+    Wraps call_crtsh() as _do_discover() — AP-06 FIX: was using async_search_crtsh
+    which duplicated call_crtsh logic without cache/outcome support.
     """
 
     name: str = "crtsh"
@@ -810,9 +697,9 @@ class CRTshAdapter(BaseDiscoveryMixin):
     async def _do_discover(
         self, query: str, limit: int
     ):
-        """Wrap async_search_crtsh() as an async iterator."""
+        """Wrap call_crtsh() as an async iterator — AP-06 FIX."""
         try:
-            result = await async_search_crtsh(query, max_results=limit)
+            result, _outcome = await call_crtsh(query, max_results=limit, timeout_s=self.timeout_s)
         except Exception:
             return
 

@@ -33,7 +33,7 @@ from hledac.universal.utils.async_helpers import parallel, safe_gather_ok
 _MIN_RELIABILITY = 0.05
 _EXPLORATION_PROB = 0.1
 _COST_MULTIPLIER = 1.5
-_MAX_PROVIDERS_PER_CALL = 4
+_MAX_PROVIDERS_PER_CALL = 8
 
 class ProviderCapabilityState(Enum):
     """Discovery provider operational state.
@@ -178,7 +178,38 @@ async def _run_ct_pivots(query: str, max_results: int, timeout_s: float) -> Disc
         raise
     except Exception as e:
         return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='ct_pivots', provider_chain=('ct_pivots',), source_family='ct', elapsed_s=0.0)
-_RUNNERS: dict[str, _ProviderRunner] = {'ddg_mojeek': _run_ddg_mojeek, 'historical_frontier': _run_historical_frontier, 'wayback_cdx': _run_wayback_cdx, 'wayback_sitemap': _run_wayback_sitemap, 'commoncrawl_cdx': _run_commoncrawl_cdx, 'feed_pivots': _run_feed_pivots, 'ct_pivots': _run_ct_pivots}
+
+async def _run_circl_pdns(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
+    """AP-05: CIRCL PDNS adapter — wired into discovery planner."""
+    from .circl_pdns_adapter import async_search_circl_pdns
+    try:
+        return await async_search_circl_pdns(query, max_results=max_results, timeout_s=timeout_s)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='circl_pdns', provider_chain=('circl_pdns',), source_family='pdns', elapsed_s=0.0)
+
+async def _run_tvnews(query: str, max_results: int, timeout_s: float) -> DiscoveryBatchResult:
+    """AP-05: TV News adapter — wired into discovery planner."""
+    from .tvnews_adapter import async_search_tvnews
+    try:
+        return await async_search_tvnews(query, max_results=max_results, timeout_s=timeout_s)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        return DiscoveryBatchResult(hits=(), error=str(e), error_type='provider_exception', provider_name='tvnews', provider_chain=('tvnews',), source_family='tvnews', elapsed_s=0.0)
+
+_RUNNERS: dict[str, _ProviderRunner] = {
+    'ddg_mojeek': _run_ddg_mojeek,
+    'historical_frontier': _run_historical_frontier,
+    'wayback_cdx': _run_wayback_cdx,
+    'wayback_sitemap': _run_wayback_sitemap,
+    'commoncrawl_cdx': _run_commoncrawl_cdx,
+    'feed_pivots': _run_feed_pivots,
+    'ct_pivots': _run_ct_pivots,
+    'circl_pdns': _run_circl_pdns,
+    'tvnews': _run_tvnews,
+}
 
 def _timeout_result(provider: str, timeout_s: float) -> DiscoveryBatchResult:
     return DiscoveryBatchResult(hits=(), error=f'{provider}_timeout', error_type='timeout', provider_name=provider, provider_chain=(provider,), source_family=None, elapsed_s=timeout_s)

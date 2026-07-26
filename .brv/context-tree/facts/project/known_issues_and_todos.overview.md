@@ -1,0 +1,9 @@
+- evidence_log_timeout: busy_timeout is 1000ms but should be 30000ms
+- shodan_rate: rate formula calculates 360/10=36 but should be 3600/10=360
+- duckpgqgraph_integration gap: DuckDB for sprint facts vs DuckPGQGraph for IOC storage separation not yet unified
+- neqo HTTP/3 implementation pending (F320-TODO) - neqo library not yet on PyPI
+- Rust AtomicCounter (issue #5) not implemented for lock-free counter in locks.py
+- acquisition.py: Prioritization using ctx.graph_stats not implemented
+- social_identity_miner.py: Platform detection for social identity mining not implemented
+- stealth/_models.py: Domain allowlist/blocklist checks not implemented
+- probe_* directories may be archived or removed - verify existence before relying on them
