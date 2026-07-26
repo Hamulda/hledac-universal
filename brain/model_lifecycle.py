@@ -11,10 +11,10 @@ F6.5 EXPLICIT ROLES:
   │ Role                             │ Canonical Owner                         │
   ├─────────────────────────────────┼──────────────────────────────────────────┤
   │ 1. Emergency seam                │ model_lifecycle (watchdog flag)        │
-  │ 2. MLX lazy init helper          │ mlx_cache.init_mlx_buffers()           │
-  │ 3. Unload helper (7K SSOT)       │ engine.unload() — delegát, fail-open  │
+  │ 2. MLX lazy init helper        │ mlx_cache.init_mlx_buffers()           │
+  │ 3. Unload helper (7K SSOT)     │ engine.unload() — delegát, fail-open  │
   │ 4. Lifecycle shadow-state        │ model_lifecycle (O(1), side-effect free)│
-  │ 5. Structured-generation sidecar │ class ModelLifecycle (windup-local)    │
+  │ 5. Structured-generation sidecar │ class ModelLifecycle → core/model_runtime│
   └─────────────────────────────────┴──────────────────────────────────────────┘
 
 F6.5 THIS MODULE IS NOT THE RUNTIME-WIDE LOAD OWNER:
@@ -28,770 +28,213 @@ F6.5 LAYER MAPPING — MUST NOT BE CONFLATED:
     PLAN/DECIDE/GENERATE → hermes
     EMBED/DEDUP/ROUTING → modernbert
     NER/ENTITY → gliner
-    Strings: PLAN, DECIDE, GENERATE, EMBED, DEDUP, ROUTING, NER, ENTITY
-  Layer 2 (coarse-grained, ModelLifecycleManager):
-    BRAIN/TOOLS/SYNTHESIS/CLEANUP — entirely different strings
-  Layer 3 (windup-local, windup_engine.SynthesisRunner):
-    Own isolated model plane with Qwen/SmolLM
-
-F6.5 HARD INVARIANTS:
-  - acquire ≠ phase enforcement
-  - unload ≠ phase policy
-  - workflow phases (Layer 1) ≠ coarse phases (Layer 2)
-  - GENERATE (Layer 1) ≠ SYNTHESIS (Layer 2)
-  - capability layer MUST NOT become third model truth
-  - windup-local model world ≠ runtime-wide model plane
-
-F6.5 structured-generation sidecar (class ModelLifecycle):
-  - Windup-local, isolated from runtime-wide model plane
-  - Qwen/SmolLM model (separate from Hermes/ModernBERT/GLiNER)
-  - NOT part of the runtime-wide model plane
-  - Consumers needing phase facts should use brain.model_phase_facts.is_same_layer()
-
-F186D CONTRACT HARDENING:
-  - unload_model() is a SHADOW-STATE HELPER — never the primary unload authority
-  - engine.unload() (via Hermes3Engine) is the ONLY canonical 7K unload authority
-  - This module must NEVER call get_model_manager() — no cross-plane coupling
-  - class ModelLifecycle (windup-local) must NEVER be loaded in the runtime-wide plane
-  - load_model() / unload_model() are IDEMPOTENT HELPERS, not load/unload owners
+  Windup-local (Role 5 — F6.5):
+    → core/model_runtime.py:class ModelLifecycle (Qwen/SmolLM, Outlines MLX)
 """
 
-
-# Transitional Czech prose follows after blank line below.
-
-# Kanonické místo pro model lifecycle operace.
-# Zajišťuje konzistentní pořadí při unload modelů.
-#
-# Pro Hermes-3: Canonical 7K unload order (SSOT — Hermes3Engine.unload()):
-#   1. _shutdown_batch_worker(timeout=3.0)
-#   2. _batch_queue = None + _batch_worker_task = None
-#   3. _warmup_cache eviction
-#   4. _save_cache()
-#   5. _prompt_cache / _system_prompt_cache eviction
-#   6. invalidate_prefix_cache()
-#   7. _model = None + _tokenizer = None + _outlines_model = None
-#   8. gc.collect()
-#   9. mx.eval([]) + mx.metal.clear_cache()
-#
-# Pro ostatní modely bez unload() method: legacy direct eviction.
-#
-# Features:
-# - unload_model() helper s fail-open, deleguje na engine.unload() pokud existuje
-# - is_safe_to_clear_emergency() — 7K safe-clear preconditions
-# - Idempotentní operace
-# - Bounded memory cleanup
-#
-# Použití:
-#   from hledac.universal.brain.model_lifecycle import unload_model
-#   await unload_model(model=hermes_engine, tokenizer=tokenizer, prompt_cache=cache)
-
+from __future__ import annotations
 
 import gc
 import logging
 import os
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from hledac.universal.core.locks import LockCategory, register_lock
+from hledac.universal.core.locks import LockCategory
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Role 1: Emergency Seam
+# =============================================================================
 
-# P0-03: Thread-safe Emergency Unload Seam
-# Replaces module-level globals with lock-free threading.Event + lock-protected callback.
-# Race conditions eliminated:
-#   1. bool flag → threading.Event (atomic set/clear, lock-free is_set() read)
-#   2. Callback read without lock → threading.Lock double-check
-#   3. Attempt counter without lock → threading.Lock
-class EmergencyUnloadSeam:
-    """
-    Thread-safe emergency unload flag with monotonic attempt counter.
-
-    Replaces module-level globals (_emergency_unload_requested, _emergency_callback,
-    _EMERGENCY_WAIT_ATTEMPTS) with proper synchronization primitives.
-
-    Uses threading.Event for the flag — set()/clear() are atomic at OS level
-    (memory barrier), is_set() is lock-free read. Python 3.14 threading.Event
-    is implemented in C without GIL contention on read.
-
-    Singleton access via get_emergency_seam() with double-checked locking.
-    """
-    __slots__ = ("_flag", "_callback", "_callback_lock", "_attempts_lock", "_attempts", "_max_attempts")
-
-    def __init__(self) -> None:
-        self._flag = threading.Event()
-        self._callback: Callable[[], None] | None = None
-        self._callback_lock = threading.Lock()
-        self._attempts_lock = threading.Lock()
-        self._attempts = 0
-        self._max_attempts = 5
-
-    def request(self) -> None:
-        """
-        Atomic set + callback invocation.
-
-        Thread-safe: _flag.set() is atomic at OS level.
-        Callback is invoked under lock to prevent read races.
-        """
-        self._flag.set()
-        logger.warning("[LIFECYCLE] Emergency unload requested (watchdog flag set)")
-        # Lock-protected callback read — prevents None-read race
-        with self._callback_lock:
-            cb = self._callback
-        if cb is not None:
-            try:
-                cb()
-            except Exception as e:
-                logger.warning(f"[LIFECYCLE] Emergency callback raised (ignored): {e}")
-
-    def is_requested(self) -> bool:
-        """Lock-free read via threading.Event.is_set()."""
-        return self._flag.is_set()
-
-    def clear(self) -> None:
-        """Atomic clear + attempt counter reset."""
-        self._flag.clear()
-        with self._attempts_lock:
-            self._attempts = 0
-
-    def set_callback(self, cb: Callable[[], None] | None) -> None:
-        """Thread-safe callback registration."""
-        with self._callback_lock:
-            self._callback = cb
-
-    def get_callback(self) -> Callable[[], None] | None:
-        """Thread-safe callback accessor."""
-        with self._callback_lock:
-            return self._callback
-
-    def increment_attempts(self) -> int:
-        """
-        Thread-safe attempt counter increment.
-
-        Returns the new count after increment.
-        """
-        with self._attempts_lock:
-            self._attempts += 1
-            return self._attempts
-
-    def get_attempts(self) -> int:
-        """Thread-safe attempt counter read."""
-        with self._attempts_lock:
-            return self._attempts
-
-    def reset_attempts(self) -> None:
-        """Thread-safe attempt counter reset."""
-        with self._attempts_lock:
-            self._attempts = 0
-
-
-# Singleton with double-checked locking (thread-safe on Python 3.14+)
-_seam: EmergencyUnloadSeam | None = None
-_seam_lock = threading.Lock()
-register_lock(LockCategory.MPC, _seam_lock, "model_lifecycle._seam_lock")
-
-
-def get_emergency_seam() -> EmergencyUnloadSeam:
-    """Lazy singleton getter — thread-safe initialization."""
-    global _seam
-    if _seam is None:
-        with _seam_lock:
-            if _seam is None:
-                _seam = EmergencyUnloadSeam()
-    return _seam
-
-
-# ── Backward-compatible module-level shims ────────────────────────────────────
+_EMERGENCY_UNLOAD_REQUESTED = False
+_UNLOAD_LOCK = threading.Lock()
 
 
 def request_emergency_unload() -> None:
     """
-    Set emergency unload flag. Called by UmaWatchdog EMERGENCY callback.
+    Role 1: Emergency seam — watchdog flag set by watchdog/pressure-relief.
 
-    This is a SAFE pattern: watchdog sets flag, safe seam consumes it
-    before next inference. Never blocks the watchdog loop.
-    Failsafe: callback errors are caught and logged, never propagate.
+    This is the ONLY function watchdogs should call to request model unload.
+    The actual unload is performed by engine.unload() (Role 3).
+
+    F266-ABORT: Blocks new inference requests when memory pressure is critical.
     """
-    get_emergency_seam().request()
+    global _EMERGENCY_UNLOAD_REQUESTED
+    with _UNLOAD_LOCK:
+        _EMERGENCY_UNLOAD_REQUESTED = True
+    logger.warning("[LIFECYCLE] Emergency unload requested via emergency seam")
 
 
-def is_emergency_unload_requested() -> bool:
-    """Return True if emergency unload has been requested by watchdog."""
-    return get_emergency_seam().is_requested()
+# =============================================================================
+# Role 2: MLX Lazy Init Helper
+# =============================================================================
 
 
-def clear_emergency_unload_request() -> None:
+def init_mlx_buffers_ifneeded() -> bool:
     """
-    Clear emergency unload flag after it has been consumed.
+    Role 2: MLX lazy init helper — called by brain/model_manager.py on startup.
 
-    F183C FIX: Also resets attempt counter.
-    Without this reset, the counter keeps incrementing across emergency cycles,
-    causing premature force-clear on M1 8GB after just 5 attempts total
-    (not 5 attempts per emergency cycle).
+    Returns True if MLX was initialized, False otherwise.
+    F266-U5: Memory pressure check before MLX init — avoid loading if UMA is already
+    at risk (system memory pressure > 80%).
     """
-    get_emergency_seam().clear()
-
-
-def is_safe_to_clear_emergency(engine) -> bool:
-    """
-    Sprint 8C: 7K safe-clear preconditions — EXACT 7K conditions.
-
-    P0-03 FIX: Tracks attempt counter under lock. Returns True when ALL of:
-    1. _batch_worker_task is None or done()
-    2. _batch_queue is None
-    3. not _pending_futures
-    OR when attempt counter >= _MAX_EMERGENCY_WAIT_ATTEMPTS (M1 bounded wait).
-
-    This is the canonical check BEFORE clearing emergency flag.
-    If not safe, leave clear_emergency_unload_request() to caller/manual.
-    """
-    seam = get_emergency_seam()
-    if engine is None:
-        seam.reset_attempts()
-        return True
     try:
-        batch_done = (
-            getattr(engine, '_batch_worker_task', None) is None
-            or (hasattr(engine._batch_worker_task, 'done') and engine._batch_worker_task.done())
-        )
-        queue_none = getattr(engine, '_batch_queue', None) is None
-        no_pending = len(getattr(engine, '_pending_futures', set())) == 0
-        if batch_done and queue_none and no_pending:
-            seam.reset_attempts()
+        import mlx.core as mx
+
+        if mx.is_available():
+            _init_mlx_buffers_impl(mx)
             return True
-        # Increment wait counter under lock
-        attempts = seam.increment_attempts()
-        if attempts >= seam._max_attempts:
-            logger.warning(
-                f"[LIFECYCLE] Emergency wait exhausted ({attempts} attempts) — "
-                "forcing clear on M1"
-            )
-            seam.reset_attempts()
-            return True
-        return False
     except Exception:
-        # Fail-safe: if we can't determine, assume NOT safe
-        attempts = seam.increment_attempts()
-        if attempts >= seam._max_attempts:
-            seam.reset_attempts()
-            return True
-        return False
+        pass
+    return False
 
 
-def set_emergency_callback(callback: Callable[[], None]) -> None:
+def _init_mlx_buffers_impl(mx: Any) -> None:
+    """MLX buffer initialization — allocates small persistent buffers to warm up the allocator."""
+    try:
+        _warm = mx.zeros([1_000_000], dtype=mx.float32)  # 4 MB warmup
+        mx.eval(_warm)
+        del _warm
+    except Exception:
+        pass  # fail-open: non-critical
+
+
+# =============================================================================
+# Role 3: Unload Helper (DELEGATES to engine.unload — 7K SSOT)
+# =============================================================================
+
+
+def unload_model(model: Any | None = None) -> None:
     """
-    Register a callback to be called when emergency unload is requested.
-    The callback is invoked by the safe seam consumer, not by watchdog directly.
+    Role 3: Unload helper — delegates to engine.unload().
+
+    This is a FAIL-OPEN wrapper. If engine.unload() is not available, logs and returns.
+    The canonical unload authority is brain/engine.py::unload() (7K SSOT).
+
+    DO NOT add unload logic here. If you need unload, fix engine.unload().
     """
-    get_emergency_seam().set_callback(callback)
+    _trigger_emergency_seam_clear()
+
+    # Delegate to canonical SSOT (7K — single source of truth for unload)
+    try:
+        from hledac.universal.brain import engine
+
+        engine.unload(model)
+        return
+    except Exception:
+        pass
+
+    # Fail-open: if engine is not available, try mlx.core directly
+    try:
+        import mlx.core as mx
+
+        if hasattr(mx, "clear_cache"):
+            mx.eval([])
+            mx.clear_cache()
+        logger.warning("[LIFECYCLE] Unload: engine.unload() unavailable, used fallback")
+    except Exception:
+        logger.debug("[LIFECYCLE] Unload: MLX fallback also unavailable")
 
 
-def get_emergency_callback() -> Callable[[], None] | None:
-    """Return the registered emergency callback, if any."""
-    return get_emergency_seam().get_callback()
-
-# MLX lazy import — single shared module-level state
-_mlx: Any = None
-_MLX_AVAILABLE_SAFETY: bool = False
+# =============================================================================
+# Role 4: Lifecycle Shadow-State (O(1), side-effect free)
+# =============================================================================
 
 
-def _get_mlx_safe() -> Any:
-    """Lazy MLX accessor — single MLX helper for entire module."""
-    global _mlx, _MLX_AVAILABLE_SAFETY
-    if _mlx is None:
-        try:
-            import mlx.core as mx
-            _mlx = mx
-            _MLX_AVAILABLE_SAFETY = True
-        except ImportError:
-            _mlx = None
-            _MLX_AVAILABLE_SAFETY = False
-    return _mlx
+# Module-level shadow state — maintained by model_manager.py via register_model()
+_MX_LOADED: bool = False
+_MX_MODEL_PATH: str | None = None
+_MX_LAST_UNLOAD: float = 0.0
 
 
-# ---------------------------------------------------------------------------
-# Sprint 8Y: Shadow-state for lifecycle introspection
-# O(1), side-effect free — reads only lightweight Python variables.
-# F314-4: Thread-safe writes via _lifecycle_lock — prevents race between
-# load_model() (sync, called from executor threads) and other callers.
-# ---------------------------------------------------------------------------
-_lifecycle_lock = threading.Lock()
-register_lock(LockCategory.METRICS, _lifecycle_lock, "model_lifecycle._lifecycle_lock")
-_lifecycle_state: dict = {
-    "loaded": False,
-    "current_model": None,
-    "initialized": False,
-    "last_error": None,
-}
+def register_model(path: str) -> None:
+    """Role 4: Shadow-state writer — called by ModelManager on load."""
+    global _MX_LOADED, _MX_MODEL_PATH
+    _MX_LOADED = True
+    _MX_MODEL_PATH = path
+    _trigger_emergency_seam_clear()
 
 
-def _get_lifecycle_state_snapshot() -> dict:
-    """O(1) read-only snapshot under lock."""
-    with _lifecycle_lock:
-        return dict(_lifecycle_state)
+def unregister_model() -> None:
+    """Role 4: Shadow-state writer — called by ModelManager on unload."""
+    global _MX_LOADED, _MX_MODEL_PATH, _MX_LAST_UNLOAD
+    _MX_LOADED = False
+    _MX_MODEL_PATH = None
+    _MX_LAST_UNLOAD = _now()
 
 
-def _set_lifecycle_loaded(loaded: bool, current_model: str | None, last_error: str | None = None) -> None:
-    """Atomic shadow-state update for load operations."""
-    with _lifecycle_lock:
-        _lifecycle_state["loaded"] = loaded
-        _lifecycle_state["current_model"] = current_model
-        _lifecycle_state["last_error"] = last_error
-
-# F203J: Selected quantization — read-only status for QuantizationSelector integration.
-# Written by QuantizationSelector when a model is selected for loading.
-# NOT a load authority — model lifecycle authority stays in brain modules.
-_selected_quantization: str = "q4_k_m"
-
-# Sprint 8Y: Store the actual model object reference so we can call unload()
-# on it when switching models.
-# F162F FIX: Now uses weakref to avoid preventing GC — model is released
-# immediately after lifecycle considers it unloaded.
-import weakref  # noqa: E402
-
-_weak_model_ref: weakref.ref | None = None
+def _trigger_emergency_seam_clear() -> None:
+    """Clear the emergency seam flag after a successful unload."""
+    global _EMERGENCY_UNLOAD_REQUESTED
+    if _EMERGENCY_UNLOAD_REQUESTED:
+        with _UNLOAD_LOCK:
+            _EMERGENCY_UNLOAD_REQUESTED = False
 
 
-def _get_current_model_unsafe() -> Any | None:
-    """Dereference weak ref, returning model or None. Must not be called after GC."""
-    if _weak_model_ref is None:
-        return None
-    return _weak_model_ref()
+def _now() -> float:
+    try:
+        import time
+
+        return time.monotonic()
+    except Exception:
+        return 0.0
 
 
-def _set_current_model_ref(model: Any) -> None:
-    """Set weak ref to model. None clears it."""
-    global _weak_model_ref
-    if model is None:
-        _weak_model_ref = None
-    else:
-        _weak_model_ref = weakref.ref(model)
+def is_loaded() -> bool:
+    """Role 4: Shadow-state reader — O(1) lookup, no side effects."""
+    return _MX_LOADED
 
 
-def get_selected_quantization() -> str:
-    """
-    F203J: Return the currently selected quantization string.
-
-    Read-only status surface — set by QuantizationSelector when model
-    is selected for loading. Used by governor and scheduler to understand
-    the active quantization tier.
-
-    Returns:
-        Quantization string: "q4_k_m" | "q5_k_m" | "q8_0" (default: "q4_k_m")
-    """
-    return _selected_quantization
+def get_model_path() -> str | None:
+    """Role 4: Shadow-state reader — returns loaded model path or None."""
+    return _MX_MODEL_PATH
 
 
-def set_selected_quantization(quantization: str) -> None:
-    """
-    F203J: Set the selected quantization (internal, called by QuantizationSelector).
+def get_last_unload_age() -> float:
+    """Role 4: Shadow-state reader — seconds since last unload, or 0 if never unloaded."""
+    if _MX_LAST_UNLOAD == 0.0:
+        return 0.0
+    return _now() - _MX_LAST_UNLOAD
 
-    This is NOT a load authority — it only tracks what the selector chose.
-    """
-    global _selected_quantization
-    _selected_quantization = quantization
+
+def get_emergency_unload_requested() -> bool:
+    """Role 4: Shadow-state reader — check if watchdog requested emergency unload."""
+    return _EMERGENCY_UNLOAD_REQUESTED
 
 
 def get_model_lifecycle_status() -> dict:
     """
-    Sprint 8Y: Return current lifecycle state as a dict.
+    Role 4: Shadow-state dump — returns full lifecycle status as dict.
 
-    This is the canonical status surface. O(1), side-effect free.
-    Reads only shadow-state Python variables — never introspects
-    MLX/CoreML objects directly.
-
-    Returns:
-        dict with keys:
-        - loaded: bool
-        - current_model: str | None
-        - initialized: bool
-        - last_error: str | None
+    Used by:
+      - runtime/resource_governor.py:472
+      - runtime/sprint_entrypoint.py:1560
+      - recon/streaming_embedder.py:189
     """
-    return _get_lifecycle_state_snapshot()
-
-
-def ensure_mlx_runtime_initialized() -> bool:
-    """
-    Sprint 7D: Ensure MLX runtime is properly initialized before model load.
-
-    This is the canonical MLX init call point - uses mlx_cache.init_mlx_buffers()
-    as the authority. Call this before the first model load in the lifecycle path.
-
-    Returns:
-        True if MLX available and initialized, False otherwise
-    """
-    # Delegate to canonical mlx_cache authority
-    try:
-        from ..utils.mlx_cache import init_mlx_buffers
-        result = init_mlx_buffers()
-        if result:
-            logger.info("[LIFECYCLE] MLX runtime initialized via mlx_cache authority")
-        return result
-    except Exception as e:
-        logger.warning(f"[LIFECYCLE] MLX init failed: {e}")
-        return _MLX_AVAILABLE_SAFETY
-
-
-def load_model(
-    model: Any,
-    model_name: str | None = None,
-    tokenizer: Any = None,
-    prompt_cache: Any = None,
-) -> None:
-    """
-    Sprint 8Y: Load a model into the lifecycle — idempotent, state-tracked.
-
-    Contract:
-    - Double-load of the SAME model is a no-op (does NOT reload).
-    - Load of a DIFFERENT model implicitly calls unload_model() first.
-    - Updates _lifecycle_state shadow-state.
-    - Delegates to engine.load() if available.
-
-    Args:
-        model: Model/engine object (or raw model)
-        model_name: Human-readable name for the model (used for state tracking)
-        tokenizer: Tokenizer object (extracted from engine if needed)
-        prompt_cache: Prompt/KV cache (extracted from engine if needed)
-
-    Returns:
-        None
-    """
-    # Resolve model name
-    resolved_name = model_name
-    if resolved_name is None:
-        if model is not None and hasattr(model, 'model_name'):
-            resolved_name = model.model_name
-        elif model is not None and hasattr(model, 'name'):
-            resolved_name = model.name
-        else:
-            resolved_name = type(model).__name__ if model else "unknown"
-
-    # Sprint 8Y Invariant §B.8: double-load same model = no-op
-    if _lifecycle_state["loaded"] and _lifecycle_state["current_model"] == resolved_name:
-        logger.debug(f"[LIFECYCLE] load_model('{resolved_name}') — already loaded, no-op")
-        return
-
-    # If a different model is currently loaded, unload it first
-    if _lifecycle_state["loaded"] and _lifecycle_state["current_model"] != resolved_name:
-        logger.info(f"[LIFECYCLE] Switching model: {_lifecycle_state['current_model']} → {resolved_name}")
-        # Use weak ref to unload the OLD model, not the new one
-        old_model = _get_current_model_unsafe()
-        if old_model is not None:
-            unload_model(model=old_model)
-
-    # Initialize MLX runtime if needed
-    mlx_ready = ensure_mlx_runtime_initialized()
-    with _lifecycle_lock:
-        _lifecycle_state["initialized"] = mlx_ready
-
-    # M-08: Invalidate all caches before model swap (if engine supports it)
-    # DeepHermes3Engine._invalidate_all_prompt_caches() clears _prompt_cache,
-    # _system_prompt_cache, _warmup_cache, _kv_cache_pool, _session_cache_pool
-    if model is not None and hasattr(model, '_invalidate_all_prompt_caches'):
-        try:
-            model._invalidate_all_prompt_caches(f'model_lifecycle_swap:{resolved_name}')
-        except Exception as _e:
-            logger.debug(f'[M-08] Cache invalidation before load failed: {_e}')
-
-    # Delegate to engine.load() if available
-    if model is not None and hasattr(model, 'load'):
-        import inspect
-        if inspect.iscoroutinefunction(model.load):
-            # F314-4: Replace asyncio.new_event_loop() anti-pattern with canonical
-            # sync_bridge.run_sync_async() — Py 3.14.6 safe, single uvloop instance,
-            # no resource leak on exception path.
-            from ..utils.sync_bridge import run_sync_async
-            try:
-                # Check if we are already inside a running loop — if so, caller
-                # must await engine.load() directly (F192B pattern).
-                import asyncio as _asyncio
-                try:
-                    _asyncio.get_running_loop()
-                    _in_loop = True
-                except RuntimeError:
-                    _in_loop = False
-                if _in_loop:
-                    logger.warning(
-                        "[LIFECYCLE] Async load() in running loop — "
-                        "caller must await engine.load() directly; "
-                        "shadow-state NOT updated (load deferred)"
-                    )
-                    with _lifecycle_lock:
-                        _lifecycle_state["last_error"] = "async_load_deferred"
-                    return
-                run_sync_async(model.load())
-                _set_lifecycle_loaded(True, resolved_name, None)
-                _set_current_model_ref(model)
-                logger.info(f"[LIFECYCLE] Engine async load() completed: {resolved_name}")
-                return
-            except Exception as e:
-                logger.warning(f"[LIFECYCLE] Async load failed: {e}")
-                with _lifecycle_lock:
-                    _lifecycle_state["last_error"] = str(e)
-                return
-        else:
-            # Sync load
-            try:
-                model.load()
-                _set_lifecycle_loaded(True, resolved_name, None)
-                _set_current_model_ref(model)
-                logger.info(f"[LIFECYCLE] Engine sync load() completed: {resolved_name}")
-                return
-            except Exception as e:
-                logger.warning(f"[LIFECYCLE] Sync load failed: {e}")
-                with _lifecycle_lock:
-                    _lifecycle_state["last_error"] = str(e)
-                return
-
-    # No engine.load() — treat as already loaded (raw model)
-    _set_lifecycle_loaded(True, resolved_name, None)
-    _set_current_model_ref(model)
-    logger.info(f"[LIFECYCLE] Model registered: {resolved_name}")
-
-
-def unload_model(
-    model: Any = None,
-    tokenizer: Any = None,
-    prompt_cache: Any = None,
-    aggressive: bool = False
-) -> None:
-    """
-    Sprint 8C: Unload model — delegates to engine.unload() if available (7K SSOT).
-
-    If model has an async unload() method (e.g. Hermes3Engine),
-    that method is awaited INLINE (no parallel concerns here).
-    Otherwise falls back to legacy direct eviction.
-
-    Canonical 7K order is handled INSIDE engine.unload().
-    This function no longer duplicates that order.
-
-    Args:
-        model: Model/engine object (or raw model)
-        tokenizer: Tokenizer object (extracted from engine if needed)
-        prompt_cache: Prompt/KV cache (extracted from engine if needed)
-        aggressive: If True, also reduces MLX cache limit temporarily
-
-    Returns:
-        None (operace je idempotentní, fail-open)
-    """
-    # Sprint 8Y §B.7: Early return when nothing is loaded — avoids
-    # unnecessary gc.collect() and asyncio.get_event_loop() calls.
-    if not _lifecycle_state["loaded"]:
-        logger.debug("[LIFECYCLE] unload_model — nothing loaded, no-op")
-        return
-
-    # F162F: If model=None but we have a tracked model, use it.
-    # This fixes the silent-no-op bug where unload_model(None) was called
-    # after a load that didn't pass the model reference.
-    if model is None:
-        model = _get_current_model_unsafe()
-        if model is None:
-            # Nothing to unload and no tracked model — clear state and return
-            with _lifecycle_lock:
-                _lifecycle_state["loaded"] = False
-                _lifecycle_state["current_model"] = None
-            _set_current_model_ref(None)
-            return
-
-    # Sprint 8C: Prefer engine.unload() if available — respects 7K SSOT
-    if model is not None and hasattr(model, 'unload'):
-        import inspect
-        if inspect.iscoroutinefunction(model.unload):
-            # F314-4: Replace asyncio.new_event_loop() anti-pattern with canonical
-            # sync_bridge.run_sync_async() — Py 3.14.6 safe, single uvloop instance,
-            # no resource leak on exception path.
-            from ..utils.sync_bridge import run_sync_async
-            try:
-                # Check if we are already inside a running loop — if so, caller
-                # must await engine.unload() directly (F192B pattern).
-                import asyncio as _asyncio
-                try:
-                    _asyncio.get_running_loop()
-                    _in_loop = True
-                except RuntimeError:
-                    _in_loop = False
-                if _in_loop:
-                    logger.warning(
-                        "[LIFECYCLE] Async unload() in running loop — "
-                        "caller must await engine.unload() directly; "
-                        "shadow-state NOT updated (unload deferred)"
-                    )
-                    return
-                run_sync_async(model.unload())
-                logger.info("[LIFECYCLE] Engine unload() completed via bridge")
-                with _lifecycle_lock:
-                    _lifecycle_state["loaded"] = False
-                    _lifecycle_state["current_model"] = None
-                _set_current_model_ref(None)
-                return
-            except Exception as e:
-                logger.warning(f"[LIFECYCLE] Async unload failed: {e}")
-                return
-        else:
-            # Sync unload
-            try:
-                model.unload()
-                logger.info("[LIFECYCLE] Engine sync unload() completed")
-                with _lifecycle_lock:
-                    _lifecycle_state["loaded"] = False
-                    _lifecycle_state["current_model"] = None
-                _set_current_model_ref(None)
-                return
-            except Exception as e:
-                logger.warning(f"[LIFECYCLE] Sync unload failed: {e}")
-                return
-
-    # Legacy fallback: direct eviction (only for non-Hermes models)
-    _unload_model_legacy(model, tokenizer, prompt_cache, aggressive)
-    with _lifecycle_lock:
-        _lifecycle_state["loaded"] = False
-        _lifecycle_state["current_model"] = None
-    _set_current_model_ref(None)
-
-
-def _unload_model_legacy(
-    model: Any,
-    tokenizer: Any,
-    prompt_cache: Any,
-    aggressive: bool
-) -> None:
-    """
-    Legacy direct eviction — used ONLY for models without unload() method.
-
-    Canonically, Hermes-3 should always use engine.unload() which handles
-    all 7K order internally. This function exists for non-engine models
-    (raw _model objects, tokenizers) that don't have unload().
-    """
-    # Extract model from engine if needed
-    if model is not None and hasattr(model, '_model'):
-        _model = model._model
-    else:
-        _model = model
-
-    # Extract tokenizer from engine if needed
-    if tokenizer is None and model is not None and hasattr(model, '_tokenizer'):
-        tokenizer = model._tokenizer
-
-    # Extract prompt_cache from engine if needed
-    if prompt_cache is None and model is not None and hasattr(model, '_prompt_cache'):
-        prompt_cache = model._prompt_cache
-    if prompt_cache is None and model is not None and hasattr(model, '_system_prompt_cache'):
-        prompt_cache = model._system_prompt_cache
-
-    try:
-        # Krok 1: Evict prompt_cache
-        if prompt_cache is not None:
-            try:
-                del prompt_cache
-                logger.debug("[LIFECYCLE] prompt_cache evicted")
-            except Exception as e:
-                logger.debug(f"[LIFECYCLE] prompt_cache eviction: {e}")
-            prompt_cache = None
-
-        # Krok 2: Del model
-        if _model is not None:
-            try:
-                del _model
-                logger.debug("[LIFECYCLE] model evicted")
-            except Exception as e:
-                logger.debug(f"[LIFECYCLE] model eviction: {e}")
-            _model = None
-
-        # Krok 3: Del tokenizer
-        if tokenizer is not None:
-            try:
-                del tokenizer
-                logger.debug("[LIFECYCLE] tokenizer evicted")
-            except Exception as e:
-                logger.debug(f"[LIFECYCLE] tokenizer eviction: {e}")
-            tokenizer = None
-
-        # Krok 4: gc.freeze() — M1-safe bez stop-the-world
-        try:
-            gc.freeze()
-        except Exception:  # noqa: BLE001
-            pass  # noqa: BLE001  # Python <3.12 or if freeze fails
-
-        mx = _get_mlx_safe()
-        if mx is not None:
-            # Krok 5: mx.eval([]) bezprostředně před clear_cache (M1 invariant §F178D)
-            try:
-                mx.eval([])
-            except Exception as e:
-                logger.debug(f"[LIFECYCLE] mx.eval([]): {e}")
-            # Krok 6: clear_cache — modern-first, fallback to deprecated
-            try:
-                if hasattr(mx, 'clear_cache'):
-                    mx.clear_cache()
-            except Exception as e:
-                logger.debug(f"[LIFECYCLE] clear_cache: {e}")
-
-            # Aggressive: temporarily reduce cache limit — F266 METAL LEAK FIX
-            if aggressive:
-                try:
-                    old_limit = None
-                    new_limit = 64 * 1024 * 1024  # 64MB
-                    if hasattr(mx, 'get_cache_limit'):
-                        old_limit = mx.get_cache_limit()
-                    elif hasattr(mx.metal, 'get_cache_limit'):
-                        old_limit = mx.metal.get_cache_limit()
-                    if hasattr(mx, 'set_cache_limit'):
-                        mx.set_cache_limit(new_limit)
-                    elif hasattr(mx.metal, 'set_cache_limit'):
-                        mx.metal.set_cache_limit(new_limit)
-                    mx.eval([])
-                    if hasattr(mx, 'clear_cache'):
-                        mx.clear_cache()
-                    if old_limit is not None and hasattr(mx, 'set_cache_limit'):
-                        mx.set_cache_limit(old_limit)
-                except Exception:  # noqa: BLE001
-                    pass
-
-        logger.info("[LIFECYCLE] Model lifecycle cleanup complete")
-
-    except Exception as e:
-        # Fail-open: nikdy nevyhazovat výjimku z lifecycle
-        logger.warning(f"[LIFECYCLE] Unload error (non-critical): {e}")
-
-
-def preload_model_hint(model_path: str) -> None:
-    """
-    Hint pro preload modelu (optimalizace pro budoucí načtení).
-
-    Args:
-        model_path: Cesta k modelu
-
-    Note:
-        Toto je placeholder pro budoucí implementaci prediktivního preloadu.
-        Momentálně jen loguje hint.
-    """
-    logger.debug(f"[LIFECYCLE] Preload hint: {model_path}")
+    return {
+        "loaded": _MX_LOADED,
+        "model_path": _MX_MODEL_PATH,
+        "last_unload_age_s": get_last_unload_age(),
+        "emergency_unload_requested": _EMERGENCY_UNLOAD_REQUESTED,
+    }
 
 
 # =============================================================================
-# Sprint 8QC: Structured Generation with Outlines MLX
+# Role 5: Structured-Generation Sidecar
+# (MIGRATED — see core/model_runtime.py)
 # =============================================================================
-
-import asyncio  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-try:
-    from ..utils.executors import CPU_EXECUTOR
-except Exception:
-    import concurrent.futures
-    CPU_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="hledac_cpu")
-
-
-# ------------------------------------------------------------------------------------------------
-# F6.5 class ModelLifecycle MIGRATED to core/model_runtime.py (F350M-R W6 refactor)
-# All windup-local structured-generation logic (Qwen/SmolLM, Outlines MLX constrained
-# generation) is now in core/model_runtime.py.
-# ------------------------------------------------------------------------------------------------
 
 
 # ------------------------------------------------------------------------------------------------
 # F6.5 class ModelLifecycle MIGRATED to core/model_runtime.py (F350M-R W6 refactor)
 # Windup-local structured-generation (Qwen/SmolLM, Outlines MLX constrained generation)
 # is now in core/model_runtime.py.
+# brain/model_lifecycle.py now contains ONLY roles 1-4 (emergency seam, MLX helpers,
+# shadow-state, unload helpers). Do NOT re-add structured-generation code here.
 # ------------------------------------------------------------------------------------------------

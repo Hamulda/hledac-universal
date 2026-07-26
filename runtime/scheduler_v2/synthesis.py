@@ -90,7 +90,7 @@ async def run_synthesis_sidecar(
         return
 
     try:
-        from hledac.universal.brain.model_lifecycle import ModelLifecycle
+        from hledac.universal.core.model_runtime import ModelLifecycle
         from hledac.universal.brain.synthesis_runner import SynthesisRunner
     except ImportError as e:
         _log.debug("[F259] SynthesisRunner import failed: %s", e)

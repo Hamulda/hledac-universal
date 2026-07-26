@@ -1,0 +1,12 @@
+{
+  "state": "completed",
+  "total_files": 1581,
+  "processed_files": 1581,
+  "cached_files": 0,
+  "parsed_files": 1581,
+  "failed_files": 0,
+  "started_at": "2026-07-26T16:35:25.341324+00:00",
+  "updated_at": "2026-07-26T16:35:38.055642+00:00",
+  "completed_at": "2026-07-26T16:35:38.055640+00:00",
+  "error": null
+}

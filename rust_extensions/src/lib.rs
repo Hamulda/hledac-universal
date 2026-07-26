@@ -31,10 +31,12 @@ pub mod regex_lz4; // LZ4-compressed pattern store for 10k+ patterns
 pub mod content_hasher;
 #[cfg(feature = "core")]
 pub mod crypto_accelerate;
+pub mod xxhash_ext; // xxHash3-64 for non-cryptographic content hashing
 // ISSUE-014: adaptive_scheduler is always compiled — used by always-compiled modules
 // (claims_extraction, health). Previously gated behind advanced feature.
 pub mod adaptive_scheduler;
 #[cfg(feature = "data")]
+pub mod rolling_hash; // P3-3: Rolling hash for content fingerprinting
 pub mod graph_traverse;
 #[cfg(feature = "graph")]
 pub mod graph_centrality;
@@ -42,6 +44,7 @@ pub mod graph_centrality;
 pub mod hot_edges_rs;
 pub mod html_parse;
 pub mod int_counter_layout;
+pub mod xml_sanitize; // R7c: XML sanitization — strip DOCTYPE/ENTITY declarations
 pub mod ioc_dedup;
 pub mod ioc_patterns;
 pub mod ioc_patterns_generated; // Issue #031: generated from ioc_patterns.rs (codegen)
@@ -50,6 +53,7 @@ pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata build_many (NEON on M1)
 pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
+pub mod ip_parse; // Sprint P2-3: IP address parsing, classification, CIDR containment
 pub mod lmdb_dht; // ISSUE-004: Rust LMDB backend for DHT — eliminates asyncio.to_thread overhead
 pub mod madvise;
 // D6: metal_compute and metal_pattern_matcher removed — metal crate (~45s compile, ~3MB dylib)
@@ -65,6 +69,7 @@ pub mod simd_similarity;
 pub mod simhash_ext;
 #[cfg(feature = "graph")]
 pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
+pub mod text_similarity; // R25: Text similarity via trigram Jaccard
 pub mod text_norm;
 #[cfg(feature = "advanced")]
 pub mod feed_decision;
@@ -89,6 +94,7 @@ pub mod simd; // ISSUE-023: Modular SIMD — NEON on M1, scalar fallback
 pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
 // dedup_bloom is always compiled — used by health (always compiled).
 // Previously gated behind advanced feature but health.rs calls dedup_bloom::global_stats().
+pub mod sprint_policies; // RL sprint policy layer
 pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
 pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
 pub mod telemetry_agg;  // Real-time metrics aggregation
@@ -107,6 +113,7 @@ pub mod pool_run;      // R2: Rayon pool runners — GIL wrappers + channel-base
 pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
 pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe
 #[cfg(feature = "data")]
+pub mod async_query; // R26: Async DuckDB queries via Rust executor
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
 // ISSUE-026 + R25-DELETE: text_similarity.rs removed — SequenceMatcher in
 // metadata_dedup.py is sufficient for short-field comparison. Rust trigram
@@ -577,6 +584,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<aho_corasick::AhoCorasickMatcher>()?;
     m.add_class::<aho_corasick::PatternHit>()?;  // Issue #37: zero-copy hit struct
+
+    // B4: Query-context multi-pattern scanner — replaces 4× Python str.find loops
+    query_terms::register_functions(m)?;
+
     #[cfg(feature = "bloom")]
     {
         m.add_class::<bloom::BloomFilter>()?;
@@ -623,11 +634,16 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "graph")]
     lsh_index::register_functions(m)?;
 
-    // xxHash3-64 removed — ISSUE-005 batch_xxh3_64_bytes migrated to content_hasher::batch_xxh3_64_hex
+    // R25: Text similarity via trigram Jaccard — group_similar_texts()
+    // ISSUE-025 FIX: restored from git history, was never connected
+    text_similarity::register_functions(m)?;
 
+    // xxHash3-64 — ISSUE-005: xxhash_ext has 8 unique functions (no overlap with content_hasher)
     // F320: batch xxh3-64 via rayon — parallel prompt cache fingerprinting (Apple Silicon NEON)
     #[cfg(feature = "advanced")]
     m.add_function(wrap_pyfunction!(content_hasher::batch_xxh3_64_hex, m)?)?;
+    #[cfg(feature = "advanced")]
+    xxhash_ext::register_functions(m)?;
 
     // SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup).
     // NEON-enabled on aarch64 (Apple Silicon), scalar fallback elsewhere.
@@ -702,6 +718,15 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "data")]
     graph_traverse::register_functions(m)?;
 
+    // R26: Async DuckDB queries via Rust executor — rust_async_query_batch()
+    // ISSUE-026 FIX: restored from git history, was never connected
+    #[cfg(feature = "data")]
+    async_query::register(m)?;
+
+    // P3-3: Rabin-Karp rolling hash for sliding-window URL fingerprinting
+    #[cfg(feature = "data")]
+    rolling_hash::register(m)?;
+
     // Sprint F266: Streaming HTML parsing via lol_html — link/email/title/meta extraction.
     html_parse::register_functions(m)?;
 
@@ -713,6 +738,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Fallback: scalar Rust on non-aarch64.
     #[cfg(feature = "advanced")]
     signal_batch::register_functions(m)?;
+
+    // ISSUE-023: Low-level SIMD primitives (NEON on M1, scalar fallback)
+    simd::register(m)?;
 
     // PAR-1 P1: SIMD-accelerated batch cosine similarity for embedding re-ranking.
     // Fallback for environments without MLX (CI, testing). NEON on AArch64.
