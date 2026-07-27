@@ -34,10 +34,11 @@ _rgov_cache: dict[str, object] | None = None
 _sysdet_cache: dict[str, object] | None = None
 _uma_cache: dict[str, object] | None = None
 _rb: object | None = None
+_main_cache: object | None = None
 
 
 def __getattr__(name: str):
-    global _lock_cache, _embed_cache, _rgov_cache, _sysdet_cache, _uma_cache, _rb
+    global _lock_cache, _embed_cache, _rgov_cache, _sysdet_cache, _uma_cache, _rb, _main_cache
 
     # ── rust_backend (already lazy, keep existing pattern) ───────────────────
     if name == "rust_backend":
@@ -128,5 +129,21 @@ def __getattr__(name: str):
             from utils.uma_budget import Watchdog
             _uma_cache = {"Watchdog": Watchdog}
         return _uma_cache[name]  # type: ignore[return-value]
+
+    # ── __main__ (deprecated shim — re-exported from runtime/sprint_entrypoint) ──
+    if name == "__main__":
+        # core/__main__.py was removed; redirect to the canonical sprint_entrypoint.
+        import importlib
+        import sys
+        if _main_cache is None:
+            # Import the actual module (runtime/sprint_entrypoint) and cache it.
+            _main_cache = importlib.import_module("hledac.universal.runtime.sprint_entrypoint")
+        # Also register under the legacy sys.modules path so that
+        #   from hledac.universal.core import __main__
+        # and
+        #   import hledac.universal.core.__main__
+        # both resolve to the same cached object.
+        sys.modules["hledac.universal.core.__main__"] = _main_cache
+        return _main_cache
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

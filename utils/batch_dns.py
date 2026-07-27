@@ -74,16 +74,11 @@ DEFAULT_PER_HOST_TIMEOUT_S = 5.0  # Per-host getaddrinfo timeout
 # for offline / DNS-blocked environments)
 ENV_OPT_OUT = "HLEDAC_BATCH_DNS_DISABLED"
 
-# aiodns lazy import — optional backend for connection pooling
-# aiodns lazy import — optional backend for connection pooling
-# Install with: uv sync --extra aiodns
+# aiodns REMOVED ISSUE-008: no longer a project dep.
+# Fallback path via loop.getaddrinfo() (stdlib) always available.
+# Manual install if needed: uv add aiodns
 HAS_AIODNS = False
 aiodns: Any = None  # type: ignore[no-redef]
-try:
-    import aiodns  # type: ignore[import]
-    HAS_AIODNS = True
-except ImportError:
-    pass
 
 # Sprint F2.3: Common domains for pre-resolution
 # Top-level domains commonly seen in OSINT sprints — resolved eagerly

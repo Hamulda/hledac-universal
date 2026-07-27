@@ -245,21 +245,21 @@ from .sprint_boundary import SprintBoundaryCoordinator
 _IOC_CHUNK: int = 128  # per-chunk size for parallel IOC buffering
 
 # Lazy imports from quality_assessment to avoid circular dependency
-# duckdb_store ↔ quality_assessment. Use TYPE_CHECKING for type hints only.
+# duckdb_store ↔ quality_assessment — both use TYPE_CHECKING to break circular import
 from typing import TYPE_CHECKING
-
-# QualityAssessmentState — runtime lazy import (not in TYPE_CHECKING since it's instantiated)
-def _get_QualityAssessmentState():
-    """Lazy loader for QualityAssessmentState."""
-    from .quality_assessment import QualityAssessmentState
-    return QualityAssessmentState
-
 
 if TYPE_CHECKING:
     from .quality_assessment import (
         QualityAssessmentState,
         QualityRejectionRecord,
     )
+
+
+def _get_QualityAssessmentState():
+    """Lazy loader for QualityAssessmentState — called at instance init time."""
+    from .quality_assessment import QualityAssessmentState
+
+    return QualityAssessmentState
 
 # Rust backend — strict import
 try:

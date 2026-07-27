@@ -60,6 +60,7 @@ pub mod os_unfair_lock; // ISSUE 4.3: Darwin os_unfair_lock (~5ns) vs parking_lo
 pub mod memory;
 #[cfg(feature = "metal")]
 pub mod metal_compute; // R22: Metal GPU batch matmul for MoE router (CPU fallback always available)
+#[cfg(feature = "accelerate")]
 pub mod accelerate; // R22: Accelerate/vDSP FFI for NER cosine similarity (scalar fallback on non-macOS)
 pub mod quality_gate;
 pub mod _entropy; // Shared entropy helpers — broken out to avoid circular quality_gate ↔ zero_copy
@@ -1001,7 +1002,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "ane")]
     ane::register_functions(m)?;
 
-    // R22: Accelerate/vDSP FFI — batch cosine similarity for NER engine (always compiled)
+    // R22: Accelerate/vDSP FFI — batch cosine similarity for NER engine
+    // Gated because vDSP symbols are unavailable on macOS 26.5+ (Darwin 25.5+)
+    // Python fallback: brain/ner_engine.py uses scipy/numpy for cosine similarity
+    #[cfg(feature = "accelerate")]
     accelerate::register(m)?;
 
     // R22: Metal GPU batch matmul — MoE router integration (feature-gated)

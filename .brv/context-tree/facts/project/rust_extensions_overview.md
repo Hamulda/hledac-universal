@@ -2,7 +2,7 @@
 title: Rust Extensions Overview
 summary: 30+ Rust modules (MPSC, bloom filters, hashing, IOC extraction), crossbeam-channel MPSC with ARM LSE atomics, feature-gated compilation, memory budgets
 tags: []
-related: [facts/project/xxhash_rust_implementation.md, facts/project/technology_stack.md, facts/project/parallel_async_helper.md]
+related: [facts/project/xxhash_rust_implementation.md, facts/project/technology_stack.md, facts/project/parallel_async_helper.md, facts/project/issue_3_2_federatedqtable_parking_lot_migration.md]
 keywords: []
 createdAt: '2026-07-16T11:01:16.887Z'
 updatedAt: '2026-07-16T11:01:16.887Z'

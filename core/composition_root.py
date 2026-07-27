@@ -28,6 +28,7 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+from hledac.universal.runtime.sprint_entrypoint import _cancel_all_tasks
 from hledac.universal.utils.async_helpers import safe_create_task
 
 logger = logging.getLogger(__name__)
@@ -188,7 +189,7 @@ async def _run_sprint_task(
     Async task body that runs the sprint and waits for either
     sprint completion or the shutdown signal.
     """
-    from hledac.universal.core.__main__ import run_sprint
+    from hledac.universal.runtime.sprint_entrypoint import run_sprint
 
     sprint_coro = run_sprint(
         query=query,
@@ -271,7 +272,7 @@ def build_runtime(
     init_telemetry_context()
 
     # Pre-sprint checks (sync, fail-loud)
-    from hledac.universal.core.__main__ import run_pre_sprint_checks
+    from hledac.universal.runtime.sprint_entrypoint import run_pre_sprint_checks
 
     if not run_pre_sprint_checks():
         logger.warning("[PREFLIGHT] Pre-sprint checks returned False — continuing in degraded mode")
@@ -361,28 +362,5 @@ def shutdown_runtime(
     logger.debug("[RUNTIME] Event loop closed")
 
 
-async def _cancel_all_tasks(timeout_s: float = 5.0) -> None:
-    """Cancel all pending tasks and wait for them to drain — bounded.
-
-    Bounded drain: waits up to ``timeout_s`` for tasks to honour cancellation,
-    then logs any stragglers and abandons them.  On M1 8GB this prevents
-    DuckDB commits / MLX eval / zstd flush (each can take 30+ s) from
-    blocking shutdown indefinitely.
-
-    Args:
-        timeout_s: Maximum seconds to wait for tasks to drain.  Default 5 s
-            keeps total shutdown < 6 s (safety margin for the caller's
-            run_until_complete wrapper).
-    """
-    pending = [t for t in asyncio.all_tasks() if not t.done()]
-    if not pending:
-        return
-    for t in pending:
-        t.cancel()
-    _, stragglers = await asyncio.wait(
-        pending, timeout=timeout_s, return_when=asyncio.ALL_COMPLETED
-    )
-    for t in stragglers:
-        logger.warning(
-            f"[SHUTDOWN] Task {t.get_name()} did not drain in {timeout_s}s — abandoning"
-        )
+# _cancel_all_tasks is imported from runtime.sprint_entrypoint (canonical location).
+# Both run_runtime and shutdown_runtime use the same bounded drain.

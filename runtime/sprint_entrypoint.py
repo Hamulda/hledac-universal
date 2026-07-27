@@ -2005,25 +2005,52 @@ async def run_sprint(
 
     _cb_reset_coro = asyncio.to_thread(_reset_circuit_breakers)
 
-    # DuckDB init — now concurrent with prewarm thread + circuit breaker reset.
-    # Total boot = max(await duckdb, prewarm thread) instead of sequential sum.
+    # F350M-R Issue #5: DuckDB init + circuit breaker reset run CONCURRENTLY.
+    # Formerly sequential: await store.async_initialize() THEN await _cb_reset_coro.
+    # Now both are gathered: total wall-clock = max(duckdb, cb_reset) not sum.
+    # Savings: ~50% of the ~1-2s DuckDB init is overlapped with cb_reset.
     _duckdb_init_ok = False
-    try:
-        await store.async_initialize()
-        _duckdb_init_ok = True
-    except Exception as _init_err:
-        logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft, store will init on first ingest): {_init_err}")
 
-    # Await circuit breaker reset with timeout — prewarm already running in parallel
-    try:
-        async with asyncio.timeout(10.0):
-            await _cb_reset_coro
-            if not _cb_reset_done:
-                logger.debug("[startup] circuit_breaker reset skipped (import failed)")
-    except TimeoutError:
-        logger.warning("[startup] boot circuit_breaker reset timed out after 10s — continuing")
-    except asyncio.CancelledError:
-        raise
+    async def _duckdb_init_coro() -> bool:
+        """DuckDB async init — returns True on success, False on failure."""
+        try:
+            await store.async_initialize()
+            return True
+        except Exception as _init_err:
+            logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft, store will init on first ingest): {_init_err}")
+            return False
+
+    async def _cb_reset_awaitable() -> None:
+        """Awaitable wrapper for the circuit-breaker reset thread job."""
+        # Fire-and-forget thread already started; here we await its completion.
+        try:
+            async with asyncio.timeout(10.0):
+                await _cb_reset_coro
+                if not _cb_reset_done:
+                    logger.debug("[startup] circuit_breaker reset skipped (import failed)")
+        except TimeoutError:
+            logger.warning("[startup] boot circuit_breaker reset timed out after 10s — continuing")
+        except asyncio.CancelledError:
+            raise
+
+    # Gather both — max wall-clock instead of sequential sum.
+    _init_results: list[bool | Exception] = []
+    with contextlib.suppress(asyncio.CancelledError):
+        _init_results = await asyncio.gather(
+            _duckdb_init_coro(),
+            _cb_reset_awaitable(),
+            return_exceptions=True,
+        )
+
+    # Extract DuckDB result — gather maintains ordering.
+    if _init_results:
+        _duckdb_result = _init_results[0]
+        if isinstance(_duckdb_result, Exception):
+            logger.warning(f"[P0-3] DuckDB pre-init failed (fail-soft): {_duckdb_result}")
+            _duckdb_init_ok = False
+        else:
+            _duckdb_init_ok = _duckdb_result
+        # Circuit-breaker result is _init_results[1] — already logged inside _cb_reset_awaitable.
 
     # Scheduler config
     # F221: windup_lead_s param + active-budget guard for 'default' profile
@@ -3419,6 +3446,43 @@ def _install_signal_handler_for_loop(
     return _restore
 
 
+# --------------------------------------------------------------------------- #
+# Bounded task drain — single canonical implementation
+# --------------------------------------------------------------------------- #
+
+
+async def _cancel_all_tasks(timeout_s: float = 5.0) -> None:
+    """Cancel all pending tasks and wait for them to drain — bounded.
+
+    Bounded drain: waits up to ``timeout_s`` for tasks to honour cancellation,
+    then logs any stragglers and abandons them.  On M1 8GB this prevents
+    DuckDB commits / MLX eval / zstd flush (each can take 30+ s) from
+    blocking shutdown indefinitely.
+
+    Canonical location: runtime/sprint_entrypoint.py.
+    Imported by core/composition_root.py and cli/parser.py.
+
+    Args:
+        timeout_s: Maximum seconds to wait for tasks to drain.  Default 5 s
+            keeps total shutdown < 6 s (safety margin for the caller's
+            run_until_complete wrapper).
+    """
+    pending = [t for t in asyncio.all_tasks() if not t.done()]
+    if not pending:
+        return
+    for t in pending:
+        t.cancel()
+    _, stragglers = await asyncio.wait(
+        pending, timeout=timeout_s, return_when=asyncio.ALL_COMPLETED
+    )
+    for t in stragglers:
+        logger.warning(
+            "[SHUTDOWN] Task %s did not drain in %ss — abandoning",
+            t.get_name(),
+            timeout_s,
+        )
+
+
 def _fatal(exc: BaseException, code: int = 1) -> None:
     """
     Structured fatal-error handler. Logs _MAIN_FATAL with full traceback,
@@ -3496,9 +3560,19 @@ def _run_sprint_loop(args: argparse.Namespace) -> None:
         raise
     finally:
         restore_signals()
-        for task in pending:
-            task.cancel()
+        # F350M-R ISSUE #4 FIX: bounded task drain — replaces raw task.cancel()
+        # loop.  Uses canonical _cancel_all_tasks so all three shutdown paths
+        # (composition_root, _dispatch_sprint, _run_sprint_loop) share one impl.
+        try:
+            loop.run_until_complete(_cancel_all_tasks(timeout_s=5.0))
+        except Exception:
+            pass
         loop.close()
+        try:
+            import gc as _gc
+            _gc.collect()
+        except Exception:
+            pass
 
 
 def main() -> None:

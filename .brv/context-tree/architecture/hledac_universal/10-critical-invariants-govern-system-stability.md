@@ -6,7 +6,7 @@ type: synthesis
 title: 10 Critical Invariants Govern System Stability
 summary: 'Unified rule system enforces safe patterns: asyncio.gather return_exceptions, MLX cache management, DuckDB write paths.'
 tags: [invariants, stability, async, m1, ci]
-related: []
+related: [architecture/hledac_universal/critical_invariants.md, architecture/hledac_universal/critical-invariants-as-cross-domain-enforcement-mechanism.md]
 keywords: [ghost-invariants, asyncio-gather, return-exceptions, mx-eval, duckdb-write, lmdb-bulk, fail-safe]
 createdAt: '2026-07-18T00:18:19.624Z'
 updatedAt: '2026-07-18T00:18:19.624Z'

@@ -2,7 +2,7 @@
 title: Coding Conventions Status
 summary: Coding conventions documented in .claude/CLAUDE.md, not in dedicated docs/conventions/ directory
 tags: []
-related: []
+related: [facts/project/exit_code_convention.md, facts/project/hledac_universal_claude_md.md]
 keywords: []
 createdAt: '2026-07-26T12:10:53.721Z'
 updatedAt: '2026-07-26T12:10:53.721Z'

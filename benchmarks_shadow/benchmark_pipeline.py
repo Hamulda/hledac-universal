@@ -63,7 +63,7 @@ async def run_pipeline_iteration(
 
     # Import the canonical sprint runner
     try:
-        from hledac.universal.core.__main__ import run_sprint as _run_sprint
+        from hledac.universal.runtime.sprint_entrypoint import run_sprint as _run_sprint
     except ImportError as e:
         return {
             "error": f"Import error: {e}",

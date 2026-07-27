@@ -1,3 +1,6 @@
+---
+related: [architecture/hledac_universal/sprint-lifecycle-cross-domain-contract.md, architecture/hledac_universal/sprint_lifecycle_pipeline.md]
+---
 # Topic: duckdb_store
 
 ## Overview

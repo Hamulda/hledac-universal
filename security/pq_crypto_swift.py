@@ -23,7 +23,10 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from .pq_crypto import PostQuantumError, PQAvailability, PQSignature, PQStatus
+
+# Types from parent module — needed for msgspec.Struct field annotations (evaluated at class def time)
+from .pq_crypto import PQAvailability, PQSignature, PQStatus, PostQuantumError
+
 logger = logging.getLogger(__name__)
 HELPER_MISSING = 'HELPER_MISSING'
 HELPER_NOT_EXECUTABLE = 'HELPER_NOT_EXECUTABLE'

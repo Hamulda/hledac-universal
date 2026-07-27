@@ -1,0 +1,1 @@
+Documentation coverage as of July 2026 shows docs/integrations/ and docs/conventions/ newly created but significant gaps remain—no ADR docs, API references, or contribution guide exist yet.

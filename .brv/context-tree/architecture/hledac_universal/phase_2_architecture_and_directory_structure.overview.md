@@ -1,0 +1,7 @@
+- **8-Lane Sprint Flow**: CLI → run_sprint() → SprintScheduler.run() → 8 acquisition lanes → advisory runners → graph accumulation → DuckDB canonical write
+- **Directory Structure**: core/ (governance, locks, capabilities), runtime/ (sprint_scheduler, sprint_entrypoint), knowledge/ (duckdb_store, graph_service), fetching/ (public_fetcher/curl_cffi, fetch_coordinator), transport/ (http3_lane, prewarm_pool, tor/i2p/nym), brain/ (inference, dspy, hypothesis, ner, mlx), coordinators/, sidecar/, tests/, rust_extensions/
+- **Rust Extensions via PyO3**: feed_pipeline, ioc_extractor, url_ops, content_hasher, batch_counters modules bridge Python to Rust
+- **DuckDB Canonical Target**: DuckDB is the primary write target for graph accumulation; LanceDB also available
+- **Entry Point**: python -m hledac.universal --sprint "QUERY" [--duration SECS] [--aggressive]; current: runtime/sprint_entrypoint.py (core/__main__.py deprecated)
+- **Transport Options**: HTTP/3 lanes, conditional cache, Tor/I2P/Nym anonymization transports
+- **Sidecar Adapters**: Fediverse, DHT, academic, alt_protocols, leak_sentinel protocol adapters

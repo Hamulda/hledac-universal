@@ -1,7 +1,7 @@
 //! Feed pipeline — unified parse + scan + dedup in Rust.
 
-use crate::os_unfair_lock::{OsUnfairLock, OsUnfairLockExt};
 use aho_corasick::AhoCorasick;
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::collections::HashSet;
@@ -9,12 +9,10 @@ use std::sync::Arc;
 use xml::reader::{EventReader, XmlEvent};
 use xxhash_rust::xxh3::xxh3_64;
 
-/// Shared dedup state — OsUnfairLock for ~5ns lock/unlock (vs ~25ns parking_lot::Mutex).
-/// OsUnfairLock is NOT reentrant but is safe here because the critical section
-/// (HashSet::contains + insert) is purely computational with no suspension points.
+/// Shared dedup state — parking_lot::Mutex for HashSet access.
+/// Using Mutex because UnfairLockGuard doesn't provide access to the protected data.
 struct SeenGuids {
-    lock: OsUnfairLock,
-    set: HashSet<u64>,
+    set: Mutex<HashSet<u64>>,
 }
 
 unsafe impl Send for SeenGuids {}
@@ -23,19 +21,20 @@ unsafe impl Sync for SeenGuids {}
 impl SeenGuids {
     fn new() -> Self {
         Self {
-            lock: OsUnfairLock::new(),
-            set: HashSet::new(),
+            set: Mutex::new(HashSet::new()),
         }
     }
 
     /// Check if hash is present, insert if not. Returns true if duplicate.
     #[inline]
     fn check_and_insert(&self, hash: u64) -> bool {
-        // SAFETY: lock_guard is held for the entire contains/insert pair.
-        // No suspension points in this closure (pure computational).
-        // Each rayon thread gets its own &self; os_unfair_lock is Sync.
-        let mut guard = self.lock.lock_guard();
-        guard.contains(&hash) || guard.insert(hash)
+        let mut guard = self.set.lock();
+        if guard.contains(&hash) {
+            true
+        } else {
+            guard.insert(hash);
+            false
+        }
     }
 }
 

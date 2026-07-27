@@ -6,7 +6,7 @@ type: synthesis
 title: Lazy Loading Reduces Cold Import by 98%
 summary: PEP 562 facades and conftest pre-loading cut cold import from ~9.7s to ~150ms for ML inference modules.
 tags: [lazy-loading, performance, import, mlx]
-related: []
+related: [architecture/hledac_universal/brain_module_organization.md]
 keywords: [pep-562, __getattr__, cold-import, lazy-engine, meta-path, hermes3]
 createdAt: '2026-07-18T00:18:19.626Z'
 updatedAt: '2026-07-18T00:18:19.626Z'

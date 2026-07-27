@@ -6,7 +6,7 @@ type: synthesis
 title: PyO3 Bridges Python and Rust Across All Performance Paths
 summary: Hashing facade, MPSC batch sends, and crossbeam interop all use PyO3 — single FFI strategy for critical paths.
 tags: [rust, pyo3, interop, ffi, concurrency]
-related: []
+related: [facts/project/rust-pyo3-ffi-dominates-all-hot-paths.md, facts/project/rust-pyo3-unifies-all-hot-paths.md]
 keywords: [pyo3, rust, python, maturin, send_batch, mpsc, hashing, ffi, crossbeam]
 createdAt: '2026-07-16T11:30:38.724Z'
 updatedAt: '2026-07-16T11:30:38.724Z'

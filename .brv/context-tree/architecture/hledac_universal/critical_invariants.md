@@ -2,7 +2,7 @@
 title: Critical Invariants
 summary: '10 critical invariants for M1 8GB stability: async patterns, MLX cache, DuckDB/LMDB write paths, bloom filters, fail-safe'
 tags: []
-related: []
+related: [architecture/hledac_universal/10-critical-invariants-govern-system-stability.md, architecture/hledac_universal/critical-invariants-as-cross-domain-enforcement-mechanism.md]
 keywords: []
 createdAt: '2026-07-11T15:07:16.919Z'
 updatedAt: '2026-07-11T15:07:16.919Z'

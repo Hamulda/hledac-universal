@@ -1,0 +1,1 @@
+The KB audit from 2026-07-11 incorrectly claimed probe_p12 and probe_p14 existed; only probe_p_e2_feed_pipeline is currently active as probe tests were archived during F350M-R cleanup.

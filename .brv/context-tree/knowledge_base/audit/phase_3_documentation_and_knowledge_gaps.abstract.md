@@ -1,0 +1,1 @@
+Phase 3 KB audit confirms CLAUDE.md and AGENTS.md are comprehensive, but identifies gaps in conventions, integrations, and testing documentation, while resolving a stale probe_tests gap.

@@ -2,7 +2,7 @@
 title: Documentation Coverage Assessment 2026-07-16
 summary: 'Assessment of hledac_universal codebase documentation: 9 areas well documented, 3 needing expansion, 6 weak/missing areas identified with specific knowledge gaps'
 tags: []
-related: []
+related: [knowledge_base/audit/documentation_coverage_assessment_2026_07_27.md]
 keywords: []
 createdAt: '2026-07-16T11:00:17.427Z'
 updatedAt: '2026-07-16T11:00:17.427Z'

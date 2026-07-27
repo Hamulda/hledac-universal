@@ -6,7 +6,7 @@ type: synthesis
 title: Rust/PyO3 FFI Dominates All Hot Paths
 summary: '30+ Rust modules via PyO3 handle critical hot paths: MPSC batch (crossbeam), hashing (xxh3 NEON SIMD), graph analytics (DuckPGQGraph)'
 tags: [rust, pyo3, ffi, performance, hot-path]
-related: []
+related: [facts/project/pyo3-bridges-python-and-rust-across-all-performance-paths.md, facts/project/rust-pyo3-unifies-all-hot-paths.md]
 keywords: [rust, pyo3, crossbeam, neon-simd, xxh3, ffi, duckpgqgraph, hot-path]
 createdAt: '2026-07-26T11:44:30.876Z'
 updatedAt: '2026-07-26T11:44:30.876Z'

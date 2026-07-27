@@ -308,19 +308,27 @@ __all__ = [
 
 
 def __getattr__(name: str):
+    # Lazy imports to break circular dependency cycle with transport/__init__.py
+    # base.py → __init__.py → base.py was causing runtime circular import
+    # FIX: Import DIRECTLY from submodule FILE, NOT via __init__.py
     if name in ('TransportDecision', 'Lane', 'route_transport'):
-        from . import transport_router
-        return getattr(transport_router, name)
+        from .transport_router import Lane, TransportDecision, route_transport
+
+        return {'TransportDecision': TransportDecision, 'Lane': Lane, 'route_transport': route_transport}[name]
     if name in ('get_breaker', 'CircuitBreaker', 'CircuitDecision'):
-        from . import circuit_breaker
-        return getattr(circuit_breaker, name)
+        from .circuit_breaker import get_breaker, CircuitBreaker, CircuitDecision
+
+        return {'get_breaker': get_breaker, 'CircuitBreaker': CircuitBreaker, 'CircuitDecision': CircuitDecision}[name]
     if name in ('should_use_httpx_h2', 'fetch_via_httpx_h2'):
-        from . import httpx_transport
-        return getattr(httpx_transport, name)
+        from .httpx_transport import should_use_httpx_h2, fetch_via_httpx_h2
+
+        return {'should_use_httpx_h2': should_use_httpx_h2, 'fetch_via_httpx_h2': fetch_via_httpx_h2}[name]
     if name == 'should_use_curl_cffi':
-        from . import curl_cffi_transport
-        return curl_cffi_transport.should_use_curl_cffi
+        from .curl_cffi_transport import should_use_curl_cffi
+
+        return should_use_curl_cffi
     if name in ('fetch_via_curl_cffi', 'fetch_via_tor_curl_cffi'):
-        from . import curl_cffi_fetch
-        return getattr(curl_cffi_fetch, name)
+        from .curl_cffi_fetch import fetch_via_curl_cffi, fetch_via_tor_curl_cffi
+
+        return {'fetch_via_curl_cffi': fetch_via_curl_cffi, 'fetch_via_tor_curl_cffi': fetch_via_tor_curl_cffi}[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

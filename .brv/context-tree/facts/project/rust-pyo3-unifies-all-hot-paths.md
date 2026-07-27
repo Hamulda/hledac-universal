@@ -6,7 +6,7 @@ type: synthesis
 title: Rust/PyO3 Unifies All Hot Paths
 summary: 30+ Rust extensions via PyO3/Maturin handle MPSC batching, IOC extraction, hashing, and graph analytics.
 tags: [rust, pyo3, performance, hot-path, mpsc]
-related: []
+related: [facts/project/pyo3-bridges-python-and-rust-across-all-performance-paths.md, facts/project/rust-pyo3-ffi-dominates-all-hot-paths.md]
 keywords: [pyo3, maturin, rust-extensions, mpsc-pool, batch-ops, neon-simd, xxhash, zero-copy]
 createdAt: '2026-07-18T00:18:19.622Z'
 updatedAt: '2026-07-18T00:18:19.622Z'

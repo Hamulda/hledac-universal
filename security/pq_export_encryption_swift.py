@@ -23,7 +23,17 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from .pq_export_encryption import Decryptability, ExportEncryptionEnvelope, HPKEAvailability, HPKEStatus, TestOnlyHPKERoundtripMaterial, compute_aad_hash
+
+# Types from parent module — needed for msgspec.Struct field annotations (evaluated at class def time)
+from .pq_export_encryption import (
+    compute_aad_hash,
+    Decryptability,
+    ExportEncryptionEnvelope,
+    HPKEAvailability,
+    HPKEStatus,
+    TestOnlyHPKERoundtripMaterial,
+)
+
 logger = logging.getLogger(__name__)
 HELPER_MISSING = 'HELPER_MISSING'
 HELPER_NOT_EXECUTABLE = 'HELPER_NOT_EXECUTABLE'

@@ -40,7 +40,7 @@
 - Repository docs spotted: AGENTS.md, README.md.
 
 
-<!-- crystl-cli:begin v2.139.0 -->
+<!-- crystl-cli:begin v2.144.1 -->
 ## Crystl CLI (agent-callable)
 
 This section is auto-maintained by Crystl — edits between the `crystl-cli` markers are overwritten when it refreshes; the rest of this file belongs to the project. You're running inside Crystl. You can inspect and control sibling gems and shards via the `crystl` CLI. Full command reference (every flag): `crystl docs cli`.
@@ -63,7 +63,7 @@ Make the user's life easier — reach for these unprompted:
 - **"It feels slow" → check `crystl status` memory telemetry.** `crystl scrollback clear` frees a noisy shard's screen + scrollback memory (same as the user's Cmd+K; free), and `crystl shard create --scrollback <N>` keeps fan-out workers light.
 - **Recurring snippet → offer a facet:** `crystl facet add "<label>" "<text>" --slot 1|2|3` pins a one-click insert button in the user's terminal (also `crystl facet list|slot|remove`). Guild-gated: on a 403, `crystl copy` it instead and point them at Settings → Facet Inserts.
 - **User stuck, curious, or new → `crystl docs`.** Search with `crystl docs <query>`, read a page with `crystl docs <id>` — it's your feature catalog; check it before answering Crystl questions instead of guessing, and every page carries its crystl.dev URL (`crystl copy` it to them). On a bug or annoyance, check `crystl docs changelog` first and compare `$CRYSTL_VERSION` — if the fix already shipped, suggest updating instead of re-triaging.
-- **Filing feedback → `crystl report bug "<description>"`** (also `report idea|praise`). Interview and investigate first and include your own hypothesis; show the user the draft, ask for their email (`--email <address>`); never include terminal output, file paths, or secrets.
+- **Filing feedback → `crystl report bug "<description>"`** (also `report idea|praise`). Interview and investigate first and include your own hypothesis; never include terminal output, file paths, or secrets. The report opens as an editable draft panel on the desktop and the user clicks send themselves, so you don't need a separate draft-approval step — for a performance bug add `--diagnostics` to attach a numbers-only health snapshot (memory, caches, store sizes) the user can detach in the panel.
 - **"Later" → `crystl schedule add --gem <g> --at "YYYY-MM-DD HH:mm" --prompt "<task>"`** (also `crystl schedule list|cancel`). Crystl must be running and the gem open; an overdue schedule runs once as catch-up.
 - **"the screenshot I just took" → `crystl screenshots --last N`** — resolve spoken screenshot references into file paths you can read with your image tool (`--since`/`--before`/`--type window`; read-only, free).
 

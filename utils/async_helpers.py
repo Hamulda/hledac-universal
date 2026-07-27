@@ -275,8 +275,9 @@ class silent_except:
 
 # Export for use by other modules
 
-# aiodns lazy import — optional c-ares backend for 2-5× faster parallel DNS
-# M1 8GB: ~5 MB resident (single c-ares channel), lazy import, always-on.
+# aiodns REMOVED ISSUE-008: no longer a project dep.
+# Graceful fallback to stdlib loop.getaddrinfo() always works.
+# Manual install if needed: uv add aiodns
 _HAS_AIODNS: bool = False
 try:
     import aiodns

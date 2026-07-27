@@ -31,6 +31,44 @@ fn main() {
         println!("cargo:rustc-link-arg=dynamic_lookup");
     }
 
+    // F350M-R FIX: Detect Darwin version for vDSP availability.
+    // On macOS 26.5+ (Darwin 25.5+), Apple removed vDSP symbols from
+    // Accelerate.framework. We detect this at build time and set a cfg
+    // so the accelerate module can fall back to scalar implementations.
+    //
+    // Darwin version mapping:
+    //   24.x  = macOS 15.x (Sonoma)
+    //   25.x  = macOS 26.x (whatever comes after)
+    //   26.x  = macOS 27.x (future)
+    // vDSP was removed in Darwin 25.5 (macOS 26.5).
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("uname")
+            .arg("-r")
+            .output()
+        {
+            let version = String::from_utf8_lossy(&output.stdout);
+            // Parse "25.5.0" -> (25, 5)
+            let parts: Vec<&str> = version.trim().split('.').collect();
+            let major: u32 = parts.get(0)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let minor: u32 = parts.get(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+
+            // Darwin 25.5+ = macOS 26.5+ — vDSP removed
+            if major > 25 || (major == 25 && minor >= 5) {
+                println!("cargo:rustc-cfg=vdsp_unavailable");
+                eprintln!(
+                    "[build.rs] WARNING: Darwin {}.{} detected — vDSP symbols removed. \
+                    accelerate feature will use scalar fallback.",
+                    major, minor
+                );
+            }
+        }
+    }
+
     // Always re-run if build.rs changes (obvious).
     println!("cargo:rerun-if-changed=build.rs");
 

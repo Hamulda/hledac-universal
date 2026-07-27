@@ -32,10 +32,18 @@ PYTHON = str(VENV_PY) if VENV_PY.exists() else sys.executable
 
 
 def _cli_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    """Build subprocess env with the right PYTHONPATH for `hledac.universal`."""
+    """Build subprocess env for testing hledac.universal exit codes.
+
+    NOTE: Does NOT set PYTHONPATH — the package is installed as editable
+    (via uv) and sys.path resolution via __editable__ hook is reliable.
+    Adding REPO_ROOT/HLEDAC_PARENT to PYTHONPATH creates dual-path import
+    conflicts (same logical module via two physical paths) that cause
+    spurious LockRegistration errors in subprocess tests.
+    """
     env = os.environ.copy()
-    pp = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = f"{REPO_ROOT}{os.pathsep}{HLEDAC_PARENT}{os.pathsep}{pp}"
+    # Remove PYTHONPATH to avoid dual-path import conflicts with editable install.
+    # The venv Python resolves hledac.universal correctly without explicit path.
+    env.pop("PYTHONPATH", None)
     # Force default profile so the F221-ABORT windup guard path is exercised.
     env["HLEDAC_ACQUISITION_PROFILE"] = "default"
     # Silence mlx/duckdb warmup chatter — exit code is what we test.

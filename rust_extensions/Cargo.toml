@@ -124,6 +124,12 @@ graph = [
     "graph_centrality",
 ]
 
+# accelerate: Accelerate/vDSP FFI for NER cosine similarity — OPTIONAL on macOS 26.5+
+# vDSP symbols (_vDSP_maxmg etc.) are not available in the Accelerate.framework on macOS 26.5+
+# Build with this feature disabled if you encounter "symbol not found in flat namespace" errors.
+# Python fallback: scipy or numpy for cosine similarity (brain/ner_engine.py)
+accelerate = []
+
 # advanced: Feed pipeline, federated learning, pattern matching
 # Pure Rust, no heavy deps — always compiled in full builds
 # Includes: regex_lz4, content_hasher, adaptive_scheduler, simd_similarity,

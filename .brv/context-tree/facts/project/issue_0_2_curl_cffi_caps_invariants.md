@@ -2,7 +2,7 @@
 title: issue_0_2_curl_cffi_caps_invariants
 summary: ISSUE-0.2 establishes curl_cffi CAPS-based availability check with FAIL-FAST fallback invariants
 tags: []
-related: [facts/project/context.md]
+related: [facts/project/context.md, facts/project/caps-capability-registry-for-feature-gating.md]
 keywords: []
 createdAt: '2026-07-24T17:40:10.387Z'
 updatedAt: '2026-07-24T17:40:10.387Z'

@@ -2,7 +2,7 @@
 title: Known Issues and TODOs
 summary: 'Active tech debt: busy_timeout 1s vs 30s, shodan rate 36 vs 360, DuckPGQGraph gap'
 tags: []
-related: []
+related: [facts/project/probe_test_state_correction_2026_07_27.md]
 keywords: []
 createdAt: '2026-07-26T11:18:44.120Z'
 updatedAt: '2026-07-26T11:18:44.120Z'

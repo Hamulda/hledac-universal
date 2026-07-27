@@ -1,77 +1,72 @@
 ---
-children_hash: e46afc9472426fc1d63deedd8ba14ca36ee321d20c2d03d2d759b57929eec051
-compression_ratio: 0.2148206543161214
+children_hash: 9cde009591055f33383169c1e3dd7fc1a9ce7bee3b084a43a282ef5d9626c1b8
+compression_ratio: 0.18946749043836422
 condensation_order: 2
-covers: [context.md, hledac_universal/_index.md, transport_layers/_index.md]
-covers_token_total: 2537
+covers: [context.md, core/_index.md, hledac_universal/_index.md, runtime/_index.md, transport_layers/_index.md]
+covers_token_total: 3399
 summary_level: d2
-token_count: 545
+token_count: 644
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at the d1 (domain) level. Let me analyze the provided child entries and create a coherent overview of the transport_layers domain.
+The user wants me to create a structural summary at level d1 (domain level) for the transport_layers domain. Looking at the provided context, I need to compress the child entries into a concise overview while preserving key facts, architectural decisions, and relationships.
 
-Key information from the entries:
-1. HTTP/3 lane implementation with dual strategy
-2. curl_cffi and aioquic approaches
-3. LRU caching, concurrency limits, memory guards
-4. CAPS-based fetch transport enforcement (issue_0_2)
-5. Alt-Svc probing
-6. Dark web bypass
-7. Specific technical parameters
+From the child entries provided:
+1. HTTP/3 Lane with curl_cffi_opportunistic (default) and aioquic_stealth (fallback)
+2. neqo integration planned
+3. M1_BOUNDS configuration constants
+4. Dark web TLDs excluded from HTTP/3
+5. LRU caching (512 entries)
+6. Memory guard at 5.5 GiB RSS
+7. Concurrency capped at 3
+8. CAPS system for capability gating
+9. FAIL-FAST policy for curl_cffi
 
-Let me synthesize this into a concise domain-level summary.
+Let me create a clean structural summary.
 </think>
 
-# transport_layers
+# architecture/transport_layers — Domain Summary
 
-HTTP/3 lane implementation with dual strategy architecture and CAPS-based fetch transport enforcement.
+## Overview
+
+HTTP/3 lane implementation supporting multiple strategies with LRU caching, memory guards, and speculative Alt-Svc probing. Dark web TLDs (.onion, .i2p, .b32.i2p) are excluded from HTTP/3 due to Tor/I2P SOCKS incompatibility with QUIC/UDP.
 
 ## Strategies
 
-- **curl_cffi_opportunistic** — default strategy, LRU-cached, no extra dependencies
-- **aioquic_stealth** — opt-in QUIC strategy, adds ~50-80 MB resident memory
+| Strategy | Priority | Use Case |
+|----------|----------|----------|
+| `curl_cffi_opportunistic` | 1 | Default, JA3 spoofing via curl_cffi >= 0.7 |
+| `neqo` | 2 | Mozilla Rust QUIC, arm64 darwin priority (planned) |
+| `aioquic_stealth` | 3 | Standard fallback for stealth when neqo unavailable |
 
-## Limits & Guards
+## Configuration (M1_BOUNDS)
 
-| Parameter | Value |
-|-----------|-------|
-| LRU cache max | 512 entries |
-| Concurrency cap | 3 |
-| Per-request timeout | 8.0s |
-| Semaphore wait timeout | 2.0s |
-| Memory guard RSS ceiling | 5.5 GiB |
-| extract_host LRU | 2048 |
+- **LRU cache max**: 512 entries
+- **Concurrency max**: 3
+- **Timeout**: 8.0s
+- **Semaphore wait**: 2.0s
+- **Cache TTL**: 86400s (24h)
+- **RSS memory block**: 5.5 GiB
+- **Max probe tasks**: 16
 
-## Dark Web Bypass
+## Architecture Decisions
 
-Skips HTTP/3 lane entirely for: `.onion`, `.i2p`, `.b32.i2p` TLDs.
-
-## Alt-Svc Probing
-
-- Probe session: `AsyncSession(max_clients=2)`
-- Probe timeout: 4.0s
-- Max concurrent probe tasks: 16
-- Pattern: `^h3[= "']` (case-insensitive)
-
-## CAPS Integration (ISSUE-0.2)
-
-- FetchCoordinator now uses `CAPS.require(CURL_CFFI)` instead of `is_curl_cffi_available()`
-- New module: `fetching/curl_cffi_fetch.py` provides CAPS-aware wrappers
-- **FAIL-FAST policy**: no silent httpx fallback when curl_cffi unavailable
-- JA3 spoofing enforced via CAPS check
+- **FAIL-FAST policy**: No silent httpx fallback when curl_cffi unavailable — JA3 spoofing guaranteed
+- **CAPS integration**: FetchCoordinator uses `CAPS.require(CURL_CFFI)` instead of availability check
+- **Fallback chain**: neqo unavailable → aioquic → curl_cffi_opportunistic
+- **LRU eviction**: O(1) via OrderedDict, bounded by `http3_lru_max`
+- **Error handling**: Any error returns `None`, never propagates
 
 ## Key Files
 
-- `transport/http3_lane.py` — dual strategy implementation
+- `transport/http3_lane.py` — HTTP/3 lane implementation
+- `fetching/public_fetcher.py` — Public fetcher entry point
 - `fetching/curl_cffi_fetch.py` — CAPS-aware curl_cffi wrapper
-- `coordinators/fetch_coordinator.py` — uses CAPS for transport selection
-- `capabilities.py:190` — CURL_CFFI capability registration
+- `coordinators/fetch_coordinator.py` — Fetch orchestration with CAPS checks
 
-## Rules
+## Drill-Down
 
-1. Always `except Exception`, never bare `except`
-2. aioquic missing → fallback to curl_cffi
-3. Any error → return `None`, caller continues
-4. Dark web URLs always skip HTTP/3 lane
-5. Semaphore wait non-blocking with timeout
+- `http_3_lane_implementation.md` — Full strategy details, patterns, rules
+- `http_3_configuration_constants.md` — Complete M1_BOUNDS constants
+- `http_3_neqo_integration_plan.md` — neqo Rust integration roadmap
+- `issue_0_2_curl_cffi_caps_architecture_fix.md` — CAPS integration fix details

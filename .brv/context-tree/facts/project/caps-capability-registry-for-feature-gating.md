@@ -6,7 +6,7 @@ type: synthesis
 title: CAPS Capability Registry for Feature Gating
 summary: CAPS.require() replaces availability checks (is_curl_cffi_available) as the canonical capability gating mechanism
 tags: [caps, feature-flags, capability, gating, architecture]
-related: []
+related: [facts/project/issue_0_2_curl_cffi_caps_invariants.md]
 keywords: [caps, capability, feature-flags, require, availability, curl_cffi, gating]
 createdAt: '2026-07-26T11:44:30.879Z'
 updatedAt: '2026-07-26T11:44:30.879Z'

@@ -2,7 +2,7 @@
 title: parallel Async Helper
 summary: parallel() replaces deprecated bounded_gather with 4 exception policies (raise/first/collect/log), concurrency control, taskgroup backend, and I6/I7/I8 invariants
 tags: []
-related: [facts/project/hledac_universal_claude_md.md, facts/project/rust_extensions_overview.md]
+related: [facts/project/hledac_universal_claude_md.md, facts/project/rust_extensions_overview.md, facts/project/issue_2_3_rayon_dispatch_channel_fix.md]
 keywords: []
 createdAt: '2026-07-16T11:06:29.925Z'
 updatedAt: '2026-07-16T11:06:29.925Z'

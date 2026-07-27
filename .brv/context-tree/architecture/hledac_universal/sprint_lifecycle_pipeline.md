@@ -2,7 +2,7 @@
 title: Sprint Lifecycle & Pipeline
 summary: 'Sprint pipeline: CLI→8 lanes→advisory runners→graph→DuckDB. Lifecycle: bootstrap→discovery→fetch→quality→accept with 12 defined stages.'
 tags: []
-related: []
+related: [architecture/hledac_universal/sprint-lifecycle-cross-domain-contract.md, data/duckdb_store/context.md]
 keywords: []
 createdAt: '2026-07-11T14:54:06.241Z'
 updatedAt: '2026-07-11T14:54:06.241Z'

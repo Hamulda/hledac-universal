@@ -1,0 +1,7 @@
+- **Phase 3 KB audit (2026-07-27)** documents existing coverage and remaining documentation gaps in the project
+- **Existing documentation confirmed**: CLAUDE.md (comprehensive invariants, feature flags, exit codes, anti-patterns), AGENTS.md (RTK/workbench patterns), GHOST_INVARIANTS.md, CONTEXT.md
+- **Documentation gaps identified**: docs/conventions/ directory missing (conventions only embedded in CLAUDE.md), docs/integrations/ missing (Tor/I2P, Shodan/Censys, DuckDB/LanceDB scattered in CLAUDE.md), no dedicated testing guide
+- **Stale gap resolved**: probe_p12/ and probe_p14/ directories no longer exist in codebase - old probe_tests gap cleared
+- **docs/ directory sparsity**: Only 3 items (2 docs + .DS_Store) - docs/ISSUE-038-LAYERS-REORGANIZATION.md and docs/ioc_types.md present
+- **Test coverage**: 230+ test files organized in tests/, tests/cli/, tests/rust/, tests/unit/ but no testing guide documentation
+- **Notable integrations lacking docs**: HTTP/3, Tor, I2P, Shodan, Censys, DuckDB, LanceDB

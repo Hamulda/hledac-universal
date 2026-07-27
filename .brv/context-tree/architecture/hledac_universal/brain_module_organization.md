@@ -2,7 +2,7 @@
 title: Brain Module Organization
 summary: Brain module with PEP 562 facade reducing cold import from ~9.7s to ~150ms, featuring 12 lazy-loaded engines and MLX/Apple Silicon support
 tags: []
-related: []
+related: [architecture/hledac_universal/lazy-loading-reduces-cold-import-by-98.md]
 keywords: []
 createdAt: '2026-07-16T11:01:02.222Z'
 updatedAt: '2026-07-16T11:01:02.222Z'

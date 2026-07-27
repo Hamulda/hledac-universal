@@ -48,12 +48,20 @@ def _is_editable_install() -> bool:
     own_file = os.path.realpath(own_file)
     # __file__ is rust_extensions/hledac_rust_extensions/__init__.py
     # The parent of the package dir is the rust_extensions workspace root
-    parent_dir = os.path.dirname(os.path.dirname(own_file))  # → rust_extensions/
-    # maturin develop on macOS outputs a .dylib; maturin build --release produces .so.
-    # We use .cdylib.so as the canonical workspace artifact name to distinguish
-    # from a true Stable ABI (abi3) wheel, which this build is not.
-    marker = os.path.join(parent_dir, "hledac_rust_extensions.cdylib.so")
-    return os.path.isfile(marker)
+    pkg_dir = os.path.dirname(own_file)  # → rust_extensions/hledac_rust_extensions/
+    parent_dir = os.path.dirname(pkg_dir)  # → rust_extensions/
+    # Check for workspace artifacts - abi3.so inside package dir (maturin python-source=".")
+    # takes priority over .dylib in parent (leftover from older builds).
+    abi3_path = os.path.join(pkg_dir, "hledac_rust_extensions.abi3.so")
+    if os.path.isfile(abi3_path):
+        return True
+    # Also check parent dir for .dylib (legacy/bug-compatible)
+    import sys
+    if sys.platform == "darwin":
+        candidates = ["hledac_rust_extensions.dylib", "hledac_rust_extensions.cdylib.so"]
+    else:
+        candidates = ["hledac_rust_extensions.so", "hledac_rust_extensions.cdylib.so"]
+    return any(os.path.isfile(os.path.join(parent_dir, c)) for c in candidates)
 
 
 def _find_workspace_so() -> str | None:
@@ -66,8 +74,21 @@ def _find_workspace_so() -> str | None:
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     # one level up = rust_extensions/
     parent_dir = os.path.dirname(pkg_dir)
-    so_path = os.path.join(parent_dir, "hledac_rust_extensions.cdylib.so")
-    return so_path if os.path.isfile(so_path) else None
+    # Check inside package dir FIRST for abi3.so (maturin python-source=".")
+    abi3_path = os.path.join(pkg_dir, "hledac_rust_extensions.abi3.so")
+    if os.path.isfile(abi3_path):
+        return abi3_path
+    # Then check parent dir for .dylib/.so (legacy/bug-compatible)
+    import sys
+    if sys.platform == "darwin":
+        candidates = ["hledac_rust_extensions.dylib", "hledac_rust_extensions.cdylib.so"]
+    else:
+        candidates = ["hledac_rust_extensions.so", "hledac_rust_extensions.cdylib.so"]
+    for c in candidates:
+        so_path = os.path.join(parent_dir, c)
+        if os.path.isfile(so_path):
+            return so_path
+    return None
 
 
 # ----------------------------------------------------------------------

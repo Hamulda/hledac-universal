@@ -49,23 +49,40 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use parking_lot::RwLock;
 
+/// Runtime-detected vDSP availability.
+///
+/// On macOS 26.5+ (Darwin 25.5+) Apple removed vDSP symbols from
+/// Accelerate.framework. Static #[link] doesn't catch this at compile
+/// time — we detect at runtime via dladdr() resolution.
+static VDSP_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
+    #[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
+    {
+        // dladdr(addr, &mut Dl_info) returns 0 if symbol not found.
+        // vDSP_dotpr is the canonical entry point we always call first.
+        let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        // SAFETY: dladdr is async-signal-safe; info is valid for output.
+        unsafe { libc::dladdr(vDSP_ffi::vDSP_dotpr as *const libc::c_void, &mut info) != 0 }
+    }
+    #[cfg(any(not(target_os = "macos"), vdsp_unavailable))]
+    {
+        false
+    }
+});
+
 /// Accelerate/vDSP function availability
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AccelerateBackend {
-    /// Using Apple Accelerate vDSP (macOS/iOS only)
+    /// Using Apple Accelerate vDSP (available and runtime-detected)
     VDSP,
-    /// Using scalar fallback (Linux/Windows)
+    /// Using scalar fallback (Linux/Windows or macOS 26.5+)
     Scalar,
 }
 
 impl Default for AccelerateBackend {
     fn default() -> Self {
-        #[cfg(target_os = "macos")]
-        {
+        if *VDSP_AVAILABLE {
             AccelerateBackend::VDSP
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
+        } else {
             AccelerateBackend::Scalar
         }
     }
@@ -113,13 +130,11 @@ pub struct AccelerateTelemetry {
 }
 
 /// Get current backend type as string.
+/// Uses runtime detection (VDSP_AVAILABLE) — correct even on macOS 26.5+.
 fn get_backend_str() -> &'static str {
-    #[cfg(target_os = "macos")]
-    {
+    if *VDSP_AVAILABLE {
         "vDSP"
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
+    } else {
         "scalar"
     }
 }
@@ -128,8 +143,12 @@ fn get_backend_str() -> &'static str {
 //
 // These are raw FFI bindings to Apple's Accelerate framework vDSP functions.
 // vDSP is part of the Accelerate framework and provides vector/matrix math.
+//
+// Gated by vdsp_unavailable cfg (set by build.rs on Darwin 25.5+).
+// When vDSP is unavailable (macOS 26.5+), this module is not compiled
+// and AccelerateBackend::VDSP falls back to scalar at runtime.
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
 #[allow(non_snake_case, nonstandard_style)]
 mod vDSP_ffi {
     use libc::c_float;
@@ -181,7 +200,7 @@ mod vDSP_ffi {
 ///     normalize: If true, normalize both vectors before dot product
 ///
 /// Returns: Cosine similarity score (between -1 and 1)
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
 #[allow(non_snake_case)]
 fn vDSP_cosine(a: &[f32], b: &[f32], normalize: bool) -> Result<f32, AccelerateError> {
     if a.is_empty() || b.is_empty() {
@@ -277,7 +296,7 @@ fn scalar_cosine(a: &[f32], b: &[f32], normalize: bool) -> Result<f32, Accelerat
 /// Uses vDSP_maxmg for fast L∞ norm check to detect near-zero vectors
 /// before the more expensive dot product — saves one vDSP_dotpr call
 /// when the vector is effectively zero (common in NER embedding sparse arrays).
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
 #[allow(non_snake_case)]
 fn vDSP_l2_norm(a: &[f32]) -> Result<f32, AccelerateError> {
     if a.is_empty() {
@@ -380,13 +399,13 @@ pub fn cosine_similarity(a: Vec<f32>, b: Vec<f32>, normalize: bool) -> Result<f3
         telemetry.cosine_pairs += 1;
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
     {
         vDSP_cosine(&a, &b, normalize)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(not(target_os = "macos"), vdsp_unavailable))]
     {
         scalar_cosine(&a, &b, normalize)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
@@ -447,7 +466,7 @@ pub fn batch_cosine_similarity(
 
     let mut results = vec![0.0_f32; num_queries * num_candidates];
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
     {
         // Pre-normalize all vectors using vDSP_normalize — single vDSP call per vector.
         // vDSP_normalize computes L2 norm internally and writes normalized output directly.
@@ -507,7 +526,7 @@ pub fn batch_cosine_similarity(
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(not(target_os = "macos"), vdsp_unavailable))]
     {
         // When normalize=true, scalar_cosine does its own normalization internally.
         // Do NOT pre-normalize here (unlike macOS vDSP path) to avoid double-normalization.
@@ -566,7 +585,7 @@ pub fn batch_normalize(
 
     let mut result = vectors.clone();
 
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
     {
         // Use vDSP_normalize — computes L2 norm internally, writes normalized output.
         // Single vDSP call per vector (vs. vDSP_l2_norm + manual scalar div loop).
@@ -588,7 +607,7 @@ pub fn batch_normalize(
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(not(target_os = "macos"), vdsp_unavailable))]
     {
         for i in 0..batch_size {
             let start = i * hidden_dim;
@@ -661,13 +680,14 @@ mod tests {
     #[test]
     fn test_backend_detection() {
         let (backend, available) = get_backend_info();
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", not(vdsp_unavailable)))]
         {
             assert_eq!(backend, "vDSP");
             assert!(available);
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(any(not(target_os = "macos"), vdsp_unavailable))]
         {
+            // scalar fallback on Linux/Windows or macOS 26.5+ (Darwin 25.5+)
             assert_eq!(backend, "scalar");
             assert!(!available);
         }

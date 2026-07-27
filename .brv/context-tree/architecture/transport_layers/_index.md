@@ -1,79 +1,83 @@
 ---
-children_hash: bbe465913f557d2e9993ba392f82cb6836ac1df2129c0e36c2f2fb6a619f20b8
-compression_ratio: 0.44798785117691725
+children_hash: 0a169501548cadd7c6d34f39c4cfab923d0e51a5f0dd8e555c0f3dd65d659005
+compression_ratio: 0.47812692544670365
 condensation_order: 1
-covers: [context.md, http_3_lane_implementation.md, issue_0_2_curl_cffi_caps_architecture_fix.md]
-covers_token_total: 1317
+covers: [context.md, http_3_configuration_constants.md, http_3_lane_implementation.md, http_3_neqo_integration_plan.md, issue_0_2_curl_cffi_caps_architecture_fix.md]
+covers_token_total: 1623
 summary_level: d1
-token_count: 590
+token_count: 776
 type: summary
 ---
 <think>
-The user wants me to create a structural summary of the transport_layers domain based on the provided child entries. I need to condense this into ~20-30% of the input while preserving key facts, relationships, and architectural decisions.
+The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries about transport_layers. I need to:
 
-Key points to preserve:
-1. Two HTTP/3 lane strategies: curl_cffi_opportunistic (default) and aioquic_stealth (opt-in)
-2. LRU caching, concurrency limits, memory guards
-3. Alt-Svc probing
-4. Specific limits: LRU 512, concurrency 3, timeout 8.0s, memory guard 5.5 GiB
-5. Dark web URLs skipped
-6. CAPS integration for curl_cffi
-7. FAIL-FAST policy when curl_cffi unavailable
-8. JA3 spoofing enforcement
-9. File paths and relationships
+1. Condense the child entries into a structured overview
+2. Preserve key facts, relationships, and patterns
+3. Reference entry names for drill-down
+4. Target ~20-30% compression
+5. Output clean markdown without code blocks or XML tags
+
+Let me analyze the entries:
+
+1. **context.md** - Overview of HTTP/3 lane with curl_cffi_opportunistic and aioquic_stealth strategies
+2. **http_3_configuration_constants.md** - M1_BOUNDS constants for HTTP/3 (cache, concurrency, timeouts, memory)
+3. **http_3_lane_implementation.md** - Three strategies, LRU caching, memory guards, Alt-Svc probing
+4. **http_3_neqo_integration_plan.md** - Future neqo integration plan
+5. **issue_0_2_curl_cffi_caps_architecture_fix.md** - Bug fix for curl_cffi CAPS integration
+
+Key patterns and relationships:
+- HTTP/3 has multiple strategies (curl_cffi_opportunistic default, aioquic_stealth fallback, neqo planned)
+- Configuration bounded by M1_BOUNDS constants
+- Dark web TLDs (.onion, .i2p, .b32.i2p) excluded from HTTP/3
+- LRU caching with 512 entry max
+- Memory guard at 5.5 GiB RSS
+- Concurrency limited to 3
+- CAPS system manages capability registration
 
 Let me create a concise structural summary.
 </think>
 
 # transport_layers
 
-HTTP/3 lane implementation with dual strategy architecture and CAPS-based fetch transport enforcement.
+HTTP/3 lane implementation supporting multiple strategies with LRU caching, memory guards, and speculative Alt-Svc probing.
 
 ## Strategies
 
-- **curl_cffi_opportunistic** — default strategy, LRU-cached, no extra dependencies
-- **aioquic_stealth** — opt-in QUIC strategy, adds ~50-80 MB resident memory
+- **curl_cffi_opportunistic** (default) — JA3 spoofing via curl_cffi >= 0.7
+- **neqo** (planned) — Mozilla Rust QUIC engine, arm64 darwin priority, pending PyPI
+- **aioquic_stealth** (fallback) — Standard fallback when neqo unavailable
 
-## Limits & Guards
+## Configuration (M1_BOUNDS)
 
-| Parameter | Value |
-|-----------|-------|
+| Constant | Value |
+|----------|-------|
 | LRU cache max | 512 entries |
-| Concurrency cap | 3 |
-| Per-request timeout | 8.0s |
-| Semaphore wait timeout | 2.0s |
-| Memory guard RSS ceiling | 5.5 GiB |
-| extract_host LRU | 2048 |
+| Concurrency max | 3 |
+| Timeout | 8.0s |
+| Semaphore wait | 2.0s |
+| Cache TTL | 86400s (24h) |
+| RSS memory block | 5.5 GiB |
+| Max probe tasks | 16 |
 
-## Dark Web Bypass
+## Architecture Decisions
 
-Skips HTTP/3 lane entirely for: `.onion`, `.i2p`, `.b32.i2p` TLDs.
-
-## Alt-Svc Probing
-
-- Probe session: `AsyncSession(max_clients=2)`
-- Probe timeout: 4.0s
-- Max concurrent probe tasks: 16
-- Pattern: `^h3[= "']` (case-insensitive)
-
-## CAPS Integration (ISSUE-0.2)
-
-- FetchCoordinator now uses `CAPS.require(CURL_CFFI)` instead of `is_curl_cffi_available()`
-- New module: `fetching/curl_cffi_fetch.py` provides CAPS-aware wrappers
-- **FAIL-FAST policy**: no silent httpx fallback when curl_cffi unavailable
-- JA3 spoofing enforced via CAPS check
+- **Dark web exclusion**: HTTP/3 never attempted for `.onion`, `.i2p`, `.b32.i2p` TLDs
+- **CAPS integration**: FetchCoordinator uses `CAPS.require(CURL_CFFI)` instead of availability check
+- **FAIL-FAST policy**: No silent httpx fallback when curl_cffi unavailable — JA3 spoofing guaranteed
+- **Fallback chain**: neqo unavailable → aioquic → curl_cffi_opportunistic
+- **LRU eviction**: O(1) via OrderedDict, bounded by `http3_lru_max`
+- **Error handling**: Any error returns `None`, never propagates
 
 ## Key Files
 
-- `transport/http3_lane.py` — dual strategy implementation
+- `transport/http3_lane.py` — HTTP/3 lane implementation
+- `fetching/public_fetcher.py` — Public fetcher entry point
 - `fetching/curl_cffi_fetch.py` — CAPS-aware curl_cffi wrapper
-- `coordinators/fetch_coordinator.py` — uses CAPS for transport selection
-- `capabilities.py:190` — CURL_CFFI capability registration
+- `coordinators/fetch_coordinator.py` — Fetch orchestration with CAPS checks
 
-## Rules
+## Drill-Down
 
-1. Always `except Exception`, never bare `except`
-2. aioquic missing → fallback to curl_cffi
-3. Any error → return `None`, caller continues
-4. Dark web URLs always skip HTTP/3 lane
-5. Semaphore wait non-blocking with timeout
+- `http_3_lane_implementation.md` — Full strategy details, patterns, rules
+- `http_3_configuration_constants.md` — Complete M1_BOUNDS constants
+- `http_3_neqo_integration_plan.md` — neqo Rust integration roadmap
+- `issue_0_2_curl_cffi_caps_architecture_fix.md` — CAPS integration fix details

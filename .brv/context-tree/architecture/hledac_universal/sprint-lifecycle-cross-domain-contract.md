@@ -6,7 +6,7 @@ type: synthesis
 title: Sprint Lifecycle Cross-Domain Contract
 summary: Sprint pipeline architecture spans architecture + data domains with 12-stage lifecycle, 8 acquisition lanes, and async ingest as the canonical write endpoint.
 tags: [sprint, async-ingest, acquisition-lanes, write-serialization]
-related: []
+related: [architecture/hledac_universal/sprint_lifecycle_pipeline.md, data/duckdb_store/context.md]
 keywords: [sprint-lifecycle, async_ingest_findings_batch, acquisition-lanes, 12-stages, canonical-write, write-path, advisory-runners]
 createdAt: '2026-07-24T21:05:20.859Z'
 updatedAt: '2026-07-24T21:05:20.859Z'

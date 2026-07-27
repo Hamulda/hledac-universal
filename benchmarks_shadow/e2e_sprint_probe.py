@@ -313,7 +313,7 @@ async def run_sprint_direct(
     Run canonical sprint directly via asyncio (no subprocess).
     Returns result dict. Requires event loop already running.
     """
-    from hledac.universal.core.__main__ import run_sprint
+    from hledac.universal.runtime.sprint_entrypoint import run_sprint
 
     started_at = datetime.now(UTC).isoformat()
     artifact = _default_artifact(

@@ -22,10 +22,8 @@ classifiers = [
 
 dependencies = [
     # ── Core async ────────────────────────────────────────────────────────────
-    # aiodns: c-ares backed async DNS — 2-5× faster parallel resolution vs loop.getaddrinfo.
-    # Uses connection multiplexing for multiple queries to the same nameserver.
-    # M1 8GB: ~5 MB resident (single c-ares channel), lazy import, always-on.
-    "aiodns>=4.0.0; sys_platform == 'darwin'",
+    # aiodns REMOVED ISSUE-008: dnspython 3.x async-native covers all async DNS needs;
+    # loop.getaddrinfo() fallback is always available. Manual install: uv add aiodns.
     # aiohttp REMOVED F4XX: primary transport = curl_cffi (stealth, JA3).
     # httpx handles HTTP/2 natively (h2 bundled internally).
     # Tor/I2P use httpx-socks exclusively (connection_pool_manager.py, tor/i2p_transport).
@@ -35,8 +33,9 @@ dependencies = [
     # uvloop gives ~2× I/O-bound speedup vs native asyncio kqueue on M1.
     "uvloop>=0.22; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ── HTTP / stealth ────────────────────────────────────────────────────────
-    # httpx<0.30.0: HTTP/2 stable in 0.28.x; upper bound prevents 1.x breaking changes
-    "httpx>=0.28.0,<0.30.0",
+    # httpx<0.32.0: ISSUE-008 — relaxed upper bound to allow 0.30.x security patches.
+    # 1.x is not on the roadmap. HTTP/2 stable since 0.28.x; API compatible.
+    "httpx>=0.28.0,<0.32.0",
     "curl-cffi>=0.15.0,<1.0.0; sys_platform == 'darwin'",
     "brotlicffi>=1.2.0.1",
     "cloudscraper>=1.2.71",
@@ -153,7 +152,7 @@ dependencies = [
     "xxhash>=3.7.0,<4.0.0",
     "mmh3>=5.2.1",
     # ── Networking / OSINT ────────────────────────────────────────────────────
-    "dnspython>=2.4.0,<2.7.0",  # 2.x stable; 3.x is async-first redesign
+    "dnspython>=2.4.0,<3.0.0",  # ISSUE-008: 2.7 EOL; 3.x is stable async-native (2026)
     "ipwhois>=1.3.0",
     "yara-python>=4.5.4",
     "stix2>=3.0.1",
@@ -574,7 +573,7 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "infrastructure/**" = ["BLE001"]
 "rl/**" = ["BLE001"]
 # ── P1-01: remaining 37 files (all cold-path) ─────────────────────────────────
-"__main__.py" = ["BLE001"]
+"universal/__main__.py" = ["BLE001"]
 "execution/ghost_executor.py" = ["BLE001"]
 "fetching/_body_hash.py" = ["BLE001"]
 "fetching/_factories.py" = ["BLE001"]

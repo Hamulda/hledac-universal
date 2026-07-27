@@ -1,36 +1,38 @@
 ---
 title: Technology Stack
-summary: Python 3.14, MLX/llm for Apple Silicon, DuckDB analytics, curl-cffi stealth HTTP, Rust extensions via PyO3, pytest with asyncio session-scope
+summary: 'Hledac Universal tech stack: Python 3.14, M1 Apple Silicon, DuckDB, mlxcel Rust inference, sqlite-vec ANN, with HTTP/stealth, MLX, storage, and linting dependencies'
 tags: []
-related: [facts/project/rust_extensions_overview.md]
+related: [facts/project/rust_extensions_overview.md, facts/project/coding_conventions_status.md, facts/project/known_issues_and_todos.md]
 keywords: []
 createdAt: '2026-07-11T14:49:36.803Z'
-updatedAt: '2026-07-16T11:00:35.814Z'
+updatedAt: '2026-07-27T13:09:51.267Z'
 ---
 ## Reason
-Document project technology stack from pyproject.toml
+Documenting pyproject.toml technology stack for Hledac Universal
 
 ## Raw Concept
 **Task:**
-Document hledac-universal technology stack and pyproject.toml configuration
+Document technology stack from pyproject.toml for Hledac Universal project
 
 **Files:**
 - pyproject.toml
 
 **Flow:**
-Core: Python 3.14 + Rust backend via PyO3. ML: MLX for Apple Silicon. Storage: DuckDB (analytics), LanceDB (vectors), LMDB (KV)
+Python 3.14 + M1 Apple Silicon -> Core deps (HTTP/stealth, storage, MLX) -> Optional extras (ml, otel, http3) -> Build/Test/Lint config
 
-**Timestamp:** 2026-07-16
+**Timestamp:** 2026-07-27
+
+**Author:** Hledac Team
 
 ## Narrative
 ### Structure
-Technology stack includes Python 3.14 with Rust PyO3 backend, MLX for Apple Silicon ML inference, DuckDB for analytics, curl-cffi for stealth HTTP with JA3 fingerprinting, msgspec for fast serialization. Testing via pytest with asyncio auto mode and session-scoped event loop. PyO3 Rust extensions built via maturin.
+Technology stack organized into: Project config, Core dependencies (HTTP/stealth, serialization/async, storage, MLX/Apple Silicon, NER/NLP, vector indexes, parsing, documents, numerics, Apple frameworks, crypto, hashing, pattern matching, IPC, data), Optional extras (ml, mlx-embed, http3, otel, observability), Dev dependencies, Testing config, Linting rules, Build system, mlxcel production architecture
 
 ### Dependencies
-uv for dependency management, maturin for Rust extension builds, pytest-xdist for parallel test execution
+M1 Apple Silicon platform constraint, Python 3.14 requirement, M1 8GB memory ceiling
 
 ### Highlights
-M1 Apple Silicon only (darwin + arm64). DuckDB ~600MB memory limit on 8GB M1. pytest-benchmark fails at >10% regression. pytest-mock saves 30-50MB via MagicMock lifecycle. httpx >=0.28.0 for stable HTTP/2. mlx-lm 0.31.x metadata bug: specifies transformers>=5.0.0 but works with 4.x and 5.x at runtime.
+mlxcel external Rust binary saves ~1GB RSS vs in-process mlx-lm; sqlite-vec primary ANN (~5MB); uvloop 2× speedup on M1; nh3 9× faster than BS4; curl-cffi for JA3 fingerprints; Rust extensions via maturin
 
 ### Rules
 Rule 1: asyncio.run() forbidden outside __main__, tools/, tests/
@@ -39,14 +41,20 @@ Rule 3: BLE001 ruff rule deferred (P1-01 audit in progress, see Issue #32)
 Rule 4: pytest addopts includes -n 2 --dist=loadscope --timeout=30 -m 'not parity'
 
 ## Facts
-- **python_version**: Python 3.14 (>=3.14,<3.15) required [project]
-- **project_version**: hledac-universal v18.0.0 [project]
-- **platform**: M1 Apple Silicon only (darwin + arm64) [project]
-- **duckdb_memory**: DuckDB memory limit ~600MB on M1 8GB [project]
-- **benchmark_threshold**: pytest-benchmark fails if regression >10% [project]
-- **pytest_mock_memory**: pytest-mock saves 30-50MB via MagicMock lifecycle [project]
-- **httpx_version**: httpx requires >=0.28.0,<0.30.0 for stable HTTP/2 [project]
-- **http3_memory**: aioquic http3 adds 50-80MB resident memory [project]
-- **mlx_platform**: mlx-embeddings only for sys_platform==darwin [project]
-- **uvloop_speedup**: uvloop provides ~2x I/O-bound speedup on M1 kqueue [project]
-- **rust_build**: Rust extensions build: maturin develop --release [project]
+- **python_version**: Python 3.14 required (>=3.14,<3.15) [project]
+- **platform**: Platform restricted to darwin + arm64 (M1 Apple Silicon only) [project]
+- **duckdb_memory_limit**: DuckDB memory limit ~600MB on 8GB M1 [project]
+- **httpx_version**: httpx >=0.28.0,<0.30.0 for stable HTTP/2 [project]
+- **mlx_lm_metadata_bug**: mlx-lm 0.31.x has transformers>=5.0.0 metadata bug but works with 4.x at runtime [project]
+- **pytest_asyncio_config**: pytest-asyncio_default_fixture_loop_scope=session required for F350M-R [project]
+- **package_manager**: uv is the package manager [project]
+- **rust_build_tool**: maturin for PyO3 Rust extensions [project]
+- **mlxcel_inference**: mlxcel is the production inference binary (external Rust process) [project]
+- **primary_ann_store**: sqlite-vec is primary ANN store (~5MB vs ~200MB LanceDB) [project]
+- **uvloop_speedup**: uvloop provides 2× I/O-bound speedup on M1 [project]
+- **nh3_performance**: nh3 Rust HTML sanitizer is 9× faster than BS4 with 4 MB RSS [project]
+- **coremltools_python314**: coremltools 8.x and 9.x both lack Python 3.14 wheels [project]
+- **dnspython_version**: dnspython 2.7 is EOL; 3.x is async-native [project]
+- **xxhash_algorithm**: xxhash uses xxhash.xxh3_64() (compatible with Rust xxh3_64) [project]
+- **transformers_version_collision**: transformers>=5.10.2 satisfies both dspy>=3.2.1 and flashrank [project]
+- **posix_ipc_platform**: posix-ipc is darwin-only for M1 zero-copy cross-process [project]

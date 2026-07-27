@@ -2,7 +2,7 @@
 title: KB Audit Gap Fix 2026-07-26
 summary: 'KB Audit gap fix: naming conventions exist in CLAUDE.md, integrations scattered, probe_tests empty, exit codes 2 files not 3'
 tags: []
-related: []
+related: [knowledge_base/audit/kb_audit_2026_07_11.md]
 keywords: []
 createdAt: '2026-07-26T12:08:12.413Z'
 updatedAt: '2026-07-26T12:08:12.413Z'

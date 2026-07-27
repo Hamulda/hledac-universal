@@ -1,1 +1,1 @@
-hledac-universal v18.0.0 is a Python 3.14 application with Rust PyO3 extensions, MLX for Apple Silicon ML inference, DuckDB/LanceDB/LMDB storage, stealth HTTP via curl-cffi, built with maturin and tested with pytest on M1 Apple Silicon (darwin + arm64).
+Hledac Universal uses Python 3.14 on M1 Apple Silicon with DuckDB storage, mlxcel external Rust inference (saving ~1GB RSS), and sqlite-vec ANN (~5MB), plus performance optimizations including uvloop 2× speedup and nh3 9× faster than BeautifulSoup.

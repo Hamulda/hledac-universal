@@ -318,7 +318,7 @@ class TestF273DForceHermes(unittest.TestCase):
 
     def test_sprint_flags_has_hermes_force_field(self):
         """SprintFlags must have a hermes_force:bool field, default False."""
-        from hledac.universal.core.__main__ import SprintFlags
+        from hledac.universal.runtime.sprint_entrypoint import SprintFlags
 
         flags = SprintFlags()
         self.assertTrue(hasattr(flags, "hermes_force"))
@@ -326,7 +326,7 @@ class TestF273DForceHermes(unittest.TestCase):
 
     def test_sprint_flags_hermes_force_constructible(self):
         """SprintFlags(hermes_force=True) must work without breaking other fields."""
-        from hledac.universal.core.__main__ import SprintFlags
+        from hledac.universal.runtime.sprint_entrypoint import SprintFlags
 
         flags = SprintFlags(
             force=True,
@@ -347,7 +347,7 @@ class TestF273DForceHermes(unittest.TestCase):
 
     def test_sprint_flags_is_frozen(self):
         """SprintFlags is frozen msgspec.Struct — hermes_force must be immutable."""
-        from hledac.universal.core.__main__ import SprintFlags
+        from hledac.universal.runtime.sprint_entrypoint import SprintFlags
 
         flags = SprintFlags(hermes_force=True)
         with self.assertRaises(Exception):  # FrozenInstanceError or AttributeError

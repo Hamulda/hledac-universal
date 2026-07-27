@@ -1,0 +1,5 @@
+- **New integrations docs** (docs/integrations/): Created tor-i2p-transport.md (7.9KB), duckdb-lancedb.md (11.2KB), rust-extensions.md (12KB) — covering TransportSupervisor, storage layers, and PyO3 crate
+- **New conventions docs** (docs/conventions/): Created python-conventions.md (8.9KB) covering async patterns, naming conventions, feature flags, and testing
+- **Total docs count**: docs/ directory now contains 5 files (integrations/, conventions/, plus ioc_types.md and ISSUE-038-LAYERS-REORGANIZATION.md)
+- **Documentation gaps identified**: No ADR folder exists (no architecture decision records), no dedicated API reference docs, and no contribution guide
+- **Key topics documented**: Transport layer (Tor/I2P/Nym with specific ports), Storage trinity (HOT→COLD with 5 layers), Rust PyO3 extensions, and Python coding conventions

@@ -224,16 +224,22 @@ def dispatch(args: argparse.Namespace) -> int:
 
 
 def _dispatch_sprint(args: argparse.Namespace) -> int:
-    """Run canonical sprint via core.__main__.run_sprint()."""
+    """Run canonical sprint via runtime.sprint_entrypoint.run_sprint()."""
     import asyncio
+    import gc
     import logging
     import os
     import pathlib
 
-    from hledac.universal.core.__main__ import SprintFlags, dry_run_sprint, run_sprint
+    from hledac.universal.runtime.sprint_entrypoint import (
+        SprintFlags,
+        _cancel_all_tasks,
+        dry_run_sprint,
+        run_sprint,
+    )
 
     logger = logging.getLogger(__name__)
-    logger.info("[CLI] sprint: delegating to core.__main__.run_sprint()")
+    logger.info("[CLI] sprint: delegating to runtime.sprint_entrypoint.run_sprint()")
 
     target: str = getattr(args, "sprint", None) or ""
     duration: float = getattr(args, "duration", 1800.0)
@@ -250,9 +256,32 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
     if vault:
         os.environ["HLEDAC_VAULT_EXPORT"] = "1"
 
+    # F350M-R ISSUE #4 FIX: asyncio.Runner subclass with bounded drain on SIGINT.
+    # Standard Runner.run() closes the loop without draining cancelled tasks,
+    # so DuckDB commits / MLX evals can be abandoned.  This subclass overrides
+    # the finally block to run _cancel_all_tasks() before loop.close().
+    class _BoundedRunner(asyncio.Runner):
+        """Runner that drains tasks with a bounded timeout before closing the loop."""
+
+        def close(self) -> None:
+            """Drain pending tasks then close the event loop."""
+            if self._loop is None or self._loop.is_closed():
+                return
+            # Bounded drain: prevents 30+ s DuckDB/MLX/zstd ops from blocking shutdown.
+            try:
+                self._loop.run_until_complete(_cancel_all_tasks(timeout_s=5.0))
+            except Exception:
+                pass
+            super().close()
+            # M1 8GB: reclaim event-loop allocations
+            try:
+                gc.collect()
+            except Exception:
+                pass
+
     try:
         if dry_run:
-            with asyncio.Runner() as runner:
+            with _BoundedRunner() as runner:
                 runner.run(dry_run_sprint(query=target, duration_s=duration))
         else:
             root_flags = SprintFlags(force=force)
@@ -274,7 +303,7 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
                     shutdown_event=shutdown_event,
                 )
 
-            with asyncio.Runner() as runner:
+            with _BoundedRunner() as runner:
                 runner.run(_run_with_shutdown())
         return 0
     except (NameError, AttributeError, ImportError):
@@ -287,16 +316,20 @@ def _dispatch_sprint(args: argparse.Namespace) -> int:
 
 
 async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
-    """Run canonical sprint via core.__main__.run_sprint() — fully async, no Runner nesting."""
+    """Run canonical sprint via runtime.sprint_entrypoint.run_sprint() — fully async, no Runner nesting."""
     import asyncio
     import logging
     import os
     import pathlib
 
-    from hledac.universal.core.__main__ import SprintFlags, dry_run_sprint, run_sprint
+    from hledac.universal.runtime.sprint_entrypoint import (
+        SprintFlags,
+        dry_run_sprint,
+        run_sprint,
+    )
 
     logger = logging.getLogger(__name__)
-    logger.info("[CLI] sprint: delegating to core.__main__.run_sprint()")
+    logger.info("[CLI] sprint: delegating to runtime.sprint_entrypoint.run_sprint()")
 
     target: str = getattr(args, "sprint", None) or ""
     duration: float = getattr(args, "duration", 1800.0)
@@ -339,6 +372,14 @@ async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
     except Exception as e:
         logger.error("[CLI] sprint failed: %s", e, exc_info=True)
         return 1
+    finally:
+        # Bounded drain is handled by _BoundedRunner.close() in the sync path
+        # (_dispatch_sprint).  The async path (_dispatch_sprint_async) runs inside
+        # asyncio.Runner which owns the loop — we cannot call run_until_complete()
+        # on the running loop from within its own finally (deadlock), and we cannot
+        # close a running loop (RuntimeError).  Runner.close() handles cleanup.
+        # SIGINT exits via Runner's interrupt + sys.exit(130) from main().
+        pass
 
 
 def _dispatch_pivot(args: argparse.Namespace) -> int:
@@ -346,13 +387,13 @@ def _dispatch_pivot(args: argparse.Namespace) -> int:
     import asyncio
     import logging
 
-    from hledac.universal.core.__main__ import run_semantic_pivot
+    from hledac.universal.runtime.sprint_entrypoint import run_semantic_pivot
 
     logger = logging.getLogger(__name__)
     target: str = getattr(args, "pivot", None) or ""
     k: int = getattr(args, "pivot_k", 10)
 
-    logger.info("[CLI] pivot: delegating to core.__main__.run_semantic_pivot()")
+    logger.info("[CLI] pivot: delegating to runtime.sprint_entrypoint.run_semantic_pivot()")
     try:
         with asyncio.Runner() as runner:
             runner.run(run_semantic_pivot(query=target, top_k=k))
@@ -367,12 +408,12 @@ def _dispatch_ct(args: argparse.Namespace) -> int:
     import asyncio
     import logging
 
-    from hledac.universal.core.__main__ import run_ct_pivot
+    from hledac.universal.runtime.ct_pivot import run_ct_pivot
 
     logger = logging.getLogger(__name__)
     target: str = getattr(args, "ct_pivot", None) or ""
 
-    logger.info("[CLI] ct: delegating to core.__main__.run_ct_pivot()")
+    logger.info("[CLI] ct: delegating to runtime.ct_pivot.run_ct_pivot()")
     try:
         with asyncio.Runner() as runner:
             runner.run(run_ct_pivot(domain=target))
@@ -386,13 +427,13 @@ async def _dispatch_pivot_async(args: argparse.Namespace) -> int:
     """Run semantic pivot search — fully async, no Runner nesting."""
     import logging
 
-    from hledac.universal.core.__main__ import run_semantic_pivot
+    from hledac.universal.runtime.sprint_entrypoint import run_semantic_pivot
 
     logger = logging.getLogger(__name__)
     target: str = getattr(args, "pivot", None) or ""
     k: int = getattr(args, "pivot_k", 10)
 
-    logger.info("[CLI] pivot: delegating to core.__main__.run_semantic_pivot()")
+    logger.info("[CLI] pivot: delegating to runtime.sprint_entrypoint.run_semantic_pivot()")
     try:
         await run_semantic_pivot(query=target, top_k=k)
         return 0
@@ -405,12 +446,12 @@ async def _dispatch_ct_async(args: argparse.Namespace) -> int:
     """Run CT pivot — fully async, no Runner nesting."""
     import logging
 
-    from hledac.universal.core.__main__ import run_ct_pivot
+    from hledac.universal.runtime.ct_pivot import run_ct_pivot
 
     logger = logging.getLogger(__name__)
     target: str = getattr(args, "ct_pivot", None) or ""
 
-    logger.info("[CLI] ct: delegating to core.__main__.run_ct_pivot()")
+    logger.info("[CLI] ct: delegating to runtime.ct_pivot.run_ct_pivot()")
     try:
         await run_ct_pivot(domain=target)
         return 0

@@ -1,112 +1,77 @@
 """
-Universal Security Coordinator
-==============================
+Security Coordinator — F350M-R Architectural Split
+===================================================
 
-Integrated security coordination combining:
-- DeepSeek R1: StealthEngine + ThreatIntelligence + QuantumCrypto + ZKP
-- Hermes3: Simplified initialization patterns
-- M1 Master: Memory-aware security operations
+Threat intelligence + Quantum Crypto + ZKP operations.
+OpsEC (stealth/privacy/VPN) extracted to OpsECCoordinator.
 
-Unique Features Integrated:
-1. Multi-layer security (Stealth → Threat → Crypto → ZKP)
-2. Stealth operation mode activation
-3. Threat intelligence analysis
-4. Quantum-resistant cryptography
-5. Zero-Knowledge Proof generation/verification
-6. Security level escalation (1-4 scale)
-7. Security context preservation
+Shared DTOs (SecurityLevel, SecurityContext, SecurityResult) are defined
+in opsec_coordinator.py and re-exported from here for convenience.
 """
 import importlib
 import logging
 import secrets
 import time
-
-# Crypto-safe RNG singleton — F350M-R
-_RNG = secrets.SystemRandom()
-from dataclasses import dataclass, field
-import msgspec
-from enum import Enum
 from typing import Any
-from hledac.universal.utils.async_helpers import parallel
+
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+from .opsec_coordinator import (
+    OpsECCoordinator,
+    SecurityContext,
+    SecurityLevel,
+    SecurityResult,
+)
+
 logger = logging.getLogger(__name__)
-from hledac.universal.security.pq_crypto import PQAvailability
-_SECURITY_SUBSYSTEMS: list[tuple[str, str, str]] = [('stealth_engine', 'hledac.security.stealth_engine', 'StealthEngine'), ('threat_intelligence', 'compat.security_threat_intelligence', 'ThreatIntelligence'), ('zkp_engine', 'compat.security_zkp_research_engine', 'ZKPResearchEngine')]
 
-class SecurityLevel(Enum):
-    """Security levels for operations (1-4 scale)."""
-    MINIMAL = 1
-    STANDARD = 2
-    HIGH = 3
-    MAXIMUM = 4
+_SECURITY_SUBSYSTEMS: list[tuple[str, str, str]] = [
+    ('threat_intelligence', 'compat.security_threat_intelligence', 'ThreatIntelligence'),
+    ('zkp_engine', 'compat.security_zkp_research_engine', 'ZKPResearchEngine'),
+]
 
-class SecurityContext(msgspec.Struct):
-    """Security context for operations."""
-    operation_id: str
-    security_level: SecurityLevel
-    stealth_active: bool = False
-    threats_detected: list[str] = field(default_factory=list)
-    crypto_operations: list[str] = field(default_factory=list)
-    zkp_operations: list[str] = field(default_factory=list)
-    audit_log: list[dict[str, Any]] = field(default_factory=list)
 
-class SecurityResult(msgspec.Struct, frozen=True):
-    """Result of security operation."""
-    operation_type: str
-    success: bool
-    summary: str
-    security_level: SecurityLevel
-    execution_time: float
-    measures_activated: int = 0
-    threats_found: int = 0
-    result_data: dict[str, Any] = field(default_factory=dict)
-    error: str | None = None
-
-class UniversalSecurityCoordinator(UniversalCoordinator):
+class SecurityCoordinator(UniversalCoordinator):
     """
-    Universal coordinator for security operations.
+    Security coordinator — threat intelligence, quantum crypto, ZKP.
 
-    Integrates four security backends:
-    1. StealthEngine - Stealth/evasion operations
-    2. ThreatIntelligence - Threat detection and analysis
-    3. QuantumResistantCrypto - Post-quantum cryptography
-    4. ZKPResearchEngine - Zero-Knowledge Proofs
+    Integrates three security backends:
+    1. ThreatIntelligence - Threat detection and analysis
+    2. QuantumResistantCrypto - Post-quantum cryptography
+    3. ZKPResearchEngine - Zero-Knowledge Proofs
 
     Routing Strategy:
-    - 'stealth'/'evasion'/'anonymize' → StealthEngine
     - 'threat'/'intelligence'/'detect' → ThreatIntelligence
     - 'quantum'/'crypto'/'encrypt' → QuantumResistantCrypto
     - 'zkp'/'proof'/'verify' → ZKPResearchEngine
-
-    Security Levels:
-    - Level 1: Basic stealth
-    - Level 2: + Threat detection
-    - Level 3: + Quantum crypto
-    - Level 4: + ZKP verification
     """
-    __slots__ = tuple(('_crypto_available', '_crypto_operations', '_global_threat_level', '_max_contexts', '_quantum_crypto', '_security_contexts', '_stealth_activations', '_stealth_available', '_stealth_engine', '_stealth_mode_active', '_threat_analyses', '_threat_available', '_threat_intelligence', '_zkp_available', '_zkp_engine', '_zkp_operations'))
+    __slots__ = tuple((
+        '_crypto_operations', '_global_threat_level', '_max_contexts',
+        '_pq_backend', '_security_contexts',
+        '_threat_analyses', '_threat_available', '_threat_intelligence',
+        '_zkp_available', '_zkp_engine', '_crypto_available',
+    ))
 
-    def __init__(self, max_concurrent: int=5):
-        super().__init__(name='universal_security_coordinator', max_concurrent=max_concurrent, memory_aware=True)
-        self._stealth_engine: Any | None = None
+    def __init__(self, max_concurrent: int = 5):
+        super().__init__(
+            name='security_coordinator',
+            max_concurrent=max_concurrent,
+            memory_aware=True,
+        )
         self._threat_intelligence: Any | None = None
-        self._quantum_crypto: Any | None = None
+        self._pq_backend: Any | None = None
         self._zkp_engine: Any | None = None
-        self._stealth_available = False
         self._threat_available = False
         self._crypto_available = False
         self._zkp_available = False
         self._security_contexts: dict[str, SecurityContext] = {}
         self._max_contexts = 50
-        self._stealth_activations = 0
         self._threat_analyses = 0
         self._crypto_operations = 0
         self._zkp_operations = 0
         self._global_threat_level = 0.0
-        self._stealth_mode_active = False
 
     async def _do_initialize(self) -> bool:
-        """Initialize security subsystems with graceful degradation (unified registry)."""
+        """Initialize security subsystems with graceful degradation."""
         initialized_any = False
         for attr_name, module_path, factory_name in _SECURITY_SUBSYSTEMS:
             try:
@@ -116,7 +81,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 if hasattr(instance, 'initialize'):
                     await instance.initialize()
                 setattr(self, f'_{attr_name}', instance)
-                setattr(self, f"_{attr_name.replace('_engine', '_available')}", True)
+                setattr(self, f'{attr_name}_available', True)
                 initialized_any = True
                 logger.info(f'SecurityCoordinator: {factory_name} initialized')
             except ImportError:
@@ -124,12 +89,18 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             except Exception as e:
                 logger.warning(f'SecurityCoordinator: {factory_name} init failed: {e}')
         try:
-            from hledac.universal.security.pq_crypto import create_post_quantum_backend
-            self._pq_backend, pq_status = await create_post_quantum_backend(enabled=True, key_id='hledac.security.v1')
-            self._crypto_available = pq_status.availability.value in ('available', 'signed', 'fail_soft')
-            self._pq_crypto_available = self._crypto_available
+            from hledac.universal.security.pq_crypto import PQAvailability, create_post_quantum_backend
+            self._pq_backend, pq_status = await create_post_quantum_backend(
+                enabled=True, key_id='hledac.security.v1',
+            )
+            self._crypto_available = pq_status.availability.value in (
+                'available', 'signed', 'fail_soft',
+            )
             initialized_any = True
-            logger.info(f'SecurityCoordinator: PQ backend initialized ({pq_status.availability.value})')
+            logger.info(
+                f'SecurityCoordinator: PQ backend initialized '
+                f'({pq_status.availability.value})',
+            )
         except ImportError:
             logger.warning('SecurityCoordinator: PQ backend not available')
         except Exception as e:
@@ -138,11 +109,6 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
 
     async def _do_cleanup(self) -> None:
         """Cleanup security subsystems."""
-        if self._stealth_engine and hasattr(self._stealth_engine, 'cleanup'):
-            try:
-                await self._stealth_engine.cleanup()
-            except Exception as e:
-                logger.error(f'Error cleaning up StealthEngine: {e}')
         if self._threat_intelligence and hasattr(self._threat_intelligence, 'cleanup'):
             try:
                 await self._threat_intelligence.cleanup()
@@ -161,61 +127,249 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         self._security_contexts.clear()
 
     def get_supported_operations(self) -> list[OperationType]:
-        """Return supported operation types."""
         return [OperationType.SECURITY]
 
-    async def handle_request(self, operation_ref: str, decision: DecisionResponse) -> OperationResult:
-        """
-        Handle security request with intelligent routing.
+    # ─── PII ─────────────────────────────────────────────────────────────────
 
-        Args:
-            operation_ref: Unique operation reference
-            decision: Security decision with routing info
-
-        Returns:
-            OperationResult with security operation outcome
-        """
-        start_time = time.time()
-        operation_id = self.generate_operation_id()
+    async def detect_pii(self, text: str) -> dict[str, Any]:
+        """Detect PII in text using SecurityGate."""
         try:
-            self.track_operation(operation_id, {'operation_ref': operation_ref, 'decision': decision, 'type': 'security'})
-            result = await self._execute_security_decision(decision)
-            operation_result = OperationResult(operation_id=operation_id, status='completed' if result.success else 'failed', result_summary=result.summary, execution_time=time.time() - start_time, success=result.success, metadata={'security_operation': result.operation_type, 'security_level': result.security_level.value, 'measures_activated': result.measures_activated, 'threats_found': result.threats_found})
+            from hledac.universal.security.pii_gate import SecurityGate
+            gate = SecurityGate()
+            result = gate.sanitize(text, mask_pii=False, return_matches=True)
+            return {
+                'success': True,
+                'detections': [
+                    {
+                        'text': m.text,
+                        'label': m.category.value,
+                        'score': m.confidence,
+                        'start': m.start,
+                        'end': m.end,
+                    }
+                    for m in result.pii_found
+                ],
+                'risk_analysis': {
+                    'risk_level': result.risk_level,
+                    'risk_score': result.risk_score,
+                },
+                'detections_count': result.pii_count,
+            }
         except Exception as e:
-            operation_result = OperationResult(operation_id=operation_id, status='failed', result_summary=f'Security operation failed: {str(e)}', execution_time=time.time() - start_time, success=False, error_message=str(e))
-        finally:
-            self.untrack_operation(operation_id)
-        self.record_operation_result(operation_result)
-        return operation_result
+            logger.error(f'PII detection failed: {e}')
+            return {'success': False, 'error': str(e), 'detections': []}
 
-    async def _execute_security_decision(self, decision: DecisionResponse) -> SecurityResult:
-        """
-        Route security decision to appropriate backend.
+    async def redact_pii(self, text: str) -> dict[str, Any]:
+        """Redact PII from text using SecurityGate."""
+        try:
+            from hledac.universal.security.pii_gate import SecurityGate
+            gate = SecurityGate()
+            result = gate.sanitize(text, mask_pii=True, return_matches=True)
+            return {
+                'success': True,
+                'original': text,
+                'redacted': result.sanitized_text,
+                'detections_count': result.pii_count,
+                'redactions_applied': result.pii_count,
+            }
+        except Exception as e:
+            logger.error(f'PII redaction failed: {e}')
+            return {'success': False, 'error': str(e), 'text': text}
 
-        Routing logic:
-        1. Parse chosen_option for routing hints
-        2. Route to specific security system
-        """
-        chosen = decision.chosen_option.lower()
-        context = decision.reasoning or decision.metadata.get('context', '')
-        security_level = self._confidence_to_security_level(decision.confidence)
-        if 'stealth' in chosen or 'evasion' in chosen or 'anonymize' in chosen:
-            if self._stealth_available:
-                return await self._execute_stealth_operation(decision, context, security_level)
-        elif 'threat' in chosen or 'intelligence' in chosen or 'detect' in chosen:
-            if self._threat_available:
-                return await self._execute_threat_analysis(decision, context, security_level)
-        elif 'quantum' in chosen or 'crypto' in chosen or 'encrypt' in chosen:
-            if self._crypto_available:
-                return await self._execute_crypto_operation(decision, security_level)
-        elif 'zkp' in chosen or 'proof' in chosen or 'verify' in chosen:
-            if self._zkp_available:
-                return await self._execute_zkp_operation(decision, context, security_level)
-        if self._stealth_available:
-            return await self._execute_stealth_operation(decision, context, security_level)
-        elif self._threat_available:
-            return await self._execute_threat_analysis(decision, context, security_level)
-        return SecurityResult(operation_type='none', success=False, summary='No security backends available', security_level=security_level, execution_time=0.0, error='No security subsystems initialized')
+    async def sanitize_outbound(
+        self,
+        content: str,
+        force_fallback: bool = False,
+    ) -> dict[str, Any]:
+        """Early privacy gate for outbound content."""
+        from hledac.universal.security.pii_gate import SecurityGate, fallback_sanitize
+        try:
+            if force_fallback:
+                sanitized = fallback_sanitize(
+                    content[:10000] if len(content) > 10000 else content,
+                )
+                return {
+                    'success': True,
+                    'sanitized': sanitized,
+                    'method': 'fallback',
+                    'gate': 'early_privacy',
+                    'boundary': 'outbound',
+                    'truncated': len(content) > 10000,
+                    'original_length': len(content),
+                }
+            gate = SecurityGate()
+            result = gate.sanitize(content, mask_pii=True, return_matches=False)
+            return {
+                'success': True,
+                'sanitized': result.sanitized_text,
+                'method': 'security_gate',
+                'gate': 'early_privacy',
+                'boundary': 'outbound',
+                'pii_count': result.pii_count,
+                'risk_level': result.risk_level,
+            }
+        except Exception as e:
+            sanitized = fallback_sanitize(
+                content[:10000] if len(content) > 10000 else content,
+            )
+            return {
+                'success': True,
+                'sanitized': sanitized,
+                'method': 'fallback_on_error',
+                'gate': 'early_privacy',
+                'boundary': 'outbound',
+                'error': str(e),
+                'truncated': len(content) > 10000,
+                'original_length': len(content),
+            }
+
+    # ─── Threat Intelligence ──────────────────────────────────────────────────
+
+    async def _execute_threat_analysis(
+        self,
+        decision: DecisionResponse,
+        context: str,
+        security_level: SecurityLevel,
+    ) -> SecurityResult:
+        """Execute threat intelligence analysis."""
+        start_time = time.time()
+        if not self._threat_intelligence:
+            raise RuntimeError('ThreatIntelligence not available')
+        threat_result = await self._threat_intelligence.analyze_threats(
+            context=context,
+            priority_level=decision.confidence,
+            security_level=security_level.value,
+        )
+        execution_time = time.time() - start_time
+        self._threat_analyses += 1
+        threats = threat_result.get('threats', [])
+        self._global_threat_level = threat_result.get('threat_level', 0.0)
+        return SecurityResult(
+            operation_type='threat',
+            success=True,
+            summary=f'Threat analysis: {len(threats)} threats identified',
+            security_level=security_level,
+            execution_time=execution_time,
+            threats_found=len(threats),
+            result_data=threat_result,
+        )
+
+    async def analyze_threat_intelligence(
+        self,
+        context: str,
+        priority: float = 0.7,
+    ) -> dict[str, Any]:
+        """Analyze threat intelligence data."""
+        if not self._threat_intelligence:
+            return {'success': False, 'error': 'ThreatIntelligence not available'}
+        try:
+            result = await self._threat_intelligence.analyze_threats(
+                context=context,
+                priority_level=priority,
+                security_level=3,
+            )
+            return {'success': True, 'result': result}
+        except Exception as e:
+            logger.error(f'Threat analysis failed: {e}')
+            return {'success': False, 'error': str(e)}
+
+    async def correlate_threats(self, iocs: list[str]) -> dict[str, Any]:
+        """Correlate threat indicators across sources."""
+        if not self._threat_intelligence:
+            return {'success': False, 'error': 'ThreatIntelligence not available'}
+        try:
+            if hasattr(self._threat_intelligence, 'correlate_iocs'):
+                result = await self._threat_intelligence.correlate_iocs(iocs)
+                return {'success': True, 'correlations': result}
+            return {'success': False, 'error': 'correlate_iocs not available'}
+        except Exception as e:
+            logger.error(f'Threat correlation failed: {e}')
+            return {'success': False, 'error': str(e)}
+
+    async def threat_intel_lookup(self, indicator: str) -> dict[str, Any]:
+        """Look up a single threat intelligence indicator."""
+        if not self._threat_intelligence:
+            return {'success': False, 'error': 'ThreatIntelligence not available'}
+        try:
+            if hasattr(self._threat_intelligence, 'lookup_ioc'):
+                result = await self._threat_intelligence.lookup_ioc(indicator)
+                return {'success': True, 'result': result}
+            return {'success': False, 'error': 'lookup_ioc not available'}
+        except Exception as e:
+            logger.error(f'Threat intel lookup failed: {e}')
+            return {'success': False, 'error': str(e)}
+
+    # ─── Cryptography ─────────────────────────────────────────────────────────
+
+    async def _execute_crypto_operation(
+        self,
+        decision: DecisionResponse,
+        security_level: SecurityLevel,
+    ) -> SecurityResult:
+        """Execute quantum-resistant cryptographic operation."""
+        from hledac.universal.security.pq_crypto import PQAvailability
+        start_time = time.time()
+        backend = self._pq_backend
+        pq_status = backend.pq_status()
+        if pq_status.availability == PQAvailability.DISABLED:
+            raise RuntimeError('PQ backend not available')
+        execution_time = time.time() - start_time
+        self._crypto_operations += 1
+        return SecurityResult(
+            operation_type='crypto',
+            success=pq_status.availability.value in ('available', 'signed', 'fail_soft'),
+            summary=(
+                f'PQ: {pq_status.backend_name} ({pq_status.availability.value}), '
+                f'ML-DSA={backend.has_mldsa()}'
+            ),
+            security_level=security_level,
+            execution_time=execution_time,
+            result_data={
+                'availability': pq_status.availability.value,
+                'backend': pq_status.backend_name,
+                'has_mldsa': backend.has_mldsa(),
+                'mldsa_key_id': pq_status.mldsa_key_id,
+            },
+        )
+
+    # ─── ZKP ─────────────────────────────────────────────────────────────────
+
+    async def _execute_zkp_operation(
+        self,
+        decision: DecisionResponse,
+        context: str,
+        security_level: SecurityLevel,
+    ) -> SecurityResult:
+        """Execute zero-knowledge proof operation."""
+        start_time = time.time()
+        if not self._zkp_engine:
+            raise RuntimeError('ZKPResearchEngine not available')
+        proof_type = decision.metadata.get('proof_type', 'membership')
+        verify = decision.metadata.get('verify', False)
+        if verify:
+            zkp_result = await self._zkp_engine.verify_proof(
+                statement=context,
+                proof=decision.metadata.get('proof'),
+                proof_type=proof_type,
+            )
+        else:
+            zkp_result = await self._zkp_engine.generate_proof(
+                statement=context,
+                proof_type=proof_type,
+                confidence=decision.confidence,
+            )
+        execution_time = time.time() - start_time
+        self._zkp_operations += 1
+        return SecurityResult(
+            operation_type='zkp',
+            success=zkp_result.get('valid', zkp_result.get('success', False)),
+            summary=f"ZKP: {proof_type} proof {('verified' if verify else 'generated')}",
+            security_level=security_level,
+            execution_time=execution_time,
+            result_data=zkp_result,
+        )
+
+    # ─── Shared ───────────────────────────────────────────────────────────────
 
     def _confidence_to_security_level(self, confidence: float) -> SecurityLevel:
         """Map confidence (0.0-1.0) to security level (1-4)."""
@@ -227,105 +381,30 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
             return SecurityLevel.STANDARD
         return SecurityLevel.MINIMAL
 
-    async def _execute_stealth_operation(self, decision: DecisionResponse, context: str, security_level: SecurityLevel) -> SecurityResult:
-        """Execute stealth operation using StealthEngine."""
-        start_time = time.time()
-        if not self._stealth_engine:
-            raise RuntimeError('StealthEngine not available')
-        stealth_result = await self._stealth_engine.activate_stealth_mode(operation_type=context, confidence_threshold=decision.confidence, security_level=security_level.value)
-        execution_time = time.time() - start_time
-        self._stealth_activations += 1
-        self._stealth_mode_active = stealth_result.get('active', False)
-        return SecurityResult(operation_type='stealth', success=stealth_result.get('success', False), summary=f"Stealth: {stealth_result.get('measures_activated', 0)} measures activated", security_level=security_level, execution_time=execution_time, measures_activated=stealth_result.get('measures_activated', 0), result_data=stealth_result)
+    async def create_secure_vault(self, size_mb: int = 256) -> dict[str, Any]:
+        """Create secure RAM disk vault."""
+        try:
+            from hledac.supreme.security.ram_disk_vault import RamDiskVault
+            vault = RamDiskVault(size_mb=size_mb)
+            mount_point = vault.mount()
+            return {
+                'success': True,
+                'mount_point': mount_point,
+                'size_mb': size_mb,
+                'type': 'ram_disk',
+            }
+        except ImportError:
+            logger.warning('RAM Disk Vault not available')
+            return {'success': False, 'error': 'RAM Disk Vault not available'}
+        except Exception as e:
+            logger.error(f'Vault creation failed: {e}')
+            return {'success': False, 'error': str(e)}
 
-    async def _execute_threat_analysis(self, decision: DecisionResponse, context: str, security_level: SecurityLevel) -> SecurityResult:
-        """Execute threat intelligence analysis."""
-        start_time = time.time()
-        if not self._threat_intelligence:
-            raise RuntimeError('ThreatIntelligence not available')
-        threat_result = await self._threat_intelligence.analyze_threats(context=context, priority_level=decision.confidence, security_level=security_level.value)
-        execution_time = time.time() - start_time
-        self._threat_analyses += 1
-        threats = threat_result.get('threats', [])
-        self._global_threat_level = threat_result.get('threat_level', 0.0)
-        return SecurityResult(operation_type='threat', success=True, summary=f'Threat analysis: {len(threats)} threats identified', security_level=security_level, execution_time=execution_time, threats_found=len(threats), result_data=threat_result)
-
-    async def _execute_crypto_operation(self, decision: DecisionResponse, security_level: SecurityLevel) -> SecurityResult:
-        """Execute quantum-resistant cryptographic operation using PQ backend."""
-        start_time = time.time()
-        backend = self._pq_backend
-        pq_status = backend.pq_status()
-        if pq_status.availability == PQAvailability.DISABLED:
-            raise RuntimeError('PQ backend not available')
-        execution_time = time.time() - start_time
-        self._crypto_operations += 1
-        return SecurityResult(operation_type='crypto', success=pq_status.availability.value in ('available', 'signed', 'fail_soft'), summary=f'PQ: {pq_status.backend_name} ({pq_status.availability.value}), ML-DSA={backend.has_mldsa()})', security_level=security_level, execution_time=execution_time, result_data={'availability': pq_status.availability.value, 'backend': pq_status.backend_name, 'has_mldsa': backend.has_mldsa(), 'mldsa_key_id': pq_status.mldsa_key_id})
-
-    async def _execute_zkp_operation(self, decision: DecisionResponse, context: str, security_level: SecurityLevel) -> SecurityResult:
-        """Execute zero-knowledge proof operation."""
-        start_time = time.time()
-        if not self._zkp_engine:
-            raise RuntimeError('ZKPResearchEngine not available')
-        proof_type = decision.metadata.get('proof_type', 'membership')
-        verify = decision.metadata.get('verify', False)
-        if verify:
-            zkp_result = await self._zkp_engine.verify_proof(statement=context, proof=decision.metadata.get('proof'), proof_type=proof_type)
-        else:
-            zkp_result = await self._zkp_engine.generate_proof(statement=context, proof_type=proof_type, confidence=decision.confidence)
-        execution_time = time.time() - start_time
-        self._zkp_operations += 1
-        return SecurityResult(operation_type='zkp', success=zkp_result.get('valid', zkp_result.get('success', False)), summary=f"ZKP: {proof_type} proof {('verified' if verify else 'generated')}", security_level=security_level, execution_time=execution_time, result_data=zkp_result)
-
-    async def execute_comprehensive_security(self, context: str, target_security_level: SecurityLevel=SecurityLevel.HIGH) -> dict[str, Any]:
-        """
-        Execute comprehensive multi-layer security operation.
-
-        Unique feature: Activates all security layers up to target level.
-
-        Levels:
-        - Level 1: Stealth only
-        - Level 2: Stealth + Threat detection
-        - Level 3: Stealth + Threat + Quantum crypto
-        - Level 4: All layers + ZKP
-
-        Args:
-            context: Security context/operation description
-            target_security_level: Desired security level
-
-        Returns:
-            Comprehensive security results
-        """
-        results = []
-        start_time = time.time()
-        if self._stealth_available and target_security_level.value >= 1:
-            try:
-                stealth_result = await self._execute_stealth_operation(DecisionResponse(decision_id='comp_stealth', chosen_option='stealth', confidence=0.8, reasoning=context), context, SecurityLevel.MINIMAL)
-                results.append(stealth_result)
-            except Exception as e:
-                logger.warning(f'Comprehensive security: Stealth failed: {e}')
-        if self._threat_available and target_security_level.value >= 2:
-            try:
-                threat_result = await self._execute_threat_analysis(DecisionResponse(decision_id='comp_threat', chosen_option='threat', confidence=0.8, reasoning=context), context, SecurityLevel.STANDARD)
-                results.append(threat_result)
-            except Exception as e:
-                logger.warning(f'Comprehensive security: Threat analysis failed: {e}')
-        if self._crypto_available and target_security_level.value >= 3:
-            try:
-                crypto_result = await self._execute_crypto_operation(DecisionResponse(decision_id='comp_crypto', chosen_option='quantum', confidence=0.9, reasoning=context, metadata={'operation': 'key_generation'}), SecurityLevel.HIGH)
-                results.append(crypto_result)
-            except Exception as e:
-                logger.warning(f'Comprehensive security: Crypto failed: {e}')
-        if self._zkp_available and target_security_level.value >= 4:
-            try:
-                zkp_result = await self._execute_zkp_operation(DecisionResponse(decision_id='comp_zkp', chosen_option='zkp', confidence=0.95, reasoning=context, metadata={'proof_type': 'identity'}), context, SecurityLevel.MAXIMUM)
-                results.append(zkp_result)
-            except Exception as e:
-                logger.warning(f'Comprehensive security: ZKP failed: {e}')
-        total_time = time.time() - start_time
-        successful = sum((1 for r in results if r.success))
-        return {'success': successful > 0, 'summary': f'Comprehensive security: {successful}/{len(results)} layers active', 'target_level': target_security_level.value, 'layers_activated': successful, 'total_layers': len(results), 'execution_time': total_time, 'stealth_active': any((r.operation_type == 'stealth' and r.success for r in results)), 'threats_detected': sum((r.threats_found for r in results if r.operation_type == 'threat')), 'results': [{'type': r.operation_type, 'success': r.success, 'summary': r.summary, 'level': r.security_level.value} for r in results]}
-
-    def create_security_context(self, operation_id: str, security_level: SecurityLevel) -> SecurityContext:
+    def create_security_context(
+        self,
+        operation_id: str,
+        security_level: SecurityLevel,
+    ) -> SecurityContext:
         """Create and track security context."""
         context = SecurityContext(operation_id=operation_id, security_level=security_level)
         self._security_contexts[operation_id] = context
@@ -341,15 +420,19 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     def audit_log(self, operation_id: str, event: str, details: dict[str, Any]) -> None:
         """Add audit log entry to security context."""
         if operation_id in self._security_contexts:
-            self._security_contexts[operation_id].audit_log.append({'timestamp': time.time(), 'event': event, 'details': details})
+            self._security_contexts[operation_id].audit_log.append(
+                {'timestamp': time.time(), 'event': event, 'details': details},
+            )
 
     def get_global_security_state(self) -> dict[str, Any]:
         """Get global security state summary."""
-        return {'stealth_mode_active': self._stealth_mode_active, 'global_threat_level': self._global_threat_level, 'active_contexts': len(self._security_contexts), 'stealth_activations': self._stealth_activations, 'threat_analyses': self._threat_analyses, 'crypto_operations': self._crypto_operations, 'zkp_operations': self._zkp_operations}
-
-    def is_stealth_active(self) -> bool:
-        """Check if stealth mode is currently active."""
-        return self._stealth_mode_active
+        return {
+            'global_threat_level': self._global_threat_level,
+            'active_contexts': len(self._security_contexts),
+            'threat_analyses': self._threat_analyses,
+            'crypto_operations': self._crypto_operations,
+            'zkp_operations': self._zkp_operations,
+        }
 
     def get_threat_level(self) -> float:
         """Get current global threat level."""
@@ -357,565 +440,452 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
 
     def _get_feature_list(self) -> list[str]:
         """Report available features."""
-        features = ['Multi-layer security architecture']
-        if self._stealth_available:
-            features.append('Stealth/Evasion Operations')
+        features = ['Security coordinator']
         if self._threat_available:
             features.append('Threat Intelligence Analysis')
         if self._crypto_available:
             features.append('Quantum-Resistant Cryptography')
         if self._zkp_available:
             features.append('Zero-Knowledge Proofs')
-        features.extend(['Security level escalation (1-4)', 'Comprehensive security operations', 'Security context preservation', 'Audit logging', 'Global threat monitoring'])
+        features.extend([
+            'Security level escalation (1-4)',
+            'Comprehensive security operations',
+            'Security context preservation',
+            'Audit logging',
+            'Global threat monitoring',
+        ])
         return features
 
     def get_available_security_systems(self) -> dict[str, bool]:
         """Get availability status of all security systems."""
-        return {'stealth': self._stealth_available, 'threat_intelligence': self._threat_available, 'quantum_crypto': self._crypto_available, 'zkp': self._zkp_available}
+        return {
+            'threat_intelligence': self._threat_available,
+            'quantum_crypto': self._crypto_available,
+            'zkp': self._zkp_available,
+        }
 
     def get_security_stats(self) -> dict[str, int]:
         """Get security operation statistics."""
-        return {'stealth_activations': self._stealth_activations, 'threat_analyses': self._threat_analyses, 'crypto_operations': self._crypto_operations, 'zkp_operations': self._zkp_operations}
+        return {
+            'threat_analyses': self._threat_analyses,
+            'crypto_operations': self._crypto_operations,
+            'zkp_operations': self._zkp_operations,
+        }
 
-    async def detect_pii(self, text: str) -> dict[str, Any]:
-        """
-        Detect PII in text using regex-based detection.
 
-        Args:
-            text: Text to analyze
+# ─── UniversalSecurityCoordinator — Composite ─────────────────────────────────
 
-        Returns:
-            PII detection results
-        """
+
+class UniversalSecurityCoordinator(UniversalCoordinator):
+    """
+    Universal security coordinator — composes OpsECCoordinator + SecurityCoordinator.
+
+    Provides full backward compatibility: all original public methods are preserved.
+    Internally delegates to the appropriate sub-coordinator.
+
+    Routing Strategy:
+    - 'stealth'/'evasion'/'anonymize'/'privacy'/'vpn'/'pgp' → OpsECCoordinator
+    - 'threat'/'intelligence'/'detect'/'crypto'/'zkp' → SecurityCoordinator
+    """
+    __slots__ = tuple(('_opsec', '_security'))
+
+    def __init__(self, max_concurrent: int = 5):
+        super().__init__(
+            name='universal_security_coordinator',
+            max_concurrent=max_concurrent,
+            memory_aware=True,
+        )
+        self._opsec: OpsECCoordinator = OpsECCoordinator(max_concurrent=max_concurrent)
+        self._security: SecurityCoordinator = SecurityCoordinator(max_concurrent=max_concurrent)
+
+    async def _do_initialize(self) -> bool:
+        """Initialize both sub-coordinators."""
+        ok_opsec = await self._opsec._do_initialize()
+        ok_sec = await self._security._do_initialize()
+        return bool(ok_opsec or ok_sec)
+
+    async def _do_cleanup(self) -> None:
+        """Cleanup both sub-coordinators."""
+        await self._opsec._do_cleanup()
+        await self._security._do_cleanup()
+
+    def get_supported_operations(self) -> list[OperationType]:
+        return [OperationType.SECURITY]
+
+    # ─── Delegation ───────────────────────────────────────────────────────────
+
+    async def handle_request(
+        self,
+        operation_ref: str,
+        decision: DecisionResponse,
+    ) -> OperationResult:
+        """Route security request to appropriate sub-coordinator."""
+        start_time = time.time()
+        operation_id = self.generate_operation_id()
         try:
-            from hledac.universal.security.pii_gate import SecurityGate
-            gate = SecurityGate()
-            result = gate.sanitize(text, mask_pii=False, return_matches=True)
-            return {'success': True, 'detections': [{'text': m.text, 'label': m.category.value, 'score': m.confidence, 'start': m.start, 'end': m.end} for m in result.pii_found], 'risk_analysis': {'risk_level': result.risk_level, 'risk_score': result.risk_score}, 'detections_count': result.pii_count}
+            self.track_operation(
+                operation_id,
+                {'operation_ref': operation_ref, 'decision': decision, 'type': 'security'},
+            )
+            result = await self._execute_security_decision(decision)
+            operation_result = OperationResult(
+                operation_id=operation_id,
+                status='completed' if result.success else 'failed',
+                result_summary=result.summary,
+                execution_time=time.time() - start_time,
+                success=result.success,
+                metadata={
+                    'security_operation': result.operation_type,
+                    'security_level': result.security_level.value,
+                    'measures_activated': result.measures_activated,
+                    'threats_found': result.threats_found,
+                },
+            )
         except Exception as e:
-            logger.error(f'PII detection failed: {e}')
-            return {'success': False, 'error': str(e), 'detections': []}
+            operation_result = OperationResult(
+                operation_id=operation_id,
+                status='failed',
+                result_summary=f'Security operation failed: {str(e)}',
+                execution_time=time.time() - start_time,
+                success=False,
+                error_message=str(e),
+            )
+        finally:
+            self.untrack_operation(operation_id)
+        self.record_operation_result(operation_result)
+        return operation_result
 
-    async def redact_pii(self, text: str) -> dict[str, Any]:
-        """
-        Redact PII from text using regex-based detection.
+    async def _execute_security_decision(self, decision: DecisionResponse) -> SecurityResult:
+        """Route security decision to appropriate sub-coordinator."""
+        chosen = decision.chosen_option.lower()
+        context = decision.reasoning or decision.metadata.get('context', '')
+        security_level = self._security._confidence_to_security_level(decision.confidence)
 
-        Args:
-            text: Text to redact
+        if any(k in chosen for k in ('stealth', 'evasion', 'anonymize', 'privacy', 'vpn', 'pgp')):
+            if self._opsec._stealth_available:
+                return await self._opsec._execute_stealth_operation(decision, context, security_level)
+        elif any(k in chosen for k in ('threat', 'intelligence', 'detect')):
+            if self._security._threat_available:
+                return await self._security._execute_threat_analysis(decision, context, security_level)
+        elif any(k in chosen for k in ('quantum', 'crypto', 'encrypt')):
+            if self._security._crypto_available:
+                return await self._security._execute_crypto_operation(decision, security_level)
+        elif any(k in chosen for k in ('zkp', 'proof', 'verify')):
+            if self._security._zkp_available:
+                return await self._security._execute_zkp_operation(decision, context, security_level)
 
-        Returns:
-            Redaction results
-        """
-        try:
-            from hledac.universal.security.pii_gate import SecurityGate
-            gate = SecurityGate()
-            result = gate.sanitize(text, mask_pii=True, return_matches=True)
-            return {'success': True, 'original': text, 'redacted': result.sanitized_text, 'detections_count': result.pii_count, 'redactions_applied': result.pii_count}
-        except Exception as e:
-            logger.error(f'PII redaction failed: {e}')
-            return {'success': False, 'error': str(e), 'text': text}
+        # Fallback to OpsEC
+        if self._opsec._stealth_available:
+            return await self._opsec._execute_stealth_operation(decision, context, security_level)
+        elif self._security._threat_available:
+            return await self._security._execute_threat_analysis(decision, context, security_level)
 
-    async def sanitize_outbound(self, content: str, force_fallback: bool=False) -> dict[str, Any]:
-        """
-        Early privacy gate for outbound content.
+        return SecurityResult(
+            operation_type='none',
+            success=False,
+            summary='No security backends available',
+            security_level=security_level,
+            execution_time=0.0,
+            error='No security subsystems initialized',
+        )
 
-        F10 canonical seam: applies sanitization ONLY at boundary points
-        where content leaves the system (outbound, export, persistence).
+    async def _execute_stealth_operation(
+        self,
+        decision: DecisionResponse,
+        context: str,
+        security_level: SecurityLevel,
+    ) -> SecurityResult:
+        """Execute stealth operation via OpsECCoordinator."""
+        import time as _time
+        start_time = _time.time()
+        if not self._opsec._stealth_engine:
+            raise RuntimeError('StealthEngine not available')
+        stealth_result = await self._opsec._stealth_engine.activate_stealth_mode(
+            operation_type=context,
+            confidence_threshold=decision.confidence,
+            security_level=security_level.value,
+        )
+        execution_time = _time.time() - start_time
+        self._opsec._stealth_activations += 1
+        self._opsec._stealth_mode_active = stealth_result.get('active', False)
+        return SecurityResult(
+            operation_type='stealth',
+            success=stealth_result.get('success', False),
+            summary=f"Stealth: {stealth_result.get('measures_activated', 0)} measures activated",
+            security_level=security_level,
+            execution_time=execution_time,
+            measures_activated=stealth_result.get('measures_activated', 0),
+            result_data=stealth_result,
+        )
 
-        This is NOT applied to internal paths — only at explicit exit points.
+    # ─── OpsEC passthrough ───────────────────────────────────────────────────
 
-        Args:
-            content: Content to sanitize before outbound delivery
-            force_fallback: If True, use fallback_sanitize (10KB bound, no ML)
+    @property
+    def _stealth_engine(self) -> Any | None:
+        return self._opsec._stealth_engine
 
-        Returns:
-            Sanitized content with gate metadata
-        """
-        from hledac.universal.security.pii_gate import SecurityGate, fallback_sanitize
-        try:
-            if force_fallback:
-                sanitized = fallback_sanitize(content[:10000] if len(content) > 10000 else content)
-                return {'success': True, 'sanitized': sanitized, 'method': 'fallback', 'gate': 'early_privacy', 'boundary': 'outbound', 'truncated': len(content) > 10000, 'original_length': len(content)}
-            else:
-                gate = SecurityGate()
-                result = gate.sanitize(content, mask_pii=True, return_matches=False)
-                return {'success': True, 'sanitized': result.sanitized_text, 'method': 'security_gate', 'gate': 'early_privacy', 'boundary': 'outbound', 'pii_count': result.pii_count, 'risk_level': result.risk_level}
-        except Exception as e:
-            sanitized = fallback_sanitize(content[:10000] if len(content) > 10000 else content)
-            return {'success': True, 'sanitized': sanitized, 'method': 'fallback_on_error', 'gate': 'early_privacy', 'boundary': 'outbound', 'error': str(e), 'truncated': len(content) > 10000, 'original_length': len(content)}
+    @property
+    def _stealth_available(self) -> bool:
+        return self._opsec._stealth_available
 
-    async def enable_stealth_mode(self, level: str='medium') -> dict[str, Any]:
-        """
-        Enable stealth mode via AnonymityManager (from Hermes3).
+    @property
+    def _stealth_mode_active(self) -> bool:
+        return self._opsec._stealth_mode_active
 
-        Args:
-            level: Stealth level (low, medium, high)
+    @property
+    def _stealth_activations(self) -> int:
+        return self._opsec._stealth_activations
 
-        Returns:
-            Stealth activation result
-        """
-        try:
-            logger.warning(f'AnonymityManager not available, stealth mode unavailable')
-            return {'success': False, 'error': 'Anonymity Manager not available', 'level': level}
-        except Exception as e:
-            logger.error(f'Stealth activation failed: {e}')
-            return {'success': False, 'error': str(e)}
+    async def stealth_request_with_jitter(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.stealth_request_with_jitter(**kwargs)
 
-    async def resurrect_from_archive(self, url: str, target_date: str | None=None, sources: list[str] | None=None) -> dict[str, Any]:
-        """
-        Resurrect content from web archives using ArchiveResurrector.
+    async def stealth_scrape(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.stealth_scrape(**kwargs)
 
-        Integrated from: stealth_osint/archive_resurrector.py
+    async def batch_stealth_requests(self, **kwargs) -> list[dict[str, Any]]:
+        return await self._opsec.batch_stealth_requests(**kwargs)
 
-        Features:
-        - Wayback Machine (Internet Archive) - Full CDX API support
-        - Search engine cache (Google, Bing, Yandex)
-        - Social media archives (Politwoops, Unreddit)
-        - Content quality assessment and ranking
+    async def enable_stealth_mode(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.enable_stealth_mode(**kwargs)
 
-        Args:
-            url: URL to resurrect
-            target_date: Target date (ISO format)
-            sources: List of sources to check ['wayback', 'search_cache', 'social']
+    def is_stealth_active(self) -> bool:
+        return self._opsec.is_stealth_active()
 
-        Returns:
-            Resurrection result with content and metadata
-        """
-        try:
-            from hledac.universal.intel.archive_discovery import ArchiveResurrector
-            resurrector = ArchiveResurrector()
-            await resurrector.initialize()
-            parsed_date = None
-            if target_date:
-                from datetime import datetime
-                try:
-                    parsed_date = datetime.fromisoformat(target_date)
-                except ValueError:
-                    pass
-            result = await resurrector.resurrect(url=url, target_date=parsed_date, min_quality=None)
-            return {'success': result.success, 'content': result.content, 'title': result.title, 'snapshots_found': len(result.all_snapshots), 'best_snapshot': result.best_snapshot.snapshot_id if result.best_snapshot else None, 'processing_time': result.processing_time}
-        except (ImportError, ModuleNotFoundError):
-            logger.warning('ArchiveResurrector not available')
-            return {'success': False, 'error': 'ArchiveResurrector not available'}
-        except Exception as e:
-            logger.error(f'Archive resurrection failed: {e}')
-            return {'success': False, 'error': str(e)}
+    async def fetch_with_limit(self, url: str) -> dict[str, Any]:
+        return await self._opsec.fetch_with_limit(url)
 
-    async def check_data_leaks(self, target: str, target_type: str='email') -> dict[str, Any]:
-        """
-        Check for data leaks using DataLeakHunter.
+    def get_browser_fingerprint(self, **kwargs) -> dict[str, Any]:
+        return self._opsec.get_browser_fingerprint(**kwargs)
 
-        Integrated from: stealth_osint/data_leak_hunter.py
+    async def resurrect_from_archive(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.resurrect_from_archive(**kwargs)
 
-        Features:
-        - Breach API integration (HaveIBeenPwned, DeHashed)
-        - Dark web monitoring indicators
-        - Paste site surveillance
-        - Real-time alerts
-
-        Args:
-            target: Target to check (email, username, domain)
-            target_type: Type of target ('email', 'username', 'domain', 'ip')
-
-        Returns:
-            Leak check results with alerts
-        """
-        try:
-            from hledac.universal.intel.data_leak_hunter import DataLeakHunter
-            hunter = DataLeakHunter()
-            await hunter.initialize()
-            await hunter.add_target(target, target_type)
-            alerts = await hunter.check_target(target, target_type)
-            return {'success': True, 'target': target, 'alerts_count': len(alerts), 'alerts': [{'severity': alert.severity.value, 'source': alert.source.value, 'breach_name': alert.breach_name, 'timestamp': alert.timestamp.isoformat()} for alert in alerts], 'high_risk': sum((1 for a in alerts if a.severity.value in ['high', 'critical']))}
-        except (ImportError, ModuleNotFoundError):
-            logger.warning('DataLeakHunter not available')
-            return {'success': False, 'error': 'DataLeakHunter not available'}
-        except Exception as e:
-            logger.error(f'Data leak check failed: {e}')
-            return {'success': False, 'error': str(e)}
-
-    async def stealth_scrape(self, url: str, protection_bypass: bool=True, fingerprint_rotation: bool=True) -> dict[str, Any]:
-        """
-        Stealth web scraping with anti-detection using StealthWebScraper.
-
-        Integrated from: stealth_osint/stealth_web_scraper.py
-
-        Features:
-        - Protection detection (Cloudflare, Akamai, Imperva, DataDome)
-        - Multi-layer bypass (cloudscraper → Selenium → Browser automation)
-        - Fingerprint rotation (50+ unique profiles)
-        - Proxy management with residential support
-        - CAPTCHA solving integration
-
-        Args:
-            url: URL to scrape
-            protection_bypass: Enable protection bypass
-            fingerprint_rotation: Enable fingerprint rotation
-
-        Returns:
-            Scraping result with content
-        """
-        try:
-            from hledac.universal.intel.stealth_crawler import StealthWebScraper
-            scraper = StealthWebScraper()
-            await scraper.initialize()
-            result = await scraper.scrape(url=url, headers=None, use_proxy=protection_bypass)
-            return {'success': result.success, 'content': result.content, 'status_code': result.status_code, 'protection_detected': result.protection_detected.value, 'bypass_method': result.bypass_method_used.value, 'duration': result.duration, 'proxy_used': result.proxy_used}
-        except (ImportError, ModuleNotFoundError):
-            logger.warning('StealthWebScraper not available')
-            return {'success': False, 'error': 'StealthWebScraper not available'}
-        except Exception as e:
-            logger.error(f'Stealth scraping failed: {e}')
-            return {'success': False, 'error': str(e)}
-
-    async def establish_privacy_connection(self, privacy_level: str='enhanced', connection_type: str | None=None) -> dict[str, Any]:
-        """
-        Establish privacy-protected connection using PersonalPrivacyManager.
-
-        Integrated from: privacy_protection/personal_privacy_manager.py
-
-        Features:
-        - VPN/Proxy management with rotation
-        - Tor network integration
-        - DNS-over-HTTPS/TLS encryption
-        - Browser fingerprint randomization
-        - Traffic correlation prevention
-
-        Args:
-            privacy_level: 'basic', 'standard', 'enhanced', 'maximum'
-            connection_type: 'vpn', 'tor', 'proxy', 'mixed' (auto-selected if None)
-
-        Returns:
-            Connection establishment result
-        """
-        logger.warning('PersonalPrivacyManager not available')
-        return {'success': False, 'error': 'PersonalPrivacyManager not available'}
-
-    def get_browser_fingerprint(self, platform: str='macos', browser: str='chrome', domain: str | None=None) -> dict[str, Any]:
-        """
-        Get browser fingerprint using FingerprintManager.
-
-        Integrated from: advanced_web/fingerprint_manager.py
-
-        Features:
-        - Large fingerprint database (1000+ unique fingerprints)
-        - Usage tracking and risk assessment
-        - Domain-specific fingerprint rotation
-        - Canvas/WebGL/Audio fingerprint randomization
-
-        Args:
-            platform: 'macos', 'windows', 'linux', 'ios', 'android'
-            browser: 'chrome', 'firefox', 'safari', 'edge'
-            domain: Domain for domain-specific rotation
-
-        Returns:
-            Fingerprint profile
-        """
-        logger.warning('FingerprintManager not available')
-        return {'success': False, 'error': 'FingerprintManager not available'}
-
-    async def manage_data_leak_monitoring(self, action: str, target: str | None=None, target_type: str | None=None, check_interval: int=3600) -> dict[str, Any]:
-        """
-        Manage continuous data leak monitoring.
-
-        Features:
-        - Start/stop continuous monitoring
-        - Add/remove monitoring targets
-        - Get monitoring status
-
-        Args:
-            action: 'start', 'stop', 'add_target', 'remove_target', 'status'
-            target: Target value (for add/remove)
-            target_type: Type of target (email, username, domain)
-            check_interval: Seconds between checks
-
-        Returns:
-            Operation result
-        """
-        try:
-            from hledac.stealth_osint.data_leak_hunter import DataLeakHunter
-            if not hasattr(self, '_leak_hunter'):
-                self._leak_hunter = DataLeakHunter(check_interval=check_interval)
-                await self._leak_hunter.initialize()
-            hunter = self._leak_hunter
-            if action == 'start':
-                await hunter.start_monitoring()
-                return {'success': True, 'action': 'start_monitoring', 'interval': check_interval, 'targets_count': len(hunter._targets)}
-            elif action == 'stop':
-                await hunter.stop_monitoring()
-                return {'success': True, 'action': 'stop_monitoring'}
-            elif action == 'add_target' and target and target_type:
-                target_id = await hunter.add_target(target, target_type)
-                return {'success': True, 'action': 'add_target', 'target_id': target_id, 'target': target}
-            elif action == 'remove_target' and target:
-                target_id = None
-                for tid, t in hunter._targets.items():
-                    if t.value == target:
-                        target_id = tid
-                        break
-                if target_id:
-                    success = await hunter.remove_target(target_id)
-                    return {'success': success, 'action': 'remove_target', 'target': target}
-                return {'success': False, 'error': 'Target not found'}
-            elif action == 'status':
-                return {'success': True, 'action': 'status', 'is_monitoring': hunter._is_monitoring, 'targets_count': len(hunter._targets), 'checks_performed': hunter._checks_performed, 'alerts_generated': hunter._alerts_generated}
-            else:
-                return {'success': False, 'error': f'Unknown action: {action}'}
-        except ImportError:
-            return {'success': False, 'error': 'DataLeakHunter not available'}
-        except Exception as e:
-            logger.error(f'Monitoring management failed: {e}')
-            return {'success': False, 'error': str(e)}
-
-    async def establish_vpn_connection(self, provider: str='mullvad', protocol: str='wireguard', server: str | None=None) -> dict[str, Any]:
-        """
-        Establish VPN connection using PersonalPrivacyManager.
-
-        Features:
-        - WireGuard and OpenVPN support
-        - Multiple providers (Mullvad, ProtonVPN, IVPN)
-        - DNS leak protection
-        - Automatic server selection
-
-        Args:
-            provider: VPN provider ('mullvad', 'protonvpn', 'ivpn')
-            protocol: 'wireguard' or 'openvpn'
-            server: Specific server (auto-selected if None)
-
-        Returns:
-            Connection result
-        """
-        try:
-            from hledac.privacy_protection.personal_privacy_manager import PersonalPrivacyManager, PrivacyLevel, VPNConfig, VPNDriver
-            if not server:
-                servers = VPNDriver.PROVIDERS.get(provider, {}).get('servers', [])
-                if servers:
-                    import secrets
-                    server = secrets.choice(servers)
-                else:
-                    return {'success': False, 'error': f'Unknown provider: {provider}'}
-            config = VPNConfig(provider=provider, server=server, protocol=protocol, dns_leak_protection=True, kill_switch=True)
-            driver = VPNDriver(config)
-            success = await driver.connect()
-            if success:
-                return {'success': True, 'provider': provider, 'protocol': protocol, 'server': server, 'connected': True, 'dns_protection': config.dns_leak_protection}
-            else:
-                return {'success': False, 'error': 'VPN connection failed', 'provider': provider, 'server': server}
-        except ImportError:
-            return {'success': False, 'error': 'PersonalPrivacyManager not available'}
-        except Exception as e:
-            logger.error(f'VPN connection failed: {e}')
-            return {'success': False, 'error': str(e)}
+    async def establish_vpn_connection(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.establish_vpn_connection(**kwargs)
 
     async def disconnect_vpn(self) -> dict[str, Any]:
-        """Disconnect active VPN connection."""
-        try:
-            from hledac.privacy_protection.personal_privacy_manager import VPNDriver
-            return {'success': True, 'message': 'VPN disconnect initiated', 'note': 'Use system network settings to verify disconnection'}
-        except ImportError:
-            return {'success': False, 'error': 'VPNDriver not available'}
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
+        return await self._opsec.disconnect_vpn()
 
-    async def send_anonymous_email(self, to_address: str, subject: str, body: str, provider: str='protonmail', use_tor: bool=True, encrypt: bool=False, recipient_key: str | None=None) -> dict[str, Any]:
-        """
-        Send anonymous email through secure providers with optional Tor.
+    async def establish_privacy_connection(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.establish_privacy_connection(**kwargs)
 
-        Integrated from: privacy_protection/anonymous_communication.py
+    async def send_anonymous_email(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.send_anonymous_email(**kwargs)
 
-        Features:
-        - Tor network routing
-        - PGP encryption support
-        - Privacy-friendly providers (ProtonMail, Tutanota)
-        - Exit node country selection
+    async def check_data_leaks(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.check_data_leaks(**kwargs)
 
-        Args:
-            to_address: Recipient email
-            subject: Email subject
-            body: Email body
-            provider: Email provider ('protonmail', 'tutanota', 'startmail')
-            use_tor: Route through Tor network
-            encrypt: Encrypt with PGP
-            recipient_key: PGP public key for encryption
+    async def manage_data_leak_monitoring(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.manage_data_leak_monitoring(**kwargs)
 
-        Returns:
-            Send result with privacy metadata
-        """
-        try:
-            from hledac.privacy_protection.anonymous_communication import EmailConfig, TorMailer
-            mailer = TorMailer(use_tor=use_tor)
-            config = EmailConfig(smtp_server='127.0.0.1' if use_tor else 'smtp.protonmail.com', smtp_port=1025 if use_tor else 587, username='anonymous@protonmail.com', password='', use_tls=not use_tor, use_tor=use_tor)
-            success = await mailer.send_email(config=config, to_address=to_address, subject=subject, body=body, encrypt=encrypt, recipient_key=recipient_key)
-            return {'success': success, 'provider': provider, 'tor_used': use_tor, 'encrypted': encrypt, 'recipient': to_address, 'privacy_level': 'maximum' if use_tor and encrypt else 'high'}
-        except ImportError:
-            logger.warning('Anonymous communication module not available')
-            return {'success': False, 'error': 'Module not available'}
-        except Exception as e:
-            logger.error(f'Anonymous email failed: {e}')
-            return {'success': False, 'error': str(e)}
+    async def create_pgp_identity(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.create_pgp_identity(**kwargs)
 
-    async def establish_secure_channel(self, participant_ids: list[str], channel_name: str | None=None) -> dict[str, Any]:
-        """
-        Create secure encrypted communication channel.
+    async def establish_secure_channel(self, **kwargs) -> dict[str, Any]:
+        return await self._opsec.establish_secure_channel(**kwargs)
 
-        Features:
-        - End-to-end encryption
-        - Channel-based messaging
-        - Participant management
-        - TTL support for messages
+    # ─── Security passthrough ────────────────────────────────────────────────
 
-        Args:
-            participant_ids: List of participant IDs
-            channel_name: Optional channel name
+    @property
+    def _threat_intelligence(self) -> Any | None:
+        return self._security._threat_intelligence
 
-        Returns:
-            Channel creation result
-        """
-        try:
-            from hledac.privacy_protection.anonymous_communication import SecureChannelManager
-            manager = SecureChannelManager()
-            channel = manager.create_channel(participant_ids, channel_name)
-            if channel:
-                return {'success': True, 'channel_id': channel.channel_id, 'participants': list(channel.participants), 'encryption': 'AES-256-GCM', 'created_at': channel.created_at.isoformat()}
-            return {'success': False, 'error': 'Channel creation failed'}
-        except ImportError:
-            return {'success': False, 'error': 'SecureChannelManager not available'}
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
+    @property
+    def _threat_available(self) -> bool:
+        return self._security._threat_available
 
-    async def create_pgp_identity(self, name: str, email: str, key_type: str='RSA', key_length: int=4096) -> dict[str, Any]:
-        """
-        Create PGP identity for secure communication.
+    @property
+    def _pq_backend(self) -> Any | None:
+        return self._security._pq_backend
 
-        Args:
-            name: Identity name
-            email: Identity email
-            key_type: Key type (RSA, ECC)
-            key_length: Key length in bits
+    @property
+    def _crypto_available(self) -> bool:
+        return self._security._crypto_available
 
-        Returns:
-            PGP key information
-        """
-        try:
-            from hledac.privacy_protection.anonymous_communication import PGPManager
-            manager = PGPManager()
-            key = manager.generate_key(name, email, key_type, key_length)
-            if key:
-                return {'success': True, 'key_id': key.key_id, 'fingerprint': key.fingerprint, 'public_key': key.public_key[:100] + '...', 'created_at': key.created_at.isoformat(), 'expires_at': key.expires_at.isoformat() if key.expires_at else None}
-            return {'success': False, 'error': 'Key generation failed'}
-        except ImportError:
-            return {'success': False, 'error': 'PGPManager not available'}
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
+    @property
+    def _zkp_engine(self) -> Any | None:
+        return self._security._zkp_engine
 
-    async def stealth_request_with_jitter(self, url: str, method: str='GET', headers: dict[str, str] | None=None, impersonate: str='chrome110', jitter_shape: float=1.5, jitter_scale: float=2.0, min_delay: float=0.5, max_delay: float=10.0, **kwargs) -> dict[str, Any]:
-        """
-        Stealth HTTP request with Weibull-distributed jitter delays.
+    @property
+    def _zkp_available(self) -> bool:
+        return self._security._zkp_available
 
-        Integrated from: tools/preserved_logic/stealth_request.py
+    @property
+    def _threat_analyses(self) -> int:
+        return self._security._threat_analyses
 
-        Features:
-        - Weibull-distributed random delays (more natural than uniform)
-        - curl_cffi impersonation (Chrome, Firefox, Safari)
-        - Automatic retry with exponential backoff
-        - Response time tracking
+    @property
+    def _crypto_operations(self) -> int:
+        return self._security._crypto_operations
 
-        Args:
-            url: Target URL
-            method: HTTP method (GET, POST, etc.)
-            headers: Additional headers
-            impersonate: Browser to impersonate ('chrome110', 'firefox110', etc.)
-            jitter_shape: Weibull shape parameter (1.5 = typical human behavior)
-            jitter_scale: Weibull scale parameter
-            min_delay: Minimum delay in seconds
-            max_delay: Maximum delay in seconds
+    @property
+    def _zkp_operations(self) -> int:
+        return self._security._zkp_operations
 
-        Returns:
-            Response with content, status code, and timing
-        """
-        import asyncio
-        import secrets
-        import time
+    @property
+    def _global_threat_level(self) -> float:
+        return self._security._global_threat_level
+
+    @property
+    def _security_contexts(self) -> dict:
+        return self._security._security_contexts
+
+    async def detect_pii(self, **kwargs) -> dict[str, Any]:
+        return await self._security.detect_pii(**kwargs)
+
+    async def redact_pii(self, **kwargs) -> dict[str, Any]:
+        return await self._security.redact_pii(**kwargs)
+
+    async def sanitize_outbound(self, **kwargs) -> dict[str, Any]:
+        return await self._security.sanitize_outbound(**kwargs)
+
+    async def analyze_threat_intelligence(self, **kwargs) -> dict[str, Any]:
+        return await self._security.analyze_threat_intelligence(**kwargs)
+
+    async def correlate_threats(self, **kwargs) -> dict[str, Any]:
+        return await self._security.correlate_threats(**kwargs)
+
+    async def threat_intel_lookup(self, **kwargs) -> dict[str, Any]:
+        return await self._security.threat_intel_lookup(**kwargs)
+
+    async def create_secure_vault(self, **kwargs) -> dict[str, Any]:
+        return await self._security.create_secure_vault(**kwargs)
+
+    # ─── Shared state passthrough ─────────────────────────────────────────────
+
+    def create_security_context(self, operation_id: str, security_level: SecurityLevel) -> SecurityContext:
+        return self._security.create_security_context(operation_id, security_level)
+
+    def get_security_context(self, operation_id: str) -> SecurityContext | None:
+        return self._security.get_security_context(operation_id)
+
+    def audit_log(self, operation_id: str, event: str, details: dict[str, Any]) -> None:
+        self._security.audit_log(operation_id, event, details)
+
+    def get_global_security_state(self) -> dict[str, Any]:
+        return {
+            'stealth_mode_active': self._opsec._stealth_mode_active,
+            **self._security.get_global_security_state(),
+            'stealth_activations': self._opsec._stealth_activations,
+        }
+
+    def get_threat_level(self) -> float:
+        return self._security.get_threat_level()
+
+    def _get_feature_list(self) -> list[str]:
+        return self._security._get_feature_list() + self._opsec._get_feature_list()
+
+    def get_available_security_systems(self) -> dict[str, bool]:
+        return {**self._security.get_available_security_systems(), **self._opsec.get_available_security_systems()}
+
+    def get_security_stats(self) -> dict[str, int]:
+        return {
+            **self._security.get_security_stats(),
+            'stealth_activations': self._opsec._stealth_activations,
+        }
+
+    # ─── execute_comprehensive_security (requires both sub-coordinators) ────────
+
+    async def execute_comprehensive_security(
+        self,
+        context: str,
+        target_security_level: SecurityLevel = SecurityLevel.HIGH,
+    ) -> dict[str, Any]:
+        """Execute comprehensive multi-layer security operation."""
+        results = []
         start_time = time.time()
-        try:
+
+        # Level 1: Stealth
+        if self._opsec._stealth_available and target_security_level.value >= 1:
             try:
-                import numpy as np
-                delay = np.random.weibull(jitter_shape) * jitter_scale
-            except ImportError:
-                delay = _RNG.uniform(min_delay, max_delay)
-            delay = max(min_delay, min(delay, max_delay))
-            await asyncio.sleep(delay)
+                stealth_result = await self._execute_stealth_operation(
+                    DecisionResponse(
+                        decision_id='comp_stealth',
+                        chosen_option='stealth',
+                        confidence=0.8,
+                        reasoning=context,
+                    ),
+                    context,
+                    SecurityLevel.MINIMAL,
+                )
+                results.append(stealth_result)
+            except Exception as e:
+                logger.warning(f'Comprehensive security: Stealth failed: {e}')
+
+        # Level 2: Threat
+        if self._security._threat_available and target_security_level.value >= 2:
             try:
-                from curl_cffi.requests import AsyncSession
-                async with AsyncSession(impersonate=impersonate) as session:
-                    if method.upper() == 'GET':
-                        resp = await session.get(url, headers=headers, **kwargs)
-                    elif method.upper() == 'POST':
-                        resp = await session.post(url, headers=headers, **kwargs)
-                    else:
-                        resp = await session.request(method, url, headers=headers, **kwargs)
-                    elapsed = time.time() - start_time
-                    return {'success': True, 'url': url, 'status_code': resp.status_code, 'content': resp.text[:5000] if hasattr(resp, 'text') else '', 'headers': dict(resp.headers) if hasattr(resp, 'headers') else {}, 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': impersonate, 'method': 'curl_cffi'}
-            except ImportError:
-                from network.session_runtime import async_get_httpx_session
-                import httpx
-                session = await async_get_httpx_session()
-                async with session.request(method, url, headers=headers, **kwargs) as resp:
-                    content = resp.text
-                    elapsed = time.time() - start_time
-                    return {'success': True, 'url': url, 'status_code': resp.status_code, 'content': content[:5000], 'headers': dict(resp.headers), 'elapsed_seconds': elapsed, 'jitter_delay': delay, 'impersonate': None, 'method': 'httpx'}
-        except Exception as e:
-            elapsed = time.time() - start_time
-            logger.error(f'Stealth request failed for {url}: {e}')
-            return {'success': False, 'url': url, 'error': str(e), 'elapsed_seconds': elapsed}
+                threat_result = await self._security._execute_threat_analysis(
+                    DecisionResponse(
+                        decision_id='comp_threat',
+                        chosen_option='threat',
+                        confidence=0.8,
+                        reasoning=context,
+                    ),
+                    context,
+                    SecurityLevel.STANDARD,
+                )
+                results.append(threat_result)
+            except Exception as e:
+                logger.warning(f'Comprehensive security: Threat analysis failed: {e}')
 
-    async def batch_stealth_requests(self, urls: list[str], concurrency: int=3, jitter_range: tuple[float, float]=(0.5, 5.0)) -> list[dict[str, Any]]:
-        """
-        Execute multiple stealth requests with controlled concurrency.
+        # Level 3: Crypto
+        if self._security._crypto_available and target_security_level.value >= 3:
+            try:
+                crypto_result = await self._security._execute_crypto_operation(
+                    DecisionResponse(
+                        decision_id='comp_crypto',
+                        chosen_option='quantum',
+                        confidence=0.9,
+                        reasoning=context,
+                        metadata={'operation': 'key_generation'},
+                    ),
+                    SecurityLevel.HIGH,
+                )
+                results.append(crypto_result)
+            except Exception as e:
+                logger.warning(f'Comprehensive security: Crypto failed: {e}')
 
-        Args:
-            urls: List of URLs to request
-            concurrency: Maximum concurrent requests
-            jitter_range: (min, max) delay range
+        # Level 4: ZKP
+        if self._security._zkp_available and target_security_level.value >= 4:
+            try:
+                zkp_result = await self._security._execute_zkp_operation(
+                    DecisionResponse(
+                        decision_id='comp_zkp',
+                        chosen_option='zkp',
+                        confidence=0.95,
+                        reasoning=context,
+                        metadata={'proof_type': 'identity'},
+                    ),
+                    context,
+                    SecurityLevel.MAXIMUM,
+                )
+                results.append(zkp_result)
+            except Exception as e:
+                logger.warning(f'Comprehensive security: ZKP failed: {e}')
 
-        Returns:
-            List of response results
-        """
-        from asyncio import Semaphore
-        semaphore = Semaphore(concurrency)
-
-        async def fetch_with_limit(url: str) -> dict[str, Any]:
-            async with semaphore:
-                return await self.stealth_request_with_jitter(url, min_delay=jitter_range[0], max_delay=jitter_range[1])
-        tasks = [fetch_with_limit(url) for url in urls]
-        _sec_result = await parallel(tasks, policy="log", ctx='security_coordinator:1699')
-        results = _sec_result.ok
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                processed_results.append({'success': False, 'url': urls[i], 'error': str(result)})
-            else:
-                processed_results.append(result)
-        return processed_results
-
-    async def create_secure_vault(self, size_mb: int=256) -> dict[str, Any]:
-        """
-        Create secure RAM disk vault (from Hermes3).
-
-        Args:
-            size_mb: Vault size in MB
-
-        Returns:
-            Vault creation result
-        """
-        try:
-            from hledac.supreme.security.ram_disk_vault import RamDiskVault
-            vault = RamDiskVault(size_mb=size_mb)
-            mount_point = vault.mount()
-            return {'success': True, 'mount_point': mount_point, 'size_mb': size_mb, 'type': 'ram_disk'}
-        except ImportError:
-            logger.warning('RAM Disk Vault not available')
-            return {'success': False, 'error': 'RAM Disk Vault not available'}
-        except Exception as e:
-            logger.error(f'Vault creation failed: {e}')
-            return {'success': False, 'error': str(e)}
+        total_time = time.time() - start_time
+        successful = sum((1 for r in results if r.success))
+        return {
+            'success': successful > 0,
+            'summary': f'Comprehensive security: {successful}/{len(results)} layers active',
+            'target_level': target_security_level.value,
+            'layers_activated': successful,
+            'total_layers': len(results),
+            'execution_time': total_time,
+            'stealth_active': any(
+                r.operation_type == 'stealth' and r.success for r in results
+            ),
+            'threats_detected': sum(
+                r.threats_found for r in results if r.operation_type == 'threat'
+            ),
+            'results': [
+                {
+                    'type': r.operation_type,
+                    'success': r.success,
+                    'summary': r.summary,
+                    'level': r.security_level.value,
+                }
+                for r in results
+            ],
+        }

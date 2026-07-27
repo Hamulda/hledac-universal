@@ -2,7 +2,7 @@
 title: Hledac Universal CLAUDE.md
 summary: 'Hledac Universal project docs: conventions, invariants, architecture, feature flags, wired components, pre-flight guards, exit codes, anti-patterns, hardware constraints'
 tags: []
-related: [facts/project/parallel_async_helper.md, facts/project/issue_g2_pep_734_isolation_infrastructure.md]
+related: [facts/project/parallel_async_helper.md, facts/project/issue_g2_pep_734_isolation_infrastructure.md, facts/project/coding_conventions_status.md]
 keywords: []
 createdAt: '2026-07-11T15:07:16.916Z'
 updatedAt: '2026-07-11T15:07:16.916Z'

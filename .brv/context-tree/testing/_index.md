@@ -1,65 +1,55 @@
 ---
-children_hash: 18d646182f9f3bf98c725d88329c4b53ae55b9a821129929f2a74d609c0afc6b
-compression_ratio: 0.36103467253714916
+children_hash: 9eb83f8d60ebd279a00bcd5805dc2f1dd87892cdbec93fc1eeddd8e855d4665b
+compression_ratio: 0.14959531119173877
 condensation_order: 2
-covers: [conftest/_index.md, exit_codes/_index.md, memory_leaks/_index.md]
-covers_token_total: 1817
+covers: [conftest/_index.md, discovery_adapter_tests/_index.md, discovery_adapters/_index.md, exit_codes/_index.md, memory_leaks/_index.md, url_dedup/_index.md, url_dedup_tests/_index.md]
+covers_token_total: 3583
 summary_level: d2
-token_count: 656
+token_count: 536
 type: summary
 ---
 <think>
-The user wants me to create a more concise structural summary. Looking at the input, it's a fairly verbose explanation of pytest infrastructure and fixtures. I need to compress this significantly while preserving the essential architecture and key facts.
+The user wants me to create a structural summary at level d1 (domain level) from the child entries. I need to preserve key facts, architectural decisions, and relationships while compressing to ~20-30% of the original token count. I should reference entry names for drill-down.
 
-Key things to preserve:
-- 33 conftest.py fixtures
-- Session-scoped event loop (critical for M1 8GB)
-- Memory profiling with RSS+tracemalloc
-- MLX/Hermes/GraphService cleanup guards
-- Lazy load optimization for 27 modules
-- Centralized cleanup replaces 40+ scattered gc.collect()
-- Key conventions: asyncio_mode=auto, 30s timeout, 10% benchmark threshold
-- Mock factories save ~500KB RAM
-- 1238 test files
+Let me analyze the single child entry:
 
-I need to be much more concise - this is a SUMMARY, not a full documentation.
+**url_deduplication_tests.md** - A test suite for URL deduplication with the following key points:
+- Test file: tests/test_f_a5_url_dedup.py
+- 13 tests in 5 sections
+- Tests RotatingBloomFilterAdapter isolation
+- dedupe_url_list returns (unique_list, dropped_count)
+- Edge cases like unparseable URLs, None filter fallback
+- Fresh filter fixture pattern for hermetic tests
+
+I'll create a concise structural summary.
 </think>
 
-## Pytest Infrastructure and Fixtures
+## URL Deduplication Tests
 
-### Overview
-33 conftest.py fixtures provide session-scoped event loop, memory profiling, MLX/Hermes/GraphService cleanup guards, lazy load optimization, and centralized cleanup for the test suite.
+**Source:** `tests/test_f_a5_url_dedup.py` — Hermetic test suite validating URL dedup behavior with bloom filter integration.
 
-### Core Architecture
-**Session Fixtures:** `event_loop` (session-scoped, critical for M1 8GB), `duckdb_store`, `otel_tracer`
+### Test Organization (13 tests across 5 sections)
 
-**Memory Profiling:** `_session_tracer`, `memory_snapshot`, `memory_tracker`, `assert_memory_leak` — tracks RSS and tracemalloc
+- **Basic correctness** (5 tests): Verify first-seen-wins ordering, correct unique/dropped counts, normalize flag collapsing scheme/host
+- **Filter mutation contract** (2 tests): Assert filter is mutated after dedupe
+- **Edge cases** (3 tests): Unparseable URLs kept in output but NOT added to filter (poisoning prevention), empty strings dropped
+- **None filter fallback** (1 test): In-list dedup without mutation
+- **Real-world scenario** (1 test): 1800 raw URLs → 600 unique across 3 query batches
 
-**Cleanup Guards (autouse):**
-- `_memory_profiler_gc_sync` — forces sync before memory snapshots
-- `_hermes_cache_cleanup` — Hermes singleton cleanup
-- `_mlx_model_pool_cleanup` — MLX model pool cleanup
-- `_asyncio_task_leak_guard` — validates no leaked tasks
-- `_graph_service_session_cleanup` — GraphService session cleanup
-- `_gc_and_close_loops` — closes event loops
-- `_cleanup` — centralized 2-pass GC (mlx/duckdb/lmdb/heavy markers), replaces 40+ scattered `gc.collect()` calls
+### Key API Contract
 
-**Mock Factories:** `scheduler_mocks`, `lifecycle_mock`, base mock factories — spec-limited saves ~500KB session RAM
+- `dedupe_url_list(urls, filter=None, normalize=True)` returns `tuple[unique_urls, dropped_count]`
+- `normalize=True`: lowercases scheme/host before comparison
+- `normalize=False`: preserves raw strings verbatim
 
-**Lazy Load:** `_LazyForceLoadFinder` prepended to `sys.meta_path` — tracks 27 hledac.universal subpackages for on-demand import
+### Isolation Pattern
 
-### Conventions
-- `asyncio_mode=auto`, `asyncio_default_fixture_loop_scope=session`
-- pytest-timeout: 30s default
-- pytest-benchmark: 10% regression threshold for hot-path
-- pytest-mock for MagicMock/AsyncMock
+`fresh_filter` pytest fixture provides per-test `RotatingBloomFilterAdapter` instance, preventing singleton state leakage across tests.
 
-### Key Facts
-- 1238 test files, 33 fixtures
-- Session-scoped loop eliminates loop recreation overhead on M1 8GB
-- Lazy load eliminates 27-module eager load at collection time
-- Mock factories spec-limited save ~30-50MB RAM
+### Edge Case Rules
 
-### Related
-- `testing/memory_leaks/f350m_r_memory_leak_fixes` — memory leak fixes informed by this infrastructure
-- `testing/exit_codes/exit_code_testing` — exit code testing with 30s timeout convention
+1. Unparseable URLs remain in output but are excluded from filter
+2. Empty strings count as dropped URLs
+3. None filter falls back to list-only dedup without side effects
+
+**Drill-down:** See `url_deduplication_tests.md` for full test implementations and examples.

@@ -2,7 +2,7 @@
 title: Exit Code Convention
 summary: 'Exit codes: 0=success, 1=runtime error, 2=config error, 3=programmer error, 130=SIGINT. 6 regression tests validate subprocess exit codes.'
 tags: []
-related: [architecture/hledac_universal/sidecar_protocol_registry.md]
+related: [architecture/hledac_universal/sidecar_protocol_registry.md, facts/project/coding_conventions_status.md]
 keywords: []
 createdAt: '2026-07-26T12:08:12.419Z'
 updatedAt: '2026-07-26T12:09:46.623Z'

@@ -2,7 +2,7 @@
 title: Issue 3.2 FederatedQTable parking_lot Migration
 summary: 'Issue 3.2: Replaced DashMap with parking_lot::RwLock + AHashMap in federated_qtable.rs to fix segfaults caused by crossbeam/PyO3 GIL conflicts'
 tags: []
-related: [facts/project/issue_0_2_curl_cffi_caps_invariants.md, facts/project/issue_2_3_rayon_dispatch_channel_fix.md]
+related: [facts/project/issue_0_2_curl_cffi_caps_invariants.md, facts/project/issue_2_3_rayon_dispatch_channel_fix.md, facts/project/rust_extensions_overview.md]
 keywords: []
 createdAt: '2026-07-24T17:57:50.632Z'
 updatedAt: '2026-07-24T17:57:50.632Z'

@@ -1,0 +1,5 @@
+- **Active probe test**: `tests/probe_p_e2_feed_pipeline/` is the only currently active probe test directory
+- **Archived probes**: `probe_p12_http3_lane` and `probe_p14_prewarm_conditional` were archived in F350M-R cleanup and no longer exist
+- **Stale KB audit**: A KB audit from 2026-07-11 incorrectly claimed probe_p12 and probe_p14 existed — this audit is now stale
+- **Archive location**: Archived probe tests reside in `tests/archive/` directory
+- **Deep probe runner**: Infrastructure includes `tests/test_deep_probe_runner.py` for running probe tests

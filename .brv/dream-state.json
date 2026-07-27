@@ -1,82 +1,9 @@
 {
-  "curationsSinceDream": 5,
-  "lastDreamAt": "2026-07-24T21:07:46.114Z",
-  "lastDreamLogId": "drm-1784927039151",
+  "curationsSinceDream": 0,
+  "lastDreamAt": "2026-07-27T13:49:01.138Z",
+  "lastDreamLogId": "drm-1785159606649",
   "pendingMerges": [],
-  "staleSummaryPaths": [
-    {
-      "enqueuedAt": 1785064745057,
-      "path": "architecture/hledac_universal/graphservice_sprint_memory_layer.md"
-    },
-    {
-      "enqueuedAt": 1785064745057,
-      "path": "architecture/hledac_universal/duckdb_kuzu_dual_graph_architecture.md"
-    },
-    {
-      "enqueuedAt": 1785064745057,
-      "path": "data/duckdb_store/duckdb_remote_parquet_support.md"
-    },
-    {
-      "enqueuedAt": 1785064745057,
-      "path": "data/duckdb_store/duckdb_shadow_store_sprint_facts.md"
-    },
-    {
-      "enqueuedAt": 1785064745057,
-      "path": "facts/project/known_issues_and_todos.md"
-    },
-    {
-      "enqueuedAt": 1785064745057,
-      "path": "testing/discovery_adapter_tests/discovery_base_adapter_tests.md"
-    },
-    {
-      "enqueuedAt": 1785064745057,
-      "path": "testing/url_dedup_tests/url_deduplication_tests.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/core/context.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/core/lock_registry_architecture.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/transport_layers/http_3_configuration_constants.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/runtime/acquisition_cycleresult_structure.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/transport_layers/http_3_neqo_integration_plan.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/transport_layers/http_3_lane_implementation.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/runtime/acquisition_exit_paths.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/runtime/acquisition_orchestrator_lifecycle.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "architecture/runtime/context.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "testing/discovery_adapters/discovery_adapter_tests.md"
-    },
-    {
-      "enqueuedAt": 1785064810358,
-      "path": "testing/url_dedup/url_deduplication_tests.md"
-    }
-  ],
-  "totalDreams": 6,
+  "staleSummaryPaths": [],
+  "totalDreams": 7,
   "version": 1
 }

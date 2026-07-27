@@ -6,7 +6,7 @@ type: synthesis
 title: Critical Invariants as Cross-Domain Enforcement Mechanism
 summary: 10 critical invariants are defined in architecture but enforced by duckdb_store, resource_governor, and facts/project CI.
 tags: [invariants, ci-enforcement, cross-domain, stability]
-related: []
+related: [architecture/hledac_universal/10-critical-invariants-govern-system-stability.md, architecture/hledac_universal/critical_invariants.md]
 keywords: [critical-invariants, GHOST_INVARIANTS, CI, stability-rules, asyncio, DuckDB, enforcement]
 createdAt: '2026-07-24T21:05:20.864Z'
 updatedAt: '2026-07-24T21:05:20.864Z'

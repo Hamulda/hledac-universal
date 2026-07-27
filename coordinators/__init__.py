@@ -131,7 +131,14 @@ from .resource_allocator import (
     ResourceRequest,
     ResourceType,
 )
-from .security_coordinator import UniversalSecurityCoordinator
+from .opsec_coordinator import OpsECCoordinator
+from .security_coordinator import (
+    SecurityCoordinator,
+    SecurityLevel,
+    SecurityContext,
+    SecurityResult,
+    UniversalSecurityCoordinator,
+)
 
 # swarm_coordinator: deprecated - use lazy import via __getattr__
 
@@ -163,6 +170,13 @@ __all__ = [
     'UniversalSecurityCoordinator',
     'UniversalMonitoringCoordinator',
     'UniversalMemoryCoordinator',
+    'SecurityCoordinator',
+    'OpsECCoordinator',
+
+    # Security DTOs
+    'SecurityLevel',
+    'SecurityContext',
+    'SecurityResult',
 
     # Memory management
     'MemoryAllocation',

@@ -3,19 +3,25 @@
     {
       "order": 3,
       "path": "_index.md",
-      "tokens": 681,
+      "tokens": 555,
       "type": "summary"
     },
     {
       "order": 2,
       "path": "architecture/_index.md",
-      "tokens": 545,
+      "tokens": 644,
       "type": "summary"
     },
     {
       "order": 2,
-      "path": "knowledge_base/_index.md",
-      "tokens": 549,
+      "path": "data/_index.md",
+      "tokens": 548,
+      "type": "summary"
+    },
+    {
+      "order": 1,
+      "path": "architecture/core/_index.md",
+      "tokens": 187,
       "type": "summary"
     },
     {
@@ -41,7 +47,7 @@
     {
       "importance": 50,
       "path": "architecture/hledac_universal/10-critical-invariants-govern-system-stability.md",
-      "tokens": 364,
+      "tokens": 400,
       "type": "context"
     },
     {
@@ -61,15 +67,15 @@
     {
       "importance": 50,
       "path": "architecture/hledac_universal/critical-invariants-as-cross-domain-enforcement-mechanism.md",
-      "tokens": 377,
+      "tokens": 410,
       "type": "context"
     },
     {
       "abstractPath": "architecture/hledac_universal/critical_invariants.abstract.md",
-      "abstractTokens": 0,
+      "abstractTokens": 97,
       "importance": 50,
       "path": "architecture/hledac_universal/critical_invariants.md",
-      "tokens": 0,
+      "tokens": 97,
       "type": "context"
     },
     {
@@ -115,7 +121,7 @@
     {
       "importance": 50,
       "path": "architecture/hledac_universal/lazy-loading-reduces-cold-import-by-98.md",
-      "tokens": 302,
+      "tokens": 317,
       "type": "context"
     },
     {
@@ -145,7 +151,7 @@
     {
       "importance": 50,
       "path": "architecture/hledac_universal/sprint-lifecycle-cross-domain-contract.md",
-      "tokens": 334,
+      "tokens": 356,
       "type": "context"
     },
     {
@@ -233,7 +239,7 @@
     {
       "importance": 50,
       "path": "data/duckdb_store/context.md",
-      "tokens": 59,
+      "tokens": 97,
       "type": "context"
     },
     {
@@ -256,6 +262,14 @@
       "importance": 50,
       "path": "data/duckdb_store/duckdb_shadow_store.md",
       "tokens": 61,
+      "type": "context"
+    },
+    {
+      "abstractPath": "data/duckdb_store/duckdb_shadow_store_deep_dive.abstract.md",
+      "abstractTokens": 62,
+      "importance": 50,
+      "path": "data/duckdb_store/duckdb_shadow_store_deep_dive.md",
+      "tokens": 62,
       "type": "context"
     },
     {
@@ -283,12 +297,6 @@
       "type": "context"
     },
     {
-      "importance": 50,
-      "path": "data/duckdb_store/duckpgqgraph-integration-gap.md",
-      "tokens": 358,
-      "type": "context"
-    },
-    {
       "abstractPath": "data/duckdb_store/duckpgqgraph_api.abstract.md",
       "abstractTokens": 47,
       "importance": 50,
@@ -297,11 +305,19 @@
       "type": "context"
     },
     {
-      "abstractPath": "data/duckdb_store/query_cache_ioc_extraction.abstract.md",
-      "abstractTokens": 48,
+      "abstractPath": "data/duckdb_store/duckpgqgraph_storage_trinity_gap_fill.abstract.md",
+      "abstractTokens": 46,
       "importance": 50,
-      "path": "data/duckdb_store/query_cache_ioc_extraction.md",
-      "tokens": 48,
+      "path": "data/duckdb_store/duckpgqgraph_storage_trinity_gap_fill.md",
+      "tokens": 46,
+      "type": "context"
+    },
+    {
+      "abstractPath": "data/duckdb_store/issue_032_write_serialization_fix.abstract.md",
+      "abstractTokens": 75,
+      "importance": 50,
+      "path": "data/duckdb_store/issue_032_write_serialization_fix.md",
+      "tokens": 75,
       "type": "context"
     },
     {
@@ -337,13 +353,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-26T11:20:10.811Z",
+  "generated_at": "2026-07-27T13:49:01.086Z",
   "lane_tokens": {
-    "contexts": 3982,
+    "contexts": 4000,
     "stubs": 0,
-    "summaries": 1775
+    "summaries": 1934
   },
-  "source_fingerprint": "b8a68d7f89d9a6060323c0089d5a0fc1db54872e6ac4bf41e079137a10fb1aa2",
-  "total_tokens": 5757,
+  "source_fingerprint": "95f468e5c2b58a8c15738065e2fb30081cd6cef7b92cbf5a51e9d187ea67168c",
+  "total_tokens": 5934,
   "version": 1
 }

@@ -322,7 +322,7 @@ def configure_env_from_args(args: argparse.Namespace) -> None:
 
 def sprint_flags_from_args(args: argparse.Namespace):
     """Build a SprintFlags msgspec.Struct from parsed CLI args."""
-    from hledac.universal.core.__main__ import SprintFlags
+    from hledac.universal.runtime.sprint_entrypoint import SprintFlags
 
     return SprintFlags(
         force=getattr(args, "force", False),

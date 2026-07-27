@@ -1,0 +1,1 @@
+Phase 2 architecture organizes hledac_universal into core/runtime/knowledge/fetching/transport/brain modules with an 8-lane SprintScheduler orchestrating acquisition, writing to DuckDB as the canonical target and using PyO3 Rust extensions.

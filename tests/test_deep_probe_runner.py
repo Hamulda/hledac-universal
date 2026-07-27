@@ -210,7 +210,7 @@ class TestDeepProbeExportNonBlocking:
         # Verify the source code structure - export_sprint awaited first, then probe runs
         import inspect
 
-        from hledac.universal.core.__main__ import run_sprint
+        from hledac.universal.runtime.sprint_entrypoint import run_sprint
 
         source = inspect.getsource(run_sprint)
 
