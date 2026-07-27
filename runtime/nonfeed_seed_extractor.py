@@ -38,7 +38,7 @@ _WEAK_DOMAINS: frozenset[str] = frozenset(['mozilla.org', 'google.com', 'cloudfl
 _RANSOMWARE_KEYWORDS: frozenset[str] = frozenset(['ransomware', 'lockbit', 'conti', 'revil', 'clop', 'alphv', 'blackcat', 'hive', 'darkrace', 'vice society', 'PLAY', 'mount', 'babuk', 'avaddon', 'phobos', 'dharma', 'cem', 'mallox', 'stopdoj', 'doesp', ' Lucifer', 'malware', 'breach', 'leak', 'stolen', 'exposed', 'onion', 'darkweb', 'panel', 'victim', 'payment'])
 'Context keywords that boost weak domains to keep.'
 
-class SeedQuality(msgspec.Struct, frozen=True):
+class SeedQuality(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F223B: Quality gate decision for a NonfeedSeed.
 

@@ -301,7 +301,7 @@ impl AhoCorasickMatcher {
         let check_boundary = boundary_policy == Some("word");
         // Clone interned_labels for use inside rayon thread (Send + Clone)
         let interned_labels = self.interned_labels.clone();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             release_gil(py, || {
                 pool.install(|| {
                     texts

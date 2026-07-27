@@ -38,7 +38,7 @@ MAX_PRUNED_TYPES: int = 20
 _ZERO_YIELD_PENALTY_THRESHOLD: int = 3
 _PENALTY_FACTOR: float = 0.5
 
-class HypothesisFeedbackRecord(msgspec.Struct, frozen=True):
+class HypothesisFeedbackRecord(msgspec.Struct, frozen=True, gc=False):
     """
     A single feedback record for one pivot outcome.
 
@@ -61,7 +61,7 @@ class HypothesisFeedbackRecord(msgspec.Struct, frozen=True):
     signal_value: float
     ts: float
 
-class HypothesisFeedbackSummary(msgspec.Struct, frozen=True):
+class HypothesisFeedbackSummary(msgspec.Struct, frozen=True, gc=False):
     """
     Aggregated feedback summary per (target_id, pivot_type, ioc_type).
 

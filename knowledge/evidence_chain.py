@@ -47,7 +47,7 @@ STEP_TYPE_EVIDENCE_TRIAGE = 'evidence_triage'
 STEP_TYPE_ATTRIBUTION = 'attribution_scoring'
 STEP_TYPE_PIVOT = 'pivot_planning'
 
-class ChainStep(msgspec.Struct, frozen=True):
+class ChainStep(msgspec.Struct, frozen=True, gc=False):
     """
     Single step in an evidence chain.
 
@@ -68,7 +68,7 @@ class ChainStep(msgspec.Struct, frozen=True):
     confidence: float
     reason: str
 
-class EvidenceChain(msgspec.Struct):
+class EvidenceChain(msgspec.Struct, gc=False):
     """
     Complete reasoning chain for a root finding.
 

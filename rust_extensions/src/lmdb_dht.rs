@@ -11,7 +11,7 @@
 //! pure thread-hop overhead — before any actual LMDB I/O.
 //!
 //! ## Solution
-//! Rust calls Python `lmdb` library with `py.allow_threads()` GIL release.
+//! Rust calls Python `lmdb` library with `py.detach()` GIL release.
 //! This runs LMDB I/O in the rayon io_pool thread without:
 //!   - Python asyncio thread pool queue overhead
 //!   - Thread context switch on each call
@@ -21,12 +21,12 @@
 //!
 //! ## Design
 //! - Opens LMDB environment via Python lmdb.open() called from Rust
-//! - `py.allow_threads()` releases GIL during LMDB I/O
+//! - `py.detach()` releases GIL during LMDB I/O
 //! - Encrypted data handling stays in Python (LocalGraphStore)
 //! - io_pool (2 threads) for I/O-bound operations
 //!
 //! ## PyO3 Version
-//! PyO3 =0.28.2 — `py.allow_threads()` IS available (lesson #1985: 0.29 removed it)
+//! PyO3 =0.28.2 — `py.detach()` IS available (lesson #1985: 0.29 removed it)
 
 use pyo3::prelude::*;
 
@@ -443,7 +443,7 @@ pub fn lmdb_dht_bfs_traverse<'py>(
 
             let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
             let py_bytes = pyo3::types::PyBytes::new(py, &neigh_key);
-            let neigh_data: Option<Vec<u8>> = txn.call_method1("get", (py_bytes.as_ref(),))?
+            let neigh_data: Option<Vec<u8>> = txn.call_method1("get", (py_bytes,))?
                 .extract()
                 .ok()
                 .unwrap_or(None);
@@ -478,10 +478,10 @@ pub fn lmdb_dht_close_env(path: String) -> PyResult<()> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Generic async LMDB operations — P4-3: async LMDB via py.allow_threads()
+// Generic async LMDB operations — P4-3: async LMDB via py.detach()
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Async single-key put with GIL release via py.allow_threads().
+/// Async single-key put with GIL release via py.detach().
 ///
 /// path_or_env: Either a path string (new env opened) or an lmdb.Environment.
 /// key: Raw key bytes.
@@ -498,9 +498,9 @@ pub fn lmdb_async_put<'py>(
 ) -> PyResult<bool> {
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.allow_threads(move || {
+    py.detach(move || {
         let env_owned = env_owned;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
             let txn = match env.getattr("begin") {
                 Ok(t) => t,
@@ -522,7 +522,7 @@ pub fn lmdb_async_put<'py>(
     })
 }
 
-/// Async single-key get with GIL release via py.allow_threads().
+/// Async single-key get with GIL release via py.detach().
 #[pyfunction]
 #[pyo3(name = "lmdb_async_get")]
 pub fn lmdb_async_get<'py>(
@@ -533,10 +533,10 @@ pub fn lmdb_async_get<'py>(
     let env = _resolve_env(py, path_or_env)?;
     // Clone to get owned refcount - env_owned is Send+Sync and keeps Python object alive
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.allow_threads(|| {
+    py.detach(|| {
         // Move env_owned into this closure - Py is Send+Sync
         let env_owned = env_owned;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
             let txn = match env.getattr("begin") {
                 Ok(t) => t,
@@ -560,7 +560,7 @@ pub fn lmdb_async_get<'py>(
 }
 
 /// Async batch put — single write transaction for N items.
-/// GIL release via py.allow_threads() for the entire batch.
+/// GIL release via py.detach() for the entire batch.
 #[pyfunction]
 #[pyo3(name = "lmdb_async_put_batch")]
 pub fn lmdb_async_put_batch<'py>(
@@ -572,9 +572,9 @@ pub fn lmdb_async_put_batch<'py>(
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let max_batch = max_batch.min(10_000);
-    py.allow_threads(|| {
+    py.detach(|| {
         let env_owned = env_owned;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
             let mut total_written = 0;
             for chunk in items.chunks(max_batch.max(1)) {
@@ -609,7 +609,7 @@ pub fn lmdb_async_put_batch<'py>(
 }
 
 /// Async batch get — parallel reads via multiple read transactions.
-/// GIL release via py.allow_threads().
+/// GIL release via py.detach().
 #[pyfunction]
 #[pyo3(name = "lmdb_async_get_many")]
 pub fn lmdb_async_get_many<'py>(
@@ -619,9 +619,9 @@ pub fn lmdb_async_get_many<'py>(
 ) -> PyResult<Vec<Option<Vec<u8>>>> {
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.allow_threads(|| {
+    py.detach(|| {
         let env_owned = env_owned;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
             let mut results: Vec<Option<Vec<u8>>> = Vec::with_capacity(keys.len());
             for key in keys {
@@ -649,7 +649,7 @@ pub fn lmdb_async_get_many<'py>(
 }
 
 /// Async prefix scan — returns all (key, value) pairs matching prefix.
-/// GIL release via py.allow_threads().
+/// GIL release via py.detach().
 #[pyfunction]
 #[pyo3(name = "lmdb_async_scan_prefix")]
 pub fn lmdb_async_scan_prefix<'py>(
@@ -661,9 +661,9 @@ pub fn lmdb_async_scan_prefix<'py>(
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
-    py.allow_threads(|| {
+    py.detach(|| {
         let env_owned = env_owned;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
             let mut results: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
             let txn = match env.getattr("begin") {
@@ -724,9 +724,9 @@ pub fn lmdb_async_delete<'py>(
 ) -> PyResult<bool> {
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.allow_threads(move || {
+    py.detach(move || {
         let env_owned = env_owned;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
             let txn = match env.getattr("begin") {
                 Ok(t) => t,

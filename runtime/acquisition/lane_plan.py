@@ -18,7 +18,7 @@ import msgspec
 from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane, RiskLevel
 logger = logging.getLogger(__name__)
 
-class LaneSpec(msgspec.Struct, frozen=True):
+class LaneSpec(msgspec.Struct, frozen=True, gc=False):
     """
     Per-lane specification for acquisition planning.
 
@@ -34,7 +34,7 @@ class LaneSpec(msgspec.Struct, frozen=True):
     concurrency: int
     risk_level: str
 
-class LaneRule(msgspec.Struct, frozen=True):
+class LaneRule(msgspec.Struct, frozen=True, gc=False):
     """
     A single lane enable/disable rule with condition functions.
     """
@@ -46,7 +46,7 @@ class LaneRule(msgspec.Struct, frozen=True):
     concurrency: int
     risk_level: str
 
-class AcquisitionContext(msgspec.Struct):
+class AcquisitionContext(msgspec.Struct, gc=False):
     """
     Shared context for lane eligibility evaluation.
     """

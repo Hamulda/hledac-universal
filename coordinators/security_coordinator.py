@@ -48,7 +48,7 @@ class SecurityCoordinator(UniversalCoordinator):
         '_crypto_operations', '_global_threat_level', '_max_contexts',
         '_pq_backend', '_security_contexts',
         '_threat_analyses', '_threat_available', '_threat_intelligence',
-        '_zkp_available', '_zkp_engine', '_crypto_available',
+        '_zkp_available', '_zkp_engine', '_zkp_operations', '_crypto_available',
     ))
 
     def __init__(self, max_concurrent: int = 5):
@@ -128,6 +128,75 @@ class SecurityCoordinator(UniversalCoordinator):
 
     def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.SECURITY]
+
+    async def handle_request(
+        self,
+        operation_ref: str,
+        decision: DecisionResponse,
+    ) -> OperationResult:
+        """Handle security request — routes to threat/crypto/ZKP backend."""
+        start_time = time.time()
+        operation_id = self.generate_operation_id()
+        try:
+            self.track_operation(
+                operation_id,
+                {'operation_ref': operation_ref, 'decision': decision, 'type': 'security'},
+            )
+            result = await self._execute_security_decision(decision)
+            operation_result = OperationResult(
+                operation_id=operation_id,
+                status='completed' if result.success else 'failed',
+                result_summary=result.summary,
+                execution_time=time.time() - start_time,
+                success=result.success,
+                metadata={
+                    'security_operation': result.operation_type,
+                    'security_level': result.security_level.value,
+                    'measures_activated': result.measures_activated,
+                    'threats_found': result.threats_found,
+                },
+            )
+        except Exception as e:
+            operation_result = OperationResult(
+                operation_id=operation_id,
+                status='failed',
+                result_summary=f'Security operation failed: {str(e)}',
+                execution_time=time.time() - start_time,
+                success=False,
+                error_message=str(e),
+            )
+        finally:
+            self.untrack_operation(operation_id)
+        self.record_operation_result(operation_result)
+        return operation_result
+
+    async def _execute_security_decision(
+        self,
+        decision: DecisionResponse,
+    ) -> SecurityResult:
+        """Route security decision to appropriate sub-backend."""
+        chosen = decision.chosen_option.lower()
+        context = decision.reasoning or decision.metadata.get('context', '')
+        security_level = self._confidence_to_security_level(decision.confidence)
+        if any(k in chosen for k in ('threat', 'intelligence', 'detect')):
+            if self._threat_available:
+                return await self._execute_threat_analysis(decision, context, security_level)
+        elif any(k in chosen for k in ('quantum', 'crypto', 'encrypt')):
+            if self._crypto_available:
+                return await self._execute_crypto_operation(decision, security_level)
+        elif any(k in chosen for k in ('zkp', 'proof', 'verify')):
+            if self._zkp_available:
+                return await self._execute_zkp_operation(decision, context, security_level)
+        if self._threat_available:
+            return await self._execute_threat_analysis(decision, context, security_level)
+        return SecurityResult(
+            operation_type='none',
+            success=False,
+            summary='No security backends available',
+            security_level=security_level,
+            execution_time=0.0,
+            error='No security subsystems initialized',
+        )
 
     # ─── PII ─────────────────────────────────────────────────────────────────
 
@@ -736,8 +805,8 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     async def redact_pii(self, **kwargs) -> dict[str, Any]:
         return await self._security.redact_pii(**kwargs)
 
-    async def sanitize_outbound(self, **kwargs) -> dict[str, Any]:
-        return await self._security.sanitize_outbound(**kwargs)
+    async def sanitize_outbound(self, content: str, force_fallback: bool = False) -> dict[str, Any]:
+        return await self._security.sanitize_outbound(content=content, force_fallback=force_fallback)
 
     async def analyze_threat_intelligence(self, **kwargs) -> dict[str, Any]:
         return await self._security.analyze_threat_intelligence(**kwargs)

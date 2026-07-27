@@ -515,7 +515,7 @@ pub fn rust_batch_entropy_analysis<'py>(
         // Parallel for large batches (mixed_pool P-core ceiling)
         // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
         let pool = mixed_pool(n);
-        let results: Vec<(f64, i8, f64)> = Python::with_gil(|py| {
+        let results: Vec<(f64, i8, f64)> = Python::attach(|py| {
             release_gil(py, || {
                 pool.install(|| {
                     owned

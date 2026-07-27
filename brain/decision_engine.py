@@ -27,7 +27,7 @@ class DecisionType(Enum):
     ERROR = 'error'
     COMPLETE = 'complete'
 
-class Decision(msgspec.Struct):
+class Decision(msgspec.Struct, gc=False):
     """Rozhodnutí orchestrátoru"""
     decision_type: DecisionType
     action: str

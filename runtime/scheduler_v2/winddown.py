@@ -50,7 +50,7 @@ def _maybe_call_pressure_relief(ctx: Any) -> None:
     except Exception:
         pass
 
-class WinddownPhaseResult(msgspec.Struct):
+class WinddownPhaseResult(msgspec.Struct, gc=False):
     """Result from the winddown phase."""
     export_paths: list[str] = field(default_factory=list)
     synthesis_success: bool = False

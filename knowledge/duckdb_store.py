@@ -2413,6 +2413,12 @@ class DuckDBShadowStore:
                     # already initialized by a prior _init_connection call (reused store),
                     # cached results from the old schema must be discarded.
                     SchemaMigrator(setup_conn).migrate()
+                    # 7B fix: invalidate prepared statement cache after DDL migration.
+                    # The cached _stmt_insert_finding holds a parsed SQL AST from the old
+                    # schema — after ALTER/CREATE it is stale and must be re-prepared.
+                    qe = self._qe()
+                    if qe is not None:
+                        qe._invalidate_insert_stmt()
                     if self._query_cache is not None:
                         self._query_cache.invalidate()
             finally:
@@ -10105,11 +10111,18 @@ class DuckDBShadowStore:
         fts_k = min(k_actual * 2, 50)
         vec_k = min(k_actual * 2, 50)
 
-        # Parallel fetch
+        # Parallel fetch — F350M-R: parallel() replaces asyncio.gather
         fts_task = self.fts_search_findings(query_text, k=fts_k)
         vec_task = self.vector_search_rag(query_vector, k=vec_k)
 
-        fts_results, vec_results = await asyncio.gather(fts_task, vec_task)
+        hybrid_results = await parallel(
+            [fts_task, vec_task],
+            policy="collect",
+            concurrency=2,
+            ctx="duckdb_store:hybrid_search",
+        )
+        fts_results = hybrid_results[0] if len(hybrid_results) > 0 else []
+        vec_results = hybrid_results[1] if len(hybrid_results) > 1 else []
 
         if not fts_results and not vec_results:
             return []

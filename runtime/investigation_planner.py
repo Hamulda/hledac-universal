@@ -41,7 +41,7 @@ MAX_ACTIONS: int = 10
 _CORROBORATION_STRONG_THRESHOLD: float = 0.7
 _MIN_SOURCES_FOR_SYNTHESIS: int = 2
 
-class InvestigationAction(msgspec.Struct, frozen=True):
+class InvestigationAction(msgspec.Struct, frozen=True, gc=False):
     """
     A single recommended investigation action.
 

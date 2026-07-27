@@ -175,4 +175,7 @@ class Injector:
         for name, method in _methods.items():
             if name in ("inject_evidence_log", "inject_cancel_event"):
                 continue  # keep these in the scheduler
-            setattr(scheduler, name, lambda m=method: lambda val: m(scheduler, val))
+            # Default-arg capture in lambda prevents late-binding bugs.
+            # This is intentional and correct: the captured `method` is the staticmethod's
+            # underlying function and `scheduler` is the target instance.
+            setattr(scheduler, name, lambda m=method, s=scheduler: lambda val: m(s, val))

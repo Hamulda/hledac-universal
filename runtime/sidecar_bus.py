@@ -400,10 +400,9 @@ async def _banner_grab_runner(findings: list, store: DuckDBShadowStore, query: s
             async def _query_one(target: str) -> list:
                 return await adapter.query(target)
             from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
-            batches = await bounded_parallel_map(targets[:20], _query_one, concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='banner_grab')
-            for batch in batches:
-                if batch is not None:
-                    derived_findings.extend(batch)
+            result = await parallel([_query_one(t) for t in targets[:20]], policy="log", concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='banner_grab')
+            for batch in result:
+                derived_findings.extend(batch or [])
             return await _store_ingest_and_count(store, derived_findings)
         finally:
             await adapter.close()
@@ -436,10 +435,9 @@ async def _ipv6_recon_runner(findings: list, store: DuckDBShadowStore, query: st
 
             async def _query_one(target: str) -> list:
                 return await adapter.query(target)
-            batches = await bounded_parallel_map(targets[:20], _query_one, concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='ipv6_recon')
-            for batch in batches:
-                if batch is not None:
-                    derived_findings.extend(batch)
+            result = await parallel([_query_one(t) for t in targets[:20]], policy="log", concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='ipv6_recon')
+            for batch in result:
+                derived_findings.extend(batch or [])
             return await _store_ingest_and_count(store, derived_findings)
         finally:
             await adapter.close()
@@ -476,10 +474,9 @@ async def _network_intel_runner(findings: list, store: DuckDBShadowStore, query:
                 if results:
                     return network_recon_result_to_findings(target, results)
                 return []
-            batches = await bounded_parallel_map(targets, _recon_one, concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='network_intel')
-            for batch in batches:
-                if batch is not None:
-                    derived_findings.extend(batch)
+            result = await parallel([_recon_one(t) for t in targets], policy="log", concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='network_intel')
+            for batch in result:
+                derived_findings.extend(batch or [])
             return await _store_ingest_and_count(store, derived_findings)
         finally:
             await adapter.close()
@@ -507,7 +504,6 @@ async def _gopher_crawl_runner(findings: list, store: DuckDBShadowStore, query: 
     except Exception:
         return 0
 from hledac.universal.runtime.sidecar_runner_decorator import sidecar_runner, sidecar_runner_await
-from hledac.universal.utils.async_helpers import bounded_parallel_map
 _ExposureCorrelatorRunner = sidecar_runner(name='exposure_correlator', module_path='hledac.universal.intel.exposure_correlator', factory_name='create_exposure_correlator_adapter', correlate_method='correlate')
 _LeakSentinelRunner = sidecar_runner(name='leak_sentinel', module_path='hledac.universal.intel.leak_sentinel', factory_name='create_leak_sentinel_adapter', correlate_method='scan')
 _TemporalArchaeologyRunner = sidecar_runner(name='temporal_archaeology', module_path='hledac.universal.intel.temporal_archaeologist_adapter', factory_name='create_temporal_archaeologist_adapter', correlate_method='synthesize_timeline')

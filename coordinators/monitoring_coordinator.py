@@ -80,7 +80,7 @@ class MetricType(StrEnum):
     LOAD = 'load'
     TEMPERATURE = 'temperature'
 
-class SystemMetrics(msgspec.Struct):
+class SystemMetrics(msgspec.Struct, gc=False):
     """System metrics snapshot."""
     timestamp: float
     cpu_percent: float
@@ -95,7 +95,7 @@ class SystemMetrics(msgspec.Struct):
     def to_dict(self) -> dict[str, Any]:
         return {'timestamp': self.timestamp, 'cpu_percent': self.cpu_percent, 'memory_percent': self.memory_percent, 'memory_used_mb': self.memory_used_mb, 'memory_available_mb': self.memory_available_mb, 'disk_percent': self.disk_percent, 'network_connections': self.network_connections, 'load_average': self.load_average, 'processes': self.processes}
 
-class MonitoringResult(msgspec.Struct, frozen=True):
+class MonitoringResult(msgspec.Struct, frozen=True, gc=False):
     """Result of monitoring operation."""
     monitoring_type: str
     success: bool
@@ -105,7 +105,7 @@ class MonitoringResult(msgspec.Struct, frozen=True):
     alert_triggered: bool = False
     alert_message: str | None = None
 
-class AlertThreshold(msgspec.Struct, frozen=True):
+class AlertThreshold(msgspec.Struct, frozen=True, gc=False):
     """Threshold configuration for alerts."""
     metric: str
     warning: float

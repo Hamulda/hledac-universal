@@ -24,7 +24,7 @@ MAX_RETURNED_PATHS = 20
 MAX_PENDING_QUERIES = 1000
 FINGERPRINT_EDGE_TYPES = {'ct_subdomain_of', 'same_infra_as', 'source_map_of', 'open_storage_bucket', 'onion_mirror_of'}
 
-class GraphCoordinatorConfig(msgspec.Struct):
+class GraphCoordinatorConfig(msgspec.Struct, gc=False):
     """Configuration for GraphCoordinator."""
     max_walks_per_step: int = 2
     max_steps_per_walk: int = 128

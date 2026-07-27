@@ -1264,9 +1264,28 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def _clear_all_lock_registries() -> None:
+    """Clear ALL _LockRegistry instances across all module namespaces.
+
+    During collection, conftest's _force_load() may load modules into different
+    namespaces (e.g., 'transport.circuit_breaker' vs 'hledac.universal.transport.circuit_breaker').
+    These register locks in their respective 'core.locks' module's _LockRegistry.
+    The fixture must clear ALL lock registries to prevent stale lock conflicts.
+    """
+    for mod_name, mod in list(sys.modules.items()):
+        if mod is None:
+            continue
+        try:
+            registry = getattr(mod, '_LockRegistry', None)
+            if registry is not None and isinstance(registry, dict):
+                registry.clear()
+        except Exception:
+            pass  # Best-effort cleanup
+
+
 @pytest.fixture(autouse=True)
 def _reset_lock_registry() -> None:
-    """Clear _LockRegistry between every test to prevent lock-registration conflicts.
+    """Clear ALL _LockRegistry instances between every test to prevent lock-registration conflicts.
 
     During collection, conftest's _force_load() pre-imports modules including
     circuit_breaker, which registers _breakers_lock in _LockRegistry. Then conftest's
@@ -1274,60 +1293,37 @@ def _reset_lock_registry() -> None:
     imports circuit_breaker again, it re-executes the module, creates a NEW lock,
     and tries to register it → ValueError (stale entry from collection).
 
-    This fixture clears _LockRegistry before each test so re-imports
-    re-register cleanly. It uses autouse=True because the lock conflict is
-    invisible to test authors — it manifests only as an import-level side effect.
+    CRITICAL: circuit_breaker imports 'hledac.universal.core.locks' but conftest's
+    _force_load may register the lock in a DIFFERENT module namespace. Therefore
+    this fixture clears ALL _LockRegistry instances across all modules, not just
+    the 'core.locks' stub.
     """
-    # Ensure circuit_breaker is in sys.modules before the test runs, so the
-    # test's import gets the cached module (not a fresh re-execution).
-    # This prevents the stale-lock / re-registration conflict.
-    _circuit_breaker_in_sys = "hledac.universal.transport.circuit_breaker" in sys.modules
-
-    try:
-        from core.locks import _LockRegistry
-        _LockRegistry.clear()
-    except ImportError:
-        pass
+    _clear_all_lock_registries()
 
     yield
 
-    try:
-        from core.locks import _LockRegistry
-        _LockRegistry.clear()
-    except ImportError:
-        pass
+    _clear_all_lock_registries()
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """Clear _LockRegistry before first test runs (after conftest init)."""
-    from core.locks import _LockRegistry
-    _LockRegistry.clear()
+    """Clear ALL _LockRegistry instances before first test runs (after conftest init)."""
+    _clear_all_lock_registries()
 
-    # Restore sys.path ordering (existing logic)
+    # Fix sys.path ordering after pytest applies pythonpath from pytest.ini.
+    #
+    # F350M-R: pytest adds pythonpath="tests" (relative) as the FIRST entry
+    # AFTER conftest.py is loaded. There are TWO "tests/" directories in the
+    # project tree:
+    #   - /hledac/universal/tests/     ← TESTS_DIR (canonical)
+    #   - /hledac/tests/              ← other tests dir (wrong)
+    #
+    # The relative "tests" entry resolves to the PARENT /hledac/tests/ which
+    # lacks utils/memory_profiler.py. We move the relative entry to the END
+    # so TESTS_DIR (at index 0) is always tried first.
     _rel_tests = "tests"
     while _rel_tests in sys.path:
         sys.path.remove(_rel_tests)
     sys.path.append(_rel_tests)
-    while sys.path[0] != TESTS_DIR:
-        sys.path.insert(0, sys.path.pop())
-    """Fix sys.path ordering after pytest applies pythonpath from pytest.ini.
-
-    F350M-R: pytest adds pythonpath="tests" (relative) as the FIRST entry
-    AFTER conftest.py is loaded. There are TWO "tests/" directories in the
-    project tree:
-      - /hledac/universal/tests/     ← TESTS_DIR (canonical)
-      - /hledac/tests/              ← other tests dir (wrong)
-
-    The relative "tests" entry resolves to the PARENT /hledac/tests/ which
-    lacks utils/memory_profiler.py. We move the relative entry to the END
-    so TESTS_DIR (at index 0) is always tried first.
-    """
-    _rel_tests = "tests"
-    # Move relative "tests" to the end so TESTS_DIR at index 0 wins.
-    while _rel_tests in sys.path:
-        sys.path.remove(_rel_tests)
-    sys.path.append(_rel_tests)
-    # Ensure TESTS_DIR is at index 0.
     while TESTS_DIR in sys.path:
         sys.path.remove(TESTS_DIR)
     sys.path.insert(0, TESTS_DIR)

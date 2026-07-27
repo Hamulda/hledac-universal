@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.utils.async_helpers import parallel
+
 if TYPE_CHECKING:
     pass
 
@@ -643,11 +645,18 @@ class DuckDBEntityStore:
         if query_vector is None:
             query_vector = [0.0] * _EMBED_DIM
 
-        # Parallel FTS + vector
+        # Parallel FTS + vector — F350M-R: parallel() replaces asyncio.gather
         fts_task = self._store.fts_search_entities(query, k=k * 2, entity_type=entity_type)
         vec_task = self._store.vector_search_entities(query_vector, k=k * 2, entity_type=entity_type)
 
-        fts_results, vec_results = await asyncio.gather(fts_task, vec_task)
+        hybrid_results = await parallel(
+            [fts_task, vec_task],
+            policy="collect",
+            concurrency=2,
+            ctx="duckdb_rag_store:hybrid_search",
+        )
+        fts_results = hybrid_results[0] if len(hybrid_results) > 0 else []
+        vec_results = hybrid_results[1] if len(hybrid_results) > 1 else []
 
         # Merge with RRF
         candidates: dict[str, EntityCandidate] = {}

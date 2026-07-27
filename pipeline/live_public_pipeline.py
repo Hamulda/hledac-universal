@@ -794,7 +794,7 @@ def _extract_domain_from_query(query: str) -> str | None:
 # Sprint F193B: Explicit fetch policy — policy-driven JS/DoH/stealth, not dormant defaults
 
 
-class FetchPolicy(msgspec.Struct, frozen=True):
+class FetchPolicy(msgspec.Struct, frozen=True, gc=False):
     """Bounded fetch policy for canonical public sprint."""
     use_js: bool = False
     use_doh: bool = False
@@ -999,7 +999,7 @@ def hits_from_result(discovery_result) -> tuple:
     return ()
 
 
-class PipelinePageResult(msgspec.Struct, frozen=True):
+class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     """Result of processing a single discovered page."""
 
     url: str
@@ -1041,7 +1041,7 @@ class PipelinePageResult(msgspec.Struct, frozen=True):
     build_attempted: bool = False
 
 
-class PipelineRunResult(msgspec.Struct, frozen=True):
+class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     """Top-level result of a full pipeline run."""
 
     query: str
@@ -2674,7 +2674,7 @@ async def async_run_live_public_pipeline(
     # Each engine is a dataclass with async run() method that encapsulates a
     # logical phase of the pipeline. Backward compatible — same inputs/outputs.
 
-    class _DiscoveryEngine(msgspec.Struct):
+    class _DiscoveryEngine(msgspec.Struct, gc=False):
         """
         Engine 1: Handles all discovery-related logic.
 

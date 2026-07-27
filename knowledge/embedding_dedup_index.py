@@ -74,7 +74,7 @@ MIN_TEXT_LEN: Final[int] = 50  # minimum text length for embedding dedup
 # ── Result Types ───────────────────────────────────────────────────────────────
 
 
-class DedupResult(msgspec.Struct, frozen=True):
+class DedupResult(msgspec.Struct, frozen=True, gc=False):
     """Embedding-based dedup advisory result."""
     is_duplicate: bool
     similarity: float  # cosine similarity to nearest neighbor

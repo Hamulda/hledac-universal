@@ -51,7 +51,7 @@ _BRIDGE_CONFIDENCE_MAX: Final = 1.0
 _BRIDGE_CONFIDENCE_MIN: Final = 0.0
 
 
-class BridgeConfig(msgspec.Struct, frozen=True):
+class BridgeConfig(msgspec.Struct, frozen=True, gc=False):
     """
     Base configuration for any source → CanonicalFinding bridge.
 

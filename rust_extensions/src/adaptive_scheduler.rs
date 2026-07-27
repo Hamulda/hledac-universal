@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 /// 1000+ times per sprint.
 const METAL_CACHE_TTL_MS: u64 = 100;
 
-/// Thread-local cache entry: (last_instant, metal_level, limit_bytes).
+// Thread-local cache entry: (last_instant, metal_level, limit_bytes).
 /// limit_bytes is cached alongside level so we skip the Python call
 /// when the cached entry is still valid.
 thread_local! {
@@ -160,7 +160,7 @@ fn get_metal_level_cached() -> u8 {
         return level;
     }
     // Cache miss — acquire GIL, re-probe, update cache.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let limit_bytes = get_metal_limit_bytes(py);
         let active = crate::memory::get_metal_active_memory_bytes(py);
         let level = fraction_to_level(limit_bytes, active);

@@ -654,7 +654,7 @@ pub fn build_findings_from_iocs<'py>(
             Ok(it) => it,
             Err(_) => continue,
         };
-        let tuple = match item.downcast::<PyTuple>() {
+        let tuple = match item.cast::<PyTuple>() {
             Ok(t) => t,
             Err(_) => continue,
         };

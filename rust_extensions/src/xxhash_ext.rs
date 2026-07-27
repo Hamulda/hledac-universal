@@ -176,7 +176,7 @@ pub fn batch_xxh3_64_bytes<'py>(
     let mut bytes_slice: Vec<Vec<u8>> = Vec::new();
     for i in 0..items.len() {
         if let Ok(item) = items.get_item(i) {
-            if let Ok(pb) = item.downcast::<PyBytes>() {
+            if let Ok(pb) = item.cast::<PyBytes>() {
                 bytes_slice.push(pb.as_bytes().to_vec());
             }
         }

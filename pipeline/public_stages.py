@@ -22,7 +22,7 @@ from typing import Any
 # ----------------------------------------------------------------------
 
 
-class PipelinePageResult(msgspec.Struct, frozen=True):
+class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     """Result of processing a single discovered page."""
     url: str
     fetched: bool
@@ -51,7 +51,7 @@ class PipelinePageResult(msgspec.Struct, frozen=True):
     build_attempted: bool = False
 
 
-class PipelineRunResult(msgspec.Struct, frozen=True):
+class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     """Top-level result of a full pipeline run."""
     query: str
     discovered: int

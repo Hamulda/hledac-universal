@@ -6,6 +6,11 @@ Sprint: F650H / F600K / F130S
 Target: capabilities.py
 Goal: bounded de-ownership + facade truth hardening
 
+NOTE: This module is the ModelLifecycleManager facade — NOT a dependency registry.
+For capability/dependency detection, use ``core.capabilities.CAP`` (SoT).
+For sidecar plugin registration, use ``capabilities_registry.CapabilityPluginRegistry``.
+See F350M-R architecture decision: separate concerns (model lifecycle vs deps).
+
 VERIFIED HYPOTHESES:
 - H2 CONFIRMED: _release_all_models() does MLX cleanup directly — duplicate of
   ModelManager._release_current_async() cleanup. Canonical owner: ModelManager.
@@ -216,7 +221,7 @@ def get_capability_truth_matrix(capabilities: list[Capability], registry: Capabi
     declarations = _get_tool_capability_declarations()
     return {cap: probe_capability_truth(cap, registry, declarations) for cap in capabilities}
 
-class CapabilityStatus(msgspec.Struct, frozen=True):
+class CapabilityStatus(msgspec.Struct, frozen=True, gc=False):
     """Status of a capability."""
     available: bool
     reason: str = ''

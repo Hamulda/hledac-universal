@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
 
-class MvDomainRecord(msgspec.Struct):
+class MvDomainRecord(msgspec.Struct, gc=False):
     domain: str
     source_family: str
     ioc_type: str
@@ -100,7 +100,7 @@ class MvDomainRecord(msgspec.Struct):
         )
 
 
-class DomainCandidateMvStats(msgspec.Struct, frozen=True):
+class DomainCandidateMvStats(msgspec.Struct, frozen=True, gc=False):
     total_rows: int
     unique_domains: int
     oldest_row: datetime | None

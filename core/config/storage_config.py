@@ -28,7 +28,7 @@ from typing import ClassVar
 import msgspec
 
 
-class StorageConfig(msgspec.Struct, frozen=True, kw_only=True):
+class StorageConfig(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """
     Immutable typed storage configuration.
 

@@ -59,7 +59,7 @@ _STORE_FLUSH_CONCURRENCY: int = 4  # P4-2: max concurrent flush operations
 _STORE_FLUSH_CHUNK_SIZE: int = 256  # P4-2: per-chunk size for parallel flush
 
 
-class PipelineStats(msgspec.Struct):
+class PipelineStats(msgspec.Struct, gc=False):
     """Statistics for the finding pipeline.
 
     Msgspec.Struct benefits:

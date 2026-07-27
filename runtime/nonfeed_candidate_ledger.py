@@ -123,7 +123,7 @@ class LedgerRecord:
         if len(self.candidate_id) > CANDIDATE_ID_TRUNC:
             object.__setattr__(self, 'candidate_id', self.candidate_id[:CANDIDATE_ID_TRUNC])
 
-class NonfeedCandidateLedger(msgspec.Struct):
+class NonfeedCandidateLedger(msgspec.Struct, gc=False):
     """
     Sprint F217E: Bounded in-memory nonfeed candidate evidence ledger.
 
@@ -442,7 +442,7 @@ def _is_valid_domain_candidate(domain: str) -> bool:
 _DEDUP_DOMAIN_RE = re.compile('(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}')
 _URL_PREFIX_RE = re.compile('https?://|[a-zA-Z][a-zA-Z0-9+.-]*://|www\\.')
 
-class DomainCandidate(msgspec.Struct, frozen=True):
+class DomainCandidate(msgspec.Struct, frozen=True, gc=False):
     """
     F214: Domain candidate extracted from feed/public findings text.
 

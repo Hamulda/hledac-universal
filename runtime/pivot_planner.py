@@ -52,7 +52,7 @@ class PivotType:
     ARCHIVE = 'archive'
     GRAPH = 'graph'
 
-class Pivot(msgspec.Struct, frozen=True):
+class Pivot(msgspec.Struct, frozen=True, gc=False):
     """
     A single investigation pivot derived from findings.
 
@@ -81,7 +81,7 @@ class Pivot(msgspec.Struct, frozen=True):
     estimated_cost: float = field(compare=False, default=0.5)
     mission_boost: float = field(compare=False, default=1.0)
 
-class PivotStats(msgspec.Struct):
+class PivotStats(msgspec.Struct, gc=False):
     """
     Tracks pivot usage history for exponential decay scoring.
     Tracks successes/failures so underperforming or stale pivots lose priority.

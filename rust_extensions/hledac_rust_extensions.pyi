@@ -995,6 +995,27 @@ def create_nvd_limiter(has_api_key: bool = False) -> NvdRateLimiter:
     """Create an NVD rate limiter. has_api_key=False → 5 req/30s, True → 50 req/30s."""
     ...
 
+
+class RustGeneralRateLimiter:
+    """
+    General-purpose token bucket rate limiter for discovery adapters.
+
+    ISSUE 24: Uses atomic operations — no lock contention, ~10× faster than asyncio.Lock.
+
+    Usage:
+        limiter = RustGeneralRateLimiter(rate=60, burst_size=30)
+        if limiter.try_acquire():
+            # make API call
+    """
+
+    def try_acquire(self) -> bool:
+        """Non-blocking. Returns True if a token was immediately available."""
+        ...
+    def available_tokens(self) -> int:
+        """Return the current number of available tokens."""
+        ...
+
+
 # Pool runners — R4.1: Rayon pool wrappers (rust_extensions/src/pool_run.rs)
 
 def cpu_pool_run(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

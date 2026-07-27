@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _MAX_CACHED_PROMPTS: int = 8
 
-class TokenizedPromptEntry(msgspec.Struct):
+class TokenizedPromptEntry(msgspec.Struct, gc=False):
     """Cached tokenized prompt array."""
     key: str
     tokens: list[int]
@@ -37,7 +37,7 @@ class TokenizedPromptEntry(msgspec.Struct):
     last_used: float = 0.0
     tokenize_time_ms: float = 0.0
 
-class PromptCacheStats(msgspec.Struct):
+class PromptCacheStats(msgspec.Struct, gc=False):
     """Statistics for tokenized prompt cache."""
     cache_hits: int = 0
     cache_misses: int = 0

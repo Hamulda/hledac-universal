@@ -9,7 +9,7 @@ from typing import Any
 _dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 logger = logging.getLogger(__name__)
 
-class SearchDocument(msgspec.Struct):
+class SearchDocument(msgspec.Struct, gc=False):
     """OSINT document for BM25 indexing."""
     url: str
     title: str
@@ -20,7 +20,7 @@ class SearchDocument(msgspec.Struct):
     def __hash__(self):
         return hash(self.url)
 
-class SearchResult(msgspec.Struct, frozen=True):
+class SearchResult(msgspec.Struct, frozen=True, gc=False):
     """Search results with timing metadata."""
     query: str
     results: list[SearchDocument]

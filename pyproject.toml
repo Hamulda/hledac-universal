@@ -56,9 +56,9 @@ dependencies = [
     "hishel>=0.0.31,<2.0.0",
     "aiosqlite>=0.20.0",  # hishel AsyncSqliteStorage backend (RFC 9111 cache store)
     # ── Serialization ─────────────────────────────────────────────────────────
-    "orjson>=3.10.0",
-    # STABLE 2026-07: msgspec 0.21.1 je nejnovější funkční release pro Py 3.14 cp314t (nogil).
-    # Všechna IPC schémata používají Struct(gc=False) pro minimální RAM footprint.
+    "orjson>=3.11.0,<4.0.0",   # 3.11+ obsahuje critical perf a memory optimalizace
+    # msgspec: gc=True je default az do 0.21.x (confirmed stubs). Hot-path Structs mají
+    # explicit gc=False (333 upraveno v F350M-R upgrade). msgspec 0.22+ není na PyPI.
     "msgspec>=0.21.1,<0.22.0",
     # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
     "tenacity>=9.0.0",
@@ -72,8 +72,6 @@ dependencies = [
     # LanceDB moved to [ml] extra (opt-in, >1M vectors where Rust-side ANN gives real benefit).
     "sqlite-vec>=0.1.0",
     "pyarrow>=24.0.0,<25.0.0",
-    # Polars 1.43+: improved streaming engine for M1 8GB, streaming collect by default.
-    "polars>=1.43.0,<2.0.0",
     "lmdb>=2.2.0",
     # ── MLX / Apple Silicon ───────────────────────────────────────────────────
     # NOTE: mlx + mlx-lm exact pins come from uv.lock; >= here allows range resolution.
@@ -306,6 +304,16 @@ m1-local = [
     # aioquic is ~50-80MB resident and should ONLY be installed via:
     #   uv sync --extra http3
     # This keeps the default M1 8GB footprint minimal.
+]
+# ISSUE-FIX: graph-storage extra was referenced in check_dependency_profiles.py but never existed.
+# This extra provides the columnar analytics stack: duckdb + lancedb + pyarrow + polars.
+# Install with: uv sync --extra graph-storage
+graph-storage = [
+    "duckdb>=1.5.4,<2.0.0",
+    "lancedb>=0.34.0,<0.36.0",
+    "pyarrow>=24.0.0,<25.0.0",
+    # Polars 1.43+: improved streaming engine for M1 8GB, streaming collect by default.
+    "polars>=1.43.0,<2.0.0",
 ]
 [project.scripts]
 hledac = "hledac.universal.__main__:main"

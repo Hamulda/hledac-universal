@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 from core.rust_backend import get_accel
 
-import httpx  # F4XX: replaces aiohttp in wayback fallback seam
+import httpx
 import msgspec
 
 from hledac.universal.pipeline._deduper import (
@@ -149,7 +149,7 @@ def _get_pattern_offload_semaphore() -> asyncio.Semaphore:
 # ---------------------------------------------------------------------------
 
 
-class FeedPipelineEntryResult(msgspec.Struct, frozen=True):
+class FeedPipelineEntryResult(msgspec.Struct, frozen=True, gc=False):
     """Result for a single feed entry."""
 
     entry_url: str
@@ -161,7 +161,7 @@ class FeedPipelineEntryResult(msgspec.Struct, frozen=True):
     quality_reason_tag: str = ""  # comma-separated: "author_present" | "feed_title_context" | "language_match" | "title_only" | etc.  # noqa: E501
 
 
-class FeedSignalTelemetry(msgspec.Struct, frozen=True):
+class FeedSignalTelemetry(msgspec.Struct, frozen=True, gc=False):
     """Observability surface for feed signal analysis — sidecar for FeedPipelineRunResult.
 
     Reduces typical RunResult payload by ~60-70%%. Only populated when non-empty
@@ -247,7 +247,7 @@ class FeedSignalTelemetry(msgspec.Struct, frozen=True):
     assembly_tier: str = "unknown"
 
 
-class FeedPipelineRunResult(msgspec.Struct, frozen=True):
+class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     """Result for a full feed pipeline run.
 
     Core payload only — observability fields moved to FeedSignalTelemetry sidecar.
@@ -406,7 +406,7 @@ class FeedIngestContext:
 # ==============================================================================
 
 
-class FallbackDecision(msgspec.Struct, frozen=True):
+class FallbackDecision(msgspec.Struct, frozen=True, gc=False):
     """
     Structured fallback decision output.
 
@@ -716,7 +716,7 @@ def _compute_adapter_adjusted_confidence(
 # ---------------------------------------------------------------------------
 
 
-class FeedSourceRunResult(msgspec.Struct, frozen=True):
+class FeedSourceRunResult(msgspec.Struct, frozen=True, gc=False):
     """Result for a single feed source run within a batch."""
 
     feed_url: str
@@ -733,7 +733,7 @@ class FeedSourceRunResult(msgspec.Struct, frozen=True):
     findings_lost_to_dedup: int = 0
 
 
-class FeedSourceBatchRunResult(msgspec.Struct, frozen=True):
+class FeedSourceBatchRunResult(msgspec.Struct, frozen=True, gc=False):
     """Result for a multi-feed source batch run."""
 
     total_sources: int
@@ -1359,7 +1359,6 @@ async def _check_wayback_cdx(entry_url: str, session: httpx.AsyncClient) -> str 
 
     CDX API returns: [[url, timestamp, original, mimetype, status, ...], ...]
 
-    F4XX: migrated from aiohttp to httpx.AsyncClient.
     """
     try:
         cdx_url = f"{_WAYBACK_CDX_URL}?url={entry_url}&output=json&limit=1&filter=statuscode:200&from={_WAYBACK_CDX_MAX_AGE_DAYS}d"
@@ -1407,7 +1406,6 @@ async def _wayback_resolve(wayback_session: httpx.AsyncClient, entry_url: str) -
 
     Returns (article_text, success, replacement_count).
 
-    F4XX: migrated from aiohttp to httpx.AsyncClient.
     """
     try:
         wayback_url = await _check_wayback_cdx(entry_url, wayback_session)
@@ -1462,7 +1460,6 @@ async def _safe_fetch(session: httpx.AsyncClient, fetch_url: str) -> tuple[bytes
     Returns (b"", 0) on any error — the caller decides what to do with it.
     CancelledError propagates.
 
-    F4XX: migrated from aiohttp to httpx.AsyncClient.
     """
     try:
         async with asyncio.timeout(_MAX_WAYBACK_FETCH_TIMEOUT):
@@ -1569,7 +1566,7 @@ async def _fetch_with_wayback_fallback(
 
 async def _fetch_article_text(entry_url: str) -> tuple[str, bool, int]:
     """
-    Fetch article body via direct httpx GET and strip HTML.  # F4XX: was aiohttp
+    Fetch article body via direct httpx GET and strip HTML.
 
     F183E EXPANSION: Wayback CDX seam — before live fetch, check if archive
     capture exists and is recent (within 90 days). If so, fetch from archive

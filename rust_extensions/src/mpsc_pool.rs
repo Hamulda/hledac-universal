@@ -283,7 +283,7 @@ impl MPSCPool {
         let mut sent = 0;
         for i in 0..payloads.len() {
             if let Ok(item) = payloads.get_item(i) {
-                if let Ok(bytes) = item.downcast::<PyBytes>() {
+                if let Ok(bytes) = item.cast::<PyBytes>() {
                     let payload = bytes.as_bytes();
                     // Each send() still does to_vec() internally (crossbeam requirement),
                     // but we save: 1× the GIL acquisition + Python call overhead per item,

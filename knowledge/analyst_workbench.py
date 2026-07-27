@@ -61,7 +61,7 @@ MAX_TEXT_PER_CLUSTER: int = 200
 MAX_RISK_HYPOTHESES: int = 5
 MAX_PIVOT_RECOMMENDATIONS: int = 5
 
-class AnalystBrief(msgspec.Struct, frozen=True):
+class AnalystBrief(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F204E: Analyst brief produced at sprint teardown.
     F225B: Added source_family_summary, evidence_gaps, risk_hypotheses,
@@ -106,7 +106,7 @@ class AnalystBrief(msgspec.Struct, frozen=True):
     pivot_recommendations: tuple[str, ...] = field(default_factory=lambda: ())
     target_memory_feedback: dict[str, Any] = field(default_factory=lambda: {})
 
-class EvidencePointer(msgspec.Struct, frozen=True):
+class EvidencePointer(msgspec.Struct, frozen=True, gc=False):
     """
     Evidence pointer for an analyst answer.
 
@@ -129,7 +129,7 @@ class EvidencePointer(msgspec.Struct, frozen=True):
     envelope_available: bool
     snippet: str | None = None
 
-class RelatedEntity(msgspec.Struct, frozen=True):
+class RelatedEntity(msgspec.Struct, frozen=True, gc=False):
     """
     Related entity from graph traversal.
 
@@ -146,7 +146,7 @@ class RelatedEntity(msgspec.Struct, frozen=True):
     hops: int
     relation_types: frozenset[str] = field(default_factory=frozenset)
 
-class AnalystAnswer(msgspec.Struct):
+class AnalystAnswer(msgspec.Struct, gc=False):
     """
     Complete analyst answer with evidence.
 

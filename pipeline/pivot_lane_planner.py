@@ -24,7 +24,7 @@ from typing import Any
 # ----------------------------------------------------------------------
 
 
-class LanePlanItem(msgspec.Struct, frozen=True):
+class LanePlanItem(msgspec.Struct, frozen=True, gc=False):
     """A single planned lane invocation for a pivot seed."""
 
     lane: str  # e.g. "DOH", "CT", "WAYBACK"
@@ -34,7 +34,7 @@ class LanePlanItem(msgspec.Struct, frozen=True):
     reason: str
 
 
-class PivotLanePlan(msgspec.Struct, frozen=True):
+class PivotLanePlan(msgspec.Struct, frozen=True, gc=False):
     """Complete lane plan for a set of pivot seeds."""
 
     items: tuple[LanePlanItem, ...]

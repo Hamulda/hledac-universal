@@ -26,7 +26,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 
-class LaneResult(msgspec.Struct):
+class LaneResult(msgspec.Struct, gc=False):
     lane: str
     attempted: bool
     skipped: bool

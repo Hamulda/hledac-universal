@@ -85,7 +85,7 @@ _CAP_SCORE: float = 0.0
 _CAP_SO_MTIME: float | None = None
 
 
-class ProbeResult(msgspec.Struct, frozen=True):
+class ProbeResult(msgspec.Struct, frozen=True, gc=False):
     """Frozen result of the Rust extension probe."""
 
     available: bool

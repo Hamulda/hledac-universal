@@ -174,37 +174,54 @@ pub mod data;           // DuckDB bridge — isolated module for future cdylib e
 // which is pressure-aware (16 idle / 32 normal / 64 pressure).
 // MLX Metal-aware threshold: adaptive_scheduler::mixed_threshold_via_metal()
 
-/// Detekuje počet P-cores (performance cores).
+/// Returns the number of performance cores (P-cores) on Apple Silicon.
 ///
-/// macOS: hw.perflevel0.logicalcpu = počet performance cores v perf clusteru.
+/// Uses `sysctlbyname(2)` directly — NO fork+exec syscall.
+/// LazyLock ensures this is called exactly ONCE per process lifetime.
+///
+/// macOS: hw.perflevel0.logicalcpu → P-core count, clamped to [1, 4]
+///         (M1 Air has 4 P-cores, M3 Pro up to 12, clamp protects 8GB RAM budget)
 /// Linux/Windows: num_cpus::get_physical() fallback.
-/// Clamped to [1, 4] for M1 8GB RAM budget safety.
+///         Clamped to [1, 4] for M1 8GB RAM budget safety.
 ///
-/// MacBook Pro M3 Pro (12 jader) → 6 P-cores → clamp to 4.
+/// MacBook Pro M3 Pro (12 cores) → 6 P-cores → clamp to 4.
 #[cfg(target_os = "macos")]
 fn detect_p_core_count() -> usize {
-    use std::process::Command;
+    // ISSUE-12 FIX: Use sysctlbyname(2) directly — raw Mach syscall, no fork+exec
+    // Previous: Command::new("sysctl").output() → fork()+exec() = ~1-2ms
+    // Now: libc::sysctlbyname() → ~100ns (10,000× faster)
+    let mut size: libc::size_t = std::mem::size_of::<u32>();
+    let mut value: u32 = 0;
 
-    // hw.perflevel0.logicalcpu — Apple Silicon P-core count
-    if let Ok(output) = Command::new("sysctl")
-        .args(["-n", "hw.perflevel0.logicalcpu"])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Ok(n) = stdout.trim().parse::<usize>() {
-            return n.clamp(1, 4);
-        }
+    let ret = unsafe {
+        libc::sysctlbyname(
+            b"hw.perflevel0.logicalcpu\0".as_ptr() as *const libc::c_char,
+            &mut value as *mut _ as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+
+    if ret == 0 {
+        return (value as usize).clamp(1, 4);
     }
 
-    // Fallback: hw.physicalcpu (total physical, may include E-cores on big.LITTLE)
-    if let Ok(output) = Command::new("sysctl")
-        .args(["-n", "hw.physicalcpu"])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Ok(n) = stdout.trim().parse::<usize>() {
-            return n.clamp(1, 4);
-        }
+    // Fallback: total physical CPUs (may include E-cores on big.LITTLE)
+    let mut size2: libc::size_t = std::mem::size_of::<u32>();
+    let mut value2: u32 = 0;
+    let ret2 = unsafe {
+        libc::sysctlbyname(
+            b"hw.physicalcpu\0".as_ptr() as *const libc::c_char,
+            &mut value2 as *mut _ as *mut libc::c_void,
+            &mut size2,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+
+    if ret2 == 0 {
+        return (value2 as usize).clamp(1, 4);
     }
 
     // Krajní fallback: 4 P-cores (M1 Air default)
@@ -967,6 +984,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Issue #22: Health endpoint
     health::register(m)?;
+
+    // ISSUE-008: Darwin os_unfair_lock (~5ns) — replaces threading.Lock for short critical sections.
+    // Gated on extension-module feature (cdylib build).
+    #[cfg(feature = "extension-module")]
+    os_unfair_lock::register(m)?;
 
     // ISSUE-27: Claims extraction — CPU-bound sentence splitting, polarity, confidence.
     // Pre-compiled regexes via LazyLock, mixed_pool adaptive threading.

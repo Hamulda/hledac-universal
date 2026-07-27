@@ -22,20 +22,20 @@ MAX_FINDINGS: int = 5000
 MAX_HYPOTHESES: int = 500
 _TYPE_MAP: dict[str, str] = {'ipv4': 'ip', 'ipv6': 'ip'}
 
-class Entity(msgspec.Struct):
+class Entity(msgspec.Struct, gc=False):
     """Single entity in the causal graph."""
     entity_id: str
     entity_type: str
     value: str = ''
     attributes: dict[str, Any] = field(default_factory=dict)
 
-class EntityCluster(msgspec.Struct, frozen=True):
+class EntityCluster(msgspec.Struct, frozen=True, gc=False):
     """Group of related entities (e.g. all hosts in the same ASN)."""
     cluster_id: str
     entities: list[Entity] = field(default_factory=list)
     cohesion: float = 0.0
 
-class TemporalSequence(msgspec.Struct, frozen=True):
+class TemporalSequence(msgspec.Struct, frozen=True, gc=False):
     """Ordered sequence of events with timestamps."""
     sequence_id: str
     events: list[tuple[float, str]] = field(default_factory=list)
@@ -50,7 +50,7 @@ class TemporalSequence(msgspec.Struct, frozen=True):
         """Timestamps in order."""
         return [ts for ts, _ in self.events]
 
-class AnomalySignal(msgspec.Struct, frozen=True):
+class AnomalySignal(msgspec.Struct, frozen=True, gc=False):
     """Flag raised when a cluster deviates from baseline behaviour."""
     signal_id: str
     cluster_id: str
@@ -59,7 +59,7 @@ class AnomalySignal(msgspec.Struct, frozen=True):
     anomaly_type: str = ''
     entities: tuple[str, ...] = ()
 
-class CausalHypothesis(msgspec.Struct, frozen=True):
+class CausalHypothesis(msgspec.Struct, frozen=True, gc=False):
     """Hypothesis linking (cluster, event) -> downstream effect."""
     hypothesis_id: str
     cause_cluster_id: str
@@ -69,7 +69,7 @@ class CausalHypothesis(msgspec.Struct, frozen=True):
     source_entity: str = ''
     target_entity: str = ''
 
-class Contradiction(msgspec.Struct, frozen=True):
+class Contradiction(msgspec.Struct, frozen=True, gc=False):
     """Two hypotheses that cannot both be true."""
     contradiction_id: str
     a: str

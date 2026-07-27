@@ -27,7 +27,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-class Insight(msgspec.Struct):
+class Insight(msgspec.Struct, gc=False):
     """Generated insight."""
     insight_id: str
     type: str
@@ -40,7 +40,7 @@ class Insight(msgspec.Struct):
     related_insights: list[str] = field(default_factory=list)
 
 
-class Pattern(msgspec.Struct):
+class Pattern(msgspec.Struct, gc=False):
     """Discovered pattern."""
     pattern_type: str
     description: str
@@ -49,7 +49,7 @@ class Pattern(msgspec.Struct):
     examples: list[str] = field(default_factory=list)
 
 
-class Anomaly(msgspec.Struct):
+class Anomaly(msgspec.Struct, gc=False):
     """Detected anomaly."""
     anomaly_type: str
     description: str
@@ -59,7 +59,7 @@ class Anomaly(msgspec.Struct):
     implications: str
 
 
-class Contradiction(msgspec.Struct):
+class Contradiction(msgspec.Struct, gc=False):
     """Identified contradiction."""
     contradiction_id: str
     statement_a: str
@@ -68,7 +68,7 @@ class Contradiction(msgspec.Struct):
     resolution_options: list[str] = field(default_factory=list)
 
 
-class Gap(msgspec.Struct):
+class Gap(msgspec.Struct, gc=False):
     """Identified knowledge gap."""
     area: str
     description: str
@@ -76,7 +76,7 @@ class Gap(msgspec.Struct):
     research_opportunities: list[str] = field(default_factory=list)
 
 
-class Hypothesis(msgspec.Struct):
+class Hypothesis(msgspec.Struct, gc=False):
     """Generated hypothesis."""
     # Intentionally NOT brain.hypothesis._types.Hypothesis —
     # simpler shape (insight string only, no statement/evidence/tests).
@@ -87,7 +87,7 @@ class Hypothesis(msgspec.Struct):
     test_methods: list[str] = field(default_factory=list)
 
 
-class CausalRelationship(msgspec.Struct):
+class CausalRelationship(msgspec.Struct, gc=False):
     """
     Causal relationship between variables.
 
@@ -104,7 +104,7 @@ class CausalRelationship(msgspec.Struct):
     alternative_explanations: list[str] = field(default_factory=list)
 
 
-class SynthesisLevel(msgspec.Struct):
+class SynthesisLevel(msgspec.Struct, gc=False):
     """
     Multi-level synthesis result.
 
@@ -123,7 +123,7 @@ class SynthesisLevel(msgspec.Struct):
     key_insights: list[str] = field(default_factory=list)
 
 
-class InsightAnalysisResult(msgspec.Struct):
+class InsightAnalysisResult(msgspec.Struct, gc=False):
     """Complete insight analysis result.
 
     Sprint F300: Migrated from dataclass(slots=True) to msgspec.Struct.

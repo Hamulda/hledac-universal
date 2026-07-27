@@ -30,7 +30,7 @@ PROVENANCE_BONUS = 0.1
 TITLE_AGREEMENT_BONUS = 0.1
 MAX_CONFIDENCE = 0.75
 
-class ClaimsCoordinatorConfig(msgspec.Struct):
+class ClaimsCoordinatorConfig(msgspec.Struct, gc=False):
     """Configuration for ClaimsCoordinator."""
     max_evidence_per_step: int = 10
     max_clusters_per_step: int = 20

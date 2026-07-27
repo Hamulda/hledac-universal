@@ -191,7 +191,7 @@ AIMD_EXTRACTION_MIN = 1
 AIMD_EXTRACTION_MAX = 8
 
 
-class AIMDController(msgspec.Struct):
+class AIMDController(msgspec.Struct, gc=False):
     """
     Unified AIMD (Additive Increase/Multiplicative Decrease) controller.
 
@@ -336,7 +336,7 @@ _MIN_CLEARNET = 1
 _MAX_CLEARNET_FROM_GOVERNOR = 20
 
 
-class BackpressureDecision(msgspec.Struct, frozen=True):
+class BackpressureDecision(msgspec.Struct, frozen=True, gc=False):
     """
     Backpressure decision for the fetch lane.
     Derived from GovernorDecision but scoped to fetch concurrency only.
@@ -480,7 +480,7 @@ class BackpressureMonitor:
 MAX_PENDING_RESOURCE_REQUESTS = 1000
 
 
-class CapacitySnapshot(msgspec.Struct, frozen=True):
+class CapacitySnapshot(msgspec.Struct, frozen=True, gc=False):
     """Immutable snapshot of M1 resource capacity with TTL tracking."""
     cpu_percent: float
     gpu_memory: float

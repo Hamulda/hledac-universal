@@ -68,7 +68,7 @@ class LanePriority(IntEnum):
     EMBEDDING = 1
     BACKGROUND = 2
 
-class SchedulerStats(msgspec.Struct):
+class SchedulerStats(msgspec.Struct, gc=False):
     """Mutable unified scheduler telemetry — O(1) in-place inc(), no allocation.
 
     NOTE: msgspec.Struct without frozen=True allows field mutations.
@@ -101,14 +101,14 @@ class SchedulerStats(msgspec.Struct):
         """Return frozen copy for external consumers (get_stats)."""
         return msgspec.convert(self, SchedulerStats)
 
-class EmbeddedModelInfo(msgspec.Struct):
+class EmbeddedModelInfo(msgspec.Struct, gc=False):
     """Information about loaded MLX/ANE models."""
     llm_loaded: bool = False
     embedding_loaded: bool = False
     ane_available: bool = False
     ane_busy: bool = False
 
-class LaneMetrics(msgspec.Struct):
+class LaneMetrics(msgspec.Struct, gc=False):
     """Per-lane metrics for adaptive scheduling.
 
     NOTE: msgspec.Struct without frozen=True allows field mutations.

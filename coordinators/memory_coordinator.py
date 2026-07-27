@@ -153,7 +153,7 @@ class MemoryZone(Enum):
     MEDIUM = 'medium'
     LOW = 'low'
 
-class MemoryAllocation(msgspec.Struct):
+class MemoryAllocation(msgspec.Struct, gc=False):
     """Represents a memory allocation."""
     allocation_id: str
     zone: MemoryZone
@@ -164,7 +164,7 @@ class MemoryAllocation(msgspec.Struct):
     evictable: bool = True
     on_evict: Callable | None = None
 
-class MemoryStatistics(msgspec.Struct):
+class MemoryStatistics(msgspec.Struct, gc=False):
     """Memory usage statistics."""
     total_memory_mb: float
     used_memory_mb: float
@@ -175,7 +175,7 @@ class MemoryStatistics(msgspec.Struct):
     last_cleanup_time: float
     allocation_count: int = 0
 
-class ZoneStatistics(msgspec.Struct, frozen=True):
+class ZoneStatistics(msgspec.Struct, frozen=True, gc=False):
     """Statistics for a specific memory zone (immutable, msgspec zero-copy)."""
     zone: str
     allocation_count: int
@@ -1192,7 +1192,7 @@ class ResearchPhase(Enum):
     SYNTHESIS = 'synthesis'
     VALIDATION = 'validation'
 
-class ContextItem(msgspec.Struct):
+class ContextItem(msgspec.Struct, gc=False):
     """Individual context item with metadata for three-tier storage."""
     item_id: str
     content: str
@@ -1205,7 +1205,7 @@ class ContextItem(msgspec.Struct):
     content_type: str = 'general'
     confidence: float = 0.5
 
-class CompressedContext(msgspec.Struct):
+class CompressedContext(msgspec.Struct, gc=False):
     """Compressed context container."""
     context_id: str
     original_size: int
@@ -1469,7 +1469,7 @@ class CacheLocation(Enum):
     L1_MEMORY = 'l1_memory'
     L2_DISK = 'l2_disk'
 
-class CacheEntry(msgspec.Struct):
+class CacheEntry(msgspec.Struct, gc=False):
     """Single cache entry with FAISS embedding support."""
     cache_id: str
     content: Any

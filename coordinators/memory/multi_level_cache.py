@@ -67,7 +67,7 @@ class CacheLocation(Enum):
     L2_DISK = 'l2_disk'
 
 
-class CacheEntry(msgspec.Struct):
+class CacheEntry(msgspec.Struct, gc=False):
     """Single cache entry with FAISS embedding support."""
     cache_id: str
     content: Any

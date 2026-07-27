@@ -36,7 +36,7 @@ from typing import Any
 _OTEL_AVAILABLE: bool | None = None
 TELEMETRY_EVENT_FIELDS = frozenset(['session_id', 'phase', 'component', 'event', 'elapsed_ms'])
 
-class SprintEvent(msgspec.Struct):
+class SprintEvent(msgspec.Struct, gc=False):
     """
     A single sprint telemetry event.
 

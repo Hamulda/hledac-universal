@@ -21,7 +21,7 @@ import msgspec
 # ── NonfeedPlanDebug ─────────────────────────────────────────────────────────
 
 
-class NonfeedPlanDebug(msgspec.Struct):
+class NonfeedPlanDebug(msgspec.Struct, gc=False):
     """
     F217C: Debug info for nonfeed acquisition plan.
 
@@ -46,7 +46,7 @@ class NonfeedPlanDebug(msgspec.Struct):
 # ── NonfeedSeedContext ─────────────────────────────────────────────────────────
 
 
-class NonfeedSeedContext(msgspec.Struct, frozen=False):
+class NonfeedSeedContext(msgspec.Struct, frozen=False, gc=False):
     """
     F217: Seed context for nonfeed lane seeding.
 
@@ -88,7 +88,7 @@ class NonfeedSeedContext(msgspec.Struct, frozen=False):
 # ── AcquisitionLaneOutcome ─────────────────────────────────────────────────────────
 
 
-class AcquisitionLaneOutcome(msgspec.Struct, frozen=True):
+class AcquisitionLaneOutcome(msgspec.Struct, frozen=True, gc=False):
     """
     F206BG: Canonical outcome for a single acquisition lane.
 
@@ -117,7 +117,7 @@ class AcquisitionLaneOutcome(msgspec.Struct, frozen=True):
 # ── SourceFamilyOutcome ─────────────────────────────────────────────────────────
 
 
-class SourceFamilyOutcome(msgspec.Struct, frozen=True):
+class SourceFamilyOutcome(msgspec.Struct, frozen=True, gc=False):
     """
     F216G: Canonical outcome for a source family (aggregated across lanes).
 
@@ -146,7 +146,7 @@ class SourceFamilyOutcome(msgspec.Struct, frozen=True):
 # ── MandatoryLaneTerminality ─────────────────────────────────────────────────────
 
 
-class MandatoryLaneTerminality(msgspec.Struct, frozen=True):
+class MandatoryLaneTerminality(msgspec.Struct, frozen=True, gc=False):
     """
     F228B: Represents a mandatory lane and its terminality requirements.
     """
@@ -159,7 +159,7 @@ class MandatoryLaneTerminality(msgspec.Struct, frozen=True):
 # ── AcquisitionStrategySnapshot ─────────────────────────────────────────────────
 
 
-class AcquisitionStrategySnapshot(msgspec.Struct, frozen=True):
+class AcquisitionStrategySnapshot(msgspec.Struct, frozen=True, gc=False):
     """
     F206BG: Canonical snapshot of acquisition strategy plan.
 
@@ -189,7 +189,7 @@ class AcquisitionStrategySnapshot(msgspec.Struct, frozen=True):
 # ── AcquisitionLanePlan ─────────────────────────────────────────────────────────
 
 
-class AcquisitionLanePlan(msgspec.Struct, frozen=True):
+class AcquisitionLanePlan(msgspec.Struct, frozen=True, gc=False):
     """
     F206BG: Plan for a single acquisition lane.
 

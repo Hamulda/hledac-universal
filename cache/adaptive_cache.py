@@ -65,7 +65,7 @@ _MAX_ENTRIES_ELEVATED = 50_000
 _MAX_ENTRIES_CRITICAL = 10_000
 
 
-class AdaptiveCacheConfig(msgspec.Struct):
+class AdaptiveCacheConfig(msgspec.Struct, gc=False):
     """
     Konfigurácia adaptívnej cache.
 
@@ -85,7 +85,7 @@ class AdaptiveCacheConfig(msgspec.Struct):
     pressure_threshold_critical_gib: float = 1.0
 
 
-class CacheStats(msgspec.Struct):
+class CacheStats(msgspec.Struct, gc=False):
     """Cache statistics."""
     hits: int = 0
     misses: int = 0

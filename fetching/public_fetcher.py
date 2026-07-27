@@ -1525,31 +1525,43 @@ async def close_public_fetcher_sessions_async() -> dict:
     _tor_error: str | None = None
     if not _SESSION_MGR._session_is_closed(_SESSION_MGR._tor_session):
         _tor_attempted = True
-        if _SESSION_MGR._tor_session_locally_created:
-            try:
-                await _SESSION_MGR._session_aclose(_SESSION_MGR._tor_session)
-                _tor_success = True
-            except asyncio.CancelledError:
-                raise
-            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                _tor_error = str(_e)
-                logger.warning('Error closing Tor session: %s', _e)
-    _SESSION_MGR._tor_session = None
-    _SESSION_MGR._tor_session_locally_created = False
     _i2p_attempted = False
     _i2p_success = False
     _i2p_error: str | None = None
     if not _SESSION_MGR._session_is_closed(_SESSION_MGR._i2p_session):
         _i2p_attempted = True
-        if _SESSION_MGR._i2p_session_locally_created:
-            try:
-                await _SESSION_MGR._session_aclose(_SESSION_MGR._i2p_session)
+
+    # F3XX: parallel close — asyncio.gather with return_exceptions=True so that
+    # one protocol's error does not cancel the other.  Both sessions are
+    # independent; the lock per protocol is held only inside _session_aclose.
+    _close_tor_coro: asyncio.Task | None = None
+    _close_i2p_coro: asyncio.Task | None = None
+    if _tor_attempted and _SESSION_MGR._tor_session_locally_created:
+        _close_tor_coro = asyncio.create_task(
+            _SESSION_MGR._session_aclose(_SESSION_MGR._tor_session)
+        )
+    if _i2p_attempted and _SESSION_MGR._i2p_session_locally_created:
+        _close_i2p_coro = asyncio.create_task(
+            _SESSION_MGR._session_aclose(_SESSION_MGR._i2p_session)
+        )
+    _tasks = [t for t in (_close_tor_coro, _close_i2p_coro) if t is not None]
+    if _tasks:
+        _results = await asyncio.gather(*_tasks, return_exceptions=True)
+        for _i, _task in enumerate(_tasks):
+            _exc = _task.result() if isinstance(_results[_i], Exception) else None
+            if _task is _close_tor_coro and _exc is not None:
+                _tor_error = str(_exc)
+                logger.warning('Error closing Tor session: %s', _exc)
+            elif _task is _close_tor_coro and _exc is None:
+                _tor_success = True
+            elif _task is _close_i2p_coro and _exc is not None:
+                _i2p_error = str(_exc)
+                logger.warning('Error closing I2P session: %s', _exc)
+            elif _task is _close_i2p_coro and _exc is None:
                 _i2p_success = True
-            except asyncio.CancelledError:
-                raise
-            except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                _i2p_error = str(_e)
-                logger.warning('Error closing I2P session: %s', _e)
+    # Clear session references after parallel close completes.
+    _SESSION_MGR._tor_session = None
+    _SESSION_MGR._tor_session_locally_created = False
     _SESSION_MGR._i2p_session = None
     _SESSION_MGR._i2p_session_locally_created = False
     _SESSION_MGR._session_source_telemetry['tor'] = 'unavailable'

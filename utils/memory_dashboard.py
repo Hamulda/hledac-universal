@@ -24,7 +24,7 @@ try:
 except ImportError:
     mx = None
 
-class UnifiedMemorySnapshot(msgspec.Struct, frozen=True):
+class UnifiedMemorySnapshot(msgspec.Struct, frozen=True, gc=False):
     """
     Kombinovaný snapshot systémové a GPU (Metal) paměti.
 

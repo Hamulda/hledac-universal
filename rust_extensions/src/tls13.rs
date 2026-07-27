@@ -757,7 +757,7 @@ pub fn connect_and_ja4(
         // This will be constructed in the calling code
         // For now return empty and construct in Python
         // Actually we need to construct it here
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = pyo3::types::PyDict::new(py);
             dict.set_item("ja4", result.ja4).unwrap();
             dict.set_item("ech_detected", result.ech_detected).unwrap();
@@ -820,7 +820,7 @@ pub fn batch_ja4(
             let result = connect_and_fingerprint_internal(host, *port, sni, alpn.clone(), timeout);
 
             match result {
-                Ok(r) => Python::with_gil(|py| {
+                Ok(r) => Python::attach(|py| {
                     let dict = pyo3::types::PyDict::new(py);
                     dict.set_item("host", host).unwrap();
                     dict.set_item("port", port).unwrap();
@@ -844,7 +844,7 @@ pub fn batch_ja4(
                     dict.set_item("error", "").unwrap();
                     dict.into()
                 }),
-                Err(e) => Python::with_gil(|py| {
+                Err(e) => Python::attach(|py| {
                     let dict = pyo3::types::PyDict::new(py);
                     dict.set_item("host", host).unwrap();
                     dict.set_item("port", port).unwrap();

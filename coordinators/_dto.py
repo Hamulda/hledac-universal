@@ -28,7 +28,7 @@ class OperationType(Enum):
     OPTIMIZATION = auto()
 
 
-class DecisionResponse(msgspec.Struct):
+class DecisionResponse(msgspec.Struct, gc=False):
     """Decision from orchestrator to be executed by coordinator."""
     decision_id: str
     chosen_option: str
@@ -39,7 +39,7 @@ class DecisionResponse(msgspec.Struct):
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class OperationResult(msgspec.Struct, frozen=True):
+class OperationResult(msgspec.Struct, frozen=True, gc=False):
     """Result of coordinator operation execution."""
     operation_id: str
     status: str
@@ -51,7 +51,7 @@ class OperationResult(msgspec.Struct, frozen=True):
     timestamp: float = field(default_factory=time.time)
 
 
-class CoordinatorCapabilities(msgspec.Struct, frozen=True):
+class CoordinatorCapabilities(msgspec.Struct, frozen=True, gc=False):
     """Capabilities reported by a coordinator."""
     name: str
     supported_operations: list[OperationType]

@@ -15,6 +15,12 @@ Profile logic:
     last_seen   = current_ts
     cumulative  = (previous.cumulative if exists else 0) + len(current)
     velocity    = cumulative / max(days_since_first, 1)
+
+Performance (F350M-R):
+    - Single-pass index building: prev_by_key + prev_by_val in ONE loop
+    - Cached entity keys: compute once, reuse for both indexes
+    - O(n) set operations for new/disappeared (dict key diff)
+    - M1 8GB safe: pure Python, no external native dependencies
 """
 
 
@@ -36,7 +42,7 @@ MAX_PROFILE_ENTRIES: int = 500
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
-class SprintDiffResult(msgspec.Struct, frozen=True):
+class SprintDiffResult(msgspec.Struct, frozen=True, gc=False):
     target_id: str
     current_sprint_id: str
     previous_sprint_id: str | None
@@ -45,7 +51,7 @@ class SprintDiffResult(msgspec.Struct, frozen=True):
     changed_entities: list[dict]
 
 
-class TargetProfileSummary(msgspec.Struct):
+class TargetProfileSummary(msgspec.Struct, gc=False):
     target_id: str
     first_seen: float
     last_seen: float
@@ -59,7 +65,15 @@ class TargetProfileSummary(msgspec.Struct):
 # ── SprintDiffEngine ───────────────────────────────────────────────────────────
 
 class SprintDiffEngine:
-    """Pure-python cross-sprint diff and target profiling. No I/O dependencies."""
+    """Pure-python cross-sprint diff and target profiling. No I/O dependencies.
+
+    Performance design (F350M-R):
+        - Single-pass index construction: builds both by_key and by_val indexes
+          in ONE loop instead of 4 separate loops
+        - Cached entity keys: computed once per finding, reused for all indexes
+        - O(n) set operations for new/disappeared (dict key diff)
+        - Fail-safe: all operations wrapped in try/except, returns empty on error
+    """
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -89,46 +103,39 @@ class SprintDiffEngine:
                 changed_entities=[],
             )
 
+        # ── SINGLE-PASS index building (was 4 separate loops) ─────────────────
+        # Build prev_by_key AND prev_by_val in ONE loop
         prev_keys: set[str] = set()
         prev_by_key: dict[str, dict] = {}
+        prev_by_val: dict[str, dict] = {}
         for f in previous_findings:
             try:
                 key = self._entity_key(f)
+                val = self._ioc_val(f)
             except Exception:
                 continue
             prev_keys.add(key)
             prev_by_key[key] = f
+            prev_by_val[val] = f  # last-write-wins is fine: same val = same semantic
 
+        # Build curr_by_key AND curr_by_val in ONE loop
         curr_keys: set[str] = set()
         curr_by_key: dict[str, dict] = {}
+        curr_by_val: dict[str, dict] = {}
         for f in current_findings:
             try:
                 key = self._entity_key(f)
+                val = self._ioc_val(f)
             except Exception:
                 continue
             curr_keys.add(key)
             curr_by_key[key] = f
+            curr_by_val[val] = f
 
         # ── changed: same ioc_value but different ioc_type or finding_id ───────
         # Must be detected BEFORE new/disappeared set ops, and uses ioc_value
         # as the grouping key (not the composite entity key) so that a type
         # change on the same value is still recognised as "changed".
-        prev_by_val: dict[str, dict] = {}
-        for f in previous_findings:
-            try:
-                val = (f.get("ioc_value") or "?").lower()
-            except Exception:
-                continue
-            prev_by_val[val] = f
-
-        curr_by_val: dict[str, dict] = {}
-        for f in current_findings:
-            try:
-                val = (f.get("ioc_value") or "?").lower()
-            except Exception:
-                continue
-            curr_by_val[val] = f
-
         shared_vals = set(prev_by_val.keys()) & set(curr_by_val.keys())
         changed: list[dict] = []
         for val in shared_vals:
@@ -143,7 +150,7 @@ class SprintDiffEngine:
             if len(changed) >= cap:
                 break
 
-        # ── new / disappeared (composite entity key) ────────────────────────────
+        # ── new / disappeared (composite entity key) ───────────────────────────
         new_keys = curr_keys - prev_keys
         gone_keys = prev_keys - curr_keys
 
@@ -272,6 +279,17 @@ class SprintDiffEngine:
         # Deliberately raise KeyError if both are "?" so caller skips the finding
         return f"{ioc_type}::{ioc_value}"
 
+    def _ioc_val(self, finding: dict) -> str:
+        """Extract lowercase ioc_value for changed-detection (type migration).
+
+        Returns '?' if missing — shared_vals will skip it as it won't match
+        any properly-formed current finding.
+        """
+        val = finding.get("ioc_value") or "?"
+        if isinstance(val, str):
+            return val.lower()
+        return "?"
+
     def _compute_entity_summary(self, findings: list[dict]) -> dict:
         """Collapse finding list into a compact per-type, per-source tally.
 
@@ -283,83 +301,36 @@ class SprintDiffEngine:
             }
 
         Capped at MAX_PROFILE_ENTRIES keys per counter dict.
+
+        Performance: Single-pass with inline counter dict updates (no get+set).
         """
         cap = MAX_PROFILE_ENTRIES
-        summary: dict = {
-            "total": 0,
-            "by_type": {},
-            "by_source": {},
-        }
+        total = 0
+        by_type: dict[str, int] = {}
+        by_source: dict[str, int] = {}
 
         for f in findings:
             try:
-                summary["total"] = summary.get("total", 0) + 1
+                total += 1
 
-                # ioc_type bucket
+                # ioc_type bucket — inline update, avoid get()
                 ioc_type = f.get("ioc_type") or "unknown"
-                by_type: dict = summary.get("by_type", {})  # type: ignore[assignment]
                 if len(by_type) < cap:
                     by_type[ioc_type] = by_type.get(ioc_type, 0) + 1
-                summary["by_type"] = by_type
 
                 # source bucket
                 source = f.get("source_type") or f.get("source") or "unknown"
-                by_source: dict = summary.get("by_source", {})  # type: ignore[assignment]
                 if len(by_source) < cap:
                     by_source[source] = by_source.get(source, 0) + 1
-                summary["by_source"] = by_source
 
             except Exception:
                 # Fail-soft: skip malformed entries without aborting
                 continue
 
-        # MLX entity fuzzy merge — consolidate near-identical entity names (cosine >= 0.97)
-        # F265B: Replaced deprecated ANE/CoreML path with MLX ModernBERT embeddings
-        # Skip merge if MLX unavailable (hash fallback — fail-soft, entity merge is optional)
-        try:
-            import numpy as np
-
-            # Use MLXEmbeddingManager via compat for entity similarity
-            try:
-                from core.mlx_embeddings import get_embedding_manager
-                _mgr = get_embedding_manager()
-            except Exception:
-                _mgr = None
-
-            if _mgr is not None and hasattr(_mgr, '_is_loaded') and _mgr._is_loaded and len(summary) > 1:
-                _keys = list(summary.keys())
-                # Encode entity keys for cosine similarity (sync path via executor)
-                _texts = [_k[:256] for _k in _keys]  # Truncate to 256 chars
-                import threading
-                _vecs = None
-
-                def _encode_sync():
-                    return _mgr.encode(_texts, batch_size=32, normalize=True)
-
-                t = threading.Thread(target=lambda: globals().__setitem__('_vecs', _encode_sync()))
-                t.start()
-                t.join(timeout=10.0)
-                if t.is_alive() or _vecs is None:
-                    raise RuntimeError("MLX encode timeout")
-
-                _sim = _vecs @ _vecs.T
-                _merged: dict = {}
-                _used: set = set()
-                for i, k in enumerate(_keys):
-                    if i in _used:
-                        continue
-                    _merged[k] = summary[k]
-                    for j in range(i + 1, len(_keys)):
-                        if j not in _used and _sim[i, j] >= 0.97:
-                            # Merge j into i — combine counts
-                            _cur = _merged[k]
-                            _oth = summary[_keys[j]]
-                            if isinstance(_cur, (int, float)) and isinstance(_oth, (int, float)):
-                                _merged[k] = _cur + _oth
-                            _used.add(j)
-                summary = _merged
-                logger.debug("[MLX:diff] entity merge: %d → %d keys", len(_keys), len(summary))
-        except Exception as _e:
-            logger.debug("[MLX:diff] entity merge skipped: %s", _e)
+        summary: dict = {
+            "total": total,
+            "by_type": by_type,
+            "by_source": by_source,
+        }
 
         return summary

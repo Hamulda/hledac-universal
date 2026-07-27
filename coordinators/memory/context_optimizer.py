@@ -45,7 +45,7 @@ class ResearchPhase(Enum):
     VALIDATION = 'validation'
 
 
-class ContextItem(msgspec.Struct):
+class ContextItem(msgspec.Struct, gc=False):
     """Individual context item with metadata for three-tier storage."""
     item_id: str
     content: str
@@ -59,7 +59,7 @@ class ContextItem(msgspec.Struct):
     confidence: float = 0.5
 
 
-class CompressedContext(msgspec.Struct):
+class CompressedContext(msgspec.Struct, gc=False):
     """Compressed context container."""
     context_id: str
     original_size: int

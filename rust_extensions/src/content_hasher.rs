@@ -107,7 +107,7 @@ pub fn blake3_hex(body: &[u8]) -> String {
 #[pyfunction]
 pub fn batch_xxh3_64_hex(items: Vec<Vec<u8>>) -> Vec<String> {
     use rayon::prelude::*;
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
@@ -141,7 +141,7 @@ pub fn batch_blake3_64(bodies: Vec<Vec<u8>>) -> Vec<String> {
     // ISSUE-063: release GIL during rayon parallel scope — otherwise rayon
     // workers block the GIL, defeating parallelism. GIL is reacquired when
     // this closure returns and PyO3 builds the return value.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             bodies
                 .par_iter()

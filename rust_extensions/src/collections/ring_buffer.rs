@@ -30,7 +30,6 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use pyo3::{Py, PyObject};
 use std::collections::VecDeque;
 
 /// Maximum recent IOCs to retain for hypothesis feedback.
@@ -39,12 +38,12 @@ pub const RECENT_IOC_RING_CAPACITY: usize = 200;
 
 /// A bounded ring buffer holding IOC dicts as Python objects.
 ///
-/// Backed by a pre-allocated VecDeque of PyObject references.
+/// Backed by a pre-allocated VecDeque of Py<PyAny> references.
 /// Push on full: silently evicts oldest entry.
 #[pyclass(name = "RingBuffer", unsendable)]
 pub struct RingBuffer {
     /// Pre-allocated ring storage. Slot count never changes after init.
-    ring: VecDeque<PyObject>,
+    ring: VecDeque<Py<PyAny>>,
     /// Fixed capacity — used to bound allocation.
     capacity: usize,
 }
@@ -86,7 +85,7 @@ impl RingBuffer {
     ///     The number of entries currently in the buffer after this push
     fn push(&mut self, entry: &Bound<'_, PyAny>) -> usize {
         // Clone to increment refcount — we store the clone in the ring
-        let owned: PyObject = entry.into_py(entry.py()).into();
+        let owned: Py<PyAny> = entry.clone().unbind();
         if self.ring.len() >= self.capacity {
             // Evict oldest (front of VecDeque)
             self.ring.pop_front();
@@ -103,7 +102,7 @@ impl RingBuffer {
     /// Returns:
     ///     List[dict] of all entries currently in the buffer
     fn get_all(&self, py: Python<'_>) -> Py<PyList> {
-        let list: Bound<'_, PyList> = PyList::new(py, &[] as &[Py<PyObject>]).expect("RingBuffer: PyList allocation failed");
+        let list: Bound<'_, PyList> = PyList::new(py, &[] as &[Py<PyAny>]).expect("RingBuffer: PyList allocation failed");
         for obj in &self.ring {
             // Steal a reference from the ring — list takes ownership
             let _ = list.append(obj);
@@ -119,7 +118,7 @@ impl RingBuffer {
     /// Returns:
     ///     List[dict] of the N most recent entries (newest first)
     fn get_recent(&self, py: Python<'_>, n: usize) -> Py<PyList> {
-        let list: Bound<'_, PyList> = PyList::new(py, &[] as &[Py<PyObject>]).expect("RingBuffer: PyList allocation failed");
+        let list: Bound<'_, PyList> = PyList::new(py, &[] as &[Py<PyAny>]).expect("RingBuffer: PyList allocation failed");
         let take = n.min(self.ring.len());
         // Iterate from back (newest) to front (oldest), take `take` items
         for obj in self.ring.iter().rev().take(take) {

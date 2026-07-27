@@ -429,9 +429,9 @@ pub fn pipeline_map(
         .into_iter()
         .map(|s| {
             if fn_name == "len" {
-                s.parse::<usize>().map(|v| v.into_py(_py)).unwrap_or_else(|_| s.into_py(_py))
+                s.parse::<usize>().map(|v| v.into_pyobject(_py).unwrap()).unwrap_or_else(|_| s.into_pyobject(_py).unwrap())
             } else {
-                s.into_py(_py)
+                s.into_pyobject(_py).unwrap()
             }
         })
         .collect();
@@ -573,9 +573,9 @@ pub fn pipeline_filter_map(
         .into_iter()
         .map(|s| {
             if map_fn == "len" {
-                s.parse::<usize>().map(|v| v.into_py(_py)).unwrap_or_else(|_| s.into_py(_py))
+                s.parse::<usize>().map(|v| v.into_pyobject(_py).unwrap()).unwrap_or_else(|_| s.into_pyobject(_py).unwrap())
             } else {
-                s.into_py(_py)
+                s.into_pyobject(_py).unwrap()
             }
         })
         .collect();
@@ -632,7 +632,7 @@ pub fn pipeline_fold(
                 )
                 .sum()
         });
-        return Ok(result.into_py(_py));
+        return Ok(result.into_pyobject(_py).unwrap());
     }
 
     // Fallback to string fold — extract strings before pool
@@ -654,7 +654,7 @@ pub fn pipeline_fold(
                 )
                 .sum()
         });
-        return Ok(result.into_py(_py));
+        return Ok(result.into_pyobject(_py).unwrap());
     }
 
     if fold_fn == "sum_len" {
@@ -667,7 +667,7 @@ pub fn pipeline_fold(
                 )
                 .sum()
         });
-        return Ok(result.into_py(_py));
+        return Ok(result.into_pyobject(_py).unwrap());
     }
 
     // String fold — initial_str already extracted
@@ -697,7 +697,7 @@ pub fn pipeline_fold(
             )
             .collect() // Use collect() not sum() for String
     });
-    Ok(result.into_py(_py))
+    Ok(result.into_pyobject(_py).unwrap())
 }
 
 /// pipeline_count — COUNT items matching a predicate (O(1) fold).
@@ -830,9 +830,9 @@ pub fn pipeline_compose_two(
         .map(|s| {
             // If stage1 was "len", it's a number string to convert back
             if stage1 == "len" {
-                s.parse::<usize>().map(|v| v.into_py(_py)).unwrap_or_else(|_| s.into_py(_py))
+                s.parse::<usize>().map(|v| v.into_pyobject(_py).unwrap()).unwrap_or_else(|_| s.into_pyobject(_py).unwrap())
             } else {
-                s.into_py(_py)
+                s.into_pyobject(_py).unwrap()
             }
         })
         .collect();

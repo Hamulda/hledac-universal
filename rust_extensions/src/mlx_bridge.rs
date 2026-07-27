@@ -41,7 +41,7 @@
 //! MBridge.2: SPSC queue depth = 16 (matches spsc_queue.rs SPSC_QUEUE_DEPTH)
 //! MBridge.3: Chunk size adaptive: 64 tokens @ normal, 256 @ WARNING, 512 @ CRITICAL
 //! MBridge.4: Cancellation wired to _stream_cancelled asyncio.Event
-//! MBridge.5: Memory feedback: mlx.core.metal.get_active_memory() -> chunk_size
+//! MBridge.5: Memory feedback: mx.get_active_memory() -> chunk_size (canonical since MLX 0.32)
 //!
 //! Always-on, fail-safe, M1 8GB bounded.
 
@@ -96,7 +96,7 @@ impl MemoryPressure {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Configuration for MLX token streaming bridge.
-#[pyclass(name = "MLXBridgeConfig")]
+#[pyclass(name = "MLXBridgeConfig", from_py_object)]
 #[derive(Debug, Clone)]
 pub struct MLXBridgeConfig {
     /// Max tokens to generate per request.
@@ -194,7 +194,7 @@ impl MLXBridgeConfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Token chunk with metadata for streaming.
-#[pyclass(name = "TokenChunk")]
+#[pyclass(name = "TokenChunk", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct TokenChunk {
     /// Decoded token text.
@@ -257,7 +257,7 @@ impl TokenChunk {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Adaptive chunk sizer based on memory pressure.
-#[pyclass(name = "AdaptiveChunkSizer")]
+#[pyclass(name = "AdaptiveChunkSizer", skip_from_py_object)]
 #[derive(Debug, Clone)]
 pub struct AdaptiveChunkSizer {
     warning_threshold: f32,
@@ -318,7 +318,7 @@ impl AdaptiveChunkSizer {
 /// the coordination layer.
 ///
 /// MBridge.1: mlx_lm is imported lazily inside Python, not in Rust
-#[pyclass(name = "MLXBridge")]
+#[pyclass(name = "MLXBridge", skip_from_py_object)]
 #[derive(Debug)]
 pub struct MLXBridge {
     /// Engine reference (PyObject, stored as opaque reference).
@@ -339,7 +339,7 @@ pub struct MLXBridge {
 // Use Py::clone_ref which increments the underlying PyObject refcount
 impl Clone for MLXBridge {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
+        Python::attach(|py| Self {
             engine: Py::clone_ref(&self.engine, py),
             tokenizer: Py::clone_ref(&self.tokenizer, py),
             config: self.config.clone(),
@@ -490,7 +490,7 @@ pub fn batch_tokenize_(
     let mut results: Vec<Vec<u32>> = Vec::with_capacity(tokenizers.len());
     for i in 0..tokenizers.len() {
         let p = &prompts[i];
-        let ids: Vec<u32> = Python::with_gil(|py| {
+        let ids: Vec<u32> = Python::attach(|py| {
             // Clone the Py pointer so we can call into_bound without moving
             let tok = Py::clone_ref(&tokenizers[i], py);
             let tok_bound: Bound<'_, PyAny> = tok.into_bound(py);

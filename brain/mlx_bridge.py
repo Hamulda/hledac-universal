@@ -23,7 +23,7 @@ Key invariants (MBridge.*):
     MBridge.2: SPSC queue depth = 16 (matches spsc_queue.rs)
     MBridge.3: Chunk size adaptive: 64 tokens @ normal, 256 @ WARNING, 512 @ CRITICAL
     MBridge.4: Cancellation wired to _stream_cancelled asyncio.Event
-    MBridge.5: Memory feedback: mlx.core.metal.get_active_memory() → chunk_size
+    MBridge.5: Memory feedback: mx.get_active_memory() → chunk_size (canonical since MLX 0.32)
     MBridge.6: mlx_bridge config from constants.mlx_bridge (30s default timeout)
 
 Always-on, fail-safe, M1 8GB bounded.

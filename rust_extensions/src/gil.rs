@@ -1,16 +1,17 @@
 //! gil.rs — GIL release helper for CPU-intensive hot paths
 //!
-//! Standard Python (CPython) GIL: `release_gil` calls `py.allow_threads()` to
-//! temporarily release the GIL during CPU-bound Rust work, allowing other Python
-//! coroutines to make progress on this thread.
+//! PyO3 0.29: `release_gil` uses `py.detach()` to temporarily release
+//! the GIL during CPU-bound Rust work, allowing other Python coroutines to
+//! make progress on this thread.
 //!
-//! Free-threaded Python (PEP 703, Py_GIL_DISABLED=1): `py.allow_threads()` is a
-//! no-op — the GIL never existed, so nothing is released.
+//! PyO3 0.29 API changes:
+//! - `py.allow_threads(f)` → `py.detach(f)` (same semantics)
+//! - `Python::with_gil(|py| ...)` → `Python::attach(|py| ...)`
 //!
 //! MLX is NOT free-threaded compatible (PyO3/Metal/NumPy coordination assumes
-//! GIL on tensors). This module is a no-op alias for the current codebase.
+//! GIL on tensors). This module uses the `py.detach()` API.
 //!
-//! Supported: PyO3 0.28 with `py.allow_threads()`.
+//! Supported: PyO3 0.29 with `py.detach()`
 
 use pyo3::prelude::*;
 
@@ -30,5 +31,7 @@ where
     F: FnOnce() -> R + Send,
     R: pyo3::marker::Ungil,
 {
-    py.allow_threads(f)
+    // PyO3 0.29: py.detach() releases the GIL for the duration of the closure.
+    // This is the direct replacement for py.allow_threads() from PyO3 0.24.
+    py.detach(f)
 }

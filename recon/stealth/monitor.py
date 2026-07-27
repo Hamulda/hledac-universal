@@ -361,7 +361,7 @@ class StreamingMonitor:
 
             async with self._session.head(
                 source.url,
-                timeout=aiohttp.ClientTimeout(total=self.HEAD_CHECK_TIMEOUT),
+                timeout=httpx.Timeout(self.HEAD_CHECK_TIMEOUT),
                 allow_redirects=True,
             ) as response:
                 etag = response.headers.get("ETag")
@@ -419,7 +419,7 @@ class StreamingMonitor:
         _mark_surface_patched("StreamingMonitor._fetch_api")
         try:
             async with self._session.get(
-                source.url, timeout=aiohttp.ClientTimeout(total=self.CONTENT_TIMEOUT)
+                source.url, timeout=httpx.Timeout(self.CONTENT_TIMEOUT)
             ) as response:
                 content = await response.text()
                 return content
@@ -439,7 +439,7 @@ class StreamingMonitor:
         try:
             async with self._session.get(
                 source.url,
-                timeout=aiohttp.ClientTimeout(total=self.CONTENT_TIMEOUT),
+                timeout=httpx.Timeout(self.CONTENT_TIMEOUT),
                 headers=self._get_default_headers(),
             ) as response:
                 content = await response.text()

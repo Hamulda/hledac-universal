@@ -68,13 +68,13 @@ MINHASH_NUM_PERM: Final[int] = 128  # permutations for MinHash (M1 8GB balance)
 # ── Result Types ───────────────────────────────────────────────────────────────
 
 
-class SimHashResult(msgspec.Struct, frozen=True):
+class SimHashResult(msgspec.Struct, frozen=True, gc=False):
     """SimHash fingerprint result."""
     fingerprint: int  # 64-bit integer
     bits: int  # actual bits used
 
 
-class DedupDecision(msgspec.Struct, frozen=True):
+class DedupDecision(msgspec.Struct, frozen=True, gc=False):
     """Dedup advisory decision."""
     is_duplicate: bool
     reason: str  # e.g. "simhash_distance_2", "minhash_similarity_0.92"

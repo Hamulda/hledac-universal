@@ -49,7 +49,7 @@ from typing import Any
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class RuntimeState(msgspec.Struct, frozen=True):
+class RuntimeState(msgspec.Struct, frozen=True, gc=False):
     """
     Canonical runtime state — single source of truth for global runtime flags.
 
@@ -104,7 +104,7 @@ def mark_uvloop_installed() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class ResearchContextSnapshot(msgspec.Struct, frozen=True):
+class ResearchContextSnapshot(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable snapshot of ResearchContext at sprint start.
 

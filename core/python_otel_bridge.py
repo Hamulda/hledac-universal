@@ -86,7 +86,7 @@ def _get_rust_aggregator() -> Any:
 
 # ── Metric instruments cache ────────────────────────────────────────────────────
 
-class _MetricInstruments(msgspec.Struct):
+class _MetricInstruments(msgspec.Struct, gc=False):
     """Cached OTel metric instruments for one metric name."""
     counter_values: dict[str, tuple[int, int]]  # name → (count, bytes)
     histogram_values: dict[str, dict[str, int]]  # name → {p50, p95, p99, ...}

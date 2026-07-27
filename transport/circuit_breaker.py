@@ -48,7 +48,8 @@ import threading
 import time
 
 from hledac.universal.core.locks import LockCategory, register_lock
-from dataclasses import dataclass, field
+import dataclasses
+from dataclasses import field
 from enum import Enum
 from typing import TYPE_CHECKING, Final
 
@@ -189,7 +190,7 @@ def _metrics_safe_increment(metric_name: str) -> None:
         pass  # noqa: BLE001
 
 
-class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, kw_only=True):
+class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """Immutable snapshot of circuit breaker state for diagnostics."""
 
     domain: str
@@ -201,7 +202,7 @@ class CircuitBreakerSnapshot(msgspec.Struct, frozen=True, kw_only=True):
     warmup_failure_count: int = 0
 
 
-class CircuitDecision(msgspec.Struct, frozen=True, kw_only=True):
+class CircuitDecision(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """Decision returned when checking a domain circuit breaker."""
 
     allowed: bool
@@ -211,7 +212,8 @@ class CircuitDecision(msgspec.Struct, frozen=True, kw_only=True):
     reason: str
 
 
-class CircuitBreaker(msgspec.Struct):
+@dataclasses.dataclass
+class CircuitBreaker:
     """Domain-based circuit breaker for transport layer.
 
     Features: warmup failure tracking, boot-phase TTL shortcuts,
@@ -228,21 +230,25 @@ class CircuitBreaker(msgspec.Struct):
     domain: str
     failure_threshold: int = CIRCUIT_FAILURE_THRESHOLD
     recovery_timeout: float = BASE_RECOVERY_TIMEOUT_S
-    _state: CBState = field(default=CBState.CLOSED, init=False)
-    _failure_count: int = field(default=0, init=False)
-    _warmup_failure_count: int = field(default=0, init=False)
-    _warmup_last_failure_time: float = field(default=0.0, init=False)
-    _last_failure_time: float = field(default=0.0, init=False)
-    _consecutive_timeouts: int = field(default=0, init=False)
-    _opened_at_monotonic: float = field(default=0.0, init=False)
-    _last_failure_kind: str = field(default="", init=False)
-    _half_open_probes: int = field(default=0, init=False)
+    _state: CBState = dataclasses.field(default=CBState.CLOSED, init=False)
+    _failure_count: int = dataclasses.field(default=0, init=False)
+    _warmup_failure_count: int = dataclasses.field(default=0, init=False)
+    _warmup_last_failure_time: float = dataclasses.field(default=0.0, init=False)
+    _last_failure_time: float = dataclasses.field(default=0.0, init=False)
+    _consecutive_timeouts: int = dataclasses.field(default=0, init=False)
+    _opened_at_monotonic: float = dataclasses.field(default=0.0, init=False)
+    _last_failure_kind: str = dataclasses.field(default="", init=False)
+    _half_open_probes: int = dataclasses.field(default=0, init=False)
     # Sprint F4: Track state entry time for duration metrics
-    _state_entered_at_monotonic: float = field(default_factory=time.monotonic, init=False)
+    _state_entered_at_monotonic: float = dataclasses.field(default_factory=time.monotonic, init=False)
     # RLock: reentrant, protects all state fields. Using RLock (not Lock) because
     # _record_state_duration -> _emit_transport_event -> user callback may call
     # back into breaker methods that also need the lock.
-    _state_lock: threading.RLock = field(default_factory=threading.RLock, init=False)
+    _state_lock: threading.RLock = dataclasses.field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if self._state_lock is None:
+            self._state_lock = threading.RLock()
 
     def _record_state_duration(self, from_state: CBState, to_state: CBState) -> None:
         """Sprint F4: Record duration gauge when transitioning between states."""
@@ -1029,9 +1035,9 @@ async def checked_httpx_post(
         return None, 0, "unknown_error"
 
 
-# Backward-compat aliases — F4XX: aiohttp removed from default install
+# Backward-compat alias — httpx is the primary HTTP client
 checked_aiohttp_get = checked_httpx_get
-"""F4XX: alias — httpx now replaces aiohttp."""
+"""Alias for backward compatibility with code referencing the old aiohttp name."""
 
 checked_aiohttp_post = checked_httpx_post
 """F4XX: alias — httpx now replaces aiohttp."""

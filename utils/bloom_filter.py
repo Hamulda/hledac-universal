@@ -49,7 +49,7 @@ except ImportError:
     _RUST_BLOOM_AVAILABLE = False
 logger.debug('bloom_filter_backend', extra={'backend': 'rust' if _RUST_BLOOM_AVAILABLE else 'python'})
 
-class BloomFilterStats(msgspec.Struct):
+class BloomFilterStats(msgspec.Struct, gc=False):
     """Statistics for Bloom Filter."""
     size: int
     hash_count: int

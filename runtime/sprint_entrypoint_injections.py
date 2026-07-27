@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     pass
 
 
-class _Injection(msgspec.Struct, frozen=True):
+class _Injection(msgspec.Struct, frozen=True, gc=False):
     """
     One declarative injection entry.
 

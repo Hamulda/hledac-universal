@@ -73,7 +73,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .shadow_inputs import GraphSummaryBundle, LifecycleSnapshotBundle, ModelControlFactsBundle
 
-class ParityArtifact(msgspec.Struct):
+class ParityArtifact(msgspec.Struct, gc=False):
     """
     Diagnostic parity artifact — output of shadow mode comparison.
 

@@ -114,7 +114,7 @@ def _dequantize_int8(int8_vec: np.ndarray, scale: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-class CacheStats(msgspec.Struct):
+class CacheStats(msgspec.Struct, gc=False):
     hits: int = 0
     misses: int = 0
     l1_hits: int = 0
@@ -153,7 +153,7 @@ class CacheStats(msgspec.Struct):
 
 
 # ISSUE #022: CacheEntry now mutable (no frozen=True) to allow mtime updates
-class CacheEntry(msgspec.Struct):
+class CacheEntry(msgspec.Struct, gc=False):
     offset: int
     length: int  # embedding dimension (256)
     mtime: float

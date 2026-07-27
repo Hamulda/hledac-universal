@@ -20,7 +20,7 @@ from __future__ import annotations
 import msgspec
 
 
-class FindingQualityDecision(msgspec.Struct, frozen=True):
+class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint 8W: Quality decision contract for CanonicalFinding ingest.
 

@@ -382,7 +382,7 @@ async def _distill_findings(
 # ---------------------------------------------------------------------------
 
 
-class SynthesisOutcome(msgspec.Struct):
+class SynthesisOutcome(msgspec.Struct, gc=False):
     """
     Sprint F151A: Fail-soft synthesis outcome seam.
 
@@ -440,7 +440,7 @@ def synthesis_outcome_to_dict(outcome: SynthesisOutcome | None) -> dict:
         return {"status": "unknown", "primary_reason": "attr_error", "operator_note": ""}
 
 
-class IOCEntity(msgspec.Struct):
+class IOCEntity(msgspec.Struct, gc=False):
     """Jedna IOC entita extrahovaná z findingu."""
     value: str
     ioc_type: str  # "cve","ip","hash","onion","domain","apt","malware","btc"
@@ -448,7 +448,7 @@ class IOCEntity(msgspec.Struct):
     context: str    # 1 věta
 
 
-class OSINTReport(msgspec.Struct):
+class OSINTReport(msgspec.Struct, gc=False):
     """
     STIX-ready OSINT synthesis report.
 

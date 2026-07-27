@@ -270,7 +270,7 @@ fn blake2b_128_to_hex(result: &[u8]) -> String {
 /// ISSUE-002: Input struct for batch quality assessment.
 /// mirrors Python CanonicalFinding fields used by _assess_finding_quality_batch.
 #[derive(Debug, Clone)]
-#[pyclass(get_all, set_all)]
+#[pyclass(get_all, set_all, from_py_object)]
 pub struct PyFindingInput {
     pub finding_id: String,
     pub source_type: String,
@@ -282,7 +282,7 @@ pub struct PyFindingInput {
 /// ISSUE-002: Output struct for batch quality assessment.
 /// Mirrors Python FindingQualityDecision.
 #[derive(Debug, Clone)]
-#[pyclass(get_all, set_all)]
+#[pyclass(get_all, set_all, skip_from_py_object)]
 pub struct PyQualityDecision {
     pub accepted: bool,
     pub reason: Option<String>,
@@ -466,7 +466,7 @@ pub fn assess_findings_quality_batch(
     // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
     // cpu_pool: 4 threads for BLAKE2b SIMD-bound work — all Rust compute,
     // no Python objects accessed inside the closure.
-    let results: Vec<PyQualityDecision> = py.allow_threads(|| {
+    let results: Vec<PyQualityDecision> = py.detach(|| {
         crate::cpu_pool().install(|| {
             findings.par_iter().map(assess_single_finding).collect()
         })
@@ -512,7 +512,7 @@ pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> Vec<f64> {
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
         // cpu_pool: 4 threads for BLAKE2b SIMD-bound work — pure Rust compute.
-        py.allow_threads(|| {
+        py.detach(|| {
             crate::cpu_pool().install(|| {
                 slice
                     .par_iter()
@@ -538,7 +538,7 @@ pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> Vec<Strin
         slice.iter().map(|t| dedup_fingerprint(t)).collect()
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        py.allow_threads(|| {
+        py.detach(|| {
             crate::cpu_pool().install(|| {
                 slice
                     .par_iter()
@@ -564,7 +564,7 @@ pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> Vec<String> 
         slice.iter().map(|u| url_fingerprint(u)).collect()
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        py.allow_threads(|| {
+        py.detach(|| {
             crate::cpu_pool().install(|| {
                 slice
                     .par_iter()
@@ -590,7 +590,7 @@ pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> Vec<S
         slice.iter().map(|t| normalize_quality_text(t)).collect()
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        py.allow_threads(|| {
+        py.detach(|| {
             crate::cpu_pool().install(|| {
                 slice
                     .par_iter()

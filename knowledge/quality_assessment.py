@@ -285,7 +285,7 @@ def _compute_url_fingerprint(url: str) -> str:
 
 
 # Sprint F216G: Quality Rejection Ledger
-class QualityRejectionRecord(msgspec.Struct, frozen=True):
+class QualityRejectionRecord(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F216G: Bounded per-finding quality gate rejection record.
 

@@ -39,7 +39,7 @@ class SecurityLevel(Enum):
     MAXIMUM = 4
 
 
-class SecurityContext(msgspec.Struct):
+class SecurityContext(msgspec.Struct, gc=False):
     """Security context for operations."""
     operation_id: str
     security_level: SecurityLevel
@@ -50,7 +50,7 @@ class SecurityContext(msgspec.Struct):
     audit_log: list[dict[str, Any]] = field(default_factory=list)
 
 
-class SecurityResult(msgspec.Struct, frozen=True):
+class SecurityResult(msgspec.Struct, frozen=True, gc=False):
     """Result of security operation."""
     operation_type: str
     success: bool

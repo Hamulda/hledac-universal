@@ -36,7 +36,7 @@ MAX_PIVOTS_PER_SPRINT: int = 10
 PIVOT_TIMEOUT_S: float = 25.0
 MAX_PIVOT_FINDINGS: int = 50
 
-class PivotExecutionRequest(msgspec.Struct, frozen=True):
+class PivotExecutionRequest(msgspec.Struct, frozen=True, gc=False):
     """Request to execute a single pivot."""
     pivot_id: str
     pivot_type: str
@@ -45,7 +45,7 @@ class PivotExecutionRequest(msgspec.Struct, frozen=True):
     confidence: float
     reason: str
 
-class PivotExecutionResult(msgspec.Struct, frozen=True):
+class PivotExecutionResult(msgspec.Struct, frozen=True, gc=False):
     """Result of executing a single pivot."""
     pivot_id: str
     attempted: bool

@@ -204,7 +204,7 @@ impl BloomFilter {
         // Parallel: hash all items in parallel, collect indices per item.
         // ISSUE-D1: py.allow_threads() enables true parallelism — rayon workers
         // don't block the GIL, so asyncio coroutines on the same thread can progress.
-        let results: Vec<(Vec<usize>, bool)> = Python::with_gil(|py| {
+        let results: Vec<(Vec<usize>, bool)> = Python::attach(|py| {
             release_gil(py, || {
                 items
                     .par_iter()
@@ -312,7 +312,7 @@ impl BloomFilter {
         // Parallel: hash all items, collect contains result per item.
         // ISSUE-D1: py.allow_threads() enables true parallelism — rayon workers
         // don't block the GIL, so asyncio coroutines can make progress.
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             release_gil(py, || {
                 items
                     .par_iter()
@@ -787,7 +787,7 @@ impl MmapBloomFilter {
         // Phase 1: parallel xxHash3-64 hashing (read-only, safe with RwLock read guard).
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let ptr_guard = self.ptr.read();
-        let results: Vec<(Vec<usize>, bool)> = Python::with_gil(|py| {
+        let results: Vec<(Vec<usize>, bool)> = Python::attach(|py| {
             release_gil(py, || {
                 items
                     .par_iter()
@@ -890,7 +890,7 @@ impl MmapBloomFilter {
         // Vec<usize> allocation per item in the hot path.
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let _ptr_guard = self.ptr.read();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             release_gil(py, || {
                 items
                     .par_iter()
@@ -924,7 +924,7 @@ impl MmapBloomFilter {
         // Single iteration: compute both flags in one pass over indices (ISSUE-7 optimization).
         // ISSUE-D1: py.allow_threads() enables true rayon parallelism.
         let ptr_guard = self.ptr.read();
-        let results: Vec<(Vec<usize>, bool, bool)> = Python::with_gil(|py| {
+        let results: Vec<(Vec<usize>, bool, bool)> = Python::attach(|py| {
             release_gil(py, || {
                 items
                     .par_iter()
@@ -1135,7 +1135,7 @@ impl RotatingMmapBloomFilter {
         // Hold read locks for the duration of par_iter (RwLockReadGuard is Send+Sync).
         let _active_guard = active.ptr.read();
         let _previous_guard = previous.ptr.read();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             release_gil(py, || {
                 items
                     .par_iter()

@@ -199,7 +199,7 @@ async def fetch_eepsite_socks5(
     Fetch content from an I2P eepsite via SOCKS5 proxy.
 
     This uses the lower-level SOCKS5 protocol (port 7654) for better anonymity.
-    Falls back to HTTP proxy if aiohttp_socks is not available.
+    Falls back to HTTP proxy if httpx-socks is not available.
 
     Args:
         url: Eepsite URL (e.g., "http://i2pwiki.i2p/")

@@ -70,7 +70,7 @@ class AuditEventType(Enum):
     SYSTEM_EVENT = "system_event"
 
 
-class AuditEvent(msgspec.Struct):
+class AuditEvent(msgspec.Struct, gc=False):
     """Audit event."""
     timestamp: datetime
     event_type: AuditEventType
@@ -89,7 +89,7 @@ class AuditEvent(msgspec.Struct):
         return hashlib.sha256(data.encode()).hexdigest()
 
 
-class AuditConfig(msgspec.Struct):
+class AuditConfig(msgspec.Struct, gc=False):
     """Audit configuration."""
     db_path: str = "data/audit.duckdb"
     min_level: AuditLevel = AuditLevel.INFO

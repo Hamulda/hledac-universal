@@ -9,10 +9,13 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-pyo3 = { version = "0.24", features = ["extension-module", "abi3-py312"] }
-rayon = "1.12"
+# P1-FIX: pyo3 locked to 0.24.x — codebase written for 0.24 API
+# 0.29+ has breaking changes: Python::with_gil, into_py, etc.
+# P1-KEEP: pyo3 0.29 — gil.rs and ring_buffer.rs written for 0.29 API
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py312"] }
+rayon = "1.10"
 regex = "1.11"
-regex-automata = { version = "=0.4.15", default-features = false, features = ["meta"] }
+regex-automata = { version = "0.4.16", default-features = false, features = ["meta"] }
 url = "2"
 lol_html = "2.9"
 xml = "1.3"
@@ -44,6 +47,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 # PDF extraction via lopdf — pure Rust PDF parser
 # Feature-gated: ~3MB additional compile, M1 8GB safe
 # Enables: pdf.extract_text(), pdf.extract_iocs(), pdf.extract_text_from_bytes()
+# MAINTENANCE NOTE (2026-07): lopdf is in maintenance mode — no new features.
+# Python fallback: PyMuPDF in content_miner.py (already wired as primary path).
+# Rust lopdf kept for backward compatibility; consider pdfium-render for new work.
 lopdf = { version = "0.34", optional = true }
 
 # Office documents — docx-rs + calamine + zip (for office feature)
@@ -57,16 +63,20 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
 hex = "0.4"
 
-# STIX 2.1 bundle encoding + jsonschema validation (for stix feature)
+# STIX 2.1 bundle encoding (for stix feature)
 # Feature-gated: ~2MB additional compile, M1 8GB safe
 # Enables: stix.encode(), stix.decode(), stix.validate()
-jsonschema = { version = "0.24", optional = true }
+# NOTE: jsonschema crate removed 2026-07-27 — validation uses custom serde_json logic
 
 # DNS resolution — DoH/DoT/DoQ via hickory-dns
 # Feature-gated: ~5MB additional compile, M1 8GB safe
 # Enables: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
+# P1-UPGRADE: hickory - simplified feature set for DoH/DoT
+# dns-over-https-rustls provides both DoH and DoT via rustls
 hickory = { package = "hickory-dns", version = "0.24", optional = true, features = ["resolver", "rustls"] }
-tokio = { version = "1", optional = true, features = ["rt-multi-thread", "net", "time", "sync"] }
+# P1-UPGRADE: tokio 1.x → 1.40+ (2026-07-27)
+# Backward compatible for standard runtime builder APIs in dns.rs and quic.rs.
+tokio = { version = "1.40", optional = true, features = ["rt-multi-thread", "net", "time", "sync"] }
 
 # QUIC/HTTP3 via quinn + h3 (for http3 feature)
 # Feature-gated: ~8MB additional compile, M1 8GB safe
@@ -99,6 +109,8 @@ dirs = "5"
 
 [features]
 # Default = core + data (DuckDB wired) — standard Hledac build
+# NOTE: dns feature temporarily disabled — hickory-dns is a binary crate, not lib
+# Use --features "dns" to enable DNS resolution when hickory-resolver is fixed
 default = ["core", "data"]
 
 # core: IOC extraction, URL ops, hashing, compression, HTML parsing
@@ -198,13 +210,11 @@ otel = [
 # Requires pyo3-build-config in build-dependencies (already declared)
 py-version = []
 
-# stix: STIX 2.1 bundle encoding + JSON Schema validation
+# stix: STIX 2.1 bundle encoding + validation
 # Adds: stix.encode(), stix.decode(), stix.validate()
-# M1 8GB: ~2MB compile, serde_json + jsonschema
+# M1 8GB: ~2MB compile, uses custom serde_json validation (jsonschema removed)
 # Python fallback: runtime/stix_exporter.py uses json.dumps when Rust unavailable
-stix = [
-    "dep:jsonschema",
-]
+stix = []
 
 # tls13: TLS 1.3 fingerprinting — JA4 + ECH detection via rustls
 # Adds: rust.tls.ja4_from_client_hello(), connect_and_ja4(), batch_ja4()
@@ -218,10 +228,12 @@ tls13 = [
 # Adds: rust.quic.fetch() — true HTTP/3 over QUIC
 # M1 8GB: ~8MB compile, bounded to 3 concurrent connections
 # Fallback path when curl_cffi Alt-Svc H3 upgrade fails
+# P1-FIX: quic needs rustls for TLS (was only in tls13 feature)
 quic = [
     "dep:quinn",
     "dep:h3",
     "dep:h3-quinn",
+    "dep:rustls",
 ]
 
 # pdf: PDF text extraction and IOC extraction via lopdf
@@ -265,7 +277,7 @@ strip = "symbols"
 panic = "abort"
 
 [build-dependencies]
-pyo3-build-config = "0.24"
+pyo3-build-config = "0.29"
 
 [lints.rust]
 unused = "warn"

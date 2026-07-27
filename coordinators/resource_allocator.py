@@ -44,7 +44,7 @@ SKLEARN_AVAILABLE = True
 logger = logging.getLogger(__name__)
 MAX_PENDING_RESOURCE_REQUESTS = 1000
 
-class CapacitySnapshot(msgspec.Struct, frozen=True):
+class CapacitySnapshot(msgspec.Struct, frozen=True, gc=False):
     """Immutable snapshot of resource capacity with TTL tracking."""
     cpu_percent: float
     gpu_memory: float
@@ -143,7 +143,7 @@ class Priority(Enum):
     CRITICAL = 4
     EMERGENCY = 5
 
-class ResourceRequest(msgspec.Struct):
+class ResourceRequest(msgspec.Struct, gc=False):
     """Resource request specification"""
     task_id: str
     task_name: str
@@ -159,7 +159,7 @@ class ResourceRequest(msgspec.Struct):
     affinity: list[str] | None = None
     anti_affinity: list[str] | None = None
 
-class ResourceCapacity(msgspec.Struct, frozen=True):
+class ResourceCapacity(msgspec.Struct, frozen=True, gc=False):
     """Available resource capacity"""
     cpu_cores: float
     memory_gb: float
@@ -170,7 +170,7 @@ class ResourceCapacity(msgspec.Struct, frozen=True):
     memory_usage: float
     gpu_usage: float
 
-class ResourceAllocation(msgspec.Struct, frozen=True):
+class ResourceAllocation(msgspec.Struct, frozen=True, gc=False):
     """Resource allocation record"""
     task_id: str
     allocated_resources: dict[str, float]

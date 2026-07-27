@@ -90,7 +90,7 @@ class STDPParameters:
         self.tau = tau
 
 
-class MemoryPattern(msgspec.Struct):
+class MemoryPattern(msgspec.Struct, gc=False):
     """
     A memory pattern stored in neuromorphic memory.
 

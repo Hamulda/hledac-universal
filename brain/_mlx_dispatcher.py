@@ -238,7 +238,7 @@ async def stop_async_batcher() -> None:
             await _global_batcher.stop()
             _global_batcher = None
 
-class _DispatcherContext(msgspec.Struct):
+class _DispatcherContext(msgspec.Struct, gc=False):
     """
     Per-sprint context pro MLXDispatcher.
 

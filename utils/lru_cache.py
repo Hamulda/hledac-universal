@@ -2,13 +2,18 @@
 LRU Cache Utilities
 ==================
 
-Python 3.14+ compatible LRU cache implementation using dict + list hybrid.
-Replaces OrderedDict usage for LRU cache semantics.
+Custom LRU cache implementation optimized for M1 8GB UMA with battle-tested
+cachetools library available as alternative.
 
-Motivation:
-- OrderedDict is deprecated in Python 3.14 (collections.abc moved to collections.abc)
-- dict maintains insertion order since Python 3.7, but move_to_end() is still OrderedDict-only
-- This module provides O(1) LRU operations using a dict + list hybrid
+Features vs cachetools:
+- __slots__ for reduced memory footprint (M1 8GB critical)
+- TTLCache extension with per-entry expiration
+- lru_cache decorator with functools-compatible interface
+- hit/miss statistics tracking
+
+When to use which:
+- LRUCache/TTLCache: When you need TTL, __slots__, or the decorator
+- cachetools.LRUCache: When you want battle-tested standard library semantics
 
 Usage:
     from utils.lru_cache import LRUCache
@@ -23,6 +28,10 @@ Usage:
     @lru_cache(max_size=256)
     def expensive_func(arg):
         return compute(arg)
+
+    # TTLCache for time-based expiration:
+    from utils.lru_cache import TTLCache
+    cache = TTLCache(max_size=100, ttl=3600)  # 1 hour TTL
 """
 
 from __future__ import annotations

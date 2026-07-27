@@ -140,7 +140,7 @@ class InitResult(Generic[T]):
         """Construct a failure result."""
         return cls(value=None, error=error, elapsed_ms=elapsed_ms)
 
-class PreludePhaseResult(msgspec.Struct):
+class PreludePhaseResult(msgspec.Struct, gc=False):
     """Result from the prelude phase."""
     lanes_attempted: list[str]
     lanes_skipped: dict[str, str]
@@ -148,7 +148,7 @@ class PreludePhaseResult(msgspec.Struct):
     prelude_duration_s: float | None = None
     error: str | None = None
 
-class AcquisitionPhaseResult(msgspec.Struct):
+class AcquisitionPhaseResult(msgspec.Struct, gc=False):
     """Result from one acquisition cycle."""
     cycles_started: int = 0
     cycles_completed: int = 0
@@ -158,14 +158,14 @@ class AcquisitionPhaseResult(msgspec.Struct):
     exit_path: str | None = None
     error: str | None = None
 
-class WinddownPhaseResult(msgspec.Struct):
+class WinddownPhaseResult(msgspec.Struct, gc=False):
     """Result from the winddown phase."""
     export_paths: list[str] = msgspec.field(default_factory=list)
     synthesis_success: bool = False
     teardown_duration_s: float | None = None
     error: str | None = None
 
-class _CycleState(msgspec.Struct):
+class _CycleState(msgspec.Struct, gc=False):
     """Per-cycle mutable state — isolated to prevent cross-cycle leakage.
 
     Unlike SprintContext (which is immutable/frozen), _CycleState IS mutable
@@ -241,7 +241,7 @@ class _CycleState(msgspec.Struct):
     forensics_enricher: Any = None
     'Forensics enricher. May be None.'
 
-class SprintContext(msgspec.Struct, frozen=True):
+class SprintContext(msgspec.Struct, frozen=True, gc=False):
     """Shared immutable context passed to all phase orchestrators.
 
     Unlike v1's `self._*` slots, v2 passes all state explicitly via this

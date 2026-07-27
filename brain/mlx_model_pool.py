@@ -32,7 +32,7 @@ def _get_mlx() -> Any | None:
             _mlx = None
     return _mlx
 
-class ModelEntry(msgspec.Struct):
+class ModelEntry(msgspec.Struct, gc=False):
     """ISSUE #15: Přidána weakref pro referenční počítání."""
     model: Any
     tokenizer: Any | None = None
@@ -42,7 +42,7 @@ class ModelEntry(msgspec.Struct):
     ref_count: int = 1  # ISSUE #15: Reference count pro pool management
     weak_ref: Any = None  # ISSUE #15: weakref pro GC-safe referenci
 
-class MLXModelPoolConfig(msgspec.Struct):
+class MLXModelPoolConfig(msgspec.Struct, gc=False):
     budget_gb: float = 4.0
     min_eviction_interval_s: float = 1.0
     auto_clear_cache: bool = True

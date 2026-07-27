@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 # ─────────────────────────────────────────────────────────────────
 
 
-class _Injection(msgspec.Struct, frozen=True):
+class _Injection(msgspec.Struct, frozen=True, gc=False):
     """One declarative injection entry."""
 
     name: str

@@ -142,7 +142,7 @@ pub fn batch_compute_simhash(texts: Vec<String>, ngram_size: usize) -> Vec<u64> 
     } else {
         // adaptive 1-2 threads: n < 64 → 1 thread; n ≥ 64 → 2 threads (P-core ceiling)
         // Issue #6: GIL released so rayon workers can truly run in parallel.
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             crate::gil::release_gil(py, || {
                 crate::mixed_pool(n).install(|| {
                     slice

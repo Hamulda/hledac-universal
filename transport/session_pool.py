@@ -4,14 +4,17 @@ transport/session_pool.py
 ISSUE-007 / ISSUE-010: Canonical session pool — unified HTTP session entry point.
 
 F4.3 / F350M-R: Canonical session pool — singleton per kind.
+F4XX / ISSUE-013: Adaptive connection limits based on UMA memory pressure.
+
 This module is the SINGLE CANONICAL entry point for ALL HTTP session types:
   - httpx.AsyncClient (HTTP/2) for clearnet API/text fetching
   - httpx-socks (SOCKS5) for Tor/I2P
   - curl_cffi for JA3 stealth fingerprinting
 
 M1 8GB bounds:
-- httpx clearnet: max_connections=25, max_keepalive_connections=10
-- httpx SOCKS5: max_connections=10, max_keepalive_connections=5
+- httpx clearnet: max_connections=25, max_keepalive_connections=10 (normal)
+- httpx SOCKS5: max_connections=10, max_keepalive_connections=5 (normal)
+- Adaptive: reduced at elevated/critical memory pressure
 
 Lazy init — no network side effects at import time.
 Thread-safe via asyncio.Lock.
@@ -39,8 +42,11 @@ Usage:
 
 import asyncio
 import logging
+import time
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+
+import msgspec
 
 from hledac.universal.utils.locks import LazyAsyncioLock
 
@@ -60,18 +66,79 @@ class PoolKind(Enum):
 
 
 # =============================================================================
-# Constants — M1 8GB bounded
+# ConnectionPreset — Adaptive limits based on UMA memory pressure (ISSUE-013)
 # =============================================================================
 
-_HTTPX_MAX_CONNECTIONS = 25
-_HTTPX_MAX_KEEPALIVE = 10
-_HTTPX_KEEPALIVE_EXPIRY = 30.0
+class ConnectionPreset(msgspec.Struct, frozen=True, gc=False):
+    """
+    ISSUE-013: Immutable connection preset derived from UMA memory pressure state.
 
-_HTTPX_SOCKS_MAX_CONNECTIONS = 10
-_HTTPX_SOCKS_MAX_KEEPALIVE = 5
+    Parallel to ConcurrencyPreset in core/resource_governor.py.
+    Single source of truth for HTTP connection limits derived from
+    M1 8GB UMA state.
 
-_DEFAULT_TIMEOUT_S = 15.0
-_CONNECT_TIMEOUT_S = 5.0
+    M1 8GB calibrated values:
+        critical:   max_conn=10, max_keep=4  — active memory pressure, OOM risk
+        elevated:   max_conn=15, max_keep=6  — approaching limit
+        normal:     max_conn=25, max_keep=10  — normal operation
+    """
+
+    max_connections: int
+    max_keepalive: int
+    keepalive_expiry: float
+
+    @classmethod
+    def from_uma_state(cls, state: str) -> ConnectionPreset:
+        """Derive preset from UMA state string."""
+        match state:
+            case "critical" | "emergency":
+                return cls(max_connections=10, max_keepalive=4, keepalive_expiry=15.0)
+            case "warn":
+                return cls(max_connections=15, max_keepalive=6, keepalive_expiry=20.0)
+            case "soft_warn":
+                return cls(max_connections=20, max_keepalive=8, keepalive_expiry=25.0)
+            case _:
+                return cls(max_connections=25, max_keepalive=10, keepalive_expiry=30.0)
+
+
+# =============================================================================
+# UMA-aware adaptive limits (ISSUE-013)
+# =============================================================================
+
+# LRU cache for UMA state — 1s TTL to avoid sampling overhead
+_uma_state_cache: tuple[str, float] | None = None  # (state, timestamp)
+
+
+def _get_cached_uma_state() -> str:
+    """
+    Get cached UMA state with 1s TTL.
+    Falls back to 'ok' if sampling fails.
+    """
+    global _uma_state_cache
+    now = time.monotonic()
+
+    if _uma_state_cache is not None:
+        state, cached_at = _uma_state_cache
+        if now - cached_at < 1.0:
+            return state
+
+    # Sample UMA status
+    try:
+        from hledac.universal.core.resource_governor import sample_uma_status
+
+        uma = sample_uma_status()
+        state = uma.state
+    except Exception:
+        state = "ok"
+
+    _uma_state_cache = (state, now)
+    return state
+
+
+def _get_connection_preset() -> ConnectionPreset:
+    """Get connection preset based on current UMA memory pressure."""
+    state = _get_cached_uma_state()
+    return ConnectionPreset.from_uma_state(state)
 
 
 # =============================================================================
@@ -86,10 +153,31 @@ _httpx_lock = LazyAsyncioLock()
 _httpx_socks_clients: dict[tuple[str, bool], httpx.AsyncClient] = {}
 _httpx_socks_lock = LazyAsyncioLock()
 
+# ISSUE-013: Active connection tracking for metrics
+_active_connections: int = 0
+_pool_metrics_lock = asyncio.Lock()
+
+
+def _record_pool_metrics() -> None:
+    """Record pool metrics to metrics registry (fail-soft)."""
+    try:
+        from hledac.universal.core.metrics_registry import get_metrics_registry
+
+        registry = get_metrics_registry()
+        preset = _get_connection_preset()
+        registry.record_gauge("session_pool_active_connections", float(_active_connections))
+        registry.record_gauge("session_pool_httpx_max_connections", float(preset.max_connections))
+        registry.record_gauge("session_pool_httpx_max_keepalive", float(preset.max_keepalive))
+        registry.record_gauge("session_pool_uma_pressure", float(hash(preset) % 100))  # 0-99
+    except Exception:
+        pass  # Fail-soft: metrics are diagnostic only
+
 
 # =============================================================================
-# httpx Singleton
+# httpx Singleton (ISSUE-013: Adaptive limits)
 # =============================================================================
+
+_CONNECT_TIMEOUT_S = 5.0
 
 
 async def httpx_client() -> httpx.AsyncClient:
@@ -99,9 +187,9 @@ async def httpx_client() -> httpx.AsyncClient:
     Singleton — same instance returned on every call until close.
     HTTP/2 enabled when h2 is installed; falls back to 1.1 otherwise.
 
-    M1 8GB bounds:
-        max_connections=25, max_keepalive_connections=10
-        ~25MB RAM for connection states (well within 6.25GB budget)
+    ISSUE-013: Connection limits are adaptive based on UMA memory pressure.
+    At critical/emergency pressure, max_connections is reduced from 25 to 10
+    to prevent OOM on M1 8GB.
 
     Returns:
         httpx.AsyncClient: HTTP/2 capable async client
@@ -120,10 +208,12 @@ async def httpx_client() -> httpx.AsyncClient:
 
     async with _httpx_lock:
         if _httpx_client is None or _httpx_client.is_closed:
+            # ISSUE-013: Adaptive limits from UMA state
+            preset = _get_connection_preset()
             limits = httpx.Limits(
-                max_connections=_HTTPX_MAX_CONNECTIONS,
-                max_keepalive_connections=_HTTPX_MAX_KEEPALIVE,
-                keepalive_expiry=_HTTPX_KEEPALIVE_EXPIRY,
+                max_connections=preset.max_connections,
+                max_keepalive_connections=preset.max_keepalive,
+                keepalive_expiry=preset.keepalive_expiry,
             )
             timeout = httpx.Timeout(
                 connect=_CONNECT_TIMEOUT_S,
@@ -139,7 +229,11 @@ async def httpx_client() -> httpx.AsyncClient:
                 cookies=None,
                 trust_env=False,
             )
-            logger.debug("[SessionPool] httpx.AsyncClient created (HTTP/2, singleton)")
+            logger.debug(
+                f"[SessionPool] httpx.AsyncClient created (HTTP/2, "
+                f"max_conn={preset.max_connections}, max_keep={preset.max_keepalive})"
+            )
+            _record_pool_metrics()
         return _httpx_client
 
 
@@ -149,7 +243,7 @@ async def close_httpx() -> None:
 
     After close, next httpx_client() creates a fresh instance.
     """
-    global _httpx_client
+    global _httpx_client, _active_connections
 
     client = None
     async with _httpx_lock:
@@ -164,9 +258,14 @@ async def close_httpx() -> None:
         except Exception as e:
             logger.warning(f"[SessionPool] httpx close error: {e}")
 
+    # ISSUE-013: Update metrics on close
+    async with _pool_metrics_lock:
+        _active_connections = max(0, _active_connections - 1)
+        _record_pool_metrics()
+
 
 # =============================================================================
-# httpx-socks SOCKS5 Singleton Pool (ISSUE-007)
+# httpx-socks SOCKS5 Singleton Pool (ISSUE-007 / ISSUE-013: Adaptive limits)
 # =============================================================================
 
 
@@ -180,13 +279,10 @@ async def httpx_socks_client(
 
     ISSUE-007: Replaces aiohttp_socks.ProxyConnector with httpx-socks.
     ISSUE-080: Adds rdns=True for remote DNS resolution (Tor anonymity).
+    ISSUE-013: Connection limits are adaptive based on UMA memory pressure.
 
     Each unique (proxy_url, rdns) tuple gets its own client
-    (bounded by _HTTPX_SOCKS_MAX_PROXIES).
-
-    M1 8GB bounds:
-        max_connections=10, max_keepalive_connections=5
-        ~10MB RAM per SOCKS5 client
+    (bounded by 8 SOCKS proxies max on M1 8GB).
 
     Args:
         proxy_url: SOCKS5 proxy URL (e.g., "socks5://127.0.0.1:9050")
@@ -220,10 +316,15 @@ async def httpx_socks_client(
                 except Exception:
                     pass
 
+            # ISSUE-013: Adaptive limits from UMA state (50% of httpx preset)
+            preset = _get_connection_preset()
+            socks_max_conn = max(5, preset.max_connections // 2)
+            socks_max_keep = max(2, preset.max_keepalive // 2)
+
             limits = httpx.Limits(
-                max_connections=_HTTPX_SOCKS_MAX_CONNECTIONS,
-                max_keepalive_connections=_HTTPX_SOCKS_MAX_KEEPALIVE,
-                keepalive_expiry=_HTTPX_KEEPALIVE_EXPIRY,
+                max_connections=socks_max_conn,
+                max_keepalive_connections=socks_max_keep,
+                keepalive_expiry=preset.keepalive_expiry,
             )
             timeout = httpx.Timeout(
                 connect=_CONNECT_TIMEOUT_S,
@@ -246,8 +347,9 @@ async def httpx_socks_client(
             )
             logger.debug(
                 f"[SessionPool] httpx-socks client created for {proxy_url} "
-                f"(rdns={rdns})"
+                f"(rdns={rdns}, max_conn={socks_max_conn})"
             )
+            _record_pool_metrics()
         return _httpx_socks_clients[cache_key]
 
 
@@ -378,21 +480,30 @@ class SessionPool:
         """
         Get pool status for telemetry.
 
+        ISSUE-013: Returns adaptive limits based on current UMA state.
+
         Returns:
             dict with pool state and bounds
         """
+        preset = _get_connection_preset()
+        uma_state = _get_cached_uma_state()
+        socks_max_conn = max(5, preset.max_connections // 2)
+        socks_max_keep = max(2, preset.max_keepalive // 2)
+
         return {
             "httpx": {
                 "available": True,
                 "initialized": _httpx_client is not None and not _httpx_client.is_closed,
-                "max_connections": _HTTPX_MAX_CONNECTIONS,
-                "max_keepalive": _HTTPX_MAX_KEEPALIVE,
+                "max_connections": preset.max_connections,
+                "max_keepalive": preset.max_keepalive,
+                "uma_state": uma_state,
+                "active_connections": _active_connections,
             },
             "httpx_socks": {
                 "available": True,
                 "active_proxies": len(_httpx_socks_clients),
-                "max_connections": _HTTPX_SOCKS_MAX_CONNECTIONS,
-                "max_keepalive": _HTTPX_SOCKS_MAX_KEEPALIVE,
+                "max_connections": socks_max_conn,
+                "max_keepalive": socks_max_keep,
             },
             "curl_cffi": {
                 "delegated_to": "curl_cffi_runtime",
@@ -417,15 +528,7 @@ async def get_httpx_client() -> httpx.AsyncClient:
     return await session_pool.httpx()
 
 
-# F4XX: aiohttp removed — backward-compat aliases for code still using aiohttp naming
-async def aiohttp_session() -> httpx.AsyncClient:
-    """Backward-compat alias for httpx_client(). aiohttp removed (F4XX)."""
-    return await httpx_client()
-
-
-async def close_aiohttp() -> None:
-    """Backward-compat alias for close_httpx(). aiohttp removed (F4XX)."""
-    await close_httpx()
+# F4XX: aiohttp removed — backward-compat aliases moved to network.session_runtime
 
 
 # For files already importing from transport.curl_cffi_runtime
@@ -452,10 +555,8 @@ __all__ = [
     # Backward compat
     "httpx_client",
     "httpx_socks_client",
-    "aiohttp_session",
     "curl_cffi_session",
     "close_httpx",
-    "close_aiohttp",
     "close_httpx_socks",
     "close_curl_cffi",
     "get_httpx_client",

@@ -392,7 +392,7 @@ class ProcessType(Enum):
     SUSPICIOUS = 2
     MALWARE = 3
 
-class ProcessInfo(msgspec.Struct):
+class ProcessInfo(msgspec.Struct, gc=False):
     """Process information"""
     pid: int
     name: str
@@ -405,7 +405,7 @@ class ProcessInfo(msgspec.Struct):
     create_time: float
     status: ProcessType
 
-class SecurityEvent(msgspec.Struct, frozen=True):
+class SecurityEvent(msgspec.Struct, frozen=True, gc=False):
     """Security event for VM threats"""
     event_type: str
     timestamp: float

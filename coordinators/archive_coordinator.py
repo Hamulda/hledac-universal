@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 MAX_ARCHIVE_RESULTS = 20
 MAX_PENDING_URLS = 2000
 
-class ArchiveCoordinatorConfig(msgspec.Struct):
+class ArchiveCoordinatorConfig(msgspec.Struct, gc=False):
     """Configuration for ArchiveCoordinator."""
     max_escalations_per_step: int = 2
     max_mementos_per_url: int = 5

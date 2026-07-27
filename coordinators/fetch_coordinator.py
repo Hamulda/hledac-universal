@@ -309,7 +309,7 @@ def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     """Wrapper for backward compatibility — delegates to tools/file_cache.py."""
     _apply_fcntl_nocache(fd, content_length)
 
-class FetchCoordinatorConfig(msgspec.Struct, frozen=True):
+class FetchCoordinatorConfig(msgspec.Struct, frozen=True, gc=False):
     """Configuration for FetchCoordinator."""
     max_urls_per_step: int = 5
     max_evidence_per_step: int = 10
@@ -601,10 +601,11 @@ class FetchCoordinator(UniversalCoordinator):
         Validate fetch target: resolve and check for private IPs.
 
         NOTE (P3-8): This provides DNS rebinding protection but has a residual
-        TOCTOU window between validation and fetch. The actual aiohttp fetch
-        resolves DNS independently. For HTTPS, certificate validation provides
-        secondary protection. For HTTP, the risk is acknowledged but the
-        performance cost of binding to pre-validated IPs is prohibitive.
+        TOCTOU window between validation and fetch. The actual fetch
+        (curl_cffi) resolves DNS independently. For HTTPS, certificate
+        validation provides secondary protection. For HTTP, the risk is
+        acknowledged but the performance cost of binding to pre-validated
+        IPs is prohibitive.
 
         Sprint F-A4: consults ``self._host_ips_cache`` first (populated
         by ``run_step`` via the batch DNS resolver) and falls through
@@ -923,7 +924,7 @@ class FetchCoordinator(UniversalCoordinator):
         bind the connection to the pre-validated IP before DNS lookup,
         eliminating the TOCTOU window between validation and fetch.
 
-        Replaced StealthWebScraper (aiohttp) with public_fetcher's
+        Replaced StealthWebScraper with public_fetcher's
         fetch_via_curl_cffi_cached() which has full H3 Alt-Svc LRU priming,
         conditional cache (ETag/Last-Modified), and prewarm pool support.
         """
@@ -1325,9 +1326,11 @@ class FetchCoordinator(UniversalCoordinator):
                     except Exception:
                         return (domain, None)
                     return (domain, _doc)
-                _domain_docs = await asyncio.gather(
-                    *[_prefetch_domain(d) for d in _unique_domains],
-                    return_exceptions=True
+                _domain_docs = await parallel(
+                    [_prefetch_domain(d) for d in _unique_domains],
+                    policy="collect",
+                    concurrency=10,
+                    ctx="robots_prefetch",
                 )
                 for _item in _domain_docs:
                     if isinstance(_item, Exception):
@@ -1698,16 +1701,17 @@ class FetchCoordinator(UniversalCoordinator):
                     except Exception:  # noqa: BLE001 — best-effort; HEAD probe failure; non-critical
                         return None
 
-                # B3-FIX: asyncio.gather with coroutines (not pre-created tasks).
-                # gather() schedules coroutines as tasks internally; pre-creating with
-                # create_task() would schedule them twice, causing duplicate execution.
-                try:
-                    _curl_result, _js_probe_result = await asyncio.gather(
-                        _curl_task(), _js_probe_task(), return_exceptions=True
-                    )
-                except Exception:  # noqa: BLE001 — gather error; fall back to curl-only
-                    _curl_result = None
-                    _js_probe_result = None
+                # B3-FIX (F350M-R): parallel() with taskgroup backend replaces asyncio.gather.
+                # Race: curl vs JS probe — both run concurrently, first dict result wins.
+                # parallel(policy="collect") collects results without raising.
+                results = await parallel(
+                    [_curl_task(), _js_probe_task()],
+                    policy="collect",
+                    concurrency=2,
+                    ctx="curl_js_probe",
+                )
+                _curl_result = results.ok[0] if len(results.ok) > 0 else None
+                _js_probe_result = results.ok[1] if len(results.ok) > 1 else None
 
                 result = _curl_result if isinstance(_curl_result, dict) else None
 

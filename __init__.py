@@ -27,28 +27,50 @@ from importlib.util import find_spec as _find_spec
 from types import ModuleType
 from typing import Any
 import re as _re
+import threading
 
 # -----------------------------------------------------------------------------
 # Lazy namespace bootstrap (runs once on first __getattr__ call, not at import)
+# Thread-safe via double-checked locking pattern.
 # -----------------------------------------------------------------------------
+_BOOTSTRAP_LOCK = threading.RLock()  # RLock: reentrant pro případ rekurzivního volání z _bootstrap_* chain
 _BOOTSTRAPPED: bool = False
 
 
 def _ensure_bootstrap() -> None:
-    """Lazily bootstrap the hledac namespace — called once on first attribute access."""
+    """Lazily bootstrap the hledac namespace — called once on first attribute access.
+
+    Thread-safe double-checked locking:
+    1. Fast path: if _BOOTSTRAPPED, return immediately (no lock acquired)
+    2. Slow path: acquire lock, re-check, perform bootstrap, set flag
+    """
     global _BOOTSTRAPPED
+
+    # Fast path: already bootstrapped (no lock needed)
     if _BOOTSTRAPPED:
         return
-    _BOOTSTRAPPED = True
-    try:
-        from hledac._namespace_bootstrap import ensure_namespace_paths
 
-        ensure_namespace_paths()
-    except (ImportError, Exception):  # noqa: BLE001
-        pass  # noqa: BLE001  # fail-soft guard
+    # Slow path: acquire lock and bootstrap
+    with _BOOTSTRAP_LOCK:
+        # Double-check after acquiring lock
+        if _BOOTSTRAPPED:
+            return
+
+        try:
+            from hledac._namespace_bootstrap import ensure_namespace_paths
+
+            ensure_namespace_paths()
+            _BOOTSTRAPPED = True  # Set ONLY after successful bootstrap
+        except ImportError:
+            # ImportError propagates — namespace is broken, not silently ignorable
+            raise
 
 # -----------------------------------------------------------------------------
-# Auto-discovery configuration
+# Lazy index builder (extracted for maintainability)
+# -----------------------------------------------------------------------------
+from hledac.universal._lazy_index import build_module_index
+
+
 # -----------------------------------------------------------------------------
 # Ordered module paths for __getattr__ lookup.
 # Earlier entries take priority on name collisions.
@@ -187,41 +209,7 @@ _ATTRIBUTE_INDEX: dict[str, str] | None = None
 
 def _build_index() -> dict[str, str]:
     """Build the attribute→module index once (paid once, amortised across all imports)."""
-    idx: dict[str, str] = {}
-
-    # 1. Populate from explicit whitelists — authoritative, zero extra imports
-    for mod_path, explicit in _EXPLICIT_ATTRS_BY_MODULE.items():
-        for name in explicit:
-            idx.setdefault(name, mod_path)  # first wins (preserves _AUTO_MODULE_PATHS priority)
-
-    # 2. Scan modules without explicit entries: contribute their __all__ (or public module attrs)
-    # These are the few modules in _AUTO_MODULE_PATHS not covered by _EXPLICIT_ATTRS_BY_MODULE.
-    # We import them lazily here — one-time cost, paid once at first __getattr__.
-    for mod_path in _AUTO_MODULE_PATHS:
-        if mod_path in _EXPLICIT_ATTRS_BY_MODULE:
-            continue  # already covered by step 1
-        try:
-            mod = import_module(mod_path)
-        except (ImportError, ModuleNotFoundError):
-            continue
-        explicit = _EXPLICIT_ATTRS_BY_MODULE.get(mod_path)
-        if explicit is not None:
-            for name in explicit:
-                idx.setdefault(name, mod_path)
-        else:
-            # __all__-based module
-            all_list: list[str] | None = getattr(mod, "__all__", None)
-            if all_list is not None:
-                for name in all_list:
-                    if not name.startswith("_"):
-                        idx.setdefault(name, mod_path)
-            else:
-                # Last resort: public attrs of the module itself (non-dunder, non-underscore)
-                for name in dir(mod):
-                    if not name.startswith("_"):
-                        idx.setdefault(name, mod_path)
-
-    return idx
+    return build_module_index(_AUTO_MODULE_PATHS, _EXPLICIT_ATTRS_BY_MODULE)
 
 
 # -----------------------------------------------------------------------------

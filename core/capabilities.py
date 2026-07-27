@@ -110,7 +110,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-class Capability(msgspec.Struct, frozen=True):
+class Capability(msgspec.Struct, frozen=True, gc=False):
     """Frozen descriptor for one optional dependency."""
 
     name: str
@@ -187,7 +187,7 @@ CAPS = CapabilityRegistry()
 
 # Pre-defined capabilities
 ZSTD = Capability("zstd", "zstandard:zstd", install_hint="Python 3.14+ stdlib; older: pip install zstandard")
-# F4XX: aiohttp removed from default deps — httpx is now the primary HTTP client
+# F4XX: aiohttp in fallback extras — httpx is the primary HTTP client
 AIOHTTP = Capability("aiohttp", "aiohttp", install_hint="pip install aiohttp (only with --extra aiohttp-fallback)")
 CURL_CFFI = Capability("curl_cffi", "curl_cffi", install_hint="pip install curl_cffi")
 LIGHTPANDA = Capability("lightpanda", "hledac.universal.tools.lightpanda_manager:LightpandaManager")
@@ -223,7 +223,7 @@ CAMOUFOX = Capability("camoufox", "camoufox", install_hint="pip install camoufox
 PLAYWRIGHT = Capability("playwright", "playwright", install_hint="pip install playwright")
 
 # Network
-AIOHTTP_SOCKS = Capability("aiohttp_socks", "aiohttp_socks", install_hint="pip install aiohttp-socks")
+AIOHTTP_SOCKS = Capability("httpx_socks", "httpx-socks", install_hint="pip install httpx-socks")
 SCAPY = Capability("scapy", "scapy", install_hint="pip install scapy")
 NPMINER = Capability("npminer", "npminer", install_hint="pip install npminer")
 

@@ -130,7 +130,7 @@ class UMAGovernor(Protocol):  # type: ignore[explicit-any]
 from hledac.universal.core.locks import LockCategory, register_lock
 
 
-class ConcurrencyPreset(msgspec.Struct, frozen=True):
+class ConcurrencyPreset(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F289: Immutable concurrency preset derived from UMA state.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
@@ -587,7 +587,7 @@ def _record_transition(state: str, prev_io_only: bool, io_only: bool) -> None:
             _telemetry["io_only_exit_count"] += 1
 
 
-class UMAStatus(msgspec.Struct, frozen=True):
+class UMAStatus(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint 8AB + F163F: Unified UMA accounting snapshot.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
@@ -752,7 +752,7 @@ class MemoryPressureHysteresis:
         self._exit_enter_time = None
 
 
-class GovernorDecision(msgspec.Struct, frozen=True):
+class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     """
     G-1 Fix: Canonical governor rozhodnutí s auto-apply semantics.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
@@ -1052,7 +1052,7 @@ class M1ResourceGovernor:
         except Exception:
             return False
 
-    class SidecarAdmission(msgspec.Struct, frozen=True):
+    class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
         """Sidecar admission result. Migrated from @dataclass → msgspec.Struct."""
 
         allowed: bool
@@ -1663,7 +1663,7 @@ _mpc_lock: _threading.Lock = _threading.Lock()
 register_lock(LockCategory.MPC, _mpc_lock, "resource_governor._mpc_lock")
 
 
-class MPCMetrics(msgspec.Struct, frozen=True):
+class MPCMetrics(msgspec.Struct, frozen=True, gc=False):
     """
     F290: Diagnostic snapshot from MPC controller.
     Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.

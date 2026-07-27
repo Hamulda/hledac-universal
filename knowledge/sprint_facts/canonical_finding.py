@@ -17,7 +17,7 @@ from typing import Any
 import msgspec
 
 
-class CanonicalFinding(msgspec.Struct, frozen=True):
+class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint 8P: Canonical internal finding DTO.
 
@@ -65,7 +65,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True):
         return msgspec.json.schema(cls)
 
 
-class FindingQualityDecision(msgspec.Struct, frozen=True):
+class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint 8W: Quality decision contract for CanonicalFinding ingest.
 
@@ -84,7 +84,7 @@ class FindingQualityDecision(msgspec.Struct, frozen=True):
     duplicate: bool
 
 
-class ActivationResult(msgspec.Struct, frozen=True):
+class ActivationResult(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F300: Result of activating a finding in the sprint facts store.
 

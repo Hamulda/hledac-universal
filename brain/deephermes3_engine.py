@@ -292,7 +292,7 @@ M3_METAL_PRESSURE_BYTES = 2 * 1024 * 1024 * 1024
 STREAM_BUFFER_SIZE = 32
 STREAM_MIN_BUFFER = 8
 
-class DeepHermesConfig(msgspec.Struct):
+class DeepHermesConfig(msgspec.Struct, gc=False):
     """Konfigurace pro DeepHermes-3"""
     model_path: str = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
     temperature: float = 0.3
@@ -300,14 +300,14 @@ class DeepHermesConfig(msgspec.Struct):
     context_window: int = 8192
     max_parallel_prefill: int = 1
 
-class _DecisionOutput(msgspec.Struct, frozen=True):
+class _DecisionOutput(msgspec.Struct, frozen=True, gc=False):
     """Decision output for research agent — GC-free msgspec.Struct."""
     action: str
     reasoning: str
     params: dict[str, str] = msgspec.field(default_factory=dict)
     complete: bool = False
 
-class _SynthesisOutput(msgspec.Struct, frozen=True):
+class _SynthesisOutput(msgspec.Struct, frozen=True, gc=False):
     """Synthesis output — GC-free msgspec.Struct."""
     report: str
     confidence: float = 0.0
@@ -3111,7 +3111,7 @@ class DeepHermes3Engine:
             return [PlannerRuntimeResult(task_id=r.task_id, executed=False, skipped_panic=False, hermes_output=None, error='model_not_loaded') for r in requests]
         import msgspec
 
-        class GenericResult(msgspec.Struct, kw_only=True):
+        class GenericResult(msgspec.Struct, kw_only=True, gc=False):
             result: str = ''
             confidence: float = 0.5
 
@@ -3697,7 +3697,7 @@ class DeepHermes3Engine:
             import outlines.generate as og
             import msgspec
 
-            class _ProbeSchema(msgspec.Struct):
+            class _ProbeSchema(msgspec.Struct, gc=False):
                 ok: bool
             gen = og.json(self._outlines_model, _ProbeSchema)
             return callable(gen)

@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass
 import msgspec
 
-class CapabilityRegistration(msgspec.Struct, frozen=True):
+class CapabilityRegistration(msgspec.Struct, frozen=True, gc=False):
     """Immutable registration record for a single capability."""
     module_spec: str
     env_gate: str | None

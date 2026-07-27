@@ -71,7 +71,7 @@ fn get_runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .max_threads(2)  // M1 8GB: only 2 threads needed for QUIC I/O
+            .max_blocking_threads(2)  // M1 8GB: only 2 threads needed for QUIC I/O
             .build()
             .expect("quic: failed to create tokio runtime")
     })

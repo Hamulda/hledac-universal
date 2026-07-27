@@ -241,7 +241,7 @@ pub fn serde_json_pretty_bytes(input: &[u8], sort_keys: bool) -> Vec<u8> {
 /// List of formatted JSON strings (same order as input)
 #[pyfunction]
 pub fn batch_serde_json(items: Vec<(String, bool, bool)>) -> Vec<String> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
@@ -254,7 +254,7 @@ pub fn batch_serde_json(items: Vec<(String, bool, bool)>) -> Vec<String> {
 /// Batch pretty-print (indent=2) for a list of pre-serialized JSON strings.
 #[pyfunction]
 pub fn batch_serde_json_pretty(items: Vec<String>) -> Vec<String> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
@@ -267,7 +267,7 @@ pub fn batch_serde_json_pretty(items: Vec<String>) -> Vec<String> {
 /// Batch compact serialize for a list of pre-serialized JSON strings.
 #[pyfunction]
 pub fn batch_serde_json_compact(items: Vec<String>) -> Vec<String> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
@@ -280,7 +280,7 @@ pub fn batch_serde_json_compact(items: Vec<String>) -> Vec<String> {
 /// Batch pretty-print with sorted keys for a list of pre-serialized JSON strings.
 #[pyfunction]
 pub fn batch_serde_json_pretty_sorted(items: Vec<String>) -> Vec<String> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()
@@ -293,7 +293,7 @@ pub fn batch_serde_json_pretty_sorted(items: Vec<String>) -> Vec<String> {
 /// Batch compact serialize with sorted keys for a list of pre-serialized JSON strings.
 #[pyfunction]
 pub fn batch_serde_json_compact_sorted(items: Vec<String>) -> Vec<String> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             items
                 .par_iter()

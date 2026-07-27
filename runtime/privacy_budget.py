@@ -39,14 +39,14 @@ DEFAULT_I2P_WORKERS = 1
 DEFAULT_NYM_WORKERS = 1
 MIN_CLEARNET_WORKERS = 3
 
-class PrivacyLaneConfig(msgspec.Struct, frozen=True):
+class PrivacyLaneConfig(msgspec.Struct, frozen=True, gc=False):
     """Configuration for a single privacy transport lane."""
     name: str
     workers: int
     env_gate: str
     ram_per_session_mb: int = 80
 
-class PrivacyBudgetAllocator(msgspec.Struct):
+class PrivacyBudgetAllocator(msgspec.Struct, gc=False):
     """
     Allocates privacy lane semaphores from total fetch worker budget.
 

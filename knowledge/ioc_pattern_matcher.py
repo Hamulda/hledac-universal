@@ -70,7 +70,7 @@ HOT_PATTERNS: Final[list[tuple[str, re.Pattern[str]]]] = [
 ]
 
 
-class IOCMatch(msgspec.Struct, frozen=True):
+class IOCMatch(msgspec.Struct, frozen=True, gc=False):
     """A single IOC pattern match."""
     pattern_name: str
     matched_value: str

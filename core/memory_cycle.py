@@ -170,7 +170,7 @@ _PRESSURE_RELIEF_MIN_INTERVAL_S: float = 60.0
 # Issue #042: Background gc.collect(2) interval (60s per spec)
 _GC_BACKGROUND_INTERVAL_S: float = 60.0
 
-class MemoryCycleStats(msgspec.Struct):
+class MemoryCycleStats(msgspec.Struct, gc=False):
     """Snapshot of GC + pressure-relief state — for telemetry / debug."""
     gc_freeze_supported: bool
     gc_gen0_collected: int

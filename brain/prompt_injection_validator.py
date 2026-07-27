@@ -184,7 +184,7 @@ _ALL_PATTERNS: list[tuple[str, re.Pattern[str]]] = (
 # Data structures
 # ---------------------------------------------------------------------------
 
-class PromptInjectionValidationResult(msgspec.Struct, frozen=True):
+class PromptInjectionValidationResult(msgspec.Struct, frozen=True, gc=False):
     """Result of prompt injection validation."""
     safe_text: str
     suspicious: bool

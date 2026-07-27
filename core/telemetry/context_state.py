@@ -28,7 +28,7 @@ import msgspec
 
 # ─── TelemetryContext (O-01) ─────────────────────────────────────────────────
 
-class TelemetryContext(msgspec.Struct, frozen=True, eq=False):
+class TelemetryContext(msgspec.Struct, frozen=True, eq=False, gc=False):
     """
     Unified telemetry context — initialized once per sprint session.
 

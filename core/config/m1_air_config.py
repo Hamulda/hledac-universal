@@ -28,7 +28,7 @@ from typing import ClassVar
 # M1AirConfig — frozen hardware profile for MacBook Air M1 8GB UMA
 # ─────────────────────────────────────────────────────────────────────────────
 
-class M1AirConfig(msgspec.Struct, frozen=True):
+class M1AirConfig(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable M1 8GB UMA hardware profile.
 

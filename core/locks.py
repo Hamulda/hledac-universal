@@ -22,12 +22,15 @@ LOCK-FREE ALTERNATIVES:
 UŽITÍ:
     from hledac.universal.core.locks import (
         LockCategory, register_lock, acquire_in_order,
-        AsyncLockDCLP, make_counter,
+        AsyncLockDCLP, make_counter, make_lock,
     )
 
-    # Registrace locku:
+    # Varianta A: make_lock factory (DOPORUČENÁ — auto-registrace + Darwin optimalizace):
+    _my_lock = make_lock(LockCategory.CACHE, name="mymodule._my_lock")
+
+    # Varianta B: Ruční registrace:
     _my_lock = threading.Lock()
-    register_lock(LockCategory.CACHE, _my_lock, "my_module._my_lock")
+    register_lock(LockCategory.CACHE, _my_lock, "mymodule._my_lock")
 
     # Akvizice více locků v pořadí:
     async with acquire_in_order(LockCategory.CACHE, LockCategory.NETWORK):
@@ -39,6 +42,8 @@ PYTHON 3.14 KOMPATIBILITA:
     • contextvars pro async lock context isolation
 
 M1 8GB OPTIMALIZACE:
+    • Darwin os_unfair_lock (~5ns) pro velmi krátké kritické sekce (<1µs)
+    • threading.Lock pro delší hold times (IO, network)
     • Lock contention monitoring (metrics do telemetry)
     • Minimal lock hold time (<1ms cíl)
     • Bounded critical sections
@@ -50,6 +55,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import platform
 import threading
 import weakref
 from collections.abc import Callable, Sequence
@@ -187,8 +193,8 @@ def register_lock(
     # threading.Lock() returns _thread.lock, threading.RLock() returns _thread.RLock
     # Check using type names instead of isinstance (Lock/RLock are factory functions, not types)
     lock_type_name = type(lock).__name__
-    if lock_type_name not in ("lock", "RLock"):
-        raise TypeError(f"Expected threading.Lock or threading.RLock, got {lock_type_name}")
+    if lock_type_name not in ("lock", "RLock", "PyUnfairLock"):
+        raise TypeError(f"Expected threading.Lock, threading.RLock, or PyUnfairLock, got {lock_type_name}")
 
     import inspect
 
@@ -417,6 +423,86 @@ def make_counter(initial: int = 0) -> _PythonCounter:
 
 
 # ==============================================================================
+# MAKE_LOCK FACTORY — Darwin os_unfair_lock + Auto-Registration (ISSUE-008)
+# ==============================================================================
+
+# Lazy import pro os_unfair_lock — pouze na Darwinu
+_rust_unfair_lock: Any = None
+_IS_DARWIN: bool = platform.system() == "Darwin"
+
+
+def _get_rust_unfair_lock() -> Any:
+    """Lazy load rust unfair_lock — voláno pouze na Darwinu."""
+    global _rust_unfair_lock
+    if _rust_unfair_lock is None:
+        try:
+            from hledac_rust_extensions import unfair_lock
+            _rust_unfair_lock = unfair_lock
+        except ImportError:
+            _rust_unfair_lock = False  # Mark as unavailable
+    return _rust_unfair_lock if _rust_unfair_lock else None
+
+
+def make_lock(
+    category: LockCategory,
+    name: str,
+    *,
+    prefer_unfair: bool = False,
+) -> threading.Lock | Any:
+    """
+    Factory pro vytvoření registrovaného locku s automatickou optimalizací.
+
+    NA Darwinu (M1/M2/M3):
+        • Používá os_unfair_lock pokud prefer_unfair=True (default pro CACHE, CONFIG)
+        • ~5ns lock/unlock vs ~25ns threading.Lock
+        • Není reentrantní — nelze volat lock() znovu ze stejného threadu!
+
+    NA ostatních platformách:
+        • Vždy používá threading.Lock
+
+    Args:
+        category: LockCategory enum — kategorie locku
+        name: Unikátní identifier ve formátu "module._lock_name"
+        prefer_unfair: Na Darwinu preferovat os_unfair_lock (~5ns) místo threading.Lock (~25ns)
+                      Doporučeno pro: CACHE, CONFIG (krátké kritické sekce <1µs)
+                      Nedoporučeno pro: NETWORK, GRAPH (delší hold times, možná reentrance)
+
+    Returns:
+        threading.Lock — vždy zaregistrovaný v centralizovaném registru
+
+    Example:
+        # Doporučené použití:
+        _cache_lock = make_lock(LockCategory.CACHE, "url_dedup._bloom_lock")
+        _ua_lock = make_lock(LockCategory.CACHE, "public_fetcher._ua_lock")
+        _config_lock = make_lock(LockCategory.CONFIG, "settings._config_lock")
+
+        # NETWORK lock — threading.Lock (delší hold time, možná reentrance):
+        _session_lock = make_lock(LockCategory.NETWORK, "session_mgr._lock", prefer_unfair=False)
+
+    NOTE: make_lock VŽDY registruje. Pro locky používané pouze v izolovaných
+          třídách (každá instance má svůj vlastní lock) je registrace
+         DOPORUČENÁ pro audit, ale není kritická.
+    """
+    lock: threading.Lock
+    use_unfair = _IS_DARWIN and prefer_unfair
+
+    if use_unfair:
+        rust = _get_rust_unfair_lock()
+        if rust is not None:
+            # Použij Darwin os_unfair_lock (~5ns)
+            lock = rust.UnfairLock()
+        else:
+            # Fallback na threading.Lock pokud rust modul není dostupný
+            lock = threading.Lock()
+    else:
+        lock = threading.Lock()
+
+    # Auto-registrace do centralizovaného registru
+    register_lock(category, lock, name)
+    return lock
+
+
+# ==============================================================================
 # EXPORTS
 # ==============================================================================
 
@@ -431,4 +517,7 @@ __all__ = [
     "AsyncLockDCLP",
     "make_async_lock_dclp",
     "make_counter",
+    "make_lock",
+    # Internal for advanced usage:
+    "get_lock_by_name",
 ]

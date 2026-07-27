@@ -49,14 +49,14 @@ class ModalityType(Enum):
     MOLECULAR = 'molecular'
     MIXED = 'mixed'
 
-class ModalityInput(msgspec.Struct):
+class ModalityInput(msgspec.Struct, gc=False):
     """Input with modality information."""
     content: Any
     modality: ModalityType
     metadata: dict[str, Any] = field(default_factory=dict)
     source: str | None = None
 
-class ModalityOutput(msgspec.Struct, frozen=True):
+class ModalityOutput(msgspec.Struct, frozen=True, gc=False):
     """Output from modality processing."""
     modality: ModalityType
     embedding: Any | None = None
@@ -64,14 +64,14 @@ class ModalityOutput(msgspec.Struct, frozen=True):
     metadata: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
 
-class FusedRepresentation(msgspec.Struct, frozen=True):
+class FusedRepresentation(msgspec.Struct, frozen=True, gc=False):
     """Fused multimodal representation."""
     fused_embedding: Any
     modalities: list[ModalityType]
     weights: dict[ModalityType, float]
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class ContrastiveExample(msgspec.Struct, frozen=True):
+class ContrastiveExample(msgspec.Struct, frozen=True, gc=False):
     """Example for contrastive learning."""
     text_embedding: Any
     image_embedding: Any

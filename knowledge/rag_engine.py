@@ -43,7 +43,7 @@ except ImportError:
 import numpy as np
 logger = logging.getLogger(__name__)
 
-class RAGConfig(msgspec.Struct):
+class RAGConfig(msgspec.Struct, gc=False):
     """Konfigurace pro RAG — Sprint F330: env var defaults consistent with knowledge/ pattern."""
     enable_ultra_context: bool = os.environ.get('HLEDAC_RAG_ULTRA_CONTEXT', '1') == '1'
     enable_spr_compression: bool = os.environ.get('HLEDAC_RAG_SPR_COMPRESSION', '1') == '1'
@@ -66,7 +66,7 @@ class RAGConfig(msgspec.Struct):
     hnsw_index_path: str | None = os.environ.get('HLEDAC_RAG_HNSW_INDEX_PATH')
     hnsw_space: str = os.environ.get('HLEDAC_RAG_HNSW_SPACE', 'cosine')
 
-class Document(msgspec.Struct):
+class Document(msgspec.Struct, gc=False):
     """Document for retrieval"""
     id: str
     content: str
@@ -76,7 +76,7 @@ class Document(msgspec.Struct):
     def __hash__(self):
         return hash(self.id)
 
-class RetrievedChunk(msgspec.Struct, frozen=True):
+class RetrievedChunk(msgspec.Struct, frozen=True, gc=False):
     """Retrieved document chunk with scores"""
     document: Document
     chunk_text: str
@@ -511,7 +511,7 @@ class HNSWVectorIndex:
         self.max_elements = new_max_elements
         logger.debug(f'USearch index resize requested to {new_max_elements} (not directly supported)')
 
-class RaptorNode(msgspec.Struct, frozen=True):
+class RaptorNode(msgspec.Struct, frozen=True, gc=False):
     """Single node in RAPTOR summarization tree."""
     node_id: str
     level: int
@@ -784,11 +784,18 @@ class RAGEngine:
         doc_embeddings_list = all_embeddings[1:]
         doc_embeddings = {doc.id: doc_embeddings_list[i] for i, doc in enumerate(documents)}
 
-        # Dense + sparse retrieval — paralelně přes asyncio.gather (oba CPU-bound)
+        # Dense + sparse retrieval — F350M-R: parallel() replaces asyncio.gather (oba CPU-bound)
         # ISSUE-S3: sequential → parallel: dense_retrieval (numpy dot) + BM25.search běží concurrent
         dense_coro = asyncio.to_thread(self._dense_retrieval, query_embedding, doc_embeddings, top_k * 2)
         sparse_coro = asyncio.to_thread(bm25.search, query, top_k=top_k * 2)
-        dense_results, sparse_results = await asyncio.gather(dense_coro, sparse_coro)
+        hybrid_results = await parallel(
+            [dense_coro, sparse_coro],
+            policy="collect",
+            concurrency=2,
+            ctx="rag_engine:dense_sparse_retrieval",
+        )
+        dense_results = hybrid_results[0] if len(hybrid_results) > 0 else []
+        sparse_results = hybrid_results[1] if len(hybrid_results) > 1 else []
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
         doc_scores: dict[str, dict[str, float]] = _dense_sparse_factory.copy()
         for doc_id, score in dense_results:
@@ -1026,11 +1033,18 @@ class RAGEngine:
                 ]
             query_embedding = all_embeddings[0]
 
-        # ANN HNSW search (Rust/GIL-free) + BM25 search — paralelně přes asyncio.gather
+        # ANN HNSW search (Rust/GIL-free) + BM25 search — F350M-R: parallel() replaces asyncio.gather
         # ISSUE-S3: sequential → parallel: HNSW search + BM25.search běží concurrent
         dense_coro = asyncio.to_thread(self._hnsw_retrieval, query_embedding, top_k * 2, filters)
         sparse_coro = asyncio.to_thread(bm25.search, query, top_k=top_k * 2)
-        dense_results, sparse_results = await asyncio.gather(dense_coro, sparse_coro)
+        hybrid_results = await parallel(
+            [dense_coro, sparse_coro],
+            policy="collect",
+            concurrency=2,
+            ctx="rag_engine:hnsw_bm25_retrieval",
+        )
+        dense_results = hybrid_results[0] if len(hybrid_results) > 0 else []
+        sparse_results = hybrid_results[1] if len(hybrid_results) > 1 else []
         sparse_doc_ids = [(bm25.documents[idx].id, score) for idx, score in sparse_results]
         doc_scores: dict[str, dict[str, float]] = _dense_sparse_factory.copy()
         for chunk in dense_results:

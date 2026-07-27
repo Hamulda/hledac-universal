@@ -47,7 +47,7 @@ class ExcavationStrategy(Enum):
     RELEVANCE = 'relevance'
     HYBRID = 'hybrid'
 
-class ResearchContext(msgspec.Struct, frozen=True):
+class ResearchContext(msgspec.Struct, frozen=True, gc=False):
     """Context for research operations."""
     query: str
     sources_used: list[str] = ()
@@ -55,7 +55,7 @@ class ResearchContext(msgspec.Struct, frozen=True):
     confidence_scores: dict[str, float] = {}
     metadata: dict[str, Any] = {}
 
-class ResearchResult(msgspec.Struct, frozen=True):
+class ResearchResult(msgspec.Struct, frozen=True, gc=False):
     """Structured research result."""
     source: str
     summary: str
@@ -64,7 +64,7 @@ class ResearchResult(msgspec.Struct, frozen=True):
     execution_time: float
     sources_found: int = 0
 
-class ExcavationConfig(msgspec.Struct, frozen=True):
+class ExcavationConfig(msgspec.Struct, frozen=True, gc=False):
     """Configuration for deep excavation."""
     max_depth: int = 10
     max_breadth: int = 5
@@ -78,7 +78,7 @@ class ExcavationConfig(msgspec.Struct, frozen=True):
     auto_summarize: bool = True
     progress_callback: collections.abc.Callable | None = None
 
-class ResearchPaper(msgspec.Struct):
+class ResearchPaper(msgspec.Struct, gc=False):
     """Research paper node with citation tracking."""
     id: str
     title: str
@@ -102,7 +102,7 @@ class ResearchPaper(msgspec.Struct):
             return self.id == other.id
         return False
 
-class ResearchThread(msgspec.Struct, frozen=True):
+class ResearchThread(msgspec.Struct, frozen=True, gc=False):
     """Research thread tracking context."""
     id: str
     root_topic: str
@@ -112,7 +112,7 @@ class ResearchThread(msgspec.Struct, frozen=True):
     path: list[str] = ()
     created_at: datetime = datetime.now(UTC)
 
-class MetaPattern(msgspec.Struct, frozen=True):
+class MetaPattern(msgspec.Struct, frozen=True, gc=False):
     """Meta-pattern detected across research."""
     pattern_id: str
     name: str
@@ -122,7 +122,7 @@ class MetaPattern(msgspec.Struct, frozen=True):
     confidence: float
     cross_domain: bool = False
 
-class ResearchTheory(msgspec.Struct, frozen=True):
+class ResearchTheory(msgspec.Struct, frozen=True, gc=False):
     """Theory generated from research patterns."""
     theory_id: str
     name: str
@@ -134,7 +134,7 @@ class ResearchTheory(msgspec.Struct, frozen=True):
     novelty_score: float
     confidence: float
 
-class HierarchicalPlan(msgspec.Struct, frozen=True):
+class HierarchicalPlan(msgspec.Struct, frozen=True, gc=False):
     """Hierarchical research plan."""
     plan_id: str
     objective: str
@@ -709,10 +709,16 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             level_stats[depth]['explored'] += 1
             if config.progress_callback:
                 await config.progress_callback({'depth': depth, 'papers_found': len(thread.papers), 'current_paper': current_paper.title[:50]})
-            citations, references = await asyncio.gather(
-                self._fetch_citations(current_paper, 'backward'),
-                self._fetch_citations(current_paper, 'forward')
+            citation_results = await parallel(
+                [
+                    self._fetch_citations(current_paper, 'backward'),
+                    self._fetch_citations(current_paper, 'forward'),
+                ],
+                policy="collect",
+                concurrency=2,
+                ctx="citations",
             )
+            citations, references = citation_results[0], citation_results[1]
             all_related = citations + references
             # Parallel relevance calculation via asyncio.to_thread (GIL released in string ops)
             # Threshold: only parallelize when enough items to amortize thread pool overhead
@@ -725,11 +731,16 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                     ))
                     for paper in all_related if paper.id not in explored
                 ]
-                # Execute all in parallel, gather maintains order
-                results = await asyncio.gather(*[r for _, r in pending])
+                # Execute all in parallel, parallel() maintains order
+                relevance_results = await parallel(
+                    [r for _, r in pending],
+                    policy="collect",
+                    concurrency=10,
+                    ctx="relevance",
+                )
                 scored_papers = [
                     (paper, relevance)
-                    for (paper, _), relevance in zip(pending, results)
+                    for (paper, _), relevance in zip(pending, relevance_results)
                     if relevance >= config.min_relevance_score
                 ]
             else:

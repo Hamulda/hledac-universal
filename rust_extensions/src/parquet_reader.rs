@@ -43,7 +43,7 @@ const CANONICAL_COLUMNS: [&str; 6] = [
 /// Enables O(1) row-group pruning before reading data.
 #[pyfunction]
 pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f64, usize)>>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -156,7 +156,7 @@ pub fn parquet_row_group_stats(path: &str) -> PyResult<Option<Vec<(usize, f64, f
 ///     (num_row_groups, total_rows) or None on error.
 #[pyfunction]
 pub fn parquet_get_metadata(path: &str) -> PyResult<Option<(usize, usize)>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -201,7 +201,7 @@ pub fn parquet_read_row_group_ipc(
     columns: Option<&Bound<'_, PyList>>,
     batch_size: Option<usize>,
 ) -> PyResult<Option<Py<PyBytes>>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),
@@ -252,7 +252,7 @@ pub fn parquet_read_row_group_ipc(
             Ok(b) => b,
             Err(_) => return Ok(None),
         };
-        let batches: &Bound<'_, PyList> = match py_batches.downcast::<PyList>() {
+        let batches: &Bound<'_, PyList> = match py_batches.cast::<PyList>() {
             Ok(b) => b,
             Err(_) => return Ok(None),
         };
@@ -295,7 +295,7 @@ pub fn parquet_read_row_group_ipc(
         };
 
         // Extract bytes from PyObject — use as_bytes() on PyBytes
-        if let Ok(bytes_obj) = result.downcast::<PyBytes>() {
+        if let Ok(bytes_obj) = result.cast::<PyBytes>() {
             let bytes = bytes_obj.as_bytes();
             let py_bytes: Py<PyBytes> = PyBytes::new(py, bytes).into_pyobject(py).unwrap().unbind();
             Ok(Some(py_bytes))
@@ -353,7 +353,7 @@ pub fn parquet_read_table(
     columns: Option<&Bound<'_, PyList>>,
     batch_size: Option<usize>,
 ) -> PyResult<Option<Py<PyAny>>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let pa = match py.import("pyarrow") {
             Ok(m) => m,
             Err(_) => return Ok(None),

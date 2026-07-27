@@ -14,7 +14,7 @@
 //!
 //! The GIL is held by the asyncio.to_thread worker thread during both
 //! submit and join. The rayon pool workers acquire the GIL via
-//! Python::with_gil() for Python callbacks — no contention because the
+//! Python::attach() for Python callbacks — no contention because the
 //! asyncio worker is blocked on the condvar during pool execution.
 //!
 //! ## M1 8GB Safety
@@ -202,7 +202,7 @@ where
     }
 
     // Execute Python function with GIL
-    let py_result: Result<Py<PyAny>, PyErr> = Python::with_gil(|py| {
+    let py_result: Result<Py<PyAny>, PyErr> = Python::attach(|py| {
         let result = work.func.into_bound(py).call1((work.args.into_bound(py),))?;
         Ok(result.unbind())
     });
@@ -233,7 +233,7 @@ pub fn cpu_pool_run_(
     func: Py<PyAny>,
     args: Py<PyTuple>,
 ) -> PyResult<Py<PyAny>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let result = func.into_bound(py).call1((args.into_bound(py),))?;
         Ok(result.unbind())
     })
@@ -246,7 +246,7 @@ pub fn io_pool_run_(
     func: Py<PyAny>,
     args: Py<PyTuple>,
 ) -> PyResult<Py<PyAny>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let result = func.into_bound(py).call1((args.into_bound(py),))?;
         Ok(result.unbind())
     })
@@ -260,7 +260,7 @@ pub fn mixed_pool_run_(
     func: Py<PyAny>,
     args: Py<PyTuple>,
 ) -> PyResult<Py<PyAny>> {
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let result = func.into_bound(py).call1((args.into_bound(py),))?;
         Ok(result.unbind())
     })
@@ -363,7 +363,7 @@ pub fn rayon_join_channel_(
         .map(|t| Duration::from_secs_f64(t.max(0.0)))
         .unwrap_or(Duration::MAX);
 
-    // GIL RELEASE FIX (R-16.1): Use py.allow_threads + parking_lot Condvar
+    // GIL RELEASE FIX (R-16.1): Use py.detach + parking_lot Condvar
     // to actually release the GIL during the wait, allowing the asyncio event
     // loop to run other coroutines in parallel.
     //
@@ -372,7 +372,7 @@ pub fn rayon_join_channel_(
     //
     // parking_lot::Condvar::wait_for() calls pthread_cond_timedwait on macOS,
     // which is a real OS-level block (not busy-polling). Wrapped in
-    // py.allow_threads() to release the GIL during the syscall.
+    // py.detach() to release the GIL during the syscall.
     //
     // Memory safety: Arc<SharedTask> stays alive because:
     //   - Worker thread holds Arc clone via WorkItem.shared
@@ -385,7 +385,7 @@ pub fn rayon_join_channel_(
     let timed_out_flag = Arc::new(AtomicBool::new(true));
     let timed_out_flag_clone = Arc::clone(&timed_out_flag);
 
-    py.allow_threads(|| {
+    py.detach(|| {
         let mut guard = shared.result.lock();
         while (*guard).is_none() {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -475,7 +475,7 @@ pub fn rayon_abort_channel_(py: Python<'_>, handle_ptr: usize) -> PyResult<()> {
     let timeout = Duration::from_secs(5);
     let deadline = std::time::Instant::now() + timeout;
 
-    py.allow_threads(|| {
+    py.detach(|| {
         let mut guard = shared.result.lock();
         while (*guard).is_none() {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());

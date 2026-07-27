@@ -40,7 +40,7 @@ CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
 from core.sys_metrics import get_memory_usage_mb
 
-class AgentMetrics(msgspec.Struct):
+class AgentMetrics(msgspec.Struct, gc=False):
     """Performance metrics for individual agents."""
     name: str
     execution_count: int = 0
@@ -53,7 +53,7 @@ class AgentMetrics(msgspec.Struct):
     rate_limited: bool = False
     cache_hit_rate: float = 0.0
 
-class LoadBalancingConfig(msgspec.Struct, frozen=True):
+class LoadBalancingConfig(msgspec.Struct, frozen=True, gc=False):
     """Configuration for agent load balancing."""
     max_concurrent_agents: int = 8
     memory_threshold_mb: int = 512
@@ -63,7 +63,7 @@ class LoadBalancingConfig(msgspec.Struct, frozen=True):
     agent_pool_size: int = 4
     load_balance_strategy: str = 'round_robin'
 
-class OptimizationReport(msgspec.Struct, frozen=True):
+class OptimizationReport(msgspec.Struct, frozen=True, gc=False):
     """Report containing optimization results."""
     timestamp: float = field(default_factory=time.time)
     optimizations_applied: list[str] = field(default_factory=list)

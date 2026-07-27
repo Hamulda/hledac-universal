@@ -114,7 +114,7 @@ class StorageKind(str, Enum):
     KEYVALUE = 'kv'
     STRING = 'string'
 
-class StoragePolicy(msgspec.Struct, frozen=True):
+class StoragePolicy(msgspec.Struct, frozen=True, gc=False):
     """Decision policy: which storage for which data type."""
     kind: StorageKind
     max_bytes: int

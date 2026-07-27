@@ -46,7 +46,7 @@ except ImportError:
     from typing_extensions import Literal
 from core.psutil_shim import psutil_module as _psutil_mod
 
-class HardwareCapabilities(msgspec.Struct, frozen=True):
+class HardwareCapabilities(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable hardware capability snapshot.
 

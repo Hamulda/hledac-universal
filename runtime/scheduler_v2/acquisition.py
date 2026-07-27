@@ -43,7 +43,7 @@ log = logging.getLogger(__name__)
 # ── Cycle Result Types ──────────────────────────────────────────────────────────
 
 
-class _FeedWork(msgspec.Struct, frozen=True):
+class _FeedWork(msgspec.Struct, frozen=True, gc=False):
     """Work item for one feed source. Compatible with _async_run_live_feed signature.
 
     Migrated from @dataclass(slots=True) to msgspec.Struct (frozen=True).
@@ -54,7 +54,7 @@ class _FeedWork(msgspec.Struct, frozen=True):
     max_results: int = 10
 
 
-class CycleResult(msgspec.Struct, frozen=True):
+class CycleResult(msgspec.Struct, frozen=True, gc=False):
     """Result from one acquisition cycle.
 
     Migrated from @dataclass to msgspec.Struct (frozen=True) for:
@@ -823,7 +823,7 @@ class AcquisitionOrchestrator:
     async def _build_seed_context(self, ctx: Any, _query: str) -> Any:
         """Build seed context from query and acquisition plan."""
 
-        class _SeedCtx(msgspec.Struct):
+        class _SeedCtx(msgspec.Struct, gc=False):
             domains: tuple = ()
             ips: tuple = ()
             urls: tuple = ()
@@ -844,7 +844,7 @@ class AcquisitionOrchestrator:
     ) -> Any:
         """Check that required nonfeed lanes are terminal before windup."""
 
-        class BarrierResult(msgspec.Struct, frozen=True):
+        class BarrierResult(msgspec.Struct, frozen=True, gc=False):
             satisfied: bool = True
             required_lanes: tuple = ()
 

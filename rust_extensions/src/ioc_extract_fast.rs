@@ -355,7 +355,7 @@ pub fn batch_extract_structured_entities(
 
     // Release GIL during rayon parallel scan — rayon workers are pure Rust (no Python objects).
     // GIL is reacquired automatically when the closure returns.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             crate::mixed_pool(n).install(|| {
                 texts
@@ -421,7 +421,7 @@ pub fn batch_ioc_extract_unified(texts: Vec<String>) -> Vec<Vec<(String, String)
 
     // Release GIL during rayon parallel scan — rayon workers are pure Rust (no Python objects).
     // GIL is reacquired automatically when the closure returns.
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         release_gil(py, || {
             // adaptive 1-2 threads: n < 64 → 1 thread (no pool overhead); n ≥ 64 → 2 threads (P-core ceiling)
             crate::mixed_pool(n).install(|| {

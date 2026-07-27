@@ -37,7 +37,7 @@ def _ensure_discovery_patched() -> None:
         from hledac.universal.discovery.duckduckgo_adapter import search_multi_engine as _search_multi_engine_bootstrap
         _async_search_multi_engine_var.set(_search_multi_engine_bootstrap)
 
-class FetchPolicy(msgspec.Struct, frozen=True):
+class FetchPolicy(msgspec.Struct, frozen=True, gc=False):
     """Bounded fetch policy for canonical public sprint."""
     use_js: bool = False
     use_doh: bool = False

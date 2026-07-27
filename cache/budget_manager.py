@@ -67,7 +67,7 @@ class FrequencyTracker:
     def size_mb(self):
         return self.counters.nbytes / (1024 * 1024)
 
-class BudgetConfig(msgspec.Struct, kw_only=True):
+class BudgetConfig(msgspec.Struct, kw_only=True, gc=False):
     """Configuration for resource budgets"""
     max_iterations: int = 6
     max_docs: int = 30
@@ -76,7 +76,7 @@ class BudgetConfig(msgspec.Struct, kw_only=True):
     min_confidence: float = 0.7
     stagnation_threshold: int = 2
 
-class BudgetState(msgspec.Struct, kw_only=True):
+class BudgetState(msgspec.Struct, kw_only=True, gc=False):
     """Current state of resource consumption"""
     iteration: int = 0
     docs_collected: int = 0
@@ -86,7 +86,7 @@ class BudgetState(msgspec.Struct, kw_only=True):
     stagnation_counter: int = 0
     current_confidence: float = 0.0
 
-class IterationSnapshot(msgspec.Struct, kw_only=True):
+class IterationSnapshot(msgspec.Struct, kw_only=True, gc=False):
     """Log of evidence collected in an iteration"""
     iteration: int = 0
     entities: list[str] = msgspec.field(default_factory=list)
@@ -96,7 +96,7 @@ class IterationSnapshot(msgspec.Struct, kw_only=True):
     confidence: float = 0.0
     timestamp: datetime = msgspec.field(default_factory=lambda: datetime.now(UTC))
 
-class BudgetStatus(msgspec.Struct, kw_only=True):
+class BudgetStatus(msgspec.Struct, kw_only=True, gc=False):
     """Status report for logging and debugging"""
     should_stop: bool = False
     stop_reason: StopReason = StopReason.NONE

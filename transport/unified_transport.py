@@ -9,8 +9,8 @@ Single entry point for all HTTP fetching. Replaces 3-stack matrix:
   - httpx.AsyncClient HTTP/2 (primary for clearnet)
   - curl_cffi.AsyncSession JA3 (fingerprint spoofing, Tor/I2P darknet)
 
-Note: aiohttp previously used in StealthSession has been migrated to curl_cffi
-  for JA3 fingerprint support (critical for OSINT stealth operations).
+Note: aiohttp (StealthSession) was migrated to curl_cffi for JA3 fingerprint
+  support (critical for OSINT stealth operations).
 
 Architecture:
   TransportRuntime.get_client(policy) → appropriate client

@@ -5,7 +5,7 @@ F350M-R / Issue SC-06.
 SC-06 refactor: scheduler.py slimmed to ~320 LOC.
 Bootstrap  → runtime/scheduler_v2/_v2_init.py (V2Init.run() called in sprint_entrypoint.py)
 Inject shims → runtime/scheduler_v2/injector.py (Injector.apply() called at end of run())
-Synthesis    → runtime/scheduler_v2/synthesis.py (run_synthesis_sidecar())
+Synthesis    → runtime/scheduler_v2/acquisition.py (AcquisitionOrchestrator._run_synthesis_sidecar())
 
 Wiring:
     run()
@@ -372,10 +372,27 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     async def _run_synthesis_sidecar(
         self, query: str, duckdb_store: Any, lifecycle: Any
     ) -> None:
-        """F259: Run synthesis in windup phase."""
-        from runtime.scheduler_v2.synthesis import run_synthesis_sidecar
+        """F259: Run synthesis in windup phase.
 
-        await run_synthesis_sidecar(self, query, duckdb_store, lifecycle)
+        Calls AcquisitionOrchestrator._run_synthesis_sidecar() directly.
+        The synthesis is also called inline during windup in AcquisitionOrchestrator.run()
+        (acquisition.py:277) as part of the parallel winddown sequence.
+        This method exists for backward compatibility with tests that call it directly.
+        """
+        from runtime.scheduler_v2.acquisition import AcquisitionOrchestrator
+
+        # Reuse the same AcquisitionOrchestrator pattern but without creating
+        # a full orch instance — just call the method directly with self._result
+        class _ResultCtx:
+            __slots__ = ("query", "result")
+
+            def __init__(self, query: str, result: Any) -> None:
+                self.query = query
+                self.result = result
+
+        _ctx = _ResultCtx(query, self._result)
+        _orch = AcquisitionOrchestrator()
+        await _orch._run_synthesis_sidecar(_ctx, duckdb_store, lifecycle)
 
     # ── Health / shutdown ─────────────────────────────────────────────────
 

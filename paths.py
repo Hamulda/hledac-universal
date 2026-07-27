@@ -37,7 +37,7 @@ import logging
 import os
 import pathlib
 import shutil
-import threading
+from hledac.universal.core.locks import make_lock, LockCategory
 import warnings
 from pathlib import Path
 from typing import Any
@@ -50,7 +50,7 @@ def _warn_opsec_once(msg: str) -> None:
         _OPSEC_FALLBACK_WARNED = True
         warnings.warn(f'[GHOST OPSEC] {msg}', stacklevel=3)
 _AUTO_CREATED_DEVICE: str | None = None
-_AUTO_CREATED_LOCK = threading.Lock()
+_AUTO_CREATED_LOCK = make_lock(LockCategory.CACHE, "paths._AUTO_CREATED_LOCK", prefer_unfair=True)
 
 def _cleanup_auto_ramdisk() -> None:
     """
@@ -409,7 +409,7 @@ _LMDB_ROOT_FALLBACK: Path = Path('~/.hledac/lmdb_store').expanduser()
 _LMDB_ROOT_FALLBACK: Path = Path('~/.hledac/lmdb_store').expanduser()
 _UNRESOLVED: object = object()
 _DEDUP_PATHS_CACHE: dict[str, Path] | object = _UNRESOLVED
-_DEDUP_PATHS_LOCK: threading.Lock = threading.Lock()
+_DEDUP_PATHS_LOCK = make_lock(LockCategory.CONFIG, "paths._DEDUP_PATHS_LOCK", prefer_unfair=True)
 
 def resolve_dedup_paths(env_prefix: str='HLEDAC_DEDUP') -> dict[str, Path]:
     """

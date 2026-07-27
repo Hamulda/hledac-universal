@@ -26,7 +26,7 @@ from hledac.universal.utils.async_helpers import parallel, safe_create_task
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
 
-class ExecutionTask(msgspec.Struct):
+class ExecutionTask(msgspec.Struct, gc=False):
     """Definition of an execution task."""
     task_id: str
     description: str
@@ -36,7 +36,7 @@ class ExecutionTask(msgspec.Struct):
     timeout: float = 60.0
     retries: int = 0
 
-class ExecutionResult(msgspec.Struct, frozen=True):
+class ExecutionResult(msgspec.Struct, frozen=True, gc=False):
     """
     Result of task execution.
 

@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class SystemMemory(msgspec.Struct, frozen=True):
+class SystemMemory(msgspec.Struct, frozen=True, gc=False):
     """Immutable snapshot of system memory."""
 
     total_gib: float
@@ -54,7 +54,7 @@ class SystemMemory(msgspec.Struct, frozen=True):
         )
 
 
-class SwapMemory(msgspec.Struct, frozen=True):
+class SwapMemory(msgspec.Struct, frozen=True, gc=False):
     """Immutable snapshot of swap usage."""
 
     total_gib: float

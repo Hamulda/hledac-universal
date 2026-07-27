@@ -292,7 +292,7 @@ class ANEStatus(Enum):
     LOADED = 'loaded'
     LOAD_FAILED = 'load_failed'
 
-class ANEStatusResult(msgspec.Struct):
+class ANEStatusResult(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for ANE status result.
 
     Result of get_ane_status().

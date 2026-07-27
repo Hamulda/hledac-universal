@@ -21,7 +21,7 @@ import msgspec
 
 # === Feed Quality Metrics ===
 
-class FeedQualityMetrics(msgspec.Struct, frozen=True):
+class FeedQualityMetrics(msgspec.Struct, frozen=True, gc=False):
     """Kvalita + adapter bands — extracted from FeedIngestContext."""
 
     signal_stage: str = "unknown"
@@ -47,7 +47,7 @@ class FeedQualityMetrics(msgspec.Struct, frozen=True):
 
 # === Feed Fallback Metrics ===
 
-class FeedFallbackMetrics(msgspec.Struct, frozen=True):
+class FeedFallbackMetrics(msgspec.Struct, frozen=True, gc=False):
     """Fallback economics — extracted from FeedIngestContext.
 
     decision_reason: canonical reason tag for fallback decision.
@@ -89,7 +89,7 @@ class FeedFallbackMetrics(msgspec.Struct, frozen=True):
 
 # === Feed Economics Verdict ===
 
-class FeedEconomicsVerdict(msgspec.Struct, frozen=True):
+class FeedEconomicsVerdict(msgspec.Struct, frozen=True, gc=False):
     """Rich ratio + squandered_high_usefulness — extracted from FeedIngestContext."""
 
     verdict_tag: str = "no_signal"  # "feed_lean" | "fallback_lean" | "balanced" | "no_signal"
@@ -111,7 +111,7 @@ class FeedEconomicsVerdict(msgspec.Struct, frozen=True):
 
 # === Feed Telemetry ===
 
-class FeedTelemetry(msgspec.Struct, frozen=True):
+class FeedTelemetry(msgspec.Struct, frozen=True, gc=False):
     """Signal stage + samples + zero_signal_reason — extracted from FeedIngestContext."""
 
     signal_stage: str = "unknown"
@@ -465,7 +465,7 @@ def compute_feed_branch_verdict(*args: Any, **kwargs: Any) -> dict[str, Any]:
 
 # === Fallback Decision (moved from live_feed_pipeline.py) ===
 
-class FallbackDecision(msgspec.Struct, frozen=True):
+class FallbackDecision(msgspec.Struct, frozen=True, gc=False):
     """
     Structured fallback decision output.
 

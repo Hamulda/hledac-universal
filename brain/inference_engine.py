@@ -53,7 +53,7 @@ def _is_mlx_available() -> bool:
         return False
 MLX_AVAILABLE = _is_mlx_available()
 
-class InferenceEvidence(msgspec.Struct, frozen=False):
+class InferenceEvidence(msgspec.Struct, frozen=False, gc=False):
     """Single piece of evidence with metadata."""
     fact: str
     confidence: float
@@ -72,7 +72,7 @@ class InferenceEvidence(msgspec.Struct, frozen=False):
         """Convert to dictionary representation."""
         return {'evidence_id': self.evidence_id, 'fact': self.fact, 'confidence': self.confidence, 'source': self.source, 'timestamp': self.timestamp, 'metadata': self.metadata}
 
-class InferenceStep(msgspec.Struct, frozen=True):
+class InferenceStep(msgspec.Struct, frozen=True, gc=False):
     """Single step in an inference chain."""
     from_statement: str
     to_statement: str
@@ -84,7 +84,7 @@ class InferenceStep(msgspec.Struct, frozen=True):
     def to_dict(self) -> dict[str, Any]:
         return {'step_number': self.step_number, 'from': self.from_statement, 'to': self.to_statement, 'rule': self.rule, 'confidence': self.confidence, 'evidence_ids': self.evidence_ids}
 
-class Hypothesis(msgspec.Struct, frozen=False):
+class Hypothesis(msgspec.Struct, frozen=False, gc=False):
     """Generated hypothesis with probabilistic assessment."""
     statement: str
     prior_probability: float
@@ -112,7 +112,7 @@ class Hypothesis(msgspec.Struct, frozen=False):
     def to_dict(self) -> dict[str, Any]:
         return {'hypothesis_id': self.hypothesis_id, 'statement': self.statement, 'prior_probability': self.prior_probability, 'posterior_probability': self.posterior_probability, 'supporting_evidence': self.supporting_evidence, 'conflicting_evidence': self.conflicting_evidence, 'inference_chain': [step.to_dict() for step in self.inference_chain], 'created_at': self.created_at, 'metadata': self.metadata}
 
-class ResolvedEntity(msgspec.Struct, frozen=True):
+class ResolvedEntity(msgspec.Struct, frozen=True, gc=False):
     """Result of probabilistic entity resolution."""
     entity_id: str
     canonical_name: str
@@ -126,7 +126,7 @@ class ResolvedEntity(msgspec.Struct, frozen=True):
     def to_dict(self) -> dict[str, Any]:
         return {'entity_id': self.entity_id, 'canonical_name': self.canonical_name, 'aliases': self.aliases, 'fragment_count': len(self.fragments), 'confidence': self.confidence, 'resolution_method': self.resolution_method, 'attributes': self.attributes, 'source_evidence': self.source_evidence}
 
-class InferenceRule(msgspec.Struct, frozen=False):
+class InferenceRule(msgspec.Struct, frozen=False, gc=False):
     """Definition of an inference rule."""
     name: str
     description: str
@@ -150,7 +150,7 @@ class InferenceType(Enum):
     CAUSAL = 'causal'
     MULTI_HOP = 'multi_hop'
 
-class HopStep(msgspec.Struct, frozen=False):
+class HopStep(msgspec.Struct, frozen=False, gc=False):
     """Single step in a multi-hop reasoning chain.
 
     Represents one inference hop from one entity to another,
@@ -178,7 +178,7 @@ class HopStep(msgspec.Struct, frozen=False):
     def to_dict(self) -> dict[str, Any]:
         return {'step_number': self.step_number, 'from_entity': self.from_entity, 'to_entity': self.to_entity, 'relation': self.relation, 'confidence': self.confidence, 'evidence': self.evidence}
 
-class MultiHopPath(msgspec.Struct, frozen=False):
+class MultiHopPath(msgspec.Struct, frozen=False, gc=False):
     """Complete multi-hop reasoning path between entities.
 
     Represents a full inference chain from a start entity to an end entity,
@@ -1598,7 +1598,7 @@ def create_inference_tool(engine: InferenceEngine, execute_fn=None):
     import msgspec
     from ..tool_registry import Tool
 
-    class InferenceArgs(msgspec.Struct, kw_only=True):
+    class InferenceArgs(msgspec.Struct, kw_only=True, gc=False):
         """Inference arguments for the tool."""
         mode: str = ''
         query: str = ''
@@ -1607,7 +1607,7 @@ def create_inference_tool(engine: InferenceEngine, execute_fn=None):
         hypothesis: str = ''
         max_hops: int = 3
 
-    class InferenceResult(msgspec.Struct, kw_only=True):
+    class InferenceResult(msgspec.Struct, kw_only=True, gc=False):
         """Inference result."""
         result: dict[str, Any] = msgspec.field(default_factory=dict)
 

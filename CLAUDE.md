@@ -131,7 +131,7 @@ CLI / __main__.py
 
 | Komponenta | Status | Entry Point |
 |------------|--------|-------------|
-| SynthesisRunner | WIRED | `sprint_scheduler.py:6335` `_run_synthesis_sidecar()` |
+| SynthesisRunner | WIRED | `runtime/scheduler_v2/acquisition.py:934` `_run_synthesis_sidecar()` |
 | Hermes3Engine | WIRED | `pipeline/live_public_pipeline.py:2586` |
 | DuckPGQGraph | WIRED | `knowledge/graph_service.py` |
 | DuckDBShadowStore | WIRED | `knowledge/duckdb_store.py` |

@@ -43,14 +43,14 @@ _FREE_UMA_FOR_Q5: float = 2.0
 _FREE_UMA_FOR_Q8: float = 3.5
 RSS_OP_BUDGET_GB: float = 4.5  # ISSUE-35: Hard cap 4.5 GB for MLX inference (from 8GB)
 
-class InferenceBudget(msgspec.Struct, frozen=True):
+class InferenceBudget(msgspec.Struct, frozen=True, gc=False):
     """F203J: Inference budget for a model load decision."""
     max_tokens: int
     max_latency_ms: int
     quantization: str
     reason: str
 
-class QuantizationDecision(msgspec.Struct, frozen=True):
+class QuantizationDecision(msgspec.Struct, frozen=True, gc=False):
     """F203J: Full decision record from QuantizationSelector.select()."""
     quantization: str
     max_tokens: int

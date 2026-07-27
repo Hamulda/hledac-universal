@@ -55,7 +55,7 @@ def get_m1_uma_mb() -> int:
     """Public accessor for detected UMA size."""
     return _UMA_TOTAL_MB
 
-class NetworkTimeouts(msgspec.Struct, frozen=True):
+class NetworkTimeouts(msgspec.Struct, frozen=True, gc=False):
     """
     HTTP/HTTPS network timeouty — všechny sítové operace.
 
@@ -84,7 +84,7 @@ class NetworkTimeouts(msgspec.Struct, frozen=True):
     i2p: float = 150.0
     gopher: float = 30.0
 
-class M1MemoryBounds(msgspec.Struct, frozen=True):
+class M1MemoryBounds(msgspec.Struct, frozen=True, gc=False):
     """
     M1 8GB UMA specifické memory a cache limity.
 
@@ -115,7 +115,7 @@ class M1MemoryBounds(msgspec.Struct, frozen=True):
     domain_failure_cutoff_s: int = 86400
     duckdb_vacuum_threshold_mb: int = 2048
 
-class MLXInference(msgspec.Struct, frozen=True):
+class MLXInference(msgspec.Struct, frozen=True, gc=False):
     """
     MLX inference limity — KV cache, batch, token boundy.
 
@@ -158,7 +158,7 @@ class MLXInference(msgspec.Struct, frozen=True):
     pid_kd: float = 0.1
     lora_kv_reduction_factor: int = 2
 
-class ProtocolPorts(msgspec.Struct, frozen=True):
+class ProtocolPorts(msgspec.Struct, frozen=True, gc=False):
     """
     Protocol-specific port numbers.
 
@@ -172,7 +172,7 @@ class ProtocolPorts(msgspec.Struct, frozen=True):
     i2p_http: int = 8888
     https: int = 443
 
-class HTTPCodes(msgspec.Struct, frozen=True):
+class HTTPCodes(msgspec.Struct, frozen=True, gc=False):
     """
     HTTP status kódy pro retry/error policy.
 
@@ -185,7 +185,7 @@ class HTTPCodes(msgspec.Struct, frozen=True):
     redirect_min: int = 300
     redirect_max: int = 399
 
-class SemanticRatios(msgspec.Struct, frozen=True):
+class SemanticRatios(msgspec.Struct, frozen=True, gc=False):
     """
     Empiricky odvozené plovoucí konstanty.
 
@@ -212,7 +212,7 @@ class SemanticRatios(msgspec.Struct, frozen=True):
     funnel_text_rate: float = 100.0
     windup_efficiency_acceptable: float = 0.7
 
-class DuckDBStorage(msgspec.Struct, frozen=True):
+class DuckDBStorage(msgspec.Struct, frozen=True, gc=False):
     """
     DuckDB-specific storage bounds.
     """

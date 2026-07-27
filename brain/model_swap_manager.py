@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 T = TypeVar('T', default=Any)
 
-class ModelLifecycleProtocol(msgspec.Struct, frozen=True):
+class ModelLifecycleProtocol(msgspec.Struct, frozen=True, gc=False):
     """
     Protocol contract for model lifecycle management.
 
@@ -73,7 +73,7 @@ class ModelLifecycleProtocol(msgspec.Struct, frozen=True):
         """
         return False
 
-class SwapResult(msgspec.Struct, frozen=True):
+class SwapResult(msgspec.Struct, frozen=True, gc=False):
     """
     Result of a model swap operation.
 
@@ -102,7 +102,7 @@ class SwapResult(msgspec.Struct, frozen=True):
     error: str | None = None
     duration_ms: float = 0.0
 
-class SwapStatus(msgspec.Struct, frozen=True):
+class SwapStatus(msgspec.Struct, frozen=True, gc=False):
     """Lightweight snapshot of swap manager state."""
     current_model: str | None
     swap_in_progress: bool
@@ -110,7 +110,7 @@ class SwapStatus(msgspec.Struct, frozen=True):
     failed_swaps: int
     last_swap_ms: float | None
 
-class DrainResult(msgspec.Struct, frozen=True):
+class DrainResult(msgspec.Struct, frozen=True, gc=False):
     """Result of a drain operation."""
     cancelled_count: int
     timed_out: bool

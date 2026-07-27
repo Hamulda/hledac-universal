@@ -31,7 +31,7 @@ _CURL_CFFI_POOL_SIZE = int(os.environ.get("HLEDAC_CURL_CFFI_POOL_SIZE", "4"))
 BrowserTier = Literal["camoufox", "nodriver", "deferred", "skip_js"]
 
 
-class BrowserDecision(msgspec.Struct, frozen=True):
+class BrowserDecision(msgspec.Struct, frozen=True, gc=False):
     tier: BrowserTier
     allowed: bool
     rss_gib: float

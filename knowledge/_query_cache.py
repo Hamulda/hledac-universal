@@ -134,8 +134,12 @@ class _DuckDBQueryCache:
 
             entry_bytes = _orjson_mod.dumps({"rows": rows, "ts": time.monotonic()})
             with env.begin(write=True) as txn:
-                cursor = txn.cursor()
                 if txn.stat()["entries"] >= object.__getattribute__(self, "_max_l2"):
+                    # Evict the oldest entry (first in insertion order) before putting.
+                    # cursor.iternext() traverses in B-tree insertion order — O(n) where
+                    # n = max_l2 (5000). Called ONLY on eviction, so amortized cost is
+                    # negligible. Must delete BEFORE put to keep capacity bounded.
+                    cursor = txn.cursor()
                     for k, _ in cursor.iternext():
                         txn.delete(k)
                         break

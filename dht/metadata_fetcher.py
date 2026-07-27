@@ -23,7 +23,7 @@ BT_HEADER_SIZE = 68
 PROTOCOL_STRING = b'BitTorrent protocol'
 BT_EXTENDED_FLAG = 16
 
-class TorrentInfo(msgspec.Struct):
+class TorrentInfo(msgspec.Struct, gc=False):
     """Parsed torrent metadata."""
     name: str
     files: list[dict]
@@ -35,7 +35,7 @@ class TorrentInfo(msgspec.Struct):
     created_by: str | None = None
     comment: str | None = None
 
-class TorrentMetadataFetcher(msgspec.Struct, frozen=True):
+class TorrentMetadataFetcher(msgspec.Struct, frozen=True, gc=False):
     """BEP-9: Fetch torrent metadata via extended BitTorrent handshake.
 
     Uses TCP connections to peers that support the ut_metadata extension.

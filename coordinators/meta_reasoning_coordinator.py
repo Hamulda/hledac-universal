@@ -43,7 +43,7 @@ class ReasoningStrategy(Enum):
     GRAPH_REASONING = 'graph'
     HYBRID = 'hybrid'
 
-class ReasoningStep(msgspec.Struct):
+class ReasoningStep(msgspec.Struct, gc=False):
     """Single reasoning step."""
     step_id: str
     description: str
@@ -53,14 +53,14 @@ class ReasoningStep(msgspec.Struct):
     parent_steps: list[str] = field(default_factory=list)
     sub_steps: list[str] = field(default_factory=list)
 
-class ReasoningChain(msgspec.Struct, frozen=True):
+class ReasoningChain(msgspec.Struct, frozen=True, gc=False):
     """Chain of reasoning steps."""
     chain_id: str
     steps: list[ReasoningStep] = field(default_factory=list)
     final_conclusion: str | None = None
     overall_confidence: float = 0.0
 
-class ThoughtNode(msgspec.Struct, frozen=True):
+class ThoughtNode(msgspec.Struct, frozen=True, gc=False):
     """Node in Tree of Thoughts."""
     node_id: str
     thought: str

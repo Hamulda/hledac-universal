@@ -16,7 +16,7 @@ from typing import Any
 import msgspec
 
 
-class SourceHitLog(msgspec.Struct, frozen=True):
+class SourceHitLog(msgspec.Struct, frozen=True, gc=False):
     """
     Per-sprint source attribution record.
 
@@ -35,7 +35,7 @@ class SourceHitLog(msgspec.Struct, frozen=True):
     findings_count: int
 
 
-class SprintScorecard(msgspec.Struct, frozen=True):
+class SprintScorecard(msgspec.Struct, frozen=True, gc=False):
     """
     Per-sprint aggregated scores.
 
@@ -62,7 +62,7 @@ class SprintScorecard(msgspec.Struct, frozen=True):
     ioc_nodes: int
 
 
-class SprintDelta(msgspec.Struct, frozen=True):
+class SprintDelta(msgspec.Struct, frozen=True, gc=False):
     """
     Per-sprint delta metrics.
 

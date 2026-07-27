@@ -113,7 +113,7 @@ async def _bounded_gather_pairs(
     Replaces asyncio.gather + _check_gathered with bounded_parallel_map
     for cleaner API and proper GHOST I6/I7 exception routing.
     """
-    from utils.async_helpers import bounded_parallel_map
+    from utils.async_helpers import parallel
     from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
 
     # F1 FIX: resolve dynamic concurrency before bounded_parallel_map call.
@@ -123,14 +123,14 @@ async def _bounded_gather_pairs(
     async def _compute_pair(pair: tuple[str, str]) -> IdentityMatch:
         return compute_fn(pair[0], pair[1])
 
-    raw = await bounded_parallel_map(
-        pairs,
-        _compute_pair,
+    result = await parallel(
+        [_compute_pair(pair) for pair in pairs],
+        policy="collect",
         concurrency=concurrency,
         ctx="identity_stitching_pairwise",
     )
     matches: list[IdentityMatch] = []
-    for r in raw:
+    for r in result.ok:
         if isinstance(r, IdentityMatch) and r.match_score >= threshold:
             matches.append(r)
     return matches

@@ -42,7 +42,7 @@ MAX_TEMPORAL_ANOMALIES = 100
 _MAYBE_MEMORY: ResearchSessionMemory | None = None
 
 
-class EntityObservation(msgspec.Struct):
+class EntityObservation(msgspec.Struct, gc=False):
     observation_id: str
     entity_value: str
     entity_type: str
@@ -53,7 +53,7 @@ class EntityObservation(msgspec.Struct):
     finding_id: str
 
 
-class EntityHistory(msgspec.Struct):
+class EntityHistory(msgspec.Struct, gc=False):
     entity_value: str
     observations: list[EntityObservation]
     sprint_count: int
@@ -62,7 +62,7 @@ class EntityHistory(msgspec.Struct):
     activity_trend: str
 
 
-class TemporalAnomaly(msgspec.Struct):
+class TemporalAnomaly(msgspec.Struct, gc=False):
     entity_value: str
     anomaly_type: str
     severity: float
@@ -71,7 +71,7 @@ class TemporalAnomaly(msgspec.Struct):
     ts: float
 
 
-class UnexploredAngle(msgspec.Struct):
+class UnexploredAngle(msgspec.Struct, gc=False):
     angle: str
     rationale: str
     suggested_sources: list[str]

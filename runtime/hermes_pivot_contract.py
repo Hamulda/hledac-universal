@@ -20,7 +20,7 @@ MAX_INFERENCE_ITEMS: int = 50  # cap hermes_outputs list in advisory runner
 # --------------------------------------------------------------------------- #
 # Struct
 # --------------------------------------------------------------------------- #
-class HermesInferenceOutput(msgspec.Struct, frozen=True):
+class HermesInferenceOutput(msgspec.Struct, frozen=True, gc=False):
     """Hermes3Engine structured inference output for pivot planning.
 
     Migrated from @dataclass(slots=True) to msgspec.Struct(frozen=True) for:

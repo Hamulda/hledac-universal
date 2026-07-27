@@ -13,7 +13,7 @@ Policy rules (in evaluation order):
 6. use_stealth=True → True, "explicit_stealth"
 7. prior_status in {403, 429} → True, "status_403_or_429"
 8. protection_hint in cloudflare/akamai/datadome/imperva → True, "protection_detected"
-9. otherwise → False, "default_aiohttp"
+9. otherwise → False, "default_httpx"
 
 Tor/I2P/JS are protected from accidental curl routing.
 """
@@ -79,4 +79,4 @@ def should_use_curl_cffi(
         return True, "protection_detected"
 
     # Rule 9: Default — use aiohttp hot-path
-    return False, "default_aiohttp"
+    return False, "default_httpx"

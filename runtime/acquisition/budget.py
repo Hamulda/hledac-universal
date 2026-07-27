@@ -49,7 +49,7 @@ _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {
 # ── FeedDominanceBudget ─────────────────────────────────────────────────────────
 
 
-class FeedDominanceBudget(msgspec.Struct, frozen=True):
+class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
     """
     F216E / Sprint C: Canonical feed dominance budget policy.
 

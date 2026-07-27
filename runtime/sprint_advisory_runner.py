@@ -98,7 +98,7 @@ def build_search_documents_from_findings(findings: list) -> list:
         docs.append(doc)
     return docs
 
-class AdvisoryRunOutcome(msgspec.Struct, frozen=True):
+class AdvisoryRunOutcome(msgspec.Struct, frozen=True, gc=False):
     """
     Result of a full advisory run (all 6 advisory steps).
 

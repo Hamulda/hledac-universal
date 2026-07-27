@@ -18,7 +18,7 @@ MAX_DRIFT_REASONS = 8
 MAX_DRIFT_DELTA_KEYS = 20
 _logger = logging.getLogger(__name__)
 
-class TargetMemoryUpdate(msgspec.Struct, frozen=True):
+class TargetMemoryUpdate(msgspec.Struct, frozen=True, gc=False):
     target_id: str
     sprint_id: str
     finding_count: int
@@ -27,7 +27,7 @@ class TargetMemoryUpdate(msgspec.Struct, frozen=True):
     pivot_facets: dict[str, Any]
     observed_ts: float
 
-class TargetMemory(msgspec.Struct, frozen=True):
+class TargetMemory(msgspec.Struct, frozen=True, gc=False):
     target_id: str
     first_seen_ts: float
     last_seen_ts: float

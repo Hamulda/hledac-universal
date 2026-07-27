@@ -175,7 +175,7 @@ pub fn batch_compress_pages(pages: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
         // CPU-bound: use io_pool() (2 threads)
         // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
         use crate::gil::release_gil;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             release_gil(py, || {
                 crate::io_pool().install(|| {
                     pages
@@ -211,7 +211,7 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     } else {
         // Issue #6: GIL released via `release_gil` to enable true rayon parallelism.
         use crate::gil::release_gil;
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             release_gil(py, || {
                 crate::io_pool().install(|| {
                     wires

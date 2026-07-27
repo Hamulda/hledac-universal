@@ -17,6 +17,8 @@ New code should import directly from the appropriate submodule.
 """
 from __future__ import annotations
 
+import logging
+
 # Re-export all pure planner symbols (PLANNER section)
 from runtime.acquisition_strategy_planner import (
     # Enums
@@ -45,6 +47,7 @@ from runtime.acquisition_strategy_planner import (
     lane_is_terminal,
     terminality_report,
     # Utilities
+    logger,
     _load_feed_budget_from_env,
     _has_explicit_cid,
     _extract_cids_from_text,

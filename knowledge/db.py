@@ -156,14 +156,14 @@ def _get_rust_pool() -> bool | None:
 # ============================================================================
 
 
-class DBCoordinates(msgspec.Struct, frozen=True):
+class DBCoordinates(msgspec.Struct, frozen=True, gc=False):
     """Coordinates for a database operation."""
     db: str  # "duckdb" | "lmdb"
     table: str | None = None
     schema: str | None = None
 
 
-class QueryResult(msgspec.Struct):
+class QueryResult(msgspec.Struct, gc=False):
     """Generic query result."""
     rows: list[dict[str, Any]]
     columns: list[str]

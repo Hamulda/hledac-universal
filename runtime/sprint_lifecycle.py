@@ -52,7 +52,7 @@ _PHASE_ORDER = [
 
 # ── Manager ──────────────────────────────────────────────────────────────────
 
-class SprintLifecycleManager(msgspec.Struct):
+class SprintLifecycleManager(msgspec.Struct, gc=False):
     """
     Lightweight sprint lifecycle state machine.
 

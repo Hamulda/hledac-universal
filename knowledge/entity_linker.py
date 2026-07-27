@@ -75,7 +75,7 @@ except Exception:
     GLINER_AVAILABLE = False
     logger.debug('GLiNER check failed, using fallback NER')
 
-class EntityCandidate(msgspec.Struct):
+class EntityCandidate(msgspec.Struct, gc=False):
     """
     Represents a candidate entity from Wikidata.
 
@@ -107,7 +107,7 @@ class EntityCandidate(msgspec.Struct):
         """Create from dictionary."""
         return cls(entity_text=data['entity_text'], wikidata_id=data['wikidata_id'], label=data['label'], description=data['description'], types=data.get('types', []), context_score=data.get('context_score', 0.0), popularity_score=data.get('popularity_score', 0.0), final_score=data.get('final_score', 0.0))
 
-class LinkedEntity(msgspec.Struct):
+class LinkedEntity(msgspec.Struct, gc=False):
     """
     Represents a successfully linked entity.
 

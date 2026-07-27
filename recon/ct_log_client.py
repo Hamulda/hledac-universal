@@ -215,7 +215,7 @@ class CTLogClient:
             logger.warning(f'certspotter {domain}: failed, trying crt.sh identity search')
         crtsh_identity_decision = domain_breaker_check('crt.sh.identity')
         if crtsh_identity_decision.allowed:
-            raw, _status, err = await checked_aiohttp_get(session, self._CRT_SH_IDENTITY_URL.format(domain=domain), timeout=aiohttp.ClientTimeout(total=5), failure_kind='crtsh_ct_identity')
+            raw, _status, err = await checked_aiohttp_get(session, self._CRT_SH_IDENTITY_URL.format(domain=domain), timeout=httpx.Timeout(total=5.0), failure_kind='crtsh_ct_identity')
             if err:
                 logger.warning(f'CT crt.sh identity {domain}: {err}')
             elif isinstance(raw, list) and len(raw) > 0:

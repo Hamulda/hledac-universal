@@ -73,7 +73,7 @@ def _get_mlx_nn() -> Any:
 
 _MLX_NN_AVAILABLE: bool = _get_mlx_nn() is not None
 
-class DistillationExample(msgspec.Struct):
+class DistillationExample(msgspec.Struct, gc=False):
     """
     Dataclass pro training example pro distillation.
 

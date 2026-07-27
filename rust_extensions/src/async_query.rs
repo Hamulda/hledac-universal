@@ -298,7 +298,7 @@ pub fn rust_async_query_with_params(
     sql: String,
     params: Vec<Py<PyAny>>,
 ) -> PyResult<Vec<Vec<String>>> {
-    let param_strings: Vec<String> = Python::with_gil(|py| {
+    let param_strings: Vec<String> = Python::attach(|py| {
         params
             .iter()
             .map(|p| {

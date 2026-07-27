@@ -27,7 +27,7 @@ from hledac.universal.runtime.sidecar_bus import SidecarBatch, classify_sidecar_
 from hledac.universal.utils.deduplication import SimHash
 __all__ = ['SidecarDispatcher', 'DispatchOutcome']
 
-class DispatchOutcome(msgspec.Struct, frozen=True):
+class DispatchOutcome(msgspec.Struct, frozen=True, gc=False):
     """
     Result of a sidecar dispatch call.
 

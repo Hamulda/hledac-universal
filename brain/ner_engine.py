@@ -656,7 +656,7 @@ n        Pokud je model již načten, nic nedělá.
             import msgspec
             import outlines
 
-            class EntityList(msgspec.Struct):
+            class EntityList(msgspec.Struct, gc=False):
                 entities: list[dict]
             generator = outlines.generate.json(NEREngine._MLX_EXTRACTOR, EntityList)
             prompt = f'Extract named entities from text:\n{text[:2000]}'
@@ -1461,7 +1461,7 @@ def build_entity_summary(findings: list[dict], *, max_entities: int=20, max_cooc
         takeaway = f'{unique_count} unique entities across {len(findings)} findings.'
     return {'top_entities': top_entities, 'corroborated': corroborated, 'co_occurrence_pivots': pivots, 'dominant_type': dominant, 'entity_takeaway': takeaway, 'type_breakdown': type_breakdown, 'total_entities': unique_count}
 
-class FeedbackPack(msgspec.Struct):
+class FeedbackPack(msgspec.Struct, gc=False):
     """
     Unified compact feedback artifact for findings→entity→hypothesis→semantic loop.
 
