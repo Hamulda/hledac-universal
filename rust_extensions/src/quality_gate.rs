@@ -463,9 +463,13 @@ pub fn assess_findings_quality_batch(
     if n == 0 {
         return Ok(PyList::empty(py));
     }
-    // cpu_pool: 4 threads for BLAKE2b SIMD-bound work
-    let results: Vec<PyQualityDecision> = crate::cpu_pool().install(|| {
-        findings.par_iter().map(assess_single_finding).collect()
+    // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
+    // cpu_pool: 4 threads for BLAKE2b SIMD-bound work — all Rust compute,
+    // no Python objects accessed inside the closure.
+    let results: Vec<PyQualityDecision> = py.allow_threads(|| {
+        crate::cpu_pool().install(|| {
+            findings.par_iter().map(assess_single_finding).collect()
+        })
     });
     let list = PyList::new(py, results)?;
     Ok(list)
@@ -495,7 +499,7 @@ const BATCH_PARALLEL_MIN_CHUNK: usize = 32;
 
 /// Parallel batch: compute entropy for many texts.
 #[pyfunction]
-pub fn batch_entropy(texts: Vec<String>) -> Vec<f64> {
+pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> Vec<f64> {
     use rayon::prelude::*;
     let n_valid = validate_batch_slice(&texts);
     if n_valid == 0 {
@@ -506,20 +510,23 @@ pub fn batch_entropy(texts: Vec<String>) -> Vec<f64> {
     if n < BATCH_PARALLEL_THRESHOLD {
         slice.iter().map(|t| compute_entropy(t)).collect()
     } else {
-        // cpu_pool: 4 threads for BLAKE2b SIMD-bound work
-        crate::cpu_pool().install(|| {
-            slice
-                .par_iter()
-                .map(|t| compute_entropy(t))
-                .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
-                .collect()
+        // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
+        // cpu_pool: 4 threads for BLAKE2b SIMD-bound work — pure Rust compute.
+        py.allow_threads(|| {
+            crate::cpu_pool().install(|| {
+                slice
+                    .par_iter()
+                    .map(|t| compute_entropy(t))
+                    .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                    .collect()
+            })
         })
     }
 }
 
 /// Parallel batch: dedup fingerprints for many texts.
 #[pyfunction]
-pub fn batch_dedup_fingerprints(texts: Vec<String>) -> Vec<String> {
+pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
     let n_valid = validate_batch_slice(&texts);
     if n_valid == 0 {
@@ -530,19 +537,22 @@ pub fn batch_dedup_fingerprints(texts: Vec<String>) -> Vec<String> {
     if n < BATCH_PARALLEL_THRESHOLD {
         slice.iter().map(|t| dedup_fingerprint(t)).collect()
     } else {
-        crate::cpu_pool().install(|| {
-            slice
-                .par_iter()
-                .map(|t| dedup_fingerprint(t))
-                .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
-                .collect()
+        // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
+        py.allow_threads(|| {
+            crate::cpu_pool().install(|| {
+                slice
+                    .par_iter()
+                    .map(|t| dedup_fingerprint(t))
+                    .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                    .collect()
+            })
         })
     }
 }
 
 /// Parallel batch: URL fingerprints for many URLs.
 #[pyfunction]
-pub fn batch_url_fingerprints(urls: Vec<String>) -> Vec<String> {
+pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
     let n_valid = validate_batch_slice(&urls);
     if n_valid == 0 {
@@ -553,19 +563,22 @@ pub fn batch_url_fingerprints(urls: Vec<String>) -> Vec<String> {
     if n < BATCH_PARALLEL_THRESHOLD {
         slice.iter().map(|u| url_fingerprint(u)).collect()
     } else {
-        crate::cpu_pool().install(|| {
-            slice
-                .par_iter()
-                .map(|u| url_fingerprint(u))
-                .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
-                .collect()
+        // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
+        py.allow_threads(|| {
+            crate::cpu_pool().install(|| {
+                slice
+                    .par_iter()
+                    .map(|u| url_fingerprint(u))
+                    .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                    .collect()
+            })
         })
     }
 }
 
 /// Parallel batch: normalize text for quality assessment.
 #[pyfunction]
-pub fn batch_normalize_quality_text(texts: Vec<String>) -> Vec<String> {
+pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> Vec<String> {
     use rayon::prelude::*;
     let n_valid = validate_batch_slice(&texts);
     if n_valid == 0 {
@@ -576,12 +589,15 @@ pub fn batch_normalize_quality_text(texts: Vec<String>) -> Vec<String> {
     if n < BATCH_PARALLEL_THRESHOLD {
         slice.iter().map(|t| normalize_quality_text(t)).collect()
     } else {
-        crate::cpu_pool().install(|| {
-            slice
-                .par_iter()
-                .map(|t| normalize_quality_text(t))
-                .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
-                .collect()
+        // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
+        py.allow_threads(|| {
+            crate::cpu_pool().install(|| {
+                slice
+                    .par_iter()
+                    .map(|t| normalize_quality_text(t))
+                    .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
+                    .collect()
+            })
         })
     }
 }

@@ -1,8 +1,12 @@
 """
-Test RoleBasedPools — ISSUE #5 fix
-====================================
+Test RoleBasedPools — DEPRECATED MODULE (R-18)
+==============================================
 
-Tests for runtime/role_based_pools.py — unified role-based executor facade.
+Tests for runtime/_legacy_role_based_pools.py — deprecated role-based executor facade.
+
+.. deprecated::
+    This module tests the deprecated _legacy_role_based_pools.py.
+    Production code should use runtime.lmdb_pool or runtime.worker_pool instead.
 
 Run with: pytest tests/test_role_based_pools.py -v
 """
@@ -19,7 +23,7 @@ class TestRoleBasedPools:
 
     def test_get_role_pools_returns_singleton(self) -> None:
         """get_role_pools returns the same instance on repeated calls."""
-        from hledac.universal.runtime.role_based_pools import get_role_pools
+        from hledac.universal.runtime._legacy_role_based_pools import get_role_pools
 
         pools1 = get_role_pools()
         pools2 = get_role_pools()
@@ -28,7 +32,7 @@ class TestRoleBasedPools:
     @pytest.mark.asyncio
     async def test_role_based_pools_lazy_initialization(self) -> None:
         """RoleBasedPools does not initialize executors until first use."""
-        from hledac.universal.runtime.role_based_pools import RoleBasedPools
+        from hledac.universal.runtime._legacy_role_based_pools import RoleBasedPools
 
         pools = RoleBasedPools()
         assert not pools._initialized
@@ -38,7 +42,7 @@ class TestRoleBasedPools:
 
     def test_run_hash_sync_basic(self) -> None:
         """run_hash_sync executes function and returns result."""
-        from hledac.universal.runtime.role_based_pools import get_role_pools
+        from hledac.universal.runtime._legacy_role_based_pools import get_role_pools
 
         pools = get_role_pools()
 
@@ -51,7 +55,7 @@ class TestRoleBasedPools:
     @pytest.mark.asyncio
     async def test_run_hash_async_basic(self) -> None:
         """run_hash executes async function and returns result."""
-        from hledac.universal.runtime.role_based_pools import get_role_pools
+        from hledac.universal.runtime._legacy_role_based_pools import get_role_pools
 
         pools = get_role_pools()
 
@@ -67,7 +71,7 @@ class TestRoleBasedPools:
     @pytest.mark.asyncio
     async def test_run_regex_basic(self) -> None:
         """run_regex executes regex function and returns result."""
-        from hledac.universal.runtime.role_based_pools import get_role_pools
+        from hledac.universal.runtime._legacy_role_based_pools import get_role_pools
 
         pools = get_role_pools()
 
@@ -82,7 +86,7 @@ class TestRoleBasedPools:
     @pytest.mark.asyncio
     async def test_run_async_io_basic(self) -> None:
         """run_async_io executes blocking I/O and returns result."""
-        from hledac.universal.runtime.role_based_pools import get_role_pools
+        from hledac.universal.runtime._legacy_role_based_pools import get_role_pools
 
         pools = get_role_pools()
 
@@ -94,7 +98,7 @@ class TestRoleBasedPools:
 
     def test_check_embed_ram_budget_true(self) -> None:
         """_check_embed_ram_budget returns True when memory is available."""
-        from hledac.universal.runtime.role_based_pools import RoleBasedPools
+        from hledac.universal.runtime._legacy_role_based_pools import RoleBasedPools
 
         pools = RoleBasedPools()
         # Patch to avoid actual MLX calls
@@ -104,7 +108,7 @@ class TestRoleBasedPools:
 
     def test_check_db_ram_budget_true(self) -> None:
         """_check_db_ram_budget returns True when memory is available."""
-        from hledac.universal.runtime.role_based_pools import RoleBasedPools
+        from hledac.universal.runtime._legacy_role_based_pools import RoleBasedPools
 
         pools = RoleBasedPools()
         result = pools._check_db_ram_budget()
@@ -117,7 +121,7 @@ class TestBackwardCompatShims:
     @pytest.mark.asyncio
     async def test_run_in_hash_pool_deprecated(self) -> None:
         """run_in_hash_pool emits deprecation warning."""
-        from hledac.universal.runtime.role_based_pools import run_in_hash_pool
+        from hledac.universal.runtime._legacy_role_based_pools import run_in_hash_pool
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
             await run_in_hash_pool(lambda x: x, 1)
@@ -125,7 +129,7 @@ class TestBackwardCompatShims:
     @pytest.mark.asyncio
     async def test_run_in_regex_pool_deprecated(self) -> None:
         """run_in_regex_pool emits deprecation warning."""
-        from hledac.universal.runtime.role_based_pools import run_in_regex_pool
+        from hledac.universal.runtime._legacy_role_based_pools import run_in_regex_pool
 
         with pytest.warns(DeprecationWarning, match="deprecated"):
             await run_in_regex_pool(lambda x: x, "text")
@@ -136,7 +140,7 @@ class TestRAMBudget:
 
     def test_embed_budget_checks_available_memory(self) -> None:
         """Embedding budget check uses psutil to get available memory."""
-        from hledac.universal.runtime.role_based_pools import RoleBasedPools, _get_available_memory_gib
+        from hledac.universal.runtime._legacy_role_based_pools import RoleBasedPools, _get_available_memory_gib
 
         available = _get_available_memory_gib()
         assert available > 0
@@ -153,25 +157,25 @@ class TestConstants:
 
     def test_embed_workers_is_1(self) -> None:
         """EMBED_WORKERS is 1 due to 2GB VRAM limit."""
-        from hledac.universal.runtime.role_based_pools import _EMBED_WORKERS
+        from hledac.universal.runtime._legacy_role_based_pools import _EMBED_WORKERS
 
         assert _EMBED_WORKERS == 1
 
     def test_db_workers_is_2(self) -> None:
         """DB_WORKERS is 2 for DuckDB concurrent writers."""
-        from hledac.universal.runtime.role_based_pools import _DB_WORKERS
+        from hledac.universal.runtime._legacy_role_based_pools import _DB_WORKERS
 
         assert _DB_WORKERS == 2
 
     def test_hash_workers_is_4(self) -> None:
         """HASH_WORKERS is 4 for P-core count."""
-        from hledac.universal.runtime.role_based_pools import _HASH_WORKERS
+        from hledac.universal.runtime._legacy_role_based_pools import _HASH_WORKERS
 
         assert _HASH_WORKERS == 4
 
     def test_regex_workers_is_4(self) -> None:
         """REGEX_WORKERS is 4 for P-core count."""
-        from hledac.universal.runtime.role_based_pools import _REGEX_WORKERS
+        from hledac.universal.runtime._legacy_role_based_pools import _REGEX_WORKERS
 
         assert _REGEX_WORKERS == 4
 
@@ -182,7 +186,7 @@ class TestRoleBasedPoolsShutdown:
     @pytest.mark.asyncio
     async def test_shutdown_cleans_executors(self) -> None:
         """shutdown sets _initialized to False and clears executors."""
-        from hledac.universal.runtime.role_based_pools import RoleBasedPools
+        from hledac.universal.runtime._legacy_role_based_pools import RoleBasedPools
 
         pools = RoleBasedPools()
         await pools.run_hash(lambda x: x, 1)

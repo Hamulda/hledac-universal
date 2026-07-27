@@ -1,9 +1,17 @@
 # misc.py — Miscellaneous domains: graph, hot_edges, aho, evidence, madvise, memory, json, spsc, query, text, int_counter, simd, sprint_policies, metal
 
 import re
+import warnings
 from collections import deque
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal
+
+# Issue R-17: Deprecation markers for domains where Python fallback always wins
+_DEPRECATED_RUST_DOMAINS: set[str] = {
+    "_RustGraphDomain",   # Rust has incompatible signature → Python always wins
+    "_RustSimdDomain",    # Rust batch_cosine_scores incompatible → Python always wins
+    "_RustXmlDomain",     # Rust sanitize_xml absent on older builds → Python fallback
+}
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
@@ -257,6 +265,12 @@ class _RustGraphDomain:
     __slots__ = ("_ext",)
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
+        warnings.warn(
+            "[R-17] _RustGraphDomain is deprecated: "
+            "Rust batch_graph_traverse has incompatible signature — Python fallback always wins",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._ext = ext
 
     def batch_graph_traverse(
@@ -798,6 +812,12 @@ class _RustXmlDomain:
     __slots__ = ("_ext",)
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
+        warnings.warn(
+            "[R-17] _RustXmlDomain is deprecated: "
+            "Rust sanitize_xml may be absent on older builds — Python fallback preferred",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._ext = ext
 
     def sanitize_xml(self, raw: str) -> str:
@@ -869,6 +889,12 @@ class _RustSimdDomain:
     __slots__ = ("_ext",)
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
+        warnings.warn(
+            "[R-17] _RustSimdDomain is deprecated: "
+            "Rust batch_cosine_scores has incompatible signature — Python fallback always wins",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._ext = ext
 
     def cosine_similarity(self, a: list[float], b: list[float]) -> float:

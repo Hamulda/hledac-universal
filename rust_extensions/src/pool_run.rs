@@ -363,19 +363,47 @@ pub fn rayon_join_channel_(
         .map(|t| Duration::from_secs_f64(t.max(0.0)))
         .unwrap_or(Duration::MAX);
 
-    // parking_lot 0.12: use sleep loop with Instant tracking
-    let start = std::time::Instant::now();
-    let mut guard = shared.result.lock();
-    while (*guard).is_none() {
-        let remaining = timeout.saturating_sub(start.elapsed());
-        if remaining.is_zero() {
-            break;
+    // GIL RELEASE FIX (R-16.1): Use py.allow_threads + parking_lot Condvar
+    // to actually release the GIL during the wait, allowing the asyncio event
+    // loop to run other coroutines in parallel.
+    //
+    // Previous busy-loop with std::thread::sleep() held the GIL the entire time
+    // because Python threads cannot release GIL via std::thread::sleep().
+    //
+    // parking_lot::Condvar::wait_for() calls pthread_cond_timedwait on macOS,
+    // which is a real OS-level block (not busy-polling). Wrapped in
+    // py.allow_threads() to release the GIL during the syscall.
+    //
+    // Memory safety: Arc<SharedTask> stays alive because:
+    //   - Worker thread holds Arc clone via WorkItem.shared
+    //   - Python holds Arc clone via Box::into_raw(handle)
+    //   - Both must drop before SharedTask is dropped
+    let deadline = std::time::Instant::now() + timeout;
+
+    // Thread-safe flag: AtomicBool is Sync (unlike Cell), usable across allow_threads boundary
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let timed_out_flag = Arc::new(AtomicBool::new(true));
+    let timed_out_flag_clone = Arc::clone(&timed_out_flag);
+
+    py.allow_threads(|| {
+        let mut guard = shared.result.lock();
+        while (*guard).is_none() {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            // wait_for: atomically unlocks mutex and blocks on condvar;
+            // on notify or timeout, reacquires mutex and returns WaitTimeoutResult.
+            // Guard is MODIFIED IN-PLACE (parking_lot semantics).
+            // On macOS this maps to pthread_cond_timedwait — real OS thread block.
+            let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
         }
-        drop(guard);
-        std::thread::sleep(std::time::Duration::from_millis(1.min(remaining.as_millis() as u64)));
-        guard = shared.result.lock();
-    }
-    let timed_out = (*guard).is_none();
+        // timed_out = true if result is still None after wait loop
+        timed_out_flag_clone.store((*guard).is_none(), Ordering::Release);
+    });
+    // Re-lock to read result — allow_threads released the mutex on each iteration
+    let timed_out = timed_out_flag.load(Ordering::Acquire);
+    let mut guard = shared.result.lock();
     if timed_out {
         // Try to claim ABORTED ownership atomically.
         // If CAS fails → worker already won (wrote result and transitioned to READY).
@@ -429,7 +457,7 @@ pub fn rayon_join_channel_(
 /// Sets cancel flag and waits up to 5s for worker acknowledgment.
 #[pyfunction]
 #[pyo3(name = "rayon_abort_channel")]
-pub fn rayon_abort_channel_(handle_ptr: usize) -> PyResult<()> {
+pub fn rayon_abort_channel_(py: Python<'_>, handle_ptr: usize) -> PyResult<()> {
     if handle_ptr == 0 {
         return Ok(());
     }
@@ -442,19 +470,21 @@ pub fn rayon_abort_channel_(handle_ptr: usize) -> PyResult<()> {
     shared.cancel_flag.store(true, Ordering::Release);
 
     // Wait up to 5s for worker to acknowledge
+    // GIL RELEASE FIX: same pattern as rayon_join_channel_ — use condvar wait
+    // with allow_threads to release GIL during blocking.
     let timeout = Duration::from_secs(5);
-    // parking_lot 0.12: use sleep loop with Instant tracking
-    let start = std::time::Instant::now();
-    let mut guard = shared.result.lock();
-    while (*guard).is_none() {
-        let remaining = timeout.saturating_sub(start.elapsed());
-        if remaining.is_zero() {
-            break;
+    let deadline = std::time::Instant::now() + timeout;
+
+    py.allow_threads(|| {
+        let mut guard = shared.result.lock();
+        while (*guard).is_none() {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
         }
-        drop(guard);
-        std::thread::sleep(std::time::Duration::from_millis(1.min(remaining.as_millis() as u64)));
-        guard = shared.result.lock();
-    }
+    });
 
     Ok(())
 }
