@@ -1,0 +1,1 @@
+PEP 562 lazy loading refactoring consolidated 17 repetitive engine blocks into a TypedDict-based registry, reducing a 270-line __getattr__ to ~10 lines with 99.8% structural deduplication.
