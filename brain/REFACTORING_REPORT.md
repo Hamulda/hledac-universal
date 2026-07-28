@@ -5,7 +5,6 @@
 
 **Post-Review Fixes (2026-07-27):**
 - ✅ Fixed `_betal` typo → `_metal` in `_metal/__init__.py`
-- ✅ Archived orphaned `deephermes3_engine_refactor.py` (885 lines, never wired to production) → `brain/archive/deephermes3_engine_refactor_20260727.py`
 - ✅ Fixed `INFERENCE_AVAILABLE` name collision — `brain._inference.InferenceEngine` renamed to `GenerationFacade` to avoid collision with `brain.inference_engine.InferenceEngine` (abductive reasoning)
 - ✅ Fixed `__getattr__` lazy loading — `AVAILABLE_BRAIN_ENGINES` dict now uses `None` values (not undefined names), `__getattr__` updates dict after setting flag, `is_brain_engine_available` uses `_ENGINE_FLAG_MAP` to resolve name → flag
 - ✅ Fixed corrupted `__slots__` comment (line 364) — remnant of merge conflict
@@ -140,7 +139,6 @@ from brain import METAL_AVAILABLE, CACHE_AVAILABLE, BATCH_AVAILABLE
 - `brain/_inference/__init__.py` — ✅ Inference module exports
 
 ### Files Archived
-- `brain/archive/deephermes3_engine_refactor_20260727.py` — Orphaned refactor reference (885 lines, never wired to production)
 
 ## M1 8GB UMA Compliance
 
@@ -200,11 +198,6 @@ print(f'BATCH_AVAILABLE={BATCH_AVAILABLE}')
 | `brain/_inference/__init__.py` | 18 | Inference module exports |
 | `brain/_inference/stream_handler.py` | 233 | Streaming |
 | `brain/_inference/generate.py` | 323 | Inference orchestration |
-
-### Phase 1: Archived
-| File | Lines | Reason |
-|------|-------|--------|
-| `brain/archive/deephermes3_engine_refactor_20260727.py` | 885 | Orphaned — never wired to production |
 
 ### Phase 2: Updated Files
 | File | Change | Purpose |

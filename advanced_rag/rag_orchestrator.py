@@ -100,7 +100,7 @@ class RAGOrchestrator:
             errors: list[str] = []
             if self._backend_mode in ('auto', 'sqlitevec'):
                 try:
-                    from utils.sqlite_vec_helpers import SqliteVecStore
+                    from hledac.universal.utils.sqlite_vec_helpers import SqliteVecStore
                     store = SqliteVecStore(sprint_id=self._sprint_id)
                     ok = await store.initialize()
                     if ok:
@@ -114,7 +114,7 @@ class RAGOrchestrator:
             if self._backend_mode in ('auto', 'lancedb') and self._sqlite_vec_store is None:
                 if _has_ram_headroom(_LANCEDB_RAM_THRESHOLD_GB):
                     try:
-                        from knowledge.lancedb_store import get_identity_store
+                        from hledac.universal.knowledge.lancedb_store import get_identity_store
                         self._lancedb_store = await get_identity_store()
                         logger.info('RAGOrchestrator: LanceDB fallback activated')
                     except Exception as e:
@@ -221,7 +221,7 @@ class RAGOrchestrator:
         Uses the canonical MLX embedder from core/mlx_embeddings.py.
         """
         try:
-            from core.mlx_embeddings import get_embedding_manager
+            from hledac.universal.core.mlx_embeddings import get_embedding_manager
             mgr = get_embedding_manager()
             emb = mgr.embed_query(text)
             try:

@@ -19,7 +19,7 @@ USE CASES where t-strings DO NOT help:
 - Runtime parameterization (values baked in at compile time)
 
 Example:
-    from utils.t_string_helpers import t_analyze, t_inspect
+    from hledac.universal.utils.t_string_helpers import t_analyze, t_inspect
 
     # At compile time, when query="ransomware" and limit=5:
     prompt_tpl = t"Query: {query} limit {limit:05d}"

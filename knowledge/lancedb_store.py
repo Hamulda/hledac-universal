@@ -452,7 +452,7 @@ class LanceDBIdentityStore:
         # Binary embeddings (for fast pre-filter)
         self._binary_embeddings: Any = None
         try:
-            from knowledge.lancedb_auto_tuner import make_default_tuner
+            from hledac.universal.knowledge.lancedb_auto_tuner import make_default_tuner
             self._autotune = make_default_tuner(table_name='entities', state_dir=Path(uri).parent, num_sub_vectors=self._ivfpq_num_sub_vectors, vector_column='embedding', key_column='id')
         except Exception:
             self._autotune = None
@@ -515,7 +515,7 @@ class LanceDBIdentityStore:
     async def _initialize_embedder(self) -> bool:
         """Initialize embedder: MLX/GPU → CoreML/ANE → Numpy fallback."""
         try:
-            from core.mlx_embeddings import get_embedding_manager
+            from hledac.universal.core.mlx_embeddings import get_embedding_manager
             self._mlx_embed_manager = get_embedding_manager()
             self._embedder = self._mlx_embed_manager
             self._embedder_type = 'mlx_gpu'
@@ -1074,7 +1074,7 @@ class LanceDBIdentityStore:
             return candidates
         num_bytes = self._mlx_embeddings.shape[1]
         try:
-            from hledac.compat.core_simd_similarity import batch_hamming_scores as _bhs
+            from hledac.universal.hledac.compat.core_simd_similarity import batch_hamming_scores as _bhs
             query_packed = self._pack_query_to_binary(query_emb)
             candidates_flat = self._mlx_embeddings[cand_indices].tolist()
             all_bytes = b''.join((bytes((int(x) for x in row)) for row in candidates_flat))
@@ -1241,7 +1241,7 @@ class LanceDBIdentityStore:
         if self._colbert_loaded:
             return self._colbert_reranker
         try:
-            from knowledge.colbert_retriever import ColBERTReranker
+            from hledac.universal.knowledge.colbert_retriever import ColBERTReranker
             self._colbert_reranker = ColBERTReranker()
             self._colbert_loaded = True
             logger.info('ColBERT reranker loaded')
@@ -1781,7 +1781,7 @@ class SqliteVecIdentityStore:
         if self._store is not None:
             return True
         try:
-            from utils.sqlite_vec_helpers import SqliteVecStore
+            from hledac.universal.utils.sqlite_vec_helpers import SqliteVecStore
             store = SqliteVecStore(sprint_id=self._sprint_id)
             ok = await store.initialize()
             if ok:
@@ -1794,7 +1794,7 @@ class SqliteVecIdentityStore:
     async def _get_embedding_manager(self):
         """Lazily get MLX embedding manager."""
         if self._embedding_manager is None:
-            from core.mlx_embeddings import get_embedding_manager
+            from hledac.universal.core.mlx_embeddings import get_embedding_manager
             self._embedding_manager = get_embedding_manager()
         return self._embedding_manager
 
@@ -2001,7 +2001,7 @@ class LanceDBAcademicStore:
         """
         try:
             import mlx.core
-            from core.mlx_embeddings import get_mlx_embedder
+            from hledac.universal.core.mlx_embeddings import get_mlx_embedder
             self._embedder = get_mlx_embedder()
             self._embedder_backend = 'mlx'
             return

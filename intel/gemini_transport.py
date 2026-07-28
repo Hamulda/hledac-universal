@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.protocols.gemini_transport import *
+from hledac.universal.recon.protocols.gemini_transport import *

@@ -5,7 +5,7 @@ Provides DP noise for aggregate statistics publishing — prevents exact counts
 from being derived from reported aggregates.
 
 Usage:
-    from utils.privacy_utils import DPNoise, RDPCalculator
+    from hledac.universal.utils.privacy_utils import DPNoise, RDPCalculator
     dp = DPNoise(epsilon=1.0, delta=1e-5)
     noisy_counts = dp.add_noise({'entity_count': 42, 'finding_count': 17})
 """

@@ -13,8 +13,8 @@ NOTE: This is NOT brain.inference_engine (abductive reasoning / evidence chainin
 Independence: brain._inference is MLX-generate-only; brain.inference_engine is symbolic.
 """
 
-from brain._inference.stream_handler import StreamHandler
-from brain._inference.generate import GenerationFacade
+from hledac.universal.brain._inference.stream_handler import StreamHandler
+from hledac.universal.brain._inference.generate import GenerationFacade
 
 __all__ = [
     "StreamHandler",

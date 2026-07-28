@@ -50,7 +50,7 @@ def _get_rust_signal_domain():
     global _rust_signal_domain
     if _rust_signal_domain is None:
         try:
-            from core.rust_backend import rust
+            from hledac.universal.core.rust_backend import rust
             _rust_signal_domain = rust.signal if rust.is_available else None
         except Exception:
             _rust_signal_domain = None
@@ -63,7 +63,7 @@ def _get_rust_federated_domain():
     global _rust_federated_domain
     if _rust_federated_domain is None:
         try:
-            from core.rust_backend import rust
+            from hledac.universal.core.rust_backend import rust
             _rust_federated_domain = rust.federated if rust.is_available else None
         except Exception:
             _rust_federated_domain = None
@@ -154,7 +154,7 @@ class PrefetchOracleIntegration:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             # No running loop — bridge to async via run_sync_async (M1 Metal safe).
-            from utils.sync_bridge import run_sync_async
+            from hledac.universal.utils.sync_bridge import run_sync_async
             return run_sync_async(self.suggest_scores_async(work_items, current_cycle))
         except Exception:
             return self._suggest_scores_sequential(work_items, current_cycle)
@@ -614,7 +614,7 @@ class PrefetchOracleIntegration:
             if conn is None:
                 return {}
             if self._duckdb_executor is None:
-                from utils.domain_executors import get_duckdb_executor
+                from hledac.universal.utils.domain_executors import get_duckdb_executor
                 self._duckdb_executor = get_duckdb_executor()
 
             def _query_sync() -> dict[str, float]:

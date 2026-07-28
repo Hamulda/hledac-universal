@@ -42,7 +42,7 @@ class _DuckDBQueryCache:
     def __init__(self, lmdb_path: Path, *, max_l1: int = 500, max_l2: int = 5000, ttl_s: int = 300) -> None:
         import os
         from collections import OrderedDict
-        from core.env_config import ENV
+        from hledac.universal.core.env_config import ENV
 
         _DUCKDB_QUERY_CACHE_ENABLED = ENV.get_bool("HLEDAC_DUCKDB_QUERY_CACHE")
 
@@ -148,7 +148,7 @@ class _DuckDBQueryCache:
             pass
 
     def get(self, sql: str, params: tuple) -> list | None:
-        from core.env_config import ENV
+        from hledac.universal.core.env_config import ENV
 
         if not ENV.get_bool("HLEDAC_DUCKDB_QUERY_CACHE"):
             return None
@@ -162,7 +162,7 @@ class _DuckDBQueryCache:
         return rows
 
     def put(self, sql: str, params: tuple, rows: list) -> None:
-        from core.env_config import ENV
+        from hledac.universal.core.env_config import ENV
 
         if not ENV.get_bool("HLEDAC_DUCKDB_QUERY_CACHE"):
             return

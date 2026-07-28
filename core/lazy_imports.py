@@ -4,7 +4,7 @@ Extends PEP 562 __getattr__ for module-level lazy imports.
 Reduces cold-start overhead for --help / diagnostics path.
 
 Usage:
-    from core.lazy_imports import lazy
+    from hledac.universal.core.lazy_imports import lazy
 
     # Define at module level (no import cost until first attribute access)
     duckdb = lazy("duckdb")

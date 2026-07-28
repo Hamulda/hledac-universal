@@ -21,8 +21,8 @@ def __getattr__(name: str):
     global _LOADED
     if not _LOADED:
         _LOADED = True
-        from runtime.sidecars.forensics import _digital_ghost as _dg_mod
-        from runtime.sidecars.forensics import _steganography as _steg_mod
+        from hledac.universal.runtime.sidecars.forensics import _digital_ghost as _dg_mod
+        from hledac.universal.runtime.sidecars.forensics import _steganography as _steg_mod
 
         _CACHE.update({
             "DigitalGhostSidecarAdapter": _dg_mod.DigitalGhostSidecarAdapter,

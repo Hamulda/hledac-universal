@@ -1,11 +1,11 @@
 
 
 # renderers/ — Output format renderers for report/ pipeline
-from report.renderers.json_renderer import JSONRenderer
-from report.renderers.markdown_renderer import MarkdownRenderer
-from report.renderers.html_renderer import HTMLRenderer
-from report.renderers.svg_renderer import SVGRenderer
-from report.renderers.pdf_renderer import PDFRenderer
+from hledac.universal.report.renderers.json_renderer import JSONRenderer
+from hledac.universal.report.renderers.markdown_renderer import MarkdownRenderer
+from hledac.universal.report.renderers.html_renderer import HTMLRenderer
+from hledac.universal.report.renderers.svg_renderer import SVGRenderer
+from hledac.universal.report.renderers.pdf_renderer import PDFRenderer
 
 __all__ = [
     "JSONRenderer",

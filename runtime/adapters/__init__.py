@@ -6,7 +6,7 @@ Adapter wrappers implementing the 14 protocols.
 Each adapter wraps an existing implementation without changing behavior.
 
 Usage:
-    from runtime.adapters import DuckDBStoreAdapter, FetchCoordinatorAdapter
+    from hledac.universal.runtime.adapters import DuckDBStoreAdapter, FetchCoordinatorAdapter
 
     # Wrap existing store
     store = DuckDBStoreAdapter(duckdb_store)

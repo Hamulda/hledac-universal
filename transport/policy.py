@@ -35,7 +35,7 @@ INVARIANTS:
 import os
 from dataclasses import dataclass
 import msgspec
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 from enum import Enum
 from typing import Literal
 from hledac.universal.fetching.memory_budget_gate import BrowserDecision, _rss_gib

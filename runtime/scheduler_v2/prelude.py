@@ -90,7 +90,7 @@ async def run_ct_prelude_lane(query: str, result: Any, seed_context: Any=None) -
         if isinstance(_shaped, dict) or not _shaped:
             result.ct_planned = False
             return LaneResult(lane='CT', attempted=False, skipped=True, skip_reason='empty_query')
-        from runtime.scheduler.lanes import _get_ct_adapter
+        from hledac.universal.runtime.scheduler.lanes import _get_ct_adapter
         _ct_adapter = _get_ct_adapter()
         async with asyncio.timeout(15.0):
             _ct_result, _ct_outcome = await _ct_adapter(query=_shaped, max_results=5, timeout_s=15.0)

@@ -144,7 +144,7 @@ class LazyModel[T]:
         """
         try:
             # sample_uma_status is sync and lightweight (TTL-cached psutil reads)
-            from core.resource_governor import sample_uma_status
+            from hledac.universal.core.resource_governor import sample_uma_status
             uma = sample_uma_status()
             match uma.state:
                 case "critical":
@@ -351,27 +351,27 @@ def _make_lazy_registry() -> dict[str, LazyModel]:
     """
 
     def _hermes3():
-        from brain.deephermes3_engine import DeepHermes3Engine  # type: ignore
+        from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine  # type: ignore
         return DeepHermes3Engine()
 
     def _ner():
-        from brain.ner_engine import NEREngine  # type: ignore
+        from hledac.universal.brain.ner_engine import NEREngine  # type: ignore
         return NEREngine()
 
     def _gnn():
-        from brain.gnn_predictor import GNNPredictor  # type: ignore
+        from hledac.universal.brain.gnn_predictor import GNNPredictor  # type: ignore
         return GNNPredictor()
 
     def _ane():
-        from brain.ane_embedder import ANEEmbedder  # type: ignore
+        from hledac.universal.brain.ane_embedder import ANEEmbedder  # type: ignore
         return ANEEmbedder()
 
     def _moe():
-        from brain.moe_router import MoERouter  # type: ignore
+        from hledac.universal.brain.moe_router import MoERouter  # type: ignore
         return MoERouter()
 
     def _modernbert():
-        from brain.modernbert_engine import ModernBertEngine  # type: ignore
+        from hledac.universal.brain.modernbert_engine import ModernBertEngine  # type: ignore
         return ModernBertEngine()
 
     return {

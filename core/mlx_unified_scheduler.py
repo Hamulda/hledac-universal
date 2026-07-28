@@ -43,12 +43,12 @@ import msgspec
 
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 if TYPE_CHECKING:
-    from brain.ane_embedder import ANE_MLX_Mutex
-    from brain.deephermes3_engine import DeepHermes3Engine
-    from brain.mlx_batched_executor import MLXBatchedExecutor
-    from brain.mlx_embedder import MLXEmbedder
-    from brain.mlx_worker_thread import MLXWorkerThread
-    from core.resource_governor import ConcurrencyPreset
+    from hledac.universal.brain.ane_embedder import ANE_MLX_Mutex
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.mlx_batched_executor import MLXBatchedExecutor
+    from hledac.universal.brain.mlx_embedder import MLXEmbedder
+    from hledac.universal.brain.mlx_worker_thread import MLXWorkerThread
+    from hledac.universal.core.resource_governor import ConcurrencyPreset
 logger = logging.getLogger(__name__)
 _METAL_CACHE_ALPHA = 0.2
 _METAL_CACHE_MIN = 512 * 1024 * 1024
@@ -252,7 +252,7 @@ class MLXUnifiedScheduler:
         self._lane_metrics[LanePriority.INTERACTIVE].record(latency_ms)
         self._update_stats(llm_requests=1, active_lane='llm')
         try:
-            from core.telemetry.context_state import update_lane_latency
+            from hledac.universal.core.telemetry.context_state import update_lane_latency
             update_lane_latency('llm', latency_ms)
         except Exception:
             pass
@@ -309,7 +309,7 @@ class MLXUnifiedScheduler:
             if batch_size is not None:
                 result = await self._do_embedding_batch(texts, batch_size)
             else:
-                from brain.mlx_embedder import AdaptiveEmbeddingBatcher
+                from hledac.universal.brain.mlx_embedder import AdaptiveEmbeddingBatcher
                 initial = self._adaptive_embedding_batch_size()
                 batcher = AdaptiveEmbeddingBatcher(initial_batch_size=initial, min_batch_size=_EMBEDDING_LOW_WATER, max_batch_size=_EMBEDDING_HIGH_WATER, pressure_high=0.8, pressure_low=0.5)
                 result = await batcher.process(texts, embedder, memory_provider=self._sample_memory_pressure)
@@ -322,7 +322,7 @@ class MLXUnifiedScheduler:
         self._lane_metrics[LanePriority.EMBEDDING].record(latency_ms)
         self._update_stats(embedding_requests=len(texts), active_lane='embedding')
         try:
-            from core.telemetry.context_state import update_lane_latency
+            from hledac.universal.core.telemetry.context_state import update_lane_latency
             update_lane_latency('embedding', latency_ms)
         except Exception:
             pass
@@ -347,7 +347,7 @@ class MLXUnifiedScheduler:
             raise RuntimeError('MLXUnifiedScheduler: submit_background after shutdown')
         self._update_stats(background_requests=self._stats.background_requests + 1, active_lane='background')
         try:
-            from core.telemetry.context_state import update_lane_latency
+            from hledac.universal.core.telemetry.context_state import update_lane_latency
             update_lane_latency('background', 0.0)
         except Exception:
             pass
@@ -469,7 +469,7 @@ class MLXUnifiedScheduler:
         """Lazily initialize embedder."""
         if self._embedder_loaded and self._embedder is not None:
             return self._embedder
-        from brain.mlx_embedder import MLXEmbedder
+        from hledac.universal.brain.mlx_embedder import MLXEmbedder
         embedder = MLXEmbedder()
         await embedder.load()
         self._embedder = embedder

@@ -312,7 +312,7 @@ async def _fetch_and_process_page(
                     terminal_reason="rejected_empty_text",
                 )
         else:
-            from utils.rayon_pool import run_in_cpu_pool_async
+            from hledac.universal.utils.rayon_pool import run_in_cpu_pool_async
             from .public_patterns import _html_to_text
 
             try:
@@ -398,7 +398,7 @@ async def _fetch_and_process_page(
             except Exception:
                 js_result = None
             if js_result is not None and js_result.text and len(js_result.text) >= _PRE_FETCH_TEXT_MIN_CHARS:
-                from utils.rayon_pool import run_in_cpu_pool_async
+                from hledac.universal.utils.rayon_pool import run_in_cpu_pool_async
                 from .public_patterns import _html_to_text
 
                 try:
@@ -472,7 +472,7 @@ async def _fetch_and_process_page(
             matched_count = len(hits)
         else:
             try:
-                from utils.rayon_pool import run_in_cpu_pool_async
+                from hledac.universal.utils.rayon_pool import run_in_cpu_pool_async
 
                 hits = await run_in_cpu_pool_async(_SYNC_MATCH_TEXT, scan_text)
             except Exception:
@@ -570,7 +570,7 @@ async def _fetch_and_process_page(
                 return None
 
         # P1-02: Parallel extraction — small N, but still wins on 10+ hits
-        from utils.async_helpers import parallel
+        from hledac.universal.utils.async_helpers import parallel
         results = await parallel([_extract_one_hit(h) for h in deduped_hits], policy="log", ctx="public_fetch:_extract_hit")
         unique_findings = [r for r in results if r is not None]
 

@@ -36,7 +36,7 @@ def _get_lmdb_dht() -> Any:
     global _lmdb_dht
     if _lmdb_dht is None:
         try:
-            from hledac.universal import hledac_rust_extensions as ext
+            from hledac.universal.hledac.universal import hledac_rust_extensions as ext
 
             _lmdb_dht = ext
         except ImportError:

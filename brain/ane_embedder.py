@@ -618,7 +618,7 @@ async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -
     Hash fallback: url+title hash (zero RAM, always works).
     """
     try:
-        from core.mlx_embeddings import get_embedding_manager
+        from hledac.universal.core.mlx_embeddings import get_embedding_manager
         mgr = get_embedding_manager()
     except Exception:
         mgr = None
@@ -664,7 +664,7 @@ def rerank_findings_cosine(findings: list[dict], query: str, top_k: int=20) -> l
     Fallback: embeddings.reranker batch_rerank_topk() → Rust SIMD → top-k extraction.
     """
     try:
-        from core.mlx_embeddings import get_embedding_manager
+        from hledac.universal.core.mlx_embeddings import get_embedding_manager
         mgr = get_embedding_manager()
         if mgr is None or not mgr.is_loaded:
             raise RuntimeError('MLXEmbeddingManager unavailable')

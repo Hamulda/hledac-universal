@@ -8,7 +8,7 @@ No VLM by default. Model load/unload only via brain/model_lifecycle.py.
 OCR/metadata extraction timeout + fail-soft throughout.
 
 Integration:
-    from multimodal.evidence_triage import EvidenceTriageCoordinator
+    from hledac.universal.multimodal.evidence_triage import EvidenceTriageCoordinator
 from PIL import Image
 
     coordinator = EvidenceTriageCoordinator(governor=None)

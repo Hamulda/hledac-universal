@@ -290,7 +290,7 @@ def lmdb_map_size() -> int:
     ISSUE-033: Delegates to StorageConfig to avoid duplicate GHOST_LMDB_MAX_SIZE_MB parsing.
     """
     try:
-        from core.config import get_storage_config
+        from hledac.universal.core.config import get_storage_config
         return get_storage_config().lmdb_map_size_mb * 1024 * 1024
     except Exception:
         # Fallback: bootstrap-safe (StorageConfig may not be importable at earliest init)
@@ -312,7 +312,7 @@ def get_lmdb_max_size_mb() -> int:
     ISSUE-033: Delegates to StorageConfig to avoid duplicate GHOST_LMDB_MAX_SIZE_MB parsing.
     """
     try:
-        from core.config import get_storage_config
+        from hledac.universal.core.config import get_storage_config
         return get_storage_config().lmdb_map_size_mb
     except Exception:
         # Fallback: bootstrap-safe

@@ -214,7 +214,7 @@ class IocDedupAdapter:
         self._load_attempted = False
         self._rust_available = False
         try:
-            from core.rust_backend import rust as _rust_backend
+            from hledac.universal.core.rust_backend import rust as _rust_backend
             if _rust_backend.is_available and _rust_backend.ioc_dedup is not None:
                 self._store = _rust_backend.ioc_dedup.IocDedupStore(sprint_id=sprint_id)
                 self._rust_available = True
@@ -372,7 +372,7 @@ class IocDedupAdapter:
                 if data is None:
                     return False
             if self._rust_available:
-                from core.rust_backend import rust as _rust_backend
+                from hledac.universal.core.rust_backend import rust as _rust_backend
                 ioc_dedup_from_bytes = getattr(_rust_backend.ioc_dedup, 'ioc_dedup_from_bytes', None)
                 if ioc_dedup_from_bytes:
                     self._store = ioc_dedup_from_bytes(data)

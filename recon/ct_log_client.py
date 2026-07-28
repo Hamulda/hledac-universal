@@ -21,7 +21,7 @@ import msgspec
 from hledac.universal.utils.msgspec_json import decode, encode
 if TYPE_CHECKING:
     import httpx
-    from core.ioc_patterns import DOMAIN_RE
+    from hledac.universal.core.ioc_patterns import DOMAIN_RE
 from hledac.universal.knowledge.ioc_graph import IOCGraph
 logger = logging.getLogger(__name__)
 _INVALID_DOMAINS = frozenset({'localhost', '.local', '.test', '.invalid', 'localhost.localdomain'})

@@ -83,7 +83,7 @@ def make_content_hasher_factory():
         if _RUST_CONTENT_HASHER:
             return _ContentHasher
         try:
-            from core.rust_backend import rust
+            from hledac.universal.core.rust_backend import rust
 
             _ContentHasher = rust.hash
             _RUST_CONTENT_HASHER = True

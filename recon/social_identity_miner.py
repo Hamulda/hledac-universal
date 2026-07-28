@@ -34,7 +34,7 @@ def _get_ac_matcher() -> Any:
     global _AC_MATCHER
     if _AC_MATCHER is None:
         try:
-            from core.rust_backend import rust as _rust_backend
+            from hledac.universal.core.rust_backend import rust as _rust_backend
             if _rust_backend.is_available and _rust_backend.aho is not None:
                 patterns = [p[1].pattern for p in _PLATFORM_PATTERNS]
                 # labels=[] avoids unnecessary allocation; social_identity_miner only

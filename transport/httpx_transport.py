@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     import httpx  # used only in annotations — actual import is lazy inside fetch_via_httpx_h2
 
 from ..utils.async_helpers import async_getaddrinfo
-from core.env_config import ENV  # noqa: E402
+from hledac.universal.core.env_config import ENV  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ Architecture:
     DelegatingDomain        — base class with shared __init__ and _convert
 
 Usage:
-    from core._domain_protocol import (
+    from hledac.universal.core._domain_protocol import (
         DelegatingDomain, MethodSpec, RustTarget, PythonTarget,
         make_spec, make_spec_with_conv,
     )

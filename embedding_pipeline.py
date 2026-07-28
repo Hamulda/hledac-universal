@@ -33,7 +33,7 @@ from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Self
 import numpy as np
-from core.psutil_shim import psutil, process
+from hledac.universal.core.psutil_shim import psutil, process
 from hledac.universal.utils.exceptions import MemoryPressureError
 if TYPE_CHECKING:
     from hledac.universal.embeddings.modernbert_embedder import ModernBERTEmbedder
@@ -110,7 +110,7 @@ class EmbeddingRouter:
             return mb
         except Exception as e:  # noqa: BLE001 — fail-soft: log and fallback to compat embedder
             logger.debug(f'[EMBED:ROUTER] ModernBERT sync load failed: {e}')
-        from core.mlx_embeddings import get_mlx_embedder
+        from hledac.universal.core.mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
 
     async def get_embedder(self):
@@ -131,7 +131,7 @@ class EmbeddingRouter:
             return mb
         except Exception as e:  # noqa: BLE001 — fail-soft: log and fallback to compat embedder
             logger.warning(f'[EMBED:ROUTER] ModernBERT load failed: {e}')
-        from core.mlx_embeddings import get_mlx_embedder
+        from hledac.universal.core.mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
 
     async def warmup(self):
@@ -267,7 +267,7 @@ def _get_uma_guard_threshold() -> int:
     if _UMA_GUARD_THRESHOLD_MB is not None:
         return _UMA_GUARD_THRESHOLD_MB
     try:
-        from core.resource_governor import _THRESHOLD_CRITICAL_GIB
+        from hledac.universal.core.resource_governor import _THRESHOLD_CRITICAL_GIB
         _UMA_GUARD_THRESHOLD_MB = int(_THRESHOLD_CRITICAL_GIB * 1024)
     except Exception:  # noqa: BLE001 — fail-soft: resource_governor import failure should not prevent threshold calculation
         _UMA_GUARD_THRESHOLD_MB = 6656
@@ -302,7 +302,7 @@ def _uma_guard_before_batch() -> tuple[bool, dict]:
             telemetry['uma_guard_reason'] = f'combined_uma_pressure_{combined_mb}mb_exceeds_{threshold_mb}mb'
             logger.warning(f'[EMBED:UMA] Combined UMA pressure {combined_mb}MB (Metal={active_mb}MB + RSS={rss_mb}MB) > {threshold_mb}MB — flushing cache')
             try:
-                from utils.mlx_cache import get_mx
+                from hledac.universal.utils.mlx_cache import get_mx
                 mx = get_mx()
                 if mx is not None:
                     mx.eval([])
@@ -961,7 +961,7 @@ def _clear_mlx_cache() -> None:
     because this is a best-effort memory relief call.
     """
     try:
-        from utils.mlx_cache import get_mx
+        from hledac.universal.utils.mlx_cache import get_mx
         mx = get_mx()
         if mx is None:
             return
@@ -1104,7 +1104,7 @@ async def generate_embeddings_adaptive_streaming(texts: list[str], initial_batch
     if not _check_memory_guard():
         logger.warning('[EMBED:adaptive] Skipped due to memory pressure')
         return
-    from core.embeddings.manager import AdaptiveEmbeddingBatcher, get_mlx_embedder
+    from hledac.universal.core.embeddings.manager import AdaptiveEmbeddingBatcher, get_mlx_embedder
     embedder = get_mlx_embedder()
     await embedder.ensure_loaded()
     batcher = AdaptiveEmbeddingBatcher(initial_batch_size=initial_batch_size, min_batch_size=min_batch_size, max_batch_size=max_batch_size, pressure_high=pressure_high, pressure_low=pressure_low)

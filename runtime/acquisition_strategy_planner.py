@@ -72,7 +72,7 @@ except ImportError:
 
 # Lazy import: brain.ner_engine may transitively load MLX — defer until first use
 try:
-    from brain.ner_engine import extract_iocs_from_text as _extract_iocs_from_text
+    from hledac.universal.brain.ner_engine import extract_iocs_from_text as _extract_iocs_from_text
 except ImportError:
     _extract_iocs_from_text: Any = None
 from hledac.universal.runtime.acquisition_telemetry_reconcile import complete_source_family_outcomes_from_lane_details, reconcile_lane_detail_fields

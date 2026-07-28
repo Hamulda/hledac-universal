@@ -4,8 +4,8 @@
 # Issue 12.1: export/ redirects to report/ package
 # Legacy callers import from export/* — these re-exports maintain compat
 # Re-export canonical classes from report/ for backward compat
-from report.engine import ReportEngine, get_report_engine, ReportOutput
-from report.renderers import (
+from hledac.universal.report.engine import ReportEngine, get_report_engine, ReportOutput
+from hledac.universal.report.renderers import (
     JSONRenderer,
     MarkdownRenderer,
     HTMLRenderer,

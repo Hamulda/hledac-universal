@@ -18,7 +18,7 @@ optional logging without breaking the fail-safe contract.
 Usage (3 modern styles):
 
     # 1. Function — drop-in for the legacy `pass` body
-    from utils.silent_except_helper import safe_swallow
+    from hledac.universal.utils.silent_except_helper import safe_swallow
 
     try:
         risky_op()
@@ -26,13 +26,13 @@ Usage (3 modern styles):
         safe_swallow("cleanup_lmdb_lock", logger, exc=e)
 
     # 2. Context manager — modern Python 3.11+ (PEP 654 aware)
-    from utils.silent_except_helper import silenced
+    from hledac.universal.utils.silent_except_helper import silenced
 
     with silenced(OSError, name="lmdb_lock_cleanup", level=logging.DEBUG):
         cleanup_stale_lock()
 
     # 3. Decorator — for function-level opt-in
-    from utils.silent_except_helper import silence_errors
+    from hledac.universal.utils.silent_except_helper import silence_errors
 
     @silence_errors(ValueError, name="json_parse_legacy_field")
     def parse_legacy_optional_field(raw):
@@ -128,7 +128,7 @@ def silenced(
 
     Usage::
 
-        from utils.silent_except_helper import silenced
+        from hledac.universal.utils.silent_except_helper import silenced
         import asyncio
 
         with silenced(OSError, asyncio.CancelledError,
@@ -174,7 +174,7 @@ def silence_errors(
 
     Usage::
 
-        from utils.silent_except_helper import silence_errors
+        from hledac.universal.utils.silent_except_helper import silence_errors
 
         @silence_errors(ValueError, name="parse_legacy_optional_field")
         def parse_legacy_optional_field(raw: str) -> dict | None:

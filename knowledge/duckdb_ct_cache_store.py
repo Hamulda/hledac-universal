@@ -40,12 +40,12 @@ class CTLogCacheStore:
 
     MIGRATION:
         # Old
-        from intel.ct_log_scanner import CTLogScanner
+        from hledac.universal.intel.ct_log_scanner import CTLogScanner
         scanner = CTLogScanner()
         subdomains = scanner._get_cached(domain)
 
         # New
-        from knowledge.duckdb_ct_cache_store import CTLogCacheStore
+        from hledac.universal.knowledge.duckdb_ct_cache_store import CTLogCacheStore
         cache = CTLogCacheStore()
         subdomains = await cache.get(domain)
     """
@@ -64,7 +64,7 @@ class CTLogCacheStore:
         if self._initialized:
             return
 
-        from knowledge.db import get_db
+        from hledac.universal.knowledge.db import get_db
 
         db = get_db()
         self._db_store = db.duckdb
@@ -75,7 +75,7 @@ class CTLogCacheStore:
     def _get_connection(self) -> Any:
         """Get DuckDB connection."""
         if self._db_store is None:
-            from knowledge.db import get_db
+            from hledac.universal.knowledge.db import get_db
             self._db_store = get_db().duckdb
         return self._db_store._get_connection()
 

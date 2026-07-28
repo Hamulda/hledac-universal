@@ -4,7 +4,7 @@ from hledac.universal.utils.async_helpers import safe_create_task
 import os
 import shutil
 import time
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any

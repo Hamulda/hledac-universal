@@ -60,7 +60,7 @@ LOCK_FILE_SUFFIX: str = ".lock"
 _LOCK_AGE_THRESHOLD_SECONDS: float = 10.0
 
 # Issue #17: psutil lazy import via centralized psutil_shim.
-from core.psutil_shim import psutil_module as _psutil_mod
+from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod
 
 
 def _is_process_alive(pid: int) -> bool:

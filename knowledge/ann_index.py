@@ -179,7 +179,7 @@ class _ANNIndex:
 
         # Sprint F264E: adaptive auto-tuner
         try:
-            from knowledge.lancedb_auto_tuner import make_default_tuner
+            from hledac.universal.knowledge.lancedb_auto_tuner import make_default_tuner
             self._autotune = make_default_tuner(
                 table_name="semantic_dedup_v1",
                 state_dir=db_path,

@@ -517,7 +517,7 @@ def safe_create_task_tracked(
     Returns:
         asyncio.Task, registered in the global TaskRegistry.
     """
-    from utils.async_helpers import parallel, safe_create_task as _safe_create_task
+    from hledac.universal.utils.async_helpers import parallel, safe_create_task as _safe_create_task
 
     task = _safe_create_task(coro, name=name, **kwargs)
     _registry = get_task_registry()

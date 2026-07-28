@@ -14,7 +14,7 @@ Env gates and RAM budgets configured per sidecar.
 import logging
 from typing import Any
 
-from runtime.sidecar_protocol import (
+from hledac.universal.runtime.sidecar_protocol import (
     BaseSidecarAdapter,
     SidecarContext,
     SidecarRegistry,
@@ -743,7 +743,7 @@ class LanceDBRAGSidecarAdapter(BaseSidecarAdapter):
             return []
 
         try:
-            from knowledge.lancedb_rag_engine import LanceDBRAGEngine, RAGDocument
+            from hledac.universal.knowledge.lancedb_rag_engine import LanceDBRAGEngine, RAGDocument
         except Exception:
             logger.debug("LanceDBRAGSidecarAdapter: import failed")
             return []

@@ -462,7 +462,7 @@ def predict_from_edge_list(edge_list: list[tuple[str, str, str, float]], top_k: 
         return []
     try:
         try:
-            from brain.gnn_predictor import GNNPredictor
+            from hledac.universal.brain.gnn_predictor import GNNPredictor
         except ImportError:
             GNNPredictor = None
         if GNNPredictor is not None:
@@ -528,7 +528,7 @@ def get_anomaly_scores(edge_list: list[tuple[str, str, str, float]]) -> list[dic
     from collections import Counter
     try:
         try:
-            from brain.gnn_predictor import GNNPredictor
+            from hledac.universal.brain.gnn_predictor import GNNPredictor
         except ImportError:
             GNNPredictor = None
         if GNNPredictor is not None:

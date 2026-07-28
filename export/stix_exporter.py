@@ -34,7 +34,7 @@ try:
     _ORJSON_AVAILABLE = True
 except ImportError:
     _ORJSON_AVAILABLE = False
-from core.rust_backend import rust as _rust_backend
+from hledac.universal.core.rust_backend import rust as _rust_backend
 from hledac.universal.security.pq_crypto import PostQuantumBackend, PQAvailability, PQSignature, PQStatus, create_post_quantum_backend
 _ORJSON_OPT_SORT_KEYS = None
 if _ORJSON_AVAILABLE:
@@ -915,7 +915,7 @@ def _maybe_sign_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
     GHOST_INVARIANTS: no asyncio.run() in async context.
     P1-1: run_sync_async handles both running and non-running loop cases.
     """
-    from utils.sync_bridge import run_sync_async
+    from hledac.universal.utils.sync_bridge import run_sync_async
     return run_sync_async(_maybe_sign_bundle_async(bundle))
 
 def _sync_pq_sign(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -925,7 +925,7 @@ def _sync_pq_sign(bundle: dict[str, Any]) -> dict[str, Any]:
     P1-1 FIX: Replaced asyncio.run() with run_sync_async().
     asyncio.run() inside run_in_executor thread is M1 Metal crash vector.
     """
-    from utils.sync_bridge import run_sync_async
+    from hledac.universal.utils.sync_bridge import run_sync_async
     return run_sync_async(_maybe_sign_bundle_async(bundle))
 
 async def _maybe_sign_bundle_async(bundle: dict[str, Any]) -> dict[str, Any]:

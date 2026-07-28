@@ -37,7 +37,7 @@ also return all substring matches, so no dedup needed.
 
 USAGE
 -----
-from utils.aho_extractor import get_suspicious_keywords_automaton, aho_scan_text
+from hledac.universal.utils.aho_extractor import get_suspicious_keywords_automaton, aho_scan_text
 
 # Cached automaton
 automaton = get_suspicious_keywords_automaton()

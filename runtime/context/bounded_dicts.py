@@ -18,7 +18,7 @@ Why not collections.OrderedDict or LRU cache?
 
 Usage as msgspec field default_factory:
 
-    from runtime.context.bounded_dicts import BoundedLRUDict
+    from hledac.universal.runtime.context.bounded_dicts import BoundedLRUDict
 
     class MyStruct(msgspec.Struct, gc=False):
         seen_hashes: dict[str, bool] = msgspec.field(

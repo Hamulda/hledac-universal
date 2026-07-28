@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.academic_search import *
+from hledac.universal.recon.academic_search import *

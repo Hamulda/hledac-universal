@@ -302,7 +302,7 @@ class DarkWebLane(BaseIntelligenceLane):
             return self._crawler
 
         try:
-            from recon.dark_web_intelligence import DarkWebCrawler, TorProxyManager
+            from hledac.universal.recon.dark_web_intelligence import DarkWebCrawler, TorProxyManager
         except ImportError:
             return None
 

@@ -352,7 +352,7 @@ class CircuitBreaker:
                     return CircuitDecision(
                         allowed=False,
                         domain=self.domain,
-                        state="half_open",
+                        state="closed",
                         retry_after_s=max(0.0, self.recovery_timeout - (time.monotonic() - self._last_failure_time)),
                         reason="circuit_half_open_max_probes_reached",
                     )
@@ -722,7 +722,8 @@ def clear_all_breakers() -> None:
 # =============================================================================
 
 
-class ModelCircuitBreaker(msgspec.Struct):
+@dataclasses.dataclass
+class ModelCircuitBreaker:
     """Per-model inference failure circuit breaker.
 
     Tracks OOM, timeout, and Metal driver failures per model_id.
@@ -736,14 +737,21 @@ class ModelCircuitBreaker(msgspec.Struct):
     """
 
     model_id: str
-    failure_threshold: int = field(default_factory=lambda: _cb_int("CIRCUIT_FAILURE_THRESHOLD"))
-    recovery_timeout_s: float = field(default_factory=lambda: _cb_float("BASE_RECOVERY_TIMEOUT_S"))
-    _failure_count: int = field(default=0, init=False, repr=False)
-    _last_failure_time: float = field(default=0.0, init=False, repr=False)
-    _last_failure_kind: str = field(default="", init=False, repr=False)
-    _state: CBState = field(default=CBState.CLOSED, init=False)
-    # FIX Issue C: RLock protects all state fields — same pattern as CircuitBreaker
-    _state_lock: threading.RLock = field(default_factory=threading.RLock, init=False)
+    failure_threshold: int = dataclasses.field(
+        default_factory=lambda: _cb_int("CIRCUIT_FAILURE_THRESHOLD")
+    )
+    recovery_timeout_s: float = dataclasses.field(
+        default_factory=lambda: _cb_float("BASE_RECOVERY_TIMEOUT_S")
+    )
+    _failure_count: int = dataclasses.field(default=0, init=False, repr=False)
+    _last_failure_time: float = dataclasses.field(default=0.0, init=False, repr=False)
+    _last_failure_kind: str = dataclasses.field(default="", init=False, repr=False)
+    _state: CBState = dataclasses.field(default=CBState.CLOSED, init=False)
+    _state_lock: threading.RLock = dataclasses.field(default=None, init=False)
+
+    def __post_init__(self) -> None:
+        if self._state_lock is None:
+            self._state_lock = threading.RLock()
 
     def record_failure(self, kind: str = "unknown") -> None:
         """Record inference failure. Trips breaker at failure_threshold."""

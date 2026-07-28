@@ -22,7 +22,7 @@ import threading
 import time
 from typing import Any, TypeVar
 
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 
 K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)

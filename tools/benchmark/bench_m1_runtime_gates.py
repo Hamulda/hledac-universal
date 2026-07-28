@@ -258,7 +258,7 @@ def bench_body_limiter_throughput() -> dict[str, Any]:
     Fixture: synthetic async chunk stream (100× 1KB chunks).
     NO network, NO browser, NO OCR, NO model load.
     """
-    from transport.body_limiter import read_body_with_cap
+    from hledac.universal.transport.body_limiter import read_body_with_cap
 
     TOTAL_BYTES = 100 * 1024  # 100 KB  # noqa: N806
     CHUNK_SIZE = 1024  # noqa: N806
@@ -343,7 +343,7 @@ def bench_html_parser_characterization() -> dict[str, Any]:
 
     # selectolax
     if _HAS_SELECTOLAX:
-        from utils.html_text_fast import html_to_text_fast
+        from hledac.universal.utils.html_text_fast import html_to_text_fast
 
         def sel_parse() -> str:
             return html_to_text_fast(HTML_FIXTURE)
@@ -435,7 +435,7 @@ def bench_wal_manager_single_write_smoke() -> dict[str, Any]:
     try:
         # Use repo-local import: UNIVERSAL_ROOT is on sys.path, so
         # knowledge.wal resolves to UNIVERSAL_ROOT/knowledge/wal.py
-        from knowledge.wal import WALManager
+        from hledac.universal.knowledge.wal import WALManager
     except ImportError as e:
         return {
             "name": "wal_manager_single_write_smoke",
@@ -477,7 +477,7 @@ def bench_batch_scheduler_queue_flush_smoke() -> dict[str, Any]:
 
     NO MLX, NO model load. Mock execute callback (no-op async).
     """
-    from brain.batch_scheduler import BatchScheduler
+    from hledac.universal.brain.batch_scheduler import BatchScheduler
 
     execution_log: list[dict] = []
 

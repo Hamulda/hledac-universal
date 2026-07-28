@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.browser_pool import *
+from hledac.universal.recon.browser_pool import *

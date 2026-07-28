@@ -40,8 +40,8 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
 from typing import Any
-from brain.evidence_fusion import DempsterShafer
-from utils.sync_bridge import run_sync_async
+from hledac.universal.brain.evidence_fusion import DempsterShafer
+from hledac.universal.utils.sync_bridge import run_sync_async
 try:
     import dspy as _dspy
     DSPY_AVAILABLE = True
@@ -49,7 +49,7 @@ except ImportError:
     DSPY_AVAILABLE = False
     _dspy = None
 try:
-    from brain.dspy_programs import get_multi_hop_chain
+    from hledac.universal.brain.dspy_programs import get_multi_hop_chain
     from hledac.universal.utils.uma_budget import get_uma_snapshot
     MULTIHOP_AVAILABLE = True
 except ImportError:
@@ -610,11 +610,11 @@ class HypothesisEngine:
             else:
                 response = await hermes_engine.generate(prompt=prompt, temperature=0.4, max_tokens=1024, system_msg='Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy.')
             if DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1':
-                from brain.dspy_optimizer import load_compiled_program
+                from hledac.universal.brain.dspy_optimizer import load_compiled_program
                 program = load_compiled_program('hypothesis_generator')
                 if program is None:
                     try:
-                        from brain.dspy_programs import get_program
+                        from hledac.universal.brain.dspy_programs import get_program
                         program = get_program('hypothesis_generator')
                     except Exception:
                         program = None
@@ -1743,11 +1743,11 @@ class HypothesisEngine:
                 response_model = _DarkQueryListResponse
                 result = await hermes_engine.generate_structured(prompt=prompt, response_model=response_model, max_tokens=1024, system_msg='Jsi OSINT dark surface research assistant.')
                 if DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1':
-                    from brain.dspy_optimizer import load_compiled_program
+                    from hledac.universal.brain.dspy_optimizer import load_compiled_program
                     program = load_compiled_program('dark_query')
                     if program is None:
                         try:
-                            from brain.dspy_programs import get_program
+                            from hledac.universal.brain.dspy_programs import get_program
                             program = get_program('dark_query')
                         except Exception:
                             program = None

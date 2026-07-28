@@ -23,7 +23,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)
 _MAX_CACHED_PROMPTS: int = 8
 

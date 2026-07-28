@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.protocols.jarm_fingerprinter import *
+from hledac.universal.recon.protocols.jarm_fingerprinter import *

@@ -17,7 +17,7 @@ This module exists purely to:
 
 Usage::
 
-    from core.rust_backend._metal_deprecation import metal_compute
+    from hledac.universal.core.rust_backend._metal_deprecation import metal_compute
     # DeprecationWarning: metal_compute was removed in D6 (2026-07-16).
     # Rust metal crate (~45s compile, ~3MB dylib) was removed from Cargo.toml.
     # CPU fallback via core.rust_backend.metal._PythonMetalDomainInner is used.

@@ -9,7 +9,7 @@ Protocols are defined using typing.Protocol (structural subtyping).
 Runtime checking via @runtime_checkable decorator.
 
 Usage:
-    from runtime.protocols import StorageProtocol, FetchProtocol
+    from hledac.universal.runtime.protocols import StorageProtocol, FetchProtocol
 
     def process(storage: StorageProtocol) -> None:
         await storage.async_ingest_findings(findings, sprint_id)

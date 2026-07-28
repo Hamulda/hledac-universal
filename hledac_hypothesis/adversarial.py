@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.async_helpers import safe_gather_ok
 from ._types import AdversarialReport, Contradiction, CrossReferenceResult, Event, Evidence, HypothesisType, SourceCredibility
 if TYPE_CHECKING:
-    from brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
+    from hledac.universal.brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
 logger = logging.getLogger(__name__)
 
 class AdversarialVerifier:
@@ -128,7 +128,7 @@ class AdversarialVerifier:
                     from hledac_hypothesis.explainer import SimpleNodeAblationExplainer
                     explainer = SimpleNodeAblationExplainer(graph_rag)
                     importances = await explainer.explain_path(path, claim, max_nodes=5)
-                    from brain.research_hypothesis_engine import explain_with_mlx
+                    from hledac.universal.brain.research_hypothesis_engine import explain_with_mlx
                     explanation, prompt_hash = await explain_with_mlx(claim, path)
                     metadata['edge_importances'] = importances
                     metadata['mlx_explanation'] = explanation

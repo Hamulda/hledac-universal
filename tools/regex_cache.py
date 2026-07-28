@@ -10,7 +10,7 @@ Key optimizations:
 4. M1 8GB safe — bounded cache sizes, no memory leaks
 
 Usage:
-    from tools.regex_cache import cached_compile, MultiPatternCache
+    from hledac.universal.tools.regex_cache import cached_compile, MultiPatternCache
 
     @cached_compile
     def my_patternMatcher(text: str) -> list[str]:

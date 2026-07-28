@@ -252,7 +252,7 @@ class NonfeedMissionController:
         # not in nonfeed_outcomes.py. The import below is a NO-OP at runtime but
         # would raise ImportError if the fallback exception handler were ever bypassed.
         # Fixed: import the local class directly.
-        from runtime.acquisition.mission import NonfeedMissionSnapshot
+        from hledac.universal.runtime.acquisition.mission import NonfeedMissionSnapshot
 
         try:
             required = cls.get_required_families()

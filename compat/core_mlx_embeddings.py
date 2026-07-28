@@ -26,7 +26,7 @@ warnings.warn(
     stacklevel=2,
 )
 
-from core.mlx_embeddings import (
+from hledac.universal.core.mlx_embeddings import (
     MLXEmbeddingManager,
     get_mlx_embedder,
     get_embedding_manager,

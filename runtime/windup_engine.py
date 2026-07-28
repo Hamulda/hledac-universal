@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 def _safe_get_breaker_states() -> dict:
     """Circuit breaker states — failsafe."""
     try:
-        from transport.circuit_breaker import get_all_breaker_states
+        from hledac.universal.transport.circuit_breaker import get_all_breaker_states
         return get_all_breaker_states()
     except Exception:
         return {}
@@ -107,7 +107,7 @@ async def run_windup(
     gnn_predictions: list = []
     anomalies: list = []
     try:
-        from brain.gnn_predictor import get_anomaly_scores, predict_from_edge_list
+        from hledac.universal.brain.gnn_predictor import get_anomaly_scores, predict_from_edge_list
         graph = getattr(scheduler, "get_graph", lambda: None)()
         if graph is not None:
             edge_list = getattr(graph, "export_edge_list", lambda: [])()
@@ -142,8 +142,8 @@ async def run_windup(
     all_findings = getattr(scheduler, "_all_findings", [])
     deduped = all_findings
     try:
-        from core.mlx_embeddings import get_embedding_manager
-        from brain.ane_embedder import semantic_dedup_findings
+        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+        from hledac.universal.brain.ane_embedder import semantic_dedup_findings
         if all_findings:
             deduped = await semantic_dedup_findings(all_findings)
             mgr = get_embedding_manager()
@@ -160,7 +160,7 @@ async def run_windup(
     synthesis_engine_used = "unknown"
 
     try:
-        from brain.moe_router import route_synthesis
+        from hledac.universal.brain.moe_router import route_synthesis
 
         memory_level = "nominal"
         try:
@@ -180,8 +180,8 @@ async def run_windup(
         scheduler._synthesis_engine = engine
         logger.info(f"[MOE] synthesis engine: {engine}")
 
-        from brain.model_lifecycle import ModelLifecycle
-        from brain.synthesis_runner import SynthesisRunner
+        from hledac.universal.brain.model_lifecycle import ModelLifecycle
+        from hledac.universal.brain.synthesis_runner import SynthesisRunner
 
         # P2-02: Use try/finally to guarantee runner.close() even on exception.
         # Previously close() was only on success path — synthesize_findings()
@@ -234,7 +234,7 @@ async def run_windup(
 
     # 6. Hypothesis enqueue (top-3)
     try:
-        from brain.research_hypothesis_engine import HypothesisEngine
+        from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
 
         # Extract finding strings from deduped findings
         finding_strings = []

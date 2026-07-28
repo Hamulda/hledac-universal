@@ -8,7 +8,7 @@ JA4 = Salesforce TLS fingerprint: 13-char string derived from
 TLS ClientHello during handshake (version, cipher suites, extensions, ALPN).
 
 Integration:
-    from core.rust_backend import rust
+    from hledac.universal.core.rust_backend import rust
     result = rust.tls.connect_and_ja4("example.com", 443)
 """
 

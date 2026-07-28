@@ -198,7 +198,7 @@ def _get_arrow():
             _arrow = False
     return _arrow if _arrow else None
 try:
-    from utils.flow_trace import is_enabled, trace_counter, trace_evidence_append, trace_evidence_flush, trace_queue_drop
+    from hledac.universal.utils.flow_trace import is_enabled, trace_counter, trace_evidence_append, trace_evidence_flush, trace_queue_drop
 except ImportError:
 
     def trace_evidence_append(*_, **_kw):
@@ -1531,7 +1531,7 @@ class EvidenceLog:
                 self._index_by_source[source_id] = deque(maxlen=self.MAX_RAM_EVENTS)
             self._index_by_source[source_id].append(index)
         try:
-            from knowledge.analytics_hook import shadow_record_finding
+            from hledac.universal.knowledge.analytics_hook import shadow_record_finding
             if event.event_type == 'evidence_packet':
                 payload: dict[str, Any] = orjson.loads(event.payload) if event.payload else {}
                 _corr: dict[str, Any] | None = payload.get('_correlation')
@@ -1716,7 +1716,7 @@ class EvidenceLog:
 
         # analytics_hook per event (only evidence_packet type)
         try:
-            from knowledge.analytics_hook import shadow_record_finding
+            from hledac.universal.knowledge.analytics_hook import shadow_record_finding
 
             for e in created:
                 if e.event_type == 'evidence_packet':

@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.entity_signal_extractor import *
+from hledac.universal.recon.entity_signal_extractor import *

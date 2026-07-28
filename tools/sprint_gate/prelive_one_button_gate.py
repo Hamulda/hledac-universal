@@ -689,7 +689,7 @@ def _run_self_test(repo_root: Path, profile: str, query: str) -> SelfTestResult:
         if not r.valid:
             blocking_reasons.append(f'cross-sprint artifact invalid/missing: {r.probe_dir}/{r.filename}')
     try:
-        from export import sprint_exporter as _export_sprint_exporter
+        from hledac.universal.export import sprint_exporter as _export_sprint_exporter
         _has_export = hasattr(_export_sprint_exporter, '_generate_next_sprint_seeds')
         if not _has_export:
             blocking_reasons.append('F229-EXPORT-A: export.sprint_exporter missing _generate_next_sprint_seeds')
@@ -699,7 +699,7 @@ def _run_self_test(repo_root: Path, profile: str, query: str) -> SelfTestResult:
         blocking_reasons.append(f'F229-EXPORT-A: export.sprint_exporter not importable: {_exc}')
         artifact_matrix.append({'probe_dir': 'export', 'filename': 'sprint_exporter.py', 'category': 'F229-EXPORT-A', 'found': False, 'valid': False, 'parse_error': str(_exc), 'blocks_live': True})
     try:
-        from runtime import sprint_scheduler as _runtime_scheduler
+        from hledac.universal.runtime import sprint_scheduler as _runtime_scheduler
         _has_scheduler = hasattr(_runtime_scheduler, 'SprintScheduler') or hasattr(_runtime_scheduler, 'run_sprint')
         if not _has_scheduler:
             blocking_reasons.append('F229-RUNTIME-A: runtime.sprint_scheduler missing SprintScheduler/run_sprint')

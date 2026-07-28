@@ -9,7 +9,7 @@ LIFO order: Last resource registered = First to clean up.
 This matters: client session before DB connection, scheduler before store.
 
 Usage:
-    from runtime.protocols.cleanup_protocol import AsyncCleanable, manage_cleanup
+    from hledac.universal.runtime.protocols.cleanup_protocol import AsyncCleanable, manage_cleanup
 
     # Pattern 1: async context manager (recommended)
     async with manage_cleanup(store, scheduler) as (_, _):

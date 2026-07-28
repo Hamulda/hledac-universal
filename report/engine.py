@@ -34,19 +34,19 @@ class ReportEngine(msgspec.Struct, frozen=True):
 
     def __post_init__(self) -> None:
         if self.json_renderer is None:
-            from report.renderers.json_renderer import JSONRenderer
+            from hledac.universal.report.renderers.json_renderer import JSONRenderer
             self.json_renderer = JSONRenderer()
         if self.md_renderer is None:
-            from report.renderers.markdown_renderer import MarkdownRenderer
+            from hledac.universal.report.renderers.markdown_renderer import MarkdownRenderer
             self.md_renderer = MarkdownRenderer()
         if self.html_renderer is None:
-            from report.renderers.html_renderer import HTMLRenderer
+            from hledac.universal.report.renderers.html_renderer import HTMLRenderer
             self.html_renderer = HTMLRenderer()
         if self.svg_renderer is None:
-            from report.renderers.svg_renderer import SVGRenderer
+            from hledac.universal.report.renderers.svg_renderer import SVGRenderer
             self.svg_renderer = SVGRenderer()
         if self.pdf_renderer is None:
-            from report.renderers.pdf_renderer import PDFRenderer
+            from hledac.universal.report.renderers.pdf_renderer import PDFRenderer
             self.pdf_renderer = PDFRenderer()
 
     def render(self, report_data: dict[str, Any], *, formats: list[str] | None=None, output_dir: Path | str | None=None, sprint_id: str='unknown', template: str='sprint_report') -> dict[str, ReportOutput]:

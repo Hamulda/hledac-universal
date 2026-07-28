@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.pattern_mining_canonical import *
+from hledac.universal.recon.pattern_mining_canonical import *

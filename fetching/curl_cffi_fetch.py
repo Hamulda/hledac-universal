@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.capabilities import CAPS, CURL_CFFI
+from hledac.universal.core.capabilities import CAPS, CURL_CFFI
 
 # Re-export all public symbols from canonical implementation
 # This maintains backward compatibility while adding CAPS enforcement

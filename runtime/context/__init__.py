@@ -7,7 +7,7 @@ Exports:
   get_sprint_ctx / reset_sprint_ctx: context management.
 """
 
-from runtime.context.bounded_dicts import (
+from hledac.universal.runtime.context.bounded_dicts import (
     BoundedLRUDict,
     DEFAULT_ENTRIES_PER_SOURCE_MAXSIZE,
     DEFAULT_FEED_ACCEPTED_MAXSIZE,
@@ -23,7 +23,7 @@ def __getattr__(name: str):
     # Import from the archived module directly to avoid circular import:
     # sprint_scheduler (stub) → sprint_scheduler_v1_archived → runtime.context → sprint_scheduler (stub)
     if name in ("SprintRunContext", "get_sprint_ctx", "reset_sprint_ctx"):
-        from runtime import sprint_scheduler_v1_archived as _v1
+        from hledac.universal.runtime import sprint_scheduler_v1_archived as _v1
 
         return getattr(_v1, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

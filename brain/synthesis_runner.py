@@ -79,7 +79,7 @@ def _synthesis_get_metal_tier_thresholds() -> tuple[int, int, int]:
     Fallback: static M1 8GB values.
     """
     try:
-        from hledac.universal import rust_extensions as _rust
+        from hledac.universal.hledac.universal import rust_extensions as _rust
         limit_bytes = _rust.get_metal_limit_bytes_py()
         if limit_bytes > 0:
             return (
@@ -295,7 +295,7 @@ def _get_dspy_optimizer(lifecycle=None):
         if cached is not None:
             return cached
         try:
-            from brain.dspy_optimizer import DSPyOptimizer
+            from hledac.universal.brain.dspy_optimizer import DSPyOptimizer
 
             # F234: Pass lifecycle for memory_mgr access (battery/thermal guards)
             instance = DSPyOptimizer(brain_manager=lifecycle)
@@ -321,7 +321,7 @@ def _get_dspy_prompts() -> dict:
         if dspy_opt is not None and dspy_opt._optimized_prompts:
             prompts = dspy_opt._optimized_prompts
         else:
-            from brain.dspy_optimizer import load_optimized_prompts
+            from hledac.universal.brain.dspy_optimizer import load_optimized_prompts
 
             prompts = load_optimized_prompts()
     except Exception:
@@ -339,7 +339,7 @@ def _get_prompt_bandit():
         if cached is not None:
             return cached
         try:
-            from brain.prompt_bandit import PromptBandit
+            from hledac.universal.brain.prompt_bandit import PromptBandit
 
             instance = PromptBandit(
                 brain_manager=None,
@@ -364,7 +364,7 @@ async def _distill_findings(
     Fallback: serialize top findings jako plaintext.
     """
     try:
-        from brain.distillation_engine import distil
+        from hledac.universal.brain.distillation_engine import distil
         return await distil(findings, max_tokens=max_tokens)
     except Exception:
         # Fallback: serialize top findings jako text
@@ -1388,7 +1388,7 @@ class SynthesisRunner:
     async def _rag_query_safe(self, query: str, findings: list[dict]) -> str:
         """RAG retrieval — fail-soft wrapper for parallel discovery TaskGroup."""
         try:
-            from knowledge.rag_engine import RAGEngine
+            from hledac.universal.knowledge.rag_engine import RAGEngine
             _rag = RAGEngine()
             rag_result = await _rag.query(
                 query=query,
@@ -1409,7 +1409,7 @@ class SynthesisRunner:
         """GraphRAG IOC relationships — fail-soft wrapper for parallel discovery."""
         try:
             from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer
-            from knowledge.graph_rag import GraphRAGOrchestrator
+            from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
             kl = PersistentKnowledgeLayer()
             _grag = GraphRAGOrchestrator(kl)
             if not hasattr(_grag, "find_connections"):
@@ -1998,7 +1998,7 @@ class SynthesisRunner:
 
         async def _download_model(model_id: str) -> bool:
             """Download a single model via centralized cache. Returns True on success."""
-            from brain.model_cache import get_or_download_model
+            from hledac.universal.brain.model_cache import get_or_download_model
 
             try:
                 logger.info("[SYNTHESIS] Downloading %s ...", model_id)

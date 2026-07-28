@@ -34,7 +34,7 @@ from typing import Any
 from hledac.universal.graph.quantum_pathfinder import DuckPGQGraph
 # Rust backend — strict import
 try:
-    from core.rust_backend import rust
+    from hledac.universal.core.rust_backend import rust
 except ImportError:
     try:
         from hledac.universal.core.rust_backend import rust

@@ -14,7 +14,7 @@ Scope hodnoty:
   'factory'   — nova instance pri kazdem get()
 
 usage:
-    from core.container import ServiceContainer, get_global_container
+    from hledac.universal.core.container import ServiceContainer, get_global_container
 
     # Registrace (typicky v bootstrapu)
     container = ServiceContainer()
@@ -283,7 +283,7 @@ def get_global_container() -> ServiceContainer:
 def _seed_global_container(container: ServiceContainer) -> None:
     """Seed container with capabilities (A3). Called once on first global container creation."""
     try:
-        import core.capabilities as cap_module
+        import hledac.universal.core.capabilities as cap_module
 
         # Iterate module globals — capabilities are defined as module-level variables (ZSTD, MLX, ...)
         for cap_name, cap_obj in vars(cap_module).items():
@@ -291,7 +291,7 @@ def _seed_global_container(container: ServiceContainer) -> None:
                 try:
 
                     def _factory(c: Any = cap_obj) -> Any:
-                        from core.capabilities import CAPS as _caps
+                        from hledac.universal.core.capabilities import CAPS as _caps
 
                         return _caps.require(c)
 

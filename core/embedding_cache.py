@@ -3,7 +3,7 @@ import hashlib
 import mmap
 import os
 import threading
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import numpy as np

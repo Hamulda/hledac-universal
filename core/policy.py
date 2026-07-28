@@ -29,13 +29,13 @@ asyncio.run() inside:
 COMPLIANCE
 ==========
 All sync→async bridging in production code MUST use:
-  from utils.sync_bridge import run_sync_async
+  from hledac.universal.utils.sync_bridge import run_sync_async
 
 Or for CPU-bound sync work called from async code:
-  from utils.sync_bridge import to_thread
+  from hledac.universal.utils.sync_bridge import to_thread
 
 NO bare asyncio.run() in production modules (non-__main__).
 """
-from utils.sync_bridge import run_sync_async, to_thread
+from hledac.universal.utils.sync_bridge import run_sync_async, to_thread
 
 __all__ = ["run_sync_async", "to_thread"]

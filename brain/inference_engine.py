@@ -34,11 +34,11 @@ from enum import Enum
 from typing import Any
 import msgspec
 
-from brain.deephermes3_engine import _get_xxh3_hex
-from utils.lru_cache import LRUCache
+from hledac.universal.brain.deephermes3_engine import _get_xxh3_hex
+from hledac.universal.utils.lru_cache import LRUCache
 import numpy as np
 try:
-    from utils.eig import EIGCalculator
+    from hledac.universal.utils.eig import EIGCalculator
     EIG_AVAILABLE = True
 except ImportError:
     EIGCalculator = None

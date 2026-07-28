@@ -20,7 +20,7 @@ GHOST_INVARIANTS:
 - always-on: žádný feature flag
 
 Usage:
-    from core.ioc_patterns import (
+    from hledac.universal.core.ioc_patterns import (
         IPV4_RE, IPV6_RE, DOMAIN_RE,
         MD5_RE, SHA1_RE, SHA256_RE,
         EMAIL_RE, CVE_RE, URL_RE,

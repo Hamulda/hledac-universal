@@ -23,7 +23,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import msgspec
 
-from runtime.lane_registry import LANE_REGISTRY
+from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +281,7 @@ class SidecarRegistry:
         Idempotent: subsequent calls are no-ops.
         Skips sidecars already cached via get_available().
         """
-        from utils.async_helpers import parallel  # ISSUE-006: parallel() canonical API
+        from hledac.universal.utils.async_helpers import parallel  # ISSUE-006: parallel() canonical API
         for sidecar_id in cls._registry:
             if sidecar_id in cls._cached_instances:
                 continue  # Already pre-warmed

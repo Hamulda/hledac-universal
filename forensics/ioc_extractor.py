@@ -14,7 +14,7 @@ Hot path (canonical write): knowledge/duckdb_store.py uses
 """
 
 # Re-export everything from the unified facade for backward compatibility
-from knowledge.ioc_processor import (  # noqa: F401,E402,F811
+from hledac.universal.knowledge.ioc_processor import (  # noqa: F401,E402,F811
     fast_ioc_extract,
     url_normalize,
     batch_dedup_urls,

@@ -1,8 +1,8 @@
 """
 runtime/sidecars/enrichment/_ti_feed.py — F-ISSUE-005: TIFeedSidecarAdapter
 """
-from runtime.sidecar_protocol import SidecarRegistry
-from runtime.sidecars._base import SchedulerBackedSidecarAdapter
+from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
 
 
 @SidecarRegistry.register("ti_feed")

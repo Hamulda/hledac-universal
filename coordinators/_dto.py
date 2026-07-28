@@ -6,7 +6,7 @@ Extracted from base.py (F320-5) for better separation of concerns.
 These DTOs are used across multiple coordinators.
 
 Canonical import:
-    from coordinators._dto import DecisionResponse, OperationResult, CoordinatorCapabilities, OperationType
+    from hledac.universal.coordinators._dto import DecisionResponse, OperationResult, CoordinatorCapabilities, OperationType
 """
 from __future__ import annotations
 

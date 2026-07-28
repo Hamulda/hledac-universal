@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.attribution_scorer import *
+from hledac.universal.recon.attribution_scorer import *

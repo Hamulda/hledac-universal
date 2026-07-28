@@ -359,7 +359,7 @@ class GhostExecutor:
     async def _get_network_driver(self):
         """Lazy load network driver"""
         if self._network_driver is None:
-            from hledac.network.ghost_network_driver import GhostNetworkDriver
+            from hledac.universal.hledac.network.ghost_network_driver import GhostNetworkDriver
             logger.info('Loading GhostNetworkDriver...')
             self._network_driver = GhostNetworkDriver(headless=True)
             await self._network_driver.initialize()
@@ -488,7 +488,7 @@ class GhostExecutor:
         claims = params.get('claims', [])
         logger.info(f'Fact checking {len(claims)} claims')
         try:
-            from hledac.fact_checking import quick_fact_check
+            from hledac.universal.hledac.fact_checking import quick_fact_check
             results = []
             for claim in claims:
                 result = await quick_fact_check(claim)
@@ -522,7 +522,7 @@ class GhostExecutor:
         query = params.get('query', '')
         logger.info(f'OSINT discovery: {query}')
         try:
-            from hledac.osint import HiddenSourcesCrawler
+            from hledac.universal.hledac.osint import HiddenSourcesCrawler
             crawler = HiddenSourcesCrawler()
             discovered = await crawler.discover_sources(query, max_sources=5)
             sources = [{'url': d.url, 'title': d.title, 'source_type': d.source_type} for d in discovered]

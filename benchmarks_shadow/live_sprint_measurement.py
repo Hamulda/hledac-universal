@@ -184,7 +184,7 @@ def get_invocation_reality() -> dict:
     Return a hermetic diagnostic dict about the invocation namespace.
     Does NOT import heavy MLX/model deps — only stdlib + already-imported locals.
     """
-    import hledac as _hledac
+    import hledac.universal.hledac as _hledac
     _live_sprint_measurement_file = str(_P(__file__).resolve())
     _core_main_file = str(_P(core_main.__file__).resolve()) if hasattr(core_main, '__file__') else 'N/A'
     _ss_mod = sys.modules.get('hledac.universal.runtime.sprint_scheduler')
@@ -388,7 +388,7 @@ def _stamp_live_kpi(result: LiveMeasurementResult) -> None:
     inp = LiveKpiInput(status=result.status, is_memory_gate_abort=result.run_quality_verdict == RunQualityVerdict.ABORTED_MEMORY_GATE.value, runtime_truth=result.runtime_truth, actual_duration_s=result.actual_duration_s, primary_signal_source=result.primary_signal_source, run_quality_verdict=result.run_quality_verdict, hardware_constrained=result.hardware_constrained, public_pipeline=result.public_pipeline, timing_truth=result.timing_truth, acquisition_strategy=result.acquisition_strategy, windup_guard_observation=getattr(result, 'windup_guard_observation', None), return_guard_observation=getattr(result, 'return_guard_observation', None), scheduler_exit=getattr(result, 'scheduler_exit', None), acquisition_report=result.acquisition_report, profile_verdict=result.profile_verdict, acquisition_terminality_checked=getattr(result, 'acquisition_terminality_checked', None), acquisition_terminality_satisfied=getattr(result, 'acquisition_terminality_satisfied', None), acquisition_terminality_missing_lanes=getattr(result, 'acquisition_terminality_missing_lanes', None), acquisition_terminality_report=getattr(result, 'acquisition_terminality_report', None), explicit_source_family_outcomes=result.acquisition_report.get('source_family_outcomes') if result.acquisition_report and isinstance(result.acquisition_report, dict) else None, acquisition_prelude_checked=getattr(result, 'acquisition_prelude_checked', None), acquisition_prelude_ran=getattr(result, 'acquisition_prelude_ran', None), acquisition_prelude_required_lanes=getattr(result, 'acquisition_prelude_required_lanes', None), acquisition_prelude_terminal_lanes=getattr(result, 'acquisition_prelude_terminal_lanes', None), acquisition_prelude_missing_lanes=getattr(result, 'acquisition_prelude_missing_lanes', None), acquisition_prelude_skipped_lanes=getattr(result, 'acquisition_prelude_skipped_lanes', None), acquisition_prelude_errors=getattr(result, 'acquisition_prelude_errors', None), acquisition_prelude_duration_s=getattr(result, 'acquisition_prelude_duration_s', None), acquisition_prelude_reason=getattr(result, 'acquisition_prelude_reason', None), planned_duration_s=getattr(result, 'planned_duration_s', None), claims_runtime_status=getattr(result, 'claims_runtime_status', None))  # noqa: E501
     kpi = _derive_live_kpi_from_input(inp)
     result.live_kpi = kpi
-    from tools.research_quality_score import score_research_quality
+    from hledac.universal.tools.research_quality_score import score_research_quality
     _rq_data = {'mode': 'live', 'findings_count': result.findings_count, 'runtime_truth': result.runtime_truth or {}, 'live_kpi': kpi, 'uma_post_swap_gib': result.uma_post_swap_gib, 'swap_warning': result.swap_warning}  # noqa: E501
     _rq = score_research_quality(_rq_data)
     result.live_kpi['research_quality'] = _rq

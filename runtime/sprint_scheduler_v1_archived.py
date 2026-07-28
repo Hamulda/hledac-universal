@@ -15,8 +15,8 @@ This maintains backward compatibility for:
 No active production code should import from this module. PivotTask has been
 extracted to runtime/pivot_types.py.
 Canonical paths (use these):
-    from runtime.scheduler_v2 import SprintSchedulerV2
-    from runtime.sprint_scheduler import SprintScheduler  # → SprintSchedulerV2
+    from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler  # → SprintSchedulerV2
 """
 
 from __future__ import annotations

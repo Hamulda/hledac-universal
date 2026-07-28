@@ -12,7 +12,7 @@ Architecture:
 - Backward compatibility: session_mgr still available as "default"
 
 Usage:
-    from fetching._session_mgr import session_mgr, get_session_manager, reset_all_session_managers
+    from hledac.universal.fetching._session_mgr import session_mgr, get_session_manager, reset_all_session_managers
 
     # Get default instance (backward compat)
     await session_mgr.get_tor_session()

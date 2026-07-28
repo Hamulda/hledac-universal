@@ -260,7 +260,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
         if self._dns is not None:
             return self._dns
         try:
-            from recon.network_reconnaissance import DNSEnumerator
+            from hledac.universal.recon.network_reconnaissance import DNSEnumerator
             self._dns = DNSEnumerator()
             return self._dns
         except ImportError:
@@ -271,7 +271,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
         if self._whois is not None:
             return self._whois
         try:
-            from recon.network_reconnaissance import WHOISLookup
+            from hledac.universal.recon.network_reconnaissance import WHOISLookup
             self._whois = WHOISLookup()
             return self._whois
         except ImportError:
@@ -282,7 +282,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
         if self._ssl is not None:
             return self._ssl
         try:
-            from recon.network_reconnaissance import SSLAnalyzer
+            from hledac.universal.recon.network_reconnaissance import SSLAnalyzer
             self._ssl = SSLAnalyzer()
             return self._ssl
         except ImportError:
@@ -293,7 +293,7 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
         if self._passive_dns is not None:
             return self._passive_dns
         try:
-            from recon.network_reconnaissance import PassiveDNSClient
+            from hledac.universal.recon.network_reconnaissance import PassiveDNSClient
             self._passive_dns = PassiveDNSClient()
             return self._passive_dns
         except ImportError:

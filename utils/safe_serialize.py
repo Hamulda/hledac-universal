@@ -24,7 +24,7 @@ Invariant: Only pre-registered functions can be called. No arbitrary code execut
 
 Usage
 -----
-    from utils.safe_serialize import encode_call, decode_and_execute
+    from hledac.universal.utils.safe_serialize import encode_call, decode_and_execute
 
     # Encode a call
     payload = encode_call("duckdb.execute_query", (sql,), {"params": []})

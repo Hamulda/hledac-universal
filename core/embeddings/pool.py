@@ -29,7 +29,7 @@ import threading
 import sys as _sys
 from typing import Any
 
-from utils.mlx_cache import get_dynamic_metal_cache_limit
+from hledac.universal.utils.mlx_cache import get_dynamic_metal_cache_limit
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
         stacklevel=2,
     )
     # Lazy import to avoid circular dependency
-    from brain._hermes_cache import hermes_cache
+    from hledac.universal.brain._hermes_cache import hermes_cache
 
     cache = hermes_cache()
     result = cache.get_model(model_name)

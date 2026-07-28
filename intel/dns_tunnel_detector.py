@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.dns.dns_tunnel_detector import *
+from hledac.universal.recon.dns.dns_tunnel_detector import *

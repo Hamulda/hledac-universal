@@ -548,7 +548,7 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
                     finding['confidence'] = min(finding.get('confidence', 0.5) * 0.5, 0.3)
             await asyncio.sleep(0.3)  # Rate limit mezi requesty
 
-    from utils.async_helpers import parallel
+    from hledac.universal.utils.async_helpers import parallel
     await parallel([_enrich_with_rate_limit(f) for f in ip_findings], policy="log", ctx="ti_feed:greynoise_enrich")
 
     enriched = sum(1 for f in ip_findings if 'greynoise' in f)

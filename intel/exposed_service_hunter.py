@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.exposed_service_hunter import *
+from hledac.universal.recon.exposed_service_hunter import *

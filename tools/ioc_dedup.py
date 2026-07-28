@@ -4,7 +4,7 @@ Cross-sprint IOC deduplication with normalization support.
 Persists via LMDB or file-based storage.
 
 Usage:
-    from tools.ioc_dedup import IocDedupManager
+    from hledac.universal.tools.ioc_dedup import IocDedupManager
 
     manager = IocDedupManager(persist_path="cache/ioc_dedup.bin")
     manager.add("evil.com", "domain", 0.9)

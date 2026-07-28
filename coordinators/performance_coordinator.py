@@ -26,7 +26,7 @@ import msgspec
 from typing import Any
 from weakref import ref
 try:
-    from hledac.core.resilience import AgentExecutionError, CircuitBreakerOpenError
+    from hledac.universal.hledac.core.resilience import AgentExecutionError, CircuitBreakerOpenError
 except ImportError:
 
     class AgentExecutionError(Exception):
@@ -38,7 +38,7 @@ except ImportError:
         pass
 CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
-from core.sys_metrics import get_memory_usage_mb
+from hledac.universal.core.sys_metrics import get_memory_usage_mb
 from hledac.universal.utils.async_helpers import safe_wait_for
 
 class AgentMetrics(msgspec.Struct, gc=False):

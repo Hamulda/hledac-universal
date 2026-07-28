@@ -11,7 +11,7 @@ M1 8GB: All operations are thread-pool offloaded, zero Metal/Ridge/MLX
 interaction, minimal RAM footprint (~1KB per operation).
 
 Usage:
-    from utils.async_fs_helpers import async_write_file, async_read_file_text
+    from hledac.universal.utils.async_fs_helpers import async_write_file, async_read_file_text
 
 Invariants enforced:
 - Always-on: no feature flags

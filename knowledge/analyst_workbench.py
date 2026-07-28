@@ -40,9 +40,9 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
-    from knowledge.evidence_chain import EvidenceChain
+    from hledac.universal.knowledge.evidence_chain import EvidenceChain
 from hledac.universal.core.protocols import safe_get_finding_field
-from utils.sync_bridge import run_sync_async
+from hledac.universal.utils.sync_bridge import run_sync_async
 __all__ = ['AnalystWorkbench', 'AnalystAnswer', 'AnalystBrief', 'EvidencePointer', 'RelatedEntity', 'create_analyst_workbench', 'get_evidence_chain', 'MAX_CORROBORATION_SUMMARY']
 MAX_CONTEXT_BYTES: int = 8192
 MAX_TOP_K: int = 20
@@ -484,7 +484,7 @@ class AnalystWorkbench:
         Returns None on any failure (fail-soft).
         """
         try:
-            from brain.model_lifecycle import load_model, unload_model
+            from hledac.universal.brain.model_lifecycle import load_model, unload_model
             load_model(model_name)
             answer = self._extract_answer(context, question)
             unload_model()
@@ -552,7 +552,7 @@ class AnalystWorkbench:
             is not part of any tracked chain.
         """
         try:
-            from knowledge.evidence_chain import _get_chain_for_finding
+            from hledac.universal.knowledge.evidence_chain import _get_chain_for_finding
             return _get_chain_for_finding(finding_id)
         except Exception:
             self._logger.warning(f'get_evidence_chain({finding_id}) failed')
@@ -919,7 +919,7 @@ class AnalystWorkbench:
         Fail-soft: returns ("Corroboration unavailable",) on any error.
         """
         try:
-            from knowledge.evidence_chain import get_all_chains, summarize_chain_support
+            from hledac.universal.knowledge.evidence_chain import get_all_chains, summarize_chain_support
             chains = get_all_chains()
             if chains:
                 support = summarize_chain_support(chains)
@@ -1244,12 +1244,12 @@ def create_analyst_workbench() -> AnalystWorkbench:
     vector = None
     semantic = None
     try:
-        from knowledge.vector_store import get_vector_store
+        from hledac.universal.knowledge.vector_store import get_vector_store
         vector = get_vector_store()
     except Exception as _e:
         logger.debug('fail-soft suppression: create_analyst_workbench (vector_store): %s', _e, exc_info=True)
     try:
-        from knowledge.graph_service import _get_graph
+        from hledac.universal.knowledge.graph_service import _get_graph
         graph = _get_graph()
     except Exception as _e:
         logger.debug('fail-soft suppression: create_analyst_workbench (graph): %s', _e, exc_info=True)
@@ -1265,5 +1265,5 @@ def get_evidence_chain(finding_id: str) -> EvidenceChain | None:
 
     Returns the EvidenceChain if found, None otherwise.
     """
-    from knowledge.evidence_chain import _get_chain_for_finding
+    from hledac.universal.knowledge.evidence_chain import _get_chain_for_finding
     return _get_chain_for_finding(finding_id)

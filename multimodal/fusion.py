@@ -282,7 +282,7 @@ class MobileCLIPFusion:
     def _get_vision_encoder(self, governor: Any=None):
         """Lazy-load VisionEncoder singleton (P0 canonical)."""
         if self._vision_encoder is None:
-            from multimodal.vision_encoder import VisionEncoder
+            from hledac.universal.multimodal.vision_encoder import VisionEncoder
             # VisionEncoder requires governor param — pass None for standalone use
             self._vision_encoder = VisionEncoder(governor=governor)
         return self._vision_encoder

@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.pastebin_monitor import *
+from hledac.universal.recon.pastebin_monitor import *

@@ -33,9 +33,9 @@ from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 from hledac.universal.utils.import_resolver import lazy, lazy_callable
-from brain._hermes_cache import hermes_cache
-from brain._cache.kv_cache_manager import KVCacheManager
-from brain._batch.batch_processor import BatchProcessor, BatchConfig, BatchItem, BatchStats
+from hledac.universal.brain._hermes_cache import hermes_cache
+from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
+from hledac.universal.brain._batch.batch_processor import BatchProcessor, BatchConfig, BatchItem, BatchStats
 _otel_primary = lazy('otel.instrumented')
 _otel_fallback = lazy('hledac.universal.telemetry.instrumented')
 
@@ -55,7 +55,7 @@ def _get_xxh3_hex(data: str) -> str:
     global _xxh3_func
     if _xxh3_func is None:
         try:
-            from core.rust_backend import rust
+            from hledac.universal.core.rust_backend import rust
             _xxh3_func = rust.hash.ContentHasher.xxh3_64_hex
         except Exception:
             return hashlib.blake2b(data.encode(), digest_size=8).hexdigest()
@@ -73,7 +73,7 @@ def _get_xxh3_hex_batch(items: list[str]) -> list[str]:
     global _xxh3_func_batch
     if _xxh3_func_batch is None:
         try:
-            from core.rust_backend import rust
+            from hledac.universal.core.rust_backend import rust
             _xxh3_func_batch = rust.hash.batch_xxh3_64_hex
         except Exception:
             _xxh3_func_batch = None
@@ -191,7 +191,7 @@ def _get_metal_tier_thresholds() -> tuple[int, int, int]:
     Fallback: uses the static constants below if Rust call fails.
     """
     try:
-        from hledac.universal import rust_extensions as _rust  # type: ignore[attr-defined]
+        from hledac.universal.hledac.universal import rust_extensions as _rust  # type: ignore[attr-defined]
         limit_bytes = _rust.get_metal_limit_bytes_py()
         if limit_bytes > 0:
             return (int(limit_bytes * 1.75), int(limit_bytes * 1.05), int(limit_bytes * 0.7))
@@ -540,7 +540,7 @@ class DeepHermes3Engine:
         self._metal_device: Any = _metal_cls() if _metal_cls else None
         self._model_breaker: ModelCircuitBreaker | None = None
         try:
-            from transport.circuit_breaker import ModelCircuitBreaker
+            from hledac.universal.transport.circuit_breaker import ModelCircuitBreaker
             self._model_breaker = ModelCircuitBreaker(model_id='hermes')
         except Exception:
             pass
@@ -561,7 +561,7 @@ class DeepHermes3Engine:
 
     def init_model_breaker(self, model_id: str) -> None:
         """GAP-3/1: Initialize per-model circuit breaker."""
-        from transport.circuit_breaker import ModelCircuitBreaker
+        from hledac.universal.transport.circuit_breaker import ModelCircuitBreaker
         self._model_breaker = ModelCircuitBreaker(model_id=model_id)
 
     @property
@@ -3158,7 +3158,7 @@ class DeepHermes3Engine:
             GenerationFacade instance bound to DeepHermes3Engine's model,
             tokenizer, and MetalDevice for simplified generate() calls.
         """
-        from brain._inference.generate import GenerationFacade
+        from hledac.universal.brain._inference.generate import GenerationFacade
 
         if self._generation_facade is None:
             self._generation_facade = GenerationFacade(
@@ -3330,7 +3330,7 @@ class DeepHermes3Engine:
             metal_reclaim()
         _mlx_prewarm_active = False
         try:
-            from brain.ane_embedder import get_ane_mlx_mutex
+            from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
             get_ane_mlx_mutex().release('llm')
         except Exception:
             pass
@@ -3429,7 +3429,7 @@ class DeepHermes3Engine:
                 self._prompt_cache = None
                 self._kv_cache_enabled = False
             return True
-        from brain.ane_embedder import get_ane_mlx_mutex
+        from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
         mutex = get_ane_mlx_mutex()
         try:
             from mlx_lm import load

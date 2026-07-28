@@ -137,7 +137,7 @@ class DuckDBRAGStore:
     def _store(self) -> Any:
         """Lazily get or create DuckDBShadowStore."""
         if self._duckdb_store is None:
-            from knowledge.duckdb_store import DuckDBShadowStore
+            from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
             self._duckdb_store = DuckDBShadowStore(lazy=True)
         return self._duckdb_store
@@ -576,7 +576,7 @@ class DuckDBEntityStore:
     @property
     def _store(self) -> Any:
         if self._duckdb_store is None:
-            from knowledge.duckdb_store import DuckDBShadowStore
+            from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
             self._duckdb_store = DuckDBShadowStore(lazy=True)
         return self._duckdb_store

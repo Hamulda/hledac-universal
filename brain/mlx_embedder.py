@@ -11,7 +11,7 @@ import logging
 import time as time_module
 from typing import TYPE_CHECKING, Awaitable, Callable
 import numpy as np
-from core.embeddings.manager import AdaptiveEmbeddingBatcher
+from hledac.universal.core.embeddings.manager import AdaptiveEmbeddingBatcher
 logger = logging.getLogger(__name__)
 _MLX_AVAILABLE = False
 try:

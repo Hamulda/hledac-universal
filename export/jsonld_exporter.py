@@ -513,7 +513,7 @@ def _maybe_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
     GHOST_INVARIANTS: no asyncio.run() in async context.
     P1-1: run_sync_async handles both running and non-running loop cases.
     """
-    from utils.sync_bridge import run_sync_async
+    from hledac.universal.utils.sync_bridge import run_sync_async
     return run_sync_async(_maybe_sign_jsonld_async(obj))
 
 
@@ -524,7 +524,7 @@ def _sync_pq_sign_jsonld(obj: dict[str, Any]) -> dict[str, Any]:
     P1-1 FIX: Replaced asyncio.run() with run_sync_async().
     asyncio.run() inside run_in_executor thread is M1 Metal crash vector.
     """
-    from utils.sync_bridge import run_sync_async
+    from hledac.universal.utils.sync_bridge import run_sync_async
     return run_sync_async(_maybe_sign_jsonld_async(obj))
 
 

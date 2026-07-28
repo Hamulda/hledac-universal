@@ -118,7 +118,7 @@ class AuditLogger:
         """Initialize DuckDB-backed audit store."""
         if self._initialized:
             return
-        from knowledge.duckdb_audit_store import DuckDBAuditStore
+        from hledac.universal.knowledge.duckdb_audit_store import DuckDBAuditStore
         self._duckdb_store = DuckDBAuditStore()
         await self._duckdb_store.initialize()
         self._initialized = True

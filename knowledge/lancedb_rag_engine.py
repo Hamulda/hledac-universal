@@ -133,7 +133,7 @@ class LanceDBRAGEngine:
             async with self._embedder_lock:
                 if self._embedder is None:
                     try:
-                        from core.mlx_embeddings import get_embedding_manager
+                        from hledac.universal.core.mlx_embeddings import get_embedding_manager
                         self._embedder = get_embedding_manager()
                     except Exception as e:
                         logger.debug(f'[LANCEDB:RAG] embedder init failed: {e}')

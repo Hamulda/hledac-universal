@@ -231,7 +231,7 @@ class ContradictionResolverProgram:
         findings_text = '\n'.join((f"- [{f.get('conflict_mass', 0):.2f}] {f.get('finding', '')[:150]}" for f in limited)) if limited else 'No contradictory findings'
         return self.program(contradictory_findings=findings_text, context=context)
 try:
-    from brain.dspy_signatures import DeepResearchChain, DeepResearchHopSignature
+    from hledac.universal.brain.dspy_signatures import DeepResearchChain, DeepResearchHopSignature
     _DEEP_RESEARCH_SIGNATURE_AVAILABLE = True
 except ImportError:
     DeepResearchHopSignature = None
@@ -286,7 +286,7 @@ class MultiHopDeepResearchChain:
         Returns:
             Extended evidence list with multi-hop findings
         """
-        from brain.dspy_signatures import is_dspy_available
+        from hledac.universal.brain.dspy_signatures import is_dspy_available
         if not is_dspy_available():
             logger.warning('DSPy not available, returning initial findings')
             return list(initial_findings)
@@ -391,8 +391,8 @@ def get_program(name: str) -> Any | None:
 DARK_QUERY_ZERO_SHOT = 'Z techto IOC z aktualniho sprintu: {ioc_brief}\n\nNavrhuj {max_queries} specificke dotazy pro dark surface (neindexovane zdroje).\nPro kazdy dotaz uved:\n1. typ: onion | ipfs | paste | i2p\n2. samotny dotaz (co hledat)\n3. priorita: 0-1 (vyssi = dulezitejsi)\n4. odovodneni (proc by to mohlo mit relevantni data)\n\nVystup formatuj jako JSON list s objekty: type, query, priority, reasoning\n\nZajimave patterny k hledani:\n- .onion domeny korelovane s IP/domain z IOC\n- IPFS CID z intelligence findings\n- Paste site leak korelace\n- Darknet forum IOC patterns'
 HYPOTHESIS_ZERO_SHOT = 'Research query: {query}\n\nRAG ctx:\n{rag_context}\n\n{graph_summary}\n{reward_context}\n\nNavrhni možné cesty, jak získat více informací o "{query}".\n生成 5-10 konkrétních hypotéz v češtině, kde každá začíná číslem.\n\nFormát (pouze seznam, žádný další text):\n1. [hypotéza 1]\n2. [hypotéza 2]\n...'
 try:
-    from brain.evidence_fusion import DempsterShafer
-    from utils.eig import EIGCalculator
+    from hledac.universal.brain.evidence_fusion import DempsterShafer
+    from hledac.universal.utils.eig import EIGCalculator
     _DS_EIG_AVAILABLE = True
 except ImportError:
     DempsterShafer = None

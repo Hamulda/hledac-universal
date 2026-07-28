@@ -22,7 +22,7 @@ GHOST_INVARIANTS:
 - Fail-soft: one pivot failure does not block others or sprint
 """
 import asyncio
-from utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_gather_ok
 import logging
 import time
 from dataclasses import dataclass

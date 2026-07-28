@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.onion_seed_manager import *
+from hledac.universal.recon.onion_seed_manager import *

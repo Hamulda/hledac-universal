@@ -46,7 +46,7 @@ import time
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-from utils.async_helpers import safe_create_task, safe_wait_for
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 logger = logging.getLogger(__name__)
 
 # Issue #042: M1 8GB tuned generational GC thresholds.

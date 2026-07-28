@@ -63,7 +63,7 @@ class FetchStage:
         fetch_concurrency: int = 8,
         uma_state: str = "ok",
     ):
-        from coordinators.aimd_controllers import make_fetch_aimd
+        from hledac.universal.coordinators.aimd_controllers import make_fetch_aimd
 
         self._aimd = aimd_controller or make_fetch_aimd()
         self._fetch_fn = fetch_fn

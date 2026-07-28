@@ -1459,7 +1459,7 @@ class DuckPGQGraph:
 
             # Call Rust rayon-parallel centrality
             try:
-                from core.rust_backend import rust as _rust
+                from hledac.universal.core.rust_backend import rust as _rust
                 if _rust is not None and _rust.is_available and _rust.graph_centrality is not None:
                     raw = _rust.graph_centrality.batch_centrality_all(adjacency)
                     # raw: {node_id: {"degree": float, "betweenness": float, ...}}

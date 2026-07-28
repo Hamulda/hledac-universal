@@ -8,10 +8,10 @@ This module is DEPRECATED. All functionality has been consolidated into:
 
 MIGRATION:
   OLD:
-    from utils.py314_executors import ChunkedExecutor, smart_executor
+    from hledac.universal.utils.py314_executors import ChunkedExecutor, smart_executor
 
   NEW:
-    from runtime.worker_pool import get_shared_pool, io_bound
+    from hledac.universal.runtime.worker_pool import get_shared_pool, io_bound
     # For CPU-bound work:
     await get_shared_pool().run(cpu_intensive_fn, *args)
     # For I/O-bound work:

@@ -64,7 +64,7 @@ class HypothesisBuilder:
     def engine(self) -> Any:
         """Lazy load HypothesisEngine from brain."""
         if self._engine is None:
-            from brain.research_hypothesis_engine import HypothesisEngine
+            from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
             self._engine = HypothesisEngine(max_hypotheses=200, enable_adversarial_verification=False, use_dempster_shafer=False)
         return self._engine
 

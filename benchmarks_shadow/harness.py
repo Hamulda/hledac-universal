@@ -39,7 +39,7 @@ async def _run_single_sprint(query: str) -> dict[str, Any]:
     ``run_sprint`` returns None; findings are read from the latest
     JSON export written to the reports directory.
     """
-    from core.__main__ import run_sprint
+    from hledac.universal.core.__main__ import run_sprint
     start = time.monotonic()
     await run_sprint(query=query, duration_s=10, aggressive_mode=False)
     latency_s = time.monotonic() - start

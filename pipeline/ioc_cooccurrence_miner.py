@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 from typing import Final
 if TYPE_CHECKING:
-    from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, parallel
 logger = logging.getLogger(__name__)
 _MAX_PAIRS: Final[int] = 10000

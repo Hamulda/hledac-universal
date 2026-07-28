@@ -878,7 +878,7 @@ async def ipfs_search_as_findings(query: str, timeout_per_result: int = 30) -> l
         return []
 
     # P1-02: Parallelizované přes parallel() — max 20 CIDs pro M1 bezpečnost
-    from utils.async_helpers import parallel
+    from hledac.universal.utils.async_helpers import parallel
 
     async def _fetch_one_cid(cid: str) -> CanonicalFinding | None:
         try:

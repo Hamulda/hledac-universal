@@ -5,7 +5,7 @@ Used in brain/research_hypothesis_engine.py to merge findings from multiple sour
 and detect contradictions when combined belief < 0.3.
 
 Usage:
-    from brain.evidence_fusion import DempsterShafer
+    from hledac.universal.brain.evidence_fusion import DempsterShafer
     ds = DempsterShafer(hypotheses={'entity_present', 'entity_absent'})
     ds.add_evidence('entity_present', mass=0.7, source_weight=1.0)
     ds.add_evidence('entity_present', mass=0.6, source_weight=0.8)  # another source

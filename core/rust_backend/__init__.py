@@ -17,7 +17,7 @@ Architecture:
   │                     sprint_policies + all pure-Python fallbacks
 
 Usage:
-    from core.rust_backend import get_accel
+    from hledac.universal.core.rust_backend import get_accel
 
     accel = get_accel()
     if accel.is_available:
@@ -27,8 +27,8 @@ Usage:
         fingerprints = accel.quality.batch_dedup_fingerprints(texts)
 
 F350M-R (A3): Container-based force override:
-    from core.rust_backend import get_accel, set_container, RustForce
-    from core.container import get_global_container
+    from hledac.universal.core.rust_backend import get_accel, set_container, RustForce
+    from hledac.universal.core.container import get_global_container
 
     # Sprint-scoped: force Python fallback for this sprint
     container = get_global_container()
@@ -38,11 +38,11 @@ F350M-R (A3): Container-based force override:
     accel = get_accel()  # will use Python fallback
 
 For testing:
-    from core.rust_backend import reset_accel
+    from hledac.universal.core.rust_backend import reset_accel
     reset_accel()  # clear singleton and probe cache
 
 Backward compatibility:
-    from core.rust_backend import rust
+    from hledac.universal.core.rust_backend import rust
     rust.bloom.BloomFilter()        # still works
     rust.quality.batch_entropy(...) # still works
 """
@@ -552,8 +552,8 @@ def set_container(container: Any) -> None:
     Convenience wrapper around AccelBackend.set_container().
 
     Usage (bootstrap.py):
-        from core.rust_backend import get_accel, set_container
-        from core.container import get_global_container
+        from hledac.universal.core.rust_backend import get_accel, set_container
+        from hledac.universal.core.container import get_global_container
 
         set_container(get_global_container())
 

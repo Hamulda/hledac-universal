@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.bgp_advisor_adapter import *
+from hledac.universal.recon.bgp_advisor_adapter import *

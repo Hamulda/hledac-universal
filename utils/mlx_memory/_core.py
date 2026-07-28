@@ -36,7 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from utils.locks import LazyAsyncioLock
+from hledac.universal.utils.locks import LazyAsyncioLock
 
 from hledac.universal.core.locks import LockCategory, register_lock
 
@@ -724,7 +724,7 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
         stacklevel=2,
     )
     # Lazy import to avoid circular dependency
-    from brain._hermes_cache import hermes_cache
+    from hledac.universal.brain._hermes_cache import hermes_cache
 
     cache = hermes_cache()
     result = cache.get_model(model_name)

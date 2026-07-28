@@ -187,7 +187,7 @@ def _get_circuit_breaker():
     global _circuit_breaker_check
     if _circuit_breaker_check is None:
         try:
-            from transport.circuit_breaker import domain_breaker_check
+            from hledac.universal.transport.circuit_breaker import domain_breaker_check
             _circuit_breaker_check = domain_breaker_check
         except ImportError:
             _circuit_breaker_check = None

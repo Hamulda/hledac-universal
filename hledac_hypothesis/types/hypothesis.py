@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     # Hypothesis lives in brain.research_hypothesis_engine (carries engine-specific
     # methods). Imported only for the Protocol type signatures below.
-    from brain.research_hypothesis_engine import Hypothesis
+    from hledac.universal.brain.research_hypothesis_engine import Hypothesis
 
 
 class HypothesisType(Enum):

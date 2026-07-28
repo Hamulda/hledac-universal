@@ -424,7 +424,7 @@ line-length = 120
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901"]  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901", "F811"]  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality; F811: redefinition (C-1 double-def guard)
 ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Issue #32
 # E911: P1-1 custom — forbid asyncio.run() outside allowed entry points.
 # Allowed: __main__, tools/, tests/. Use: grep -rn 'asyncio\.run(' ... | grep -v __main__ | grep -v 'tools/' | grep -v 'tests/'
@@ -540,7 +540,6 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "cache/adaptive_cache.py" = ["BLE001"]  # cache cold-path eviction
 "probe/**" = ["BLE001"]              # probe test files
 "rust_extensions/build_ffi_manifest.py" = ["BLE001"]  # build script cold-path
-"hledac/_namespace_bootstrap.py" = ["BLE001"]
 "core/resource_governor.py" = ["BLE001"]
 "core/mlx_unified_scheduler.py" = ["BLE001"]
 "utils/deduplication.py" = ["BLE001"]

@@ -320,7 +320,7 @@ async def grab_batch_as_findings(targets: list[tuple[str, int]], timeout: int=10
         def _get_xxh3_hex():
             """Lazy-load Rust content_hash_hex (xxh3-64). Cached after first call."""
             try:
-                from core.rust_backend import rust as _rust_backend
+                from hledac.universal.core.rust_backend import rust as _rust_backend
                 if _rust_backend.is_available and _rust_backend.hash is not None:
                     return _rust_backend.hash.content_hash_hex
                 raise ImportError('Rust hash not available')

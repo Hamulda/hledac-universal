@@ -26,7 +26,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 import numpy as np
-from utils.domain_executors import get_vision_executor
+from hledac.universal.utils.domain_executors import get_vision_executor
 logger = logging.getLogger(__name__)
 MPS_AVAILABLE = False
 _MPS_CHECKED = False

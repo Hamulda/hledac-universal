@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.identity_stitching_canonical import *
+from hledac.universal.recon.identity_stitching_canonical import *

@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.confidence_policy import *
+from hledac.universal.recon.confidence_policy import *

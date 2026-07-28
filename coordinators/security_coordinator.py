@@ -453,7 +453,7 @@ class SecurityCoordinator(UniversalCoordinator):
     async def create_secure_vault(self, size_mb: int = 256) -> dict[str, Any]:
         """Create secure RAM disk vault."""
         try:
-            from hledac.supreme.security.ram_disk_vault import RamDiskVault
+            from hledac.universal.hledac.supreme.security.ram_disk_vault import RamDiskVault
             vault = RamDiskVault(size_mb=size_mb)
             mount_point = vault.mount()
             return {

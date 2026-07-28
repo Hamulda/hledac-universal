@@ -445,7 +445,7 @@ def _adaptive_threshold(ratio: float) -> float:
     return round(_DETECTED_TOTAL_GIB * ratio, 2)
 
 
-from core.env_config import ENV as _ENV
+from hledac.universal.core.env_config import ENV as _ENV
 
 _RG_USE_RATIOS: bool = _ENV.get_bool("HLEDAC_RG_USE_RATIOS", default=True)
 try:
@@ -1885,7 +1885,7 @@ def get_lane_ram_budget(lane_id: str) -> int:
         RAM budget in MB (M1 8GB calibrated), defaults to 30MB for unknown lanes.
     """
     try:
-        from runtime.acquisition.lane_constants import get_lane_ram_budget as _get
+        from hledac.universal.runtime.acquisition.lane_constants import get_lane_ram_budget as _get
 
         return _get(lane_id)
     except Exception:

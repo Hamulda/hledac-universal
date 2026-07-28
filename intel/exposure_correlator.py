@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.exposure_correlator import *
+from hledac.universal.recon.exposure_correlator import *

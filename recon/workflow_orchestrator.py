@@ -777,7 +777,7 @@ def _extract_entities(findings: list[dict[str, Any]]) -> tuple[list[dict[str, An
     entities: list[dict[str, Any]] = []
     domain_counts: dict[str, int] = {}
     ioc_counts: dict[tuple[str, str], int] = {}
-    from core.ioc_patterns import DOMAIN_RE, IPV4_RE, HASH_RE, URL_RE
+    from hledac.universal.core.ioc_patterns import DOMAIN_RE, IPV4_RE, HASH_RE, URL_RE
     for f in findings:
         text = f.get('description', '') + ' ' + f.get('type', '')
         severity = f.get('severity', 'medium')

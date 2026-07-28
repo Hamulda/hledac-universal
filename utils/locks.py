@@ -12,7 +12,7 @@ called from async code — where an event loop is guaranteed to exist.
 
 Usage::
 
-    from utils.locks import LazyAsyncioLock
+    from hledac.universal.utils.locks import LazyAsyncioLock
 
     _my_lock = LazyAsyncioLock()
 

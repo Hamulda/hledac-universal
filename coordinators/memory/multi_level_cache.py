@@ -16,7 +16,7 @@ Features:
 - LFU eviction policy
 
 Canonical import:
-    from coordinators.memory import MultiLevelContextCache
+    from hledac.universal.coordinators.memory import MultiLevelContextCache
 """
 
 import asyncio
@@ -25,7 +25,7 @@ import hashlib
 import logging
 import sys
 import time
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 from dataclasses import dataclass
 import msgspec
 from enum import Enum
@@ -315,7 +315,7 @@ class MultiLevelContextCache:
         C7-FIX: Uses run_sync_async() from sync_bridge for M1 safety.
         Prefer async _get_embedding_async() when called from async context.
         """
-        from utils.sync_bridge import run_sync_async
+        from hledac.universal.utils.sync_bridge import run_sync_async
         import unicodedata
         normalized = unicodedata.normalize('NFC', text)
         cached = self._embedding_cache.get(normalized)

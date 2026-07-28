@@ -8,7 +8,7 @@ Unlike f-strings which interpolate at parse time, t-strings create a
 Template object that can be validated separately from its values.
 
 Usage:
-    from utils.tstring import render
+    from hledac.universal.utils.tstring import render
 
     # Logging with t-strings
     sprint_id = "sprint-123"

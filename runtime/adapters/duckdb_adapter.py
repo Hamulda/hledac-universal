@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
 
-from runtime.protocols.storage_protocol import StorageProtocol
+from hledac.universal.runtime.protocols.storage_protocol import StorageProtocol
 
 
 class DuckDBStoreAdapter(StorageProtocol):

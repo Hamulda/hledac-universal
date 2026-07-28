@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.timeline_synthesizer import *
+from hledac.universal.recon.timeline_synthesizer import *

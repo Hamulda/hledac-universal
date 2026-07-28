@@ -315,7 +315,7 @@ class ContinuousPrefetchPipeline:
             async def _prewarm_async() -> None:
                 """Pre-warm curl_cffi session for ja3_fingerprint profile."""
                 try:
-                    from transport.prewarm_pool import acquire_session
+                    from hledac.universal.transport.prewarm_pool import acquire_session
                     await acquire_session('ja3_fingerprint')
                 except ImportError:
                     import warnings
@@ -330,7 +330,7 @@ class ContinuousPrefetchPipeline:
     async def _prewarm_once(self) -> None:
         """Single eager pre-warm of ja3_fingerprint profile (fire-and-forget)."""
         try:
-            from transport.prewarm_pool import acquire_session
+            from hledac.universal.transport.prewarm_pool import acquire_session
             await acquire_session('ja3_fingerprint')
         except ImportError:
             pass
@@ -398,7 +398,7 @@ class ContinuousPrefetchPipeline:
         Falls back to direct httpx/aiohttp.
         """
         try:
-            from transport.prewarm_pool import acquire_session
+            from hledac.universal.transport.prewarm_pool import acquire_session
             success, session, _profile = await acquire_session('ja3_fingerprint')
             if success and session is not None:
                 try:

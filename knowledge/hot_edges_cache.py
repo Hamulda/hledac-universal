@@ -79,7 +79,7 @@ logger = logging.getLogger(__name__)
 # storage redesign (key schema change from per-node lists to flat counters).
 # Rust backend — strict import
 try:
-    from core.rust_backend import rust
+    from hledac.universal.core.rust_backend import rust
 except ImportError:
     try:
         from hledac.universal.core.rust_backend import rust

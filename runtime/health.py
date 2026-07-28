@@ -86,7 +86,7 @@ async def collect_runtime_health() -> dict[str, Any]:
 
     # ── OpenTelemetry span event ───────────────────────────────────────────
     try:
-        from runtime import get_logfire_logger
+        from hledac.universal.runtime import get_logfire_logger
 
         logger = get_logfire_logger("health")
         # Emit key UMA metrics as structured log

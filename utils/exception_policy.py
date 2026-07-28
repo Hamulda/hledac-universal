@@ -13,7 +13,7 @@ M1 8GB notes:
     - COLD_PATH uses logger.warning() for operator visibility
 
 Usage:
-    from utils.exception_policy import ExceptionPolicy, exc_info
+    from hledac.universal.utils.exception_policy import ExceptionPolicy, exc_info
 
     # HOT PATH — fail-soft, log and continue
     try:
@@ -29,7 +29,7 @@ Usage:
         ExceptionPolicy.handle(e, context="lmdb_init", re_raise=True)
 
     # Inline helper for common pattern
-    from utils.exception_policy import gexc
+    from hledac.universal.utils.exception_policy import gexc
     with gexc(OSError, "file_open"):
         f = open(path)
 
@@ -199,7 +199,7 @@ def gexc(
     Short alias for exc_info() — inline hot-path exception guard.
 
     Usage:
-        from utils.exception_policy import gexc
+        from hledac.universal.utils.exception_policy import gexc
 
         with gexc(OSError, "file_open"):
             f = open(path)

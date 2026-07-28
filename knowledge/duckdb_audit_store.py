@@ -107,11 +107,11 @@ class DuckDBAuditStore:
 
     MIGRATION:
         # Old
-        from security.audit import AuditLogger
+        from hledac.universal.security.audit import AuditLogger
         audit = AuditLogger()
 
         # New
-        from knowledge.duckdb_audit_store import DuckDBAuditStore
+        from hledac.universal.knowledge.duckdb_audit_store import DuckDBAuditStore
         audit = DuckDBAuditStore()
     """
 
@@ -133,7 +133,7 @@ class DuckDBAuditStore:
         if self._initialized:
             return
 
-        from knowledge.db import get_db
+        from hledac.universal.knowledge.db import get_db
 
         db = get_db()
         self._db_store = db.duckdb
@@ -147,7 +147,7 @@ class DuckDBAuditStore:
     def _get_connection(self) -> Any:
         """Get DuckDB connection."""
         if self._db_store is None:
-            from knowledge.db import get_db
+            from hledac.universal.knowledge.db import get_db
             self._db_store = get_db().duckdb
         return self._db_store._get_connection()
 

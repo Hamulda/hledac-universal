@@ -84,7 +84,7 @@ def generate_texts_with_duplicates(
 
 def test_fallback_embedding_determinism() -> dict[str, Any]:
     """Test that fallback embedding is deterministic."""
-    from utils.deduplication import DeduplicationConfig, SemanticDeduplicator
+    from hledac.universal.utils.deduplication import DeduplicationConfig, SemanticDeduplicator
 
     config = DeduplicationConfig()
     deduper = SemanticDeduplicator(config)
@@ -139,7 +139,7 @@ def test_fallback_embedding_determinism() -> dict[str, Any]:
 
 def test_minhash_ngram_cap() -> dict[str, Any]:
     """Test that HLEDAC_DEDUP_MAX_NGRAMS cap is respected."""
-    from utils.deduplication import ContentDeduplicator, DeduplicationConfig
+    from hledac.universal.utils.deduplication import ContentDeduplicator, DeduplicationConfig
 
     config = DeduplicationConfig()
     deduper = ContentDeduplicator(config)
@@ -197,7 +197,7 @@ def test_minhash_ngram_cap() -> dict[str, Any]:
 
 def test_minhash_performance(size_labels: list[str]) -> dict[str, Any]:
     """Benchmark MinHash on synthetic texts of various sizes."""
-    from utils.deduplication import ContentDeduplicator, DeduplicationConfig
+    from hledac.universal.utils.deduplication import ContentDeduplicator, DeduplicationConfig
 
     config = DeduplicationConfig()
     deduper = ContentDeduplicator(config)

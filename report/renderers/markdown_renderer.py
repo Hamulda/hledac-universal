@@ -37,7 +37,7 @@ class MarkdownRenderer:
     @staticmethod
     def _default_template_dir() -> Path:
         """Get default template directory."""
-        from report import __file__ as report_init
+        from hledac.universal.report import __file__ as report_init
         return Path(report_init).parent / 'templates'
 
     def render(self, template_name: str, context: dict[str, Any]) -> str:

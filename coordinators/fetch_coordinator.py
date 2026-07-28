@@ -56,8 +56,8 @@ def _fast_url_path(url: str) -> str:
         return url[path_start:] or '/'
     return url[path_start:query] or '/'
 from tenacity import wait_exponential_jitter
-from core.capabilities import AIOHTTP, CAPS, DARKNET_CONNECTOR, HINTS, LIGHTPANDA, OTEL, PAYWALL_BYPASS, SESSION, STEALTH_MANAGER, ZERO_ATTR, ZSTD
-from runtime.logging_setup import get_logger
+from hledac.universal.core.capabilities import AIOHTTP, CAPS, DARKNET_CONNECTOR, HINTS, LIGHTPANDA, OTEL, PAYWALL_BYPASS, SESSION, STEALTH_MANAGER, ZERO_ATTR, ZSTD
+from hledac.universal.runtime.logging_setup import get_logger
 _otel_mod = CAPS.require(OTEL)
 if _otel_mod is not None:
     _otel_instrumented = _otel_mod
@@ -170,7 +170,7 @@ logger = get_logger(__name__)
 
 # Crypto-safe jitter — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
-from core.constants import NETWORK
+from hledac.universal.core.constants import NETWORK
 _nw = NETWORK()
 TIMEOUT_CLEARNET_API = _nw.clearnet_api
 TIMEOUT_CLEARNET_HTML = _nw.clearnet_html
@@ -464,7 +464,7 @@ class FetchCoordinator(UniversalCoordinator):
         Delegates directly to transport/circuit_breaker.py.
         """
         try:
-            from transport import circuit_breaker as cb
+            from hledac.universal.transport import circuit_breaker as cb
             decision = cb.domain_breaker_check(domain)
             return (decision.allowed, decision.reason, decision.retry_after_s)
         except (ImportError, AttributeError, OSError) as e:  # noqa: BLE001 — best-effort; circuit_breaker unavailable; fail-open is safe
@@ -473,7 +473,7 @@ class FetchCoordinator(UniversalCoordinator):
     def _record_success(self, domain: str) -> None:
         """Record fetch success to canonical circuit breaker."""
         try:
-            from transport import circuit_breaker as cb
+            from hledac.universal.transport import circuit_breaker as cb
             cb.domain_breaker_record_success(domain)
         except (ImportError, AttributeError):  # noqa: BLE001 — best-effort; circuit_breaker telemetry; non-critical
             pass
@@ -481,7 +481,7 @@ class FetchCoordinator(UniversalCoordinator):
     def _record_failure(self, domain: str, is_timeout: bool=False, failure_kind: str='') -> None:
         """Record fetch failure to canonical circuit breaker."""
         try:
-            from transport import circuit_breaker as cb
+            from hledac.universal.transport import circuit_breaker as cb
             sprint_remaining = None
             if self._sprint_remaining_provider is not None:
                 try:
@@ -503,7 +503,7 @@ class FetchCoordinator(UniversalCoordinator):
         Delegates directly to transport/circuit_breaker.py.
         """
         try:
-            from transport import circuit_breaker as cb
+            from hledac.universal.transport import circuit_breaker as cb
             states = cb.get_all_breaker_states()
             return {
                 'circuit_breaker_states': states,

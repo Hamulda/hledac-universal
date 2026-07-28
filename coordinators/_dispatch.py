@@ -14,7 +14,7 @@ This module provides the shared skeleton so coordinators only override
 the decision execution logic.
 
 Canonical import:
-    from coordinators._dispatch import execute_dispatch, DispatchContext
+    from hledac.universal.coordinators._dispatch import execute_dispatch, DispatchContext
 
 Usage:
     async def handle_request(self, op_ref: str, decision: DecisionResponse) -> OperationResult:

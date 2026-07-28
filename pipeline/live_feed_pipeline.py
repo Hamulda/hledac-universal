@@ -43,7 +43,7 @@ import typing
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
-from core.rust_backend import get_accel
+from hledac.universal.core.rust_backend import get_accel
 
 import httpx
 import msgspec

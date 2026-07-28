@@ -12,7 +12,7 @@ import hashlib  # noqa: F401 — kept for third-party
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
 
-from utils.hashing import xxh3_64_hex
+from hledac.universal.utils.hashing import xxh3_64_hex
 
 # xxhash for fast non-crypto hashing (10x faster than blake2b)
 try:
@@ -74,7 +74,7 @@ def PROBABLES_AVAILABLE() -> bool:  # noqa: N802
 # ---------------------------------------------------------------------------
 # F265C: Rust backend — centralized access via core.rust_backend
 # ---------------------------------------------------------------------------
-from core.rust_backend import rust as _rust_backend
+from hledac.universal.core.rust_backend import rust as _rust_backend
 
 # Convenience availability flags for backward compatibility
 _RUST_XXHASH_AVAILABLE: bool = _rust_backend.is_available and _rust_backend.hash is not None

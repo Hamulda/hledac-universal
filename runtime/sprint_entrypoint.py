@@ -1956,7 +1956,7 @@ async def run_sprint(
         # Remove any lock whose owning PID is dead (crash, SIGKILL, orphaned).
         # Uses psutil.pid_exists() for cross-platform liveness check.
         try:
-            from core.psutil_shim import psutil_module
+            from hledac.universal.core.psutil_shim import psutil_module
 
             _ps = psutil_module()
             if _ps is not None:
@@ -2024,7 +2024,7 @@ async def run_sprint(
         """Reset warmup counters on all domain circuit breakers — O(n) where n<100."""
         nonlocal _cb_reset_done
         with contextlib.suppress(Exception):
-            from transport.circuit_breaker import _BREAKERS
+            from hledac.universal.transport.circuit_breaker import _BREAKERS
 
             for breaker in _BREAKERS.values():
                 breaker.mark_warmup_done()

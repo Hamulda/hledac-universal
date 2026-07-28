@@ -14,7 +14,7 @@ Two inject methods are kept in SprintSchedulerV2 (needed for aclose / critical p
 All other inject_* methods live here and are applied via Injector.apply().
 
 Usage:
-    from runtime.scheduler_v2.injector import Injector
+    from hledac.universal.runtime.scheduler_v2.injector import Injector
     Injector.apply(scheduler)  # attaches all inject_* methods
 """
 
@@ -46,7 +46,7 @@ class Injector:
         Also sets scheduler._duckdb_store for backward-compat with legacy tests
         and external code that accesses it directly.
         """
-        from runtime.scheduler_v2.protocol import InitResult, SprintContext
+        from hledac.universal.runtime.scheduler_v2.protocol import InitResult, SprintContext
 
         # Primary: store in SprintContext (canonical path)
         if scheduler._ctx:
@@ -54,8 +54,8 @@ class Injector:
         else:
             # Fallback for tests that construct scheduler without run():
             # Build a minimal SprintContext so duckdb_store is accessible
-            from runtime.scheduler_config import SprintSchedulerConfig
-            from runtime.scheduler_result import SprintSchedulerResult
+            from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
+            from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
 
             minimal_ctx = SprintContext(
                 config=SprintSchedulerConfig(sprint_duration_s=60.0, cycle_sleep_s=10.0),

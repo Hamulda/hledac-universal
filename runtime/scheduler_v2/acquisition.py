@@ -24,12 +24,12 @@ from typing import Any, Sequence
 
 import msgspec
 
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 from hledac.universal.utils.async_helpers import (
     safe_create_task,
     parallel,
 )
-from runtime.scheduler_v2._task_registry import (
+from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
     get_task_registry,
     safe_create_task_tracked,
@@ -112,7 +112,7 @@ class AcquisitionOrchestrator:
 
         Returns AcquisitionPhaseResult with final counts.
         """
-        from runtime.scheduler_v2.protocol import AcquisitionPhaseResult
+        from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionPhaseResult
 
         cycles_started = 0
         cycles_completed = 0
@@ -1194,7 +1194,7 @@ class AcquisitionOrchestrator:
         when available, default 5 for clearnet.
         """
         try:
-            from runtime.sidecar_protocol import SidecarContext, SidecarRegistry, ensure_adapters_registered
+            from hledac.universal.runtime.sidecar_protocol import SidecarContext, SidecarRegistry, ensure_adapters_registered
         except Exception:
             return
 
@@ -1309,7 +1309,7 @@ class AcquisitionOrchestrator:
 
 # ── Protocol re-export ────────────────────────────────────────────────────────
 
-from runtime.scheduler_v2.protocol import AcquisitionPhaseResult  # noqa: E402
+from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionPhaseResult  # noqa: E402
 
 __all__ = [
     "AcquisitionOrchestrator",

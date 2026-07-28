@@ -81,7 +81,7 @@ class UnifiedEmbeddingManager:
                 # F6: Use singleton via get_mlx_embedder() — single Metal command queue,
                 # no double-loads on M1 8GB. Custom model_path is handled by the
                 # singleton's prewarm() during sprint pre-flight.
-                from core.mlx_embeddings import get_mlx_embedder
+                from hledac.universal.core.mlx_embeddings import get_mlx_embedder
                 self._mlx_manager = get_mlx_embedder()
                 if not self._mlx_manager._is_loaded:
                     self._mlx_manager._load_model()
@@ -204,7 +204,7 @@ class UnifiedEmbeddingManager:
                     logger.warning(f'[UnifiedEmbedder] encode shape mismatch: {arr.shape}')
                     return [[0.0] * self._dim for _ in chunk_texts]
                 return [arr[i].tolist() for i in range(arr.shape[0])]
-            from utils.async_helpers import parallel
+            from hledac.universal.utils.async_helpers import parallel
             if n <= 4:
                 embeddings = await asyncio.to_thread(encode_chunk, texts)
                 return [list(e) for e in embeddings]

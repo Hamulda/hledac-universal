@@ -109,7 +109,7 @@ def check_metal_availability() -> dict[str, Any]:
     result = _python_check_metal_availability()
     # R-4: Cross-process Metal busy check before dispatch
     try:
-        from brain.ane_embedder import _MLXFamilyMutex
+        from hledac.universal.brain.ane_embedder import _MLXFamilyMutex
         mutex = _MLXFamilyMutex()
         result["metal_busy_with_other_process"] = mutex.is_metal_busy_with_other_process
     except Exception:

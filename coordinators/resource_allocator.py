@@ -9,7 +9,7 @@ This module still contains the full sklearn-based prediction model
 and ResourceAwareScheduler — these are NOT deprecated.
 
 Import GC/backpressure/AIMD from:
-    from coordinators.resource import gc_collect, BackpressureMonitor, AIMDController
+    from hledac.universal.coordinators.resource import gc_collect, BackpressureMonitor, AIMDController
 """
 
 import warnings
@@ -37,7 +37,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, dumps_str as _msgspec_dumps_str
 from typing import Any
-from core.psutil_shim import psutil
+from hledac.universal.core.psutil_shim import psutil
 import yaml
 from hledac.universal.utils.async_helpers import safe_create_task
 SKLEARN_AVAILABLE = True

@@ -15,7 +15,7 @@ Rationale (Issue #122 / Issue #17):
     that is now replaced by this single centralized shim
 
 Usage:
-    from core.psutil_shim import psutil, PSUTIL_AVAILABLE
+    from hledac.universal.core.psutil_shim import psutil, PSUTIL_AVAILABLE
 
     if PSUTIL_AVAILABLE:
         mem = psutil.virtual_memory()

@@ -19,19 +19,19 @@ import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
-    from core.inference_coordinator import InferenceRequest, InferenceResponse, Token
+    from hledac.universal.core.inference_coordinator import InferenceRequest, InferenceResponse, Token
 else:
     # At runtime (TYPE_CHECKING=False), we must still import the real classes.
     # We do this by importing from core.inference_coordinator first,
     # then rebinding the local names to Any only if the import failed.
     try:
-        from core.inference_coordinator import InferenceRequest, InferenceResponse, Token
+        from hledac.universal.core.inference_coordinator import InferenceRequest, InferenceResponse, Token
     except ImportError:
         InferenceRequest = Any  # type: ignore[assignment,misc]
         InferenceResponse = Any  # type: ignore[assignment,misc]
         Token = Any  # type: ignore[assignment,misc]
 
-from core.inference_coordinator import InferenceBackend, InferenceError
+from hledac.universal.core.inference_coordinator import InferenceBackend, InferenceError
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class MlxcelBackend:
         if self._client is None:
             async with self._get_lock():
                 if self._client is None:
-                    from brain.mlxcel_ipc_client import get_mlxcel_client
+                    from hledac.universal.brain.mlxcel_ipc_client import get_mlxcel_client
 
                     self._client = await get_mlxcel_client()
                     logger.info("[IC:mlxcel] MlxcelIpcClient connected")

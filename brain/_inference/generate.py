@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
-    from brain._metal.metal_device import MetalDevice
-    from brain._cache.kv_cache_manager import KVCacheManager
+    from hledac.universal.brain._metal.metal_device import MetalDevice
+    from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ class GenerationFacade:
         Yields:
             Generated tokens
         """
-        from brain._inference.stream_handler import StreamHandler
+        from hledac.universal.brain._inference.stream_handler import StreamHandler
 
         model = self._model_getter() if self._model_getter else None
         tokenizer = self._tokenizer_getter() if self._tokenizer_getter else None

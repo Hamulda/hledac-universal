@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.relationship_discovery import *
+from hledac.universal.recon.relationship_discovery import *

@@ -19,7 +19,7 @@ Použití:
         backend.ioc.extract_iocs_flat(text)
     else:
         # Graceful degradation — použij čistě Python fallback
-        from core.optional_imports import optional
+        from hledac.universal.core.optional_imports import optional
         rust = optional("hledac.universal.core.rust_backend")
         if rust is not None:
             accel = rust.get_accel()
@@ -78,7 +78,7 @@ class _LegacyRustBackend:
     __slots__ = ("_probe_result", "_accel")
 
     def __init__(self) -> None:
-        from core.rust_backend._prober import probe as _rust_probe
+        from hledac.universal.core.rust_backend._prober import probe as _rust_probe
 
         # Probe se provádí pouze jednou — modul _prober.py cachuje výsledek
         self._probe_result = _rust_probe()
@@ -129,7 +129,7 @@ class _LegacyRustBackend:
     def _get_accel(self) -> Any:
         """Lazy getter pro AccelBackend — načítá se až při prvním volání."""
         if self._accel is None:
-            from core.rust_backend import get_accel
+            from hledac.universal.core.rust_backend import get_accel
 
             self._accel = get_accel()
         return self._accel

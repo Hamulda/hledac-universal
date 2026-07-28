@@ -35,7 +35,7 @@ Ordering constraints
 
 Usage
 -----
-    from runtime.sprint_entrypoint_injections import INJECTIONS, apply_injections
+    from hledac.universal.runtime.sprint_entrypoint_injections import INJECTIONS, apply_injections
 
     await apply_injections(scheduler, flags, sprint_id=sprint_id,
                            logger=logging.getLogger(__name__))

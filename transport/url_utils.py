@@ -15,7 +15,7 @@ def cached_urlparse(url: str):
     41× speedup on cache hit (0.05µs vs 2µs on M1).
 
     Usage:
-        from transport.url_utils import cached_urlparse
+        from hledac.universal.transport.url_utils import cached_urlparse
         parsed = cached_urlparse(url)
     """
     return urlparse(url)

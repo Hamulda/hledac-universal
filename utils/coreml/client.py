@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 import httpx
 from .service import BatchPredictRequest, BatchPredictResult, ComputeUnit, ConvertRequest, ConvertResult, HealthResult, PredictRequest, PredictResult
-from utils.sync_bridge import run_sync_async
+from hledac.universal.utils.sync_bridge import run_sync_async
 logger = logging.getLogger('coreml-client')
 
 class CoreMLServiceError(Exception):

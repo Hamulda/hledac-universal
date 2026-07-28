@@ -422,7 +422,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         try:
             # mark_warmup_done on each breaker resets its warmup counter
             # We import here to avoid circular deps; circuit_breaker imports lifecycle indirectly
-            import transport.circuit_breaker as cb_module
+            import hledac.universal.transport.circuit_breaker as cb_module
             for domain in list(cb_module._BREAKERS.keys()):
                 breaker = cb_module._BREAKERS.get(domain)
                 if breaker is not None:

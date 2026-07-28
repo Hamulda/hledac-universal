@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.social_identity_miner import *
+from hledac.universal.recon.social_identity_miner import *

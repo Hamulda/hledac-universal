@@ -24,7 +24,7 @@ class SprintTooShortError(ValueError):
 def __getattr__(name: str):
     # ── SprintScheduler (v1 → v2) re-export ────────────────────────────────
     if name == "SprintScheduler":
-        from runtime.scheduler_v2 import SprintSchedulerV2
+        from hledac.universal.runtime.scheduler_v2 import SprintSchedulerV2
 
         return SprintSchedulerV2
 
@@ -48,26 +48,26 @@ def __getattr__(name: str):
     }
     # ── _LifecycleAdapter — renamed to SprintLifecycleAdapter in scheduler/core/ ─
     if name == "_LifecycleAdapter":
-        from runtime.scheduler.core.lifecycle import SprintLifecycleAdapter
+        from hledac.universal.runtime.scheduler.core.lifecycle import SprintLifecycleAdapter
         return SprintLifecycleAdapter
 
     if name in _v1_archived_names:
-        from runtime import sprint_scheduler_v1_archived as _v1
+        from hledac.universal.runtime import sprint_scheduler_v1_archived as _v1
 
         return getattr(_v1, name)
 
     # ── PivotTask — extracted to standalone module ───────────────────────
     if name == "PivotTask":
-        from runtime.pivot_types import PivotTask
+        from hledac.universal.runtime.pivot_types import PivotTask
 
         return PivotTask
 
     # ── Shared types ──────────────────────────────────────────────────────
     if name == "SprintSchedulerConfig":
-        from runtime.scheduler_config import SprintSchedulerConfig
+        from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
         return SprintSchedulerConfig
     if name == "SprintSchedulerResult":
-        from runtime.scheduler_result import SprintSchedulerResult
+        from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
         return SprintSchedulerResult
 
     if name == "detect_sprint_tier":

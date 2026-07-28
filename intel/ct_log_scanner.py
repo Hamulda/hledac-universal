@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.cert.ct_log_scanner import *
+from hledac.universal.recon.cert.ct_log_scanner import *

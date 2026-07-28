@@ -61,7 +61,7 @@ from hledac.universal.utils.async_helpers import parallel
 logger = logging.getLogger(__name__)
 MAX_CACHE_SIZE = 1000
 try:
-    from transport.http_utils import fetch_json, safe_fetch
+    from hledac.universal.transport.http_utils import fetch_json, safe_fetch
     HTTP_UTILS_AVAILABLE = True
 except ImportError:
     HTTP_UTILS_AVAILABLE = False
@@ -73,7 +73,7 @@ def _get_circuit_breaker_module():
     global _circuit_breaker_module
     if _circuit_breaker_module is None:
         try:
-            from transport.circuit_breaker import domain_breaker_check
+            from hledac.universal.transport.circuit_breaker import domain_breaker_check
             _circuit_breaker_module = domain_breaker_check
         except ImportError:
             _circuit_breaker_module = None

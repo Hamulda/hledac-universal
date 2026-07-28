@@ -7,7 +7,7 @@ on M1 8GB UMA. This module provides zero-overhead wrappers that make
 the bounded semantics explicit in the type signature.
 
 Usage:
-    from core.bounded_collections import BoundedList
+    from hledac.universal.core.bounded_collections import BoundedList
 
     class MyClass:
         __slots__ = ('_items',)

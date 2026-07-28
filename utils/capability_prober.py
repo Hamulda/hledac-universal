@@ -4,7 +4,7 @@ Capability Prober - Runtime dependency detection without boolean flags.
 This module provides lazy capability probing without persistent boolean flags.
 """
 import asyncio
-from utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_gather_ok
 import importlib
 import importlib.util
 import logging
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
-    from core.system_detector import HardwareCapabilities
+    from hledac.universal.core.system_detector import HardwareCapabilities
 logger = logging.getLogger(__name__)
 _MAX_CACHE_SIZE = 128
 _MAX_STATS_MISSED = 100
@@ -208,7 +208,7 @@ class CapabilityProber:
 
         Lazy import to avoid circular dependencies.
         """
-        from core.system_detector import get_hardware_capabilities
+        from hledac.universal.core.system_detector import get_hardware_capabilities
         return get_hardware_capabilities()
 
     @cached_property

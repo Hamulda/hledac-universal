@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import msgspec
 
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_tags
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.logging_config import get_logger
@@ -51,7 +51,7 @@ from tenacity import (
     stop_after_attempt,
 )
 
-from core.rust_backend import rust as _rust_backend
+from hledac.universal.core.rust_backend import rust as _rust_backend
 from hledac.universal.utils.async_helpers import parallel
 
 # Context variable for passing circuit-breaker state into tenacity callbacks.
@@ -163,7 +163,7 @@ def _tenacity_before_sleep(retry_state: _TenacityRetryCallState) -> None:
         cb.record_failure(failure_kind=str(exc.status_code), is_timeout=exc.is_timeout)
     if cb_domain:
         try:
-            from transport.circuit_breaker import rust_circuit_record_failure
+            from hledac.universal.transport.circuit_breaker import rust_circuit_record_failure
 
             rust_circuit_record_failure(cb_domain, is_timeout=exc.is_timeout)
         except Exception:  # noqa: BLE001 — best-effort; Rust CB unavailable is non-fatal
@@ -184,7 +184,7 @@ def _tenacity_after(retry_state: _TenacityRetryCallState) -> None:
         cb.record_success()
     if cb_domain:
         try:
-            from transport.circuit_breaker import rust_circuit_record_success
+            from hledac.universal.transport.circuit_breaker import rust_circuit_record_success
 
             rust_circuit_record_success(cb_domain)
         except Exception:  # noqa: BLE001 — best-effort; Rust CB unavailable is non-fatal
@@ -331,7 +331,7 @@ _RUST_CONTENT_HASHER: bool = False
 MAX_BODY_HASHES: Final[int] = 10000
 
 # ISSUE-018: Deduplicated — canonical BodyHashStore lives in fetching/_body_hash.py
-from fetching._body_hash import body_hash_store as _body_hash_store
+from hledac.universal.fetching._body_hash import body_hash_store as _body_hash_store
 
 # Backward-compat alias — tests and any external code access the internal dict
 # directly via _body_hashes. Use .hashes property for read-only access.
@@ -350,7 +350,7 @@ def _get_content_hasher() -> object | None:
     if _RUST_CONTENT_HASHER:
         return _ContentHasher
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
         _ContentHasher = rust.hash
         _RUST_CONTENT_HASHER = True
     except Exception:  # noqa: BLE001 — best-effort; Rust backend unavailable, fallback to Python
@@ -593,13 +593,13 @@ async def get_httpx_session() -> httpx.AsyncClient:
     The _global_httpx_session at this location was dead code (0 callers).
     Canonical httpx session is network.session_runtime:async_get_httpx_session().
     """
-    from network.session_runtime import async_get_httpx_session as _canonical_get
+    from hledac.universal.network.session_runtime import async_get_httpx_session as _canonical_get
     return await _canonical_get()
 
 
 async def close_httpx_session() -> None:
     """ISSUE-014: Delegate to canonical session_runtime (backward compat stub)."""
-    from network.session_runtime import close_httpx_session_async as _canonical_close
+    from hledac.universal.network.session_runtime import close_httpx_session_async as _canonical_close
     await _canonical_close()
 
 
@@ -2306,7 +2306,7 @@ async def async_fetch_public_text_batch(
     # concurrency=None → UMA-aware limit from ConcurrencyBudgetRegistry.
     # concurrency=int → explicit override (preserves legacy caller behavior).
     if concurrency is None:
-        from core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
 
         concurrency = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
 
@@ -2511,7 +2511,7 @@ def _batch_sync_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
     if not items:
         return []
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
         return _rust_backend.html.batch_extract_links(items)
     except Exception:  # noqa: BLE001 — best-effort; Rust batch link failure returns empty lists
         return [[] for _ in items]
@@ -2561,7 +2561,7 @@ def _batch_sync_process_html(items: list[tuple[str, str]]) -> list[tuple[str, li
     if len(items) > 1000:
         items = items[:1000]
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
         htmls = [html for html, _ in items]
         base_urls = [base_url for _, base_url in items]
         # Rayon parallel: batch_extract_html_text + batch_extract_links + batch_extract_titles
@@ -2670,7 +2670,7 @@ def _get_html_executor() -> concurrent.futures.ThreadPoolExecutor:
 
     Now uses the centralized domain_executors registry (P1-4).
     """
-    from utils.domain_executors import get_html_executor
+    from hledac.universal.utils.domain_executors import get_html_executor
     return get_html_executor()
 
 def schedule_html_extraction(html: str, url: str='') -> asyncio.Future:

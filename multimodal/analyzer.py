@@ -9,7 +9,7 @@ Additive: finding.metadata["multimodal"] is never written;
 all enrichment goes to LMDB under finding_id key.
 
 Integration:
-    from multimodal.analyzer import MultimodalEnricher
+    from hledac.universal.multimodal.analyzer import MultimodalEnricher
 
     enricher = MultimodalEnricher(governor)
     await enricher.initialize()
@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 if TYPE_CHECKING:
-    from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 log = logging.getLogger(__name__)
 _VisionEncoder: type | None = None
 _MambaFusion: type | None = None
@@ -63,12 +63,12 @@ def _lazy_load_modules() -> None:
     if _VisionEncoder is not None:
         return
     try:
-        from multimodal.vision_encoder import VisionEncoder
+        from hledac.universal.multimodal.vision_encoder import VisionEncoder
         _VisionEncoder = VisionEncoder
     except ImportError:
         _VisionEncoder = None
     try:
-        from multimodal.fusion import MambaFusion
+        from hledac.universal.multimodal.fusion import MambaFusion
         _MambaFusion = MambaFusion
     except ImportError:
         _MambaFusion = None
@@ -487,7 +487,7 @@ class DocumentExtractor:
     Bounded: max file size check, page count limit, async I/O.
 
     Integration:
-        from multimodal.analyzer import DocumentExtractor
+        from hledac.universal.multimodal.analyzer import DocumentExtractor
 
         extractor = DocumentExtractor(governor)
         await extractor.initialize()

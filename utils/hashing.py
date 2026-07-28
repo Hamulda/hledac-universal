@@ -5,7 +5,7 @@ Single source of truth for all non-crypto hashing in Hledac Universal.
 Uses Rust xxh3-64 (NEON SIMD on M1) with fallback to hashlib.
 
 Usage:
-    from utils.hashing import xxh3_64_hex, batch_xxh3_64_hex, sha256_hex
+    from hledac.universal.utils.hashing import xxh3_64_hex, batch_xxh3_64_hex, sha256_hex
 
 Benchmark (M1 MacBook Air):
     - xxh3_64_hex(10000 items): <5ms (Rust rayon parallel)
@@ -31,7 +31,7 @@ def _get_rust() -> object | None:
     global _rust_backend, _rust_available
     if _rust_backend is None:
         try:
-            from core.rust_backend import rust as _rust_mod
+            from hledac.universal.core.rust_backend import rust as _rust_mod
             _rust_backend = _rust_mod
             _rust_available = True
         except Exception:  # noqa: BLE001

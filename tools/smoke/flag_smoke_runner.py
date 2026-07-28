@@ -171,7 +171,7 @@ def _check_flag(flag: str) -> FlagReport:
     try:
         # Phase 3: lightweight probe — registry import is ~5ms, no
         # transitive coordinator load.
-        from utils.flag_registry import get_spec, is_flag_active  # noqa: F401
+        from hledac.universal.utils.flag_registry import get_spec, is_flag_active  # noqa: F401
 
         spec = get_spec(flag)
         observed = is_flag_active(flag)

@@ -152,7 +152,7 @@ def workload_zstd_cache(tempfile_dir: str, profile_top: int) -> WorkloadResult:
 def workload_target_memory_roundtrip(tempfile_dir: str, profile_top: int) -> WorkloadResult:
     """TargetMemoryService merge_update roundtrip via orjson."""
     try:
-        from knowledge.target_memory import TargetMemoryService, TargetMemoryUpdate
+        from hledac.universal.knowledge.target_memory import TargetMemoryService, TargetMemoryUpdate
     except Exception as e:
         return WorkloadResult('target_memory', 'skip', f'import error: {e}')
     try:
@@ -333,7 +333,7 @@ def _zstd_cache_sync(tmpdir: str):
     return len(decompressed)
 
 def _target_memory_sync():
-    from knowledge.target_memory import TargetMemoryService, TargetMemoryUpdate
+    from hledac.universal.knowledge.target_memory import TargetMemoryService, TargetMemoryUpdate
     svc = TargetMemoryService()
     results = []
     for i in range(100):

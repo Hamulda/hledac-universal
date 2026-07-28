@@ -303,7 +303,7 @@ class SidecarOrchestrator:
         # ISSUE-005 FIX: Bind this SidecarOrchestrator to ContextVar so that
         # SchedulerBackedSidecarAdapter.run_async() can find sidecar methods.
         # SidecarOrchestrator hosts the _run_*_sidecar() methods, not SprintScheduler.
-        from runtime.sidecars._base import bind_scheduler as _bind_scheduler
+        from hledac.universal.runtime.sidecars._base import bind_scheduler as _bind_scheduler
         _bind_scheduler(self)
 
     async def prewarm_async(self) -> None:
@@ -319,7 +319,7 @@ class SidecarOrchestrator:
             return
         self._prewarmed = True
         try:
-            from runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
+            from hledac.universal.runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
             ensure_adapters_registered()
             await SidecarRegistry.prewarm_async()
         except Exception as e:
@@ -564,7 +564,7 @@ class SidecarOrchestrator:
             - Fail-soft: any exception is caught and logged, never raised.
         """
         try:
-            from runtime.sidecar_protocol import (
+            from hledac.universal.runtime.sidecar_protocol import (
                 SidecarContext,
                 SidecarRegistry,
                 ensure_adapters_registered,

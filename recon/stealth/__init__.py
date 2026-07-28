@@ -9,7 +9,7 @@ Moduly:
 - monitor.py: StreamingMonitor
 
 Pro backwards compatibility lze importovat přímo z recon.stealth:
-    from recon.stealth import StealthCrawler, StealthWebScraper, StreamingMonitor
+    from hledac.universal.recon.stealth import StealthCrawler, StealthWebScraper, StreamingMonitor
 """
 from __future__ import annotations
 

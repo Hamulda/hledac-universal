@@ -13,6 +13,6 @@ __all__: list[str] = []
 
 def __getattr__(name: str):
     if name == "discovery":
-        from runtime.patterns import discovery
+        from hledac.universal.runtime.patterns import discovery
         return discovery
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

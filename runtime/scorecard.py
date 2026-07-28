@@ -252,7 +252,7 @@ class ScorecardBuilder:
         def sync_get_cb() -> dict[str, str]:
             cb_states: dict[str, str] = {}
             try:
-                from transport.circuit_breaker import get_all_breaker_states
+                from hledac.universal.transport.circuit_breaker import get_all_breaker_states
 
                 cb_states = get_all_breaker_states()
             except (ImportError, AttributeError):
@@ -505,7 +505,7 @@ class ScorecardBuilder:
         """
         # Rust path
         try:
-            from core.rust_backend import get_accel
+            from hledac.universal.core.rust_backend import get_accel
 
             accel = get_accel()
             rust_fn = getattr(accel.json, "dumps_compact_bytes", None)

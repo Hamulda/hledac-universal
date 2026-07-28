@@ -5,7 +5,7 @@ Universal Coordinators
 Consolidated coordinators for Hledac Universal Orchestrator v4.0.
 
 Domain Organization (via CoordinatorCatalog):
-    from coordinators import catalog
+    from hledac.universal.coordinators import catalog
     catalog.domains                       # List all domains
     catalog.get('core')                   # Get domain coordinator mappings
     catalog.load('UniversalMemoryCoordinator')  # Lazy load

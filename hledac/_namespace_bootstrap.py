@@ -14,7 +14,7 @@ re-exports under `hledac.security`, `hledac.core`, etc.). The function
 called any number of times without duplicating paths or raising.
 
 Usage:
-    from hledac._namespace_bootstrap import ensure_namespace_paths
+    from hledac.universal.hledac._namespace_bootstrap import ensure_namespace_paths
     ensure_namespace_paths()        # typically invoked from hledac/__init__.py
 
 INVARIANTS:

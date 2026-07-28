@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlparse
 import httpx
 
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 _HTTpx_SOCKS_AVAILABLE = False
 try:
     import httpx_socks
@@ -48,7 +48,7 @@ TOR_AVAILABLE = _HTTpx_SOCKS_AVAILABLE
 _RUST_URL_SET_AVAILABLE = False
 _UrlSet = None
 try:
-    from hledac.universal import rust
+    from hledac.universal.hledac.universal import rust
     if hasattr(rust, "url_set"):
         _RUST_URL_SET_AVAILABLE = True
         _UrlSet = rust.url_set.MmapUrlSet

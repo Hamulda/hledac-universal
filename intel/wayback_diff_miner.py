@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.wayback_diff_miner import *
+from hledac.universal.recon.wayback_diff_miner import *

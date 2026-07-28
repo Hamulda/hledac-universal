@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.stealth_crawler import *
+from hledac.universal.recon.stealth_crawler import *

@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass
 import msgspec
 from typing import Any, Self
-from core.psutil_shim import virtual_memory as _virtual_memory, PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
+from hledac.universal.core.psutil_shim import virtual_memory as _virtual_memory, PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
 from hledac.universal.utils.config_introspection import safe_attr_get
 logger = logging.getLogger(__name__)
@@ -203,7 +203,7 @@ def get_memory_pressure_level() -> str:
     try:
         import asyncio
         loop = asyncio.get_running_loop()
-        from utils.concurrency import AdaptiveWorkerPool
+        from hledac.universal.utils.concurrency import AdaptiveWorkerPool
         pool = AdaptiveWorkerPool._instance
         if pool is not None:
             return _uma_state_to_pressure_level(pool.get_uma_state())
@@ -226,7 +226,7 @@ def get_recommended_concurrency() -> dict[str, int]:
     level = get_memory_pressure_level()
     pool = None
     try:
-        from utils.concurrency import AdaptiveWorkerPool
+        from hledac.universal.utils.concurrency import AdaptiveWorkerPool
         pool = AdaptiveWorkerPool._instance
     except Exception:  # noqa: BLE001 — best-effort; pool import failure falls back to legacy limits
         pass

@@ -25,7 +25,7 @@ M1 8GB bounds:
 - No module-level asyncio.Lock at import time
 
 Usage:
-    from utils.async_cache import async_cached, AsyncLRUCache
+    from hledac.universal.utils.async_cache import async_cached, AsyncLRUCache
 
     # Decorator (per-key locks, bounded)
     @async_cached(maxsize=256)
@@ -56,7 +56,7 @@ import functools
 import inspect
 import sys
 import weakref
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 

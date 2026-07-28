@@ -53,7 +53,7 @@ def _get_rust_backend() -> Any:
     global _lmdb_async_rust
     if _lmdb_async_rust is None:
         try:
-            from hledac.universal import hledac_rust_extensions as ext
+            from hledac.universal.hledac.universal import hledac_rust_extensions as ext
 
             _lmdb_async_rust = ext
         except ImportError:
@@ -197,7 +197,7 @@ async def lmdb_async_get_many(
         async with semaphore:
             return await lmdb_async_get(env, key)
 
-    from utils.async_helpers import parallel
+    from hledac.universal.utils.async_helpers import parallel
     result = await parallel([_get_one(k) for k in keys], policy="log", ctx="lmdb_get_many")
     # Filter exceptions — turn them into None so caller sees clean list
     return [r if isinstance(r, bytes) or r is None else None for r in result.ok]

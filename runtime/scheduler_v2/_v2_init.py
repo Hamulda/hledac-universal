@@ -11,7 +11,7 @@ Single responsibility: initialize all services and apply all injections
 for SprintSchedulerV2 before run() begins.
 
 Usage:
-    from runtime.scheduler_v2._v2_init import V2Init
+    from hledac.universal.runtime.scheduler_v2._v2_init import V2Init
     init = V2Init(scheduler)
     await init.run(query, wall_clock_start, ctx, flags=flags,
                     sprint_id=sprint_id, duckdb_store=store,
@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import msgspec
 
-from runtime.scheduler_v2.protocol import InitResult
+from hledac.universal.runtime.scheduler_v2.protocol import InitResult
 from hledac.universal.utils.async_helpers import parallel, safe_create_task
 
 if TYPE_CHECKING:
@@ -282,7 +282,7 @@ class V2Init:
         self, query: str, wall_clock_start: float, ctx: Any, *, cancel_event: asyncio.Event
     ) -> None:
         """Bootstrap core services concurrently."""
-        from runtime.sprint_lifecycle import SprintLifecycleManager
+        from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
 
         # Store cancel_event on scheduler (used by scheduler.run() and aclose)
         object.__setattr__(self._scheduler, "_cancel_event", cancel_event)
@@ -424,7 +424,7 @@ class V2Init:
     # ── Acquisition plan ───────────────────────────────────────────────────────
 
     async def _build_acquisition_plan(self, query: str) -> Any | None:
-        from runtime.scheduler_v2.acquisition import AcquisitionPlanBuilder
+        from hledac.universal.runtime.scheduler_v2.acquisition import AcquisitionPlanBuilder
 
         try:
             builder = AcquisitionPlanBuilder()

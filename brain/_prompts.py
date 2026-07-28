@@ -15,7 +15,7 @@ M1 8GB constraints:
 - Frozen dataclasses allow safe sharing across async contexts
 
 Usage:
-    from brain._prompts import PromptFormatter, PromptRole, PromptTemplate
+    from hledac.universal.brain._prompts import PromptFormatter, PromptRole, PromptTemplate
 
     formatter = PromptFormatter()
     chatml = formatter.format_chatml(system_msg, user_msg, history)

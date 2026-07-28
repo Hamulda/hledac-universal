@@ -20,7 +20,7 @@
 #
 # Export compatibility: export/ re-exports from report/ for backward compat
 
-from report.engine import ReportEngine, get_report_engine
+from hledac.universal.report.engine import ReportEngine, get_report_engine
 import msgspec
 
 __all__ = [

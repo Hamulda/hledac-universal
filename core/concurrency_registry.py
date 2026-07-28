@@ -43,7 +43,7 @@ import msgspec
 from enum import Enum
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from core.resource_governor import M1ResourceGovernor
+    from hledac.universal.core.resource_governor import M1ResourceGovernor
 logger = logging.getLogger(__name__)
 
 class ConcurrencyCategory(Enum):

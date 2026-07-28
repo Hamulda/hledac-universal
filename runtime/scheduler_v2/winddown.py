@@ -297,7 +297,7 @@ class WinddownOrchestrator:
         try:
             from hledac.universal.core.env_config import ENV
             if ENV.get_bool('HLEDAC_ENABLE_NODRIVER'):
-                from fetching.public_fetcher import _teardown_browser_pool
+                from hledac.universal.fetching.public_fetcher import _teardown_browser_pool
                 await _teardown_browser_pool()
         except Exception:
             pass
@@ -453,12 +453,12 @@ class WinddownOrchestrator:
         WeakValueDictionary in rust_backend._lazy_mod_cache auto-releases dead modules.
         """
         try:
-            from hledac.universal import clear_cache
+            from hledac.universal.hledac.universal import clear_cache
             clear_cache()
         except Exception:
             pass
         try:
-            from core.isolated_executors import clear_isolated_function_registry
+            from hledac.universal.core.isolated_executors import clear_isolated_function_registry
             clear_isolated_function_registry()
         except Exception:
             pass

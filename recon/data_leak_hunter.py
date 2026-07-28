@@ -525,7 +525,7 @@ async def load_api_keys_from_keymanager(bucket_id: str='osint_apis') -> BreachAP
     """
     config = BreachAPIConfig()
     try:
-        from security.key_manager import KeyManager
+        from hledac.universal.security.key_manager import KeyManager
         km = KeyManager()
         key, _ = await km.get_bucket_key(bucket_id)
         import base64

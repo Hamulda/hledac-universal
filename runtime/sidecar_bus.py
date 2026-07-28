@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 
 def _safe_payload_json(obj: Any) -> str:
     """Serialize obj to canonical JSON string, fail-soft."""
-    from core.result import try_or
+    from hledac.universal.core.result import try_or
 
     def _encode_orjson() -> str:
         import orjson

@@ -279,7 +279,7 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
         if self._forensics is not None:
             return self._forensics
         try:
-            from recon.blockchain_analyzer import BlockchainForensics
+            from hledac.universal.recon.blockchain_analyzer import BlockchainForensics
             self._forensics = BlockchainForensics(
                 etherscan_api_key=self._api_keys.get("etherscan"),
                 blockchair_api_key=self._api_keys.get("blockchair"),

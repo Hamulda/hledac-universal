@@ -197,7 +197,7 @@ class StreamingEmbedder:
     async def _load_model(self) -> bool:
         """Load embedding model via embedding_pipeline.load_embedding_model()."""
         try:
-            from hledac.universal import embedding_pipeline
+            from hledac.universal.hledac.universal import embedding_pipeline
 
             self._embedding_depth += 1
             ok = embedding_pipeline.load_embedding_model()
@@ -214,7 +214,7 @@ class StreamingEmbedder:
     async def _unload_model(self) -> None:
         """Unload embedding model via embedding_pipeline.unload_embedding_model()."""
         try:
-            from hledac.universal import embedding_pipeline
+            from hledac.universal.hledac.universal import embedding_pipeline
 
             embedding_pipeline.unload_embedding_model()
             if self._embedding_depth > 0:
@@ -456,7 +456,7 @@ class StreamingEmbedder:
         Returns (ids, embeddings) tuple.
         """
         loop = asyncio.get_running_loop()
-        from utils.domain_executors import get_domain_executors
+        from hledac.universal.utils.domain_executors import get_domain_executors
 
         domain_executors = get_domain_executors()
         embeddings = await loop.run_in_executor(

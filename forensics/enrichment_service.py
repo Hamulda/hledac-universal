@@ -901,7 +901,7 @@ def make_canonical_finding_from_enrichment(original_finding: Any, enrichment: di
     if not original_finding or not isinstance(enrichment, dict):
         return None
     try:
-        from knowledge.duckdb_store import CanonicalFinding
+        from hledac.universal.knowledge.duckdb_store import CanonicalFinding
         parent_id = getattr(original_finding, 'finding_id', None)
         if not parent_id:
             return None

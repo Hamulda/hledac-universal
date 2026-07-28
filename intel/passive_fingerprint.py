@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from network.passive_fingerprint import *
+from hledac.universal.network.passive_fingerprint import *

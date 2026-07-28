@@ -177,7 +177,7 @@ def bench_execution_optimizer(python: Path, env: dict[str, str] | None) -> Bench
         f"""
         import sys
         sys.path.insert(0, {str(PROJECT_ROOT)!r})
-        from utils.execution_optimizer import ParallelExecutionOptimizer
+        from hledac.universal.utils.execution_optimizer import ParallelExecutionOptimizer
         opt = ParallelExecutionOptimizer()
         print("RESULT:ok")
         """

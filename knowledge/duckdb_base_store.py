@@ -26,7 +26,7 @@ M1 8GB constraints:
     - Fail-safe: all operations return empty/safe values on error
 
 Usage:
-    from knowledge.duckdb_base_store import DuckDBBaseStore
+    from hledac.universal.knowledge.duckdb_base_store import DuckDBBaseStore
 
     class MyStore(DuckDBBaseStore):
         __slots__ = tuple("_my_field _other_field".split())
@@ -48,7 +48,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from knowledge.duckdb_store import DuckDBShadowStore
+    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ class DuckDBBaseStore(ABC):
             DuckDB connection (thread-affine, from DuckDBShadowStore).
         """
         if self._db_store is None:
-            from knowledge.db import get_db
+            from hledac.universal.knowledge.db import get_db
 
             db = get_db()
             self._db_store = db.duckdb
@@ -110,7 +110,7 @@ class DuckDBBaseStore(ABC):
 
     def _get_duckdb(self) -> Any:
         """Get DuckDB module via shared singleton."""
-        from knowledge.duckdb_store import _get_duckdb
+        from hledac.universal.knowledge.duckdb_store import _get_duckdb
 
         return _get_duckdb()
 

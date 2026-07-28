@@ -11,10 +11,10 @@ import logging
 from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
-from utils._struct_helpers import struct_replace
+from hledac.universal.utils._struct_helpers import struct_replace
 if TYPE_CHECKING:
-    from runtime.scheduler_config import SprintSchedulerConfig
-    from runtime.scheduler_result import SprintSchedulerResult
+    from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
+    from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
 
 class PhaseRunner(Protocol):
     """Protocol for the lifecycle runner (SprintLifecycleRunner).

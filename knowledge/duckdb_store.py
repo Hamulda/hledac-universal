@@ -44,7 +44,7 @@ import functools
 import sys
 import weakref
 
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
@@ -277,7 +277,7 @@ def _get_QualityAssessmentState():
 
 # Rust backend — strict import
 try:
-    from core.rust_backend import rust
+    from hledac.universal.core.rust_backend import rust
 except ImportError:
     try:
         from hledac.universal.core.rust_backend import rust
@@ -421,7 +421,7 @@ def extract_iocs_from_texts(texts: list[str]):
         except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             pass
     try:
-        from intelligence import ioc_qs
+        from hledac.universal.intelligence import ioc_qs
 
         for text in texts:
             yield from ioc_qs.extract_iocs_from_text(text)
@@ -1226,7 +1226,7 @@ def _get_memory_pressure() -> "MemoryPressureLevel":
 
     ISSUE-025: Memory pressure gating for parquet export on M1 8GB.
     """
-    from coordinators.enums import MemoryPressureLevel as _MPL
+    from hledac.universal.coordinators.enums import MemoryPressureLevel as _MPL
     try:
         import psutil
         vm = psutil.virtual_memory()
@@ -1274,7 +1274,7 @@ def export_findings_to_parquet(
     """
     import os
 
-    from coordinators.enums import MemoryPressureLevel as _MPL
+    from hledac.universal.coordinators.enums import MemoryPressureLevel as _MPL
 
     _path = os.path.expanduser(path) if path.startswith("~") else path
     _db_path = os.environ.get("HLEDAC_DUCKDB_PATH", "hledac.duckdb")
@@ -1500,7 +1500,7 @@ def _get_duckdb() -> Any:
     return duckdb
 
 
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 
 _DUCKDB_MEMORY_LIMIT: str = ENV.get("GHOST_DUCKDB_MEMORY", default="1GB")
 _DUCKDB_MAX_TEMP: str = ENV.get("GHOST_DUCKDB_MAX_TEMP", default="1GB")
@@ -3760,7 +3760,7 @@ class DuckDBShadowStore:
             return False
         if self._initialized:
             return True
-        from core.mlx_embeddings import MLXEmbeddingManager
+        from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
 
         _EMBEDDING_DIM = getattr(MLXEmbeddingManager, "EMBEDDING_DIM", 256)
         assert _EMBEDDING_DIM == 256, (

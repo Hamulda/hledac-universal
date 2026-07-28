@@ -15,7 +15,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from brain._hermes_cache import HermesModelCache
+    from hledac.universal.brain._hermes_cache import HermesModelCache
 
 # Deferred MLX import pattern - never import at module level on M1
 _MLX_LOADER: Any = None

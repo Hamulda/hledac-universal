@@ -19,7 +19,7 @@ Design (P4-11: matches core/constants.py singleton pattern):
     - Backward compat: ENV.get() preserves raw os.environ.get semantics
 
 Usage:
-    from core.env_config import ENV
+    from hledac.universal.core.env_config import ENV
 
     if ENV.get_bool("HLEDAC_ENABLE_DARK_PIVOTS"):
         ...

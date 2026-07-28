@@ -22,7 +22,7 @@ import asyncio
 import concurrent.futures
 
 from hledac.universal.utils.locks import LazyAsyncioLock
-from utils.domain_executors import get_parallel_executor
+from hledac.universal.utils.domain_executors import get_parallel_executor
 import hashlib
 import io
 import logging

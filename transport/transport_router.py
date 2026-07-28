@@ -44,7 +44,7 @@ import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 
 Lane = Literal['aiohttp_default', 'httpx_h2', 'httpx_h3', 'curl_cffi_stealth', 'tor_socks', 'i2p_socks', 'js_renderer', 'cache_safe_http', 'gopher']
 

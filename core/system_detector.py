@@ -24,7 +24,7 @@ INVARIANTS (always-on, no toggles):
 - No MLX import at module level (lazy)
 
 Usage:
-    from core.system_detector import SystemDetector, get_system_detector
+    from hledac.universal.core.system_detector import SystemDetector, get_system_detector
 
     detector = get_system_detector()
     print(f"RAM tier: {detector.ram_tier}")        # "8gb" | "16gb" | "32gb" | "other"
@@ -44,7 +44,7 @@ try:
     from typing import Literal
 except ImportError:
     from typing_extensions import Literal
-from core.psutil_shim import psutil_module as _psutil_mod
+from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod
 
 class HardwareCapabilities(msgspec.Struct, frozen=True, gc=False):
     """

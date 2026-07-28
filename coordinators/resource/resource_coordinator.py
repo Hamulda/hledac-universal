@@ -49,7 +49,7 @@ from msgspec import field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from core.resource_governor import GovernorDecision
+    from hledac.universal.core.resource_governor import GovernorDecision
 
 
 @runtime_checkable
@@ -388,7 +388,7 @@ class BackpressureMonitor:
         """
         now = _time_module.monotonic()
         try:
-            from core.resource_governor import ConcurrencyPreset
+            from hledac.universal.core.resource_governor import ConcurrencyPreset
             cache_ttl = ConcurrencyPreset.from_state(self._decision.uma_state).cache_ttl_seconds
         except Exception:
             cache_ttl = 5.0  # safe default
@@ -429,7 +429,7 @@ class BackpressureMonitor:
                 # F1 FIX: propagate UMA state to ConcurrencyBudgetRegistry so all
                 # parallel() call sites globally respect the same memory pressure limits.
                 try:
-                    from core.concurrency_registry import ConcurrencyBudgetRegistry
+                    from hledac.universal.core.concurrency_registry import ConcurrencyBudgetRegistry
                     registry = await ConcurrencyBudgetRegistry.get_instance_async()
                     await registry.adjust_for_state(new_decision.uma_state)
                 except Exception:
@@ -517,7 +517,7 @@ class _CapacitySampler:
         MUST be called via asyncio.to_thread, never directly from event loop.
         Returns (cpu_percent, gpu_memory, gpu_usage).
         """
-        from core.psutil_shim import psutil as _ps
+        from hledac.universal.core.psutil_shim import psutil as _ps
 
         assert _ps is not None
         ps = _ps
@@ -652,7 +652,7 @@ class M1ResourceCoordinator:
             - cpu: base=4, clamped by memory
         """
         try:
-            from core.psutil_shim import psutil as _psutil
+            from hledac.universal.core.psutil_shim import psutil as _psutil
 
             assert _psutil is not None
             psutil = _psutil
@@ -688,7 +688,7 @@ class M1ResourceCoordinator:
     def get_stats(self) -> dict[str, Any]:
         """Return resource stats for telemetry."""
         try:
-            from core.psutil_shim import psutil as _ps
+            from hledac.universal.core.psutil_shim import psutil as _ps
 
             assert _ps is not None
             ps = _ps

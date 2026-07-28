@@ -68,7 +68,7 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any
-from core.psutil_shim import psutil
+from hledac.universal.core.psutil_shim import psutil
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.utils.lru_cache import LRUCache
 try:
@@ -90,7 +90,7 @@ except ImportError:
     USEARCH_AVAILABLE = False
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from knowledge.neuromorphic import NeuromorphicMemoryManager, NeuromorphicMemoryZone
+    from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryManager, NeuromorphicMemoryZone
 from hledac.universal.core.uma_governor import PressureState
 
 def _serialize_to_json(data: Any) -> bytes:
@@ -537,7 +537,7 @@ class UniversalMemoryCoordinator:
             n_neurons: Number of neurons (default 512 for M1 optimization)
         """
         try:
-            from knowledge.neuromorphic import NeuromorphicMemoryManager
+            from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryManager
             self._neuro_memory = NeuromorphicMemoryManager(n_neurons=n_neurons, connectivity=0.03)
             logger.info('Neuromorphic memory initialized: %s neurons', n_neurons)
         except Exception as e:
@@ -556,7 +556,7 @@ class UniversalMemoryCoordinator:
         Returns:
             Allocation result with zone info
         """
-        from knowledge.neuromorphic import NeuromorphicMemoryZone
+        from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryZone
         if not self._neuro_memory:
             return {'success': False, 'error': 'Neuromorphic memory not initialized'}
         if zone_type == NeuromorphicMemoryZone.WORKING_MEMORY:
@@ -877,7 +877,7 @@ class UniversalMemoryCoordinator:
 
     async def get_all_zone_usage(self) -> dict[str, ZoneStatistics]:
         """Get usage for all zones (parallel fetch, fail-safe)."""
-        from utils.async_helpers import parallel
+        from hledac.universal.utils.async_helpers import parallel
         result = await parallel(
             [self.get_zone_usage(z) for z in MemoryZone],
             policy="collect",
@@ -893,7 +893,7 @@ class UniversalMemoryCoordinator:
 
     async def get_stats(self) -> dict[str, Any]:
         """Get comprehensive memory statistics (parallel zone fetch, fail-safe)."""
-        from utils.async_helpers import parallel
+        from hledac.universal.utils.async_helpers import parallel
         stats = await self.get_memory_usage()
         zone_result = await parallel(
             [self.get_zone_usage(z) for z in MemoryZone],
@@ -1042,7 +1042,7 @@ class UniversalMemoryCoordinator:
             Filter instance info
         """
         try:
-            from hledac.tools.preserved_logic.fast_filter import FastFilter
+            from hledac.universal.hledac.tools.preserved_logic.fast_filter import FastFilter
             filter_instance = FastFilter(use_bff=use_binary_fuse, enable_cache=True)
             filter_id = f'url_filter_{id(filter_instance)}'
             if not hasattr(self, '_filters'):
@@ -1134,7 +1134,7 @@ class UniversalMemoryCoordinator:
             Detection result with language code and name
         """
         try:
-            from hledac.tools.preserved_logic.fast_lang import LanguageDetector
+            from hledac.universal.hledac.tools.preserved_logic.fast_lang import LanguageDetector
             detector = LanguageDetector(fallback_mode=fallback)
             lang_code = detector.detect(text, min_length=min_length)
             lang_name = detector.get_language_name(lang_code)
@@ -1158,7 +1158,7 @@ class UniversalMemoryCoordinator:
             Batch detection results
         """
         try:
-            from hledac.tools.preserved_logic.fast_lang import LanguageDetector
+            from hledac.universal.hledac.tools.preserved_logic.fast_lang import LanguageDetector
             detector = LanguageDetector()
             results = detector.batch_detect(texts, min_length=min_length)
             lang_counts = {}
@@ -1181,7 +1181,7 @@ class UniversalMemoryCoordinator:
             Filtered results
         """
         try:
-            from hledac.tools.preserved_logic.fast_lang import LanguageDetector
+            from hledac.universal.hledac.tools.preserved_logic.fast_lang import LanguageDetector
             detector = LanguageDetector()
             filtered = detector.filter_by_language(texts, allowed_languages)
             return {'success': True, 'total_input': len(texts), 'filtered_count': len(filtered), 'allowed_languages': allowed_languages, 'filtered_items': filtered}
@@ -1672,7 +1672,7 @@ class MultiLevelContextCache:
         C7-FIX: Uses run_sync_async() from sync_bridge for M1 safety.
         Prefer async _get_embedding_async() when called from async context.
         """
-        from utils.sync_bridge import run_sync_async
+        from hledac.universal.utils.sync_bridge import run_sync_async
         import unicodedata
         normalized = unicodedata.normalize('NFC', text)
         cached = self._embedding_cache.get(normalized)

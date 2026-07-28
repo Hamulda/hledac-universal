@@ -68,37 +68,37 @@ class AltProtocolResult(NamedTuple):
 # =============================================================================
 def _get_ipfs_client():
     """Lazy import IPFS client."""
-    from network import ipfs_client
+    from hledac.universal.network import ipfs_client
     return ipfs_client
 
 
 def _get_gopher_transport():
     """Lazy import Gopher transport (canonical: transport/gopher_transport.py)."""
-    from transport.gopher_transport import get_gopher_transport
+    from hledac.universal.transport.gopher_transport import get_gopher_transport
     return get_gopher_transport()
 
 
 def _get_gemini_transport():
     """Lazy import Gemini transport."""
-    from network import gemini_transport
+    from hledac.universal.network import gemini_transport
     return gemini_transport
 
 
 def _get_i2p_client():
     """Lazy import I2P client."""
-    from network import i2p_client
+    from hledac.universal.network import i2p_client
     return i2p_client
 
 
 def _get_fediverse_adapter():
     """Lazy import Fediverse adapter."""
-    from discovery import fediverse_adapter
+    from hledac.universal.discovery import fediverse_adapter
     return fediverse_adapter
 
 
 def _get_matrix_adapter():
     """Lazy import Matrix adapter."""
-    from discovery import matrix_adapter
+    from hledac.universal.discovery import matrix_adapter
     return matrix_adapter
 
 
@@ -115,7 +115,7 @@ async def _fetch_from_ipfs(
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     ipfs = _get_ipfs_client()
 
@@ -128,7 +128,7 @@ async def _fetch_from_ipfs(
             findings: list[CanonicalFinding] = []
 
             # P1-02: Parallelizace IPFS fetch — 10 CIDs paralelně místo sekvenčně
-            from utils.async_helpers import parallel
+            from hledac.universal.utils.async_helpers import parallel
 
             async def _fetch_one_cid(cid: str) -> CanonicalFinding | None:
                 try:
@@ -280,7 +280,7 @@ async def _fetch_from_fediverse(
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     fediverse = _get_fediverse_adapter()
 
@@ -333,7 +333,7 @@ async def _fetch_from_matrix(
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     from hledac.universal.utils.async_helpers import parallel
 
     matrix = _get_matrix_adapter()

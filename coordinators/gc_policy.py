@@ -6,12 +6,12 @@ This module is DEPRECATED. All functionality has been moved to:
     coordinators.resource.resource_coordinator
 
 Legacy import (still works for backwards compatibility):
-    from coordinators.gc_policy import gc_collect, gc_collect_aggressive
+    from hledac.universal.coordinators.gc_policy import gc_collect, gc_collect_aggressive
 
 New import:
-    from coordinators.resource import gc_collect, gc_collect_aggressive
+    from hledac.universal.coordinators.resource import gc_collect, gc_collect_aggressive
     # or
-    from coordinators.resource.resource_coordinator import gc_collect, gc_collect_aggressive
+    from hledac.universal.coordinators.resource.resource_coordinator import gc_collect, gc_collect_aggressive
 """
 
 import warnings
@@ -24,7 +24,7 @@ warnings.warn(
 )
 
 # Re-export from new location for backwards compatibility
-from coordinators.resource.resource_coordinator import (
+from hledac.universal.coordinators.resource.resource_coordinator import (
     gc_collect,
     gc_collect_aggressive,
     gc_collect_async,

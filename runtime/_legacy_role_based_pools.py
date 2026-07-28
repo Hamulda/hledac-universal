@@ -46,7 +46,7 @@ INVARIANTS (Python 3.14+):
   4. M1-metal-aware: EMBED_WORKERS throttled on memory pressure
 
 USAGE:
-  from runtime.role_based_pools import RoleBasedPools, get_role_pools
+  from hledac.universal.runtime.role_based_pools import RoleBasedPools, get_role_pools
 
   pools = get_role_pools()
 

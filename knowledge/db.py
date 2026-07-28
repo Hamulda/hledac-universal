@@ -105,7 +105,7 @@ def _get_duckdb_store() -> Any:
     """Lazy DuckDBShadowStore singleton — canonical store for all DuckDB data."""
     global _DUCKDB_STORE
     if _DUCKDB_STORE is None:
-        from knowledge.duckdb_store import DuckDBShadowStore
+        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
         _DUCKDB_STORE = DuckDBShadowStore()
     return _DUCKDB_STORE
 

@@ -31,7 +31,7 @@ class ResearchHypothesis(msgspec.Struct, frozen=True):
 def _load_dspy_program():
     """Lazy-load DSPy HypothesisGeneratorProgram. Returns (program, error)."""
     try:
-        from brain.dspy_programs import get_program
+        from hledac.universal.brain.dspy_programs import get_program
         prog = get_program('hypothesis_generator')
         if prog is None:
             logger.info('DSPy: No compiled HypothesisGenerator program — run:\n  python scripts/dspy_compile.py hypothesis_generator --train gold_data/hypotheses.jsonl')

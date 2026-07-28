@@ -23,7 +23,7 @@ import sys
 import time
 from dataclasses import dataclass
 from typing import Final
-from utils.sync_bridge import run_sync_async
+from hledac.universal.utils.sync_bridge import run_sync_async
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 _WEBKIT_SEMAPHORE: Final[asyncio.Semaphore] = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 _DEFAULT_TIMEOUT_S: Final[float] = 10.0

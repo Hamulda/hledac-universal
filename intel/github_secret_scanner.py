@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.github_secret_scanner import *
+from hledac.universal.recon.github_secret_scanner import *

@@ -291,7 +291,7 @@ class StealthManager:
             return (True, None)
         if self._cb_available is None:
             try:
-                from transport.circuit_breaker import domain_breaker_check
+                from hledac.universal.transport.circuit_breaker import domain_breaker_check
                 self._cb_available = True
             except ImportError:
                 self._cb_available = False
@@ -299,7 +299,7 @@ class StealthManager:
         if not self._cb_available:
             return (True, None)
         try:
-            from transport.circuit_breaker import domain_breaker_check
+            from hledac.universal.transport.circuit_breaker import domain_breaker_check
             decision = domain_breaker_check(domain)
             if decision.allowed:
                 return (True, None)

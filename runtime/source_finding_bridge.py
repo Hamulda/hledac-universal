@@ -35,7 +35,7 @@ import re
 import time
 from typing import Any
 
-from runtime.source_finding_config import (
+from hledac.universal.runtime.source_finding_config import (
     MAX_BRIDGE_OUTPUT,
     MAX_CT_QUARANTINE_SAMPLES,
     MAX_EXPANSION_CLUE_EXAMPLES,
@@ -60,7 +60,7 @@ from runtime.source_finding_config import (
     CT_BRIDGE,
     WAYBACK_BRIDGE,
 )
-from runtime.patterns.discovery import (
+from hledac.universal.runtime.patterns.discovery import (
     _IP_LIKE_RE,
     _TRAILING_DOT_RE,
     _URL_SCHEME_RE,
@@ -68,7 +68,7 @@ from runtime.patterns.discovery import (
     _WILDCARD_RE,
     is_ip_like as _is_ip_like_pattern,
 )
-from runtime.source_finding_config import (
+from hledac.universal.runtime.source_finding_config import (
     is_private_hostname,
     is_private_ip_prefix,
 )

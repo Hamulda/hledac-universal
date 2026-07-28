@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.wayback_cdx_deep_adapter import *
+from hledac.universal.recon.wayback_cdx_deep_adapter import *

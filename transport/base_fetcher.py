@@ -361,7 +361,7 @@ class CurlCFFIFetcher(BaseFetcher):
     """
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
-        from transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
+        from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
         result = await fetch_via_curl_cffi_cached(url, **kwargs)
         return self._convert_result(result)
 
@@ -372,7 +372,7 @@ class AiohttpFetcher(BaseFetcher):
     """Aiohttp/H2 based fetcher."""
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
-        from transport.httpx_transport import fetch_via_httpx_h2
+        from hledac.universal.transport.httpx_transport import fetch_via_httpx_h2
         timeout_s = kwargs.pop('timeout_s', self.default_timeout)
         response = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
         return self._convert_response(response)
@@ -389,15 +389,15 @@ class HybridFetcher(BaseFetcher):
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
         timeout_s = kwargs.pop('timeout_s', self.default_timeout)
         try:
-            from transport.httpx_transport import fetch_via_httpx_h2
+            from hledac.universal.transport.httpx_transport import fetch_via_httpx_h2
             response = await fetch_via_httpx_h2(url, timeout_s=timeout_s)
             if response.status_code in (403, 429):
-                from transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
+                from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
                 result = await fetch_via_curl_cffi_cached(url, timeout_s=timeout_s, **kwargs)
                 return self._convert_curl_result(result)
             return self._convert_response(response)
         except Exception:
-            from transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
+            from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
             result = await fetch_via_curl_cffi_cached(url, timeout_s=timeout_s, **kwargs)
             return self._convert_curl_result(result)
 
@@ -412,7 +412,7 @@ class TorCurlCFFIFetcher(BaseFetcher):
     TOR_TIMEOUT_SCALE: float = 2.0
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
-        from transport.curl_cffi_fetch import fetch_via_tor_curl_cffi
+        from hledac.universal.transport.curl_cffi_fetch import fetch_via_tor_curl_cffi
         timeout_s = kwargs.pop('timeout_s', self.default_timeout)
         result = await fetch_via_tor_curl_cffi(url, timeout_s=timeout_s, **kwargs)
         return self._convert_result(result)
@@ -425,7 +425,7 @@ class I2PCurlCFFIFetcher(BaseFetcher):
     TOR_TIMEOUT_SCALE: float = 2.0
 
     async def fetch_once(self, url: str, **kwargs) -> FetcherResult:
-        from transport.curl_cffi_fetch import fetch_via_i2p_curl_cffi
+        from hledac.universal.transport.curl_cffi_fetch import fetch_via_i2p_curl_cffi
         timeout_s = kwargs.pop('timeout_s', self.default_timeout)
         result = await fetch_via_i2p_curl_cffi(url, timeout_s=timeout_s, **kwargs)
         return self._convert_result(result)
@@ -458,19 +458,19 @@ class JsFetcher(BaseFetcher):
         async with semaphore:
             try:
                 if renderer == 'camoufox':
-                    from fetching.public_fetcher import _fetch_with_camoufox
+                    from hledac.universal.fetching.public_fetcher import _fetch_with_camoufox
                     html = await _fetch_with_camoufox(url, timeout=timeout_s)
                     return FetcherResult(url=url, success=True, body=html)
                 elif renderer == 'playwright':
-                    from fetching.public_fetcher import _fetch_with_playwright
+                    from hledac.universal.fetching.public_fetcher import _fetch_with_playwright
                     html = await _fetch_with_playwright(url, timeout=timeout_s)
                     return FetcherResult(url=url, success=True, body=html)
                 elif renderer == 'nodriver':
-                    from fetching.public_fetcher import _fetch_with_nodriver
+                    from hledac.universal.fetching.public_fetcher import _fetch_with_nodriver
                     html = await _fetch_with_nodriver(url)
                     return FetcherResult(url=url, success=True, body=html)
                 elif renderer == 'macos_webkit':
-                    from rendering.macos_webkit_renderer import fetch_with_macos_webkit
+                    from hledac.universal.rendering.macos_webkit_renderer import fetch_with_macos_webkit
                     result = await fetch_with_macos_webkit(url, timeout_s=timeout_s)
                     return FetcherResult(url=url, success=True, body=result.html)
                 else:

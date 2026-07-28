@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.blockchain_analyzer import *
+from hledac.universal.recon.blockchain_analyzer import *

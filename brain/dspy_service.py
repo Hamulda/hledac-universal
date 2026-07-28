@@ -471,7 +471,7 @@ async def score_findings(findings: list, min_score: float=4.0) -> list | None:
 
     try:
         # Run all batches concurrently, bounded by semaphore
-        from utils.async_helpers import parallel
+        from hledac.universal.utils.async_helpers import parallel
         result = await parallel(
             [_score_batch_sem(b) for b in batches],
             policy="log",

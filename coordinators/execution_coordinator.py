@@ -123,7 +123,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         """Initialize execution subsystems with graceful degradation."""
         initialized_any = False
         try:
-            from hledac.cortex.director import GhostDirector
+            from hledac.universal.hledac.cortex.director import GhostDirector
             self._ghost_director = GhostDirector(max_steps=self._ghost_max_steps)
             self._ghost_available = True
             initialized_any = True
@@ -145,7 +145,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         except Exception as e:
             logger.warning(f'ExecutionCoordinator: ParallelExecutor init failed: {e}')
         try:
-            from hledac.distributed_computing.ray_cluster import RayClusterManager
+            from hledac.universal.hledac.distributed_computing.ray_cluster import RayClusterManager
             self._ray_cluster = RayClusterManager()
             if hasattr(self._ray_cluster, 'initialize'):
                 await self._ray_cluster.initialize()
@@ -471,7 +471,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         if not self._ghost_available or not self._ghost_director:
             return {'success': False, 'error': 'GhostDirector not available', 'action': action_type}
         try:
-            from hledac.cortex.director import DirectorAction
+            from hledac.universal.hledac.cortex.director import DirectorAction
             if hasattr(self._ghost_director, 'initialize_drivers'):
                 await self._ghost_director.initialize_drivers()
             action = DirectorAction(action_type.upper())
@@ -507,7 +507,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Generation result with text and metrics
         """
         try:
-            from hledac.speculative_decoding.speculative_engine import DecodingMode, SpeculationConfig, SpeculativeEngine
+            from hledac.universal.hledac.speculative_decoding.speculative_engine import DecodingMode, SpeculationConfig, SpeculativeEngine
             mode_map = {'fast': DecodingMode.FAST, 'quality': DecodingMode.QUALITY, 'balanced': DecodingMode.BALANCED}
             decoding_mode = mode_map.get(mode, DecodingMode.BALANCED)
             config = SpeculationConfig()
@@ -532,7 +532,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Statistics about speculative decoding performance
         """
         try:
-            from hledac.speculative_decoding.speculative_engine import SpeculativeEngine
+            from hledac.universal.hledac.speculative_decoding.speculative_engine import SpeculativeEngine
             engine = SpeculativeEngine()
             if hasattr(engine, 'metrics'):
                 metrics = engine.metrics
@@ -563,7 +563,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Generation result with adaptive metrics
         """
         try:
-            from hledac.speculative_decoding.speculative_engine import DecodingMode, SpeculationConfig, SpeculativeEngine
+            from hledac.universal.hledac.speculative_decoding.speculative_engine import DecodingMode, SpeculationConfig, SpeculativeEngine
             config = SpeculationConfig()
             config.adaptive_k = True
             config.min_k = 1
@@ -624,7 +624,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             return {'success': True, 'steps_executed': 0, 'successful_steps': 0, 'failed_steps': 0, 'results': []}
         step_coros = [self.execute_action(s.get('action', 'search'), s.get('payload', {})) for s in plan]
         # F1 FIX: execution steps use SCRAPE_GENERAL for dynamic UMA-aware concurrency
-        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
         exec_concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
         result = await parallel(step_coros, concurrency=exec_concurrency, policy="collect", ctx='execution_coordinator.execute_plan')
         results = result.ok

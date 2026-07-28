@@ -50,7 +50,7 @@ AUTHORITY:
     - brain.model_lifecycle (unload cleanup)
 
 USAGE:
-  from brain.model_phase_facts import (
+  from hledac.universal.brain.model_phase_facts import (
       WORKFLOW_PHASES,
       COARSE_GRAINED_PHASES,
       is_workflow_phase,

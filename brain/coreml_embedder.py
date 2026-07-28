@@ -123,7 +123,7 @@ class CoreMLEmbedder:
         """
         if self._is_loaded:
             return True
-        from brain.mlx_embedder import MLXEmbedder
+        from hledac.universal.brain.mlx_embedder import MLXEmbedder
         mlx_embedder = MLXEmbedder()
         if mlx_embedder.is_available and await mlx_embedder.load():
             self._model = mlx_embedder
@@ -218,7 +218,7 @@ class CoreMLEmbedder:
 
             # CoreMLClient.close() is async — must use run_sync_async() bridge.
             # run_sync_async handles both cases (running loop / no loop) internally.
-            from utils.sync_bridge import run_sync_async
+            from hledac.universal.utils.sync_bridge import run_sync_async
             try:
                 run_sync_async(client.close())
             except Exception:
@@ -324,7 +324,7 @@ class CoreMLEmbedder:
             except Exception as e:
                 logger.warning('[CoreML] ONNX inference failed: %s', e)
                 return self._encode_hash_fallback(texts)
-        from utils.domain_executors import get_infer_executor
+        from hledac.universal.utils.domain_executors import get_infer_executor
         return await loop.run_in_executor(get_infer_executor(), _sync_encode)
 
     def _encode_hash_fallback(self, texts: list[str]) -> np.ndarray:

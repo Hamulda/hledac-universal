@@ -15,7 +15,7 @@ GHOST_INVARIANTS:
 import asyncio
 from typing import Any
 
-from runtime.protocols.fetch_protocol import FetchProtocol
+from hledac.universal.runtime.protocols.fetch_protocol import FetchProtocol
 
 
 class FetchCoordinatorAdapter(FetchProtocol):

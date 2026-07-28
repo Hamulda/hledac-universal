@@ -19,7 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from ._stage_protocol import BoundedStageQueue, Stage, StageContext
-from utils.async_helpers import parallel, safe_create_task  # ISSUE-006, E4: parallel() + OTel trace context
+from hledac.universal.utils.async_helpers import parallel, safe_create_task  # ISSUE-006, E4: parallel() + OTel trace context
 
 if TYPE_CHECKING:
     pass
@@ -61,7 +61,7 @@ class EnrichStage:
         query: str = "",
         uma_state: str = "ok",
     ):
-        from coordinators.aimd_controllers import make_enrich_aimd
+        from hledac.universal.coordinators.aimd_controllers import make_enrich_aimd
 
         self._aimd = aimd_controller or make_enrich_aimd()
         self._query = query

@@ -14,7 +14,7 @@ import time
 from typing import Literal
 
 import msgspec
-from core.psutil_shim import psutil
+from hledac.universal.core.psutil_shim import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def _rss_gib() -> float:
     # Priority 0: Rust extension via sysinfo (no subprocess, cross-platform).
     # F265C: Use centralized rust backend
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
 
         if _rust_backend.is_available and _rust_backend.memory is not None:
             val = _rust_backend.memory.get_process_rss_gib()

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     pass
 _dd_int: defaultdict[str, int] = defaultdict(int)
 _dense_sparse_factory: defaultdict[str, dict[str, float]] = defaultdict(lambda: {'dense': 0.0, 'sparse': 0.0})
-from security.secure_enclave import EnclaveAvailability, EnclaveStatus, SecureEnclaveBackend, SecureEnclaveError, build_batch_manifest, create_secure_enclave_backend
+from hledac.universal.security.secure_enclave import EnclaveAvailability, EnclaveStatus, SecureEnclaveBackend, SecureEnclaveError, build_batch_manifest, create_secure_enclave_backend
 COREML_AVAILABLE = False
 COREML_MODEL_PATH = None
 try:
@@ -581,7 +581,7 @@ class RAGEngine:
         This method is the ONLY entry point for model-plane coupling.
         """
         try:
-            from brain.model_manager import COREML_MODEL_PATH, get_model_manager
+            from hledac.universal.brain.model_manager import COREML_MODEL_PATH, get_model_manager
             coreml_available = COREML_MODEL_PATH is not None and COREML_MODEL_PATH.exists()
         except ImportError:
             coreml_available = False
@@ -608,7 +608,7 @@ class RAGEngine:
     async def _init_ultra_context(self) -> None:
         """Inicializovat InfiniteContextEngine"""
         try:
-            from hledac.ultra_context.infinite_context_engine import InfiniteContextEngine
+            from hledac.universal.hledac.ultra_context.infinite_context_engine import InfiniteContextEngine
             self._infinite_context = InfiniteContextEngine()
             logger.info('✓ Ultra Context initialized')
         except Exception as e:
@@ -617,7 +617,7 @@ class RAGEngine:
     async def _init_spr_compressor(self) -> None:
         """Inicializovat SPR Compressor"""
         try:
-            from hledac.ultra_context.spr_compressor import SPRCompressor, SPRConfig
+            from hledac.universal.hledac.ultra_context.spr_compressor import SPRCompressor, SPRConfig
             self._spr_compressor = SPRCompressor(SPRConfig(compression_ratio_target=0.5))
             logger.info('✓ SPR Compressor initialized (50% target)')
         except Exception as e:
@@ -671,7 +671,7 @@ class RAGEngine:
         """
         if not self._spr_compressor:
             return chunks
-        from utils.async_helpers import parallel, safe_wait_for
+        from hledac.universal.utils.async_helpers import parallel, safe_wait_for
         _CHUNK_TIMEOUT_S = 5.0
 
         async def _compress_one(chunk: str) -> str:
@@ -885,7 +885,7 @@ class RAGEngine:
             try:
                 # P1-1: asyncio.run() inside sync method is M1 Metal crash vector.
                 # _generate_embeddings is async but its internals are sync MLX — use bridge.
-                from utils.sync_bridge import run_sync_async
+                from hledac.universal.utils.sync_bridge import run_sync_async
                 embeddings_list = run_sync_async(self._generate_embeddings([d.content for d in documents]))
                 embeddings = {doc.id: emb for doc, emb in zip(documents, embeddings_list)}
             except Exception as e:

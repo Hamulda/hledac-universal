@@ -19,7 +19,7 @@ M1 8GB UMA notes:
   - Bounded ring buffers for event history
 
 Usage:
-  from runtime.observability import ObservabilityHub
+  from hledac.universal.runtime.observability import ObservabilityHub
 
   hub = ObservabilityHub(session_id="sprint-abc")
   hub.record_phase("ACQUISITION")

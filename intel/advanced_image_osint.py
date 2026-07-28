@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.advanced_image_osint import *
+from hledac.universal.recon.advanced_image_osint import *

@@ -314,7 +314,7 @@ async def async_get_httpx_session() -> httpx.AsyncClient:
         [I3] repeated awaits return same instance
     """
     # ISSUE-010: Delegate to canonical session_pool (import here to avoid circular deps)
-    from transport.session_pool import httpx_client as _httpx_client
+    from hledac.universal.transport.session_pool import httpx_client as _httpx_client
 
     return await _httpx_client()
 
@@ -364,7 +364,7 @@ def _get_httpx_session_blocking() -> httpx.AsyncClient:
       - No running loop → new loop via asyncio.run() inside bridge
       - Running loop   → run_coroutine_threadsafe to bridge loop
     """
-    from utils.sync_bridge import run_sync_async
+    from hledac.universal.utils.sync_bridge import run_sync_async
     return run_sync_async(async_get_httpx_session())
 
 
@@ -383,9 +383,9 @@ def close_httpx_session() -> None:
         [I5] after close, next await creates new instance
     """
     # ISSUE-010: Delegate to canonical session_pool
-    from transport.session_pool import close_httpx as _close_httpx
+    from hledac.universal.transport.session_pool import close_httpx as _close_httpx
     # P1-1: run_sync_async handles both running and non-running loop cases.
-    from utils.sync_bridge import run_sync_async
+    from hledac.universal.utils.sync_bridge import run_sync_async
     run_sync_async(_close_httpx())
 
 
@@ -408,7 +408,7 @@ async def close_httpx_session_async() -> None:
         [I5] after close, next await creates new instance
     """
     # ISSUE-010: Delegate to canonical session_pool
-    from transport.session_pool import close_httpx as _close_httpx
+    from hledac.universal.transport.session_pool import close_httpx as _close_httpx
 
     await _close_httpx()
     # Sprint F266-UV5: clear bandits at winddown to prevent unbounded dict growth
@@ -434,7 +434,7 @@ def get_session_runtime_status() -> dict:
             - last_error: str | None — last error string if any
     """
     # ISSUE-010: Delegate to session_pool for actual session state
-    from transport.session_pool import session_pool as _sp
+    from hledac.universal.transport.session_pool import session_pool as _sp
 
     status = _sp.get_status()
     return {
@@ -461,12 +461,12 @@ def _reset_session_runtime_for_tests() -> None:
 
     Usage:
         # In test fixture:
-        from network import session_runtime as sr
+        from hledac.universal.network import session_runtime as sr
         sr._reset_session_runtime_for_tests()
     """
     # ISSUE-010: Delegate to session_pool for actual session close
-    from transport.session_pool import close_httpx as _close_httpx
-    from utils.sync_bridge import run_sync_async
+    from hledac.universal.transport.session_pool import close_httpx as _close_httpx
+    from hledac.universal.utils.sync_bridge import run_sync_async
 
     try:
         run_sync_async(_close_httpx())

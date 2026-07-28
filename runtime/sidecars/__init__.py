@@ -16,7 +16,7 @@ PEP 562 lazy loading — each category is loaded only when first accessed.
 from __future__ import annotations
 
 # Re-export SidecarRegistry for convenience
-from runtime.sidecar_protocol import SidecarRegistry  # noqa: F401
+from hledac.universal.runtime.sidecar_protocol import SidecarRegistry  # noqa: F401
 
 __all__ = [
     # discovery
@@ -45,16 +45,16 @@ def __getattr__(name: str):
         _LOADED = True
         # Import all category packages (triggers @SidecarRegistry.register)
         # Using local imports to avoid namespace pollution
-        from runtime.sidecars.discovery import OnionDiscoverySidecarAdapter
-        from runtime.sidecars.discovery import I2PDiscoverySidecarAdapter
-        from runtime.sidecars.discovery import IPFSDiscoverySidecarAdapter
-        from runtime.sidecars.discovery import DHTDiscoverySidecarAdapter
-        from runtime.sidecars.discovery import CommonCrawlSidecarAdapter
-        from runtime.sidecars.enrichment import BGPEnrichmentSidecarAdapter
-        from runtime.sidecars.enrichment import BannerGrabSidecarAdapter
-        from runtime.sidecars.enrichment import TIFeedSidecarAdapter
-        from runtime.sidecars.forensics import DigitalGhostSidecarAdapter
-        from runtime.sidecars.forensics import SteganographySidecarAdapter
+        from hledac.universal.runtime.sidecars.discovery import OnionDiscoverySidecarAdapter
+        from hledac.universal.runtime.sidecars.discovery import I2PDiscoverySidecarAdapter
+        from hledac.universal.runtime.sidecars.discovery import IPFSDiscoverySidecarAdapter
+        from hledac.universal.runtime.sidecars.discovery import DHTDiscoverySidecarAdapter
+        from hledac.universal.runtime.sidecars.discovery import CommonCrawlSidecarAdapter
+        from hledac.universal.runtime.sidecars.enrichment import BGPEnrichmentSidecarAdapter
+        from hledac.universal.runtime.sidecars.enrichment import BannerGrabSidecarAdapter
+        from hledac.universal.runtime.sidecars.enrichment import TIFeedSidecarAdapter
+        from hledac.universal.runtime.sidecars.forensics import DigitalGhostSidecarAdapter
+        from hledac.universal.runtime.sidecars.forensics import SteganographySidecarAdapter
 
         _CACHE.update({
             "OnionDiscoverySidecarAdapter": OnionDiscoverySidecarAdapter,

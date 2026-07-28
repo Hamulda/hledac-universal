@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.dark_web_intelligence import *
+from hledac.universal.recon.dark_web_intelligence import *

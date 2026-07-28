@@ -8,13 +8,13 @@ M1 8GB: všechny jsou lazy-loaded — žádný framework se neimportuje
 při startu, pouze při prvním použití přes getattr.
 
 Použití:
-    from core.frameworks import Vision, NaturalLanguage, CoreML, WebKit
-    from core.frameworks import COCOA_AVAILABLE, VISION_AVAILABLE, ...
+    from hledac.universal.core.frameworks import Vision, NaturalLanguage, CoreML, WebKit
+    from hledac.universal.core.frameworks import COCOA_AVAILABLE, VISION_AVAILABLE, ...
 
 Pro kontrolu bez importu:
-    from core.frameworks import is_framework_available
+    from hledac.universal.core.frameworks import is_framework_available
     if is_framework_available("Vision"):
-        from core.frameworks import Vision
+        from hledac.universal.core.frameworks import Vision
 """
 
 from __future__ import annotations

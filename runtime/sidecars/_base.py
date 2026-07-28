@@ -20,10 +20,10 @@ import contextvars
 import logging
 from typing import TYPE_CHECKING, Any
 
-from runtime.sidecar_protocol import BaseSidecarAdapter, SidecarContext
+from hledac.universal.runtime.sidecar_protocol import BaseSidecarAdapter, SidecarContext
 
 if TYPE_CHECKING:
-    from runtime.sprint_scheduler import SprintScheduler
+    from hledac.universal.runtime.sprint_scheduler import SprintScheduler
 
 logger = logging.getLogger(__name__)
 

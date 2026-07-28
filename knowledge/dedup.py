@@ -22,7 +22,7 @@ CANONICAL WRITE PATH (unchanged):
 LMDB NAMESPACE:
     dedup:{fingerprint_hex}  → finding_id (UTF-8 bytes)
 """
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 from typing import Any
 import psutil
 __all__ = ['DedupManager', 'RotatingBloomFilter']
@@ -130,7 +130,7 @@ def _register_dedup_manager_finalizer(instance: DedupManager) -> weakref.finaliz
 def _load_rust_bloom() -> Any:
     """Lazy-load Rust MmapBloomFilter to avoid early import crash on M1."""
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
         if _rust_backend.is_available and _rust_backend.bloom is not None:
             return _rust_backend.bloom.MmapBloomFilter
         return None
@@ -223,7 +223,7 @@ class RotatingBloomFilter:
         Single import block — no redundant re-imports.
         """
         try:
-            from core.rust_backend import rust as _rb
+            from hledac.universal.core.rust_backend import rust as _rb
             if not (_rb.is_available and _rb.bloom is not None):
                 return None
             RotatingBF = getattr(_rb.bloom, 'RotatingMmapBloomFilter', None)
@@ -280,7 +280,7 @@ class RotatingBloomFilter:
         if self._filter is None:
             return False
         try:
-            from core.rust_backend import rust as _rb
+            from hledac.universal.core.rust_backend import rust as _rb
         except Exception:
             return False
         return _rb.is_available and _rb.bloom is not None and (getattr(_rb.bloom, 'RotatingMmapBloomFilter', None) is not None)
@@ -481,7 +481,7 @@ class DedupManager:
         Fails softly: any exception stored in _bloom_filter_error.
         """
         try:
-            from core.rust_backend import rust as _rust_backend
+            from hledac.universal.core.rust_backend import rust as _rust_backend
             MmapBloomFilter = None
             if _rust_backend.is_available and _rust_backend.bloom is not None:
                 MmapBloomFilter = _rust_backend.bloom.MmapBloomFilter
@@ -543,7 +543,7 @@ class DedupManager:
             store_class = RustMmapIocDedupStore
         else:
             try:
-                from core.rust_backend import rust as _rb
+                from hledac.universal.core.rust_backend import rust as _rb
                 store_class = getattr(_rb, '_PythonMmapIocDedupStore', None)
                 if store_class is None:
                     store_class = getattr(_rb, 'MmapIocDedupStore', None)

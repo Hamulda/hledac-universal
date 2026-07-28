@@ -350,7 +350,7 @@ _PREWARM_LOCK = threading.Lock()
 # Single Metal command queue = no double model loads on M1 8GB.
 # All embedding entry points now converge on one canonical source.
 
-from core.embeddings.legacy import (  # noqa: F401 — re-export for compat
+from hledac.universal.core.embeddings.legacy import (  # noqa: F401 — re-export for compat
     MLXEmbeddingManager,
     get_mlx_embedder,
     get_embedding_manager,  # deprecated alias

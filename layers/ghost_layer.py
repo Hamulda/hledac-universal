@@ -15,8 +15,8 @@ This is a thin wrapper that imports existing GhostDirector
 and adds integration logic without duplicating code.
 """
 import hashlib
-from utils.hashing import xxh3_64_hex
-from utils.mlx_cache import get_mx
+from hledac.universal.utils.hashing import xxh3_64_hex
+from hledac.universal.utils.mlx_cache import get_mx
 import logging
 import subprocess
 from typing import Any
@@ -168,7 +168,7 @@ class GhostLayer:
             return
         if self._ghost_director is None:
             try:
-                from hledac.cortex.director import GhostDirector
+                from hledac.universal.hledac.cortex.director import GhostDirector
                 self._ghost_director = GhostDirector(max_steps=self.config.max_steps)
                 await self._ghost_director.initialize_drivers()
                 logger.info('✅ GhostDirector initialized (local)')
@@ -180,7 +180,7 @@ class GhostLayer:
         """Lazy initialization of RamDiskVault"""
         if self._vault is None:
             try:
-                from security.ram_vault import RamDiskVault
+                from hledac.universal.security.ram_vault import RamDiskVault
                 self._vault = RamDiskVault(size_mb=self.config.vault_size_mb)
                 await self._vault.ainitialize()
                 logger.info(f'✅ RamDiskVault initialized ({self.config.vault_size_mb}MB)')
@@ -192,7 +192,7 @@ class GhostLayer:
         """Lazy initialization of LootManager"""
         if self._loot_manager is None:
             try:
-                from hledac.supreme.security.loot_manager import LootManager
+                from hledac.universal.hledac.supreme.security.loot_manager import LootManager
                 self._loot_manager = LootManager()
                 logger.info('✅ LootManager initialized')
             except ImportError as e:

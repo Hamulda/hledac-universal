@@ -148,7 +148,7 @@ def test_bloom_filter() -> None:
     # ---- Python fallback (utils.bloom_filter.BloomFilter) ----
     py_ms: float | None = None
     try:
-        from utils.bloom_filter import BloomFilter as PyBF  # type: ignore
+        from hledac.universal.utils.bloom_filter import BloomFilter as PyBF  # type: ignore
         py_bf = PyBF(max_elements=100_000, error_rate=0.001)
 
         # Combined add+check
@@ -207,7 +207,7 @@ def test_rolling_hash() -> None:
     # ---- Python fallback (RollingHashPython) ----
     py_ms: float | None = None
     try:
-        from tools.rolling_hash_engine import RollingHashPython  # type: ignore
+        from hledac.universal.tools.rolling_hash_engine import RollingHashPython  # type: ignore
         py_rh = RollingHashPython(base=256, modulus=2**61 - 1)
         def py_hashes() -> int:
             total = 0

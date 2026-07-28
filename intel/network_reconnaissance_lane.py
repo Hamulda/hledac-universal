@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.network_reconnaissance_lane import *
+from hledac.universal.recon.network_reconnaissance_lane import *

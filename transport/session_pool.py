@@ -25,7 +25,7 @@ DEPRECATION PATH (ISSUE-010):
 - transport/connection_pool_manager.py: DEPRECATED — import from here instead
 
 Usage:
-    from transport.session_pool import session_pool
+    from hledac.universal.transport.session_pool import session_pool
 
     # httpx (HTTP/2 clearnet) — CANONICAL
     client = await session_pool.httpx()
@@ -36,7 +36,7 @@ Usage:
     resp = await client.get(url)
 
     # curl_cffi (JA3 stealth)
-    from transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
+    from hledac.universal.transport.curl_cffi_fetch import fetch_via_curl_cffi_cached
 """
 
 

@@ -115,7 +115,7 @@ class ThreatIntelligence:
         """
         if not self._initialized:
             await self.initialize()
-        from intelligence.kill_chain_tagger import ioc_to_technique_ids
+        from hledac.universal.intelligence.kill_chain_tagger import ioc_to_technique_ids
         threats: list[dict[str, Any]] = []
         stats = {'total': 0, 'high': 0, 'medium': 0, 'low': 0}
         findings = context.get('findings', [])
@@ -133,7 +133,7 @@ class ThreatIntelligence:
                     threats.append({'type': 'kill_chain_match', 'ioc': ioc_val, 'ioc_type': ioc_type, 'techniques': techniques, 'source': 'kill_chain_tagger', 'severity': 'medium'})
             if os.getenv('HLEDAC_ENABLE_GREYNOISE'):
                 try:
-                    from intelligence.greynoise_lane import query_greynoise_ip
+                    from hledac.universal.intelligence.greynoise_lane import query_greynoise_ip
                     for ioc in iocs:
                         ioc_val = str(ioc.get('value', ioc) if isinstance(ioc, dict) else ioc)
                         if _looks_like_ip(ioc_val):
@@ -207,7 +207,7 @@ class ThreatIntelligence:
         """
         if not self._initialized:
             await self.initialize()
-        from intelligence.kill_chain_tagger import ioc_to_technique_ids
+        from hledac.universal.intelligence.kill_chain_tagger import ioc_to_technique_ids
         ioc_str = str(ioc).strip()
         ioc_type = _ioc_type_from_value(ioc_str)
         techniques = ioc_to_technique_ids(ioc_type, ioc_str)
@@ -216,7 +216,7 @@ class ThreatIntelligence:
             result.update({'found': True, 'severity': 'medium', 'techniques': techniques, 'sources': ['kill_chain_tagger']})
         if os.getenv('HLEDAC_ENABLE_GREYNOISE') and _looks_like_ip(ioc_str):
             try:
-                from intelligence.greynoise_lane import query_greynoise_ip
+                from hledac.universal.intelligence.greynoise_lane import query_greynoise_ip
                 _, raw = await query_greynoise_ip(ioc_str, use_community=True)
                 if raw.get('classification') in ('malicious', 'suspicious'):
                     result.update({'found': True, 'severity': 'high', 'classification': raw['classification'], 'sources': result['sources'] + ['greynoise']})
@@ -224,7 +224,7 @@ class ThreatIntelligence:
                 pass
         if _looks_like_ip(ioc_str):
             try:
-                from network.session_runtime import async_get_httpx_session
+                from hledac.universal.network.session_runtime import async_get_httpx_session
                 session = await async_get_httpx_session()
                 async with session.get('https://data.iana.org/rdap/ipv4.json', timeout=httpx.Timeout(total=4)) as boot_resp:
                     if boot_resp.status_code == 200:
@@ -243,7 +243,7 @@ class ThreatIntelligence:
                 pass
         if _looks_like_ip(ioc_str) and os.getenv('HLEDAC_ENABLE_BGPTOOLS', '1') != '0':
             try:
-                from network.session_runtime import async_get_httpx_session
+                from hledac.universal.network.session_runtime import async_get_httpx_session
                 session = await async_get_httpx_session()
                 async with session.get(f'https://bgp.tools/prefix/{ioc_str}/json', headers={'User-Agent': 'hledac-security-research/1.0'}, timeout=httpx.Timeout(total=4)) as resp:
                     if resp.status_code == 200:

@@ -121,7 +121,7 @@ class ModelLifecycle:
 
         Raises RuntimeError if insufficient memory — prevents OOM crash.
         """
-        from core.env_config import ENV
+        from hledac.universal.core.env_config import ENV
 
         max_memory_bytes = ENV.get_memory_bytes("HLEDAC_MLX_MAX_MEMORY", default="3GB")
         if max_memory_bytes <= 0:
@@ -141,7 +141,7 @@ class ModelLifecycle:
         # Try Rust backend for sysctl HW_MEMSIZE check
         # check_available_memory_py is registered directly on the Rust module (rust.raw)
         try:
-            from core.rust_backend import rust
+            from hledac.universal.core.rust_backend import rust
             if rust.is_available:
                 raw = rust.raw
                 if hasattr(raw, "check_available_memory"):
@@ -197,7 +197,7 @@ class ModelLifecycle:
             # Nastavení PO load() nepomůže - model už má přidělenou paměť.
             mx = _get_mlx_safe()
             if mx is not None and hasattr(mx, "metal") and hasattr(mx.metal, "set_cache_limit"):
-                from utils.mlx_cache import get_dynamic_metal_cache_limit
+                from hledac.universal.utils.mlx_cache import get_dynamic_metal_cache_limit
 
                 mx.metal.set_cache_limit(get_dynamic_metal_cache_limit())
 

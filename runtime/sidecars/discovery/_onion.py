@@ -1,8 +1,8 @@
 """
 runtime/sidecars/discovery/_onion.py — F-ISSUE-005: OnionDiscoverySidecarAdapter
 """
-from runtime.sidecar_protocol import SidecarRegistry
-from runtime.sidecars._base import SchedulerBackedSidecarAdapter
+from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
 
 
 @SidecarRegistry.register("onion_discovery")

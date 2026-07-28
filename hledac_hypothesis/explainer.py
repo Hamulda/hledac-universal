@@ -90,7 +90,7 @@ class SimpleNodeAblationExplainer:
         try:
             ablation_scores = await self.graph_rag.score_paths_parallel(ablation_paths, hypothesis, max_nodes=max_nodes)
         except Exception:
-            from utils.async_helpers import safe_gather_ok
+            from hledac.universal.utils.async_helpers import safe_gather_ok
             ablation_tasks = [self.graph_rag.score_path(p, hypothesis, hypothesis_emb=hypothesis_emb) for p in ablation_paths]
             ablation_scores = await safe_gather_ok(*ablation_tasks, label='explain_path:fallback')
         importances = {}

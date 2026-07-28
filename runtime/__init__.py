@@ -6,7 +6,7 @@ The legacy v1 module (33k LOC) is kept for exhaustiveness of type definitions
 until all types are migrated.
 
 Pattern (PEP 562):
-    from runtime import SprintScheduler  # instant, no module load
+    from hledac.universal.runtime import SprintScheduler  # instant, no module load
     scheduler = SprintScheduler(...)   # triggers V2 import here
 
 Invariant: TYPE_CHECKING imports in callers are unaffected — static

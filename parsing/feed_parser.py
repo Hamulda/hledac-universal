@@ -125,7 +125,7 @@ def _sanitize_xml(raw: str) -> str:
     """
     # Fast path: try Rust backend first
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
 
         if rust.is_available:
             return rust.xml.sanitize_xml(raw)
@@ -656,7 +656,7 @@ def parse_feed(text: str, feed_url: str = "") -> list[FeedEntry]:
 
 _RUST_SANITIZE_AVAILABLE: bool = False
 try:
-    from core.rust_backend import rust
+    from hledac.universal.core.rust_backend import rust
 
     if rust.is_available:
         _batch_sanitize_xml = rust.xml.batch_sanitize_xml
@@ -713,7 +713,7 @@ async def parse_feeds_async(
             for sanitized, task in zip(sanitized_texts, tasks)
         ]
 
-    from utils.async_helpers import parallel_ok
+    from hledac.universal.utils.async_helpers import parallel_ok
     from typing import cast
     # parallel_ok: returns list[T] (successes only), exceptions silently dropped.
     result = await parallel_ok(

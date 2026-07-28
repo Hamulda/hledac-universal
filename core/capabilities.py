@@ -3,7 +3,7 @@ core.capabilities — Centralized optional dependency registry.
 F350M-R: Replaces scattered try/except ImportError chains.
 
 Usage:
-    from core.capabilities import CAPS, ZSTD, AIOHTTP, LIGHTPANDA
+    from hledac.universal.core.capabilities import CAPS, ZSTD, AIOHTTP, LIGHTPANDA
 
     class MyClass:
         def __init__(self):

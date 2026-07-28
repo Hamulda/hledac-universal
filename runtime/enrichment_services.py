@@ -278,7 +278,7 @@ class EnrichmentServices:
     async def _init_multimodal(self) -> None:
         """Initialize multimodal enricher and LMDB. Fail-safe — never raises."""
         try:
-            from multimodal.analyzer import MultimodalEnricher
+            from hledac.universal.multimodal.analyzer import MultimodalEnricher
             self._multimodal_enricher = MultimodalEnricher(governor=self._multimodal_governor, embedding_dim=1280, batch_size=4)
             await self._multimodal_enricher.initialize()
         except Exception as exc:

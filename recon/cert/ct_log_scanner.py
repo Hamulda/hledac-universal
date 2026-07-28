@@ -18,7 +18,7 @@ from hledac.universal.network.session_runtime import (
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from knowledge.duckdb_ct_cache_store import CTLogCacheStore
+    from hledac.universal.knowledge.duckdb_ct_cache_store import CTLogCacheStore
 
 # ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 # CTLogCacheStore replaces local SQLite3 cache with DuckDB for better M1 performance.
@@ -30,7 +30,7 @@ async def _get_duckdb_store() -> "CTLogCacheStore | None":
     global _DUCKDB_STORE
     if _DUCKDB_STORE is None:
         try:
-            from knowledge.duckdb_ct_cache_store import CTLogCacheStore
+            from hledac.universal.knowledge.duckdb_ct_cache_store import CTLogCacheStore
 
             store = CTLogCacheStore()
             await store.initialize()

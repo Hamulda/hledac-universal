@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 import msgspec
 
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 
 T = TypeVar("T", default=Any)
 
@@ -1849,7 +1849,7 @@ async def bounded_parallel_map[T, R](
         raw = await bounded_parallel_map(emails[:3], ..., concurrency=3)
 
         # NEW (UMA-aware dynamic):
-        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
         raw = await bounded_parallel_map(
             emails[:3],
             lambda e: hunter.check_target(e, 'email'),
@@ -1869,7 +1869,7 @@ async def bounded_parallel_map[T, R](
             concurrency = 1
     else:
         # Default: SCRAPE_GENERAL category for general scraping operations
-        from core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
         concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     sem = asyncio.Semaphore(concurrency)
@@ -2098,7 +2098,7 @@ async def chunked_taskgroup[T, R](
         if concurrency < 1:
             concurrency = 1
     else:
-        from core.concurrency_registry import ConcurrencyCategory, concurrency_budget
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
         concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
 
     all_results: list[R] = []

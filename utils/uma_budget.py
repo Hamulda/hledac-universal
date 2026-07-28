@@ -59,8 +59,8 @@ UMA_EMERGENCY_GIB: float = _THRESHOLD_EMERGENCY_GIB
 M1_FETCH_SOFT_CEILING_GB: float = round(_UMA_TOTAL_MB / 1024 * 0.88, 2)
 GENERAL_HIGH_WATER_RATIO: float = 0.85
 MAX_L2_CACHE_SIZE_MB: int = 50
-from core.memory import get_memory_snapshot as _rust_snapshot
-from core.psutil_shim import psutil_module as _psutil_mod
+from hledac.universal.core.memory import get_memory_snapshot as _rust_snapshot
+from hledac.universal.core.psutil_shim import psutil_module as _psutil_mod
 
 def _get_mlx_core():
     """Lazy MLX import for memory metrics."""
@@ -119,7 +119,7 @@ def get_mlx_memory_mb() -> tuple[int, int, int]:
     Issue #38 SSOT: Delegates to core.memory (Rust MLX probe).
     Falls back to direct mlx.core inspection for peak/cache unavailable in Rust.
     """
-    from core.memory import get_metal_active_memory_bytes
+    from hledac.universal.core.memory import get_metal_active_memory_bytes
     try:
         active_bytes = get_metal_active_memory_bytes()
         active_mb = int(active_bytes / 1024 ** 2)

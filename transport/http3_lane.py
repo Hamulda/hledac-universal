@@ -55,7 +55,7 @@ import asyncio
 import functools
 import logging
 import time
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 from typing import Any
 from urllib.parse import urlparse
 
@@ -76,7 +76,7 @@ _H3_RSS_BLOCK_GIB: float = M1_BOUNDS().fetch_soft_ceiling_gb
 _H3_RSS_PROBE_TIMEOUT_S: float = M1_BOUNDS().rss_probe_timeout_s
 
 # Issue #17: psutil Process singleton from centralized psutil_shim.
-from core.psutil_shim import process as _psutil_proc
+from hledac.universal.core.psutil_shim import process as _psutil_proc
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +336,7 @@ def is_dark_web_url(url: str) -> bool:
     Never raises.
     """
     try:
-        from transport.transport_router import TransportRouter
+        from hledac.universal.transport.transport_router import TransportRouter
         kind, host = TransportRouter()._classify_url(url)
         return kind in ("onion", "i2p")
     except Exception:

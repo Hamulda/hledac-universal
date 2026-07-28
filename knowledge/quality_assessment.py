@@ -54,7 +54,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Rust backend — centralized access via core.rust_backend (F265C refactor)
 # ---------------------------------------------------------------------------
-from core.rust_backend import rust as _rust_backend
+from hledac.universal.core.rust_backend import rust as _rust_backend
 
 # Convenience flags — LAZY, resolved on every call.
 # Previously set at import time (False even if Rust became available later).

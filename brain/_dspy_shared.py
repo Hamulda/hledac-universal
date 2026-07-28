@@ -13,7 +13,7 @@ Single source of truth for:
   - Batch scoring concurrency constants (M1 8GB bounded)
 
 Usage:
-    from brain._dspy_shared import load_programs, ENABLED, CACHE_PATH
+    from hledac.universal.brain._dspy_shared import load_programs, ENABLED, CACHE_PATH
 """
 from __future__ import annotations
 

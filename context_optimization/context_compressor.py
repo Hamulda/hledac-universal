@@ -23,7 +23,7 @@ from hledac.universal.utils.async_helpers import safe_gather_ok
 logger = logging.getLogger(__name__)
 FASTEMBED_AVAILABLE = False
 try:
-    from core.mlx_embeddings import MLXEmbeddingManager
+    from hledac.universal.core.mlx_embeddings import MLXEmbeddingManager
     MLX_EMBED_AVAILABLE = True
 except ImportError:
     MLX_EMBED_AVAILABLE = False
@@ -123,7 +123,7 @@ class ContextCompressor:
         self._embedder_type = None
         if MLX_EMBED_AVAILABLE:
             try:
-                from core.mlx_embeddings import get_embedding_manager
+                from hledac.universal.core.mlx_embeddings import get_embedding_manager
                 self._mlx_manager = get_embedding_manager()
                 self.embedder = self._mlx_manager
                 self.embedding_dim = self._mlx_manager.EMBEDDING_DIM

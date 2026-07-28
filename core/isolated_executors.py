@@ -651,7 +651,7 @@ def get_duckdb_executor() -> IsolatedDuckDBExecutor:
         return _duckdb_pool
 
     try:
-        from core.container import get_global_container
+        from hledac.universal.core.container import get_global_container
 
         container = get_global_container()
         inst = container.try_get("executor.duckdb")
@@ -679,7 +679,7 @@ def get_mlx_executor() -> IsolatedMLXExecutor:
         return _mlx_pool
 
     try:
-        from core.container import get_global_container
+        from hledac.universal.core.container import get_global_container
 
         container = get_global_container()
         inst = container.try_get("executor.mlx")
@@ -707,7 +707,7 @@ def get_evidence_batch_writer() -> IsolatedEvidenceBatchWriter:
         return _evidence_pool
 
     try:
-        from core.container import get_global_container
+        from hledac.universal.core.container import get_global_container
 
         container = get_global_container()
         inst = container.try_get("executor.evidence")

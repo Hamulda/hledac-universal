@@ -25,11 +25,11 @@ def __getattr__(name: str):
     if not _LOADED:
         _LOADED = True
         # Import submodules to trigger @SidecarRegistry.register
-        from runtime.sidecars.discovery import _onion as _onion_mod
-        from runtime.sidecars.discovery import _i2p as _i2p_mod
-        from runtime.sidecars.discovery import _ipfs as _ipfs_mod
-        from runtime.sidecars.discovery import _dht as _dht_mod
-        from runtime.sidecars.discovery import _commoncrawl as _cc_mod
+        from hledac.universal.runtime.sidecars.discovery import _onion as _onion_mod
+        from hledac.universal.runtime.sidecars.discovery import _i2p as _i2p_mod
+        from hledac.universal.runtime.sidecars.discovery import _ipfs as _ipfs_mod
+        from hledac.universal.runtime.sidecars.discovery import _dht as _dht_mod
+        from hledac.universal.runtime.sidecars.discovery import _commoncrawl as _cc_mod
 
         _CACHE.update({
             "OnionDiscoverySidecarAdapter": _onion_mod.OnionDiscoverySidecarAdapter,

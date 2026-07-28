@@ -6,7 +6,7 @@ Architecture (F350M-R):
         - core/rust_backend/ioc.py Python domain (cold path fallback)
 
     This module provides one canonical entry point:
-        from knowledge.ioc_processor import IOCProcessor, fast_ioc_extract
+        from hledac.universal.knowledge.ioc_processor import IOCProcessor, fast_ioc_extract
 
     Hot path (canonical write): knowledge/duckdb_store.py uses
         batch_ioc_extract_unified directly from hledac_rust_extensions.
@@ -28,7 +28,7 @@ from urllib.parse import parse_qsl as _parse_qsl, urlencode as _urlencode, urlpa
 
 # ─── AccelBackend facade (properly lazy, single probe) ────────────────────────
 
-from core.rust_backend import get_accel as _get_accel
+from hledac.universal.core.rust_backend import get_accel as _get_accel
 
 # ─── Python fallback regexes (pre-compiled, module-level) ──────────────────────
 
@@ -164,7 +164,7 @@ class IOCProcessor:
         iocs = processor.extract("example.com 192.168.1.1 test@example.com")
 
     Or functional API (same underlying logic):
-        from knowledge.ioc_processor import fast_ioc_extract
+        from hledac.universal.knowledge.ioc_processor import fast_ioc_extract
         iocs = fast_ioc_extract(text)
     """
 
@@ -375,7 +375,7 @@ def _iocs_to_findings(
 ) -> list:
     """Convert IOC list to CanonicalFinding objects."""
     # Import here to avoid circular dependency
-    from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
     MAX_IOC_FINDINGS = 100
     findings: list = []

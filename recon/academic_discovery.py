@@ -32,7 +32,7 @@ import re
 from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
-from utils.sync_bridge import run_sync_async
+from hledac.universal.utils.sync_bridge import run_sync_async
 from typing import Any
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 

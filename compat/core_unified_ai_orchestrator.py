@@ -15,4 +15,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from brain.unified_research_bridge import UnifiedAIOrchestrator
+from hledac.universal.brain.unified_research_bridge import UnifiedAIOrchestrator

@@ -118,7 +118,7 @@ class PipelineOrchestrator:
         from ._match_stage import MatchStage
         from ._enrich_stage import EnrichStage
         from ._store_stage import StoreStage
-        from coordinators.aimd_controllers import (
+        from hledac.universal.coordinators.aimd_controllers import (
             make_enrich_aimd,
             make_extract_aimd,
             make_fetch_aimd,

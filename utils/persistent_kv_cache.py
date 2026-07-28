@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from utils.lru_cache import LRUCache  # noqa: I001
+from hledac.universal.utils.lru_cache import LRUCache  # noqa: I001
 
 import msgspec  # noqa: E402 (lazy, ok at module level for msgpack encode/decode)
 

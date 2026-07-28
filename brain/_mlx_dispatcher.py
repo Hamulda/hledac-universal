@@ -25,7 +25,7 @@ ANE routing (ISSUE #31):
 M1 8GB: unified memory znamená žádný IPC marshalling overhead.
 
 Usage:
-    from brain._mlx_dispatcher import MLXDispatcher, get_mlx_dispatcher
+    from hledac.universal.brain._mlx_dispatcher import MLXDispatcher, get_mlx_dispatcher
 
     dispatcher = get_mlx_dispatcher()
     if dispatcher.is_mlx_enabled:
@@ -880,7 +880,7 @@ def set_dispatcher_context(ctx: _DispatcherContext | None=None) -> None:
     ISSUE #15: Nahrazuje globální state per-sprint izolací.
 
     Použití na začátku sprintu:
-        from brain._mlx_dispatcher import set_dispatcher_context, _DispatcherContext
+        from hledac.universal.brain._mlx_dispatcher import set_dispatcher_context, _DispatcherContext
         set_dispatcher_context(_DispatcherContext())
 
     Použití na konci sprintu:

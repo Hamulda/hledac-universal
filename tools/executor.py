@@ -221,7 +221,7 @@ def execute_dns_tunnel_sync(args: dict) -> dict:
 
 def create_default_registry() -> ToolRegistry:
     """Create ToolRegistry with all built-in tools registered."""
-    from tools.registry import CostModel, RateLimits, RiskLevel, Tool, ToolRegistry
+    from hledac.universal.tools.registry import CostModel, RateLimits, RiskLevel, Tool, ToolRegistry
 
     registry = ToolRegistry()
     registry.register(

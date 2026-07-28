@@ -39,7 +39,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 logger = logging.getLogger(__name__)
 _COREML_AVAILABLE = False
 _VN_AVAILABLE = False
@@ -295,7 +295,7 @@ class VisionCaptchaSolver:
             return None
         try:
             import base64
-            from network.session_runtime import async_get_httpx_session
+            from hledac.universal.network.session_runtime import async_get_httpx_session
         except ImportError:
             logger.warning('httpx not available for 2captcha')
             return None

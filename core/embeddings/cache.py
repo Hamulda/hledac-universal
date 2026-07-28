@@ -43,7 +43,7 @@ import numpy as np
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 
 try:
-    from utils.msgspec_json import decode as _msgspec_decode, encode as _msgspec_encode
+    from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode as _msgspec_encode
 except ImportError:
     _msgspec_decode = cast(Any, None)
     _msgspec_encode = cast(Any, None)
@@ -455,7 +455,7 @@ class EmbeddingCache:
             return None
 
     async def _default_encode(self, text: str) -> np.ndarray:
-        from core.embeddings.manager import get_mlx_embedder
+        from hledac.universal.core.embeddings.manager import get_mlx_embedder
 
         mgr = get_mlx_embedder()
         result = mgr.encode(text, normalize=True, truncate_dim=self.dim)

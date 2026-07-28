@@ -157,7 +157,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         """Initialize monitoring subsystems with graceful degradation."""
         _AdvancedMonitoringImpl: type | None = None
         try:
-            from hledac.monitoring.advanced_monitoring import AdvancedMonitoring as _AM
+            from hledac.universal.hledac.monitoring.advanced_monitoring import AdvancedMonitoring as _AM
             _AdvancedMonitoringImpl = _AM
         except ImportError:
             logger.warning('MonitoringCoordinator: AdvancedMonitoring not available')
@@ -462,7 +462,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Security audit report
         """
         try:
-            from hledac.tools.audit.security_auditor import SecurityAuditor
+            from hledac.universal.hledac.tools.audit.security_auditor import SecurityAuditor
             auditor = SecurityAuditor()
             target = target_path or os.getcwd()
             report = await auditor.audit_directory(path=target, include_patterns=include_patterns or ['*.py', '*.js', '*.ts'], exclude_patterns=exclude_patterns or ['**/node_modules/**', '**/.venv/**', '**/__pycache__/**', '**/dist/**', '**/build/**', '**/tests/**'])
@@ -496,7 +496,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Integrity validation report
         """
         try:
-            from hledac.tools.diagnostics.codebase_integrity_validator import CodebaseIntegrityValidator, ValidationConfig
+            from hledac.universal.hledac.tools.diagnostics.codebase_integrity_validator import CodebaseIntegrityValidator, ValidationConfig
             config = ValidationConfig(min_lines_of_code=min_lines_of_code, strict_mode=strict_mode)
             validator = CodebaseIntegrityValidator(config)
             target = target_path or os.getcwd()
@@ -524,7 +524,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Syntax verification report
         """
         try:
-            from hledac.tools.audit.syntax_verifier import SyntaxVerifier, VerificationConfig
+            from hledac.universal.hledac.tools.audit.syntax_verifier import SyntaxVerifier, VerificationConfig
             config = VerificationConfig(auto_fix=auto_fix, parallel=parallel, max_workers=4)
             verifier = SyntaxVerifier(config)
             target = target_path or os.getcwd()
@@ -636,7 +636,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Diagnostics report with issues and recommendations
         """
         try:
-            from hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticResult, DiagnosticsEngine
+            from hledac.universal.hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticResult, DiagnosticsEngine
             engine = DiagnosticsEngine(enable_auto_diagnostics=False, m1_optimization=True)
             issues = []
             if component:
@@ -670,7 +670,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Start confirmation
         """
         try:
-            from hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticsEngine
+            from hledac.universal.hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticsEngine
             if not hasattr(self, '_diagnostics_engine'):
                 self._diagnostics_engine = DiagnosticsEngine(enable_auto_diagnostics=True, diagnostic_interval=interval_seconds, m1_optimization=True)
             success = await self._diagnostics_engine.start_diagnostics()

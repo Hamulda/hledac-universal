@@ -532,7 +532,7 @@ class RelationshipDiscoveryEngine:
         try:
             from ._graph_serde import save_nx_graph_jsonl
         except ImportError:
-            from recon._graph_serde import save_nx_graph_jsonl
+            from hledac.universal.recon._graph_serde import save_nx_graph_jsonl
         if NETWORKX_AVAILABLE and self._nx_graph is not None:
             ok = save_nx_graph_jsonl(path, self._nx_graph, max_nodes=self.MAX_NODES)
             if not ok:
@@ -572,7 +572,7 @@ class RelationshipDiscoveryEngine:
         try:
             from ._graph_serde import is_our_format, load_nx_graph_jsonl
         except ImportError:
-            from recon._graph_serde import is_our_format, load_nx_graph_jsonl
+            from hledac.universal.recon._graph_serde import is_our_format, load_nx_graph_jsonl
         if NETWORKX_AVAILABLE and is_our_format(path):
             loaded = load_nx_graph_jsonl(path, max_nodes=self.MAX_NODES)
             if loaded is not None:
@@ -589,7 +589,7 @@ class RelationshipDiscoveryEngine:
                 pass
         if is_safe_path and NETWORKX_AVAILABLE:
             try:
-                from recon._graph_serde import load_nx_graph_jsonl
+                from hledac.universal.recon._graph_serde import load_nx_graph_jsonl
                 obj = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
                 if obj is not None:
                     self._nx_graph = obj
@@ -600,7 +600,7 @@ class RelationshipDiscoveryEngine:
             logger.warning(f'[F196B] legacy pickle load rejected for unsafe path: {path}')
         if is_safe_path:
             try:
-                from recon._graph_serde import load_nx_graph_jsonl
+                from hledac.universal.recon._graph_serde import load_nx_graph_jsonl
                 loaded = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
                 if loaded is not None:
                     self._nx_graph = loaded
@@ -1656,7 +1656,7 @@ class RelationshipDiscoveryEngine:
         try:
             from ._graph_serde import save_nx_graph_jsonl
         except ImportError:
-            from recon._graph_serde import save_nx_graph_jsonl
+            from hledac.universal.recon._graph_serde import save_nx_graph_jsonl
         ok = save_nx_graph_jsonl(str(path), nx_graph, max_nodes=self.MAX_NODES)
         if not ok:
             logger.warning('[RelDiscovery] save_graph failed (jsonl path) -> %s', path)
@@ -1676,7 +1676,7 @@ class RelationshipDiscoveryEngine:
         try:
             from ._graph_serde import is_our_format, load_nx_graph_jsonl
         except ImportError:
-            from recon._graph_serde import is_our_format, load_nx_graph_jsonl
+            from hledac.universal.recon._graph_serde import is_our_format, load_nx_graph_jsonl
         nx_graph: Any | None = None
         if is_our_format(str(path)):
             nx_graph = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
@@ -1685,7 +1685,7 @@ class RelationshipDiscoveryEngine:
             graphs_root = _P('~/.hledac/graphs').expanduser().resolve()
             if str(_P(str(path)).resolve()).startswith(str(graphs_root) + '/'):
                 try:
-                    from recon._graph_serde import load_nx_graph_jsonl
+                    from hledac.universal.recon._graph_serde import load_nx_graph_jsonl
                     nx_graph = load_nx_graph_jsonl(str(path), max_nodes=self.MAX_NODES)
                 except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     logger.warning('[F196B] legacy JSON load_graph failed: %s', e)

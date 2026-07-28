@@ -36,7 +36,7 @@ import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
-    from brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ _MAX_MEMORY_BYTES: int = 6_400 * 1024 * 1024  # 6.25 GiB in bytes
 def _get_mlx_bridge_config() -> dict[str, Any]:
     """Get MLX bridge configuration from Rust or Python fallback."""
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
 
         if rust.is_available:
             cfg = rust.mlx.MLXBridgeConfig(
@@ -81,7 +81,7 @@ def _get_mlx_bridge_config() -> dict[str, Any]:
 def _create_mlx_bridge(engine: Any, tokenizer: Any) -> Any:
     """Create MLX bridge from Rust or Python fallback."""
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
 
         if rust.is_available:
             return rust.mlx.MLXBridge(engine, tokenizer)
@@ -196,7 +196,7 @@ async def generate_stream_adaptive(
     MBridge.3: Adaptive chunk sizing based on memory pressure
     MBridge.4: Respects _stream_cancelled Event
     """
-    from brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
     temp = temperature if temperature is not None else 0.1
 
@@ -206,7 +206,7 @@ async def generate_stream_adaptive(
     # Create MLX bridge for memory feedback (MBridge.5)
     bridge = None
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
 
         if rust.is_available:
             bridge = rust.mlx.MLXBridge(engine, None)
@@ -240,7 +240,7 @@ async def generate_stream_adaptive(
                 last_pressure_check = now
                 try:
                     # Use canonical mlx_memory module (not raw mx.metal.get_active_memory)
-                    from utils.mlx_memory import get_mlx_memory_pressure
+                    from hledac.universal.utils.mlx_memory import get_mlx_memory_pressure
 
                     _, level = get_mlx_memory_pressure()
                     # Map NORMAL|WARNING|CRITICAL to lowercase
@@ -337,7 +337,7 @@ async def stream_with_prefetch(
     prefetch_task = None
     if prefetch_prompt:
         # F350M-R ISSUE #31: safe_create_task with eager_start=True (KV cache prefetch is hot path)
-        from utils.async_helpers import safe_create_task
+        from hledac.universal.utils.async_helpers import safe_create_task
         prefetch_task = safe_create_task(
             _prefetch_kv_cache(engine, prefetch_prompt), eager_start=True
         )
@@ -399,7 +399,7 @@ def _sync_prefetch(engine: DeepHermes3Engine, prompt: str) -> str:
     - On M1 8GB: skip prefetch if memory pressure is CRITICAL
     """
     try:
-        from utils.mlx_memory import get_mlx_memory_pressure
+        from hledac.universal.utils.mlx_memory import get_mlx_memory_pressure
 
         _, level = get_mlx_memory_pressure()
         if level == "CRITICAL":

@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.temporal_analysis import *
+from hledac.universal.recon.temporal_analysis import *

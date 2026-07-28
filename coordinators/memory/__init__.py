@@ -9,14 +9,14 @@ Sub-modules:
 - multi_level_cache: Multi-level context cache with semantic search (FAISS/USearch HNSW)
 
 Canonical imports:
-    from coordinators.memory import ContextOptimizationManager, MultiLevelContextCache
+    from hledac.universal.coordinators.memory import ContextOptimizationManager, MultiLevelContextCache
 
 Backwards compatibility (deprecated):
-    from coordinators.memory_coordinator import ContextOptimizationManager
-    from coordinators.memory_coordinator import MultiLevelContextCache
+    from hledac.universal.coordinators.memory_coordinator import ContextOptimizationManager
+    from hledac.universal.coordinators.memory_coordinator import MultiLevelContextCache
 """
 
-from coordinators.memory.context_optimizer import (
+from hledac.universal.coordinators.memory.context_optimizer import (
     ContextPriority,
     ContextItem,
     CompressedContext,
@@ -24,7 +24,7 @@ from coordinators.memory.context_optimizer import (
     ResearchPhase,
 )
 
-from coordinators.memory.multi_level_cache import (
+from hledac.universal.coordinators.memory.multi_level_cache import (
     CacheType,
     CacheLocation,
     CacheEntry,

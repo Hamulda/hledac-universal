@@ -456,7 +456,7 @@ class SSLAnalyzer:
         try:
             # Try Rust tls13 module first (<1ms, accurate JA4)
             try:
-                from core.rust_backend import rust as _rust
+                from hledac.universal.core.rust_backend import rust as _rust
                 if hasattr(_rust, 'tls') and _rust.TLS13_AVAILABLE:
                     result = _rust.tls.connect_and_ja4(hostname, port, timeout_ms=timeout_ms)
                     result['host'] = hostname
@@ -544,7 +544,7 @@ class NetworkReconnaissance:
         """Lazy load Rust batch_ip_classify, fail-soft if unavailable."""
         if cls._rust_batch_classify is None:
             try:
-                from core.rust_backend import rust as _rust_backend
+                from hledac.universal.core.rust_backend import rust as _rust_backend
                 if _rust_backend.is_available and _rust_backend.ip is not None:
                     cls._rust_batch_classify = _rust_backend.ip.batch_ip_classify
                 else:

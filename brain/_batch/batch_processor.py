@@ -174,7 +174,7 @@ class BatchProcessor:
     def _get_memory_pressure(self) -> float:
         """Get current memory pressure (0.0 - 1.0)."""
         try:
-            from brain._metal.metal_device import get_metal_device
+            from hledac.universal.brain._metal.metal_device import get_metal_device
             device = get_metal_device()
             stats = device.get_stats()
             # Map to 0-1 range (2GB = 1.0)

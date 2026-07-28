@@ -10,7 +10,7 @@ Optimized for M1 Mac with memory-efficient implementations.
 """
 import asyncio
 import hashlib
-from utils.hashing import xxh3_64_hex, sha256_hex, blake3_64_hex
+from hledac.universal.utils.hashing import xxh3_64_hex, sha256_hex, blake3_64_hex
 import json
 import logging
 import os
@@ -41,7 +41,7 @@ except ImportError:
 _rust_lsh_available = False
 _rust_lsh = None
 try:
-    from core.rust_backend import rust
+    from hledac.universal.core.rust_backend import rust
     _rust_lsh = rust.lsh
     _rust_lsh_available = True  # Always available (Rust or Python fallback)
 except ImportError:
@@ -50,7 +50,7 @@ except ImportError:
 # ISSUE-008: Two-layer embedding cache — float16 L1 + np.memmap L2 (M1 8GB safe)
 _embedding_cache = None
 try:
-    from core.embedding_cache import EmbeddingCache
+    from hledac.universal.core.embedding_cache import EmbeddingCache
     _embedding_cache = EmbeddingCache
 except ImportError:
     _embedding_cache = None
@@ -181,13 +181,13 @@ class SemanticDeduplicator(BaseDeduplicator):
             )
         else:
             # Fallback: pure Python LRUCache (replaces OrderedDict)
-            from utils.lru_cache import LRUCache
+            from hledac.universal.utils.lru_cache import LRUCache
             self.embedding_cache: Any = LRUCache(max_size=5000)
         self.embedding_cache_size = 0
         self.max_cache_size_mb = 256
         self._embedding_model = None
         self._model_loaded = False
-        from utils.domain_executors import get_semantic_executor
+        from hledac.universal.utils.domain_executors import get_semantic_executor
         self.executor = get_semantic_executor()
         self._simhash = SimHash(hashbits=64)
         # ISSUE-008: Rust LSH index — O(1) near-duplicate detection (<50ms for 10k sigs)
@@ -346,7 +346,7 @@ class SemanticDeduplicator(BaseDeduplicator):
     async def _load_model(self):
         """Load MLXEmbeddingManager first, then sentence-transformers fallback, then hash-based."""
         try:
-            from core.mlx_embeddings import get_embedding_manager
+            from hledac.universal.core.mlx_embeddings import get_embedding_manager
             self._embedding_model = get_embedding_manager()
             self._model_loaded = True
             self.logger.info(f'[DEDUP] Using shared MLXEmbeddingManager: {self._embedding_model.model_path}')
@@ -433,7 +433,7 @@ class ContentDeduplicator(BaseDeduplicator):
         self.content_cache: dict[str, dict[str, Any]] = {}
         self.cache_size = 0
         self.max_cache_size_mb = 128
-        from utils.domain_executors import get_content_executor
+        from hledac.universal.utils.domain_executors import get_content_executor
         self.executor = get_content_executor()
         self._simhash = SimHash(hashbits=64)
 
@@ -605,7 +605,7 @@ class MetadataDeduplicator(BaseDeduplicator):
         self.field_weights = {'title': 0.4, 'url': 0.3, 'source': 0.1, 'timestamp': 0.1, 'author': 0.1}
         self.stop_words = self._get_stop_words()
         self.normalization_cache: dict[str, str] = {}
-        from utils.domain_executors import get_metadata_executor
+        from hledac.universal.utils.domain_executors import get_metadata_executor
         self.executor = get_metadata_executor()
 
     async def find_duplicates(self, item: QueryItem, candidates: list[QueryItem]) -> list[DeduplicationMatch]:

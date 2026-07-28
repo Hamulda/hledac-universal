@@ -13,7 +13,7 @@ M1 8GB constraints:
 - asyncio.to_thread = macOS QoS-aware, automatic backpressure
 
 Použití:
-    from utils.html_parse_pool import parse_html_links, parse_html_text
+    from hledac.universal.utils.html_parse_pool import parse_html_links, parse_html_text
 
     # Pro linking extraction (selectolax-based)
     links = await parse_html_links(html_content)

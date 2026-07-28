@@ -65,7 +65,7 @@ async def _get_dht_node() -> KademliaNode | None:
             return _node_instance
 
         try:
-            from core.resource_governor import ResourceGovernor
+            from hledac.universal.core.resource_governor import ResourceGovernor
             from dht.kademlia_node import KademliaNode
             from dht.local_graph import LocalGraphStore
 
@@ -194,7 +194,7 @@ async def async_search_dht(
 
         async with asyncio.timeout(timeout_s):
             # P1-02: Parallelizace přes parallel() — DHT get_peers je ~100-500ms, paralelně ~500ms místo 5-10s
-            from utils.async_helpers import parallel
+            from hledac.universal.utils.async_helpers import parallel
 
             async def _get_peers_for_candidate(ih_candidate: str) -> list[tuple[str, int, str]]:
                 """Fetch peers for one infohash candidate, return list of (ip, port, info_hash)."""

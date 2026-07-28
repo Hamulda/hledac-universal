@@ -5,7 +5,7 @@ Used to decide which entities to enrich next — picks the action with
 highest expected information gain given current belief state.
 
 Usage:
-    from utils.eig import EIGCalculator
+    from hledac.universal.utils.eig import EIGCalculator
     calc = EIGCalculator(bandit_arms={'entity_a': DempsterShafer(...)})
     eig = calc.compute_eig(hypothesis_set, candidate_action)
     if eig > EIG_THRESHOLD:
@@ -14,7 +14,7 @@ Usage:
 import math
 from typing import Any
 try:
-    from brain.evidence_fusion import DempsterShafer
+    from hledac.universal.brain.evidence_fusion import DempsterShafer
     _DS_AVAILABLE = True
 except ImportError:
     _DS_AVAILABLE = False

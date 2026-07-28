@@ -13,7 +13,7 @@ Architectural invariants:
 - Lazy import mlx.core — never at module level
 """
 
-from core.embeddings.manager import (
+from hledac.universal.core.embeddings.manager import (
     EmbeddingTask,
     EmbeddingDimensionError,
     AdaptiveEmbeddingBatcher,
@@ -30,9 +30,9 @@ from core.embeddings.manager import (
     should_normalize,
 )
 
-from core.embeddings.cache import EmbeddingCache, get_embedding_cache, get_embedding_cache_stats
+from hledac.universal.core.embeddings.cache import EmbeddingCache, get_embedding_cache, get_embedding_cache_stats
 
-from core.embeddings.pool import (
+from hledac.universal.core.embeddings.pool import (
     init_mlx_buffers,
     mlx_cleanup_sync,
     mlx_cleanup_aggressive,

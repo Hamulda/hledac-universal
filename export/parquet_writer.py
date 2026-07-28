@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
 
 __all__ = [

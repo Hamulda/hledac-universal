@@ -13,7 +13,7 @@ GHOST_INVARIANTS:
 
 from typing import Any, Iterator
 
-from runtime.protocols.graph_protocol import GraphProtocol
+from hledac.universal.runtime.protocols.graph_protocol import GraphProtocol
 
 
 class DuckPGQGraphAdapter(GraphProtocol):

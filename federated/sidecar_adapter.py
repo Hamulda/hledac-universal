@@ -308,7 +308,7 @@ class FederatedSidecarAdapter:
         """
         canonical_cls: type | None = None
         try:
-            from knowledge.duckdb_store import CanonicalFinding
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
             canonical_cls = CanonicalFinding
         except Exception:
             try:

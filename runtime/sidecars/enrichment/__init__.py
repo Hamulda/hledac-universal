@@ -22,9 +22,9 @@ def __getattr__(name: str):
     global _LOADED
     if not _LOADED:
         _LOADED = True
-        from runtime.sidecars.enrichment import _bgp as _bgp_mod
-        from runtime.sidecars.enrichment import _banner as _banner_mod
-        from runtime.sidecars.enrichment import _ti_feed as _ti_mod
+        from hledac.universal.runtime.sidecars.enrichment import _bgp as _bgp_mod
+        from hledac.universal.runtime.sidecars.enrichment import _banner as _banner_mod
+        from hledac.universal.runtime.sidecars.enrichment import _ti_feed as _ti_mod
 
         _CACHE.update({
             "BGPEnrichmentSidecarAdapter": _bgp_mod.BGPEnrichmentSidecarAdapter,

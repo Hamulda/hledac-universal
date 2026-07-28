@@ -18,12 +18,12 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING
 
-from utils.locks import LazyAsyncioLock
+from hledac.universal.utils.locks import LazyAsyncioLock
 if TYPE_CHECKING:
     from collections.abc import Awaitable
-    from core.resource_governor import GovernorDecision
+    from hledac.universal.core.resource_governor import GovernorDecision
 logger = logging.getLogger(__name__)
-from core.psutil_shim import psutil
+from hledac.universal.core.psutil_shim import psutil
 
 class AtomicAdaptiveSemaphore:
     """
@@ -239,7 +239,7 @@ def get_adaptive_limit() -> int:
     - otherwise: CLEARNET_CONCURRENCY (25)
     """
     try:
-        from core.psutil_shim import process as _psutil_process
+        from hledac.universal.core.psutil_shim import process as _psutil_process
         p = _psutil_process()
         if p is None:
             return CLEARNET_CONCURRENCY
@@ -320,13 +320,13 @@ class AdaptiveWorkerPool:
         Returns GovernorDecision for caller convenience.
         """
         async with self._lock:
-            from core.resource_governor import M1ResourceGovernor
+            from hledac.universal.core.resource_governor import M1ResourceGovernor
             governor = M1ResourceGovernor(cache_ttl_s=2.0)
             decision = await governor.evaluate()
             self._uma_state = decision.uma_state
             self._io_only = decision.io_only
             self._fetch_limit = decision.fetch_limit
-            from core.resource_governor import ConcurrencyPreset
+            from hledac.universal.core.resource_governor import ConcurrencyPreset
             preset = ConcurrencyPreset.from_state(decision.uma_state)
             self._max_workers = preset.max_workers
             await self._apply_fetch_limit(decision.fetch_limit)

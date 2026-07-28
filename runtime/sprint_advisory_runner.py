@@ -44,7 +44,7 @@ try:
     from hledac.universal.utils.source_types import SourceType
 except ImportError:
     SourceType = None
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 MAX_PIVOTS: int = 20
 _ADVISORY_PARALLEL_SEMAPHORE_LIMIT: int = 4
 

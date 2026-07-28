@@ -58,7 +58,7 @@ def _ensure_bootstrap() -> None:
             return
 
         try:
-            from hledac._namespace_bootstrap import ensure_namespace_paths
+            from hledac.universal.hledac._namespace_bootstrap import ensure_namespace_paths
 
             ensure_namespace_paths()
             _BOOTSTRAPPED = True  # Set ONLY after successful bootstrap

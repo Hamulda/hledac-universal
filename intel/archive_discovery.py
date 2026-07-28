@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.archive_discovery import *
+from hledac.universal.recon.archive_discovery import *

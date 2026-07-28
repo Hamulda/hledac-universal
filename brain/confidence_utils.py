@@ -5,7 +5,7 @@ Used in enrichment confidence policy — updates confidence after each new
 evidence piece using Bayesian inference.
 
 Usage:
-    from brain.confidence_utils import BetaBinomial
+    from hledac.universal.brain.confidence_utils import BetaBinomial
     bb = BetaBinomial(alpha=successes+1, beta=failures+1)
     confidence = bb.belief()
 """

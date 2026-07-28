@@ -9,7 +9,7 @@ Registry-driven: the available stats are documented in one place.
 No hasattr calls, no bare except: pass, no exception object allocation on miss.
 
 Usage:
-    from core.rust_backend.stats import StatCollector
+    from hledac.universal.core.rust_backend.stats import StatCollector
     stats = StatCollector().collect(hledac_rust_extensions)
 """
 from __future__ import annotations

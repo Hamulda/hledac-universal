@@ -6,8 +6,8 @@ This module is a backward-compatibility shim. All symbols have been
 consolidated into ``hledac_hypothesis`` package.
 
 OLD imports (still work):
-    from brain.hypothesis_engine import AdversarialVerifier
-    from brain.hypothesis_engine._types import HypothesisType
+    from hledac.universal.brain.hypothesis_engine import AdversarialVerifier
+    from hledac.universal.brain.hypothesis_engine._types import HypothesisType
 
 NEW imports (preferred):
     from hledac_hypothesis import AdversarialVerifier

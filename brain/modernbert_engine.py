@@ -71,7 +71,7 @@ class ModernBertEngine:
             MODERNBERT_AVAILABLE = False
             return False
         try:
-            from core.mlx_embeddings import get_mlx_embedder
+            from hledac.universal.core.mlx_embeddings import get_mlx_embedder
             self._manager = get_mlx_embedder()
             if not self._manager.is_loaded:
                 await asyncio.to_thread(self._manager._load_model)

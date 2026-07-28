@@ -68,7 +68,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from core.resource_governor import M1ResourceGovernor
+    from hledac.universal.core.resource_governor import M1ResourceGovernor
 logger = logging.getLogger(__name__)
 
 

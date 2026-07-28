@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
 
-from core.resource_governor import _get_cached_psutil_async, _read_virtual_memory_sync, _read_swap_memory_sync
+from hledac.universal.core.resource_governor import _get_cached_psutil_async, _read_virtual_memory_sync, _read_swap_memory_sync
 
 if TYPE_CHECKING:
     import psutil
@@ -124,7 +124,7 @@ async def process_rss_gib() -> float:
     Falls back to 0.0 on error.
     """
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
 
         if rust.is_available:
             return rust.memory.get_process_rss_gib()
@@ -140,7 +140,7 @@ async def available_memory_gib() -> float:
     Uses rust.memory.get_available_memory_gib() — no psutil.
     """
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
 
         if rust.is_available:
             return rust.memory.get_available_memory_gib()
@@ -158,7 +158,7 @@ async def memory_pressure_level() -> int:
     Thresholds: normal < 4 GiB, elevated 4-5.5 GiB, critical > 5.5 GiB.
     """
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
 
         if rust.is_available:
             return rust.memory.memory_pressure_level()
@@ -175,7 +175,7 @@ async def metal_active_memory_gib() -> float:
     Returns 0.0 when MLX unavailable.
     """
     try:
-        from core.rust_backend import rust
+        from hledac.universal.core.rust_backend import rust
 
         if rust.is_available:
             return rust.memory.get_metal_active_memory_gib()
@@ -196,7 +196,7 @@ def system_memory_sync() -> SystemMemory:
     Uses resource_governor's thread-safe TTL cache directly.
     """
     # Deferred import to avoid circular reference at module load
-    from core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
+    from hledac.universal.core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
 
     try:
         vm = _get_cached_psutil("virtual_memory", _read_virtual_memory_sync)
@@ -210,7 +210,7 @@ def system_memory_sync() -> SystemMemory:
 
 def swap_memory_sync() -> SwapMemory:
     """Sync fallback for non-async contexts."""
-    from core.resource_governor import _get_cached_psutil, _read_swap_memory_sync
+    from hledac.universal.core.resource_governor import _get_cached_psutil, _read_swap_memory_sync
 
     try:
         sm = _get_cached_psutil("swap_memory", _read_swap_memory_sync)

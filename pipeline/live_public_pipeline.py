@@ -1273,7 +1273,7 @@ def _make_finding_id(
     # xxhash — non-cryptographic, 10-20× faster than sha256 for dedup keys
     # F265C: Use centralized rust backend
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
 
         if _rust_backend.is_available and _rust_backend.hash is not None:
             return _rust_backend.hash.content_hash_hex(key)
@@ -1867,7 +1867,7 @@ def _make_finding_id(
     # xxhash — non-cryptographic, 10-20× faster than sha256 for dedup keys
     # F265C: Use centralized rust backend
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
 
         if _rust_backend.is_available and _rust_backend.hash is not None:
             return _rust_backend.hash.content_hash_hex(key)
@@ -1911,7 +1911,7 @@ async def _generate_and_store_report(
         try:
             from hledac.universal.brain.model_manager import get_model_manager
             from hledac.universal.embedding_pipeline import embed_query_async
-            from utils.ranking import rrf_fuse
+            from hledac.universal.utils.ranking import rrf_fuse
 
             # Generate query embedding with proper lifecycle management
             model_manager = get_model_manager()

@@ -8,7 +8,7 @@ Modules:
     storage_config — StorageConfig msgspec.Struct for storage/paths configuration
 
 Usage:
-    from core.config import M1AirConfig, M1_AIR, StorageConfig, get_storage_config
+    from hledac.universal.core.config import M1AirConfig, M1_AIR, StorageConfig, get_storage_config
 
     # Hardware limits (ClassVar)
     M1AirConfig.timeout_clearnet_api  # 20.0
@@ -25,7 +25,7 @@ Usage:
 import msgspec
 
 
-from core.config.m1_air_config import M1AirConfig, M1_AIR
-from core.config.storage_config import StorageConfig, get_storage_config
+from hledac.universal.core.config.m1_air_config import M1AirConfig, M1_AIR
+from hledac.universal.core.config.storage_config import StorageConfig, get_storage_config
 
 __all__ = ["M1AirConfig", "M1_AIR", "StorageConfig", "get_storage_config"]

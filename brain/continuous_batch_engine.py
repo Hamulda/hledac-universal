@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 from hledac.universal.utils.executor_decorator import offload_to
 from hledac.universal.utils.async_helpers import parallel_ok
 if TYPE_CHECKING:
-    from brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)
 STREAMING_PRIORITY: float = 0.5
 URGENT_PRIORITY: float = 0.0
@@ -81,7 +81,7 @@ class ContinuousBatchEngine:
         if self._running:
             return
         self._running = True
-        from utils.async_helpers import safe_create_task
+        from hledac.universal.utils.async_helpers import safe_create_task
         self._worker_task = safe_create_task(self._run_worker(), name='continuous_batch.worker', eager_start=True)
 
     async def stop(self) -> None:

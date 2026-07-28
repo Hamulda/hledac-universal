@@ -50,7 +50,7 @@ class PDFRenderer:
     def render_markdown_to_file(self, markdown: str, path: Path | str, *, html_renderer: Any=None) -> Path:
         """Convert markdown to HTML then to PDF."""
         if html_renderer is None:
-            from report.renderers.html_renderer import HTMLRenderer
+            from hledac.universal.report.renderers.html_renderer import HTMLRenderer
             html_renderer = HTMLRenderer()
         html = html_renderer.render(markdown)
         return self.render_to_file(html, path)
@@ -70,14 +70,14 @@ class PDFRenderer:
         if sys.platform != 'darwin':
             raise RuntimeError('PDF rendering unavailable: no backend (weasyprint not installed, webkit only available on macOS)')
         try:
-            from rendering.macos_webkit_renderer import fetch_with_macos_webkit
+            from hledac.universal.rendering.macos_webkit_renderer import fetch_with_macos_webkit
             import asyncio
             with tempfile.NamedTemporaryFile(suffix='.html', delete=False, mode='w', encoding='utf-8') as f:
                 f.write(html_content)
                 temp_path = f.name
             try:
                 # P1-1: asyncio.run() replaced with run_sync_async() — M1 Metal safe.
-                from utils.sync_bridge import run_sync_async
+                from hledac.universal.utils.sync_bridge import run_sync_async
                 result = run_sync_async(fetch_with_macos_webkit(f'file://{temp_path}', timeout_s=30.0))
                 if result and result.content:
                     return result.content

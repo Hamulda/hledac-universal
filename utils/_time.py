@@ -7,7 +7,7 @@ For measuring elapsed intervals, ALWAYS use time.monotonic().
 Rule: monotonic for durations, time.time() only for persisted timestamps.
 
 Usage:
-    from utils._time import monotonic, perf_counter, elapsed
+    from hledac.universal.utils._time import monotonic, perf_counter, elapsed
 
     start = monotonic()
     # ... work ...

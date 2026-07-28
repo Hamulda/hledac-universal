@@ -17,7 +17,7 @@ Confidence tiers:
   - unconfirmed → NOT seeded automatically — requires CT verification
 
 Usage:
-  from intel.intel_seed import AptOnionSeeder
+  from hledac.universal.intel.intel_seed import AptOnionSeeder
   seeder = AptOnionSeeder()
   candidates = seeder.get_candidates_for_query("LockBit BlackCat")
   # Returns list of (domain, confidence) tuples
@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from utils.lazy_singleton import LazySingleton
+from hledac.universal.utils.lazy_singleton import LazySingleton
 
 log = logging.getLogger(__name__)
 

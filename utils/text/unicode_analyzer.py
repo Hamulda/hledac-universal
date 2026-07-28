@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from hledac.universal.utils.async_helpers import safe_create_task
-from utils.sync_bridge import run_sync_async
+from hledac.universal.utils.sync_bridge import run_sync_async
 import logging
 import unicodedata
 from dataclasses import dataclass, field

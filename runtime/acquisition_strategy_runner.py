@@ -33,7 +33,7 @@ from hledac.universal.runtime.acquisition.profile import AcquisitionProfile
 logger = logging.getLogger(__name__)
 
 # Re-export pure types from planner for runner's return type signatures
-from runtime.acquisition_strategy_planner import (
+from hledac.universal.runtime.acquisition_strategy_planner import (
     AcquisitionLane,
     AcquisitionLanePlan,
     AcquisitionLaneOutcome,
@@ -90,7 +90,7 @@ async def run_enabled_acquisition_lanes(
       - STEALTH never auto-enabled
       - No MLX/model load
     """
-    from runtime.acquisition_strategy_planner import (
+    from hledac.universal.runtime.acquisition_strategy_planner import (
         build_lane_query,
         MAX_SAMPLE_REJECTIONS,
         ct_results_to_findings,
@@ -443,7 +443,7 @@ async def run_enabled_acquisition_lanes(
     async def _run_ipfs_lane(plan) -> AcquisitionLaneOutcome:
         """R10: CID-only IPFS evidence fetch — bounded gateway fetch, no search/DHT."""
         start = time.monotonic()
-        from runtime.acquisition_strategy_planner import _has_explicit_cid
+        from hledac.universal.runtime.acquisition_strategy_planner import _has_explicit_cid
         query_cid = query.strip()
         all_cids: list[str] = [query_cid] if _has_explicit_cid(query_cid) else []
         MAX_IPFS_CIDS = 5
@@ -601,7 +601,7 @@ async def run_enabled_acquisition_lanes(
         (HTTP fetch through DOHAdapter).
         """
         start = time.monotonic()
-        from runtime.acquisition_strategy_planner import build_lane_query
+        from hledac.universal.runtime.acquisition_strategy_planner import build_lane_query
         doh_raw_count = 0
         candidate_findings: tuple = ()
         accepted = 0
@@ -684,7 +684,7 @@ async def run_enabled_acquisition_lanes(
     async def _run_blockchain_lane(plan) -> AcquisitionLaneOutcome:
         """Run blockchain forensics lane."""
         start = time.monotonic()
-        from runtime.acquisition_strategy_planner import _extract_crypto_from_query, _wallet_to_findings
+        from hledac.universal.runtime.acquisition_strategy_planner import _extract_crypto_from_query, _wallet_to_findings
         try:
             async with asyncio.timeout(plan.timeout_s):
                 from hledac.universal.intel.blockchain_analyzer import BlockchainForensics

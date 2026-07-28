@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.dns.passive_dns import *
+from hledac.universal.recon.dns.passive_dns import *

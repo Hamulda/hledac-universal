@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.commoncrawl_adapter import *
+from hledac.universal.recon.commoncrawl_adapter import *

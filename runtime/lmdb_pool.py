@@ -16,7 +16,7 @@ INVARIANTS (Python 3.14+):
   3. Fail-safe: returns None on error, never raises
 
 USAGE:
-  from runtime.lmdb_pool import get_lmdb_pool
+  from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
 
   pool = get_lmdb_pool()
   result = await pool.run_lmdb(my_lmdb_func, arg1, arg2, timeout=5.0)

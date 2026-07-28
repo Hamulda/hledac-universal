@@ -30,8 +30,8 @@ Extended from evidence_network_analyzer.py comments:
 """
 import asyncio
 import threading
-from utils.async_helpers import safe_create_task, safe_gather_ok
-from utils.sync_bridge import run_sync_async
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.sync_bridge import run_sync_async
 import logging
 import re
 from collections import deque
@@ -142,7 +142,7 @@ class GraphRAGOrchestrator:
             async with self._embedder_lock:
                 if self._embedder is None:
                     try:
-                        from core.mlx_embeddings import get_mlx_embedder
+                        from hledac.universal.core.mlx_embeddings import get_mlx_embedder
                         self._embedder = get_mlx_embedder()
                         logger.debug('[EMBEDDER] graph_rag using shared MLXEmbeddingManager singleton')
                     except Exception as e:

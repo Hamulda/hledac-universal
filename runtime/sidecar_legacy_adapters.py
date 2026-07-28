@@ -10,20 +10,20 @@ All adapters have been migrated to the `runtime.sidecars` package:
     forensics/   — DigitalGhost, Steganography
 
 Import adapters directly from the new location:
-    from runtime.sidecars.discovery import OnionDiscoverySidecarAdapter
-    from runtime.sidecars.enrichment import BGPEnrichmentSidecarAdapter
-    from runtime.sidecars.forensics import DigitalGhostSidecarAdapter
+    from hledac.universal.runtime.sidecars.discovery import OnionDiscoverySidecarAdapter
+    from hledac.universal.runtime.sidecars.enrichment import BGPEnrichmentSidecarAdapter
+    from hledac.universal.runtime.sidecars.forensics import DigitalGhostSidecarAdapter
 
 Or use the central re-export:
-    from runtime.sidecars import OnionDiscoverySidecarAdapter
-    from runtime.sidecars import BGPEnrichmentSidecarAdapter
+    from hledac.universal.runtime.sidecars import OnionDiscoverySidecarAdapter
+    from hledac.universal.runtime.sidecars import BGPEnrichmentSidecarAdapter
 
 This module re-exports everything from runtime.sidecars for seamless migration.
 """
 from __future__ import annotations
 
 # Re-export everything from the new canonical location
-from runtime.sidecars import (  # noqa: F401
+from hledac.universal.runtime.sidecars import (  # noqa: F401
     OnionDiscoverySidecarAdapter,
     I2PDiscoverySidecarAdapter,
     IPFSDiscoverySidecarAdapter,
@@ -37,7 +37,7 @@ from runtime.sidecars import (  # noqa: F401
 )
 
 # Backward-compatibility shim: bind_scheduler delegates to the new location
-from runtime.sidecars._base import bind_scheduler as _bind_scheduler
+from hledac.universal.runtime.sidecars._base import bind_scheduler as _bind_scheduler
 
 # Re-export ensure_legacy_adapters_registered as a no-op (adapters auto-register)
 def ensure_legacy_adapters_registered() -> None:

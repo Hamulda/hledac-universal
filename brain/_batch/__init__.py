@@ -9,7 +9,7 @@ Architecture:
 - batch_processor.py: Batch queue management and execution
 """
 
-from brain._batch.batch_processor import BatchProcessor, BatchItem
+from hledac.universal.brain._batch.batch_processor import BatchProcessor, BatchItem
 
 __all__ = [
     "BatchProcessor",

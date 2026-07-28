@@ -15,4 +15,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from transport.http_utils import fetch_json, safe_fetch
+from hledac.universal.transport.http_utils import fetch_json, safe_fetch

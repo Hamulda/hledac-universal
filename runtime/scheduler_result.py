@@ -422,7 +422,7 @@ class SprintSchedulerResult:
         if self._int_counter_layout is not None:
             return
         try:
-            import runtime.sprint_scheduler as _ss
+            import hledac.universal.runtime.sprint_scheduler as _ss
             _layout_class = getattr(_ss, 'IntCounterLayoutRust', None) or getattr(_ss, 'IntCounterLayout', None)
             _names = getattr(_ss, 'INT_COUNTER_LAYOUT_NAMES', ())
             if _layout_class is not None and _names:

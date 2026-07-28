@@ -311,7 +311,7 @@ class ModelManager:
         self._ane_embedder = None
         self._mlx_embedder = None
         self._model_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
-        from core.psutil_shim import psutil as _ps, PSUTIL_AVAILABLE
+        from hledac.universal.core.psutil_shim import psutil as _ps, PSUTIL_AVAILABLE
         self._psutil = _ps
         self._psutil_available = PSUTIL_AVAILABLE
 

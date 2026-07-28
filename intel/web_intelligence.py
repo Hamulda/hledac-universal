@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.web_intelligence import *
+from hledac.universal.recon.web_intelligence import *

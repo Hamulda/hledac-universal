@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.cryptographic_intelligence import *
+from hledac.universal.recon.cryptographic_intelligence import *

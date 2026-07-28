@@ -210,7 +210,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """Initialize research subsystems with graceful degradation."""
         initialized_any = False
         try:
-            from brain.unified_research_bridge import UnifiedAIOrchestrator
+            from hledac.universal.brain.unified_research_bridge import UnifiedAIOrchestrator
             self._unified_orchestrator = UnifiedAIOrchestrator()
             if hasattr(self._unified_orchestrator, 'initialize'):
                 await self._unified_orchestrator.initialize()
@@ -463,7 +463,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Academic search results
         """
         try:
-            from hledac.msqes import MultiSourceQueryExpansionEngine, search_academic
+            from hledac.universal.hledac.msqes import MultiSourceQueryExpansionEngine, search_academic
             results = await search_academic(query, sources)
             return {'success': True, 'source': 'msqes', 'query': query, 'results': results, 'count': len(results)}
         except ImportError:
@@ -566,7 +566,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                         adj[dst].append(src)
                 except Exception:
                     continue
-            from graph.quantum_pathfinder import create_quantum_pathfinder
+            from hledac.universal.graph.quantum_pathfinder import create_quantum_pathfinder
             pathfinder = create_quantum_pathfinder()
             if pathfinder is None:
                 return []
@@ -577,7 +577,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             per_target_timeout = max(1.0, 60.0 / max(1, len(targets)))
             findings: list[Any] = []
             try:
-                from knowledge.duckdb_store import CanonicalFinding
+                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
             except Exception as e:
                 logger.warning(f'ResearchCoordinator: CanonicalFinding unavailable, graph path ingest skipped: {e}')
                 return []
@@ -602,7 +602,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                     continue
             if findings:
                 try:
-                    from knowledge.duckdb_store import DuckDBShadowStore
+                    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
                     store = DuckDBShadowStore()
                     await store.async_ingest_findings_batch(findings)
                 except Exception as e:

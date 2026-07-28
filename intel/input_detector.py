@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.input_detector import *
+from hledac.universal.recon.input_detector import *

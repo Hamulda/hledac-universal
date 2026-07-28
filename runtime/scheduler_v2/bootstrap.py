@@ -21,7 +21,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.async_helpers import parallel, safe_create_task
-from runtime.scheduler_v2.protocol import InitResult
+from hledac.universal.runtime.scheduler_v2.protocol import InitResult
 
 if TYPE_CHECKING:
     pass
@@ -59,7 +59,7 @@ class SprintBootstrap:
 
         Mutates ctx in-place via with_cycle/with_services.
         """
-        from runtime.sprint_lifecycle import SprintLifecycleManager
+        from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
 
         _lifecycle_mgr = SprintLifecycleManager(
             config=self._config,
@@ -135,7 +135,7 @@ class SprintBootstrap:
 
     async def _build_acquisition_plan(self, query: str) -> Any | None:
         """Build AcquisitionPlan from query (Issue #029 fix)."""
-        from runtime.scheduler_v2.acquisition import AcquisitionPlanBuilder
+        from hledac.universal.runtime.scheduler_v2.acquisition import AcquisitionPlanBuilder
 
         try:
             builder = AcquisitionPlanBuilder()
@@ -273,8 +273,8 @@ class SprintBootstrap:
         Container is attached to AccelBackend via set_container() so that
         rust.force is available before first domain access.
         """
-        from core.container import ServiceContainer
-        from core.rust_backend import RustForce, set_container
+        from hledac.universal.core.container import ServiceContainer
+        from hledac.universal.core.rust_backend import RustForce, set_container
 
         _container = ServiceContainer()
 

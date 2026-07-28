@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 
 # Re-export all pure planner symbols (PLANNER section)
-from runtime.acquisition_strategy_planner import (
+from hledac.universal.runtime.acquisition_strategy_planner import (
     # Enums
     AcquisitionLane,
     AcquisitionProfile,
@@ -92,7 +92,7 @@ from runtime.acquisition_strategy_planner import (
 )
 
 # Re-export async runner symbols (RUNNER section)
-from runtime.acquisition_strategy_runner import (
+from hledac.universal.runtime.acquisition_strategy_runner import (
     run_enabled_acquisition_lanes,
 )
 

@@ -41,7 +41,7 @@ MAX_ANOMALIES: int = 50
 MIN_EVENTS_FOR_TEMPORAL: int = 10
 MIN_ACTIONS_FOR_BEHAVIORAL: int = 5
 try:
-    from recon.pattern_mining import Action, Event, PatternMiningEngine, create_pattern_mining_engine
+    from hledac.universal.recon.pattern_mining import Action, Event, PatternMiningEngine, create_pattern_mining_engine
     _PATTERN_MINING_AVAILABLE = True
 except ImportError:
     _PATTERN_MINING_AVAILABLE = False
@@ -50,7 +50,7 @@ except ImportError:
     Action = None
     create_pattern_mining_engine = None
 try:
-    from knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 except ImportError:
     CanonicalFinding = None
 

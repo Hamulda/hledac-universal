@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     # Lazy import only for type checking — not executed at runtime
-    from brain.ner_engine import extract_iocs_from_text
+    from hledac.universal.brain.ner_engine import extract_iocs_from_text
 
 
 # Pre-compiled TTP pattern — module-level (was per-call re.compile in original)
@@ -141,7 +141,7 @@ def _get_ner_engine():
     global _NER_ENGINE
     if _NER_ENGINE is None:
         try:
-            from brain.ner_engine import extract_iocs_from_text
+            from hledac.universal.brain.ner_engine import extract_iocs_from_text
 
             _NER_ENGINE = extract_iocs_from_text
         except ImportError:

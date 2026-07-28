@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from network.bgp_monitor import *
+from hledac.universal.network.bgp_monitor import *

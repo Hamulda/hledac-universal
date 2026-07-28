@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.getcwd())
 
 # Pre-import locks module and patch
-import core.locks as locks_mod
+import hledac.universal.core.locks as locks_mod
 
 _orig = locks_mod._register_lock
 _registrations = []

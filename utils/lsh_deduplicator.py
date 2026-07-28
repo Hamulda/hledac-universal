@@ -7,7 +7,7 @@ detekci na scale. Kombinuje Rust SimHash s Rust LSH indexem.
 50× rychlejší než původní Python simhash_ext pro batch operace.
 
 Usage:
-    from utils.lsh_deduplicator import LSHNearDuplicateDetector
+    from hledac.universal.utils.lsh_deduplicator import LSHNearDuplicateDetector
 
     detector = LSHNearDuplicateDetector(num_tables=16, num_rows=4)
     detector.add_document("doc1", "text content...")

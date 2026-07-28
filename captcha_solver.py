@@ -267,7 +267,7 @@ class VisionCaptchaSolver:
             return None
         try:
             import base64
-            from network.session_runtime import async_get_httpx_session
+            from hledac.universal.network.session_runtime import async_get_httpx_session
             session = await async_get_httpx_session()
             b64_data = base64.b64encode(image_bytes).decode()
             response = await session.post('http://2captcha.com/in.php', data={'key': api_key, 'method': 'base64', 'body': b64_data})

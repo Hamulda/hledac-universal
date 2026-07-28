@@ -6,12 +6,12 @@ This module is DEPRECATED. All functionality has been moved to:
     coordinators.resource.resource_coordinator
 
 Legacy import (still works for backwards compatibility):
-    from coordinators.backpressure import BackpressureMonitor, BackpressureDecision
+    from hledac.universal.coordinators.backpressure import BackpressureMonitor, BackpressureDecision
 
 New import:
-    from coordinators.resource import BackpressureMonitor, BackpressureDecision
+    from hledac.universal.coordinators.resource import BackpressureMonitor, BackpressureDecision
     # or
-    from coordinators.resource.resource_coordinator import BackpressureMonitor, BackpressureDecision
+    from hledac.universal.coordinators.resource.resource_coordinator import BackpressureMonitor, BackpressureDecision
 """
 
 import warnings
@@ -24,7 +24,7 @@ warnings.warn(
 )
 
 # Re-export from new location for backwards compatibility
-from coordinators.resource.resource_coordinator import (
+from hledac.universal.coordinators.resource.resource_coordinator import (
     BackpressureDecision,
     BackpressureMonitor,
 )

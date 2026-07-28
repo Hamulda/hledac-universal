@@ -65,7 +65,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 if TYPE_CHECKING:
-    from brain.deephermes3_engine import DeepHermes3Engine
+    from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ class MLXInProcBackend(IInferenceBackend):
         """Lazily get or create the DeepHermes3Engine singleton."""
         if self._engine is None:
             # Import here to avoid circular deps — brain/__init__ uses lazy loading
-            from brain.deephermes3_engine import DeepHermes3Engine
+            from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
             if self._engine is None:
                 self._engine = DeepHermes3Engine()
@@ -257,7 +257,7 @@ class MlxcelBackend(IInferenceBackend):
         if self._client is None:
             async with self._get_lock():
                 if self._client is None:
-                    from brain.mlxcel_ipc_client import get_mlxcel_client
+                    from hledac.universal.brain.mlxcel_ipc_client import get_mlxcel_client
 
                     self._client = await get_mlxcel_client()
                     logger.info("[IC:mlxcel] MlxcelIpcClient connected")
@@ -348,7 +348,7 @@ class CoreMLBackend(IInferenceBackend):
         if self._client is None:
             async with self._get_lock():
                 if self._client is None:
-                    from utils.coreml.client import CoreMLClient
+                    from hledac.universal.utils.coreml.client import CoreMLClient
 
                     self._client = CoreMLClient()
                     logger.info("[IC:coreml] CoreMLClient singleton created")
@@ -536,7 +536,7 @@ class InferenceCoordinator:
         """
         sig = f"{request.prompt!r}|{request.temperature}|{request.max_tokens}|{request.thinking}"
         try:
-            from hledac.universal import rust_extensions
+            from hledac.universal.hledac.universal import rust_extensions
 
             if hasattr(rust_extensions, "batch_xxh3_64_bytes"):
                 h = rust_extensions.batch_xxh3_64_bytes(sig.encode())

@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.data_leak_hunter import *
+from hledac.universal.recon.data_leak_hunter import *

@@ -13,7 +13,7 @@ Features:
 - Phase-based prioritization
 
 Canonical import:
-    from coordinators.memory import ContextOptimizationManager
+    from hledac.universal.coordinators.memory import ContextOptimizationManager
 """
 
 import logging

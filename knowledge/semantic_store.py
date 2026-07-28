@@ -154,7 +154,7 @@ class SemanticStore:
         # This uses mlx_embeddings package via compat/core_mlx_embeddings shim
         self._mlx_embedder = None
         try:
-            from core.mlx_embeddings import get_embedding_manager
+            from hledac.universal.core.mlx_embeddings import get_embedding_manager
 
             self._mlx_embedder = get_embedding_manager()
             # Ensure loaded

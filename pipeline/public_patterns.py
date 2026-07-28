@@ -170,7 +170,7 @@ def _make_finding_id(
     """
     key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
 
         if _rust_backend.is_available and _rust_backend.hash is not None:
             return _rust_backend.hash.content_hash_hex(key)
@@ -426,7 +426,7 @@ def extract_iocs_from_text(text: str) -> list[Any]:
     Fail-safe: returns empty list on any error.
     """
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
         if _rust_backend.is_available and hasattr(_rust_backend, "ioc"):
             # P3: Use SIMD for bulk text (>1KB) — Teddy/NEON accelerates regex on M1
             if len(text) > 1024 and hasattr(_rust_backend.ioc, "extract_iocs_simd"):
@@ -470,7 +470,7 @@ def extract_iocs_from_texts(
 
     # Large batch: Rust batch path — single GIL acquisition, rayon parallel
     try:
-        from core.rust_backend import rust as _rust_backend
+        from hledac.universal.core.rust_backend import rust as _rust_backend
 
         if not _rust_backend.is_available or not hasattr(_rust_backend, "ioc"):
             return [extract_iocs_from_text(t) for t in texts]

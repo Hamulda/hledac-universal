@@ -157,7 +157,7 @@ def bench_bloom_filter() -> dict[str, Any]:
     py_ms: float | None = None
     py_hits: int | None = None
     try:
-        from utils.bloom_filter import BloomFilter as PyBF  # type: ignore
+        from hledac.universal.utils.bloom_filter import BloomFilter as PyBF  # type: ignore
 
         def py_full() -> int:
             bf = PyBF(max_elements=200_000, error_rate=0.001)
@@ -208,7 +208,7 @@ def bench_rolling_hash() -> dict[str, Any]:
     py_ms: float | None = None
     py_hits: int | None = None
     try:
-        from tools.rolling_hash_engine import RollingHashPython  # type: ignore
+        from hledac.universal.tools.rolling_hash_engine import RollingHashPython  # type: ignore
         py_rh = RollingHashPython(base=256, modulus=2**61 - 1)
         def py_hash() -> int:
             total = 0

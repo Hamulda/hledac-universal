@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.kill_chain_tagger import *
+from hledac.universal.recon.kill_chain_tagger import *

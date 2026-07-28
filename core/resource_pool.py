@@ -35,7 +35,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Generator
-from core.env_config import ENV
+from hledac.universal.core.env_config import ENV
 if TYPE_CHECKING:
     pass
 
@@ -73,7 +73,7 @@ def _get_max_workers_from_governor() -> int:
     Falls back to default if governor unavailable.
     """
     try:
-        from core.resource_governor import evaluate_uma_state, ConcurrencyPreset
+        from hledac.universal.core.resource_governor import evaluate_uma_state, ConcurrencyPreset
         import psutil
         mem = psutil.virtual_memory()
         system_used_gib = mem.used / 1024 ** 3

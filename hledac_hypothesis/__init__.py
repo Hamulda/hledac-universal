@@ -26,7 +26,7 @@ Backward Compatibility
 ---------------------
 ``brain/hypothesis_engine/`` is a backward-compat shim that re-exports from
 this package. Existing imports continue to work:
-    from brain.hypothesis_engine import AdversarialVerifier  # OK (shim)
+    from hledac.universal.brain.hypothesis_engine import AdversarialVerifier  # OK (shim)
     from hledac_hypothesis import AdversarialVerifier      # Preferred
 
 Canonical Imports (NEW)
@@ -112,7 +112,7 @@ def __getattr__(name: str) -> Any:
         "HypothesisGenerator",
     ):
         try:
-            from brain.research_hypothesis_engine import (
+            from hledac.universal.brain.research_hypothesis_engine import (
                 FalsificationResult,
                 HypothesisEngine,
                 HypothesisPack,
@@ -131,13 +131,13 @@ def __getattr__(name: str) -> Any:
                 "HypothesisGenerator": HypothesisGenerator,
             }
             if name == "DarkQuery":
-                from brain.research_hypothesis_engine import DarkQuery
+                from hledac.universal.brain.research_hypothesis_engine import DarkQuery
                 exports["DarkQuery"] = DarkQuery
             elif name == "DarkQueryType":
-                from brain.research_hypothesis_engine import DarkQueryType
+                from hledac.universal.brain.research_hypothesis_engine import DarkQueryType
                 exports["DarkQueryType"] = DarkQueryType
             elif name == "Hypothesis":
-                from brain.research_hypothesis_engine import Hypothesis
+                from hledac.universal.brain.research_hypothesis_engine import Hypothesis
                 exports["Hypothesis"] = Hypothesis
 
             val = exports.get(name)
@@ -150,7 +150,7 @@ def __getattr__(name: str) -> Any:
 
 
 if TYPE_CHECKING:
-    from brain.research_hypothesis_engine import (
+    from hledac.universal.brain.research_hypothesis_engine import (
         DarkQuery,
         DarkQueryType,
         Evidence,

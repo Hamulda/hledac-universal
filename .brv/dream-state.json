@@ -1,5 +1,5 @@
 {
-  "curationsSinceDream": 1,
+  "curationsSinceDream": 2,
   "lastDreamAt": "2026-07-27T13:49:01.138Z",
   "lastDreamLogId": "drm-1785159606649",
   "pendingMerges": [],
@@ -7,6 +7,10 @@
     {
       "enqueuedAt": 1785189588648,
       "path": "facts/project/issue_a5_feature_flag_sprawl_analysis.md"
+    },
+    {
+      "enqueuedAt": 1785249712314,
+      "path": "facts/project/pep_562_brain_lazy_loading_refactoring.md"
     }
   ],
   "totalDreams": 7,

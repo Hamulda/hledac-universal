@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec.json as _json
 
 from hledac.universal.utils.async_helpers import parallel
-from core.capabilities import CAPS, OLEVBA
+from hledac.universal.core.capabilities import CAPS, OLEVBA
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def _get_mx() -> Any | None:
     return _MLX_CORE if _MLX_CORE is not False else None
 
 if TYPE_CHECKING:
-    from knowledge.duckdb_forensics_store import ForensicsMetadataStore
+    from hledac.universal.knowledge.duckdb_forensics_store import ForensicsMetadataStore
 
 # ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 # ForensicsMetadataStore replaces local SQLite cache with DuckDB for better M1 performance.
@@ -79,7 +79,7 @@ def _get_duckdb_store_sync() -> "ForensicsMetadataStore | None":
     Thread-safe via functools.cache internal lock (PEP 603 memoization).
     """
     try:
-        from knowledge.duckdb_forensics_store import ForensicsMetadataStore
+        from hledac.universal.knowledge.duckdb_forensics_store import ForensicsMetadataStore
 
         return ForensicsMetadataStore()
     except ImportError:
@@ -859,7 +859,7 @@ class UniversalMetadataExtractor:
         Returns:
             ImageMetadata object or None
         """
-        from core.capabilities import CAPS, PIL
+        from hledac.universal.core.capabilities import CAPS, PIL
         pil_mod = CAPS.require(PIL)
         if pil_mod is None:
             return None
@@ -1008,7 +1008,7 @@ class UniversalMetadataExtractor:
             pass
 
         # Fallback to pypdf
-        from core.capabilities import CAPS, PYPDF, PYPDF2
+        from hledac.universal.core.capabilities import CAPS, PYPDF, PYPDF2
         pypdf_mod = CAPS.require(PYPDF)
         if pypdf_mod is None:
             pypdf_mod = CAPS.require(PYPDF2)
@@ -1049,7 +1049,7 @@ class UniversalMetadataExtractor:
         Returns:
             PDFMetadata object or None
         """
-        from core.capabilities import CAPS, FITZ
+        from hledac.universal.core.capabilities import CAPS, FITZ
         fitz_mod = CAPS.require(FITZ)
         if fitz_mod is None:
             return None
@@ -1105,7 +1105,7 @@ class UniversalMetadataExtractor:
         Returns:
             ImageMetadata object or None
         """
-        from core.capabilities import CAPS, PIEXIF
+        from hledac.universal.core.capabilities import CAPS, PIEXIF
         piexif_mod = CAPS.require(PIEXIF)
         if piexif_mod is None:
             return None
@@ -1224,7 +1224,7 @@ class UniversalMetadataExtractor:
         Returns:
             Tuple of (caption, tags)
         """
-        from core.capabilities import CAPS, MLX_VLM
+        from hledac.universal.core.capabilities import CAPS, MLX_VLM
         mlx_vlm_mod = CAPS.require(MLX_VLM)
         MLX_VLM_AVAILABLE = mlx_vlm_mod is not None
         if not MLX_VLM_AVAILABLE:
@@ -1317,7 +1317,7 @@ class UniversalMetadataExtractor:
         Returns:
             DocxMetadata object or None
         """
-        from core.capabilities import CAPS, DOCX
+        from hledac.universal.core.capabilities import CAPS, DOCX
         docx_mod = CAPS.require(DOCX)
         if docx_mod is None:
             return None
@@ -1337,7 +1337,7 @@ class UniversalMetadataExtractor:
         Returns:
             AudioMetadata object or None
         """
-        from core.capabilities import CAPS, MUTAGEN
+        from hledac.universal.core.capabilities import CAPS, MUTAGEN
         mutagen_mod = CAPS.require(MUTAGEN)
         if mutagen_mod is None:
             return None

@@ -29,7 +29,7 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
     safe_create_task_tracked,
 )
 from hledac.universal.utils.async_helpers import parallel
-from runtime.scheduler_v2.protocol import InitResult, SprintContext
+from hledac.universal.runtime.scheduler_v2.protocol import InitResult, SprintContext
 from hledac.universal.utils.async_helpers import safe_wait_for
 
 
@@ -102,7 +102,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
 
     def __post_init__(self) -> None:
         if self._result is None:
-            from runtime.scheduler_result import SprintSchedulerResult
+            from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
             object.__setattr__(self, "_result", SprintSchedulerResult())
 
     # ── Run ────────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         before this method is called. All services (_duckdb_store, _governor,
         _hermes_engine, _evidence_log, _lifecycle, etc.) are already wired.
         """
-        from runtime.scheduler_v2.injector import Injector
+        from hledac.universal.runtime.scheduler_v2.injector import Injector
 
         _wall_clock_start = _time.monotonic()
         self._wall_clock_start = _wall_clock_start
@@ -154,7 +154,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
 
     async def _run_prelude_and_first_cycle(self, query: str) -> None:
         """Run all prelude lanes + prewarm concurrently."""
-        from runtime.scheduler_v2.prelude import (
+        from hledac.universal.runtime.scheduler_v2.prelude import (
             run_ct_prelude_lane,
             run_doh_prelude_lane,
             run_pdns_prelude_lane,
@@ -251,7 +251,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
 
     async def _run_acquisition_loop(self, query: str) -> None:
         """Run acquisition cycles until terminal."""
-        from runtime.scheduler_v2.acquisition import AcquisitionOrchestrator
+        from hledac.universal.runtime.scheduler_v2.acquisition import AcquisitionOrchestrator
 
         _orch = AcquisitionOrchestrator()
         ordered_sources = (
@@ -290,7 +290,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
 
     async def _run_winddown(self, query: str) -> None:
         """Run winddown: export, synthesis, teardown."""
-        from runtime.scheduler_v2.winddown import WinddownOrchestrator
+        from hledac.universal.runtime.scheduler_v2.winddown import WinddownOrchestrator
 
         _duckdb_raw = self._ctx.duckdb_store if self._ctx else None
         _hermes_raw = self._hermes_engine.value if self._hermes_engine else None
@@ -339,7 +339,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         signal_value: float,
     ) -> None:
         """F203G: Record hypothesis feedback to DuckDB."""
-        from runtime.scheduler_v2.protocol import InitResult
+        from hledac.universal.runtime.scheduler_v2.protocol import InitResult
 
         _duckdb_raw = self._ctx.duckdb_store if self._ctx else None
         if _duckdb_raw is None:
@@ -378,7 +378,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         (acquisition.py:277) as part of the parallel winddown sequence.
         This method exists for backward compatibility with tests that call it directly.
         """
-        from runtime.scheduler_v2.acquisition import AcquisitionOrchestrator
+        from hledac.universal.runtime.scheduler_v2.acquisition import AcquisitionOrchestrator
 
         # Reuse the same AcquisitionOrchestrator pattern but without creating
         # a full orch instance — just call the method directly with self._result

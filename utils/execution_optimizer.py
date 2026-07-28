@@ -270,7 +270,7 @@ class ParallelExecutionOptimizer:
 
     def _init_execution_pools(self):
         """Initialize execution pools"""
-        from utils.domain_executors import get_parallel_executor
+        from hledac.universal.utils.domain_executors import get_parallel_executor
         self.thread_pool = get_parallel_executor()
         t_max = getattr(self.thread_pool, '_max_workers', '?')
         logger.info(f'Initialized execution pools - Threads: {t_max}, CPU-bound: rayon(cpu_pool_run/io_pool_run)')

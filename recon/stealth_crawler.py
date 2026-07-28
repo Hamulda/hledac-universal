@@ -11,12 +11,12 @@ Nová struktura (ISSUE-028):
 - recon/stealth/monitor.py — StreamingMonitor
 
 Pro nový kód preferujte importy z recon.stealth přímo:
-    from recon.stealth import StealthCrawler, StreamingMonitor
+    from hledac.universal.recon.stealth import StealthCrawler, StreamingMonitor
 """
 from __future__ import annotations
 
 # Re-export everything from the new stealth package for backwards compatibility
-from recon.stealth import (
+from hledac.universal.recon.stealth import (
     # Models
     Alert,
     AlertRule,

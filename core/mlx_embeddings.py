@@ -5,7 +5,7 @@ This module is a backward-compat re-export shim.
 Moved to core/embeddings/legacy.py (F350M-R A-07).
 
 Single canonical entry point:
-    from core.embeddings.legacy import MLXEmbeddingManager
+    from hledac.universal.core.embeddings.legacy import MLXEmbeddingManager
 
 This module will be removed in a future sprint.
 """
@@ -19,7 +19,7 @@ warnings.warn(
 )
 
 # Re-export everything from the canonical implementation.
-from core.embeddings.legacy import (
+from hledac.universal.core.embeddings.legacy import (
     # Classes
     MLXEmbeddingManager,
     EmbeddingTask,

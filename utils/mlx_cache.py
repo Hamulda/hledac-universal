@@ -12,10 +12,10 @@ import asyncio
 import importlib.util
 import logging
 import threading
-from utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache
 from typing import Any
 
-from core.psutil_shim import psutil
+from hledac.universal.core.psutil_shim import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
         stacklevel=2,
     )
     # Lazy import to avoid circular dependency
-    from brain._hermes_cache import hermes_cache
+    from hledac.universal.brain._hermes_cache import hermes_cache
 
     cache = hermes_cache()
     result = cache.get_model(model_name)

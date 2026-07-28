@@ -10,8 +10,8 @@ Architecture:
 - model_loader.py: Model loading/unloading with hermes_cache integration
 """
 
-from brain._metal.metal_device import MetalDevice, get_metal_device
-from brain._metal.model_loader import MetalModelLoader
+from hledac.universal.brain._metal.metal_device import MetalDevice, get_metal_device
+from hledac.universal.brain._metal.model_loader import MetalModelLoader
 
 __all__ = [
     "MetalDevice",

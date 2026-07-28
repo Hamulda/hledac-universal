@@ -7,7 +7,7 @@ Single home for all bootstrap init logic previously duplicated across:
   - V2Init._bootstrap() / _init_* methods (_v2_init.py)
 
 Usage:
-    from runtime.scheduler_v2._bootstrap import bootstrap_schedulerv2, BootstrapResult
+    from hledac.universal.runtime.scheduler_v2._bootstrap import bootstrap_schedulerv2, BootstrapResult
     result = await bootstrap_schedulerv2(
         scheduler=scheduler,
         query=query,
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 
 from hledac.universal.utils.async_helpers import parallel, safe_create_task
-from runtime.scheduler_v2.protocol import InitResult
+from hledac.universal.runtime.scheduler_v2.protocol import InitResult
 
 if TYPE_CHECKING:
     pass
@@ -224,7 +224,7 @@ async def bootstrap_schedulerv2(
 
     # ── Lifecycle manager ────────────────────────────────────────────
 
-    from runtime.sprint_lifecycle import SprintLifecycleManager
+    from hledac.universal.runtime.sprint_lifecycle import SprintLifecycleManager
 
     _lifecycle_mgr = SprintLifecycleManager(
         config=_config,
@@ -450,7 +450,7 @@ async def apply_injections(
 
 
 async def _build_acquisition_plan(query: str, config: Any) -> Any | None:
-    from runtime.scheduler_v2.acquisition import AcquisitionPlanBuilder
+    from hledac.universal.runtime.scheduler_v2.acquisition import AcquisitionPlanBuilder
 
     try:
         builder = AcquisitionPlanBuilder()
@@ -550,8 +550,8 @@ def _build_container() -> Any:
     Container is attached to AccelBackend via set_container() so that
     rust.force is available before first domain access.
     """
-    from core.container import ServiceContainer
-    from core.rust_backend import RustForce, set_container
+    from hledac.universal.core.container import ServiceContainer
+    from hledac.universal.core.rust_backend import RustForce, set_container
 
     _container = ServiceContainer()
 

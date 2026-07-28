@@ -590,7 +590,7 @@ class WhoisService:
         """
         domains = domains[:MAX_TARGETS]
         results: list[WhoisResult] = []
-        from utils.async_helpers import safe_gather_ok
+        from hledac.universal.utils.async_helpers import safe_gather_ok
         tasks = [self.lookup(d) for d in domains]
         gathered = await safe_gather_ok(*tasks, label='whois_service:lookup_batch')
         for r in gathered:

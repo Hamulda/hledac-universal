@@ -8,7 +8,7 @@ This module was moved from core/mlx_embeddings.py (F350M-R A-07 refactor).
 core/mlx_embeddings.py is now a deprecated re-export for backward compat.
 
 Použití:
-    from core.embeddings.legacy import MLXEmbeddingManager
+    from hledac.universal.core.embeddings.legacy import MLXEmbeddingManager
 
     manager = MLXEmbeddingManager()
     embeddings = manager.encode(["text 1", "text 2"])

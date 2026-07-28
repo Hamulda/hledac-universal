@@ -180,7 +180,7 @@ def compile_dark_query_program(train_path: Path) -> None:
     import dspy
     from dspy.teleprompt import MIPROv2
 
-    from brain.dspy_programs import DarkQueryProgram, osint_metric
+    from hledac.universal.brain.dspy_programs import DarkQueryProgram, osint_metric
 
     logger.info(f"Loading training data from {train_path}")
     data = _load_training_data(train_path)
@@ -241,7 +241,7 @@ def compile_hypothesis_generator_program(train_path: Path) -> None:
     import dspy
     from dspy.teleprompt import MIPROv2
 
-    from brain.dspy_programs import HypothesisGeneratorProgram, osint_metric
+    from hledac.universal.brain.dspy_programs import HypothesisGeneratorProgram, osint_metric
 
     logger.info(f"Loading training data from {train_path}")
     data = _load_training_data(train_path)
@@ -294,7 +294,7 @@ def compile_builtin_dark_query_program() -> None:
     """Compile DarkQueryProgram using built-in OSINT_DARK_QUERY_TRAINSET (no file needed)."""
     from dspy.teleprompt import MIPROv2
 
-    from brain.dspy_programs import DarkQueryProgram, osint_metric
+    from hledac.universal.brain.dspy_programs import DarkQueryProgram, osint_metric
 
     logger.info("Compiling dark_query from built-in trainset (%d examples)", len(OSINT_DARK_QUERY_TRAINSET))
     trainset = OSINT_DARK_QUERY_TRAINSET

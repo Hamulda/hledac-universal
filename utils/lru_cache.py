@@ -16,7 +16,7 @@ When to use which:
 - cachetools.LRUCache: When you want battle-tested standard library semantics
 
 Usage:
-    from utils.lru_cache import LRUCache
+    from hledac.universal.utils.lru_cache import LRUCache
 
     cache = LRUCache(max_size=100)
     cache[key] = value      # Set
@@ -30,7 +30,7 @@ Usage:
         return compute(arg)
 
     # TTLCache for time-based expiration:
-    from utils.lru_cache import TTLCache
+    from hledac.universal.utils.lru_cache import TTLCache
     cache = TTLCache(max_size=100, ttl=3600)  # 1 hour TTL
 """
 

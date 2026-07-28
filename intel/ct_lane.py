@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.ct_lane import *
+from hledac.universal.recon.ct_lane import *

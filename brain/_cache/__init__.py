@@ -10,13 +10,13 @@ Architecture:
 - warmup.py: Warmup logic for model caches
 """
 
-from brain._cache.kv_cache_manager import (
+from hledac.universal.brain._cache.kv_cache_manager import (
     KVCacheManager,
     PrefixCache,
     SessionCache,
     get_kv_cache_manager,
 )
-from brain._cache.warmup import WarmupManager
+from hledac.universal.brain._cache.warmup import WarmupManager
 
 __all__ = [
     "KVCacheManager",

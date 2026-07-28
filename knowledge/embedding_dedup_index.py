@@ -48,7 +48,7 @@ except ImportError:
     _USEARCH_AVAILABLE = False
 
 if TYPE_CHECKING:
-    from brain.unified_embedding_manager import UnifiedEmbeddingManager
+    from hledac.universal.brain.unified_embedding_manager import UnifiedEmbeddingManager
 
 __all__ = [
     "EmbeddingDedupIndex",
@@ -140,7 +140,7 @@ class EmbeddingDedupIndex:
     def _get_embedder(self) -> UnifiedEmbeddingManager:
         """Lazily get UnifiedEmbeddingManager (imports mlx at first use)."""
         if self._embedder is None:
-            from brain.unified_embedding_manager import get_unified_embedder
+            from hledac.universal.brain.unified_embedding_manager import get_unified_embedder
             self._embedder = get_unified_embedder()
         return self._embedder
 
@@ -157,7 +157,7 @@ class EmbeddingDedupIndex:
         text = text[:MAX_TEXT_EMBED_BYTES]
         try:
             # P2-07: Použij MLXDispatcher s async batching frontou
-            from brain._mlx_dispatcher import get_mlx_dispatcher
+            from hledac.universal.brain._mlx_dispatcher import get_mlx_dispatcher
             dispatcher = get_mlx_dispatcher()
             # embed_batch na dispatcher používá AsyncEmbeddingBatcher pro small batches
             embedding: np.ndarray = await dispatcher.embed_batch(text)
@@ -193,7 +193,7 @@ class EmbeddingDedupIndex:
                 processed.append((i, text[:MAX_TEXT_EMBED_BYTES]))
 
         try:
-            from brain._mlx_dispatcher import get_mlx_dispatcher
+            from hledac.universal.brain._mlx_dispatcher import get_mlx_dispatcher
             dispatcher = get_mlx_dispatcher()
             # Normalizovat texty pro batch
             texts_to_encode = [t for _, t in processed]

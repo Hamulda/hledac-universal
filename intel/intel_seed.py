@@ -12,4 +12,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from recon.intel_seed import *
+from hledac.universal.recon.intel_seed import *

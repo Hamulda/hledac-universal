@@ -29,7 +29,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from runtime.evidence_corroboration import (
+from hledac.universal.runtime.evidence_corroboration import (
     CorroborationScore,
     build_recommended_pivots,
     build_top_indicators,
@@ -98,7 +98,7 @@ def main() -> None:
     elif args.seeds_json:
         seeds = load_seeds(args.seeds_json)
         # Score seeds as findings
-        from runtime.evidence_corroboration import score_seeds_by_corroboration as _score_seeds
+        from hledac.universal.runtime.evidence_corroboration import score_seeds_by_corroboration as _score_seeds
         scores = _score_seeds(seeds)
     elif args.duckdb:
         import duckdb
