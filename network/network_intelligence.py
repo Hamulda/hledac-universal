@@ -20,7 +20,7 @@ GHOST_INVARIANTS:
 """
 import asyncio
 import logging
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task  # ISSUE-15: asyncio.gather used directly for ALL_COMPLETED
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -78,29 +78,23 @@ class NetworkIntelAdapter:
                 dns_task = safe_create_task(self._query_dns(target), name='network_intel:dns_query')
                 fp_task = safe_create_task(self._query_fp(target), name='network_intel:fp_query')
                 bgp_task = safe_create_task(self._query_bgp(target), name='network_intel:bgp_query')
-                done, pending = await asyncio.wait([dns_task, fp_task, bgp_task], return_when=asyncio.ALL_COMPLETED)
-                for task in done:
-                    if task is dns_task:
-                        try:
-                            passive_dns = task.result()
-                        except Exception as e:
-                            errors.append(f'dns:{e}')
-                    elif task is fp_task:
-                        try:
-                            passive_fingerprint = task.result()
-                        except Exception as e:
-                            errors.append(f'fp:{e}')
-                    elif task is bgp_task:
-                        try:
-                            bgp_events = task.result()
-                        except Exception as e:
-                            errors.append(f'bgp:{e}')
-                for task in pending:
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
+                # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.gather (return_exceptions preserves all results)
+                results: list[Exception | list[dict]] = await asyncio.gather(
+                    dns_task, fp_task, bgp_task, return_exceptions=True
+                )
+                dns_result, fp_result, bgp_result = results
+                if isinstance(dns_result, Exception):
+                    errors.append(f'dns:{dns_result}')
+                else:
+                    passive_dns = dns_result
+                if isinstance(fp_result, Exception):
+                    errors.append(f'fp:{fp_result}')
+                else:
+                    passive_fingerprint = fp_result
+                if isinstance(bgp_result, Exception):
+                    errors.append(f'bgp:{bgp_result}')
+                else:
+                    bgp_events = bgp_result
         except TimeoutError:
             errors.append('timeout')
         except asyncio.CancelledError:

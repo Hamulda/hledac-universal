@@ -70,6 +70,24 @@ from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.utils.async_helpers import safe_wait_for
 
+# ISSUE-14: Structured logging via structlog
+# Lazy import to avoid early import overhead — structlog is optional
+_structlog: Any = None
+
+
+def _get_logger() -> Any:
+    """Lazy structlog getter with stdlib fallback (fail-safe)."""
+    global _structlog
+    if _structlog is None:
+        try:
+            from hledac.universal.utils.logging_config import get_logger as _get_logger
+
+            _structlog = _get_logger("evidence_log")
+        except Exception:
+            # Fallback to stdlib — never raises
+            _structlog = logging.getLogger("evidence_log")
+    return _structlog
+
 # ISSUE-11 / C2: ThreadPoolExecutor for GIL-free SQLite writes
 # Lazily initialized — only created if SQLite path is used
 # C2: Added threading.RLock for thread-safe singleton creation
@@ -174,7 +192,7 @@ def _get_arrow():
                 import pyarrow.ipc as _ipc
                 _arrow = (_pa, _ipc)
             except ImportError:
-                logger.debug('[Arrow] pyarrow not available, falling back to SQLite')
+                logger.debug("arrow_not_available_falling_back_to_sqlite")
                 _arrow = False
         else:
             _arrow = False
@@ -197,7 +215,7 @@ except ImportError:
 
     def is_enabled():
         return False
-logger = logging.getLogger(__name__)
+logger = _get_logger()
 
 class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
     """
@@ -451,7 +469,7 @@ class _RustMPSCBytes:
             # Exponential backoff: double delay, cap at 60s
             self._retry_delay = min(self._retry_delay * 2, 60.0)
         except Exception:  # noqa: BLE001
-            logger.debug("[_RustMPSC] loop closing, marking pending retry", exc_info=True)
+            logger.debug("rust_mpsc_loop_closing_marking_pending_retry", exc_info=True)
             self._pending_retry = True
 
     def _do_retry_init(self) -> None:
@@ -497,11 +515,11 @@ class _RustMPSCBytes:
                 if drained:
                     for item in drained:
                         self._pool.send(self._sender_ptr, item)
-                    logger.debug(f'[_RustMPSC] Switched to Rust MPSC, drained {len(drained)} items from asyncio.Queue')
+                    logger.debug("rust_mpsc_switched_drained_items", drained_count=len(drained))
 
-            logger.info(f'[_RustMPSC] Rust MPSC now available — switched from asyncio fallback')
+            logger.info("rust_mpsc_now_available_switched_from_asyncio_fallback")
         except Exception:  # noqa: BLE001
-            logger.debug("[_RustMPSC] not available, scheduling retry", exc_info=True)
+            logger.debug("rust_mpsc_not_available_scheduling_retry", exc_info=True)
             self._pending_retry = True
             self._schedule_retry()
 
@@ -522,7 +540,7 @@ class _RustMPSCBytes:
             try:
                 return self._pool.send(self._sender_ptr, item)
             except Exception:  # noqa: BLE001
-                logger.debug("[_RustMPSC] send failed, returning False", exc_info=True)
+                logger.debug("rust_mpsc_send_failed_returning_false", exc_info=True)
                 return False
         elif self._queue is not None:
             try:
@@ -549,7 +567,7 @@ class _RustMPSCBytes:
                 # PyO3: list[bytes] → Vec<&[u8]>
                 return self._pool.send_batch(self._sender_ptr, items)
             except Exception:  # noqa: BLE001
-                logger.debug("[_RustMPSC] batch send failed, returning 0", exc_info=True)
+                logger.debug("rust_mpsc_batch_send_failed_returning_zero", exc_info=True)
                 return 0
         elif self._queue is not None:
             sent = 0
@@ -590,7 +608,7 @@ class _RustMPSCBytes:
             try:
                 return self._pool.recv_batch(max_items)
             except Exception:  # noqa: BLE001
-                logger.debug("[_RustMPSC] legacy send failed, returning []", exc_info=True)
+                logger.debug("rust_mpsc_legacy_send_failed_returning_empty", exc_info=True)
                 return []
         elif self._queue is not None:
             batch = []
@@ -690,7 +708,7 @@ class EvidenceLog:
         self._encrypt_at_rest = encrypt_at_rest or os.environ.get('ENCRYPT_AT_REST', '0') == '1'
         self._encryption_key = os.environ.get('ENCRYPTION_KEY', '').encode() if self._encrypt_at_rest else None
         if self._encrypt_at_rest:
-            logger.info('[ENCRYPT] enabled=True target=evidence')
+            logger.info("encryption_enabled", target="evidence")
             self._init_encryption()
         else:
             self._cipher = None
@@ -711,9 +729,9 @@ class EvidenceLog:
             try:
                 self._persist_file = open(self._persist_path, 'ab' if self._encrypt_at_rest else 'a', encoding='utf-8' if not self._encrypt_at_rest else None, buffering=8192)
                 self._persist_path_str = str(self._persist_path)
-                logger.debug(f'EvidenceLog persistence: {self._persist_path}')
+                logger.debug("evidence_log_persistence", persist_path=str(self._persist_path))
             except Exception as e:  # noqa: BLE001
-                logger.error(f'Failed to open evidence log: {e}')
+                logger.error("failed_to_open_evidence_log", error=str(e))
                 self._enable_persist = False
         self._mpsc: _RustMPSCBytes = _RustMPSCBytes(capacity=2048, asyncio_fallback=False)
         self._mpsc2: _RustMPSCBytes = _RustMPSCBytes(capacity=2048, asyncio_fallback=True)
@@ -836,16 +854,16 @@ class EvidenceLog:
         try:
             await self._migrate_from_file()
         except Exception as _mig_err:  # noqa: BLE001
-            logger.warning(f'[F11C] Migration from JSONL failed (non-fatal): {_mig_err}')
+            logger.warning("f11c_migration_from_jsonl_failed_non_fatal", error=str(_mig_err))
         try:
             self._flush_task = safe_create_task(self._flush_worker())
         except Exception as _task_err:  # noqa: BLE001
-            logger.warning(f'[F11C] Flush worker task creation failed (non-fatal): {_task_err}')
+            logger.warning("f11c_flush_worker_task_creation_failed_non_fatal", error=str(_task_err))
             self._flush_task = None
         try:
             self._async_write_task = safe_create_task(self._async_write_worker())
         except Exception as _write_task_err:  # noqa: BLE001
-            logger.warning(f'[F290] Async write worker task creation failed (non-fatal): {_write_task_err}')
+            logger.warning("f290_async_write_worker_task_creation_failed_non_fatal", error=str(_write_task_err))
             self._async_write_task = None
         # E2: Start cancel watcher — triggers aclose() when lifecycle cancel_event is set.
         # This ensures workers exit cleanly even when aclose() is not called explicitly.
@@ -908,10 +926,10 @@ class EvidenceLog:
                     )
                 ''')
                 self._duckdb_enabled = True
-                logger.info(f'[DuckDB] Arrow IPC evidence enabled: {self._db_path}')
+                logger.info("duckdb_arrow_ipc_evidence_enabled", db_path=str(self._db_path))
                 _ensure_duckdb_executor()
             except Exception as _duck_err:  # noqa: BLE001
-                logger.warning(f'[DuckDB] Failed to initialize, falling back to SQLite: {_duck_err}')
+                logger.warning("duckdb_failed_init_using_sqlite_fallback", error=str(_duck_err))
                 self._duckdb_enabled = False
                 self._duckdb_conn = None
 
@@ -951,7 +969,7 @@ class EvidenceLog:
             self._arrow_path = evidence_dir / f'{self._run_id}.arrow'
             self._arrow_schema = pa.schema([('timestamp', pa.float64()), ('event_type', pa.string()), ('data', pa.string()), ('hash', pa.string())])
             self._arrow_writer = ipc.new_file(str(self._arrow_path), self._arrow_schema)
-            logger.info(f'[Arrow] IPC enabled: {self._arrow_path}')
+            logger.info("arrow_ipc_enabled", arrow_path=str(self._arrow_path))
 
     async def _migrate_from_file(self) -> None:
         """Migrate events from old JSONL file if exists.
@@ -992,9 +1010,9 @@ class EvidenceLog:
                     migrated_file.unlink()
                 raise
             old_file.rename(migrated_file)
-            logger.info(f'Migrated {self._run_id} events to SQLite')
+            logger.info("migrated_events_to_sqlite", run_id=self._run_id)
         except Exception as e:  # noqa: BLE001
-            logger.warning(f'Migration failed: {e}')
+            logger.warning("migration_failed", error=str(e))
 
     async def _flush_worker(self) -> None:
         """Background worker that flushes events in batches.
@@ -1026,7 +1044,7 @@ class EvidenceLog:
                     trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
                 except Exception as _flush_err:  # noqa: BLE001
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
-                    logger.warning(f'Flush batch failed (dropping {len(batch)} events): {_flush_err}')
+                    logger.warning("flush_batch_failed_dropping_events", batch_size=len(batch), error=str(_flush_err))
                     trace_evidence_flush(len(batch), flush_latency_ms, 'flush_error', 0)
                 batch = []
                 last_flush = datetime.now(UTC)
@@ -1077,7 +1095,7 @@ class EvidenceLog:
         try:
             _afile = await _f290_aiofiles.open(self._persist_path_str, 'ab', buffering=8192)
         except Exception as _open_err:  # noqa: BLE001
-            logger.warning(f'[F290] aiofiles open failed, using sync fallback: {_open_err}')
+            logger.warning("f290_aiofiles_open_failed_using_sync_fallback", error=str(_open_err))
             _afile = None
         _WRITE_FLUSH_THRESHOLD = 64
         _write_buf: list[bytes] = []
@@ -1171,7 +1189,7 @@ class EvidenceLog:
                     try:
                         decoded_batch.append(msgspec.msgpack.decode(b))
                     except Exception:  # noqa: BLE001
-                        logger.debug("[_flush_batch] item flush failed, skipping", exc_info=True)
+                        logger.debug("flush_batch_item_flush_failed_skipping", exc_info=True)
                         continue
                 if not decoded_batch:
                     return
@@ -1187,7 +1205,7 @@ class EvidenceLog:
                     self._arrow_writer.write_batch(batch_arrow)
                 return
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'[Arrow] IPC write failed, falling back to SQLite: {e}')
+                logger.warning("arrow_ipc_write_failed_sqlite_fallback", error=str(e))
 
         # ISSUE-11: SQLite via ThreadPoolExecutor — GIL-free write
         await self._flush_sqlite_batch(batch)
@@ -1223,7 +1241,7 @@ class EvidenceLog:
                 content_hash = event[6] if len(event) > 6 else ''
                 records.append((timestamp, event_type, payload_str, content_hash))
             except Exception:  # noqa: BLE001
-                logger.debug("[_flush_batch] batch item failed, skipping", exc_info=True)
+                logger.debug("flush_batch_batch_item_failed_skipping", exc_info=True)
                 continue
 
         if not records:
@@ -1244,14 +1262,14 @@ class EvidenceLog:
                 )
                 self._duckdb_conn.commit()
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'[_flush_duckdb_batch] DuckDB executemany failed: {e}')
+                logger.warning("flush_duckdb_batch_executemany_failed", error=str(e))
 
         try:
             # C2: copy_context() propagates ContextVar (sprint_id, lane, mode) across thread boundary
             ctx = contextvars.copy_context()
             await loop.run_in_executor(ctx, _ensure_duckdb_executor(), _duckdb_insert_records)
         except Exception as e:  # noqa: BLE001
-            logger.warning(f'[_flush_duckdb_batch] executor failed: {e}')
+            logger.warning("flush_duckdb_batch_executor_failed", error=str(e))
             # Fallback: direct SQLite
             await self._flush_sqlite_batch(batch)
 
@@ -1275,7 +1293,7 @@ class EvidenceLog:
                 content_hash = event[6] if len(event) > 6 else ''
                 records.append((timestamp, event_type, payload_bytes, content_hash))
             except Exception:  # noqa: BLE001
-                logger.debug("[_write_payload] payload encoding failed, skipping", exc_info=True)
+                logger.debug("write_payload_encoding_failed_skipping", exc_info=True)
                 continue
 
         if not records:
@@ -1299,14 +1317,14 @@ class EvidenceLog:
                 conn.commit()
                 conn.close()
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'[_flush_sqlite_batch] SQLite insert failed: {e}')
+                logger.warning("flush_sqlite_batch_insert_failed", error=str(e))
 
         try:
             # C2: copy_context() propagates ContextVar (sprint_id, lane, mode) across thread boundary
             ctx = contextvars.copy_context()
             await loop.run_in_executor(ctx, _ensure_evidence_sqlite_executor(), _sqlite_insert)
         except Exception as e:  # noqa: BLE001
-            logger.warning(f'[_flush_sqlite_batch] executor failed: {e}')
+            logger.warning("flush_sqlite_batch_executor_failed", error=str(e))
 
     async def _flush_batch(self, batch: list[dict[str, Any]]) -> None:
         """Flush a batch of events to SQLite (default) or Arrow IPC (HLEDAC_ARROW_EVIDENCE=1).
@@ -1327,7 +1345,7 @@ class EvidenceLog:
                     self._arrow_writer.write_batch(batch_arrow)
                 return
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'[Arrow] IPC write failed, falling back to SQLite: {e}')
+                logger.warning("arrow_ipc_write_failed_sqlite_fallback", error=str(e))
         records = []
         for event_data in batch:
             timestamp = event_data.get('timestamp', datetime.now(UTC).timestamp())
@@ -1339,7 +1357,7 @@ class EvidenceLog:
         if db is None:
             return
         if not hasattr(db, 'executemany'):
-            logger.warning('EvidenceLog._db not initialized as aiosqlite.Connection')
+            logger.warning("evidence_log_db_not_aiosqlite_connection")
             return
         await db.executemany('INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)', records)
         await db.commit()
@@ -1348,12 +1366,12 @@ class EvidenceLog:
         """Initialize encryption cipher."""
         if not self._encryption_key:
             self._encryption_key = secrets.token_bytes(32)
-            logger.warning('[ENCRYPT] No ENCRYPTION_KEY env - using temporary key')
+            logger.warning("encrypt_no_key_env_using_temporary")
         try:
             from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
             self._cipher = (Cipher, algorithms, modes)
         except ImportError:
-            logger.warning('[ENCRYPT] cryptography not available, encryption disabled')
+            logger.warning("encrypt_cryptography_not_available_disabled")
             self._encrypt_at_rest = False
             self._cipher = None
 
@@ -1443,7 +1461,7 @@ class EvidenceLog:
             # ISSUE-006: send bytes directly — zero-copy path
             _sent = self._mpsc.send(event.to_bytes())
             if not _sent:
-                logger.warning('MPSCPool full, falling back to direct sync write')
+                logger.warning("mpsc_pool_full_fallback_to_sync_write")
                 trace_queue_drop('mpsc_pool', queue_size + 1)
         elif not self._initialized and self._db is not None:
             _event_dict = event.to_dict()
@@ -1467,7 +1485,7 @@ class EvidenceLog:
                 t.start()
                 trace_evidence_append(event.event_type, 0, 'sync_sqlite')
             except Exception as _sync_err:  # noqa: BLE001
-                logger.debug(f'[F11C] Sync SQLite fallback failed (non-fatal): {_sync_err}')
+                logger.debug("f11c_sync_sqlite_fallback_failed_non_fatal", error=str(_sync_err))
         if self._enable_persist:
             try:
                 line = event.to_jsonl_line()
@@ -1480,14 +1498,14 @@ class EvidenceLog:
                         encryptor = cipher.encryptor()
                         encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
                         bytes_to_write = nonce + encryptor.tag + encrypted
-                        logger.debug(f'[ENCRYPT] stored bytes_in={len(line)} bytes_out={len(bytes_to_write)}')
+                        logger.debug("encrypt_stored", bytes_in=len(line), bytes_out=len(bytes_to_write))
                     except Exception as e:  # noqa: BLE001
-                        logger.warning(f'[ENCRYPT] failed: {e}')
+                        logger.warning("encrypt_operation_failed", error=str(e))
                 _sent = self._mpsc2.send(bytes_to_write)
                 if not _sent:
                     self._sync_write_fallback(line, bytes_to_write)
             except Exception as e:
-                logger.critical(f'[F286] SWAL write failed (FATAL): {e}')
+                logger.critical("f286_swal_write_failed_fatal", error=str(e))
                 raise RuntimeError(f'EvidenceLog SWAL write failed: {e}') from e
         decoded_payload = orjson.loads(event.payload)
         trimmed_payload = self._trim_payload(decoded_payload)
@@ -1664,7 +1682,7 @@ class EvidenceLog:
             for e in created:
                 trace_evidence_append(e.event_type, self._mpsc.len(), 'queued')
             if _sent < len(created):
-                logger.warning(f'ISSUE-007 MPSCPool full: sent {_sent}/{len(created)}')
+                logger.warning("issue007_mpsc_pool_full", sent=_sent, total=len(created))
                 trace_queue_drop('mpsc_batch', len(created) - _sent)
 
         # Batch SWAL send — single send_batch call for JSONL persist
@@ -1684,7 +1702,7 @@ class EvidenceLog:
                         encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
                         bytes_to_write = nonce + encryptor.tag + encrypted
                     except Exception as _enc_err:  # noqa: BLE001
-                        logger.warning(f'[ENCRYPT] batch failed: {_enc_err}')
+                        logger.warning("encrypt_batch_failed", error=str(_enc_err))
                 _jsonl_payloads.append(bytes_to_write)
             try:
                 _sent2 = self._mpsc2.send_batch(_jsonl_payloads)
@@ -1694,7 +1712,7 @@ class EvidenceLog:
                         bytes_to_write = line.encode('utf-8') + b'\n'
                         self._sync_write_fallback(line, bytes_to_write)
             except Exception as _swal_err:  # noqa: BLE001
-                logger.critical(f'[F286] SWAL batch send failed: {_swal_err}')
+                logger.critical("f286_swal_batch_send_failed", error=str(_swal_err))
 
         # analytics_hook per event (only evidence_packet type)
         try:
@@ -1810,13 +1828,13 @@ class EvidenceLog:
             Created EvidenceEvent, or None on validation failure.
         """
         if not finding_id:
-            logger.warning('[FORENSIC] attach_forensic_analysis called with empty finding_id')
+            logger.warning("forensic_attach_called_with_empty_finding_id")
             return None
         if forensic_result is None:
-            logger.debug(f'[FORENSIC] attach_forensic_analysis: no forensic_result for {finding_id}')
+            logger.debug("forensic_attach_no_result", finding_id=finding_id)
             return None
         if not isinstance(forensic_result, dict):
-            logger.warning(f'[FORENSIC] attach_forensic_analysis: forensic_result must be dict, got {type(forensic_result).__name__} for {finding_id}')
+            logger.warning("forensic_attach_invalid_result_type", got_type=type(forensic_result).__name__, finding_id=finding_id)
             return None
         try:
             confidence = max(0.0, min(1.0, float(confidence)))
@@ -1828,7 +1846,7 @@ class EvidenceLog:
         try:
             return self.create_event(event_type='evidence_packet', payload=payload, source_ids=[effective_source_id], confidence=confidence)
         except (RuntimeError, ValueError) as exc:
-            logger.warning(f'[FORENSIC] attach_forensic_analysis failed for {finding_id}: {exc}')
+            logger.warning("forensic_attach_failed", finding_id=finding_id, error=str(exc))
             return None
 
     def get_forensic_analyses(self, finding_id: str) -> list[EvidenceEvent]:
@@ -1885,7 +1903,7 @@ class EvidenceLog:
         """
         valid_kinds = {'bandit', 'playbook', 'backpressure', 'delta', 'alignment', 'primary_chase', 'drift'}
         if kind not in valid_kinds:
-            logger.warning(f"[DECISION] Invalid kind={kind}, using 'drift'")
+            logger.warning("decision_invalid_kind_using_drift", kind=kind)
             kind = 'drift'
         trimmed_summary = {}
         for i, (k, v) in enumerate(summary.items()):
@@ -2012,7 +2030,7 @@ class EvidenceLog:
             try:
                 payload_dict = orjson.loads(event.payload) if event.payload else None
             except Exception:  # noqa: BLE001
-                logger.debug("serialise_payload encoding failed", exc_info=True)
+                logger.debug("serialise_payload_encoding_failed", exc_info=True)
                 payload_dict = None
             payload_summary = self._summarize_payload(payload_dict)
             yield f'{i}. [{timestamp}] {event.event_type.upper()} (conf: {event.confidence:.2f})'
@@ -2160,7 +2178,7 @@ class EvidenceLog:
             Path to the written manifest file, or None if no persist_path
         """
         if not self._persist_path:
-            logger.warning('Cannot write manifest: no persist_path set')
+            logger.warning("cannot_write_manifest_no_persist_path")
             return None
         manifest = {'run_id': self._run_id, 'chain_head': self._chain_head, 'total_count': self._total_count, 'created_at': self._created_at.isoformat(), 'last_seq_no': self._seq, 'persist_path': str(self._persist_path), 'genesis_hash': self._genesis_hash}
         manifest_path = self._persist_path.with_suffix('.manifest.json')
@@ -2168,10 +2186,10 @@ class EvidenceLog:
             manifest_path.parent.mkdir(parents=True, exist_ok=True)
             with open(manifest_path, 'wb') as f:
                 f.write(orjson.dumps(manifest, option=orjson.OPT_INDENT_2))
-            logger.info(f'[EVIDENCE] Manifest written: {manifest_path}')
+            logger.info("evidence_manifest_written", manifest_path=str(manifest_path))
             return manifest_path
         except Exception as e:  # noqa: BLE001
-            logger.error(f'Failed to write manifest: {e}')
+            logger.error("failed_to_write_manifest", error=str(e))
             return None
 
     def _start_cancel_watcher(self) -> None:
@@ -2195,19 +2213,19 @@ class EvidenceLog:
             except asyncio.CancelledError:
                 return
             except Exception as _wait_err:  # noqa: BLE001
-                logger.debug('[E2] cancel_event.wait() failed: %s', _wait_err)
+                logger.debug("e2_cancel_wait_failed", error=str(_wait_err))
                 return
             # Cancel event was set — trigger aclose if not already closing/closed
             if not self._closing and not self._closed:
                 try:
                     await self.aclose()
                 except Exception as _aclose_err:  # noqa: BLE001
-                    logger.debug('[E2] aclose() from cancel watcher failed: %s', _aclose_err)
+                    logger.debug("e2_aclose_from_cancel_watcher_failed", error=str(_aclose_err))
 
         try:
             self._cancel_watcher_task = safe_create_task(_watch_cancel(), name='_cancel_watcher')
         except Exception as _watch_err:  # noqa: BLE001
-            logger.debug('[E2] Failed to start cancel watcher: %s', _watch_err)
+            logger.debug("e2_cancel_watcher_start_failed", error=str(_watch_err))
 
     async def aclose(self, timeout_s: float | None = None) -> None:
         """
@@ -2247,7 +2265,7 @@ class EvidenceLog:
             try:
                 await safe_wait_for(self._flush_task, timeout=10.0, label='_flush_task')
             except TimeoutError:
-                logger.warning('Flush worker did not exit in 10s, cancelling')
+                logger.warning("flush_worker_did_not_exit_cancelling")
                 self._flush_task.cancel()
                 try:
                     await safe_wait_for(self._flush_task, timeout=5.0, label='_flush_task')
@@ -2266,7 +2284,7 @@ class EvidenceLog:
             try:
                 await safe_wait_for(self._async_write_task, timeout=5.0, label='_async_write_task')
             except TimeoutError:
-                logger.warning('Async write worker did not exit in 5s, cancelling')
+                logger.warning("async_write_worker_did_not_exit_cancelling")
                 self._async_write_task.cancel()
                 try:
                     await safe_wait_for(self._async_write_task, timeout=2.0, label='_async_write_task')
@@ -2287,16 +2305,16 @@ class EvidenceLog:
         if self._arrow_writer is not None:
             try:
                 self._arrow_writer.close()
-                logger.info(f'[Arrow] IPC writer closed: {self._arrow_path}')
+                logger.info("arrow_ipc_writer_closed", arrow_path=str(self._arrow_path))
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'[Arrow] Failed to close writer: {e}')
+                logger.warning("arrow_failed_to_close_writer", error=str(e))
             finally:
                 self._arrow_writer = None
         if drained and self._db is not None:
             try:
                 await self._flush_batch_bytes(drained)
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'Failed to flush remaining items: {e}')
+                logger.warning("failed_to_flush_remaining_items", error=str(e))
         if mpsc2_drained and self._persist_file:
             try:
                 # Write remaining mpsc2 items (JSONL path) before closing
@@ -2310,13 +2328,13 @@ class EvidenceLog:
                         self._persist_file.write(item.decode('utf-8', errors='replace'))
                 self._persist_file.flush()
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'Failed to flush mpsc2 remaining items: {e}')
+                logger.warning("failed_to_flush_mpsc2_remaining_items", error=str(e))
         if self._db is not None:
             try:
                 await self._db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
                 await self._db.close()
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'Failed to close SQLite: {e}')
+                logger.warning("failed_to_close_sqlite", error=str(e))
             finally:
                 self._db = None
         # ISSUE-11: Close DuckDB connection
@@ -2324,14 +2342,14 @@ class EvidenceLog:
             try:
                 self._duckdb_conn.close()
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'Failed to close DuckDB: {e}')
+                logger.warning("failed_to_close_duckdb", error=str(e))
             finally:
                 self._duckdb_conn = None
         self._close_persist_file()
         self._closed = True
         self._closing = False
         self.freeze()
-        logger.debug(f'[EVIDENCE] aclose complete: run_id={self._run_id}')
+        logger.debug("evidence_aclose_complete", run_id=self._run_id)
 
     def _close_persist_file(self) -> None:
         """Close persist file with idempotency guard (runs in thread)."""
@@ -2341,7 +2359,7 @@ class EvidenceLog:
                 os.fsync(self._persist_file.fileno())
                 self._persist_file.close()
             except Exception as e:  # noqa: BLE001
-                logger.warning(f'Failed to close persist file: {e}')
+                logger.warning("failed_to_close_persist_file", error=str(e))
             finally:
                 self._persist_file = None
         elif self._persist_file is not None:
@@ -2395,7 +2413,7 @@ class EvidenceLog:
         self.write_manifest()
         self.close()
         self.freeze()
-        logger.info(f'[EVIDENCE] Log finalized: run_id={self._run_id}, events={self._total_count}, chain_head={self._chain_head[:16]}...')
+        logger.info("evidence_log_finalized", run_id=self._run_id, events=self._total_count, chain_head=self._chain_head[:16])
 
     def verify_all(self) -> dict[str, Any]:
         """

@@ -124,7 +124,8 @@ static IOC_META_REGEX_G2: std::sync::LazyLock<Result<Regex, regex_automata::meta
 /// full hextet, compressed (::1, ::), link-local (fe80::1), IPv4-mapped (::ffff:192.0.2.1).
 /// Uses separate compilation (not build_many) because the full RFC 4291 pattern exceeds
 /// regex-automata's NFA size limit even at 50 MB.
-static IPV6_REGEX: std::sync::LazyLock<RegexSimple> =
+/// F1.2 fix: Result type instead of .expect() for fail-soft behavior.
+static IPV6_REGEX: std::sync::LazyLock<Result<RegexSimple, regex::Error>> =
     std::sync::LazyLock::new(|| {
         RegexSimple::new(concat!(
             r"(?i)^(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}$|",
@@ -139,7 +140,6 @@ static IPV6_REGEX: std::sync::LazyLock<RegexSimple> =
             r"^::(?:f{4})?:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$|",
             r"^(?:[0-9a-f]{1,4}:){1,4}:(?:(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$"
         ))
-        .expect("IPV6_REGEX should always compile — pattern is hardcoded")
     });
 
 /// IOC type mapping for Group 1 (IPv4, Domain, MD5, SHA1, SHA256).
@@ -229,10 +229,18 @@ fn extract_one_simd(text: &str) -> Vec<(String, String)> {
     }
 
     // Scan for IPv6 using separate IPV6_REGEX (too complex for build_many NFA)
-    for m in IPV6_REGEX.find_iter(text) {
-        let raw_value = &text[m.start()..m.end()];
-        if seen.insert(raw_value.to_lowercase()) {
-            iocs.push((raw_value.to_lowercase(), "ipv6".to_string()));
+    // F1.2 fix: Handle Result type from IPV6_REGEX
+    match IPV6_REGEX.as_ref() {
+        Ok(ipv6_regex) => {
+            for m in ipv6_regex.find_iter(text) {
+                let raw_value = &text[m.start()..m.end()];
+                if seen.insert(raw_value.to_lowercase()) {
+                    iocs.push((raw_value.to_lowercase(), "ipv6".to_string()));
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("[ioc_extract_simd] IPV6_REGEX unavailable: {}", e);
         }
     }
 

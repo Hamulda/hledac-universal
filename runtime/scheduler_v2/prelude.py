@@ -26,6 +26,8 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 
+from hledac.universal.utils.async_helpers import first_completed  # ISSUE-15
+
 class LaneResult(msgspec.Struct, gc=False):
     lane: str
     attempted: bool
@@ -285,33 +287,34 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
                         _cancelled_count += 1
                 break
 
-            # Čekáme na první dokončený task
-            done, _pending = await asyncio.wait(_pending, return_when=asyncio.FIRST_COMPLETED)
+            # ISSUE-15: Čekáme na první dokončený task (migrace z asyncio.wait)
+            try:
+                _res, _winner_task = await first_completed(*_pending)
+            except asyncio.TimeoutError:
+                # Timeout — cancel all and break
+                for t in _pending:
+                    if not t.done():
+                        t.cancel()
+                break
 
-            for t in done:
-                if t.cancelled():
-                    _cancelled_count += 1
-                    continue
+            _pending.discard(_winner_task)
+
+            if _winner_task.cancelled():
+                _cancelled_count += 1
+            else:
                 try:
-                    _res = t.result()
-                except asyncio.CancelledError:
-                    _cancelled_count += 1
-                    continue
-                except BaseException as _e:
-                    continue
-
-                if isinstance(_res, BaseException):
-                    continue
-                _domain, _cands, _rejs, _tel = _res
-                _all_cands.extend(_cands)
-                _all_rejs.extend(_rejs)
-                if _tel:
-                    _all_tel = _tel
-                _total_raw += len(_cands)
-                if getattr(_doh_adapter, '_cache', None) and _domain in _doh_adapter._cache:
-                    _cache_used = True
-                if _first_done_domain is None:
-                    _first_done_domain = _domain
+                    _domain, _cands, _rejs, _tel = _winner_task.result()
+                    _all_cands.extend(_cands)
+                    _all_rejs.extend(_rejs)
+                    if _tel:
+                        _all_tel = _tel
+                    _total_raw += len(_cands)
+                    if getattr(_doh_adapter, '_cache', None) and _domain in _doh_adapter._cache:
+                        _cache_used = True
+                    if _first_done_domain is None:
+                        _first_done_domain = _domain
+                except BaseException:
+                    pass
 
         result.doh_cache_used = _cache_used
         result.doh_raw_count = _all_tel.get('doh_total', _total_raw)

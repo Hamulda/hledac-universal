@@ -38,6 +38,32 @@ _PY_URL_RE = re.compile(r"https?://[^\s<>\"]+")
 _PY_HASH_RE = re.compile(r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]{64}\b")
 
 
+# ISSUE-4 FIX: Shared batch helper to eliminate duplicate `if not texts` guards.
+# Both _RustIocDomain and _PythonIocDomain use the same pattern for parallel batch ops.
+from typing import Any, Callable
+
+
+def _batch_extract_iocs_helper(
+    texts: list[str], func: Callable[[str], Any]
+) -> list[Any]:
+    """Shared batch extraction helper with early-exit guard."""
+    if not texts:
+        return []
+    ex = _get_executor()
+    return list(ex.map(func, texts))
+
+
+def _batch_extract_iocs_indexed_helper(
+    texts: list[str], func: Callable[[tuple[int, str]], list[tuple[int, str, str]]]
+) -> list[tuple[int, str, str]]:
+    """Shared indexed batch extraction helper with early-exit guard."""
+    if not texts:
+        return []
+    indexed: list[tuple[int, str]] = list(enumerate(texts))
+    ex = _get_executor()
+    return [row for rows in ex.map(func, indexed) for row in rows]
+
+
 class _RustIocDomain:
     __slots__ = ("_ext",)
 
@@ -50,10 +76,7 @@ class _RustIocDomain:
     def batch_extract_iocs(self, texts: list[str]) -> list[dict[str, list[str]]]:
         # F1.2 root fix: Rust batch_extract_iocs_simd is broken (IOC_META_REGEX init fails).
         # Use parallel Python fallback via shared executor.
-        if not texts:
-            return []
-        ex = _get_executor()
-        return list(ex.map(_python_extract_iocs, texts))
+        return _batch_extract_iocs_helper(texts, _python_extract_iocs)
 
     def nfc_normalize(self, text: str) -> str:
         return self._ext.nfc_normalize(text)
@@ -74,20 +97,11 @@ class _RustIocDomain:
 
     def batch_extract_iocs_simd(self, texts: list[str]) -> list[list[tuple[str, str]]]:
         # F1.2 root fix: Rust batch broken. Use parallel Python fallback.
-        if not texts:
-            return []
-        if not texts:
-            return []
-        ex = _get_executor()
-        return list(ex.map(_python_extract_iocs_simd_single, texts))
+        return _batch_extract_iocs_helper(texts, _python_extract_iocs_simd_single)
 
     def batch_extract_iocs_simd_indexed(self, texts: list[str]) -> list[tuple[int, str, str]]:
         # F1.2 root fix: Rust indexed batch broken. Use parallel Python fallback.
-        if not texts:
-            return []
-        indexed: list[tuple[int, str]] = list(enumerate(texts))
-        ex = _get_executor()
-        return [row for rows in ex.map(_python_extract_iocs_flat_indexed, indexed) for row in rows]
+        return _batch_extract_iocs_indexed_helper(texts, _python_extract_iocs_flat_indexed)
 
     def batch_dedup_urls(self, urls: list[str]) -> list[str]:
         """Deduplicate URLs — delegates to Rust standalone function in ioc_extract module."""
@@ -127,22 +141,13 @@ class _PythonIocDomain:
 
     @staticmethod
     def batch_extract_iocs_simd(texts: list[str]) -> list[list[tuple[str, str]]]:
-        # B2 fix: parallel via ThreadPoolExecutor.
-        if not texts:
-            return []
-        if not texts:
-            return []
-        ex = _get_executor()
-        return list(ex.map(_python_extract_iocs_simd_single, texts))
+        # B2 fix: parallel via ThreadPoolExecutor — shared helper eliminates duplicate guard.
+        return _batch_extract_iocs_helper(texts, _python_extract_iocs_simd_single)
 
     @staticmethod
     def batch_extract_iocs_simd_indexed(texts: list[str]) -> list[tuple[int, str, str]]:
-        # B2 fix: parallel via ThreadPoolExecutor.
-        if not texts:
-            return []
-        indexed: list[tuple[int, str]] = list(enumerate(texts))
-        ex = _get_executor()
-        return [row for rows in ex.map(_python_extract_iocs_flat_indexed, indexed) for row in rows]
+        # B2 fix: parallel via ThreadPoolExecutor — shared helper eliminates duplicate guard.
+        return _batch_extract_iocs_indexed_helper(texts, _python_extract_iocs_flat_indexed)
 
     @staticmethod
     def batch_dedup_urls(urls: list[str]) -> list[str]:
@@ -266,7 +271,10 @@ def _python_extract_iocs(text: str) -> dict[str, list[str]]:
             if name is None:
                 continue
             value = m.group()
-            if name in ("ipv4", "ipv6_full"):
+            if name == "url":
+                if value not in seen["urls"]:
+                    seen["urls"].add(value)
+            elif name in ("ipv4", "ipv6_full"):
                 if value not in seen["ipv4s"]:
                     seen["ipv4s"].add(value)
             elif name == "domain":

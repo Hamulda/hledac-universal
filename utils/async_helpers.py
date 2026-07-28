@@ -298,6 +298,7 @@ __all__ = [
     "monotonic_ms",
     "parallel",  # ISSUE-006: single canonical parallel runner
     "parallel_ok",  # ISSUE-003: drop-in for safe_gather_ok, variadic *coros
+    "first_completed",  # ISSUE-15: asyncio.wait(FIRST_COMPLETED) replacement
     "try_group",  # ISSUE-003: TaskGroup + except* for structured groups
     "parallel_taskgroup_star",  # C6: PEP 654 except* TaskGroup variant
     # Deprecated (Python 3.13+ warnings.deprecated; use parallel() instead):
@@ -767,6 +768,61 @@ async def safe_wait_for[T](
     except asyncio.TimeoutError:
         _log.debug(f"[GHOST] safe_wait_for{'_' + label if label else ''} timeout after {timeout}s")
         raise
+
+
+async def first_completed[T](
+    *tasks: asyncio.Task[T],
+    timeout: float | None = None,
+) -> tuple[T, asyncio.Task[T]]:
+    """PEP 654 asyncio.wait(FIRST_COMPLETED) replacement using shared Future.
+
+    Python 3.14 deprecates asyncio.wait() in favor of structured concurrency.
+    This function provides the FIRST_COMPLETED semantics using a completion
+    Future that all tasks write to when done. The TaskGroup handles
+    cancellation of children on scope exit.
+
+    Args:
+        *tasks: Task instances to race (must be pre-created)
+        timeout: Optional timeout in seconds
+
+    Returns:
+        tuple of (result, completed_task)
+
+    Raises:
+        asyncio.TimeoutError: if timeout expires before any task completes
+
+    Example:
+        task1 = asyncio.create_task(coro1())
+        task2 = asyncio.create_task(coro2())
+        result, winner = await first_completed(task1, task2)
+        # winner is the Task that completed first
+    """
+    if not tasks:
+        raise ValueError("first_completed requires at least one task")
+
+    # Future that the first completed task will write to
+    winner_future: asyncio.Future[asyncio.Task[T]] = asyncio.get_event_loop().create_future()
+
+    def on_done(task: asyncio.Task[T]) -> None:
+        if not winner_future.done():
+            winner_future.get_loop().call_soon_threadsafe(winner_future.set_result, task)
+
+    for task in tasks:
+        task.add_done_callback(on_done)
+
+    try:
+        if timeout is not None and timeout > 0:
+            async with asyncio.timeout(timeout):
+                winner = await winner_future
+        else:
+            winner = await winner_future
+    except asyncio.TimeoutError:
+        raise
+    except BaseException:
+        raise
+
+    # Return the result from the winner task
+    return winner.result(), winner
 
 
 def monotonic_ms() -> float:

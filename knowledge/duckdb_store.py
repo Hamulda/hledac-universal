@@ -9946,13 +9946,11 @@ class DuckDBShadowStore:
         if conn is None:
             return 0
 
-        import json as _json
-
         rows_inserted = 0
         for chunk in chunks:
             try:
                 embedding_list = chunk.get("embedding", [])
-                metadata_json = _json.dumps(chunk.get("metadata", {}))
+                metadata_json = _orjson_mod.dumps(chunk.get("metadata", {}))
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO rag_embeddings
@@ -10036,14 +10034,12 @@ class DuckDBShadowStore:
                     conn.execute, sql, [query_vector, k]
                 ).fetchall()
 
-            import json as _json
-
             return [
                 {
                     "chunk_id": str(r[0]),
                     "document_id": str(r[1]),
                     "content": r[2] or "",
-                    "metadata": _json.loads(r[3]) if r[3] else {},
+                    "metadata": _ORJSON_DECODER(r[3]) if r[3] else {},
                     "distance": float(r[4]) if r[4] is not None else 1.0,
                 }
                 for r in rows
@@ -10156,13 +10152,11 @@ class DuckDBShadowStore:
         if conn is None:
             return 0
 
-        import json as _json
-
         rows_inserted = 0
         for entity in entities:
             try:
                 embedding_list = entity.get("embedding", [])
-                metadata_json = _json.dumps(entity.get("metadata", {}))
+                metadata_json = _orjson_mod.dumps(entity.get("metadata", {}))
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO entity_embeddings
@@ -10245,14 +10239,12 @@ class DuckDBShadowStore:
                     conn.execute, sql, [query_vector, k]
                 ).fetchall()
 
-            import json as _json
-
             return [
                 {
                     "entity_id": str(r[0]),
                     "entity_value": str(r[1]),
                     "entity_type": r[2],
-                    "metadata": _json.loads(r[3]) if r[3] else {},
+                    "metadata": _ORJSON_DECODER(r[3]) if r[3] else {},
                     "distance": float(r[4]) if r[4] is not None else 1.0,
                 }
                 for r in rows

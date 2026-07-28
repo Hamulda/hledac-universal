@@ -9,9 +9,9 @@ Sprint F350M-R: Single Canonical Entry Point
     - `hledac` console script  →  hledac.universal.__main__.main()  (THIS file)
     - `python -m hledac.universal`  →  same, direct
 
-JIT: Python 3.14+ auto-enables JIT via PYTHON_JIT=1 in [tool.uv].env.
-No sys.execv restart needed — eliminates cold-start penalty, pytest fixture
-duplication, PyCharm debugger issues, and KeyboardInterrupt zombie processes.
+JIT: Python 3.14 copy-and-patch JIT is enabled via pyproject.toml [tool.uv.env].
+Runtime detection: sys._jit_enabled (Python 3.14+). JIT cache ~20-30 MB on M1 8GB.
+No sys.execv restart needed — uv run handles it automatically.
 
 Backward-compat root/__main__.py is now a thin re-export shim.
 """
@@ -75,6 +75,18 @@ try:
         logging.info("[RUNTIME] uvloop installed successfully (darwin/arm64)")
 except ImportError:
     # uvloop not installed — falls back to native asyncio gracefully
+    pass
+
+# Sprint P5-JIT: Log Python 3.14 JIT status
+try:
+    _jit_enabled = getattr(sys, "_jit_enabled", None)
+    if _jit_enabled is True:
+        logging.info("[RUNTIME] Python 3.14 JIT enabled (sys._jit_enabled=True) — CPU-bound ops accelerated")
+    elif _jit_enabled is False:
+        logging.info("[RUNTIME] Python 3.14 JIT disabled (sys._jit_enabled=False)")
+    else:
+        logging.debug("[RUNTIME] Python 3.14 JIT status unknown (sys._jit_enabled not available)")
+except Exception:
     pass
 
 logger = get_logger(__name__)

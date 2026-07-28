@@ -18,8 +18,17 @@ Integration: pipeline/live_public_pipeline.py:_generate_and_store_report
 
 from __future__ import annotations
 
-import json
 import logging
+
+# orjson — strict import with stdlib fallback (fail-safe, always-on)
+try:
+    import orjson as _orjson_mod
+
+    _HAS_ORJSON: bool = True
+except ImportError:
+    _orjson_mod = None  # type: ignore[assignment]
+    _HAS_ORJSON = False
+    import json as _stdlib_json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -49,6 +58,13 @@ def _get_rust_stix():
             _RUST_STIX = False  # type: ignore[assignment]
             logger.debug("[stix] Rust stix_2_1 not available, using Python fallback")
     return _RUST_STIX if _RUST_STIX else None
+
+
+def _json_loads(data: bytes | str) -> Any:
+    """Fast JSON decode: tries orjson first, falls back to stdlib json."""
+    if _HAS_ORJSON:
+        return _orjson_mod.loads(data)
+    return _stdlib_json.loads(data)
 
 
 # ─── Public API ────────────────────────────────────────────────────────────────
@@ -102,14 +118,14 @@ def decode(bundle_bytes: bytes) -> dict[str, Any]:
         try:
             result = rust.decode_bundle(bundle_bytes)
             if isinstance(result, str):
-                parsed = json.loads(result)
+                parsed = _json_loads(result)
                 if "error" not in parsed:
                     return parsed
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"[stix] Rust decode_bundle failed: {exc}, falling back to Python")
 
     try:
-        return json.loads(bundle_bytes.decode("utf-8"))
+        return _json_loads(bundle_bytes)
     except Exception:
         return {"error": "failed to decode STIX bundle"}
 
@@ -135,7 +151,7 @@ def validate(stix_json: str) -> ValidationResult:
         try:
             result_str = rust.validate_json(stix_json)
             if result_str:
-                parsed = json.loads(result_str)
+                parsed = _json_loads(result_str)
                 return ValidationResult(
                     is_valid=parsed.get("is_valid", False),
                     errors=parsed.get("errors", []),
@@ -262,14 +278,14 @@ def _py_encode(finding: dict[str, Any]) -> bytes:
         "objects": [indicator, note],
     }
 
-    return json.dumps(bundle, separators=(",", ":")).encode("utf-8")
+    return _orjson_mod.dumps(bundle)
 
 
 def _py_validate(stix_json: str) -> ValidationResult:
     """Pure-Python structural STIX validation (fallback)."""
     try:
-        obj = json.loads(stix_json)
-    except json.JSONDecodeError as exc:
+        obj = _orjson_mod.loads(stix_json)
+    except orjson.JSONDecodeError as exc:
         return ValidationResult(
             is_valid=False,
             errors=[{"path": "", "message": f"JSON parse error: {exc}", "value_preview": None}],

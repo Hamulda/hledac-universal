@@ -49,6 +49,7 @@ Backward compatibility:
 
 import logging
 import os
+import weakref
 import msgspec
 from typing import TYPE_CHECKING, Any
 
@@ -93,7 +94,7 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "misc",
 )
 
-_lazy_mod_cache: dict[str, Any] = {}
+_lazy_mod_cache: weakref.WeakValueDictionary[str, Any] = weakref.WeakValueDictionary()
 
 
 def _get_submodule(name: str) -> Any:

@@ -32,6 +32,12 @@ dependencies = [
     # uvloop 0.22+ (F3.4): Python 3.14+ M1 wheel available since June 2026.
     # uvloop gives ~2× I/O-bound speedup vs native asyncio kqueue on M1.
     "uvloop>=0.22; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # ── Observability (always-on, lazy-init) ─────────────────────────────────
+    # Issue #18: OTel API in main deps — always available for tracing without --extra otel.
+    # Lazy init: only activates when HLEDAC_OTEL_ENABLED=1 (default 1).
+    # SDK is lazy-loaded inside python_otel_bridge.py to avoid M1 8GB startup cost.
+    "opentelemetry-api>=1.27.0,<2.0.0",
+    "opentelemetry-sdk>=1.27.0,<2.0.0",
     # ── HTTP / stealth ────────────────────────────────────────────────────────
     # httpx<0.32.0: ISSUE-008 — relaxed upper bound to allow 0.30.x security patches.
     # 1.x is not on the roadmap. HTTP/2 stable since 0.28.x; API compatible.
@@ -70,9 +76,14 @@ dependencies = [
     #   → orjson.loads() / orjson.dumps() — stdlib json replacement
     # CI gate (stdlib json ban): grep-based — catches future regressions
     #   grep -rn 'import json\|from json' --include='*.py' runtime/ knowledge/ pipeline/ fetching/
-    #   Expected: 0 matches. If match found: migrate to orjson (untyped) or msgspec (typed).
+    #   Expected: 0 matches outside except-blocks. Legitimate stdlib json usage:
+    #     - Inside `except ImportError` as final fallback (orjson unavailable)
+    #     - `json.dump`/`json.load` for file I/O (not orjson-compatible API)
+    #     - duckdb_store.py lines 116+191: orjson fallback path in _ORJSON_DECODER wrapper
+    #   If match found: migrate to orjson (untyped) or msgspec (typed).
     # ruff_ext custom rule TCH909 (plugin entry point) is the automated enforcement path.
-    # legacy stdlib json: ZERO occurrences in codebase as of F350M-R (migrated to orjson/msgspec)
+    # legacy stdlib json: 12 remaining occurrences — all inside except-blocks as fallbacks
+    # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
     # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
     "tenacity>=9.0.0",
     # ── Storage ───────────────────────────────────────────────────────────────
@@ -207,8 +218,8 @@ dependencies = [
 # HLEDAC_OTEL_PROFILE=1. Default exporter: JSON-Lines to stdout.
 # Install with: uv sync --extra otel
 otel = [
-    "opentelemetry-api>=1.27.0,<2.0.0",
-    "opentelemetry-sdk>=1.27.0,<2.0.0",
+    # Issue #18: opentelemetry-api + sdk moved to main deps (always-on tracing).
+    # Keep instrumentation + exporters in extra.
     "opentelemetry-instrumentation-httpx>=0.47b0",
     "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     "opentelemetry-instrumentation-aio-pika[observability]>=0.47b0",
@@ -403,6 +414,9 @@ package = true
 
 [tool.uv.workspace]
 members = ["rust_extensions"]
+
+# NOTE: Python 3.14 JIT (PYTHON_JIT=1) is configured in .env, not in pyproject.toml.
+# uv does not support [tool.uv.env] in all versions. See .env.example.
 
 # ── Ruff ─────────────────────────────────────────────────────────────────────
 [tool.ruff]

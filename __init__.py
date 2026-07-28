@@ -28,6 +28,7 @@ from types import ModuleType
 from typing import Any
 import re as _re
 import threading
+import weakref
 
 # -----------------------------------------------------------------------------
 # Lazy namespace bootstrap (runs once on first __getattr__ call, not at import)
@@ -216,6 +217,10 @@ def _build_index() -> dict[str, str]:
 # Runtime __getattr__ with index-accelerated lookup
 # -----------------------------------------------------------------------------
 _cache: dict[str, Any] = {}
+# Sprint-scoped: clear cache between sprints to prevent symbol accumulation.
+# weakref.WeakValueDictionary cannot be used here because _cache stores
+# both module objects and primitive values (int, str, etc.) — WeakValueDictionary
+# only holds weakly-referenced objects and would prematurely evict modules.
 
 
 def __getattr__(name: str) -> Any:
@@ -261,6 +266,16 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+def clear_cache() -> None:
+    """Clear the symbol cache — called during sprint winddown.
+
+    F350M-R G7: Clears module-level _cache to prevent memory growth
+    during multi-sprint sessions. After clear, symbols are re-resolved
+    on next access via __getattr__.
+    """
+    _cache.clear()
+
+
 # -----------------------------------------------------------------------------
 # load_optional: safe loader for arbitrary submodules
 # -----------------------------------------------------------------------------
@@ -295,4 +310,4 @@ _all_names: set[str] = set()
 for explicit in _EXPLICIT_ATTRS_BY_MODULE.values():
     _all_names.update(explicit)
 
-__all__ = sorted(_all_names | {"load_optional"})
+__all__ = sorted(_all_names | {"load_optional", "clear_cache"})

@@ -137,8 +137,11 @@ def _parse_version(ext: object | None) -> tuple[tuple[int, int, int], str]:
                 int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0,
                 int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0,
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            f"[RustProbe] __version_info__/__version__ raised {type(e).__name__}: {e}; "
+            f"treating version as unknown"
+        )
 
     return ver_tuple, ver_str
 
@@ -152,28 +155,43 @@ def _parse_abi_version(ext: object | None) -> tuple[int, int, int]:
     if ext is None:
         return (0, 0, 0)
 
-    try:
-        abi_version_fn = getattr(ext, "__abi_version__", None)
-        if callable(abi_version_fn):
-            result = abi_version_fn()
+    # Single getattr — reuse the value, avoid double property invocation
+    abi_attr = getattr(ext, "__abi_version__", None)
+
+    # Path 1: callable (function)
+    if callable(abi_attr):
+        try:
+            result = abi_attr()
             if isinstance(result, tuple) and len(result) >= 2:
                 return (int(result[0]), int(result[1]), int(result[2]) if len(result) > 2 else 0)
             elif isinstance(result, int):
                 # Legacy flat u32 — convert to tuple
                 return (result, 0, 0)
-    except Exception:
-        pass
+            else:
+                # Unexpected type — fall through to direct attribute check
+                logger.warning(
+                    f"[RustProbe] __abi_version__() returned {type(result).__name__} "
+                    f"(expected tuple or int); checking direct attribute"
+                )
+        except Exception as e:
+            logger.warning(
+                f"[RustProbe] __abi_version__() raised {type(e).__name__}: {e}; "
+                f"ABI version unknown"
+            )
 
-    # Also check direct attribute (constant, not function)
+    # Path 2: direct attribute (constant, not function)
     try:
-        direct = getattr(ext, "__abi_version__", None)
-        if isinstance(direct, tuple) and len(direct) >= 2:
-            return (int(direct[0]), int(direct[1]), int(direct[2]) if len(direct) > 2 else 0)
-        elif isinstance(direct, int):
+        if isinstance(abi_attr, tuple) and len(abi_attr) >= 2:
+            return (int(abi_attr[0]), int(abi_attr[1]), int(abi_attr[2]) if len(abi_attr) > 2 else 0)
+        elif isinstance(abi_attr, int):
             # Legacy flat u32 — convert to tuple
-            return (direct, 0, 0)
-    except Exception:
-        pass
+            return (abi_attr, 0, 0)
+        # else: attribute is None or wrong type — return (0, 0, 0) below
+    except Exception as e:
+        logger.warning(
+            f"[RustProbe] __abi_version__ (direct attribute) raised {type(e).__name__}: {e}; "
+            f"ABI version unknown"
+        )
 
     return (0, 0, 0)
 
@@ -191,8 +209,11 @@ def _parse_py_version(ext: object | None) -> tuple[int, int, int] | None:
             result = py_version_fn()
             if isinstance(result, tuple) and len(result) >= 2:
                 return (int(result[0]), int(result[1]), int(result[2]) if len(result) > 2 else 0)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            f"[RustProbe] __py_version__() raised {type(e).__name__}: {e}; "
+            f"Python version compiled-for unknown"
+        )
     return None
 
 
@@ -209,8 +230,11 @@ def _parse_apple_target(ext: object | None) -> str | None:
             result = target_fn()
             if isinstance(result, str):
                 return result
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            f"[RustProbe] __apple_target__() raised {type(e).__name__}: {e}; "
+            f"Apple target unknown"
+        )
     return None
 
 

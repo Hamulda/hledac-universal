@@ -31,9 +31,17 @@ Performance invariants:
 from __future__ import annotations
 
 import asyncio
-import json as _json_lib
 import logging
 import os
+
+# orjson — strict import with stdlib fallback (fail-safe, always-on)
+try:
+    import orjson as _orjson_mod
+
+    _HAS_ORJSON: bool = True
+except ImportError:
+    _orjson_mod = None  # type: ignore[assignment]
+    _HAS_ORJSON = False
 import shutil
 import subprocess
 from abc import abstractmethod
@@ -393,7 +401,7 @@ class SqliteVecIndex(VectorIndex):
             results: list[AnnHit] = []
             for row in rows:
                 try:
-                    meta = _json_lib.loads(row[2]) if row[2] else {}
+                    meta = _orjson_mod.loads(row[2]) if row[2] else {}
                 except Exception:
                     meta = {}
                 # sqlite-vec distance is 0=identical, 2=opposite
@@ -595,14 +603,11 @@ class LanceDbIndex(VectorIndex):
 # ---------------------------------------------------------------------------
 def json_dumps_maybe(obj: dict[str, Any]) -> str:
     """Serialize metadata dict. Uses orjson if available for speed."""
-    try:
-        import orjson
+    if _HAS_ORJSON:
+        return _orjson_mod.dumps(obj).decode("utf-8")
+    import json
 
-        return orjson.dumps(obj).decode("utf-8")
-    except ImportError:
-        import json
-
-        return json.dumps(obj)
+    return json.dumps(obj)
 
 
 # ---------------------------------------------------------------------------

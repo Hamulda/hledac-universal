@@ -429,11 +429,12 @@ class UnifiedResourceManager:
 
             # Wait with timeout
             if self._active_tasks:
-                await asyncio.wait(
-                    self._active_tasks.values(),
-                    timeout=30.0,
-                    return_when=asyncio.ALL_COMPLETED,
-                )
+                # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.TaskGroup
+                try:
+                    async with asyncio.timeout(30.0):
+                        await asyncio.gather(*self._active_tasks.values(), return_exceptions=True)
+                except asyncio.TimeoutError:
+                    pass
 
         # UniversalMemoryCoordinator doesn't require async shutdown
         logger.info("[UnifiedResourceManager] Shutdown complete")

@@ -143,6 +143,12 @@ _ISOLATED_FUNC_REGISTRY: dict[str, Callable[..., Any]] = {}
 _ISOLATED_FUNC_NAMES: set[str] = set()
 
 
+def clear_isolated_function_registry() -> None:
+    """Clear all registered functions — called during executor shutdown."""
+    _ISOLATED_FUNC_REGISTRY.clear()
+    _ISOLATED_FUNC_NAMES.clear()
+
+
 def register_isolated_function(name: str, func: Callable[..., Any]) -> None:
     """Register a function for isolated executor RPC (P1-04 compatibility)."""
     _ISOLATED_FUNC_REGISTRY[name] = func

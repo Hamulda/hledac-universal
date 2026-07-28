@@ -654,6 +654,7 @@ async def _generate_conceptual_domains_mlx(query: str) -> list[DomainCandidate]:
                     candidates = orjson.loads(array_match.group(0))
                 else:
                     import json as _stdlib_json
+
                     candidates = _stdlib_json.loads(array_match.group(0))
             except Exception:
                 return []

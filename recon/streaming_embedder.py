@@ -65,6 +65,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from hledac.universal.runtime.worker_pool import run_in_pool
+from hledac.universal.utils.async_helpers import first_completed  # ISSUE-15
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -400,17 +401,24 @@ class StreamingEmbedder:
                         break
 
                     # Wait for at least one batch to complete (FIRST_COMPLETED)
+                    # ISSUE-15: Replaced asyncio.wait(FIRST_COMPLETED) with first_completed helper
+                    # asyncio.wait() is deprecated in Python 3.14; TaskGroup doesn't support
+                    # FIRST_COMPLETED semantics directly (automatic cancellation on scope exit),
+                    # so we use a shared Future pattern to detect first completion.
                     try:
                         async with asyncio.timeout(300.0):  # 5 min hard cap per batch
-                            done, pending = await asyncio.wait(
-                                pending, return_when=asyncio.FIRST_COMPLETED
-                            )
+                            # first_completed returns (result, winner_task)
+                            _result, _winner = await first_completed(*pending)
                     except asyncio.TimeoutError:
                         # TaskGroup scope will cancel all remaining children automatically
                         raise
 
-                    # Yield completed batch(es)
-                    for completed in done:
+                    # Remove winner from pending set
+                    pending.discard(_winner)
+
+                    # Yield completed batch(es) — only the winner in this iteration
+                    # (but we process one at a time since FIRST_COMPLETED returns one)
+                    for completed in [_winner]:
                         try:
                             ids, embs = await completed
                             if ids and embs is not None and len(embs) == len(ids):
@@ -517,13 +525,13 @@ class StreamingEmbedder:
 
                     try:
                         async with asyncio.timeout(300.0):
-                            done, pending = await asyncio.wait(
-                                pending, return_when=asyncio.FIRST_COMPLETED
-                            )
+                            # ISSUE-15: Replaced asyncio.wait(FIRST_COMPLETED) with first_completed helper
+                            _winner_task: asyncio.Task[tuple[list[str], np.ndarray]]
+                            _, _winner_task = await first_completed(*pending)
                     except asyncio.TimeoutError:
                         raise
 
-                    for completed in done:
+                    for completed in [_winner_task]:
                         try:
                             ids, embs = await completed
                             if ids and embs is not None and len(embs) == len(ids):

@@ -551,12 +551,23 @@ class ResourceAwareScheduler:
         if not self._tasks:
             return
         logger.info(f'Shutting down scheduler, waiting for {len(self._tasks)} tasks')
-        done, pending = await asyncio.wait(self._tasks.values(), timeout=timeout, return_when=asyncio.ALL_COMPLETED)
+        # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.TaskGroup
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+        except asyncio.TimeoutError:
+            pending = [t for t in self._tasks.values() if not t.done()]
+        else:
+            pending = []
         if pending:
             logger.warning(f'Cancelling {len(pending)} remaining tasks')
             for task in pending:
                 task.cancel()
-            await asyncio.wait(pending, timeout=5.0, return_when=asyncio.ALL_COMPLETED)
+            try:
+                async with asyncio.timeout(5.0):
+                    await asyncio.gather(*pending, return_exceptions=True)
+            except asyncio.TimeoutError:
+                pass
         self._tasks.clear()
 
 async def main():

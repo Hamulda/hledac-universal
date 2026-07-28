@@ -33,7 +33,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import safe_create_task, parallel
+from hledac.universal.utils.async_helpers import safe_create_task, parallel, first_completed  # ISSUE-15
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
@@ -1607,31 +1607,34 @@ class SynthesisRunner:
         pending = set(tasks.keys())
         try:
             while pending:
-                done, pending = await asyncio.wait(
-                    pending,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for task in done:
-                    task_name = tasks.pop(task)
-                    try:
-                        result_dict, result_name = task.result()
-                        if result_dict is not None and result_name != "none":
-                            winner = result_dict
-                            winner_name = result_name
-                            # Cancel remaining tasks — first-success
-                            for remaining_task in pending:
-                                remaining_task.cancel()
-                                try:
-                                    await remaining_task
-                                except asyncio.CancelledError:
-                                    pass
-                            logger.debug("[SYNTHESIS] race_first_wins: %s won", winner_name)
-                            return winner, winner_name
-                    except asyncio.CancelledError:
-                        # This task was cancelled by another winner — expected
-                        pass
-                    except Exception as e:
-                        logger.debug("[SYNTHESIS] %s race task exception: %s", task_name, e)
+                # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
+                # This is a race-first-wins pattern — first successful result wins
+                try:
+                    result, winner_task = await first_completed(*pending)
+                except asyncio.TimeoutError:
+                    # No timeout configured, shouldn't happen
+                    break
+
+                # Remove winner from pending
+                pending.discard(winner_task)
+
+                try:
+                    result_dict, result_name = result
+                    if result_dict is not None and result_name != "none":
+                        winner = result_dict
+                        winner_name = result_name
+                        # Cancel remaining tasks — first-success
+                        for remaining_task in pending:
+                            remaining_task.cancel()
+                            try:
+                                await remaining_task
+                            except asyncio.CancelledError:
+                                pass
+                        logger.debug("[SYNTHESIS] race_first_wins: %s won", winner_name)
+                        return winner, winner_name
+                except Exception as e:
+                    logger.debug("[SYNTHESIS] race task exception: %s", e)
+                    # Continue waiting for other tasks
         except asyncio.CancelledError:
             # Outer cancellation — cancel all and re-raise
             for task in pending:

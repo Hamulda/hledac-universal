@@ -68,6 +68,11 @@ class HardwareCapabilities(msgspec.Struct, frozen=True, gc=False):
     has_ane: bool = False
     is_m1_silicon: bool = False
     is_m1_8gb: bool = False
+    # Sprint FXXX: Python 3.14 JIT detection (PEP 749)
+    # PEP 749: JIT enabled by default in Python 3.14 if interpreter built with --with-jit
+    is_jit_available: bool = False
+    is_jit_active: bool = False
+    jit_reason: str = ""
 
     @property
     def max_memory_mb(self) -> int:
@@ -217,6 +222,28 @@ class SystemDetector:
         has_ane = False
         is_m1_silicon = False
         is_m1_8gb = False
+
+        # Sprint FXXX: Python 3.14 JIT detection (PEP 749)
+        # PEP 749: JIT enabled by default in Python 3.14+ if interpreter built with --with-jit
+        is_jit_available = False
+        is_jit_active = False
+        jit_reason = ""
+        try:
+            if hasattr(sys, 'jit'):
+                is_jit_available = True
+                # JIT is active if sys.flags.jit == 1
+                try:
+                    import sys
+                    jit_flag = getattr(sys.flags, 'jit', 0)
+                    is_jit_active = jit_flag == 1
+                    jit_reason = f"sys.jit available, sys.flags.jit={jit_flag}"
+                except Exception:
+                    jit_reason = "sys.jit available, sys.flags.jit check failed"
+            else:
+                jit_reason = "sys.jit attribute not available (Python < 3.14 or built without --with-jit)"
+        except Exception as e:
+            jit_reason = f"JIT detection error: {e}"
+
         if is_darwin:
             try:
                 import mlx.core as mx
@@ -228,7 +255,7 @@ class SystemDetector:
                 pass
             except Exception:
                 pass
-        self._capabilities = HardwareCapabilities(is_darwin=is_darwin, darwin_version=darwin_version, darwin_machine=darwin_machine, cpu_count_physical=cpu_physical, cpu_count_logical=cpu_logical, memory_total_bytes=memory_total_bytes, memory_available_bytes=memory_available_bytes, memory_total_gb=memory_total_gb, memory_available_gb=memory_available_gb, ram_tier=ram_tier, python_build_flags=python_build_flags, has_metal=has_metal, has_ane=has_ane, is_m1_silicon=is_m1_silicon, is_m1_8gb=is_m1_8gb)
+        self._capabilities = HardwareCapabilities(is_darwin=is_darwin, darwin_version=darwin_version, darwin_machine=darwin_machine, cpu_count_physical=cpu_physical, cpu_count_logical=cpu_logical, memory_total_bytes=memory_total_bytes, memory_available_bytes=memory_available_bytes, memory_total_gb=memory_total_gb, memory_available_gb=memory_available_gb, ram_tier=ram_tier, python_build_flags=python_build_flags, has_metal=has_metal, has_ane=has_ane, is_m1_silicon=is_m1_silicon, is_m1_8gb=is_m1_8gb, is_jit_available=is_jit_available, is_jit_active=is_jit_active, jit_reason=jit_reason)
 
     @property
     def capabilities(self) -> HardwareCapabilities:

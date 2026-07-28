@@ -290,18 +290,26 @@ class JSONFormatter:
             elif isinstance(sanitized_obj, list):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
 
-            # Sprint F285: Streaming JSON write with orjson
-            _json_bytes = orjson.dumps(sanitized_obj, option=orjson.OPT_INDENT_2)
-            _CHUNK_SIZE = 64 * 1024
-            with open(report_path, "wb") as f:
-                for _chunk_start in range(0, len(_json_bytes), _CHUNK_SIZE):
-                    f.write(_json_bytes[_chunk_start:_chunk_start + _CHUNK_SIZE])
-            logger.info(f"[EXPORT] JSON report → {report_path}")
+            # Sprint F320+: Parallel export formats — JSON + PQ + Vault run concurrently
+            async def _write_json() -> str | None:
+                try:
+                    _json_bytes = orjson.dumps(sanitized_obj, option=orjson.OPT_INDENT_2)
+                    _CHUNK_SIZE = 64 * 1024
+                    with open(report_path, "wb") as f:
+                        for _chunk_start in range(0, len(_json_bytes), _CHUNK_SIZE):
+                            f.write(_json_bytes[_chunk_start:_chunk_start + _CHUNK_SIZE])
+                    logger.info(f"[EXPORT] JSON report → {report_path}")
+                    return str(report_path)
+                except Exception as _e:
+                    logger.warning(f"[EXPORT] JSON write failed: {_e}")
+                    return None
 
-            # Sprint F260B: PQ export encryption
-            try:
-                import os as _os
-                if _os.environ.get("HLEDAC_ENABLE_PQ_EXPORT") == "1":
+            async def _write_pq_encrypted() -> str | None:
+                """Post-process: PQ encrypt JSON report if enabled."""
+                try:
+                    import os as _os
+                    if _os.environ.get("HLEDAC_ENABLE_PQ_EXPORT") != "1":
+                        return None
                     import base64
                     import time
                     from hledac.universal.security.pq_export_encryption import (
@@ -328,17 +336,21 @@ class JSONFormatter:
                         with open(_pq_encrypted_path, "wb") as f:
                             f.write(orjson.dumps(encrypted_bundle))
                         logger.info(f"[EXPORT] PQ-encrypted report → {_pq_encrypted_path}")
-            except Exception as _pq_err:
-                logger.warning(f"[EXPORT] PQ encryption skipped: {_pq_err}")
+                        return _pq_encrypted_path
+                    return None
+                except Exception as _pq_err:
+                    logger.warning(f"[EXPORT] PQ encryption skipped: {_pq_err}")
+                    return None
 
-            # Sprint F26X: Vault encrypted export
-            _vault_encrypted_path: str | None = None
-            try:
-                import os as _os
-                import shutil
-                import tempfile
-                from pathlib import Path
-                if _os.environ.get("HLEDAC_VAULT_EXPORT") == "1" and report_path:
+            async def _write_vault_encrypted() -> str | None:
+                """Post-process: Vault encrypt JSON report if enabled."""
+                try:
+                    import os as _os
+                    import shutil
+                    import tempfile
+                    from pathlib import Path
+                    if _os.environ.get("HLEDAC_VAULT_EXPORT") != "1" or not report_path:
+                        return None
                     from hledac.universal.security.vault_manager import LootManager
                     with tempfile.TemporaryDirectory() as _tmp_vault:
                         _report_copy = Path(_tmp_vault) / Path(report_path).name
@@ -351,10 +363,28 @@ class JSONFormatter:
                             archive_name=_archive_name,
                         )
                         if _enc_path:
-                            _vault_encrypted_path = _enc_path
-                            logger.info(f"[EXPORT] Vault encrypted → {_vault_encrypted_path}")
-            except Exception as _vault_err:
-                logger.warning(f"[EXPORT] Vault encryption skipped: {_vault_err}")
+                            logger.info(f"[EXPORT] Vault encrypted → {_enc_path}")
+                            return _enc_path
+                        return None
+                except Exception as _vault_err:
+                    logger.warning(f"[EXPORT] Vault encryption skipped: {_vault_err}")
+                    return None
+
+            # Run all post-processing in parallel (JSON must complete first for PQ/Vault to read it)
+            json_result, pq_result, vault_result = await asyncio.gather(
+                _write_json(),
+                _write_pq_encrypted(),
+                _write_vault_encrypted(),
+                return_exceptions=True,
+            )
+            # Handle any exceptions from gather
+            if isinstance(json_result, Exception):
+                logger.warning(f"[EXPORT] JSON write exception: {json_result}")
+                report_path = None
+            else:
+                report_path = Path(json_result) if json_result else None
+            _pq_encrypted_path = pq_result if not isinstance(pq_result, Exception) else None
+            _vault_encrypted_path = vault_result if not isinstance(vault_result, Exception) else None
         except Exception as e:
             logger.warning(f"[EXPORT] JSON write failed: {e}")
             report_path = None

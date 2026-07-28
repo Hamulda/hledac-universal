@@ -22,7 +22,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any, Awaitable
-from hledac.universal.utils.async_helpers import parallel, safe_create_task
+from hledac.universal.utils.async_helpers import parallel, safe_create_task, first_completed  # ISSUE-15
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
 
@@ -239,14 +239,17 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             return ExecutionResult(task_id='none', success=False, summary='No backends available', executor='none', execution_time=0.0, error='All execution backends unavailable')
         timeout_value = decision.estimated_duration if decision.estimated_duration else 10.0
         winner_result: ExecutionResult | None = None
+        # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
+        backend_tasks: list[asyncio.Task[ExecutionResult]] = [
+            safe_create_task(coro, name=f'exec:{name}') for name, coro in backends
+        ]
         try:
             async with asyncio.timeout(timeout_value):
-                done, pending = await asyncio.wait([safe_create_task(coro, name=f'exec:{name}') for name, coro in backends], return_when=asyncio.FIRST_COMPLETED)
-                for t in pending:
-                    t.cancel()
-                for t in done:
-                    winner_result = t.result()
-                    break
+                _, winner_task = await first_completed(*backend_tasks)
+                for t in backend_tasks:
+                    if t is not winner_task:
+                        t.cancel()
+                winner_result = winner_task.result()
         except asyncio.TimeoutError:
             return ExecutionResult(task_id='none', success=False, summary=f'All backends timed out after {timeout_value}s', executor='none', execution_time=timeout_value, error='Backend race timeout')
         except Exception as e:

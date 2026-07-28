@@ -209,6 +209,36 @@ class MlxcelIpcClient:
             self._reader = None
             self._connected = False
 
+    async def _reconnect_with_backoff(self) -> None:
+        """
+        Issue #19: Reconnect with exponential backoff.
+
+        Tries socket first, then subprocess fallback.
+        Retries up to 3 times with exponential delay: 1s, 2s, 4s.
+        """
+        delays = [1.0, 2.0, 4.0]
+        last_error: MlxcelUnavailable | None = None
+        for attempt, delay in enumerate(delays):
+            try:
+                # Disconnect first if connected
+                await self._disconnect_socket()
+                # Try socket connection
+                await asyncio.wait_for(self._connect_socket(), timeout=delay)
+                return
+            except (MlxcelUnavailable, asyncio.TimeoutError, OSError) as e:
+                last_error = e if isinstance(e, MlxcelUnavailable) else MlxcelUnavailable(str(e))
+                logger.debug('[MLXCEL] reconnect attempt %d failed: %s', attempt + 1, e)
+                if attempt < len(delays) - 1:
+                    await asyncio.sleep(delay)
+        # Last resort: try subprocess
+        try:
+            await self._disconnect_socket()
+            await self._spawn_subprocess()
+        except MlxcelUnavailable:
+            if last_error:
+                raise last_error
+            raise MlxcelUnavailable('mlxcel reconnect failed')
+
     async def _spawn_subprocess(self) -> None:
         """Spawn mlxcel as subprocess with stdin/stdout pipes (NOT socket mode)."""
         binary = self._find_binary()
@@ -278,7 +308,8 @@ class MlxcelIpcClient:
             return self._version
         except MlxcelUnavailable:
             try:
-                await self._spawn_subprocess()
+                # Issue #19: reconnect with backoff
+                await self._reconnect_with_backoff()
                 result = await self._send_rpc('ping', {})
                 self._version = result.get('mlxcel_version', 'unknown')
                 return self._version
@@ -400,6 +431,20 @@ _client: MlxcelIpcClient | None = None
 _client_lock = LazyAsyncioLock()
 _client_failure_count: int = 0
 _CLIENT_RETRY_INTERVAL: int = 5
+# Issue #19: Graceful degradation — after max consecutive failures, mark as degraded
+_MAX_CONSECUTIVE_FAILURES: int = 3
+_degraded_mode: bool = False
+
+
+def _is_degraded() -> bool:
+    """Return True if mlxcel client is in degraded mode after max failures."""
+    return _degraded_mode
+
+
+def _set_degraded(val: bool) -> None:
+    """Set degraded mode flag (module-level for cross-coroutine visibility)."""
+    global _degraded_mode
+    _degraded_mode = val
 
 async def get_mlxcel_client() -> MlxcelIpcClient:
     """
@@ -407,21 +452,51 @@ async def get_mlxcel_client() -> MlxcelIpcClient:
 
     Lazy initialization: first call detects mlxcel binary and connects.
     After consecutive failures, re-detects the binary to handle mlxcel updates.
+    Issue #19: Graceful degradation — after max consecutive failures, stays in
+    degraded mode and tries once per new request (no rapid retry loop).
     """
     global _client, _client_failure_count
     async with _client_lock:
-        if _client is not None and _client_failure_count < _CLIENT_RETRY_INTERVAL:
+        # If in degraded mode, only retry once per new request (not rapid loop)
+        if _client is not None and _client_failure_count < _CLIENT_RETRY_INTERVAL and not _is_degraded():
             return _client
         _client = MlxcelIpcClient()
         _client_failure_count = 0
         try:
             async with asyncio.timeout(5.0):
                 await _client.ping()
+            _set_degraded(False)
             logger.info('[MLXCEL] Connected: version=%s', _client.version)
         except (MlxcelUnavailable, asyncio.TimeoutError) as e:
             _client_failure_count += 1
-            logger.debug('[MLXCEL] mlxcel not available: %s (failure #%d)', e, _client_failure_count)
+            if _client_failure_count >= _MAX_CONSECUTIVE_FAILURES:
+                _set_degraded(True)
+                logger.warning('[MLXCEL] Degraded mode: mlxcel unavailable after %d attempts', _client_failure_count)
+            else:
+                logger.debug('[MLXCEL] mlxcel not available: %s (failure #%d)', e, _client_failure_count)
     return _client
+
+
+async def health_check() -> bool:
+    """
+    Issue #19: Explicit health check with reconnect + degraded mode.
+
+    Returns:
+        True if mlxcel is healthy and responding.
+        False if degraded or unavailable.
+    """
+    global _client
+    try:
+        async with asyncio.timeout(5.0):
+            if _client is None:
+                await get_mlxcel_client()
+            if _client is None:
+                return False
+            await _client.ping()
+            _set_degraded(False)
+            return True
+    except (MlxcelUnavailable, asyncio.TimeoutError, Exception):
+        return False
 
 def is_mlxcel_available() -> bool:
     """

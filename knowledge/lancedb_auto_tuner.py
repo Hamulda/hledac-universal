@@ -222,7 +222,7 @@ class IVFPQAutoTuner:
             else:
                 import json as _stdlib_json
 
-                data = _stdlib_json.loads(raw.decode('utf-8'))
+                data = _stdlib_json.loads(raw.decode("utf-8"))
             return TuneState(last_tune_at=float(data.get('last_tune_at', 0.0)), last_num_partitions=int(data.get('last_num_partitions', DEFAULT_NUM_PARTITIONS)), last_recall=float(data.get('last_recall', 0.0)), inserts_since_tune=int(data.get('inserts_since_tune', 0)), tune_count=int(data.get('tune_count', 0)), last_num_sub_vectors=int(data.get('last_num_sub_vectors', DEFAULT_NUM_SUB_VECTORS)), recall_ema=float(data.get('recall_ema', 0.0)), recall_ema_alpha=float(data.get('recall_ema_alpha', 0.3)))
         except Exception as e:
             logger.debug(f'[LANCEDB-AUTOTUNE] state load failed (defaults): {e}')

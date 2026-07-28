@@ -623,6 +623,25 @@ class EmbeddingCache:
         self.stats = CacheStats()
         logger.info("[EmbedCache] cleared")
 
+    def clear_sync(self) -> None:
+        """Synchronous clear for use by GlobalCacheRegistry (Issue #16).
+
+        Clears L1 and resets mmap without awaiting locks.
+        """
+        self._l1.clear()
+        if self._mmap is not None:
+            del self._mmap
+            self._mmap = None
+        try:
+            if self._memmap_path.exists():
+                self._memmap_path.unlink()
+            if self._meta_path.exists():
+                self._meta_path.unlink()
+        except Exception as e:
+            logger.debug(f"[EmbedCache] clear_sync failed: {e}")
+        self.stats = CacheStats()
+        logger.debug("[EmbedCache] clear_sync complete")
+
     def get_stats(self) -> dict[str, Any]:
         return self.stats.to_dict()
 
@@ -641,6 +660,17 @@ async def get_embedding_cache(dim: int = 256) -> EmbeddingCache:
     async with await _get_cache_lock_async():
         if _cache is None:
             _cache = EmbeddingCache(dim=dim)
+            # Issue #16: Register with GlobalCacheRegistry for winddown clear_all
+            try:
+                from hledac.universal.core.global_cache_registry import register_cache
+                register_cache(
+                    "embeddings",
+                    get_size=lambda c=_cache: len(getattr(c, '_l1', {})),
+                    clear=_cache.clear_sync,
+                    description="MLX embedding two-layer LRU cache",
+                )
+            except Exception:
+                pass  # Non-fatal — registry is optional
         return _cache
 
 

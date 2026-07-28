@@ -104,6 +104,62 @@ jobs:
       - name: BLE001 audit (CI mode — fail on NEW violations)
         run: make audit-ci
 
+  python-jit-benchmark:
+    name: python-jit-benchmark · JIT vs non-JIT
+    runs-on: macos-latest
+    timeout-minutes: 15
+    # Run on main pushes and PRs to track JIT delta over time
+    if: "github.event_name == 'push' || github.event_name == 'pull_request'"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Sync dependencies
+        run: uv sync --locked --python ${{ env.PYTHON_VERSION }}
+
+      - name: Run tests WITHOUT JIT (baseline)
+        run: |
+          echo "=== WITHOUT JIT ==="
+          UV_JIT=0 uv run pytest tests/test_rust_extensions.py tests/test_hledac_core_rust.py -v --durations=0 2>&1 | tee pytest_no_jit.log
+          echo "EXIT_CODE=$?" >> $GITHUB_ENV
+
+      - name: Run tests WITH JIT (PYTHON_JIT=1)
+        run: |
+          echo "=== WITH JIT ==="
+          UV_JIT=1 uv run pytest tests/test_rust_extensions.py tests/test_hledac_core_rust.py -v --durations=0 2>&1 | tee pytest_jit.log
+
+      - name: Extract timing summary
+        run: |
+          echo "=== JIT BENCHMARK SUMMARY ==="
+          echo "--- Without JIT (baseline) ---"
+          grep -E "^(PASSED|FAILED|ERROR)" pytest_no_jit.log || true
+          echo "--- With JIT ---"
+          grep -E "^(PASSED|FAILED|ERROR)" pytest_jit.log || true
+          echo "--- Duration comparison ---"
+          echo "Without JIT exit code: ${{ env.EXIT_CODE }}"
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jit-benchmark-logs
+          path: |
+            pytest_no_jit.log
+            pytest_jit.log
+          retention-days: 7
+
   build-rust:
     name: maturin build · wheel
     runs-on: macos-latest

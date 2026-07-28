@@ -87,13 +87,14 @@ async def async_transform[T, R](
                 task = tg.create_task(transform_with_sem(item), eager_start=True)
                 pending.add(task)
                 if len(pending) >= concurrency:
-                    done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                    for d in done:
-                        pending.discard(d)
-                        try:
-                            yield d.result()
-                        except Exception:
-                            pass
+                    # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
+                    winner_task: asyncio.Task[Any]
+                    _, winner_task = await first_completed(*pending)
+                    pending.discard(winner_task)
+                    try:
+                        yield winner_task.result()
+                    except Exception:
+                        pass
             # Drain all remaining tasks with gather — runs inside the TaskGroup
             # scope so all tasks complete before cancellation on scope exit.
             remaining = await asyncio.gather(*pending, return_exceptions=True)

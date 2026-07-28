@@ -1111,7 +1111,7 @@ class RAGEngine:
             except ImportError:
                 import json
                 with open(doc_map_path) as f:
-                    self._document_map = _msgspec_loads(f.read())
+                    self._document_map = json.load(f)
         logger.info(f'HNSW index loaded from {load_path}')
 
     def get_hnsw_stats(self) -> dict[str, Any] | None:

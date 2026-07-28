@@ -2746,10 +2746,17 @@ async def drain_pending_extractions(deadline_s: float=30.0) -> tuple[int, int, f
         return (0, 0, 0.0)
     completed = 0
     timed_out = 0
+    # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.gather with timeout tracking
+    remaining_timeout = max(0.0, deadline_abs - _t_f273c.monotonic())
     try:
-        done, still_pending = await asyncio.wait(pending, timeout=max(0.0, deadline_abs - _t_f273c.monotonic()), return_when=asyncio.ALL_COMPLETED)
-        completed = len(done)
-        timed_out = len(still_pending)
+        async with asyncio.timeout(remaining_timeout):
+            await asyncio.gather(*pending, return_exceptions=True)
+        completed = len(pending)
+        timed_out = 0
+    except asyncio.TimeoutError:
+        # Find which tasks didn't complete within timeout
+        completed = sum(1 for t in pending if t.done())
+        timed_out = len(pending) - completed
     except Exception:  # noqa: BLE001 — best-effort; wait timeout failure returns zeroed stats
         return (0, 0, _t_f273c.monotonic() - _t0)
     return (completed, timed_out, _t_f273c.monotonic() - _t0)

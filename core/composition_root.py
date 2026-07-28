@@ -29,7 +29,48 @@ from collections.abc import Callable
 from typing import Any
 
 from hledac.universal.runtime.sprint_entrypoint import _cancel_all_tasks
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, first_completed  # ISSUE-15
+
+# uvloop: 2× I/O speedup on M1 kqueue. Try uvloop.new_event_loop() first,
+# fall back to asyncio.new_event_loop() if uvloop is unavailable (CI, non-M1).
+_UVLOOP_AVAILABLE: bool = False
+
+
+def _get_event_loop() -> asyncio.AbstractEventLoop:
+    """Create an event loop: uvloop on M1 darwin, asyncio elsewhere."""
+    global _UVLOOP_AVAILABLE
+    if _UVLOOP_AVAILABLE:
+        try:
+            import uvloop
+
+            # ISSUE-2 FIX: Explicitly call uvloop.new_event_loop() — not asyncio.new_event_loop().
+            # This ensures the 2× I/O speedup on M1 kqueue is actually realized.
+            # uvloop.install() was called in __main__.py, but we use the direct constructor
+            # to guarantee uvloop is used even if asyncio's policy isn't fully propagated.
+            return uvloop.new_event_loop()
+        except (ImportError, OSError):
+            _UVLOOP_AVAILABLE = False
+    return asyncio.new_event_loop()
+
+
+def _init_uvloop() -> bool:
+    """Detect and initialize uvloop. Returns True if uvloop is available."""
+    global _UVLOOP_AVAILABLE
+    try:
+        import uvloop
+        import platform
+
+        _is_darwin_arm = (
+            platform.system() == "Darwin"
+            and platform.machine().lower() in ("arm64", "aarch64")
+        )
+        if _is_darwin_arm and sys.version_info < (3, 15):
+            _UVLOOP_AVAILABLE = True
+            return True
+    except ImportError:
+        pass
+    _UVLOOP_AVAILABLE = False
+    return False
 
 logger = logging.getLogger(__name__)
 
@@ -211,20 +252,23 @@ async def _run_sprint_task(
     sprint_task = safe_create_task(sprint_coro, name="composition_root:sprint")
     sig_task = safe_create_task(shutdown_event.wait(), name="composition_root:shutdown_signal")
 
-    done, _ = await asyncio.wait(
-        [sprint_task, sig_task],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+    # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
+    # Race between sprint completion and shutdown signal
+    try:
+        winner_task: asyncio.Task[None]
+        _, winner_task = await first_completed(sprint_task, sig_task)
+    except asyncio.TimeoutError:
+        raise  # Should not happen with no timeout
 
-    # Surface sprint exceptions (asyncio.wait swallows them)
+    # Surface sprint exceptions (first_completed preserves exceptions)
     exc = sprint_task.exception()
     if exc is not None:
         raise exc
 
-    # Cancel if we exited via signal
-    if sprint_task not in done:
+    # If shutdown signal won, cancel sprint
+    if winner_task is sig_task:
         sprint_task.cancel()
-        with __import__("contextlib").suppress(asyncio.CancelledError):
+        with contextlib.suppress(asyncio.CancelledError):
             await sprint_task
 
 
@@ -259,7 +303,9 @@ def build_runtime(
     - DuckDB in-process mode: saves ~200 MB RAM vs subprocess
     - KV bits=4, max_kv_size=8192: passed to mlx_lm.generate(), NOT load()
     """
-    loop = asyncio.new_event_loop()
+    # Detect and initialize uvloop before creating the event loop
+    _init_uvloop()
+    loop = _get_event_loop()
     asyncio.set_event_loop(loop)
     shutdown_event = asyncio.Event()
 

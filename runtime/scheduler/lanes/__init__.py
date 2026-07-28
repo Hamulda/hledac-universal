@@ -59,7 +59,7 @@ from hledac.universal.runtime.nonfeed_candidate_ledger import extract_domain_can
 from hledac.universal.runtime.acquisition_strategy import FeedDominanceBudget, _feed_budget_to_dict, _load_feed_budget_from_env, _expand_keyword_query, _has_threat_indicator, _has_crypto_indicator, build_acquisition_report
 from hledac.universal.runtime.acquisition.profile import AcquisitionProfile, normalize_acquisition_profile, is_academic_profile, is_deep_osint_m1_profile
 from hledac.universal.runtime.source_finding_bridge import MAX_SAMPLE_REJECTIONS, ct_results_to_findings, passive_dns_results_to_findings, wayback_results_to_findings
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, first_completed  # ISSUE-15
 __all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details']
 ACQUISITION_REPORT_SCHEMA_VERSION = 'f208.v1'
 
@@ -2052,23 +2052,24 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             for t in pending:
                 t.cancel()
             break
-        done, pending = await _asyncio.wait(pending, return_when=_asyncio.FIRST_COMPLETED)
-        for t in done:
+        # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
+        _, winner_task = await first_completed(*pending)
+        pending.discard(winner_task)
+        try:
+            result = winner_task.result()
+        except Exception as exc:
+            result = exc
+        if isinstance(result, AcquisitionLaneOutcome):
+            outcomes.append(result)
+        elif isinstance(result, Exception):
+            outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
+        finished_count += 1
+        if on_lane_complete is not None:
             try:
-                result = t.result()
-            except Exception as exc:
-                result = exc
-            if isinstance(result, AcquisitionLaneOutcome):
-                outcomes.append(result)
-            elif isinstance(result, Exception):
-                outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
-            finished_count += 1
-            if on_lane_complete is not None:
-                try:
-                    on_lane_complete(outcomes[-1])
-                except Exception:
-                    pass
-            yield tuple(outcomes)
+                on_lane_complete(outcomes[-1])
+            except Exception:
+                pass
+        yield tuple(outcomes)
     if pending:
         remaining = await safe_gather_ok(*pending, label='acquisition_strategy:streaming_remainder')
         for result in remaining:

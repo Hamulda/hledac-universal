@@ -2252,12 +2252,13 @@ async def run_sprint(
 
             _cancel_waiter = safe_create_task(_cancel_event.wait(), eager_start=True)
             _scheduler_waiter = safe_create_task(scheduler.run(query), eager_start=True)
-            done, _pending = await asyncio.wait(
-                [_scheduler_waiter, _cancel_waiter],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
+            try:
+                _, winner_task = await first_completed(_scheduler_waiter, _cancel_waiter)
+            except asyncio.TimeoutError:
+                raise  # Should not happen
             # If we won the race (scheduler done), get result
-            if _scheduler_waiter in done:
+            if winner_task is _scheduler_waiter:
                 result = _scheduler_waiter.result()
                 # Cancel the cancel waiter since we finished normally
                 _cancel_waiter.cancel()
@@ -3463,9 +3464,14 @@ async def _cancel_all_tasks(timeout_s: float = 5.0) -> None:
         return
     for t in pending:
         t.cancel()
-    _, stragglers = await asyncio.wait(
-        pending, timeout=timeout_s, return_when=asyncio.ALL_COMPLETED
-    )
+    # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.TaskGroup
+    try:
+        async with asyncio.timeout(timeout_s):
+            await asyncio.gather(*pending, return_exceptions=True)
+    except asyncio.TimeoutError:
+        stragglers = [t for t in pending if not t.done()]
+    else:
+        stragglers = []
     for t in stragglers:
         logger.warning(
             "[SHUTDOWN] Task %s did not drain in %ss — abandoning",

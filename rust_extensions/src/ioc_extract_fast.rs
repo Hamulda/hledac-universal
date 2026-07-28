@@ -142,13 +142,14 @@ fn has_sufficient_entropy(value: &str) -> bool {
 
 /// Build unified RegexSet for ALL IOC patterns (Issue #15).
 ///
-/// Returns (RegexSet, individual Regexes, ioc_types)
+/// Returns Result<(RegexSet, individual Regexes, ioc_types), String>
 /// Covers: IPv4/6, domain, MD5/SHA1/SHA256, email, CVE, + all Python post-pass
 /// patterns (BTC, GHSA, Telegram, XMR, I2P, PGP, IPFS, USDT, LTC, DOGE,
 /// AWS, Google, Stripe, Slack, MISP UUID, Onion v3).
 ///
 /// CRITICAL: Pattern order MUST match IocType enum order exactly.
-fn build_ioc_regex_set() -> (RegexSet, Vec<Regex>, Vec<IocType>) {
+/// F1.2 fix: Returns Result instead of panicking on invalid patterns.
+fn build_ioc_regex_set() -> Result<(RegexSet, Vec<Regex>, Vec<IocType>), String> {
     // IMPORTANT: Order must match IocType enum order (ipv4=0, ipv6=1, domain=2, ...)
     let patterns: Vec<&str> = vec![
         // 0: Ipv4
@@ -234,26 +235,44 @@ fn build_ioc_regex_set() -> (RegexSet, Vec<Regex>, Vec<IocType>) {
         IocType::EthAddr,
     ];
 
-    let regex_set = RegexSet::new(&patterns).expect("valid IOC patterns");
+    // F1.2 fix: Build RegexSet and validate each pattern individually
+    let regex_set = RegexSet::new(&patterns).map_err(|e| {
+        eprintln!("[ioc_extract_fast] RegexSet::new failed: {}", e);
+        format!("RegexSet build error: {}", e)
+    })?;
 
-    let individual_regexes: Vec<Regex> = patterns
-        .iter()
-        .map(|p| Regex::new(p).expect("valid pattern"))
-        .collect();
+    let mut individual_regexes: Vec<Regex> = Vec::with_capacity(patterns.len());
+    for (i, p) in patterns.iter().enumerate() {
+        match Regex::new(p) {
+            Ok(re) => individual_regexes.push(re),
+            Err(e) => {
+                eprintln!("[ioc_extract_fast] Pattern {} failed to compile: {}", i, e);
+                return Err(format!("Pattern {} error: {}", i, e));
+            }
+        }
+    }
 
-    (regex_set, individual_regexes, ioc_types)
+    Ok((regex_set, individual_regexes, ioc_types))
 }
 
 // ISSUE-014: LazyLock replaces lazy_static! macro
-static IOC_REGEX: std::sync::LazyLock<(RegexSet, Vec<Regex>, Vec<IocType>)> =
-    std::sync::LazyLock::new(build_ioc_regex_set);
+// F1.2 fix: Result type to prevent module load panic on regex build failure
+static IOC_REGEX: std::sync::LazyLock<Result<(RegexSet, Vec<Regex>, Vec<IocType>), String>> =
+    std::sync::LazyLock::new(|| build_ioc_regex_set());
 
 /// Extract IOCs from a single text using unified RegexSet.
 ///
 /// Returns list of (ioc_value, ioc_type) tuples.
 /// Deduplication: same value appears only once per text.
+/// F1.2 fix: Returns empty vec if regex build failed (fail-soft).
 pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
-    let (regex_set, individual_regexes, ioc_types) = &*IOC_REGEX;
+    let (regex_set, individual_regexes, ioc_types) = match IOC_REGEX.as_ref() {
+        Ok(re) => re,
+        Err(e) => {
+            eprintln!("[ioc_extract_fast] IOC_REGEX unavailable: {}", e);
+            return Vec::new();
+        }
+    };
 
     // Quick check: which patterns matched at all?
     let matches = regex_set.matches(text);
@@ -298,8 +317,15 @@ pub fn extract_iocs_from_text(text: &str) -> Vec<(String, String)> {
 /// Single GIL acquisition vs 25× Python re.finditer() calls.
 ///
 /// Deduplication by (label, value) pair.
+/// F1.2 fix: Returns empty vec if regex build failed (fail-soft).
 pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, String)> {
-    let (regex_set, individual_regexes, ioc_types) = &*IOC_REGEX;
+    let (regex_set, individual_regexes, ioc_types) = match IOC_REGEX.as_ref() {
+        Ok(re) => re,
+        Err(e) => {
+            eprintln!("[ioc_extract_fast] IOC_REGEX unavailable: {}", e);
+            return Vec::new();
+        }
+    };
 
     let matches = regex_set.matches(text);
 

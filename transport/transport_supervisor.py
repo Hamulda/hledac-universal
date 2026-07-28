@@ -36,7 +36,7 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
-from hledac.universal.utils.async_helpers import safe_create_task, parallel
+from hledac.universal.utils.async_helpers import safe_create_task, parallel, first_completed  # ISSUE-15
 
 if TYPE_CHECKING:
     from .base import Transport
@@ -166,14 +166,15 @@ class TransportSupervisor:
             try:
                 stop_task = safe_create_task(self._stop_event.wait())
                 sleep_task = safe_create_task(asyncio.sleep(sleep_duration))
-                done, _ = await asyncio.wait([stop_task, sleep_task], return_when=asyncio.FIRST_COMPLETED)
-                for d in done:
-                    if not d.done():
-                        d.cancel()
-                        try:
-                            await d
-                        except asyncio.CancelledError:
-                            pass
+                # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
+                _, winner_task = await first_completed(stop_task, sleep_task)
+                # Cancel the loser task
+                loser = sleep_task if winner_task is stop_task else stop_task
+                loser.cancel()
+                try:
+                    await loser
+                except asyncio.CancelledError:
+                    pass
                 if self._stop_event.is_set():
                     break
             except asyncio.CancelledError:
