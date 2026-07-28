@@ -521,7 +521,7 @@ class FindingSidecarBus:
     collects per-runner SidecarRunResult records, and returns them.
 
     Stages execute sequentially (stage 1 → stage 2 → stage 3). Within each stage,
-    runners execute concurrently via asyncio.gather(return_exceptions=True).
+    runners execute concurrently via ``parallel(policy="log")``.
 
     RAM guard: heavy sidecars (identity_stitching, embedding, sprint_diff) are
     skipped when M1 governor reports critical or emergency memory pressure.
@@ -562,7 +562,7 @@ class FindingSidecarBus:
     def _check_gathered(self, gathered: list[Any]) -> None:
         """
         Verify no unexpected exceptions leaked through gather(return_exceptions=True).
-        GHOST_INVARIANT: called after every asyncio.gather with return_exceptions=True.
+        GHOST_INVARIANT: called after every ``parallel(policy="log")`` call.
         """
         for item in gathered:
             if isinstance(item, BaseException) and (not isinstance(item, SidecarRunResult)):
@@ -573,7 +573,7 @@ class FindingSidecarBus:
         Fan out to all registered sidecar runners for the given batch, in stage order.
 
         Stages run sequentially (stage 1 → stage 2 → stage 3). Within each stage,
-        runners execute concurrently via asyncio.gather(return_exceptions=True).
+        runners execute concurrently via ``parallel(policy="log")``.
 
         Returns list of SidecarRunResult (one per runner that was attempted).
 

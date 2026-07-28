@@ -1,6 +1,6 @@
 """
-_betal Metal Management Module
-=============================
+_metal — Metal GPU Management Module
+=====================================
 
 Provides Metal GPU memory management for M1/M2/M3 Apple Silicon.
 Exracted from DeepHermes3Engine to eliminate God Class anti-pattern.

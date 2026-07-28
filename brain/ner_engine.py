@@ -155,11 +155,9 @@ class _NERPersistentWorker:
                 try:
                     while not self._closed:
                         try:
-                            line = await asyncio.wait_for(proc_stderr.readline(), timeout=1.0)
-                            if not line:
-                                break
-                            self._stderr_buffer.append(line)
-                        except asyncio.TimeoutError:
+                            async with asyncio.timeout(1.0):
+                                line = await proc_stderr.readline()
+                        except TimeoutError:
                             continue
                         except Exception:
                             break
@@ -175,7 +173,7 @@ class _NERPersistentWorker:
                 try:
                     while not self._closed:
                         try:
-                            line = await asyncio.wait_for(proc_stdout.readline(), timeout=5.0)
+                            line = await safe_wait_for(proc_stdout.readline(), timeout=5.0)
                             if not line:
                                 break
                             if line.startswith(b"READY"):
@@ -214,13 +212,14 @@ class _NERPersistentWorker:
 
             # Wait for READY signal with timeout
             try:
-                await asyncio.wait_for(self._ready_event.wait(), timeout=60.0)
-                logger.debug(f"NER persistent worker started (model={self._model_name})")
-                return True
-            except asyncio.TimeoutError:
+                async with asyncio.timeout(60.0):
+                    await self._ready_event.wait()
+            except TimeoutError:
                 logger.warning("NER worker startup timeout — not ready within 60s")
                 self._emergency_shutdown()
                 return False
+            logger.debug(f"NER persistent worker started (model={self._model_name})")
+            return True
 
         except Exception as e:
             logger.warning(f"NER persistent worker start failed: {e}")
@@ -289,7 +288,8 @@ class _NERPersistentWorker:
                     return None
                 try:
                     self._proc.stdin.write(json.dumps(request) + b"\n")
-                    await asyncio.wait_for(self._proc.stdin.drain(), timeout=5.0)
+                    async with asyncio.timeout(5.0):
+                        await self._proc.stdin.drain()
                 except BrokenPipeError:
                     logger.warning("NER worker stdin BrokenPipe — restarting")
                     self._emergency_shutdown()
@@ -297,8 +297,9 @@ class _NERPersistentWorker:
 
             response: dict | None = None
             try:
-                response = await asyncio.wait_for(queue.get(), timeout=timeout)
-            except asyncio.TimeoutError:
+                async with asyncio.timeout(timeout):
+                    response = await queue.get()
+            except TimeoutError:
                 logger.warning(f"NER worker request timeout ({timeout}s) — killing and restarting")
                 self._emergency_shutdown()
                 return None
@@ -361,11 +362,13 @@ class _NERPersistentWorker:
             except Exception:
                 pass
             try:
-                await asyncio.wait_for(self._proc.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+                async with asyncio.timeout(5.0):
+                    await self._proc.wait()
+            except TimeoutError:
                 self._proc.terminate()
                 try:
-                    await asyncio.wait_for(self._proc.wait(), timeout=3.0)
+                    async with asyncio.timeout(3.0):
+                        await self._proc.wait()
                 except Exception:
                     pass
             except Exception:
@@ -422,12 +425,20 @@ class NEREngine:
         self._mlx_gliner2_extractor = None
 
     async def _load_mlx_gliner2(self) -> bool:
-        """Lazy load mlx-gliner2 extractor (běží na Metal GPU / ANE)."""
+        """
+        Lazy load mlx-gliner2 extractor (běží na Metal GPU / ANE).
+
+        ISSUE-B3: Profile-gated — only loads when HLEDAC_ENABLE_GLINER2=1.
+        Without the flag, mlx-gliner2 is never imported (RAM budget on M1 8GB).
+        """
+        # ISSUE-B3: Guard — mlx-gliner2 adds ~500MB resident; only load when profile-enabled
+        if os.getenv('HLEDAC_ENABLE_GLINER2', '1') != '1':
+            logger.debug('mlx-gliner2 skipped (HLEDAC_ENABLE_GLINER2 != 1)')
+            return False
         if self._mlx_gliner2_extractor is not None:
             return True
         try:
             import mlx_gliner2
-            import os
             model_path = os.environ.get('MLX_GLINER2_MODEL', str(Path.home() / '.hledac' / 'models' / 'fastino_gliner2-base-v1'))
             self._mlx_gliner2_extractor = mlx_gliner2.GLiNER2.from_pretrained(model_path)
             self._mlx_gliner2_available = True
@@ -631,7 +642,16 @@ n        Pokud je model již načten, nic nedělá.
         return NEREngine._MLX_LOAD_LOCK
 
     async def _load_mlx_extractor(self):
-        """Lazy load MLX outlines extractor (async-safe DCLP)."""
+        """
+        Lazy load MLX outlines extractor (async-safe DCLP).
+
+        ISSUE-B3: Profile-gated — only loads when HLEDAC_ENABLE_MLX_OUTLINES=1.
+        Without the flag, outlines+mlx are never imported (RAM budget on M1 8GB).
+        """
+        if os.getenv('HLEDAC_ENABLE_MLX_OUTLINES', '1') != '1':
+            logger.debug('MLX outlines skipped (HLEDAC_ENABLE_MLX_OUTLINES != 1)')
+            NEREngine._MLX_AVAILABLE = False
+            return
         if NEREngine._MLX_AVAILABLE:
             return
         async with NEREngine._get_mlx_lock():
@@ -1008,6 +1028,7 @@ def get_extraction_status() -> dict:
     return {'ner_backend': get_ner_backend(), 'ner_loaded': _default_engine._model is not None if _default_engine else False, 'pii_backend': 'regex', 'coreml_ner_inactive': True, 'nltagger_inactive': not (_default_engine._nl_available if _default_engine else False), 'relex_model': 'knowledgator/gliner-relex-large-v0.5', 'config_model': 'knowledgator/gliner-x-base'}
 import math as _math
 import re as _re
+from hledac.universal.utils.async_helpers import safe_wait_for
 _GUESS_PATTERNS: tuple[tuple[_re.Pattern, str], ...] = ((_re.compile('\\b(?:Corp|LLC|Inc|Ltd|Technologies|Software|Systems|Security)\\b', _re.IGNORECASE), 'organization'), (_re.compile('\\b(?:Mr|Mrs|Ms|Dr|Prof)\\.\\s+\\w+', _re.IGNORECASE), 'person'), (_re.compile('\\b(?:St|Street|City|Town|Country|Road|Ave|Boulevard)\\b', _re.IGNORECASE), 'location'), (_re.compile('\\b[A-Fa-f0-9]{32,64}\\b'), 'hash'))
 _IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [('cve', _re.compile('\\bCVE-\\d{4}-\\d{4,7}\\b')), ('sha256', _re.compile('\\b[0-9a-fA-F]{64}\\b')), ('md5', _re.compile('\\b[0-9a-fA-F]{32}\\b')), ('sha1', _re.compile('\\b[0-9a-fA-F]{40}\\b')), ('email', _re.compile('\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Z|a-z]{2,}\\b')), ('url', _re.compile('https?://[^\\s<>"{}|\\\\^`\\[\\]]+')), ('ipv4', _re.compile('\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b')), ('ipv6', _re.compile('\\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\\b')), ('domain', _re.compile('\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b'))]
 _DOMAIN_TLD_DENYLIST: frozenset[str] = frozenset({'exe', 'dll', 'bin', 'so', 'dylib', 'lib', 'o', 'a', 'obj', 'deb', 'rpm', 'dmg', 'pkg', 'apk', 'ipa', 'jar', 'war', 'ear', 'class', 'cab', 'msi', 'lnk', 'tar', 'gz', 'zip', 'rar', '7z', 'iso', 'img', 'dat', 'tmp', 'bak', 'log', 'conf', 'cfg', 'ini', 'env', 'py', 'js', 'ts', 'html', 'htm', 'json', 'xml', 'yaml', 'yml', 'toml', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'})

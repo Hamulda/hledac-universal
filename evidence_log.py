@@ -68,6 +68,7 @@ import orjson
 from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
+from hledac.universal.utils.async_helpers import safe_wait_for
 
 # ISSUE-11 / C2: ThreadPoolExecutor for GIL-free SQLite writes
 # Lazily initialized — only created if SQLite path is used
@@ -2234,7 +2235,7 @@ class EvidenceLog:
             self._cancel_watcher_task.cancel()
             try:
                 with contextlib.suppress(asyncio.CancelledError):
-                    await asyncio.wait_for(self._cancel_watcher_task, timeout=2.0)
+                    await safe_wait_for(self._cancel_watcher_task, timeout=2.0)
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception:  # noqa: BLE001

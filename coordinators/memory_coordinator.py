@@ -410,7 +410,19 @@ class UniversalMemoryCoordinator:
         return current
 
     def get_power_state(self) -> dict:
+        """Synchronous power state — calls _on_battery_power() which uses subprocess.run.
+
+        USE ONLY from non-async contexts (e.g. __init__, sync callbacks).
+        From async contexts use get_power_state_async() instead.
+        """
         return {'on_battery': self._on_battery_power(), 'thermal_state': self._thermal_state.name.lower(), 'thermal_trend': self.get_thermal_trend(), 'memory_pressure_level': self.get_pressure_level(), 'should_throttle': self.should_throttle()}
+
+    async def get_power_state_async(self) -> dict:
+        """Async power state — calls _on_battery_power_async() which uses asyncio.create_subprocess_exec.
+
+        USE from async contexts (event loop). Avoids blocking the event loop.
+        """
+        return {'on_battery': await self._on_battery_power_async(), 'thermal_state': self._thermal_state.name.lower(), 'thermal_trend': self.get_thermal_trend(), 'memory_pressure_level': self.get_pressure_level(), 'should_throttle': self.should_throttle()}
 
     def get_reranking_context(self) -> dict:
         """Reranking context pro lancedb_store adaptive reranking.
@@ -473,7 +485,8 @@ class UniversalMemoryCoordinator:
                         stderr=asyncio.subprocess.PIPE,
                     )
                     # ISSUE-3 fix: check returncode — nepoužívat stdout když pmset selhal
-                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=1.0)
+                    async with asyncio.timeout(1.0):
+                        stdout, _ = await proc.communicate()
                     if proc.returncode == 0:
                         self._cached_on_battery = b'discharging' in stdout.lower()
                     # else: cache se neaktualizuje, ponechá předchozí hodnotu
@@ -733,11 +746,13 @@ class UniversalMemoryCoordinator:
                 results['neuromorphic_cleaned'] = neuro_result.get('success', False)
                 results['neuromorphic_forgotten'] = neuro_result.get('forgotten_patterns', 0)
                 logger.info('✓ Neuromorphic memory cleaned')
+            # M5: metal_reclaim() = canonical gc+eval+clear+dynamic_limit (MEM-2 pattern)
+            # RSS > soft ceiling is one of the 3 designated call sites.
             try:
-                from hledac.utils.mlx_memory import clear_mlx_cache as _clear_mlx_cache
-                results['mlx_cache_cleared'] = _clear_mlx_cache()
-                if results['mlx_cache_cleared']:
-                    logger.info('✓ MLX cache cleared')
+                from hledac.universal.utils.mlx_memory import metal_reclaim
+                metal_reclaim()
+                results['mlx_cache_cleared'] = True
+                logger.info('✓ MLX cache cleared via metal_reclaim')
             except ImportError:
                 logger.debug('mlx_memory not available, skipping MLX cache clear')
             gc.collect()

@@ -504,6 +504,48 @@ def _release_slab_pool() -> None:
         pass
 
 
+def metal_reclaim() -> None:
+    """
+    M5: Canonical defensive Metal hygiene — single entry point for all gc+eval+clear calls.
+
+    Call ONLY at:
+      1. Model swap (deephermes3_engine swap path)
+      2. Sprint winddown (sprint_scheduler run_winddown)
+      3. RSS > soft ceiling (memory_coordinator check)
+
+    NEVER call ad-hoc in recon/retry loops — MEM-2 pattern.
+
+    Sequence (GHOST_INVARIANT: F183C):
+      1. gc.collect()          — release Python refs to MLX objects FIRST
+      2. mx.eval([])           — barrier: flush GPU queue BEFORE clear_cache
+      3. clear_cache()         — release Metal cache
+      4. get_dynamic_metal_cache_limit() — recompute ceiling from current UMA state
+      5. safe_set_cache_limit() — apply dynamic ceiling
+      6. gc.collect()          — second pass for circular refs created during Metal free
+    """
+    if not MLX_AVAILABLE:
+        return
+    try:
+        gc.collect()
+        try:
+            get_mx().eval([])
+        except Exception as _e:
+            logger.warning(f"[CRITICAL] mx.eval([]) barrier failed: {_e}")
+        mx = get_mx()
+        if mx is None:
+            return
+        if hasattr(mx, "clear_cache"):
+            mx.clear_cache()
+        elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
+            mx.metal.clear_cache()
+        # MEM-2: dynamic cache ceiling after reclaim
+        new_limit = get_dynamic_metal_cache_limit()
+        safe_set_cache_limit(new_limit)
+        gc.collect()
+    except Exception as e:
+        logger.debug(f"metal_reclaim non-critical: {e}")
+
+
 def mlx_cleanup_sync() -> None:
     """
     Sync cleanup – always call in thread executor (never asyncio.run).

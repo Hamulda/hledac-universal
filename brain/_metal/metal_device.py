@@ -63,10 +63,10 @@ class MetalDevice:
 
     # M1 Metal memory thresholds (bytes)
     _TIER_THRESHOLDS: dict[str, tuple[int, int]] = field(default_factory=lambda: {
-        "low": (256 * 1024**2, 512 * 1024**2),      # 256MB - 512MB
-        "medium": (512 * 1024**2, 1024 * 1024**2), # 512MB - 1GB
-        "high": (1024 * 1024**2, 2 * 1024**2**2),   # 1GB - 2GB
-        "critical": (2 * 1024**2**2, float('inf')),  # >2GB
+        "low": (256 * 1024**2, 512 * 1024**2),       # 256MB - 512MB
+        "medium": (512 * 1024**2, 1024 * 1024**2),  # 512MB - 1GB
+        "high": (1024 * 1024**2, 2 * 1024**3),       # 1GB - 2GB
+        "critical": (2 * 1024**3, float('inf')),      # >2GB
     })
 
     def get_active_memory(self) -> int:

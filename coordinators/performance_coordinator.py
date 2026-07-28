@@ -39,6 +39,7 @@ except ImportError:
 CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
 from core.sys_metrics import get_memory_usage_mb
+from hledac.universal.utils.async_helpers import safe_wait_for
 
 class AgentMetrics(msgspec.Struct, gc=False):
     """Performance metrics for individual agents."""
@@ -210,7 +211,7 @@ class AgentPool:
         cleanup_interval = 300.0
         while True:
             try:
-                await asyncio.wait_for(self._cleanup_event.wait(), timeout=cleanup_interval)
+                await safe_wait_for(self._cleanup_event.wait(), timeout=cleanup_interval)
                 # Shutdown requested via event
                 break
             except asyncio.TimeoutError:

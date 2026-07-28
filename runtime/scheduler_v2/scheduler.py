@@ -18,19 +18,19 @@ Wiring:
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 import time as _time
 from typing import Any
 
 import msgspec
 
-from runtime.scheduler_v2.protocol import InitResult, SprintContext
-from hledac.universal.utils.async_helpers import parallel, safe_create_task
 from hledac.universal.runtime.scheduler_v2._task_registry import (
     TaskScope,
     safe_create_task_tracked,
 )
+from hledac.universal.utils.async_helpers import parallel
+from runtime.scheduler_v2.protocol import InitResult, SprintContext
+from hledac.universal.utils.async_helpers import safe_wait_for
 
 
 class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
@@ -155,11 +155,11 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     async def _run_prelude_and_first_cycle(self, query: str) -> None:
         """Run all prelude lanes + prewarm concurrently."""
         from runtime.scheduler_v2.prelude import (
-            run_public_prelude_lane,
             run_ct_prelude_lane,
-            run_wayback_prelude_lane,
-            run_pdns_prelude_lane,
             run_doh_prelude_lane,
+            run_pdns_prelude_lane,
+            run_public_prelude_lane,
+            run_wayback_prelude_lane,
         )
 
         _t0 = _time.time()
@@ -169,10 +169,10 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         _pivot_lanes: Any = None
         _seed_ctx: Any = None
         try:
+            from hledac.universal.pipeline.pivot_lane_planner import plan_lanes_for_pivot_seeds
             from hledac.universal.runtime.pivot_planner import (
                 generate_pivot_candidates_from_query as _gen_pivots,
             )
-            from hledac.universal.pipeline.pivot_lane_planner import plan_lanes_for_pivot_seeds
             from hledac.universal.runtime.scheduler.lanes import NonfeedSeedContext
 
             _pivot_seeds = _gen_pivots(query)
@@ -240,7 +240,6 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         """No-op in V2 — Hermes prewarm is handled directly by V2Init._prewarm_hermes()
         which is called from sprint_entrypoint.py before scheduler.run().
         Kept as no-op for backward-compat with tests that patch this method."""
-        pass
 
     async def _async_prewarm_temporal(self) -> None:
         try:
@@ -440,7 +439,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             # await within the timeout so we get graceful completion, not just cancellation.
             try:
                 from hledac.universal.memory import close_memory_manager
-                _t = asyncio.create_task(close_memory_manager())
+                _t = safe_create_task_tracked(close_memory_manager(), name="teardown:close_memory_manager", scope=TaskScope.TEARDOWN)
                 _bg_tasks.append(_t)
             except Exception:
                 pass
@@ -451,7 +450,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             # even if no sessions were opened.
             try:
                 from hledac.universal.transport.session_pool import session_pool
-                _t2 = asyncio.create_task(session_pool.close_all())
+                _t2 = safe_create_task_tracked(session_pool.close_all(), name="teardown:session_pool_close", scope=TaskScope.TEARDOWN)
                 _bg_tasks.append(_t2)
             except Exception:
                 pass
@@ -464,7 +463,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 from hledac.universal.transport.tor_transport import get_tor_transport_singleton
                 _tor = get_tor_transport_singleton()
                 if _tor is not None and hasattr(_tor, "stop"):
-                    _t3 = asyncio.create_task(_tor.stop())
+                    _t3 = safe_create_task_tracked(_tor.stop(), name="teardown:tor_stop", scope=TaskScope.TEARDOWN)
                     _bg_tasks.append(_t3)
             except Exception:
                 pass
@@ -483,8 +482,8 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         start = _time.monotonic()
         reason = "normal"
         try:
-            await asyncio.wait_for(_do_aclose(), timeout=timeout_s)
-        except asyncio.TimeoutError:
+            await safe_wait_for(_do_aclose(), timeout=timeout_s)
+        except TimeoutError:
             reason = "timeout"
             sys.stdout.write(f"[aclean:{sprint_id}] force shutdown after {timeout_s}s\n")
             sys.stdout.flush()

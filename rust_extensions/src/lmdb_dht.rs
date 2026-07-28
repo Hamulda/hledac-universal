@@ -17,7 +17,7 @@
 //!   - Thread context switch on each call
 //!
 //! The Python `lmdb` library is already proven (used in lmdb_bulk.py).
-//! Rust provides the GIL-release bridge via PyO3 0.28.2 `allow_threads()`.
+//! Rust provides the GIL-release bridge via PyO3 0.29 `py.detach()`.
 //!
 //! ## Design
 //! - Opens LMDB environment via Python lmdb.open() called from Rust

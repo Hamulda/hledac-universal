@@ -15,4 +15,4 @@ warnings.warn(
     stacklevel=2,
 )
 
-from utils.uma_budget import Watchdog
+from hledac.universal.utils.uma_budget import Watchdog

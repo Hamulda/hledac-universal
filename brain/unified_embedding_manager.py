@@ -126,24 +126,25 @@ class UnifiedEmbeddingManager:
                 results[idx] = emb
             return results
         try:
-            import concurrent.futures
+            from hledac.universal.utils.domain_executors import get_or_create
             uncached_texts = [t for _, t in uncached]
             n = len(uncached_texts)
             if n > 4:
                 mid = (n + 1) // 2
                 chunk_a = uncached_texts[:mid]
                 chunk_b = uncached_texts[mid:]
-                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-                    fut_a = pool.submit(self._mlx_manager.encode, chunk_a, self._dim, True)
-                    fut_b = pool.submit(self._mlx_manager.encode, chunk_b, self._dim, True)
-                    chunks: list[np.ndarray] = []
-                    for fut in concurrent.futures.as_completed([fut_a, fut_b], timeout=30):
-                        chunks.append(fut.result(timeout=0))
-                    arr = np.concatenate(chunks, axis=0) if chunks else np.zeros((0, self._dim), dtype=np.float32)
+                # M1-OPT: Use shared 'embed' domain executor (1 worker, CPU-bound MLX encode)
+                pool = get_or_create("embed")
+                fut_a = pool.submit(self._mlx_manager.encode, chunk_a, self._dim, True)
+                fut_b = pool.submit(self._mlx_manager.encode, chunk_b, self._dim, True)
+                chunks: list[np.ndarray] = []
+                for fut in concurrent.futures.as_completed([fut_a, fut_b], timeout=30):
+                    chunks.append(fut.result(timeout=0))
+                arr = np.concatenate(chunks, axis=0) if chunks else np.zeros((0, self._dim), dtype=np.float32)
             else:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    fut = pool.submit(self._mlx_manager.encode, uncached_texts, self._dim, True)
-                    arr = fut.result(timeout=30)
+                pool = get_or_create("embed")
+                fut = pool.submit(self._mlx_manager.encode, uncached_texts, self._dim, True)
+                arr = fut.result(timeout=30)
             results = [[0.0] * self._dim for _ in texts]
             for idx, emb in cached_results:
                 results[idx] = emb

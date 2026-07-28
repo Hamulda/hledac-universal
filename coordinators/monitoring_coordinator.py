@@ -172,7 +172,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             logger.info('MonitoringCoordinator: AdvancedMonitoring initialized')
         _WatchdogImpl: type | None = None
         try:
-            from utils.uma_budget import Watchdog as _WD
+            from hledac.universal.utils.uma_budget import Watchdog as _WD
             _WatchdogImpl = _WD
         except ImportError:
             logger.warning('MonitoringCoordinator: Watchdog not available')

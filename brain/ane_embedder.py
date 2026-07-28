@@ -451,7 +451,7 @@ class ANEEmbedder:
         if self._loaded:
             return
         try:
-            from utils.uma_budget import get_uma_snapshot
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
             snap = get_uma_snapshot()
             if snap.is_critical or snap.is_emergency:
                 logger.warning(f'[ANE] initialize skipped: memory pressure {snap.pct_used:.0f}% (>85%% critical)')

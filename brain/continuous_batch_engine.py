@@ -37,6 +37,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 from hledac.universal.utils.executor_decorator import offload_to
+from hledac.universal.utils.async_helpers import parallel_ok
 if TYPE_CHECKING:
     from brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)
@@ -166,18 +167,44 @@ class ContinuousBatchEngine:
         """
         return await self._batch_generate(prompts, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg)
 
+    # M1 8GB: Metal command queue is single-stream, so we bound concurrent
+    # inference calls to avoid saturating the queue. 2 is a safe default —
+    # enough to overlap I/O (JSON parsing, post-processing) between calls
+    # while not overwhelming Metal.
+    _INFERENCE_SEMAPHORE = asyncio.Semaphore(2)
+
     async def _batch_generate(self, prompts: list[str], *, max_tokens: int, temperature: float, system_msg: str | None) -> list[str]:
-        """Batch generation: parallel prep (ChatML formatting) + serial inference."""
+        """
+        Batch generation: parallel prep (ChatML formatting) + concurrent inference.
+
+        B2 FIX: Prompts are now generated concurrently via asyncio.gather
+        instead of sequential await in a for-loop. This overlaps I/O
+        (JSON parsing, post-processing) between calls while Metal's
+        single-stream command queue serializes actual GPU work.
+
+        M1 8GB: _INFERENCE_SEMAPHORE bounds concurrency to 2 to avoid
+        saturating the Metal command queue.
+        """
         system = system_msg or 'You are a helpful assistant.'
 
         def prep_one(prompt: str) -> str:
             return self._engine._format_chatml(system_msg=system, user_msg=prompt)
-        formatted_prompts = await asyncio.gather(*[offload_to('cpu_blocking_pool', prep_one, p) for p in prompts], return_exceptions=True)
-        results = []
-        for formatted in formatted_prompts:
-            result = await self._engine.generate(prompt=formatted, max_tokens=max_tokens, temperature=temperature, system_msg=None)
-            results.append(result)
-        return results
+        formatted_prompts = await parallel_ok(*[offload_to('cpu_blocking_pool', prep_one, p) for p in prompts], label="batch_prep")
+
+        async def gen_one(formatted: str) -> str:
+            async with self._INFERENCE_SEMAPHORE:
+                return await self._engine.generate(prompt=formatted, max_tokens=max_tokens, temperature=temperature, system_msg=None)
+
+        results = await asyncio.gather(*[gen_one(fp) for fp in formatted_prompts], return_exceptions=True)
+        # Map exceptions to empty strings (fail-safe per-entry)
+        final: list[str] = []
+        for r in results:
+            if isinstance(r, Exception):
+                logger.warning("[Batch] prompt failed: %s", r)
+                final.append("")
+            else:
+                final.append(r)
+        return final
 
     async def _run_worker(self) -> None:
         """Background worker that processes batched requests."""
@@ -202,16 +229,29 @@ class ContinuousBatchEngine:
                 logger.warning('[Batch] Worker error: %s', e)
 
     async def _execute_batch(self, batch: list[_BatchRequest]) -> None:
-        """Execute a batch of requests."""
-        async with self._semaphore:
-            for req in batch:
+        """
+        Execute a batch of requests concurrently.
+
+        B2 FIX: Uses asyncio.gather with _INFERENCE_SEMAPHORE instead of
+        sequential for-loop. This overlaps I/O between Metal inference calls
+        while the semaphore bounds concurrency for M1 8GB safety.
+        """
+        async def exec_one(req: _BatchRequest) -> None:
+            async with self._INFERENCE_SEMAPHORE:
                 try:
-                    result = await self._engine.generate(prompt=req.prompt, max_tokens=req.max_tokens, temperature=req.temperature, system_msg=req.system_msg)
+                    result = await self._engine.generate(
+                        prompt=req.prompt,
+                        max_tokens=req.max_tokens,
+                        temperature=req.temperature,
+                        system_msg=req.system_msg,
+                    )
                     if not req.future.done():
                         req.future.set_result(result)
                 except Exception as e:
                     if not req.future.done():
                         req.future.set_exception(e)
+
+        await asyncio.gather(*[exec_one(req) for req in batch], return_exceptions=True)
 
 class _BatchRequest:
     """Internal batch request."""

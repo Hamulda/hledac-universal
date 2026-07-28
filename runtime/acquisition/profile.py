@@ -4,16 +4,22 @@ runtime/acquisition/profile.py
 Acquisition profile constants and normalization.
 Extracted from acquisition_strategy.py (original L442-563).
 
-MODERNIZATION (Issue #18):
-  - AcquisitionProfile stays as-is (class with constants — no msgspec needed)
-  - normalize_acquisition_profile() unchanged
-  - is_academic_profile() unchanged
-  - is_deep_osint_m1_profile() unchanged
+MODERNIZATION (Issue A5):
+  AcquisitionProfile extended with .lanes frozenset — lane membership is now
+  a first-class attribute. Replaces scattered HLEDAC_ENABLE_X env checks.
+  See runtime/lane_registry.py for the canonical lane registry.
 """
 
+from __future__ import annotations
 
 from typing import Any
 
+
+# ── Lane membership per profile ─────────────────────────────────────────────────
+# Imported from lane_registry to avoid duplication.
+# Re-exported here for convenience (profile.lanes is the canonical access point).
+
+from runtime.lane_registry import LaneRegistry as _LR
 
 # Valid research/academic/geopolitical profiles that enable ACADEMIC lane
 # F266-U1: threat_intel added to enable ACADEMIC lane for threat intelligence queries
@@ -27,7 +33,13 @@ _MISSION_PROFILES = frozenset({"nonfeed_diagnostic", "nonfeed_diagnostic180"})
 
 
 class AcquisitionProfile:
-    """Acquisition profile constants — mirrors original StrEnum-style class."""
+    """
+    Acquisition profile constants with lane membership.
+
+    MODERNIZATION (Issue A5):
+      .lanes is now the canonical source of truth for which lanes run.
+      Replaces os.environ.get("HLEDAC_ENABLE_X") pattern.
+    """
 
     DEFAULT = "default"
     NONFEED_DIAGNOSTIC = "nonfeed_diagnostic"
@@ -49,6 +61,17 @@ class AcquisitionProfile:
             cls.THREAT_INTEL,
         ]
 
+    @classmethod
+    def lanes(cls, profile: str) -> frozenset[str]:
+        """
+        Return the frozenset of lane IDs enabled for this profile.
+
+        MODERNIZATION (Issue A5):
+          Replaces os.environ.get("HLEDAC_ENABLE_X") checks.
+          O(1) lookup via LaneRegistry.
+        """
+        return _LR.get_lanes_for_profile(profile)
+
 
 def normalize_acquisition_profile(profile: str | None) -> dict[str, Any]:
     """
@@ -68,7 +91,10 @@ def normalize_acquisition_profile(profile: str | None) -> dict[str, Any]:
       - Fail-safe: always returns a valid dict
       - Deterministic: same input always same output
     """
-    _CANONICAL = frozenset(["default", "nonfeed_diagnostic", "deep_osint_m1"])
+    _CANONICAL = frozenset([
+        "default", "nonfeed_diagnostic", "deep_osint_m1",
+        "research", "academic", "geopolitical", "threat_intel",
+    ])
     _input = profile
     _effective = profile
     _normalized = False
@@ -133,3 +159,34 @@ def is_mission_profile(profile: str | None) -> bool:
     if profile is None:
         return False
     return profile.startswith("nonfeed_diagnostic")
+
+
+def is_lane_enabled(lane_id: str, profile: str | None = None) -> bool:
+    """
+    Check if a lane is enabled for a given profile.
+
+    MODERNIZATION (Issue A5):
+      Replaces os.environ.get("HLEDAC_ENABLE_<LANE>") checks.
+      If profile is None, uses the current active profile from LaneRegistry.
+
+    GHOST_INVARIANTS:
+      - No network I/O, no model/MLX load
+      - Fail-safe: returns False for unknown lane IDs
+      - O(1) frozenset lookup
+
+    Examples:
+        if is_lane_enabled("tor"):
+            run_tor_lane()
+
+        if is_lane_enabled("dht", "deep_osint_m1"):
+            run_dht_sidecar()
+    """
+    effective_profile = profile
+    if effective_profile is None:
+        effective_profile = _LR.get_current_profile()
+    else:
+        # Normalize and resolve to profile lanes
+        norm = normalize_acquisition_profile(effective_profile)
+        effective_profile = norm["effective"]
+
+    return lane_id in _LR.get_lanes_for_profile(effective_profile)

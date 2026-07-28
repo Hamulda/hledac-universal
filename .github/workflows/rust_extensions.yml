@@ -205,6 +205,36 @@ jobs:
           # 5/5 modules: aho_corasick, bloom, rolling_hash, fast_hasher, content_hash.
           uv run --no-sync python verify_build.py
 
+      - name: CI otool check — no /opt/homebrew in release artifact
+        # R4 FIX: Verifies DuckDB is statically bundled, not dynamically linked to Homebrew.
+        # Release artifact must NOT contain /opt/homebrew paths (CI fails otherwise).
+        # Only applies to macOS aarch64 (M1) where Homebrew DuckDB is a risk.
+        if: matrix.platform == 'macos-arm64'
+        run: |
+          WHEEL=$(find rust_extensions/dist/wheels -name "*.whl" -path "*macos*" | head -1)
+          if [ -z "$WHEEL" ]; then
+            echo "WARNING: No macOS wheel found in dist/wheels — skipping otool check"
+            exit 0
+          fi
+          echo "Checking wheel: $WHEEL"
+          # Extract and check the dylib for Homebrew paths
+          python -c "
+import zipfile, subprocess, tempfile, os
+with tempfile.TemporaryDirectory() as tmpdir:
+    with zipfile.ZipFile('$WHEEL', 'r') as z:
+        z.extractall(tmpdir)
+    for root, dirs, files in os.walk(tmpdir):
+        for f in files:
+            if f.endswith('.so') or f.endswith('.dylib'):
+                path = os.path.join(root, f)
+                result = subprocess.run(['otool', '-L', path], capture_output=True, text=True)
+                for line in result.stdout.splitlines():
+                    if '/opt/homebrew' in line:
+                        print(f'FAIL: {path} links to Homebrew: {line.strip()}')
+                        exit(1)
+    print('OK: No /opt/homebrew dependencies found in wheel')
+"
+
       - name: Benchmark — bench_rust_vs_python.py
         run: |
           # Must finish in <30s and report a valid speedup row.

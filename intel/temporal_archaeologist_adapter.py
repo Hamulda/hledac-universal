@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.temporal_archaeologist_adapter. Auto-gen ISSUE #20 F2."""
-from recon.temporal_archaeologist_adapter import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.temporal_archaeologist_adapter" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.temporal_archaeologist_adapter"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.temporal_archaeologist_adapter.
+"""
+import warnings
+
+warnings.warn(
+    "intel.temporal_archaeologist_adapter is deprecated — import from \"recon.temporal_archaeologist_adapter\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.temporal_archaeologist_adapter import *

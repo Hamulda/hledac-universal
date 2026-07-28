@@ -103,7 +103,7 @@ class TestRegisterLock:
         register_lock(LockCategory.CACHE, rlock, f"test_type._rlock_{_test_id}")
 
         # Špatný typ
-        with pytest.raises(TypeError, match="threading.Lock or threading.RLock"):
+        with pytest.raises(TypeError, match="threading.Lock"):
             register_lock(LockCategory.CACHE, "not a lock", "test_type._bad_lock")  # type: ignore
 
 

@@ -49,7 +49,7 @@ except Exception:
             last_error = 'sample_uma_status unavailable'
         return _DummyStatus()
 try:
-    from utils.uma_budget import UMA_CRITICAL_GIB, UMA_EMERGENCY_GIB, UMA_WARN_GIB, get_uma_snapshot
+    from hledac.universal.utils.uma_budget import UMA_CRITICAL_GIB, UMA_EMERGENCY_GIB, UMA_WARN_GIB, get_uma_snapshot
 except Exception:
     UMA_WARN_GIB = 6.0
     UMA_CRITICAL_GIB = 6.5

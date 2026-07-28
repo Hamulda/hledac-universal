@@ -14,22 +14,22 @@ which uses the same combined regex but bypasses broken Rust path.
 """
 
 
-import concurrent.futures
-import os
 import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
-# Shared ThreadPoolExecutor for CPU-bound Python IOC extraction (M1 GIL release)
-_n_workers = min(4, (os.cpu_count() or 2))
-_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
-def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _executor
-    if _executor is None:
-        _executor = concurrent.futures.ThreadPoolExecutor(max_workers=_n_workers)
-    return _executor
+# M1-OPT: Use shared domain executor instead of per-module TPE
+# crypto preset = 1 worker (CPU-bound: yara-python, Pycryptodome)
+from concurrent.futures import ThreadPoolExecutor
+
+from hledac.universal.utils.domain_executors import get_or_create
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    """Return shared 'crypto' domain executor for CPU-bound IOC extraction."""
+    return get_or_create("crypto")
 
 _PY_IPV4_RE = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")
 _PY_DOMAIN_RE = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b")

@@ -126,7 +126,7 @@ def __getattr__(name: str):
     # ── uma_budget ────────────────────────────────────────────────────────────
     if name == "Watchdog":
         if _uma_cache is None:
-            from utils.uma_budget import Watchdog
+            from hledac.universal.utils.uma_budget import Watchdog
             _uma_cache = {"Watchdog": Watchdog}
         return _uma_cache[name]  # type: ignore[return-value]
 

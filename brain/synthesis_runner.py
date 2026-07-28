@@ -978,15 +978,6 @@ class SynthesisRunner:
             "bandit_arm_rewards": self._bandit_rewards,
         }
 
-    def _get_bandit_rewards(self) -> dict:
-        bandit = _get_prompt_bandit()
-        if bandit is None:
-            return {}
-        try:
-            return getattr(bandit, "arm_rewards", {})
-        except Exception:
-            return {}
-
     # ------------------------------------------------------------------
     # Public synthesis API
     # ------------------------------------------------------------------

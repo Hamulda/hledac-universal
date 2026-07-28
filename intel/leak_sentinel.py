@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.leak_sentinel. Auto-gen ISSUE #20 F2."""
-from recon.leak_sentinel import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.leak_sentinel" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.leak_sentinel"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.leak_sentinel.
+"""
+import warnings
+
+warnings.warn(
+    "intel.leak_sentinel is deprecated — import from \"recon.leak_sentinel\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.leak_sentinel import *

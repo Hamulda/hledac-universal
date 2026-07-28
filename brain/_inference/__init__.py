@@ -1,19 +1,22 @@
 """
-_inference — Inference Module
-=============================
+_inference — Generation Module
+==============================
 
-PEP 698: Extracted from DeepHermes3Engine inference methods.
-Handles streaming, generate orchestration, and structured output.
+PEP 698: Extracted from DeepHermes3Engine generation methods.
+Handles streaming, MLX generate orchestration, and structured output.
 
 Architecture:
 - stream_handler.py: Token streaming abstraction
-- generate.py: Generate orchestration
+- generate.py: GenerationFacade (MLX token generation)
+
+NOTE: This is NOT brain.inference_engine (abductive reasoning / evidence chaining).
+Independence: brain._inference is MLX-generate-only; brain.inference_engine is symbolic.
 """
 
 from brain._inference.stream_handler import StreamHandler
-from brain._inference.generate import InferenceEngine
+from brain._inference.generate import GenerationFacade
 
 __all__ = [
     "StreamHandler",
-    "InferenceEngine",
+    "GenerationFacade",
 ]

@@ -1,8 +1,15 @@
-"""Backward-compat stub — canonical: recon.network.passive_fingerprint. Auto-gen ISSUE #20 F2."""
-import importlib
+"""Backward-compat stub — DEPRECATED: import from "network.passive_fingerprint" directly.
 
-# Target recon.network.passive_fingerprint directly — avoids network.__init__.py re-export chain
-_target = "recon.network.passive_fingerprint"
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: network.passive_fingerprint.
+"""
+import warnings
 
-def __getattr__(name):
-    return getattr(importlib.import_module(_target), name)
+warnings.warn(
+    "intel.passive_fingerprint is deprecated — import from \"network.passive_fingerprint\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from network.passive_fingerprint import *

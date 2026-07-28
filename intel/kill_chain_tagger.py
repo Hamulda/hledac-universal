@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.kill_chain_tagger. Auto-gen ISSUE #20 F2."""
-from recon.kill_chain_tagger import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.kill_chain_tagger" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.kill_chain_tagger"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.kill_chain_tagger.
+"""
+import warnings
+
+warnings.warn(
+    "intel.kill_chain_tagger is deprecated — import from \"recon.kill_chain_tagger\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.kill_chain_tagger import *

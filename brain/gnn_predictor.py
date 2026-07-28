@@ -311,19 +311,17 @@ class GNNPredictor:
         """
         Sprint 8TD: Async wrapper pro score_ioc_batch.
 
-        P0-3 FIX: Uses reusable _cpu_executor instead of creating a new
-        ThreadPoolExecutor per call (which was wasteful and added latency).
-
+        M1-OPT: Uses shared 'parallel' domain executor instead of per-instance TPE.
         MLX Metal state is not thread-safe, so max_workers=1 is correct.
         """
         import asyncio
-        if self._cpu_executor is None:
-            self._cpu_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        from hledac.universal.utils.domain_executors import get_or_create
 
         def _sync():
             return self.score_ioc_batch(ioc_nodes, ioc_graph)
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._cpu_executor, _sync)
+        # Use 'parallel' preset (3 workers) - GNN batch scoring is CPU-bound
+        return await loop.run_in_executor(get_or_create("parallel"), _sync)
 
     async def predict_ioc_links(self, graph_nodes: list[dict], graph_edges: list[dict], query_node_id: str, top_k: int=10) -> list[dict]:
         """

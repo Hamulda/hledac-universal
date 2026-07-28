@@ -18,6 +18,8 @@ import ssl
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.utils.async_helpers import parallel_ok
+
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
@@ -185,11 +187,12 @@ class _PythonTlsDomain:
         timeout_ms: int = 5000,
     ) -> list[dict[str, Any]]:
         """Batch JA4 via asyncio.gather."""
+        # F3XX: parallel_ok() replaces asyncio.gather — returns list[T] in original order.
         tasks = [
             self.connect_and_ja4(host, port, timeout_ms=timeout_ms)
             for host, port in hosts
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await parallel_ok(*tasks, label="batch_ja4")
         return [r for r in results if isinstance(r, dict)]
 
 

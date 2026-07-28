@@ -1,9 +1,14 @@
 {
-  "curationsSinceDream": 0,
+  "curationsSinceDream": 1,
   "lastDreamAt": "2026-07-27T13:49:01.138Z",
   "lastDreamLogId": "drm-1785159606649",
   "pendingMerges": [],
-  "staleSummaryPaths": [],
+  "staleSummaryPaths": [
+    {
+      "enqueuedAt": 1785189588648,
+      "path": "facts/project/issue_a5_feature_flag_sprawl_analysis.md"
+    }
+  ],
   "totalDreams": 7,
   "version": 1
 }

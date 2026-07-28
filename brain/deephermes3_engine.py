@@ -34,6 +34,8 @@ from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 from hledac.universal.utils.import_resolver import lazy, lazy_callable
 from brain._hermes_cache import hermes_cache
+from brain._cache.kv_cache_manager import KVCacheManager
+from brain._batch.batch_processor import BatchProcessor, BatchConfig, BatchItem, BatchStats
 _otel_primary = lazy('otel.instrumented')
 _otel_fallback = lazy('hledac.universal.telemetry.instrumented')
 
@@ -81,6 +83,47 @@ def _get_xxh3_hex_batch(items: list[str]) -> list[str]:
         except Exception:
             pass
     return [hashlib.blake2b(s.encode(), digest_size=8).hexdigest() for s in items]
+
+
+class PriorityQueueAdapter:
+    """PEP 698: Bridges BatchProcessor API to DeepHermes3Engine PriorityQueue.
+
+    Allows external BatchProcessor consumers to interact with DeepHermes3Engine's
+    existing PriorityQueue-based batching without rewriting the batch worker.
+    """
+
+    def __init__(self, engine: DeepHermes3Engine) -> None:
+        self._engine = engine
+        self._config = BatchConfig(
+            max_size=engine._batch_max_size,
+            default_flush_interval=engine._batch_default_flush_interval,
+        )
+        self._batch_processor = BatchProcessor(self._config)
+
+    async def submit(self, item: BatchItem) -> asyncio.Future:
+        """Submit BatchItem to engine's PriorityQueue (converted to 4-tuple)."""
+        import itertools
+        tie = next(itertools.count())
+        schema_key = item.response_model.__name__ if item.response_model else "None"
+        payload = {
+            'type': 'structured',
+            'prompt': item.prompt,
+            'response_model': item.response_model,
+            'future': item.future,
+        }
+        await self._engine._batch_queue.put((item.priority, tie, schema_key, payload))
+        return item.future
+
+    @property
+    def queue_size(self) -> int:
+        """Current queue depth."""
+        return self._engine._batch_queue.qsize()
+
+    def get_stats(self) -> BatchStats:
+        """Get batch statistics from wrapped processor."""
+        return self._batch_processor.get_stats()
+
+
 WARMUP_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'warmup'
 
 def _get_warmup_cache_path(system_prompt: str, few_shot_examples: list | None=None) -> Path:
@@ -361,10 +404,10 @@ class DeepHermes3Engine:
         {user_message}<|im_end|>
         <|im_start|>assistant
     """
-    # Duplicate __slots__ removed - see line 366ium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_gpu_memory', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
+    # Duplicate __slots__ removed - see line 367
     _DEEP_THINKING_PREFIX = 'You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.'
 
-    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_gpu_memory', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
+    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_generation_facade', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_mgr', '_batch_adapter', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_metal_device', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
 
     def __init__(self, model_path: str | None=None, sanitize_for_llm: Callable[[str], str] | None=None):
         """
@@ -446,6 +489,12 @@ class DeepHermes3Engine:
         self._prefix_cache: LRUCache[str, Any] = LRUCache(max_size=self._prefix_cache_maxsize)
         self._idle_unload_timeout_s: float = float(os.getenv('HLEDAC_IDLE_UNLOAD_TIMEOUT_S', '1800.0'))
         self._prefix_cache_stats = {'prefix_cache_maxsize': self._prefix_cache_maxsize, 'prefix_cache_size': 0, 'prefix_cache_evictions': 0, 'prefix_cache_hits': 0, 'prefix_cache_misses': 0}
+        # PEP 698: KVCacheManager wrapper (lazy, bound to inline pools)
+        self._kv_cache_mgr: KVCacheManager | None = None
+        # PEP 698: BatchProcessor adapter (lazy, wraps PriorityQueue)
+        self._batch_adapter: PriorityQueueAdapter | None = None
+        # PEP 698: GenerationFacade (lazy, bound to engine's model/tokenizer/metal)
+        self._generation_facade: Any | None = None
         self._inference_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         # Issue #14: CPU prep || GPU exec pipeline — 3-stage overlap
         # Stage 1 (prep): format_chatml + tokenization — CPU-bound, parallel across prompts
@@ -485,7 +534,10 @@ class DeepHermes3Engine:
         self._warmup_cache: Any = None
         self._warmup_prompt_hash: str | None = None
         self._batch_worker_shutting_down = False
-        self._last_gpu_memory: int = 0
+        # F350M-R: Wire MetalDevice for M1 8GB GPU memory tracking
+        # NOTE: Inline Metal memory tracking (mx.metal.get_active_memory) replaced by delegation
+        _metal_cls = lazy('brain._metal.metal_device.MetalDevice')
+        self._metal_device: Any = _metal_cls() if _metal_cls else None
         self._model_breaker: ModelCircuitBreaker | None = None
         try:
             from transport.circuit_breaker import ModelCircuitBreaker
@@ -571,6 +623,16 @@ class DeepHermes3Engine:
         self._batch_worker_task = None
         self._batch_queue = None
         logger.debug('Batch worker shutdown complete (Sprint 7K)')
+
+    @property
+    def batch_processor(self) -> PriorityQueueAdapter:
+        """Get BatchProcessor adapter (PEP 698).
+
+        Provides BatchProcessor API while delegating to existing PriorityQueue.
+        """
+        if self._batch_adapter is None:
+            self._batch_adapter = PriorityQueueAdapter(self)
+        return self._batch_adapter
 
     async def _submit_structured_batch(self, prompt: str, response_model: type, priority: float=1.0, temperature: float=0.1, max_tokens: int=1024, system_msg: str | None=None) -> Any:
         """
@@ -1739,21 +1801,14 @@ class DeepHermes3Engine:
         """
         if self._kv_cache_enabled is False:
             return {}
+        # F350M-R: Wire MetalDevice — delegate GPU memory tier detection
         tier = 'normal'
         try:
-            import mlx.core as mx
-            active = 0
-            if hasattr(mx, 'get_active_memory'):
-                active = int(mx.get_active_memory())
-            elif hasattr(mx.metal, 'get_active_memory'):
-                active = int(mx.metal.get_active_memory())
-            emergency_bytes, critical_bytes, warn_bytes = _get_metal_tier_thresholds()
-            if active > emergency_bytes:
-                tier = 'emergency'
-            elif active > critical_bytes:
-                tier = 'critical'
-            elif active > warn_bytes:
-                tier = 'warn'
+            if self._metal_device is not None:
+                stats = self._metal_device.get_stats()
+                # Map MetalDevice tiers ('low'/'medium'/'high'/'critical') to inference tiers
+                _tier_map = {'low': 'normal', 'medium': 'warn', 'high': 'critical', 'critical': 'emergency'}
+                tier = _tier_map.get(stats.metal_tier, 'normal')
         except Exception:
             tier = 'normal'
         uma_state = 'ok'
@@ -2736,12 +2791,9 @@ class DeepHermes3Engine:
                     _tokens_generated += 1
                     _token_buffer.append(tok)
                     if _eval_counter % CLEAR_GRANULARITY_TOKENS == 0:
+                        # F350M-R: Wire MetalDevice — GPU memory via delegation
                         try:
-                            import mlx.core as _m3_mx
-                            if hasattr(_m3_mx, 'get_active_memory'):
-                                _active_gb = int(_m3_mx.get_active_memory()) / 1024 ** 3
-                            elif hasattr(_m3_mx.metal, 'get_active_memory') and _m3_mx.metal is not None:
-                                _active_gb = int(_m3_mx.metal.get_active_memory()) / 1024 ** 3
+                            _active_gb = self._metal_device.get_stats().active_gb if self._metal_device else 0.0
                         except Exception:
                             _active_gb = 0.0
                     _chunk_size = max(EVAL_GRANULARITY_TOKENS_MIN, min(EVAL_GRANULARITY_TOKENS_MAX, int(_active_gb * 40)))
@@ -2751,14 +2803,8 @@ class DeepHermes3Engine:
                             _m3_mx.eval([])
                             self._lazy_ops_eval_count += 1
                             if _eval_counter % CLEAR_GRANULARITY_TOKENS == 0:
-                                _active = 0
-                                try:
-                                    if hasattr(_m3_mx, 'get_active_memory'):
-                                        _active = int(_m3_mx.get_active_memory())
-                                    elif hasattr(_m3_mx.metal, 'get_active_memory') and _m3_mx.metal is not None:
-                                        _active = int(_m3_mx.metal.get_active_memory())
-                                except Exception:
-                                    _active = 0
+                                # F350M-R: Wire MetalDevice — GPU memory for cache clearing
+                                _active = self._metal_device.get_active_memory() if self._metal_device else 0
                                 if _active > M3_METAL_PRESSURE_BYTES:
                                     import gc
                                     gc.collect()
@@ -3085,6 +3131,44 @@ class DeepHermes3Engine:
         self._prefix_cache_stats['prefix_cache_hits'] = 0
         self._prefix_cache_stats['prefix_cache_misses'] = 0
         logger.info('[CACHE] Prefix cache invalidated')
+
+    @property
+    def kv_cache_manager(self) -> KVCacheManager:
+        """Get KVCacheManager wrapping existing inline pools (PEP 698).
+
+        Returns:
+            KVCacheManager instance bound to DeepHermes3Engine's inline pools.
+        """
+        if self._kv_cache_mgr is None:
+            self._kv_cache_mgr = KVCacheManager(
+                kv_pool_maxsize=self._kv_cache_pool_maxsize,
+                session_cache_maxsize=self._session_cache_maxsize,
+                prefix_cache_maxsize=self._prefix_cache_maxsize,
+                _kv_cache_pool=self._kv_cache_pool,
+                _session_cache_pool=self._session_cache_pool,
+                _prefix_cache=self._prefix_cache,
+            )
+        return self._kv_cache_mgr
+
+    @property
+    def generation_facade(self) -> Any:
+        """Get GenerationFacade wrapping engine's model/tokenizer/metal (PEP 698).
+
+        Returns:
+            GenerationFacade instance bound to DeepHermes3Engine's model,
+            tokenizer, and MetalDevice for simplified generate() calls.
+        """
+        from brain._inference.generate import GenerationFacade
+
+        if self._generation_facade is None:
+            self._generation_facade = GenerationFacade(
+                model_getter=lambda: self._model,
+                tokenizer_getter=lambda: self._tokenizer,
+                metal_device=self._metal_device,
+                kv_cache=self._kv_cache_mgr,  # uses the wrapped KVCacheManager
+            )
+        return self._generation_facade
+
     _BRIDGE_CHUNK_SIZE = 10
 
     async def execute_planner_requests(self, requests, response_models=None):
@@ -3241,7 +3325,9 @@ class DeepHermes3Engine:
                 pass
             logger.debug('[F267] MLX prewarm: skipping clear_cache, model kept warm')
         else:
-            _safe_mlx_eval_and_clear_cache('hermes_unload')
+            # M5: metal_reclaim() = canonical gc+eval+clear+dynamic_limit at model swap
+            from hledac.universal.utils.mlx_memory import metal_reclaim
+            metal_reclaim()
         _mlx_prewarm_active = False
         try:
             from brain.ane_embedder import get_ane_mlx_mutex
@@ -3305,11 +3391,8 @@ class DeepHermes3Engine:
         _active_bytes = 0
         if _MLX_AVAILABLE_GLOBAL:
             try:
-                import mlx.core as _mx
-                if hasattr(_mx, 'get_active_memory'):
-                    _active_bytes = int(_mx.get_active_memory())
-                elif hasattr(_mx.metal, 'get_active_memory') and _mx.metal is not None:
-                    _active_bytes = int(_mx.metal.get_active_memory())
+                # F350M-R: Wire MetalDevice — GPU memory telemetry via delegation
+                _active_bytes = self._metal_device.get_active_memory() if self._metal_device else 0
             except Exception:
                 pass
         return {'lazy_ops_eval_count': self._lazy_ops_eval_count, 'gpu_memory_active_bytes': _active_bytes, 'gpu_memory_active_gb': _active_bytes / 1024 ** 3, 'metal_pressure_fast_flush': self._telemetry_counters.get('metal_pressure_fast_flush', 0), 'pending_lazy_ops_estimate': self._lazy_ops_eval_count * EVAL_EVERY_N_TOKENS}

@@ -85,6 +85,9 @@ class TaskScope:
     # Advisory lanes
     ADVISORY = "advisory"
 
+    # Scorecard / winddown teardown
+    SCORECARD = "scorecard"
+
     @classmethod
     def parent(cls, scope: str) -> str | None:
         """Return parent scope or None if scope is a top-level group."""
@@ -356,27 +359,17 @@ class TaskRegistry:
         # Wait for all with a single timeout
         try:
             async with asyncio.timeout(timeout):
-                # Wait for all tasks to complete (they should see CancelledError)
-                results = await asyncio.gather(
-                    *live_tasks, return_exceptions=True
-                )
-                # Return exceptional results as logged (not raised)
-                for r in results:
-                    if isinstance(r, _CancelledError):
-                        pass  # expected
-                    elif isinstance(r, Exception):
-                        # Log but don't raise — fail-safe
-                        try:
-                            import logging
-                            _logger = logging.getLogger(__name__)
-                            _logger.debug(f"task raised during cancel: {r}")
-                        except Exception:
-                            pass
+                # Use raw asyncio.gather with return_exceptions=True instead of
+                # parallel(). parallel() re-raises CancelledError per I6 invariant,
+                # which breaks cancellation wind-down where we only care that tasks
+                # complete (not whether they were cancelled).
+                await asyncio.gather(*live_tasks, return_exceptions=True)
         except asyncio.TimeoutError:
             timed_out = len(live_tasks)
         except asyncio.CancelledError:
-            # Outer cancellation — await remaining
-            timed_out = len(live_tasks)
+            # Outer cancellation — count how many actually timed out (still running).
+            # Some tasks may have finished before the CancelledError propagated.
+            timed_out = sum(1 for t in live_tasks if not t.done())
             for t in live_tasks:
                 if not t.done():
                     try:
@@ -384,7 +377,8 @@ class TaskRegistry:
                     except Exception:
                         pass
         except Exception:
-            timed_out = len(live_tasks)
+            # Some tasks may have completed successfully before this exception.
+            timed_out = sum(1 for t in live_tasks if not t.done())
 
         return timed_out
 
@@ -428,7 +422,8 @@ class TaskRegistry:
 
         try:
             async with asyncio.timeout(timeout):
-                await asyncio.gather(*live_tasks, return_exceptions=True)
+                # F3XX: parallel(policy="log") replaces asyncio.gather — fire-and-forget pattern.
+                await parallel(list(live_tasks), policy="log", ctx="_wait_all")
         except (asyncio.TimeoutError, asyncio.CancelledError):
             return len(live_tasks)
         except Exception:
@@ -460,13 +455,12 @@ class TaskRegistry:
         except Exception:
             pass
 
-        # 3. mx.eval([]) + mx.metal.clear_cache() — MLX M1 Metal cache
-        # Lazy import: mlx is not available in all environments (tests, stubs)
+        # 3. metal_reclaim() — M5: canonical gc+eval+clear+dynamic_limit (MEM-2 pattern)
+        # Replaces inline gc+eval+clear sequence with single canonical entry point.
+        # Called here because winddown is one of the 3 designated call sites.
         try:
-            import mlx.core as _mx
-
-            _mx.eval([])  # type: ignore[union-attr]
-            _mx.metal.clear_cache()  # type: ignore[union-attr]
+            from hledac.universal.utils.mlx_memory import metal_reclaim
+            metal_reclaim()
         except Exception:
             # mlx may not be installed — skip Metal cache cleanup
             pass
@@ -523,7 +517,7 @@ def safe_create_task_tracked(
     Returns:
         asyncio.Task, registered in the global TaskRegistry.
     """
-    from utils.async_helpers import safe_create_task as _safe_create_task
+    from utils.async_helpers import parallel, safe_create_task as _safe_create_task
 
     task = _safe_create_task(coro, name=name, **kwargs)
     _registry = get_task_registry()

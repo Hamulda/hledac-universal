@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.workflow_orchestrator. Auto-gen ISSUE #20 F2."""
-from recon.workflow_orchestrator import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.workflow_orchestrator" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.workflow_orchestrator"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.workflow_orchestrator.
+"""
+import warnings
+
+warnings.warn(
+    "intel.workflow_orchestrator is deprecated — import from \"recon.workflow_orchestrator\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.workflow_orchestrator import *

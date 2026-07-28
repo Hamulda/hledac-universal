@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.browser_pool. Auto-gen ISSUE #20 F2."""
-from recon.browser_pool import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.browser_pool" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.browser_pool"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.browser_pool.
+"""
+import warnings
+
+warnings.warn(
+    "intel.browser_pool is deprecated — import from \"recon.browser_pool\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.browser_pool import *

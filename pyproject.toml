@@ -38,7 +38,9 @@ dependencies = [
     "httpx>=0.28.0,<0.32.0",
     "curl-cffi>=0.15.0,<1.0.0; sys_platform == 'darwin'",
     "brotlicffi>=1.2.0.1",
-    "cloudscraper>=1.2.71",
+    # cloudscraper REMOVED T3: curl_cffi impersonate covers all bypass needs.
+    # Supply-chain reduction: fewer deps = fewer CVEs. If bypass fails,
+    # curl_cffi JA3 rotation handles Cloudflare/Akamai automatically.
     # camoufox REMOVED F330: nodriver (CDP-direct) + playwright 2-tab pool
     # (~150MB RAM cap on M1 8GB) covers all browser fingerprinting needs.
     # camoufox added redundant Firefox-specific surface area for marginal gain.
@@ -60,6 +62,17 @@ dependencies = [
     # msgspec: gc=True je default az do 0.21.x (confirmed stubs). Hot-path Structs mají
     # explicit gc=False (333 upraveno v F350M-R upgrade). msgspec 0.22+ není na PyPI.
     "msgspec>=0.21.1,<0.22.0",
+    # ── JSON Serialization Strategy (Issue M3) ───────────────────────────────
+    # Wire format (typed structs with known schema): msgspec (msgspec.Struct)
+    #   → encode/decode: msgspec.json.encode() / .decode() — 5-10× faster than stdlib json
+    #   → DuckDB JSON columns: msgspec codec once at boundary, validated on the way in
+    # Untyped blobs (arbitrary JSON, schemas unknown at edit time): orjson
+    #   → orjson.loads() / orjson.dumps() — stdlib json replacement
+    # CI gate (stdlib json ban): grep-based — catches future regressions
+    #   grep -rn 'import json\|from json' --include='*.py' runtime/ knowledge/ pipeline/ fetching/
+    #   Expected: 0 matches. If match found: migrate to orjson (untyped) or msgspec (typed).
+    # ruff_ext custom rule TCH909 (plugin entry point) is the automated enforcement path.
+    # legacy stdlib json: ZERO occurrences in codebase as of F350M-R (migrated to orjson/msgspec)
     # F3XX: Retry modernization — replaces manual exponential-backoff retry loops
     "tenacity>=9.0.0",
     # ── Storage ───────────────────────────────────────────────────────────────
@@ -80,19 +93,19 @@ dependencies = [
     "mlx-lm>=0.31.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # Issue #50: mlx-lm 0.31.x METADATA incorrectly specifies transformers>=5.0.0.
     # Actual runtime: works with both 4.x and 5.x (tested with 5.13.0).
-    # Pin spodní hranice pro stabilitu — [ml] extra separately vyžaduje 5.x pro DSPy.
-    "transformers>=4.30",
+    # transformers UNIFIED: main dep removed (was duplicate); [ml] extra holds the
+    # canonical pin (>=5.10.2 for DSPy compatibility). mlx-lm works without it.
+    # If you need transformers without [ml]: pip install transformers (no version pin needed).
     "mlx-embeddings>=0.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # ── NER / NLP ─────────────────────────────────────────────────────────────
     "gliner2>=1.0.1",
     "mlx-gliner2>=0.1.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "fast-langdetect>=1.0.1",
-    # ── Numerika / ML ─────────────────────────────────────────────────────────
+    # ── Numerika / ML (light) ─────────────────────────────────────────────────
+    # MIGRATED to [ml] extra: scipy, scikit-learn, xgboost, lightgbm.
+    # M1 8GB: 0 usage in codebase; hundreds of MB disk + RAM pressure avoided.
     "numpy>=2.5.0,<3.0.0",  # M1 8GB: cap at <3.0.0 for ABI stability
-    "scipy>=1.17.1",
-    "scikit-learn>=1.9.0",
-    "xgboost>=3.2.0",
-    "lightgbm>=4.6.0",
+    # xgrammar, onnxscript: required by mlx-lm / transformers integration
     "xgrammar>=0.2.1",
     "onnxscript>=0.7.0",
     # ── Vektorové indexy ──────────────────────────────────────────────────────
@@ -185,6 +198,7 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "structlog>=24.4.0",
     "cyclopts>=4.22.2",
+    "diskcache>=5.6.3",
 ]
 
 [project.optional-dependencies]
@@ -214,10 +228,21 @@ observability = [
 # ── Optional ML extras ───────────────────────────────────────────────────────
 # Install with: uv sync --extra ml
 ml = [
+    # Issue M4: Classical ML — moved from main deps to [ml] extra.
+    # M1 8GB: 0 usage in codebase; saves ~500 MB disk + RAM pressure.
+    # xgboost, lightgbm, scipy, scikit-learn: NO runtime imports anywhere.
+    # transformers pin (>=5.10.2) unifies main deps duplicate (was >=4.30).
+    "scipy>=1.17.1",
+    "scikit-learn>=1.9.0",
+    "xgboost>=3.2.0",
+    "lightgbm>=4.6.0",
     # LanceDB ANN — opt-in for >1M vectors where Rust-side HNSW gives real benefit.
     # Default: sqlite-vec primary (zero-process, M1-native, ~5MB resident).
     # Install with: uv sync --extra ml  (also installs DSPy, transformers, flashrank).
     "lancedb>=0.34.0,<0.36.0",
+    # sentence-transformers: lazy-imported via mlx-gliner2 in brain/ane_embedder.py.
+    # NOT in main deps/dev — mlx-gliner2 pulls it as a soft dep at inference time.
+    "sentence-transformers>=5.5.1",
     # DSPy compiled programs (HLEDAC_ENABLE_DSPY=1)
     "dspy>=3.2.1",
     # Structured generation + grammar-constrained decoding
@@ -307,12 +332,14 @@ m1-local = [
 ]
 # ISSUE-FIX: graph-storage extra was referenced in check_dependency_profiles.py but never existed.
 # This extra provides the columnar analytics stack: duckdb + lancedb + pyarrow + polars.
+# duckdb a pyarrow jsou v main deps — sem pro konzistenci dependency manifestu.
 # Install with: uv sync --extra graph-storage
 graph-storage = [
-    "duckdb>=1.5.4,<2.0.0",
-    "lancedb>=0.34.0,<0.36.0",
+    # duckdb a pyarrow jsou v main deps — sem pro konzistenci dependency manifestu.
+    # lancedb ŽIVÁ V [ml] extra (ne zde) — graph-storage NENÍ pro ANN!
     "pyarrow>=24.0.0,<25.0.0",
     # Polars 1.43+: improved streaming engine for M1 8GB, streaming collect by default.
+    # NENÍ v main deps — pouze v graph-storage extra.
     "polars>=1.43.0,<2.0.0",
 ]
 [project.scripts]
@@ -345,8 +372,10 @@ dev = [
     "pyright>=1.1.410",
     "ty>=0.0.49",
     # ── Test-only extras (used in tests / probes only) ──────────────────────
-    "ddgs>=9.14.4",
-    "sentence-transformers>=5.5.1",
+    "ddgs>=9.14.4",          # DuckDuckGo SERP — runtime dep in discovery/duckduckgo_adapter.py
+    # sentence-transformers REMOVED from dev: lazy-imported via mlx-gliner2/modernbert
+    # in brain/ane_embedder.py; NOT a runtime dep for standard ML pipeline.
+    # If needed: pip install sentence-transformers (not in uv lock, not installed by default).
     "ijson>=3.5.0",
     "kuzu>=0.11.3; platform_machine == 'arm64'",  # M1 wheel only
     # pybloom-live REMOVED 2026-07-09: Rust MmapBloomFilter is primary (10× faster,
@@ -381,7 +410,7 @@ line-length = 120
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901"]  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality
 ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Issue #32
 # E911: P1-1 custom — forbid asyncio.run() outside allowed entry points.
 # Allowed: __main__, tools/, tests/. Use: grep -rn 'asyncio\.run(' ... | grep -v __main__ | grep -v 'tools/' | grep -v 'tests/'
@@ -402,6 +431,15 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 # DOPORUČUJE pro audit, ale není kritická. Kritická je pouze pro global/module-level locks."
 # All GLOBAL threading.Lock / threading.RLock instances must call
 # register_lock(LockCategory.XXX, lock, "module._name"). See core/locks.py.
+# ── Issue P3: ASYNC461 ban raw asyncio.gather without return_exceptions=True ───────
+# Ban raw `asyncio.gather(...)` call sites that bypass fail-soft invariants.
+# Allowed patterns:
+#   - asyncio.gather(..., return_exceptions=True)
+#   - parallel(*coros, policy=...) (any policy)
+#   - parallel_ok(*coros), safe_gather_*(...)
+#   - _asyncio.gather(...) (internal alias)
+# CI gate: `python tools/audit/ban_raw_gather.py` — expects 0 violations.
+# Tests/ are skipped (raw gather is legitimate for concurrent-test fixtures).
 
 [tool.ruff.lint.per-file-ignores]
 # stubs/ – Apple/CoreML framework .pyi binding files; preserve original names
@@ -414,17 +452,26 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "brain/experimental_neuro_crypto.py" = ["N803", "N806"]
 # tests/transports/ – InMemoryTransport is test-only (TST001 = import-from-tests guard)
 "tests/transports/**" = []
-# ── Issue #9.1: BLE001 allowlist REMOVED (2026-07-24) ─────────────────────────
-# AST scan (925 source files, core/runtime/knowledge/fetching/transport/brain/graph):
-#   TOTAL bare except: 0
-#   All 269 per-file BLE001 entries are LEGACY/ORPHANED — bare except: no longer exists.
-# Fix: removed entire BLE001 per-file-ignores block. Silent fail-safe patterns
-# that were protected by this allowlist now fall through to explicit 'except Exception'
-# or inline # noqa: BLE001 in genuinely cold-path init (see individual files).
-#
-# CI invariant: ruff --select= BLE001  must report 0 violations in source dirs.
-#   CI: rtk ruff --select= BLE001 2>/dev/null | grep -c 'BLE001' — expect 0.
-# ── Issue #9.1: remaining cold-path files with except Exception: patterns ──────
+# ── Issue A1: Dual import namespace — RUFF022 ban bare package imports ───────────
+# Canonical form: always hledac.universal.<pkg> (src-layout convention).
+# Bare imports (from runtime, from brain, from knowledge, from core, from
+# coordinators) work via the flat-layout hacks in __init__.py / _namespace_bootstrap
+# but create dual-load risk, circular-dep traps, and tooling blind-spots.
+# Ruff has no built-in "ban this import path" rule, so we enforce via:
+#   1. I002 isort: groups bare pkg imports separately from hledac.universal ones
+#      → dual-namespace files fail I002 (unsorted import groups)
+#   2. F401 (unused-import): after the codemod, bare imports become unused stumps
+#      → CI catches regressions automatically
+#   3. RUFF022 custom plugin: banned-imports rule in ruff_ext/__init__.py
+#      → requires ruff_ext to be installed; CI gate is the ruff_ext check or skip
+# CI gate: `ruff check . --extend-select RUFF022` (RUFF022 = banned-imports)
+#   Run: uv run ruff check . --no-cache 2>&1 | grep RUFF022 || true
+# Codemod: scripts/codemod_dual_namespace.py (one-shot, reversible via git)
+
+# I002 = isort required-import order; dual-namespace files MIX two groups → caught
+# UP035 = deprecated imports; I005 = missing import for isort
+# C901 = complex comprehension; PIE790 = unnecessary pass
+# YTT = type conversion; ANN = annotation completeness
 # These files have legitimate fail-safe cold-path patterns (init, cleanup, shutdown)
 # where catching Exception with proper handling is intentional.
 "graph/quantum_pathfinder.py" = ["BLE001"]  # cold-path graph query orchestration

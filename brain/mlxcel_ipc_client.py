@@ -245,7 +245,8 @@ class MlxcelIpcClient:
                 raise MlxcelUnavailable('Reader not available')
             self._writer.write(request_bytes)
             await self._writer.drain()
-            response_line = await asyncio.wait_for(reader.readline(), timeout=self._RPC_TIMEOUT_S)
+            async with asyncio.timeout(self._RPC_TIMEOUT_S):
+                response_line = await reader.readline()
             latency_ms = (time.monotonic() - start) * 1000
             if not response_line:
                 raise MlxcelUnavailable('mlxcel closed connection')
@@ -341,7 +342,8 @@ class MlxcelIpcClient:
         self._writer.write(request_bytes)
         await self._writer.drain()
         while True:
-            line = await asyncio.wait_for(reader.readline(), timeout=self._RPC_TIMEOUT_S)
+            async with asyncio.timeout(self._RPC_TIMEOUT_S):
+                line = await reader.readline()
             if not line:
                 break
             try:
@@ -372,7 +374,8 @@ class MlxcelIpcClient:
                 self._pid = None
                 try:
                     proc.terminate()
-                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    async with asyncio.timeout(5.0):
+                        await proc.wait()
                 except asyncio.TimeoutError:
                     try:
                         proc.kill()
@@ -387,7 +390,8 @@ class MlxcelIpcClient:
                         pass
                 try:
                     if proc.stderr is not None:
-                        await asyncio.wait_for(proc.stderr.read(), timeout=1.0)
+                        async with asyncio.timeout(1.0):
+                            await proc.stderr.read()
                 except (asyncio.TimeoutError, OSError, asyncio.CancelledError):
                     pass
             self._connected = False
@@ -411,7 +415,8 @@ async def get_mlxcel_client() -> MlxcelIpcClient:
         _client = MlxcelIpcClient()
         _client_failure_count = 0
         try:
-            await asyncio.wait_for(_client.ping(), timeout=5.0)
+            async with asyncio.timeout(5.0):
+                await _client.ping()
             logger.info('[MLXCEL] Connected: version=%s', _client.version)
         except (MlxcelUnavailable, asyncio.TimeoutError) as e:
             _client_failure_count += 1

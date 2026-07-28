@@ -764,7 +764,7 @@ async def safe_wait_for[T](
     try:
         async with asyncio.timeout(timeout):
             return await coro
-    except TimeoutError:
+    except asyncio.TimeoutError:
         _log.debug(f"[GHOST] safe_wait_for{'_' + label if label else ''} timeout after {timeout}s")
         raise
 

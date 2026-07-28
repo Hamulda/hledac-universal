@@ -1,28 +1,15 @@
 """
-Re-export from recon.network.bgp_monitor — canonical implementation.
+Re-export from recon.bgp_advisor_adapter — canonical BGP implementation.
 
-Migration (F350M-R):
-  - network/bgp_monitor.py was a near-duplicate (99.7% similar)
-  - recon/network/bgp_monitor.py is the canonical source
-  - This file is kept for backward compatibility with code that
-    imports from network.bgp_monitor
-
-All production code should import from recon.network.bgp_monitor directly.
+K2 (F350M-R): network/ is infrastructure facade.
+Canonical BGP adapter is recon.bgp_advisor_adapter.
 """
-from hledac.universal.recon.network.bgp_monitor import (  # noqa: F401, E402
-    BGP_AVAILABLE,
-    extract_public_ips_from_text,
-    monitor_bgp,
-    monitor_bgp_as_findings,
-    bgp_enrich_to_canonical,
-    enrich_ip_as_finding,
+from hledac.universal.recon.bgp_advisor_adapter import (  # noqa: F401, E402
+    BGPAdvisorAdapter,
+    create_bgp_advisor_adapter,
 )
 
 __all__ = [
-    "BGP_AVAILABLE",
-    "extract_public_ips_from_text",
-    "monitor_bgp",
-    "monitor_bgp_as_findings",
-    "bgp_enrich_to_canonical",
-    "enrich_ip_as_finding",
+    "BGPAdvisorAdapter",
+    "create_bgp_advisor_adapter",
 ]

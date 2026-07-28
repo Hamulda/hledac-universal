@@ -20,11 +20,11 @@ _HTML_PARSE_RUST_AVAILABLE = False
 _SELECTOLAX_AVAILABLE = False
 
 try:
-    from hledac.universal.rust_extensions import html_parse
+    import hledac_rust_extensions
 
     _HTML_PARSE_RUST_AVAILABLE = True
 except ImportError:
-    html_parse = None  # type: ignore[assignment]
+    hledac_rust_extensions = None  # type: ignore[assignment]
 
 try:
     from selectolax.parser import HTMLParser as _SelectolaxParser
@@ -64,11 +64,12 @@ class _RustHtmlDomain:
 
     def extract_titles(self, html: str) -> list[str | None]:
         """Extract <title> content."""
-        return self._ext.extract_titles(html)
+        title = self._ext.extract_title(html)
+        return [title] if title is not None else []
 
     def html_to_text(self, html: str) -> str:
         """Extract plain text from HTML."""
-        return self._ext.html_to_text(html)
+        return getattr(self._ext, "html_to_text", lambda x: x)(html)
 
     def batch_extract_links(self, items: list[tuple[str, str]]) -> list[list[str]]:
         """Parallel link extraction for (html, base_url) pairs."""
@@ -224,7 +225,11 @@ class _PythonHtmlDomain:
 
     def batch_extract_titles(self, items: list[str]) -> list[str | None]:
         """Parallel title extraction."""
-        return [self.extract_titles(html)[0] if self.extract_titles(html) else None for html in items]
+        result = []
+        for html in items:
+            titles = self.extract_titles(html)
+            result.append(titles[0] if titles else None)
+        return result
 
 
 def _python_extract_links_regex(html: str, base_url: str) -> list[str]:

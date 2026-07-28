@@ -206,10 +206,21 @@ def register_lock(
 
     with _REGISTRY_LOCK:
         if name in _LockRegistry:
+            # Při re-importu modulu (sys.modules reload) vznikne NOVÝ lock instance,
+            # ale v globálním registru už existuje záznam. Správné řešení:
+            # Lock registry přežije re-import jen pokud proces běží dál.
+            # Pro čistý idempotentní vzor: pokud lock s name už existuje, vždycky
+            # kontroluj pouze identity (existing.lock is lock) — tj. stejný objekt.
+            # Duplicitní název = vždy bug (i když stejná category), protože dva různé
+            # locky se stejným názvem indikují logickou chybu v kódu.
             existing = _LockRegistry[name]
             if existing.lock is lock:
-                return  # Idempotentní volání
-            raise ValueError(f"Lock name '{name}' already registered with different lock instance")
+                return  # Idempotent: TEN SAMÝ lock objekt — OK
+            raise ValueError(
+                f"Lock name '{name}' already registered. "
+                f"Two different lock objects with the same name is a bug. "
+                f"Use unique names or reuse the existing lock."
+            )
 
         _register_lock(category, lock, name, frame_info)
 

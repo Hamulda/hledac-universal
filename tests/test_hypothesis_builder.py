@@ -15,10 +15,8 @@ from brain.causal_engine import (
     MAX_HYPOTHESES,
     CausalEngine,
 )
-from export.hypothesis_builder import (
-    HYPOTHESIS_ENABLED,
-    HypothesisBuilder,
-)
+from export.hypothesis_builder import HypothesisBuilder
+from runtime.lane_registry import LANE_REGISTRY
 from graph.hypothesis_graph import (
     HypothesisEdge,
     HypothesisGraph,
@@ -338,7 +336,7 @@ class TestHypothesisBuilder:
 
         result = await builder.run_hypothesis_generation(sample_findings)
 
-        if not HYPOTHESIS_ENABLED:
+        if not LANE_REGISTRY.is_enabled("hypothesis"):
             assert result.enabled is False, "Should be disabled"
             assert result.hypotheses_generated == 0, "Should generate no hypotheses"
             if result.error:

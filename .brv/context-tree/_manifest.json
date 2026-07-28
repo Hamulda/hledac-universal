@@ -353,13 +353,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-27T13:49:01.086Z",
+  "generated_at": "2026-07-27T21:59:48.717Z",
   "lane_tokens": {
     "contexts": 4000,
     "stubs": 0,
     "summaries": 1934
   },
-  "source_fingerprint": "95f468e5c2b58a8c15738065e2fb30081cd6cef7b92cbf5a51e9d187ea67168c",
+  "source_fingerprint": "912d3272355af3c3abffdf5bf5f003b6b91016951a48b43957315c02911738b6",
   "total_tokens": 5934,
   "version": 1
 }

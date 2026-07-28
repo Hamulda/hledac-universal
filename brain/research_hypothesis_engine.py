@@ -50,7 +50,7 @@ except ImportError:
     _dspy = None
 try:
     from brain.dspy_programs import get_multi_hop_chain
-    from utils.uma_budget import get_uma_snapshot
+    from hledac.universal.utils.uma_budget import get_uma_snapshot
     MULTIHOP_AVAILABLE = True
 except ImportError:
     get_multi_hop_chain = None

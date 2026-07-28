@@ -1466,13 +1466,14 @@ def _pool_close_all() -> None:
 
 
 def _python_parallel_duckdb_queries(db_path: str, queries: list[str]) -> list[dict[str, Any]]:
-    """Execute queries in parallel using ThreadPoolExecutor (DuckDB MVCC allows concurrent reads)."""
+    """Execute queries in parallel using shared DuckDB executor (DuckDB MVCC allows concurrent reads)."""
     if not queries:
         return []
-    import concurrent.futures
+
+    from hledac.universal.utils.domain_executors import get_or_create
 
     results: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(queries), _POOL_MAX_SIZE)) as executor:
+    with get_or_create("duckdb") as executor:
         futures = [executor.submit(_python_query_duckdb, db_path, sql) for sql in queries]
         for future in concurrent.futures.as_completed(futures):
             try:

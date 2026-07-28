@@ -16,7 +16,7 @@ from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_
 import logging
 from pathlib import Path
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather
+from hledac.universal.utils.async_helpers import bounded_parallel_map
 from hledac.universal.utils.lmdb_bulk import putmulti_bounded
 log = logging.getLogger(__name__)
 _FORENSICS_LMDB_NAME = 'forensics_enrichment.lmdb'
@@ -178,7 +178,9 @@ class EnrichmentServices:
                                     self._evidence_log.attach_forensic_analysis(finding_id=str(fid)[:128], forensic_result=res_for_evidence, source_id=str(fid)[:128], confidence=0.95)
                     except Exception:
                         pass
-            await safe_gather(*[enrich_one(f) for f in findings], label='forensics_enrichment', logger_instance=log)
+            # E2-FIX: bounded_parallel_map replaces safe_gather — concurrency capped at 3
+            # (GRAPH_RAG semaphore already inside enrich_one, but parallel() caps N in-flight tasks)
+            await bounded_parallel_map(findings, enrich_one, concurrency=3, ordered=False, ctx='forensics_enrichment', logger_instance=log)
             if enriched_pairs:
                 try:
                     written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
@@ -225,7 +227,8 @@ class EnrichmentServices:
                                     result.multimodal_enriched_findings += 1
                     except Exception:
                         pass
-            await safe_gather(*[enrich_one(f) for f in findings], label='multimodal_enrichment', logger_instance=log)
+            # E2-FIX: bounded_parallel_map replaces safe_gather — concurrency capped at 3
+            await bounded_parallel_map(findings, enrich_one, concurrency=3, ordered=False, ctx='multimodal_enrichment', logger_instance=log)
             if enriched_pairs:
                 try:
                     written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)

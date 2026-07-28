@@ -98,9 +98,13 @@ class IOCExtractorProto(Protocol):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @runtime_checkable
-class DuckDBStoreProtocol(Protocol):
+class FindingsWritePort(Protocol):
     """
-    Minimální kontrakt pro DuckDB canonical write path.
+    Findings-only canonical write path.
+
+    ISSUE-K3: All findings MUST go through this port. Telemetry (scorecard, episodes,
+    target_memory, DHT metadata) uses TelemetryWritePort — different tables, same
+    connection governor, no quality gate.
 
     Implementuje: DuckDBShadowStore
 
@@ -113,6 +117,35 @@ class DuckDBStoreProtocol(Protocol):
         self,
         findings: list[CanonicalFinding],
     ) -> list[FindingQualityDecision | ActivationResult]: ...
+
+
+# Alias pro zpětnou kompatibilitu — mnoho souborů reference DuckDBStoreProtocol
+DuckDBStoreProtocol = FindingsWritePort
+
+
+@runtime_checkable
+class TelemetryWritePort(Protocol):
+    """
+    Telemetry/non-finding DuckDB write path.
+
+    ISSUE-K3: Augments FindingsWritePort (DuckDBStoreProtocol) with telemetry
+    tables that bypass the quality gate but share the same connection governor.
+
+    Tables: sprint_scorecard, research_episodes, target_memory, dht_metadata.
+    All writes are serialized through DuckDBShadowStore._executor (bounded thread pool).
+
+    Invariant: Telemetry writes are NOT findings — they do NOT go through
+    async_ingest_findings_batch() quality gate and do NOT produce
+    FindingQualityDecision/ActivationResult values.
+    """
+
+    async def upsert_scorecard(self, data: dict) -> bool: ...
+
+    async def upsert_episode(self, data: dict) -> None: ...
+
+    async def upsert_target_memory(self, memory: Any) -> bool: ...
+
+    async def async_ingest_dht_metadata(self, metadata: list[dict[str, Any]]) -> int: ...
 
 
 @runtime_checkable

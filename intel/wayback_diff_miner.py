@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.wayback_diff_miner. Auto-gen ISSUE #20 F2."""
-from recon.wayback_diff_miner import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.wayback_diff_miner" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.wayback_diff_miner"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.wayback_diff_miner.
+"""
+import warnings
+
+warnings.warn(
+    "intel.wayback_diff_miner is deprecated — import from \"recon.wayback_diff_miner\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.wayback_diff_miner import *

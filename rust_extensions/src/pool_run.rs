@@ -36,7 +36,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use rayon::ThreadPool;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Weak};
 use std::thread;
 use std::time::Duration;
 
@@ -59,13 +59,17 @@ const STATE_ABORTED: u8 = 2;
 // Work item — submitted to rayon pool dispatcher via channel
 // ---------------------------------------------------------------------------
 
+/// Work item — submitted to rayon pool dispatcher via channel.
+/// Uses Weak so the Arc can be dropped by the submitter after submission
+/// without affecting the worker thread's reference.
 struct WorkItem {
     func: Py<PyAny>,
     args: Py<PyTuple>,
     /// Batch size hint — used by mixed dispatcher to select pool size
     n_items: usize,
-    /// Shared result storage + synchronization
-    shared: Arc<SharedTask>,
+    /// Shared result storage + synchronization — Weak prevents use-after-free
+    /// when submitter drops its Arc before worker finishes.
+    shared: Weak<SharedTask>,
 }
 
 /// Shared storage for task result + cancellation + completion signal.
@@ -186,18 +190,32 @@ fn run_mixed_dispatcher_loop(rx: Arc<Receiver<WorkItem>>) {
 }
 
 /// Execute a single work item: cooperative cancellation check, GIL-acquire, call Python func.
+/// R5 FIX: Uses Weak::upgrade() to safely handle the case where Python has already
+/// dropped its Arc<SharedTask> (via Box::into_raw) before the worker started or finished.
+/// This prevents use-after-free where Arc was dropped at line 360 (drop(shared_box))
+/// while the worker thread was still running.
 fn execute_work_item<F>(work: WorkItem, _pool_fn: F)
 where
     F: Fn() -> &'static ThreadPool,
 {
+    // R5 FIX: Upgrade Weak to Arc — may return None if Python already dropped its Arc.
+    // This can happen when:
+    //   1. Python called rayon_join_channel and its local Arc was dropped at function return
+    //   2. Worker hasn't started yet (channel backed up) or is still running
+    // If None → the task was already collected and we should exit silently.
+    let Ok(shared) = work.shared.upgrade() else {
+        // SharedTask was already dropped by Python-side join — silent exit is correct.
+        return;
+    };
+
     // Cooperative cancellation check
-    if work.shared.cancel_flag.load(Ordering::Acquire) {
-        let mut guard = work.shared.result.lock();
+    if shared.cancel_flag.load(Ordering::Acquire) {
+        let mut guard = shared.result.lock();
         *guard = Some(Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
             "Task was cancelled before starting",
         )));
-        work.shared.state.swap(STATE_READY, Ordering::AcqRel);
-        work.shared.condvar.notify_one();
+        shared.state.swap(STATE_READY, Ordering::AcqRel);
+        shared.condvar.notify_one();
         return;
     }
 
@@ -209,17 +227,17 @@ where
 
     // Atomically set STATE_READY if still PENDING (not aborted by timeout)
     let expected = STATE_PENDING;
-    if work.shared.state.compare_exchange(
+    if shared.state.compare_exchange(
         expected,
         STATE_READY,
         Ordering::AcqRel,
         Ordering::Acquire,
     ).is_ok() {
-        let mut guard = work.shared.result.lock();
+        let mut guard = shared.result.lock();
         *guard = Some(py_result);
     }
 
-    work.shared.condvar.notify_one();
+    shared.condvar.notify_one();
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +305,15 @@ pub fn rayon_submit_channel_(
     let func_clone = Py::clone_ref(&func, py);
     let args_clone = Py::clone_ref(&args, py);
 
-    let shared: Arc<SharedTask> = Arc::new(SharedTask {
+    // R5 FIX: Use Arc::new_cyclic so the Weak in WorkItem can upgrade to the Arc.
+    // Ownership model:
+    //   - WorkItem.shared = Weak<SharedTask> (does NOT keep SharedTask alive)
+    //   - Python receives Arc::into_raw(work_shared) as usize pointer
+    //   - Python passes usize back → Arc::from_raw reconstructs Arc in join/abort
+    //   - Worker upgrades Weak → valid Arc for duration of execute_work_item
+    //   - When worker finishes: if Arc still alive (Python hasn't dropped), condvar fires
+    //   - If Python never calls rayon_join: work_shared is leaked (acceptable for abort path)
+    let work_shared: Arc<SharedTask> = Arc::new_cyclic(|weak| SharedTask {
         result: parking_lot::Mutex::new(None),
         cancel_flag: AtomicBool::new(false),
         state: AtomicU8::new(STATE_PENDING),
@@ -298,7 +324,7 @@ pub fn rayon_submit_channel_(
         func: func_clone,
         args: args_clone,
         n_items,
-        shared: Arc::clone(&shared),
+        shared: weak.clone(),
     };
 
     let sender_mutex: &parking_lot::Mutex<Option<Sender<WorkItem>>> = match pool_type {
@@ -326,8 +352,10 @@ pub fn rayon_submit_channel_(
         ));
     }
 
-    // Return pointer to SharedTask — Python passes this to rayon_join_channel
-    let ptr = Box::into_raw(Box::new(shared)) as usize;
+    // Return pointer to SharedTask — Python passes this to rayon_join_channel.
+    // R5 FIX: Use Arc::into_raw so we can reconstruct with Arc::from_raw in join/abort.
+    // Arc::into_raw returns *mut SharedTask (not *mut Arc<SharedTask>).
+    let ptr = Arc::into_raw(work_shared) as usize;
     Ok(ptr.into_pyobject(py).unwrap().into())
 }
 
@@ -354,10 +382,12 @@ pub fn rayon_join_channel_(
         ));
     }
 
-    // Reconstruct Arc from raw pointer and Clone so Box release doesn't drop inner Arc
-    let shared_box = unsafe { Box::from_raw(handle_ptr as *mut Arc<SharedTask>) };
-    let shared = Arc::clone(&*shared_box);
-    drop(shared_box); // free Box, NOT the Arc
+    // R5 FIX (Arc::new_cyclic): Reconstruct Arc from raw pointer.
+    // The pointer is Arc::into_raw(work_shared) from rayon_submit_channel.
+    // Arc::from_raw creates an Arc that shares ownership with Python's Arc.
+    // When this local Arc is dropped at end of function, refcount decrements by 1
+    // but Python's Arc (from Arc::into_raw in submit) keeps SharedTask alive.
+    let shared = unsafe { Arc::from_raw(handle_ptr as *const SharedTask) };
 
     let timeout = timeout_s
         .map(|t| Duration::from_secs_f64(t.max(0.0)))
@@ -375,9 +405,9 @@ pub fn rayon_join_channel_(
     // py.detach() to release the GIL during the syscall.
     //
     // Memory safety: Arc<SharedTask> stays alive because:
-    //   - Worker thread holds Arc clone via WorkItem.shared
-    //   - Python holds Arc clone via Box::into_raw(handle)
-    //   - Both must drop before SharedTask is dropped
+    //   - R5 FIX: Worker thread upgrades Weak in WorkItem → valid Arc until worker finishes
+    //   - Python's Arc::from_raw (from Arc::into_raw in submit) keeps SharedTask alive
+    //   - SharedTask dropped when BOTH Python Arc and worker Arc are dropped
     let deadline = std::time::Instant::now() + timeout;
 
     // Thread-safe flag: AtomicBool is Sync (unlike Cell), usable across allow_threads boundary
@@ -462,10 +492,9 @@ pub fn rayon_abort_channel_(py: Python<'_>, handle_ptr: usize) -> PyResult<()> {
         return Ok(());
     }
 
-    // Clone Arc so Box release doesn't drop inner Arc
-    let shared_box = unsafe { Box::from_raw(handle_ptr as *mut Arc<SharedTask>) };
-    let shared = Arc::clone(&*shared_box);
-    drop(shared_box);
+    // R5 FIX (Arc::new_cyclic): Reconstruct Arc from raw pointer.
+    // Same pattern as rayon_join_channel_ — Arc::from_raw reconstructs.
+    let shared = unsafe { Arc::from_raw(handle_ptr as *const SharedTask) };
 
     shared.cancel_flag.store(true, Ordering::Release);
 

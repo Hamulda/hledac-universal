@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.ct_lane. Auto-gen ISSUE #20 F2."""
-from recon.ct_lane import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.ct_lane" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.ct_lane"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.ct_lane.
+"""
+import warnings
+
+warnings.warn(
+    "intel.ct_lane is deprecated — import from \"recon.ct_lane\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.ct_lane import *

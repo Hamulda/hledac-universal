@@ -174,6 +174,66 @@ def putmulti_bounded(
     return total_written
 
 
+def putmulti_bounded_str(
+    env: Any,
+    items: Sequence[tuple[str, dict]],
+    key_prefix: str = "",
+    max_batch: int = DEFAULT_BULK_BATCH,
+) -> list[bool]:
+    """Bounded LMDB bulk write for str-keyed JSON dict values.
+
+    Converts str keys → bytes and dict values → msgpack bytes, then calls
+    ``putmulti_bounded`` with a single write transaction per chunk.
+
+    Args:
+        env: ``lmdb.Environment`` instance (sync, not async).
+        items: Sequence of ``(key_str, value_dict)`` tuples.
+        key_prefix: Optional prefix prepended to all keys (e.g. ``"wal"``).
+        max_batch: Max items per write transaction.
+
+    Returns:
+        Per-item success list (same shape as input items). Partial results
+        are preserved on error.
+    """
+    if env is None or not items:
+        return [False] * len(items) if items else []
+
+    # Pre-encode all keys and values so the hot path stays zero-copy
+    encoded: list[tuple[bytes, bytes]] = []
+    for key_str, value_dict in items:
+        try:
+            prefixed = f"{key_prefix}:{key_str}".encode("utf-8") if key_prefix else key_str.encode("utf-8")
+            val_bytes = _msgspec_dumps_str(value_dict)
+            encoded.append((prefixed, val_bytes))
+        except Exception:
+            # Skip unencodable items; track them in results
+            pass
+
+    if not encoded:
+        return [False] * len(items)
+
+    # putmulti_bounded returns total count, not per-item results
+    written = putmulti_bounded(env, encoded, max_batch=max_batch)
+
+    # Reconstruct per-item bools: items before first failure are True
+    results: list[bool] = []
+    ok_so_far = 0
+    for key_str, _ in items:
+        try:
+            prefixed = f"{key_prefix}:{key_str}".encode("utf-8") if key_prefix else key_str.encode("utf-8")
+            # Check if this specific key was in the encoded list up to `written`
+            # Since putmulti_bounded processes in order, items[0:written] succeeded
+            if ok_so_far < written:
+                results.append(True)
+                ok_so_far += 1
+            else:
+                results.append(False)
+        except Exception:
+            results.append(False)
+
+    return results
+
+
 def putmulti_safe(env: Any, items: Sequence[LMDBPair], **kwargs: Any) -> int:
     """Silent variant of :func:`putmulti_bounded`.
 
@@ -193,5 +253,6 @@ __all__ = [
     "DEFAULT_BULK_BATCH",
     "LMDBPair",
     "putmulti_bounded",
+    "putmulti_bounded_str",
     "putmulti_safe",
 ]

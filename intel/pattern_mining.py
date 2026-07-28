@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.pattern_mining. Auto-gen ISSUE #20 F2."""
-from recon.pattern_mining import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.pattern_mining" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.pattern_mining"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.pattern_mining.
+"""
+import warnings
+
+warnings.warn(
+    "intel.pattern_mining is deprecated — import from \"recon.pattern_mining\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.pattern_mining import *

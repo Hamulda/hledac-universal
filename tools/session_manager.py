@@ -27,16 +27,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 _ENCRYPTION_KEY_KEY = b'session:_encryption_key'
 
-def _derive_encryption_key() -> bytes:
+def _derive_encryption_key_sync() -> bytes:
     """
-    Derive a machine-specific Fernet key from unique machine identifiers.
+    Synchronous key derivation for use in to_thread wrapper.
+    Derives a machine-specific Fernet key from unique machine identifiers.
     Uses multiple sources to ensure same machine produces same key across reinstalls.
-    This allows decryption of existing sessions after app reinstall on same machine.
 
     Falls back to random key if machine ID cannot be determined.
     """
-    import base64
-    import subprocess
     key_material = []
     try:
         key_material.append(os.environ.get('HOSTNAME', ''))
@@ -49,7 +47,11 @@ def _derive_encryption_key() -> bytes:
     machine_id = ''
     try:
         if sys.platform == 'darwin':
-            result = subprocess.run(['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'], capture_output=True, text=True, timeout=5)
+            import subprocess
+            result = subprocess.run(
+                ['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'],
+                capture_output=True, text=True, timeout=5,
+            )
             for line in result.stdout.split('\n'):
                 if 'IOPlatformUUID' in line:
                     machine_id = line.split('"')[-2] if '"' in line else ''
@@ -71,12 +73,13 @@ def _derive_encryption_key() -> bytes:
     fernet_key = base64.urlsafe_b64encode(derived)
     return fernet_key
 
+
 async def _derive_encryption_key_async() -> bytes:
     """
-    Async version: run the sync _derive_encryption_key in a thread pool.
-    Issue #13 fix: asyncio.to_thread avoids blocking the event loop.
+    Async wrapper: runs blocking _derive_encryption_key_sync in thread pool.
+    Fully async pipeline — no blocking calls in event loop.
     """
-    return await asyncio.to_thread(_derive_encryption_key)
+    return await asyncio.to_thread(_derive_encryption_key_sync)
 
 class SessionManager:
     """
@@ -110,7 +113,9 @@ class SessionManager:
     def __init__(self, lmdb_env: lmdb.Environment):
         self._env = lmdb_env
         self._cache: dict[str, dict] = {}
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix='session_lmdb')
+        # M1-OPT: Use shared 'storage' domain executor instead of per-module TPE
+        from hledac.universal.utils.domain_executors import get_or_create
+        self._executor = get_or_create("storage")
         self._closed: bool = False
         self._fernet: Fernet | None = None
         self._encryption_key: bytes | None = None
@@ -122,23 +127,32 @@ class SessionManager:
         """
         F206L: Lazy initialization of Fernet cipher (P25).
 
-        Issue #13 fix: _derive_encryption_key_async uses asyncio.to_thread
-        to avoid blocking the event loop with subprocess.run/ioreg.
-        Must be called from async context (get_session, save_session).
+        Key derivation runs in thread pool via _derive_encryption_key_async.
+        LMDB write is wrapped in to_thread to avoid blocking the event loop.
         """
         if self._fernet is not None:
             return
         if not FERNET_AVAILABLE:
             return
+        loop = asyncio.get_running_loop()
+
+        # Read existing key from LMDB (read-only, fast)
         with self._env.begin() as txn:
             key_data = txn.get(_ENCRYPTION_KEY_KEY)
             if key_data:
                 self._encryption_key = key_data
                 self._fernet = Fernet(self._encryption_key)
                 return
+
+        # Derive new key (blocking ioreg on darwin, runs in thread pool)
         self._encryption_key = await _derive_encryption_key_async()
-        with self._env.begin(write=True) as txn:
-            txn.put(_ENCRYPTION_KEY_KEY, self._encryption_key)
+
+        # Write key to LMDB (blocking write, must run in thread pool)
+        async def _sync_put():
+            with self._env.begin(write=True) as txn:
+                txn.put(_ENCRYPTION_KEY_KEY, self._encryption_key)
+
+        await loop.run_in_executor(None, _sync_put)
         self._fernet = Fernet(self._encryption_key)
 
     def _encrypt(self, data: bytes) -> bytes:

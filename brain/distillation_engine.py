@@ -27,33 +27,20 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
 from typing import Any
 import numpy as np
 from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.utils.mlx_cache import MLX_AVAILABLE, get_mx
 logger = logging.getLogger(__name__)
 
-# ── Module-level cached ThreadPoolExecutor (SC-09 fix) ────────────────────────
-# Created lazy, shared across all DistillationEngine instances.
-# ThreadPoolExecutor is stateless for this use case — each task calls
-# self._get_chain_embedding which captures only self.embedding_model.
-# Lifecycle: created on first train() call, shutdown at process exit.
-_EMBED_EXECUTOR: ThreadPoolExecutor | None = None
-_EMBED_EXECUTOR_LOCK = Lock()
+# M1-OPT: Use shared domain executor instead of per-module TPE
+# embed preset = 1 worker (MLX embed sync bridge)
+from hledac.universal.utils.domain_executors import get_or_create
 
 
 def _get_embed_executor() -> ThreadPoolExecutor:
-    """Return the module-level cached embedding ThreadPoolExecutor."""
-    global _EMBED_EXECUTOR
-    with _EMBED_EXECUTOR_LOCK:
-        if _EMBED_EXECUTOR is None:
-            _EMBED_EXECUTOR = ThreadPoolExecutor(
-                max_workers=2,
-                thread_name_prefix="distill_embed",
-            )
-            logger.debug("[SC-09] Created module-level embed executor")
-        return _EMBED_EXECUTOR
+    """Return shared 'embed' domain executor for CPU-bound embedding extraction."""
+    return get_or_create("embed")
 
 
 # Lazy-loaded mlx.nn module (avoids importing MLX at module load time)

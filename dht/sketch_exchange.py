@@ -6,7 +6,7 @@ from typing import Any
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
 from hledac.universal.dht.kademlia_node import KademliaNode
 from hledac.universal.dht.local_graph import LocalGraphStore
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import parallel, safe_create_task
 logger = logging.getLogger(__name__)
 MAX_SKETCH_ITEMS = 10000
 
@@ -64,11 +64,10 @@ class SketchExchange:
         if self._publish_task is not None and not self._publish_task.done():
             self._publish_task.cancel()
             tasks = [self._publish_task] + tasks
-        # PEP-705: asyncio.gather with return_exceptions suppresses CancelledError.
-        # This eliminates the "Task was destroyed but it is pending!" warning
-        # when the event loop shuts down before cancelled tasks fully complete.
+        # PEP-705 / F3XX: parallel(policy="log") replaces asyncio.gather.
+        # CancelledError re-raised per I6; non-Exception BaseException per I7.
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await parallel(tasks, policy="log", ctx="_shutdown_tasks")
 
     async def _refresh_digests(self):
         nodes = await self.local_graph.get_all_nodes(limit=MAX_SKETCH_ITEMS)

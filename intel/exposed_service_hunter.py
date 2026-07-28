@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.exposed_service_hunter. Auto-gen ISSUE #20 F2."""
-from recon.exposed_service_hunter import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.exposed_service_hunter" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.exposed_service_hunter"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.exposed_service_hunter.
+"""
+import warnings
+
+warnings.warn(
+    "intel.exposed_service_hunter is deprecated — import from \"recon.exposed_service_hunter\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.exposed_service_hunter import *

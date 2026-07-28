@@ -94,6 +94,7 @@ clear_mlx_cache_debounced = _core_module.clear_mlx_cache_debounced
 set_cache_limit_with_debounce = _core_module.set_cache_limit_with_debounce
 mlx_cleanup_sync = _core_module.mlx_cleanup_sync
 mlx_cleanup_aggressive = _core_module.mlx_cleanup_aggressive
+metal_reclaim = _core_module.metal_reclaim  # M5: canonical gc+eval+clear+dynamic_limit entry point
 safe_clear_metal_cache = _core_module.safe_clear_metal_cache
 
 # Metal limits
@@ -172,6 +173,7 @@ __all__ = [
     "set_cache_limit_with_debounce",
     "mlx_cleanup_sync",
     "mlx_cleanup_aggressive",
+    "metal_reclaim",
     "safe_clear_metal_cache",
     # Metal limits
     "get_dynamic_metal_cache_limit",

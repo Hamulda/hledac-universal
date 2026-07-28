@@ -83,6 +83,7 @@ def sample_request():
         temperature=0.3,
         max_tokens=128,
         thinking=True,
+        backend=InferenceBackend.MLX_INPROC,  # explicit — avoids env dependency
     )
 
 
@@ -91,13 +92,13 @@ def sample_request():
 class TestSprintM10BackendEnum:
     """IC.2: Backend resolution from env."""
 
-    def test_default_is_mlx_inproc(self):
-        """Default backend is mlx_inproc when env is unset."""
+    def test_default_is_mlxcel(self):
+        """Default backend is mlxcel when env is unset (M1 8GB RSS savings)."""
         # Clear any existing env
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("HLEDAC_INFERENCE_BACKEND", None)
             backend = InferenceBackend.from_env()
-            assert backend == InferenceBackend.MLX_INPROC
+            assert backend == InferenceBackend.MLXCEL
 
     def test_env_mlx_inproc(self, mock_env_mlx_inproc):
         backend = InferenceBackend.from_env()
@@ -111,11 +112,11 @@ class TestSprintM10BackendEnum:
         backend = InferenceBackend.from_env()
         assert backend == InferenceBackend.COREML
 
-    def test_env_unknown_defaults_to_mlx_inproc(self):
-        """Unknown env value falls back to mlx_inproc."""
+    def test_env_unknown_defaults_to_mlxcel(self):
+        """Unknown env value falls back to mlxcel."""
         with patch.dict(os.environ, {"HLEDAC_INFERENCE_BACKEND": "invalid_backend"}):
             backend = InferenceBackend.from_env()
-            assert backend == InferenceBackend.MLX_INPROC
+            assert backend == InferenceBackend.MLXCEL
 
     def test_backend_values(self):
         """All backends have string values."""
@@ -376,26 +377,24 @@ class TestSprintM10Coordinator:
     def test_resolve_backend_per_request(self):
         """_resolve_backend uses request.backend over default.
 
-        A4: MLXCEL is no longer in _DEFAULT_BACKENDS (only MLX_INPROC).
-        When a request requests MLXCEL but it's not registered, _resolve_backend
-        logs a warning and falls back to MLx_inproc.
+        B1 FIX: Both MLXCEL and MLX_INPROC are always in _backends dict.
+        A per-request MLXCEL backend resolves to MlxcelBackend.
         """
         coord = InferenceCoordinator()
         req = InferenceRequest(prompt="test", backend=InferenceBackend.MLXCEL)
         be = coord._resolve_backend(req)
-        assert isinstance(be, MLXInProcBackend)
+        assert isinstance(be, MlxcelBackend)
 
     def test_resolve_backend_env_default(self, mock_env_mlxcel):
-        """_resolve_backend falls back to mlx_inproc when MLXCEL not registered.
+        """_resolve_backend uses MLXCEL as default when HLEDAC_INFERENCE_BACKEND=mlxcel.
 
-        A4: Optional backends (mlxcel/coreml) must be explicitly registered.
-        HLEDAC_INFERENCE_BACKEND sets the *default*, but if the backend is not
-        in _backends dict, it still falls back to mlx_inproc.
+        B1 FIX: MLXCEL is now the default and is always registered.
+        When env=mlxcel, _backends[MLXCEL] = MlxcelBackend is used.
         """
         coord = InferenceCoordinator()
         req = InferenceRequest(prompt="test")
         be = coord._resolve_backend(req)
-        assert isinstance(be, MLXInProcBackend)
+        assert isinstance(be, MlxcelBackend)
 
     @pytest.mark.asyncio
     async def test_generate_delegates_to_backend(self, sample_request):
@@ -455,7 +454,8 @@ class TestSprintM10Coordinator:
         coord = InferenceCoordinator()
         mock_be = AsyncMock()
         mock_be.health_check = AsyncMock(return_value=True)
-        coord._backends[InferenceBackend.MLX_INPROC] = mock_be
+        # B1: default backend is now MLXCEL, mock the actual default
+        coord._backends[coord._default_backend] = mock_be
 
         result = await coord.health_check()
         assert result is True
@@ -494,7 +494,8 @@ class TestSprintM10ModuleAPI:
             latency_ms=50.0,
             backend=InferenceBackend.MLX_INPROC,
         ))
-        coord._backends[InferenceBackend.MLX_INPROC] = mock_be
+        # B1: mock whatever the actual default backend is
+        coord._backends[coord._default_backend] = mock_be
 
         with patch("core.inference_coordinator.get_inference_coordinator", return_value=coord):
             response = await generate("test prompt")
@@ -516,7 +517,8 @@ class TestSprintM10ModuleAPI:
 
         mock_be = MagicMock()
         mock_be.stream = mock_stream
-        coord._backends[InferenceBackend.MLX_INPROC] = mock_be
+        # B1: mock whatever the actual default backend is
+        coord._backends[coord._default_backend] = mock_be
 
         with patch("core.inference_coordinator.get_inference_coordinator", return_value=coord):
             tokens = []

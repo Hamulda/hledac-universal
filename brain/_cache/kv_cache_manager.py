@@ -71,20 +71,43 @@ class KVCacheManager:
     prefix_cache_maxsize: int = 64
 
     # Internal state
-    _kv_cache_pool: LRUCache[str, _KVCacheValue] = field(default_factory=None)
-    _session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = field(default_factory=None)
-    _prefix_cache: LRUCache[str, Any] = field(default_factory=None)
-    _kv_cache_stats: dict[str, int] = field(default_factory=None)
-    _session_cache_stats: dict[str, int] = field(default_factory=None)
-    _prefix_cache_stats: dict[str, int] = field(default_factory=None)
+    _kv_cache_pool: LRUCache[str, _KVCacheValue] = field(default=None)
+    _session_cache_pool: LRUCache[str, tuple[Any, str, float, int]] = field(default=None)
+    _prefix_cache: LRUCache[str, Any] = field(default=None)
+    _kv_cache_stats: dict[str, int] = field(default=None)
+    _session_cache_stats: dict[str, int] = field(default=None)
+    _prefix_cache_stats: dict[str, int] = field(default=None)
     _key_locks: dict[str, threading.RLock] = field(default_factory=dict)
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
-    def __post_init__(self) -> None:
-        """Initialize cache pools with bounded sizes."""
-        self._kv_cache_pool = LRUCache(max_size=self.kv_pool_maxsize)
-        self._session_cache_pool = LRUCache(max_size=self.session_cache_maxsize)
-        self._prefix_cache = LRUCache(max_size=self.prefix_cache_maxsize)
+    def __post_init__(
+        self,
+        _kv_cache_pool: LRUCache | None = None,
+        _session_cache_pool: LRUCache | None = None,
+        _prefix_cache: LRUCache | None = None,
+    ) -> None:
+        """Initialize cache pools with bounded sizes.
+
+        Args:
+            _kv_cache_pool: If provided, use this existing pool (delegation mode)
+            _session_cache_pool: If provided, use this existing pool (delegation mode)
+            _prefix_cache: If provided, use this existing pool (delegation mode)
+        """
+        # Delegation mode: use existing pools from DeepHermes3Engine
+        if _kv_cache_pool is not None:
+            self._kv_cache_pool = _kv_cache_pool
+        else:
+            self._kv_cache_pool = LRUCache(max_size=self.kv_pool_maxsize)
+
+        if _session_cache_pool is not None:
+            self._session_cache_pool = _session_cache_pool
+        else:
+            self._session_cache_pool = LRUCache(max_size=self.session_cache_maxsize)
+
+        if _prefix_cache is not None:
+            self._prefix_cache = _prefix_cache
+        else:
+            self._prefix_cache = LRUCache(max_size=self.prefix_cache_maxsize)
 
         self._kv_cache_stats = {
             'cache_uses': 0,
@@ -116,7 +139,7 @@ class KVCacheManager:
             Cached prefix cache tensor or None
         """
         import xxhash
-        key = xxhash.xxh3_64_hex(system_prompt)[:16]
+        key = xxhash.xxh3_64_hexdigest(system_prompt)[:16]
         result = self._prefix_cache.get(key)
         if result is not None:
             self._prefix_cache_stats['prefix_cache_hits'] += 1
@@ -127,7 +150,7 @@ class KVCacheManager:
     def put_prefix_cache(self, system_prompt: str, cache: Any) -> None:
         """Store prefix cache for system prompt."""
         import xxhash
-        key = xxhash.xxh3_64_hex(system_prompt)[:16]
+        key = xxhash.xxh3_64_hexdigest(system_prompt)[:16]
         self._prefix_cache.put(key, cache)
 
     def invalidate_prefix_cache(self) -> None:
@@ -149,7 +172,7 @@ class KVCacheManager:
             Tuple of (kv_cache, cache_key) or None
         """
         import xxhash
-        key = xxhash.xxh3_64_hex(formatted_prompt)[:16]
+        key = xxhash.xxh3_64_hexdigest(formatted_prompt)[:16]
 
         result = self._session_cache_pool.get(key)
         if result is not None:
@@ -173,7 +196,7 @@ class KVCacheManager:
             cache_size: Size in bytes
         """
         import xxhash
-        key = xxhash.xxh3_64_hex(formatted_prompt)[:16]
+        key = xxhash.xxh3_64_hexdigest(formatted_prompt)[:16]
         self._session_cache_pool.put(
             key,
             (kv_cache, key, self._current_time(), cache_size)
@@ -228,15 +251,15 @@ class KVCacheManager:
     def _estimate_pool_memory(self) -> int:
         """Estimate current pool memory usage."""
         total = 0
-        for item in self._kv_cache_pool._cache.values():  # type: ignore
+        for item in self._kv_cache_pool.values():
             if isinstance(item, tuple) and len(item) >= 3:
                 total += item[2]  # size_bytes
         return total
 
     def _evict_kv_pool_items(self, count: int) -> None:
         """Evict oldest items from KV pool."""
-        for _ in range(min(count, len(self._kv_cache_pool._cache))):  # type: ignore
-            oldest_key = self._kv_cache_pool._cache.keys()[-1]  # type: ignore
+        for _ in range(min(count, len(self._kv_cache_pool))):
+            oldest_key = list(self._kv_cache_pool.keys())[-1]
             self._kv_cache_pool.remove(oldest_key)
 
     def compress_kv_cache(self) -> bool:
@@ -256,7 +279,7 @@ class KVCacheManager:
         M1 8GB: Called when memory pressure detected.
         """
         # Evict oldest 50%
-        current_size = len(self._kv_cache_pool._cache)  # type: ignore
+        current_size = len(self._kv_cache_pool)
         evict_count = max(1, current_size // 2)
         self._evict_kv_pool_items(evict_count)
         return True
@@ -268,11 +291,11 @@ class KVCacheManager:
     def get_stats(self) -> KVCacheStats:
         """Get comprehensive cache statistics."""
         return KVCacheStats(
-            pool_size=len(self._kv_cache_pool._cache),  # type: ignore
+            pool_size=len(self._kv_cache_pool),
             pool_maxsize=self.kv_pool_maxsize,
-            session_cache_size=len(self._session_cache_pool._cache),  # type: ignore
+            session_cache_size=len(self._session_cache_pool),
             session_cache_maxsize=self.session_cache_maxsize,
-            prefix_cache_size=len(self._prefix_cache._cache),  # type: ignore
+            prefix_cache_size=len(self._prefix_cache),
             prefix_cache_maxsize=self.prefix_cache_maxsize,
             cache_hits=self._session_cache_stats['session_cache_hits'] + self._prefix_cache_stats['prefix_cache_hits'],
             cache_misses=self._session_cache_stats['session_cache_misses'] + self._prefix_cache_stats['prefix_cache_misses'],

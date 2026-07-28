@@ -46,28 +46,21 @@ from core.inference_coordinator import (
 # ─── A4 Invariants ──────────────────────────────────────────────────────────
 
 class TestSprintA4BackendSimplification:
-    """A4: Optional backends moved to inference_backends/, only MLX_INPROC in _DEFAULT_BACKENDS."""
+    """B1: MLXCEL is now the default; MLX_INPROC always available as fallback."""
 
-    def test_default_backends_only_mlx_inproc(self):
-        """_DEFAULT_BACKENDS contains only MLX_INPROC."""
-        assert list(_DEFAULT_BACKENDS.keys()) == [InferenceBackend.MLX_INPROC]
+    def test_default_backends_is_mlxcel(self):
+        """_DEFAULT_BACKENDS contains only MLXCEL (B1 fix)."""
+        assert list(_DEFAULT_BACKENDS.keys()) == [InferenceBackend.MLXCEL]
 
-    def test_mlxcel_not_in_default_backends(self, mock_env_mlxcel):
-        """MlxcelBackend is NOT in _DEFAULT_BACKENDS."""
+    def test_mlx_inproc_always_in_backends(self):
+        """MLX_INPROC is always registered as fallback (B1 fix)."""
         coord = InferenceCoordinator()
-        assert InferenceBackend.MLXCEL not in coord._backends
+        assert InferenceBackend.MLX_INPROC in coord._backends
 
-    def test_coreml_not_in_default_backends(self, mock_env_coreml):
-        """CoreMLBackend is NOT in _DEFAULT_BACKENDS."""
+    def test_mlxcel_in_default_backends(self):
+        """MLXCEL is in _DEFAULT_BACKENDS (B1 fix)."""
         coord = InferenceCoordinator()
-        assert InferenceBackend.COREML not in coord._backends
-
-    def test_fallback_to_mlx_inproc_when_backend_not_registered(self):
-        """Request for unregistered backend falls back to MLX_INPROC."""
-        coord = InferenceCoordinator()
-        req = InferenceRequest(prompt="test", backend=InferenceBackend.MLXCEL)
-        be = coord._resolve_backend(req)
-        assert be.__class__.__name__ == "MLXInProcBackend"
+        assert InferenceBackend.MLXCEL in coord._backends
 
 
 # ─── Prompt Cache ─────────────────────────────────────────────────────────────
@@ -87,9 +80,9 @@ class TestSprintA4PromptCache:
             backend=InferenceBackend.MLX_INPROC,
         )
         mock_be.generate = AsyncMock(return_value=mock_response)
-        coord._backends[InferenceBackend.MLX_INPROC] = mock_be
+        coord._backends[coord._default_backend] = mock_be
 
-        req = InferenceRequest(prompt="same prompt", temperature=0.3, max_tokens=512)
+        req = InferenceRequest(prompt="same prompt", temperature=0.3, max_tokens=512, backend=coord._default_backend)
 
         # First call — cache miss
         r1 = await coord.generate(req)
@@ -110,10 +103,10 @@ class TestSprintA4PromptCache:
             InferenceResponse(text="first", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC),
             InferenceResponse(text="second", tokens_generated=1, latency_ms=1.0, backend=InferenceBackend.MLX_INPROC),
         ])
-        coord._backends[InferenceBackend.MLX_INPROC] = mock_be
+        coord._backends[coord._default_backend] = mock_be
 
-        r1 = await coord.generate(InferenceRequest(prompt="prompt A"))
-        r2 = await coord.generate(InferenceRequest(prompt="prompt B"))
+        r1 = await coord.generate(InferenceRequest(prompt="prompt A", backend=coord._default_backend))
+        r2 = await coord.generate(InferenceRequest(prompt="prompt B", backend=coord._default_backend))
 
         assert r1.text == "first"
         assert r2.text == "second"
@@ -131,9 +124,9 @@ class TestSprintA4PromptCache:
             backend=InferenceBackend.MLX_INPROC,
         )
         mock_be.generate = AsyncMock(return_value=mock_response)
-        coord._backends[InferenceBackend.MLX_INPROC] = mock_be
+        coord._backends[coord._default_backend] = mock_be
 
-        req = InferenceRequest(prompt="cache test", temperature=0.3, max_tokens=512)
+        req = InferenceRequest(prompt="cache test", temperature=0.3, max_tokens=512, backend=coord._default_backend)
 
         # Warm up
         await coord.generate(req)

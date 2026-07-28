@@ -320,7 +320,7 @@ class MultiHopDeepResearchChain:
     def _get_ram_adaptive_hops(self) -> int:
         """Get hop count based on available RAM."""
         try:
-            from utils.uma_budget import get_uma_snapshot
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
             snapshot = get_uma_snapshot()
             if snapshot.is_emergency or snapshot.is_critical:
                 return min(3, self.max_hops)

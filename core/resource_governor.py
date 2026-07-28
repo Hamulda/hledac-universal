@@ -1329,7 +1329,8 @@ async def _get_memory_pressure_status_async() -> str:
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+            async with asyncio.timeout(2.0):
+                stdout, stderr = await proc.communicate()
         except asyncio.TimeoutError:
             proc.kill()
             try:

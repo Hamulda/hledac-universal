@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.stealth_crawler. Auto-gen ISSUE #20 F2."""
-from recon.stealth_crawler import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.stealth_crawler" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.stealth_crawler"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.stealth_crawler.
+"""
+import warnings
+
+warnings.warn(
+    "intel.stealth_crawler is deprecated — import from \"recon.stealth_crawler\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.stealth_crawler import *

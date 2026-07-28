@@ -90,10 +90,8 @@ class StreamHandler:
                 async for token in generate_fn(*args, **kwargs):
                     if self._cancelled:
                         break
-                    await asyncio.wait_for(
-                        self._queue.put(token),
-                        timeout=self._config.cancel_timeout,
-                    )
+                    async with asyncio.timeout(self._config.cancel_timeout):
+                        await self._queue.put(token)
                 # Signal end of stream
                 await self._queue.put(None)  # type: ignore
             except asyncio.CancelledError:
@@ -109,19 +107,17 @@ class StreamHandler:
         try:
             while True:
                 try:
-                    token = await asyncio.wait_for(
-                        self._queue.get(),
-                        timeout=0.1,
-                    )
-                    if token is None:  # End of stream
-                        break
-                    self._stats.tokens_yielded += 1
-                    yield token
+                    async with asyncio.timeout(0.1):
+                        token = await self._queue.get()
                 except asyncio.TimeoutError:
                     # Check for cancellation
                     if self._cancelled:
                         break
                     continue
+                if token is None:  # End of stream
+                    break
+                self._stats.tokens_yielded += 1
+                yield token
         finally:
             producer_task.cancel()
             try:

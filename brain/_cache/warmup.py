@@ -145,7 +145,7 @@ class WarmupManager:
 
     async def _parallel_warmup(self) -> bool:
         """Parallel system cache + warmup cache prefilling."""
-        from hledac.universal.utils.async_helpers import safe_wait_for
+        from hledac.universal.utils.async_helpers import parallel, safe_wait_for
 
         async def prefetch_system_cache() -> bool:
             return await self._prefill_system_cache()
@@ -155,14 +155,18 @@ class WarmupManager:
 
         try:
             # Run both prefetches in parallel
-            results = await asyncio.gather(
-                safe_wait_for(prefetch_system_cache(), timeout=self._config.timeout_seconds),
-                safe_wait_for(prefetch_warmup_cache(), timeout=self._config.timeout_seconds),
-                return_exceptions=True,
+            # F3XX: parallel(policy="collect") replaces asyncio.gather.
+            results = await parallel(
+                [
+                    safe_wait_for(prefetch_system_cache(), timeout=self._config.timeout_seconds),
+                    safe_wait_for(prefetch_warmup_cache(), timeout=self._config.timeout_seconds),
+                ],
+                policy="collect",
+                ctx="warmup",
             )
 
-            successes = sum(1 for r in results if r is True)
-            exceptions = [r for r in results if isinstance(r, Exception)]
+            successes = sum(1 for r in results.ok if r is True)
+            exceptions = results.errors
 
             if exceptions:
                 logger.warning(f'[WarmupManager] {len(exceptions)} prefill exception(s)')
@@ -274,7 +278,7 @@ class WarmupManager:
                 inference_future = asyncio.run_coroutine_threadsafe(
                     coro_wrapper(), main_loop
                 )
-                await asyncio.wait_for(
+                await safe_wait_for(
                     asyncio.wrap_future(inference_future),
                     timeout=self._config.timeout_seconds,
                 )

@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.intel_seed. Auto-gen ISSUE #20 F2."""
-from recon.intel_seed import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.intel_seed" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.intel_seed"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.intel_seed.
+"""
+import warnings
+
+warnings.warn(
+    "intel.intel_seed is deprecated — import from \"recon.intel_seed\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.intel_seed import *

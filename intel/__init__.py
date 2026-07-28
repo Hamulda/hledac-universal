@@ -2,11 +2,9 @@
 Intel — Backward-Compat Facade
 ==============================
 
-F350M-R Phase 2 Migration:
-
 ARCHITECTURE (post-F350M-R Phase 2):
   recon/           — Canonical OSINT namespace (capability forest + primitives)
-  intel/          — Pure backward-compat facade → recon/
+  intel/          — DEPRECATED facade → recon/ (emits DeprecationWarning)
 
 RECON/ SUBSTRUCTURE:
   recon/dns/          — passive_dns, dns_tunnel_detector
@@ -18,23 +16,30 @@ RECON/ SUBSTRUCTURE:
 All production code should import from canonical paths (recon/*).
 This facade preserves backward compatibility for `from intel.X` imports.
 
+DEPRECATED (F350M-R A4):
+  All intel/ re-exports now emit DeprecationWarning (stacklevel=2).
+  Physical stub files removed (A4-5) — intel/__init__.__getattr__ handles
+  all redirects via _RECON_MAP. The canonical path is recon/*.
+
 SIDE CAR ADAPTERS (recon/):
   greynoise_lane, shodan_lane, doh_lane, dark_web_lane,
   network_reconnaissance_lane, ct_lane, bgp_lane, ...
 """
 
-import importlib.util
+from __future__ import annotations
+
+import warnings
 from importlib import import_module
 
 
 # ── Module-level __getattr__ for lazy re-exports ─────────────────────────────────
-# Allows `from intel.bgp_monitor import X` to resolve via intel/__init__.py
-# when no physical intel/bgp_monitor.py exists.
+# DEPRECATED (F350M-R A4): emits DeprecationWarning on every attribute access.
 
-_RECON_MAP = {
-    # primitives (moved from intel/ to recon/ subdirs)
-    "bgp_monitor": "recon.network.bgp_monitor",
-    "passive_fingerprint": "recon.network.passive_fingerprint",
+_RECON_MAP: dict[str, str] = {
+    # primitives (moved from intel/ to network/ or recon/dns/ subdirs)
+    # network/ = infrastructure facade → canonical paths below
+    "bgp_monitor": "network.bgp_monitor",
+    "passive_fingerprint": "network.passive_fingerprint",
     "passive_dns": "recon.dns.passive_dns",
     "dns_tunnel_detector": "recon.dns.dns_tunnel_detector",
     "ct_log_scanner": "recon.cert.ct_log_scanner",
@@ -99,5 +104,11 @@ _RECON_MAP = {
 
 def __getattr__(name: str):
     if name in _RECON_MAP:
-        return import_module(_RECON_MAP[name])
+        canonical = _RECON_MAP[name]
+        warnings.warn(
+            f"intel.{name} is deprecated — import from \"{canonical}\" directly instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return import_module(canonical)
     raise AttributeError(f"module 'intel' has no attribute {name!r}")

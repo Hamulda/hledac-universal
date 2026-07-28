@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.identity_stitching. Auto-gen ISSUE #20 F2."""
-from recon.identity_stitching import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.identity_stitching" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.identity_stitching"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.identity_stitching.
+"""
+import warnings
+
+warnings.warn(
+    "intel.identity_stitching is deprecated — import from \"recon.identity_stitching\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.identity_stitching import *

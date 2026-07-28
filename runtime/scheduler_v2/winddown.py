@@ -23,6 +23,7 @@ from hledac.universal.runtime.scheduler_v2._task_registry import (
     get_task_registry,
     safe_create_task_tracked,
 )
+from hledac.universal.utils.async_helpers import parallel, safe_wait_for
 
 try:
     import orjson
@@ -414,10 +415,9 @@ class WinddownOrchestrator:
             t.cancel()
         if _bg_tasks:
             try:
-                await asyncio.wait_for(
-                    asyncio.gather(*_bg_tasks, return_exceptions=True),
-                    timeout=5.0,
-                )
+                # F3XX: parallel(policy="log", timeout=5.0) replaces asyncio.gather + safe_wait_for.
+                # CancelledError is re-raised per I6; TimeoutError returns here (task cleanup below).
+                await parallel(list(_bg_tasks), policy="log", timeout=5.0, ctx="_cancel_bg_tasks")
             except asyncio.TimeoutError:
                 for t in _bg_tasks:
                     if not t.done():

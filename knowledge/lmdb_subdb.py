@@ -245,22 +245,11 @@ class UnifiedLMDBStore:
         """Batch put with string keys. Returns per-item success list."""
         if self._closed or not items:
             return [False] * len(items) if items else []
-        results: list[bool] = []
         try:
             self._ensure_init()
-            import orjson
-            encoded = [
-                (self._key_str(prefix, k), _msgspec_dumps_str(v))
-                for k, v in items
-            ]
-            with self._env.begin(write=True) as txn:
-                for key_bytes, value_bytes in encoded:
-                    try:
-                        txn.put(key_bytes, value_bytes)
-                        results.append(True)
-                    except Exception:
-                        results.append(False)
-            return results
+            # M1-OPT: Single write transaction per chunk via putmulti_bounded_str
+            from hledac.universal.utils.lmdb_bulk import putmulti_bounded_str
+            return putmulti_bounded_str(self._env, items, key_prefix=prefix)
         except Exception as exc:
             logger.debug(f"[LMDB-UNIFIED] putmany_str failed: {exc}")
             return [False] * len(items)

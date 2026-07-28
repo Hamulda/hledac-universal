@@ -48,6 +48,7 @@ help:
 	@echo "  make ble-audit      BLE001 bare-except audit"
 	@echo "  make ci-guard       Root scripts guard"
 	@echo "  make flag-smoke     Flag smoke runner"
+	@echo "  make probe-q1       Q1 arch rules probe tests"
 
 # =============================================================================
 # CI Targets — consumed by .github/workflows/
@@ -64,6 +65,8 @@ probe-ci:
 	$(PYTHON) -m tools.probe.probe_f214zstd2_transient_artifacts || exit 1
 	$(PYTHON) -m tools.probe.probe_r0_nonfeed_reality_lock || exit 1
 	$(PYTHON) -m tools.probe.probe_f214h_content_miner_backpressure || exit 1
+	$(PYTEST) tests/probe_q1_arch_rules/ -x --timeout=30 -q || exit 1
+	$(PYTHON) -m ruff_ext --ci || exit 1
 
 .PHONY: audit-ci
 audit-ci:
@@ -97,6 +100,12 @@ probe:
 	$(PYTHON) -m tools.probe.probe_f214zstd2_transient_artifacts
 	$(PYTHON) -m tools.probe.probe_r0_nonfeed_reality_lock
 	$(PYTHON) -m tools.probe.probe_f214h_content_miner_backpressure
+	$(PYTEST) tests/probe_q1_arch_rules/ --timeout=30 -q
+
+.PHONY: probe-q1
+probe-q1:
+	@echo "[probe-q1] Running Q1 arch rules probe..."
+	$(PYTEST) tests/probe_q1_arch_rules/ -x --timeout=30 -v
 
 # =============================================================================
 # Benchmark

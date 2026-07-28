@@ -425,9 +425,11 @@ class StealthWebScraper:
 
     Enhanced with stealth_toolkit:
     - Protection detection (Cloudflare, Akamai, Imperva, DataDome)
-    - Multi-layer bypass (cloudscraper, proxy rotation)
+    - Multi-layer bypass via curl_cffi JA3 impersonation + proxy rotation
     - Fingerprint rotation (50+ profiles)
     - Async support via asyncio.to_thread for M1 compatibility
+
+    T3: cloudscraper removed — curl_cffi impersonate covers all bypass needs.
     """
 
     __slots__ = tuple(
@@ -465,14 +467,8 @@ class StealthWebScraper:
         except ImportError:
             logger.debug("curl_cffi not available")
             self._curl_cffi_available = False
-        try:
-            import cloudscraper
-
-            self._cloudscraper_available = True
-            logger.info("✓ cloudscraper available for protection bypass")
-        except ImportError:
-            logger.debug("cloudscraper not available")
-            self._cloudscraper_available = False
+        # cloudscraper REMOVED T3: curl_cffi JA3 impersonate covers all bypass needs.
+        self._cloudscraper_available = False
 
     def _load_fingerprint_profiles(self) -> None:
         """Load TLS/HTTP fingerprint profiles for rotation."""
@@ -642,26 +638,9 @@ class StealthWebScraper:
                     "Sec-Fetch-Site": "none",
                     "Sec-Fetch-User": "?1",
                 }
-        if protection_type == ProtectionType.CLOUDFLARE and self._cloudscraper_available:
-            return self._fetch_with_cloudscraper(url, headers)
         if self._curl_cffi_available:
             return self._fetch_with_curl_cffi_async(url, headers)
         return self._fetch_with_httpx_fallback(url, headers)
-
-    def _fetch_with_cloudscraper(
-        self, url: str, headers: dict[str, str]
-    ) -> str | None:
-        """Fetch using cloudscraper for Cloudflare bypass."""
-        import cloudscraper
-
-        try:
-            scraper = cloudscraper.create_scraper()
-            response = scraper.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
-            return response.text
-        except Exception as e:
-            logger.warning(f"cloudscraper fetch failed: {e}")
-            return None
 
     def _fetch_with_curl_cffi_async(
         self, url: str, headers: dict[str, str]

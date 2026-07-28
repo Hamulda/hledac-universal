@@ -33,8 +33,9 @@ UNIFIED API:
     coordinator.stream(request) → AsyncIterator[Token]
 
 ENV:
-    HLEDAC_INFERENCE_BACKEND={mlx_inproc|mlxcel|coreml}
-    Default: mlx_inproc
+    HLEDAC_INFERENCE_BACKEND={mlxcel|mlx_inproc|coreml}
+    Default: mlxcel (RSS savings ~2GB vs in-process on M1 8GB)
+    Dev override: HLEDAC_INFERENCE_BACKEND=mlx_inproc for in-process debugging
 
 INVARIANTS (IC.*):
     IC.1: brain/ modules NEVER import mlx_lm directly — all go through coordinator
@@ -79,15 +80,15 @@ class InferenceBackend(str, Enum):
     @classmethod
     def from_env(cls) -> InferenceBackend:
         """Resolve backend from HLEDAC_INFERENCE_BACKEND env var."""
-        raw = os.environ.get("HLEDAC_INFERENCE_BACKEND", "mlx_inproc").strip().lower()
+        raw = os.environ.get("HLEDAC_INFERENCE_BACKEND", "mlxcel").strip().lower()
         try:
             return cls(raw)
         except ValueError:
             logger.warning(
-                "[IC] Unknown HLEDAC_INFERENCE_BACKEND=%r, defaulting to mlx_inproc",
+                "[IC] Unknown HLEDAC_INFERENCE_BACKEND=%r, defaulting to mlxcel",
                 raw,
             )
-            return cls.MLX_INPROC
+            return cls.MLXCEL
 
 
 # ─── DTOs ─────────────────────────────────────────────────────────────────────
@@ -159,7 +160,7 @@ class MLXInProcBackend(IInferenceBackend):
     In-process mlx_lm via DeepHermes3Engine.
 
     Uses MLXWorker (DCLP, asyncio-safe) for Metal lock serialization.
-    Default backend on M1 8GB.
+    Opt-in backend: HLEDAC_INFERENCE_BACKEND=mlx_inproc.
 
     Invariant: IC.1 — brain/ NEVER imports mlx_lm directly.
     """
@@ -422,10 +423,10 @@ class CoreMLBackend(IInferenceBackend):
 
 # ─── InferenceCoordinator ───────────────────────────────────────────────────────
 
-# Lean default: MLXInProc only (M1 8GB optimized).
-# Optional backends (mlxcel, coreml) must be explicitly registered.
+# Default: mlxcel out-of-process (M1 8GB RSS savings ~2GB).
+# mlx_inproc opt-in only via HLEDAC_INFERENCE_BACKEND=mlx_inproc.
 _DEFAULT_BACKENDS: dict[InferenceBackend, IInferenceBackend] = {
-    InferenceBackend.MLX_INPROC: MLXInProcBackend(),
+    InferenceBackend.MLXCEL: MlxcelBackend(),
 }
 
 # All registered backends (for explicit registration via backends= parameter).
@@ -452,13 +453,8 @@ class InferenceCoordinator:
 
     Backend selection:
         - Per-request: request.backend = InferenceBackend.MLXCEL
-        - Global default: HLEDAC_INFERENCE_BACKEND env var
-        - Fallback: mlx_inproc (always-on default)
-
-    Backend selection:
-        - Per-request: request.backend = InferenceBackend.MLXCEL
-        - Global default: HLEDAC_INFERENCE_BACKEND env var
-        - Fallback: mlx_inproc (always-on default)
+        - Global default: HLEDAC_INFERENCE_BACKEND env var (default: mlxcel)
+        - Fallback: mlx_inproc (when mlxcel unavailable or HLEDAC_INFERENCE_BACKEND=mlx_inproc)
     """
 
     __slots__ = ('_backends', '_default_backend', '_prompt_cache')
@@ -468,8 +464,11 @@ class InferenceCoordinator:
         backends: dict[InferenceBackend, IInferenceBackend] | None = None,
         default_backend: InferenceBackend | None = None,
     ) -> None:
-        # Shallow copy — prevents test pollution from shared module-level dict
+        # Shallow copy — prevents test pollution from shared module-level dict.
+        # Always include MLX_INPROC as fallback even when default is mlxcel.
         self._backends = dict(backends or _DEFAULT_BACKENDS)
+        if InferenceBackend.MLX_INPROC not in self._backends:
+            self._backends[InferenceBackend.MLX_INPROC] = MLXInProcBackend()
         self._default_backend = default_backend or InferenceBackend.from_env()
         # A4: Prompt LRU cache — 32 entries, xxh3/sha256 fingerprint
         self._prompt_cache: OrderedDict[str, InferenceResponse] = OrderedDict()
@@ -483,6 +482,7 @@ class InferenceCoordinator:
         backend = request.effective_backend()
         be = self._backends.get(backend)
         if be is None:
+            # Fallback chain: mlxcel → mlx_inproc (both always in _BACKENDS)
             logger.warning(
                 "[IC] Backend %s not available, falling back to mlx_inproc",
                 backend.value,
@@ -491,7 +491,7 @@ class InferenceCoordinator:
             if be is None:
                 raise InferenceError(
                     f"No fallback backend available",
-                    backend=InferenceBackend.MLX_INPROC,
+                    backend=InferenceBackend.MLXCEL,
                 )
         return be
 

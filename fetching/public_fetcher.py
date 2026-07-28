@@ -20,6 +20,7 @@ F-GLOBAL: Global state refactoring (2026-06-30):
 - _session_source_telemetry → _SessionManager._session_source_telemetry (instance dict, __slots__)
 """
 from __future__ import annotations
+
 import asyncio
 import concurrent.futures
 import contextvars
@@ -29,34 +30,34 @@ import os
 import re
 import secrets
 import threading
-import time
 import urllib.parse
 from collections import deque as _f273c_deque
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Final, cast
+
 import msgspec
+
 from core.env_config import ENV
-from hledac.universal.utils.cache import PyCacheDict
-from runtime.logging_setup import get_logger
 from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_tags
+from hledac.universal.utils.cache import PyCacheDict
+from hledac.universal.utils.logging_config import get_logger
+
 if TYPE_CHECKING:
     import httpx
-from core.psutil_shim import process as _psutil_process
-from core.rust_backend import rust as _rust_backend
-from hledac.universal.utils.async_helpers import parallel
+from tenacity import RetryCallState as _TenacityRetryCallState
 from tenacity import (
     retry,
-    retry_if_exception,
     retry_if_exception_type,
     stop_after_attempt,
-    wait_exponential_jitter,
 )
-from tenacity import RetryCallState as _TenacityRetryCallState
+
+from core.rust_backend import rust as _rust_backend
+from hledac.universal.utils.async_helpers import parallel
 
 # Context variable for passing circuit-breaker state into tenacity callbacks.
 # ISSUE-7: avoids closure capture of mutable objects across tenacity retry boundaries.
 _cb_domain_var: contextvars.ContextVar[str] = contextvars.ContextVar('_cb_domain', default='')
-_cb_breaker_var: contextvars.ContextVar['CircuitBreaker | None'] = contextvars.ContextVar('_cb_breaker', default=None)  # type: ignore[valid-type]
+_cb_breaker_var: contextvars.ContextVar[CircuitBreaker | None] = contextvars.ContextVar('_cb_breaker', default=None)  # type: ignore[valid-type]
 
 _URL_OPS_WARNING = False
 
@@ -192,7 +193,7 @@ def _tenacity_after(retry_state: _TenacityRetryCallState) -> None:
 
 _classify_url_cache: PyCacheDict[str, tuple[str, str]] = PyCacheDict(512, 300.0)
 @functools.lru_cache(maxsize=1)
-def _get_rust_url_cache() -> 'Any':
+def _get_rust_url_cache() -> Any:
     """Lazy singleton for UrlClassifyCachePy — created on first call.
 
     Thread-safe via functools.lru_cache internals (one lock, acquired once).
@@ -304,29 +305,32 @@ def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
     for (orig_idx, url), classified in zip(misses, batch_results):
         results[orig_idx] = classified
     return cast("list[tuple[str, str]]", results)
+# ISSUE-0.2: Import from fetching/curl_cffi_fetch.py (CAPS-aware wrapper)
+# This ensures CAPS-based availability checking for curl_cffi
+from hledac.universal.fetching.curl_cffi_fetch import (
+    fetch_via_i2p_curl_cffi,
+)
 from hledac.universal.layers.ua_rotator import build_randomized_headers as _canonical_build_randomized_headers
 from hledac.universal.layers.ua_rotator import get_random_accept_language as _canonical_get_random_accept_language
 from hledac.universal.layers.ua_rotator import get_random_ua as _canonical_get_random_ua
-from hledac.universal.transport.base import CircuitBreaker, TransportDecision, fetch_via_httpx_h2, fetch_via_tor_curl_cffi, get_breaker, route_transport, should_use_curl_cffi
-from hledac.universal.transport.body_limiter import BodyReadResult, _read_body_into
-# ISSUE-0.2: Import from fetching/curl_cffi_fetch.py (CAPS-aware wrapper)
-# This ensures CAPS-based availability checking for curl_cffi
-from hledac.universal.fetching.curl_cffi_fetch import _blocking_altsvc_probe_for_url, fetch_via_curl_cffi_cached, fetch_via_i2p_curl_cffi, is_curl_cffi_capable, require_curl_cffi
+from hledac.universal.transport.base import (
+    CircuitBreaker,
+    fetch_via_tor_curl_cffi,
+)
+
 # Backward compat: still import is_curl_cffi_available from curl_cffi_runtime
 from hledac.universal.transport.curl_cffi_runtime import is_curl_cffi_available as _runtime_is_curl_cffi_available
 from hledac.universal.transport.decompression import build_accept_encoding_header
 from hledac.universal.transport.session_pool import httpx_socks_client
-from hledac.universal.utils.concurrency import get_clearnet_semaphore, get_tor_semaphore
-from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
+from hledac.universal.utils.encoding import decode_response_bytes
 from hledac.universal.utils.patterns.pattern_matcher import PatternHit, match_text
-from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
+
 logger = get_logger(__name__)
 _ContentHasher: object | None = None
 _RUST_CONTENT_HASHER: bool = False
 MAX_BODY_HASHES: Final[int] = 10000
 
 # ISSUE-018: Deduplicated — canonical BodyHashStore lives in fetching/_body_hash.py
-from fetching._body_hash import BodyHashStore as _BodyHashStore
 from fetching._body_hash import body_hash_store as _body_hash_store
 
 # Backward-compat alias — tests and any external code access the internal dict
@@ -398,6 +402,7 @@ def _store_body_hash(url: str, hash_hex: str) -> None:
     _body_hash_store.store(url, hash_hex)
 from hledac.universal.transport.http3_lane import http_version_for_curl_cffi as _h3_http_version_for_url
 from hledac.universal.transport.http3_lane import record_from_curl_cffi_result as _h3_record_from_result_headers
+
 
 def _altsvc_extract_host(url: str, preclassified_host: str='') -> str:
     """Return lowercased hostname from URL, or empty string on parse failure.
@@ -984,6 +989,7 @@ def _derive_failure_stage_and_network_kind(error: str | None) -> tuple[str | Non
     return ('body', None)
 import bisect
 
+
 def _build_error_trie() -> tuple[dict[str, str], list[tuple[str, str]]]:
     """Build optimized error taxonomy: O(1) exact dict + O(log n) sorted prefix list.
 
@@ -1546,19 +1552,27 @@ async def close_public_fetcher_sessions_async() -> dict:
         )
     _tasks = [t for t in (_close_tor_coro, _close_i2p_coro) if t is not None]
     if _tasks:
-        _results = await asyncio.gather(*_tasks, return_exceptions=True)
+        # F3XX: parallel close via parallel(policy="collect") — preserves which task failed
+        # so we can log per-protocol errors without silent suppression.
+        _close_result = await parallel(_tasks, policy="collect", ctx="_session_aclose")
         for _i, _task in enumerate(_tasks):
-            _exc = _task.result() if isinstance(_results[_i], Exception) else None
-            if _task is _close_tor_coro and _exc is not None:
-                _tor_error = str(_exc)
-                logger.warning('Error closing Tor session: %s', _exc)
-            elif _task is _close_tor_coro and _exc is None:
-                _tor_success = True
-            elif _task is _close_i2p_coro and _exc is not None:
-                _i2p_error = str(_exc)
-                logger.warning('Error closing I2P session: %s', _exc)
-            elif _task is _close_i2p_coro and _exc is None:
-                _i2p_success = True
+            _ok = _i < len(_close_result.ok)
+            if _task is _close_tor_coro:
+                if _ok:
+                    _tor_success = True
+                else:
+                    _exc = next((e for e in _close_result.errors if isinstance(e, Exception)), None)
+                    _tor_error = str(_exc) if _exc else None
+                    if _tor_error:
+                        logger.warning('Error closing Tor session: %s', _tor_error)
+            elif _task is _close_i2p_coro:
+                if _ok:
+                    _i2p_success = True
+                else:
+                    _exc = next((e for e in _close_result.errors if isinstance(e, Exception)), None)
+                    _i2p_error = str(_exc) if _exc else None
+                    if _i2p_error:
+                        logger.warning('Error closing I2P session: %s', _i2p_error)
     # Clear session references after parallel close completes.
     _SESSION_MGR._tor_session = None
     _SESSION_MGR._tor_session_locally_created = False
@@ -1684,7 +1698,7 @@ class _JSRendererCapability:
     def is_any_available(self) -> bool:
         """Check if any JS renderer is available."""
         with self._lock:
-            return any((v is None for v in self._capability.values()))
+            return any(v is None for v in self._capability.values())
 _js_renderer_cap = _JSRendererCapability()
 
 def _check_chrome_binary_exists() -> bool:
@@ -1692,7 +1706,7 @@ def _check_chrome_binary_exists() -> bool:
     import os
     candidates = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser']
     from pathlib import Path
-    return any((Path(p).exists() and os.access(p, os.X_OK) for p in candidates))
+    return any(Path(p).exists() and os.access(p, os.X_OK) for p in candidates)
 
 def _get_js_renderer_capability() -> dict[str, str | None]:
     """
@@ -1712,7 +1726,7 @@ def _all_js_renderers_unavailable() -> bool:
     str = unavailable reason.
     """
     cap = _js_renderer_cap.get()
-    return all((v is not None for v in cap.values()))
+    return all(v is not None for v in cap.values())
 
 def reset_js_renderer_capability_cache() -> None:
     """
@@ -2292,7 +2306,7 @@ async def async_fetch_public_text_batch(
     # concurrency=None → UMA-aware limit from ConcurrencyBudgetRegistry.
     # concurrency=int → explicit override (preserves legacy caller behavior).
     if concurrency is None:
-        from core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        from core.concurrency_registry import ConcurrencyCategory, concurrency_budget
 
         concurrency = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
 
@@ -2413,6 +2427,7 @@ async def async_fetch_public_text_batch(
 
 __all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status']
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
+
 
 def _sync_process_html(html: str, url: str='') -> tuple[str, list, dict]:
     """Synchronous CPU-bound HTML parsing + pattern matching + metadata extraction.
@@ -2650,7 +2665,7 @@ _DRAIN_REGISTRY = _drain_registry._registry  # collections.deque with maxlen
 _DRAIN_TOTAL_SCHEDULED = 0  # Deprecated; now encapsulated in _DrainRegistry
 _DRAIN_TOTAL_COMPLETED = 0  # Deprecated; now encapsulated in _DrainRegistry
 
-def _get_html_executor() -> 'concurrent.futures.ThreadPoolExecutor':
+def _get_html_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create bounded HTML processing executor.
 
     Now uses the centralized domain_executors registry (P1-4).

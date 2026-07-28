@@ -20,11 +20,11 @@ import asyncio
 import os
 from typing import TYPE_CHECKING, Any
 
-from runtime.scheduler_v2.protocol import InitResult
 from hledac.universal.utils.async_helpers import parallel, safe_create_task
+from runtime.scheduler_v2.protocol import InitResult
 
 if TYPE_CHECKING:
-    from runtime.scheduler_v2.protocol import SprintContext
+    pass
 
 
 class SprintBootstrap:
@@ -148,8 +148,8 @@ class SprintBootstrap:
 
     async def _init_duckdb_store(self, query: str) -> InitResult[Any]:
         """Initialize DuckDBShadowStore (fail-soft)."""
-        import time as _t
         import logging as _logging
+        import time as _t
 
         _t0 = _t.monotonic()
         try:
@@ -168,8 +168,8 @@ class SprintBootstrap:
 
     async def _init_governor(self) -> InitResult[Any]:
         """Initialize M1ResourceGovernor (fail-soft)."""
-        import time as _t
         import logging as _logging
+        import time as _t
 
         _t0 = _t.monotonic()
         try:
@@ -187,8 +187,8 @@ class SprintBootstrap:
 
     async def _init_hermes_engine(self, _query: str) -> InitResult[Any]:
         """Initialize Hermes3Engine (fail-soft)."""
-        import time as _t
         import logging as _logging
+        import time as _t
 
         _t0 = _t.monotonic()
         try:
@@ -206,8 +206,8 @@ class SprintBootstrap:
 
     async def _init_evidence_log(self) -> InitResult[Any]:
         """Initialize EvidenceLog (fail-soft)."""
-        import time as _t
         import logging as _logging
+        import time as _t
 
         _t0 = _t.monotonic()
         try:
@@ -225,8 +225,8 @@ class SprintBootstrap:
 
     async def _init_sidecar_orchestrator(self, _query: str) -> InitResult[Any]:
         """Initialize SidecarOrchestrator (fail-soft)."""
-        import time as _t
         import logging as _logging
+        import time as _t
 
         _t0 = _t.monotonic()
         try:

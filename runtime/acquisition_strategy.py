@@ -24,6 +24,7 @@ from runtime.acquisition_strategy_planner import (
     # Enums
     AcquisitionLane,
     AcquisitionProfile,
+    AcquisitionContext,
     # Structs / dataclasses
     AcquisitionLanePlan,
     AcquisitionStrategySnapshot,
@@ -32,8 +33,10 @@ from runtime.acquisition_strategy_planner import (
     NonfeedPlanDebug,
     MandatoryLaneTerminality,
     FeedDominanceBudget,
+    LANE_RULES,
     # Functions (planner)
     build_acquisition_plan,
+    _disabled_reason,
     build_acquisition_report,
     build_lane_query,
     is_lane_enabled,
@@ -98,6 +101,7 @@ __all__ = [
     # From planner
     'AcquisitionLane',
     'AcquisitionProfile',
+    'AcquisitionContext',
     'AcquisitionLanePlan',
     'AcquisitionStrategySnapshot',
     'AcquisitionLaneOutcome',
@@ -105,7 +109,9 @@ __all__ = [
     'NonfeedPlanDebug',
     'MandatoryLaneTerminality',
     'FeedDominanceBudget',
+    'LANE_RULES',
     'build_acquisition_plan',
+    '_disabled_reason',
     'build_acquisition_report',
     'build_lane_query',
     'is_lane_enabled',

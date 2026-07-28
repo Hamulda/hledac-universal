@@ -10,7 +10,6 @@ Sprint F214AD: DeduplicationStrategy protocol extracted to break concrete coupli
 
 import hashlib  # noqa: F401 — kept for third-party
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
 
 from utils.hashing import xxh3_64_hex
@@ -804,19 +803,19 @@ def fast_hash(text: str) -> str:
 
 
 # F7.2: Parallel batch fast hash for URL fingerprinting.
+# M1-OPT: Uses shared 'html' domain executor (8 workers) instead of ad-hoc TPE.
 # ThreadPoolExecutor parallelizes across CPU cores — no GIL contention
 # since hashing is pure CPU work with minimal Python object overhead.
 # Threshold 256 matches rayon threshold in xxhash_ext.rs for consistency.
 _PREFILTER_HASH_THRESHOLD = 256
-_PREFILTER_WORKERS = 4  # M1 4P cores
 
 
 def fast_hash_parallel(texts: list[str]) -> list[str]:
     """
-    Batch fast hash — parallel ThreadPoolExecutor for large batches.
+    Batch fast hash — parallel via shared domain executor for large batches.
 
     Uses xxhash (10x faster) if available, falls back to blake2b.
-    Threshold: ≥256 items → parallel (4 workers); <256 → sequential.
+    Threshold: ≥256 items → parallel; <256 → sequential.
 
     M1 8GB safe: pure Python work, no GPU, no additional memory allocation
     beyond the input list and result list (in-place compatible).
@@ -828,8 +827,9 @@ def fast_hash_parallel(texts: list[str]) -> list[str]:
     if n < _PREFILTER_HASH_THRESHOLD:
         return [fast_hash(t) for t in texts]
 
-    with ThreadPoolExecutor(max_workers=_PREFILTER_WORKERS) as ex:
-        return list(ex.map(fast_hash, texts))
+    from hledac.universal.utils.domain_executors import get_or_create
+
+    return list(get_or_create("html").map(fast_hash, texts))
 
 
 def create_rotating_bloom_filter(
@@ -971,8 +971,10 @@ def normalize_url_parallel(urls: list[str], normalize: bool = True) -> list[str]
         except Exception:  # noqa: BLE001
             pass  # Fall through to Python parallel
 
-    with ThreadPoolExecutor(max_workers=_NORMALIZE_WORKERS) as ex:
-        return list(ex.map(normalize_url, urls))
+    # M1-OPT: Uses shared 'html' domain executor instead of ad-hoc TPE
+    from hledac.universal.utils.domain_executors import get_or_create
+
+    return list(get_or_create("html").map(normalize_url, urls))
 
 
 def normalize_url(url: str) -> str:

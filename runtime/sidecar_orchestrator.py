@@ -51,11 +51,13 @@ the SchedulerAdvisory Protocol in sidecar_protocol.py.
 import asyncio as _asyncio
 
 from hledac.universal.utils.async_helpers import parallel, safe_create_task
+from hledac.universal.runtime.scheduler_v2._task_registry import TaskScope, safe_create_task_tracked
 import logging
 import os as _os
 import time as _time
 from typing import Any
 
+from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 from hledac.universal.runtime.sidecar_bus import create_sidecar_bus
 from hledac.universal.runtime.sidecar_dispatcher import (
     DispatchOutcome,
@@ -454,9 +456,8 @@ class SidecarOrchestrator:
                         _run_bounded_sidecar(self._run_wayback_cdx_deep_sidecar(), "wayback_cdx_deep"),
                         name="sprint:wayback_cdx_sidecar",
                     )
-                    # F250F: CommonCrawl CDX sidecar (non-blocking, HLEDAC_ENABLE_COMMONCRAWL=1)
-                    _cc_env = _os.environ.get("HLEDAC_ENABLE_COMMONCRAWL", "").strip()
-                    if _cc_env in ("1", "true"):
+                    # F250F: CommonCrawl CDX sidecar (non-blocking, via LaneRegistry)
+                    if LANE_REGISTRY.is_enabled("common_crawl"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_commoncrawl_sidecar(), "commoncrawl"),
                             name="sprint:commoncrawl_sidecar",
@@ -468,8 +469,7 @@ class SidecarOrchestrator:
             )
 
             # ── Branch D: IPFS/Onion/I2P/banner/DHT/Gopher/stego/TI sidecars ─
-            _ipfs_env = _os.environ.get("HLEDAC_ENABLE_IPFS", "").strip()
-            _ipfs_enabled = _ipfs_env in ("1", "true", "True")
+            _ipfs_enabled = LANE_REGISTRY.is_enabled("ipfs")
             if _ipfs_enabled:
                 _gateway = _os.environ.get("HLEDAC_IPFS_GATEWAY_URL", "https://ipfs.io")
                 log.info("IPFS sidecar: ENABLED — gateway=%s", _gateway)
@@ -506,32 +506,25 @@ class SidecarOrchestrator:
                         _run_bounded_sidecar(self._run_dht_sidecar(), "dht_discovery"),
                         name="sprint:dht_sidecar",
                     )
-                    # F214R: Gopher discovery sidecar — ISSUE #3-2 FIX: gate behind
-                    # HLEDAC_ENABLE_GOPHER env (same pattern as digital_ghost / stego).
-                    # Until GopherLane exists, the no-op consumes a semaphore slot
-                    # unnecessarily when disabled.
-                    _gopher_env = _os.environ.get("HLEDAC_ENABLE_GOPHER", "").strip()
-                    if _gopher_env == "1":
+                    # F214R: Gopher discovery sidecar — gated via LaneRegistry
+                    if LANE_REGISTRY.is_enabled("gopher"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_gopher_sidecar(), "gopher"),
                             name="sprint:gopher_sidecar",
                         )
                     # F3FORENSICS: File forensics sidecars (non-blocking, env-gated, P0 bounded)
-                    _dg_env = _os.environ.get("HLEDAC_ENABLE_DIGITAL_GHOST", "0")
-                    if _dg_env == "1":
+                    if LANE_REGISTRY.is_enabled("digital_ghost"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_digital_ghost_sidecar(), "digital_ghost"),
                             name="sprint:digital_ghost_sidecar",
                         )
-                    _stego_env = _os.environ.get("HLEDAC_ENABLE_STEGANOGRAPHY", "0")
-                    if _stego_env == "1":
+                    if LANE_REGISTRY.is_enabled("steganography"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_steganography_sidecar(), "steganography"),
                             name="sprint:stego_sidecar",
                         )
                     # F252: TI feed advisory sidecar (NVD + CISA KEV, P0 bounded)
-                    _ti_env = _os.environ.get("HLEDAC_ENABLE_TI_FEEDS", "1")
-                    if _ti_env == "1":
+                    if LANE_REGISTRY.is_enabled("ti_feeds"):
                         _tg.create_task(
                             _run_bounded_sidecar(self._run_ti_feed_sidecar(), "ti_feed"),
                             name="sprint:ti_feed_sidecar",
@@ -943,7 +936,7 @@ class SidecarOrchestrator:
             async with sem:
                 await _upsert_one(target_id)
 
-        tasks = [_asyncio.create_task(_upsert_one_bounded(tid)) for tid in all_target_ids]
+        tasks = [safe_create_task_tracked(_upsert_one_bounded(tid), name=f"sidecar:upsert_target_memory:{tid}", scope=TaskScope.WINDUP_SIDECAR) for tid in all_target_ids]
         await _asyncio.gather(*tasks, return_exceptions=True)
         # NOTE: gather with return_exceptions=True — each _upsert_one catches all
         # exceptions internally (pass). No exception can propagate to gather's

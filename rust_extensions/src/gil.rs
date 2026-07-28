@@ -33,5 +33,6 @@ where
 {
     // PyO3 0.29: py.detach() releases the GIL for the duration of the closure.
     // This is the direct replacement for py.allow_threads() from PyO3 0.24.
+    // R6: Now using PyO3 0.29 py.detach() — the documented API.
     py.detach(f)
 }

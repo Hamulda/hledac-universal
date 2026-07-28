@@ -25,7 +25,7 @@ Sprint 71: Bounded, fail-safe, MLX fallback for similarity.
 Sprint 77: Embedding optimization (float16, writeback buffer, batched embedding, health check).
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils.async_helpers import safe_wait_for, bounded_parallel_map
 from hledac.universal.utils.locks import LazyAsyncioLock
 import contextlib
 import hashlib
@@ -48,7 +48,7 @@ _uma_budget = None
 def _get_uma_budget():
     global _uma_budget
     if _uma_budget is None:
-        from utils.uma_budget import is_uma_critical
+        from hledac.universal.utils.uma_budget import is_uma_critical
         _uma_budget = is_uma_critical
     return _uma_budget
 try:
@@ -590,8 +590,18 @@ class LanceDBIdentityStore:
                             emb = emb[:self._current_mrl_dim]
                         all_embs.append(emb)
                 except Exception:
-                    for t in batch:
-                        all_embs.append(await self._embed_single(t))
+                    # E2-FIX: fallback to bounded_parallel_map — concurrent, M1-safe
+                    # Concurrency=2: embedder is I/O-bound (CPU blocking), 2 avoids Metal saturation
+                    emb_results = await bounded_parallel_map(
+                        batch,
+                        self._embed_single,
+                        concurrency=2,
+                        ordered=True,
+                        ctx="lancedb_embed_fallback",
+                    )
+                    for emb in emb_results:
+                        if emb is not None:
+                            all_embs.append(emb)
         return all_embs
 
     def _compute_binary_signature(self, embedding: list[float]) -> int:
@@ -889,11 +899,21 @@ class LanceDBIdentityStore:
             return
         try:
             recent = self._orch._evidence_log.get_recent_evidence(top_k)
-            for ev in recent:
-                text_hash = hashlib.sha256(ev.content.encode()).hexdigest()[:16]
+
+            async def _process_evidence(ev_item: Any) -> None:
+                text_hash = hashlib.sha256(ev_item.content.encode()).hexdigest()[:16]
                 cached = await self._get_cached_embedding(text_hash)
-                if cached is None and hasattr(ev, 'embedding') and ev.embedding:
-                    await self._store_embedding(text_hash, ev.embedding)
+                if cached is None and hasattr(ev_item, 'embedding') and ev_item.embedding:
+                    await self._store_embedding(text_hash, ev_item.embedding)
+
+            # E2-FIX: parallel warm_cache — bounded_concurrency=3 (I/O-bound, M1-safe)
+            await bounded_parallel_map(
+                recent,
+                _process_evidence,
+                concurrency=3,
+                ordered=False,
+                ctx="warm_cache",
+            )
             logger.info(f'Cache warmed with {top_k} embeddings')
         except Exception as e:
             logger.debug(f'Cache warming failed: {e}')
@@ -1860,10 +1880,10 @@ class SqliteVecIdentityStore:
     async def initialize(self) -> bool:
         """Explicit init (optional). Stores are lazy inited on first use."""
         return await self._ensure_store()
-_identity_store: LanceDBIdentityStore | None = None
+_identity_store: LanceDBIdentityStore | SqliteVecIdentityStore | None = None
 _identity_store_lock = LazyAsyncioLock()
 
-async def get_identity_store() -> LanceDBIdentityStore:
+async def get_identity_store() -> LanceDBIdentityStore | SqliteVecIdentityStore:
     """Get or create the singleton identity store (async-safe).
 
     Phase 11.2: Primary is now SqliteVecIdentityStore (zero-process, M1-native).

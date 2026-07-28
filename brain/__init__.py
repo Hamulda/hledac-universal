@@ -43,6 +43,13 @@ class DecisionType(Enum):
 
 from .deephermes3_engine import DeepHermes3Engine, parse_thinking_output  # noqa: E402
 
+# ─── Phase 2 Modular Brain Components (PEP 698) ───────────────────────────────
+# Extracted from DeepHermes3Engine God Class refactoring.
+# Module-level None defaults: needed for AVAILABLE_BRAIN_ENGINES dict (eval at import time).
+# __getattr__ updates these via globals() on first attribute access.
+# NOTE: "from brain import X" returns current value without triggering __getattr__;
+# use "getattr(brain, 'X')" or access brain.X to trigger lazy loading.
+
 # Sprint LoRA-1: LoRA fine-tuning via mlx_lm.lora — lazy (A2-FIX)
 # mlx_lm import is ~300ms GPU init; defer to first attribute access.
 LORA_AVAILABLE = None
@@ -142,6 +149,37 @@ unload_embedding_model = None  # type: ignore[assignment,misc]
 # Cold import cost drops from ~9.7s to ~150ms (enum + flag defs only).
 # HypothesisEngine stays eager (circular dep with hypothesis_engine/adversarial.py).
 def __getattr__(name: str):
+    # Phase 2: Modular Brain Components (extracted from DeepHermes3Engine)
+    if name in ("METAL_AVAILABLE",):
+        global METAL_AVAILABLE
+        try:
+            from . import _metal
+            METAL_AVAILABLE = True
+            AVAILABLE_BRAIN_ENGINES["metal"] = True
+        except Exception:
+            METAL_AVAILABLE = False
+            AVAILABLE_BRAIN_ENGINES["metal"] = False
+        return METAL_AVAILABLE
+    if name in ("CACHE_AVAILABLE",):
+        global CACHE_AVAILABLE
+        try:
+            from . import _cache
+            CACHE_AVAILABLE = True
+            AVAILABLE_BRAIN_ENGINES["cache"] = True
+        except Exception:
+            CACHE_AVAILABLE = False
+            AVAILABLE_BRAIN_ENGINES["cache"] = False
+        return CACHE_AVAILABLE
+    if name in ("BATCH_AVAILABLE",):
+        global BATCH_AVAILABLE
+        try:
+            from . import _batch
+            BATCH_AVAILABLE = True
+            AVAILABLE_BRAIN_ENGINES["batch"] = True
+        except Exception:
+            BATCH_AVAILABLE = False
+            AVAILABLE_BRAIN_ENGINES["batch"] = False
+        return BATCH_AVAILABLE
     # Sprint LoRA-1: mlx_lm.lora deferred import
     if name in ("LORA_AVAILABLE",):
         global LORA_AVAILABLE
@@ -385,15 +423,37 @@ def __getattr__(name: str):
 # Explicit catalog of brain engine availability. Callers should use
 # is_brain_engine_available("insight") rather than checking _AVAILABLE directly.
 AVAILABLE_BRAIN_ENGINES = {
-    "insight": INSIGHT_AVAILABLE,
-    "inference": INFERENCE_AVAILABLE,
-    "hypothesis": HYPOTHESIS_AVAILABLE,
-    "moe": MOE_AVAILABLE,
-    "distillation": DISTILLATION_AVAILABLE,
-    "modernbert": MODERNBERT_AVAILABLE,
-    "model_manager": MODEL_MANAGER_AVAILABLE,
-    "ner_engine": NER_ENGINE_AVAILABLE,
-    "embedding": EMBEDDING_AVAILABLE,
+    # Phase 2: Modular Brain Components (None = not yet probed via __getattr__)
+    "metal": None,
+    "cache": None,
+    "batch": None,
+    # Legacy engines
+    "insight": None,
+    "inference": None,
+    "hypothesis": None,
+    "moe": None,
+    "distillation": None,
+    "modernbert": None,
+    "model_manager": None,
+    "ner_engine": None,
+    "embedding": None,
+}
+
+
+# Map from public name → _AVAILABLE flag attribute name
+_ENGINE_FLAG_MAP = {
+    "metal": "METAL_AVAILABLE",
+    "cache": "CACHE_AVAILABLE",
+    "batch": "BATCH_AVAILABLE",
+    "insight": "INSIGHT_AVAILABLE",
+    "inference": "INFERENCE_AVAILABLE",
+    "hypothesis": "HYPOTHESIS_AVAILABLE",
+    "moe": "MOE_AVAILABLE",
+    "distillation": "DISTILLATION_AVAILABLE",
+    "modernbert": "MODERNBERT_AVAILABLE",
+    "model_manager": "MODEL_MANAGER_AVAILABLE",
+    "ner_engine": "NER_ENGINE_AVAILABLE",
+    "embedding": "EMBEDDING_AVAILABLE",
 }
 
 
@@ -402,9 +462,8 @@ def is_brain_engine_available(name: str) -> bool:
     Runtime capability check for brain engines.
 
     Args:
-        name: Engine name ("mlx_batched_executor", "mlx_worker_thread",
-               "inference_pipeliner", "insight", "inference", "hypothesis", "moe",
-               "distillation", "modernbert", "model_engine", "model_manager",
+        name: Engine name ("metal", "cache", "batch", "insight", "inference",
+               "hypothesis", "moe", "distillation", "modernbert", "model_manager",
                "ner_engine", "embedding")
 
     Returns:
@@ -413,8 +472,9 @@ def is_brain_engine_available(name: str) -> bool:
     """
     val = AVAILABLE_BRAIN_ENGINES.get(name, False)
     if val is None:
-        # Trigger the __getattr__ probe for this engine
-        getattr(__import__(__name__), name)
+        # Trigger __getattr__ for the corresponding _AVAILABLE flag
+        flag_name = _ENGINE_FLAG_MAP.get(name, name)
+        getattr(__import__(__name__), flag_name)
         val = AVAILABLE_BRAIN_ENGINES.get(name, False)
     return bool(val)
 
@@ -426,6 +486,10 @@ def get_available_brain_engines() -> dict[str, bool]:
 __all__ = [
     "DeepHermes3Engine",
     "parse_thinking_output",
+    # Phase 2: Modular Brain Components (extracted from DeepHermes3Engine)
+    "METAL_AVAILABLE",
+    "CACHE_AVAILABLE",
+    "BATCH_AVAILABLE",
     # Sprint P0-2: Continuous batching executor
     "MLXBatchedExecutor",
     "MLX_BATCHED_EXECUTOR_AVAILABLE",

@@ -1,8 +1,15 @@
-"""Backward-compat stub — canonical: recon.dns.passive_dns. Auto-gen ISSUE #20 F2."""
-import importlib
+"""Backward-compat stub — DEPRECATED: import from "recon.dns.passive_dns" directly.
 
-# Target recon.dns.passive_dns directly — avoids network.__init__.py re-export chain
-_target = "recon.dns.passive_dns"
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.dns.passive_dns.
+"""
+import warnings
 
-def __getattr__(name):
-    return getattr(importlib.import_module(_target), name)
+warnings.warn(
+    "intel.passive_dns is deprecated — import from \"recon.dns.passive_dns\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.dns.passive_dns import *

@@ -69,19 +69,22 @@ CLI / __main__.py
 
 ## FEATURE FLAGS (Kompletní seznam)
 
-| Flag | Default | Popis |
-|------|---------|-------|
-| HLEDAC_ENABLE_ACADEMIC | 0 | Academic research lane (R9) |
-| HLEDAC_ENABLE_ALT_PROTOCOLS | 0 | Gopher, Finger, etc. |
-| HLEDAC_ENABLE_BANNER_GRAB | 0 | TCP banner enumeration |
-| HLEDAC_ENABLE_BGP | 0 | BGP enrichment sidecar (F234) |
-| HLEDAC_ENABLE_BGP_PDNS | 0 | Passive DNS via BGP |
-| HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER | 0 | Blockchain forensics lane (BTC/ETH address analysis) |
-| HLEDAC_ENABLE_CAPTCHA_DETECTION | 0 | CAPTCHA solving |
-| HLEDAC_ENABLE_CENSYS | 0 | Censys intelligence API |
-| HLEDAC_ENABLE_COMMONCRAWL | 0 | CommonCrawl search |
-| HLEDAC_ENABLE_CONTENT_LAYER | 0 | Content analysis layer |
-| HLEDAC_ENABLE_CURL_CFFI | 0 | curl_cffi HTTP (default: httpx) |
+**Pravidlo Q1:** Každý nový `HLEDAC_ENABLE_*` flag MUSÍ mít vyplněný sloupec `Profile`.
+Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/`.
+
+| Flag | Default | Profile | Popis |
+|------|---------|---------|-------|
+| HLEDAC_ENABLE_ACADEMIC | 0 | research | Academic research lane (R9) |
+| HLEDAC_ENABLE_ALT_PROTOCOLS | 0 | network | Gopher, Finger, etc. |
+| HLEDAC_ENABLE_BANNER_GRAB | 0 | network | TCP banner enumeration |
+| HLEDAC_ENABLE_BGP | 0 | intel | BGP enrichment sidecar (F234) |
+| HLEDAC_ENABLE_BGP_PDNS | 0 | intel | Passive DNS via BGP |
+| HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER | 0 | forensic | Blockchain forensics lane (BTC/ETH address analysis) |
+| HLEDAC_ENABLE_CAPTCHA_DETECTION | 0 | browser | CAPTCHA solving |
+| HLEDAC_ENABLE_CENSYS | 0 | intel | Censys intelligence API |
+| HLEDAC_ENABLE_COMMONCRAWL | 0 | fetch | CommonCrawl search |
+| HLEDAC_ENABLE_CONTENT_LAYER | 0 | analysis | Content analysis layer |
+| HLEDAC_ENABLE_CURL_CFFI | 0 | fetch | curl_cffi HTTP (default: httpx) |
 | HLEDAC_ENABLE_DARK_PIVOTS | 0 | Tor/I2P/IPFS pivot queries |
 | HLEDAC_ENABLE_DHT | 0 | DHT discovery (real UDP) |
 | HLEDAC_ENABLE_DIGITAL_GHOST | 0 | Digital forensics steganography |
@@ -89,6 +92,7 @@ CLI / __main__.py
 | HLEDAC_DUCKDB_THREADS | 2 | DuckDB thread count (F275: 2 optimal for thread-local conn bottleneck) |
 | HLEDAC_ENABLE_DSPY | 0 | DSPy compiled hypothesis generation |
 | HLEDAC_ENABLE_FEDIVERSE | 0 | Fediverse/Mastodon discovery |
+| HLEDAC_ENABLE_GLINER2 | 1 | MLX GLiNER2 NER (NER engine, M1 RAM budget) |
 | HLEDAC_ENABLE_GOPHER | 0 | Gopher protocol support |
 | HLEDAC_ENABLE_GRAPH_ANALYSIS | 0 | Graph analytics |
 | HLEDAC_ENABLE_GRAPH_RAG | 0 | Graph RAG embeddings |
@@ -104,6 +108,7 @@ CLI / __main__.py
 | HLEDAC_ENABLE_LAYERS | 0 | Security layer manager |
 | HLEDAC_ENABLE_LEAKSENTINEL | 0 | Secret/leak detection |
 | HLEDAC_ENABLE_LLM | 0 | LLM inference |
+| HLEDAC_ENABLE_MLX_OUTLINES | 1 | MLX outlines NER extractor (NER engine, M1 RAM budget) |
 | HLEDAC_ENABLE_NETWORK_RECON | 0 | Network reconnaissance lane (DNS/WHOIS/SSL) |
 | HLEDAC_ENABLE_NODRIVER | 0 | Headless browser (Chrome required) |
 | HLEDAC_ENABLE_NYM | 0 | Nym mixnet transport |

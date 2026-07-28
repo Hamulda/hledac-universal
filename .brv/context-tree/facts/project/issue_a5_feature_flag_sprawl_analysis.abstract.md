@@ -1,0 +1,1 @@
+Feature flag sprawl analysis reveals 410 HLEDAC_* env vars with 97 ENABLE flags, only 36 checked at runtime, proposing a three-layer model (Capabilities/SprintProfile/RuntimeConfig) to replace scattered os.environ calls with centralized registries.

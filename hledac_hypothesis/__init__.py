@@ -92,8 +92,11 @@ from .packs import (
 )
 
 logger = logging.getLogger(__name__)
+from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 
-HAS_DSPY = bool(os.environ.get("HLEDAC_ENABLE_DSPY", ""))
+def _is_dspy_enabled() -> bool:
+    """DSPy lane enablement check via LaneRegistry."""
+    return LANE_REGISTRY.is_enabled("dspy")
 
 
 # Lazy exports for HypothesisEngine and related classes from brain.research_hypothesis_engine

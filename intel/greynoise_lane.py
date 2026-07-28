@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.greynoise_lane. Auto-gen ISSUE #20 F2."""
-from recon.greynoise_lane import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.greynoise_lane" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.greynoise_lane"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.greynoise_lane.
+"""
+import warnings
+
+warnings.warn(
+    "intel.greynoise_lane is deprecated — import from \"recon.greynoise_lane\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.greynoise_lane import *

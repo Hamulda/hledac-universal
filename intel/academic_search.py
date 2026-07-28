@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.academic_search. Auto-gen ISSUE #20 F2."""
-from recon.academic_search import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.academic_search" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.academic_search"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.academic_search.
+"""
+import warnings
+
+warnings.warn(
+    "intel.academic_search is deprecated — import from \"recon.academic_search\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.academic_search import *

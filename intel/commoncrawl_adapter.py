@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.commoncrawl_adapter. Auto-gen ISSUE #20 F2."""
-from recon.commoncrawl_adapter import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.commoncrawl_adapter" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.commoncrawl_adapter"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.commoncrawl_adapter.
+"""
+import warnings
+
+warnings.warn(
+    "intel.commoncrawl_adapter is deprecated — import from \"recon.commoncrawl_adapter\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.commoncrawl_adapter import *

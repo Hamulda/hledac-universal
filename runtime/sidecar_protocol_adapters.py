@@ -39,7 +39,7 @@ class FediverseSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "fediverse"
-    env_gate: str = "HLEDAC_ENABLE_FEDIVERSE"
+    lane_id: str = "fediverse"
     ram_budget_mb: int = 50
     priority: int = 6
 
@@ -140,7 +140,7 @@ class DHTSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "dht"
-    env_gate: str = "HLEDAC_ENABLE_DHT"
+    lane_id: str = "dht"
     ram_budget_mb: int = 100
     priority: int = 4
 
@@ -195,7 +195,7 @@ class AcademicSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "academic"
-    env_gate: str = "HLEDAC_ENABLE_ACADEMIC"
+    lane_id: str = "academic"
     ram_budget_mb: int = 80
     priority: int = 5
 
@@ -261,7 +261,7 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "alt_protocols"
-    env_gate: str = "HLEDAC_ENABLE_ALT_PROTOCOLS"
+    lane_id: str = "alt_protocols"
     ram_budget_mb: int = 60
     priority: int = 4
 
@@ -354,7 +354,7 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "leak_sentinel"
-    env_gate: str = "HLEDAC_ENABLE_LEAKSENTINEL"
+    lane_id: str = "leak_sentinel"
     ram_budget_mb: int = 30
     priority: int = 3
 
@@ -427,7 +427,7 @@ class TVNewsSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "tvnews"
-    env_gate: str = "HLEDAC_ENABLE_TV_NEWS"
+    lane_id: str = "tvnews"
     ram_budget_mb: int = 40
     priority: int = 5
 
@@ -497,7 +497,7 @@ class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
     """
 
     sidecar_id: str = "federated_research"
-    env_gate: str = "HLEDAC_ENABLE_FEDERATED"
+    lane_id: str = "federated"
     ram_budget_mb: int = 30
     priority: int = 5
 
@@ -542,7 +542,7 @@ class PassiveFingerprintSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "passive_fingerprint"
-    env_gate: str = "HLEDAC_ENABLE_PASSIVE_FINGERPRINT"
+    lane_id: str = "passive_fingerprint"
     ram_budget_mb: int = 50
     priority: int = 4
 
@@ -585,7 +585,7 @@ class PassiveTechStackSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "passive_tech_stack"
-    env_gate: str = "HLEDAC_ENABLE_PASSIVE_TECH_STACK"
+    lane_id: str = "passive_tech_stack"
     ram_budget_mb: int = 30
     priority: int = 4
 
@@ -630,7 +630,7 @@ class SocialIdentityMinerSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "social_identity_surface"
-    env_gate: str = "HLEDAC_ENABLE_SOCIAL_IDENTITY_SURFACE"
+    lane_id: str = "social_identity_surface"
     ram_budget_mb: int = 60
     priority: int = 5
 
@@ -669,7 +669,7 @@ class IdentityStitchingSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "identity_stitching"
-    env_gate: str = "HLEDAC_ENABLE_IDENTITY_STITCHING"
+    lane_id: str = "identity_stitching"
     ram_budget_mb: int = 100
     priority: int = 5
 
@@ -700,7 +700,7 @@ class TemporalArchaeologySidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "temporal_archaeology"
-    env_gate: str = "HLEDAC_ENABLE_TEMPORAL_ARCHAEOLOGY"
+    lane_id: str = "temporal_archaeology"
     ram_budget_mb: int = 80
     priority: int = 4
 
@@ -733,7 +733,7 @@ class LanceDBRAGSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "lancedb_rag"
-    env_gate: str = "HLEDAC_ENABLE_GRAPH_RAG"
+    lane_id: str = "lancedb_rag"
     ram_budget_mb: int = 60
     priority: int = 7
 
@@ -820,7 +820,7 @@ class GitHubGistSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "github_gist"
-    env_gate: str = "HLEDAC_ENABLE_GITHUB_GIST"
+    lane_id: str = "github_gist"
     ram_budget_mb: int = 30
     priority: int = 5
 
@@ -906,7 +906,7 @@ class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "ja4_collector"
-    env_gate: str = "HLEDAC_ENABLE_JA4_COLLECTOR"
+    lane_id: str = "ja4_collector"
     ram_budget_mb: int = 30
     priority: int = 5
 
@@ -1018,7 +1018,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "whois"
-    env_gate: str = "HLEDAC_ENABLE_WHOIS"
+    lane_id: str = "whois"
     ram_budget_mb: int = 30
     priority: int = 5
 
@@ -1154,7 +1154,7 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "threat_intel"
-    env_gate: str = "HLEDAC_ENABLE_TI_FEEDS"
+    lane_id: str = "ti_feeds"
     ram_budget_mb: int = 40
     priority: int = 7
 
@@ -1277,7 +1277,7 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
     """
 
     sidecar_id: str = "shadow_walker"
-    env_gate: str = "HLEDAC_ENABLE_SHADOW_WALKER"
+    lane_id: str = "shadow_walker"
     ram_budget_mb: int = 20
     priority: int = 4
 

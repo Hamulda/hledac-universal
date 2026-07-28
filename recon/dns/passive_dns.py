@@ -379,4 +379,4 @@ class PassiveDNSAdapter:
 
 def _is_ipv6(value: str) -> bool:
     return ':' in value
-__all__ = ['PassiveDNSResolver', 'PassiveDNSAdapter', 'DOH_RESOLVERS']
+__all__ = ['PassiveDNSResolver', 'PassiveDNSAdapter', 'DOH_RESOLVERS', 'RetryableError']

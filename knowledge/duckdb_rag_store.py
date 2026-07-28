@@ -106,6 +106,8 @@ class DuckDBRAGStore:
         "_fts_enabled",
         "_mmr_top_k",
         "_closed",
+        "_pending_tasks",
+        "_pending_lock",
     )
 
     def __init__(
@@ -128,6 +130,8 @@ class DuckDBRAGStore:
         self._fts_enabled = fts_enabled
         self._mmr_top_k = mmr_top_k
         self._closed = False
+        self._pending_tasks: list[asyncio.Task] = []
+        self._pending_lock = asyncio.Lock()
 
     @property
     def _store(self) -> Any:
@@ -408,10 +412,13 @@ class DuckDBRAGStore:
             "ioc_types": ",".join(ioc_types) if ioc_types else "",
             "ts": ts_val,
         }
-        # Immediate upsert (DuckDB has its own batching; no separate flush needed)
-        asyncio.create_task(
+        # Immediate upsert — track task so close() can await pending writes
+        task = asyncio.create_task(
             self._upsert_text_async(finding_id, text, metadata)
         )
+        async with self._pending_lock:
+            self._pending_tasks.append(task)
+        task.add_done_callback(self._make_pending_done_callback())
 
     async def _upsert_text_async(
         self,
@@ -488,10 +495,40 @@ class DuckDBRAGStore:
         except Exception:  # noqa: BLE001
             return 0
 
+    def _make_pending_done_callback(self) -> Any:
+        """Create a done-callback that removes the task from _pending_tasks."""
+        import weakref
+        _self_ref = weakref.ref(self)
+
+        def _cb(task: asyncio.Task) -> None:
+            try:
+                _s = _self_ref()
+                if _s is None:
+                    return
+                try:
+                    _s._pending_tasks.remove(task)
+                except ValueError:
+                    pass
+            except Exception:
+                pass
+        return _cb
+
     async def close(self) -> None:
-        """Close store and release resources."""
+        """Close store and release resources — drain pending upserts first."""
         self._closed = True
         self._embedder = None
+
+        # Drain pending upsert tasks (await with timeout)
+        async with self._pending_lock:
+            pending = self._pending_tasks[:]
+            self._pending_tasks.clear()
+
+        if pending:
+            try:
+                async with asyncio.timeout(5.0):
+                    await asyncio.gather(*pending, return_exceptions=True)
+            except (asyncio.TimeoutError, Exception):
+                pass
 
 
 # ── Entity Store ───────────────────────────────────────────────────────────────

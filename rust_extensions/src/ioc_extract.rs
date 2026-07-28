@@ -52,7 +52,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-/// Issue #15a: Releases GIL during CPU-intensive regex scan via py.allow_threads()
+/// Issue #15a: Releases GIL during CPU-intensive regex scan via py.detach() (PyO3 0.29)
 /// to enable true parallelism in asyncio.to_thread() ThreadPoolExecutor.
 fn scan_iocs(text: &str) -> Vec<(String, String)> {
     let mut iocs: Vec<(String, String)> = Vec::new();
@@ -126,7 +126,7 @@ fn fast_ioc_extract(text: &str) -> Vec<(String, String)> {
     // Copy to Rust-owned string before releasing GIL
     let text_owned = text.to_string();
     // Release GIL for CPU-intensive regex scanning — allows Python threads to run.
-    // Uses gil::release_gil() which probes allow_threads availability once
+    // Uses gil::release_gil() via py.detach() (PyO3 0.29)
     // and caches the result (zero overhead in hot paths).
     Python::attach(|py| release_gil(py, || scan_iocs(&text_owned)))
 }

@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.temporal_analysis. Auto-gen ISSUE #20 F2."""
-from recon.temporal_analysis import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.temporal_analysis" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.temporal_analysis"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.temporal_analysis.
+"""
+import warnings
+
+warnings.warn(
+    "intel.temporal_analysis is deprecated — import from \"recon.temporal_analysis\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.temporal_analysis import *

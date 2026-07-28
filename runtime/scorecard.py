@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.runtime.scheduler_v2._task_registry import TaskScope, safe_create_task_tracked
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -398,7 +398,7 @@ class ScorecardBuilder:
                 except (RuntimeError, OSError):
                     pass
 
-            duckdb_write_tasks.append(asyncio.create_task(safe_upsert_scorecard()))
+            duckdb_write_tasks.append(safe_create_task_tracked(safe_upsert_scorecard(), name="scorecard:upsert_scorecard", scope=TaskScope.SCORECARD))
 
         if store is not None and hasattr(store, "upsert_episode"):
 
@@ -433,7 +433,7 @@ class ScorecardBuilder:
                 except (RuntimeError, OSError):
                     pass
 
-            duckdb_write_tasks.append(asyncio.create_task(safe_upsert_episode()))
+            duckdb_write_tasks.append(safe_create_task_tracked(safe_upsert_episode(), name="scorecard:upsert_episode", scope=TaskScope.SCORECARD))
 
         # Ghost global entities upsert (sequential, after duckdb writes)
         async def ghost_global_and_await() -> None:

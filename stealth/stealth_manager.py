@@ -364,7 +364,7 @@ class StealthSession:
     Stealth session for making real HTTP requests with M1 8GB optimization.
 
     Features:
-    - Shared aiohttp.ClientSession for connection pooling
+    - Shared httpx.AsyncClient for connection pooling (M1 8GB-safe)
     - Streaming read s hard limitem max_bytes (žádné velké stringy v RAM)
     - Timeouty pro connect/read/total
     - Automatic cookie handling
@@ -390,7 +390,7 @@ class StealthSession:
         here, and vice versa. Fail-soft: any probe error returns False and
         records the negative result so we do not hammer the same host.
 
-        Note: Uses shared aiohttp.ClientSession from _get_session() for efficiency
+        Note: Uses shared httpx.AsyncClient from _get_session() for efficiency
         (avoids creating a new session per call). HTTP/3 detection is a lightweight
         probe that doesn't require JA3 fingerprint spoofing.
         """

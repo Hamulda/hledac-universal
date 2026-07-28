@@ -1,11 +1,11 @@
 """
-core/inference_backends/ — Optional inference backends (mlxcel, coreml)
-======================================================================
-These backends are maintained for testing and future use but are NOT
-wired into the default InferenceCoordinator path.
+core/inference_backends/ — Optional inference backends (mlxcel, coreml, mlx_inproc)
+================================================================================
+These backends are available to InferenceCoordinator:
 
-To use: set HLEDAC_INFERENCE_BACKEND=mlxcel or HLEDAC_INFERENCE_BACKEND=coreml
-before importing, or pass backend=InferenceBackend.MLXCEL explicitly.
+- mlxcel: Default on M1 8GB (RSS savings ~2GB via subprocess isolation)
+- mlx_inproc: Opt-in via HLEDAC_INFERENCE_BACKEND=mlx_inproc (in-process, dev/debug)
+- coreml: Opt-in via HLEDAC_INFERENCE_BACKEND=coreml (CoreML FastAPI)
 
 MlxcelBackend: Out-of-process mlxcel via MlxcelIpcClient (JSON-RPC over UDS)
 CoreMLBackend: CoreML FastAPI microservice via CoreMLClient (http://127.0.0.1:8765)

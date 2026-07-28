@@ -44,16 +44,19 @@ class GenerateResult:
     model_name: str | None = None
 
 
-class InferenceEngine:
+class GenerationFacade:
     """
-    Unified inference engine facade.
+    MLX generation facade — coordinates streaming, KV cache, and structured output.
 
     Extracted from DeepHermes3Engine to:
-    1. Provide single interface for all inference types
+    1. Provide single interface for all generation types
     2. Integrate Metal device, KV cache, and streaming
-    3. Enable independent testing of inference logic
+    3. Enable independent testing of generation logic
 
     M1 8GB: Coordinates with MetalDevice for GPU memory management.
+
+    NOTE: This is NOT brain.inference_engine.InferenceEngine (abductive reasoning).
+    This facade is for MLX token generation only.
     """
 
     def __init__(

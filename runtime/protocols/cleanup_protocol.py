@@ -111,7 +111,8 @@ async def shutdown_aclose(
     reason: str = _SHUTDOWN_NORMAL
 
     try:
-        await asyncio.wait_for(coro, timeout=timeout_s)
+        async with asyncio.timeout(timeout_s):
+            await coro
     except asyncio.TimeoutError:
         reason = _SHUTDOWN_TIMEOUT
         logger.warning(

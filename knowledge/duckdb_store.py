@@ -6,6 +6,20 @@ ROLE: Canonical store for sprint-level facts and derived analytics.
     This store IS the canonical sprint facts authority for the analytics
     subsystem, not a shadow of anything.
 
+F360 ARCHITECTURE:
+    This module contains DuckDBShadowStore (monolithic, backward-compatible).
+    Extracted components live in:
+      - duckdb_protocol.py      — DuckDBStoreProtocol (interface contract)
+      - duckdb_vector_store.py — DuckDBVectorStore (HNSW/vector operations)
+      - duckdb_quality_gate.py — DuckDBQualityGate (quality assessment)
+      - duckdb_graph_attachment.py — DuckDBGraphAttachment (graph attachment)
+      - duckdb_wal_manager.py  — DuckDBWALManager (WAL + LMDB lifecycle)
+      - duckdb_canonical.py    — DuckDBCanonical (future refactor target)
+
+    The 15 "DEPRECATED" graph methods (inject_graph, get_graph_stats, etc.)
+    are now delegated to DuckDBGraphAttachment instead of inline lazy-init.
+    See duckdb_graph_attachment.py for the extracted implementation.
+
 FACTS HIERARCHY (3 tiers):
 
 TIER 1 -- SPRINT FACTS (DuckDB, durable):
@@ -1358,6 +1372,7 @@ def export_findings_to_parquet(
 
 
 from .wal import WALManager
+from .duckdb_wal_manager import DuckDBWALManager
 
 logger = logging.getLogger(__name__)
 
@@ -1825,7 +1840,8 @@ class DuckDBShadowStore:
         "_last_ingest_ts",
         "_min_flush",
         "_max_flush_interval",
-        "_DuckDBShadowStore__graph_store",
+        "_quality_gate",  # F360: DuckDBQualityGate (extracted from _assess_finding_quality)
+        "_graph_attachment",  # F360: DuckDBGraphAttachment (replaces _graph_store lazy-init)
         "_stmt_insert_finding",
         "_stmt_insert_finding_conn_id",
         "DEAD_LETTER_PREFIX",
@@ -1835,6 +1851,7 @@ class DuckDBShadowStore:
         "_pending_accepted_findings",
         "_pending_accepted_indices",
         "_batch_start_ts",
+        "_claims_enabled",
     )
 
     # P1-9: Canonical aclose timeout — matches DEFAULT_ACLOSE_TIMEOUT_S.
@@ -1877,12 +1894,10 @@ class DuckDBShadowStore:
         self._duckdb_module: Any | None = None
         self._uma_state: str | None = uma_state
         self._duckdb_settings: dict[str, str | int] = {}
-        # F320M-R: M1 8GB has 4P+4E cores. DuckDB writes are I/O-bound (Arrow batch + LMDB WAL),
-        # so we use 4 workers (not cpu_count()-1 which gives only 2 for 8-core M1).
-        _max_workers = min(4, max(1, (os.cpu_count() or 2)))
-        self._shared_executor: ThreadPoolExecutor = ThreadPoolExecutor(
-            max_workers=_max_workers, thread_name_prefix="duckdb_unified"
-        )
+        # M1-OPT: Use shared 'duckdb' domain executor instead of per-module TPE
+        # duckdb preset = 2 workers (I/O-bound DuckDB sync operations)
+        from hledac.universal.utils.domain_executors import get_or_create
+        self._shared_executor: ThreadPoolExecutor = get_or_create("duckdb")
         self._write_executor: ThreadPoolExecutor = self._shared_executor
         self._read_executor: ThreadPoolExecutor = self._shared_executor
         self._wal_executor: ThreadPoolExecutor = self._shared_executor
@@ -1915,6 +1930,9 @@ class DuckDBShadowStore:
             "arrow_partial_duplicates": 0,
         }
         self._wal_manager: WALManager | None = None
+        from .duckdb_quality_gate import DuckDBQualityGate
+
+        self._quality_gate: DuckDBQualityGate = DuckDBQualityGate()
         self._dedup_manager: DedupManager | None = None
         self._wal_lmdb: Any | None = None
         self._dedup_lmdb: Any | None = None
@@ -1924,6 +1942,8 @@ class DuckDBShadowStore:
         self._pending_accepted_indices: list[int] = []
         _flush_cfg = os.getenv("HLEDAC_DUCKDB_MIN_FLUSH", "50")
         self._min_flush: int = max(1, int(_flush_cfg))
+        # F350M-R: Claims extraction wiring — Rust batch_extract_claims_python
+        self._claims_enabled: bool = os.getenv("HLEDAC_ENABLE_CLAIMS_EXTRACTION", "0") == "1"
         _max_cfg = os.getenv("HLEDAC_DUCKDB_MAX_FLUSH_INTERVAL", "1.0")
         self._max_flush_interval: float = max(0.1, float(_max_cfg))
         self.DEAD_LETTER_PREFIX: str = "deadletter_ingest:"
@@ -2057,7 +2077,7 @@ class DuckDBShadowStore:
         Returns duckdb_stats section: findings count, graph stats,UMA state.
         """
         try:
-            graph_stats = self.get_graph_stats() if hasattr(self, "_DuckDBShadowStore__graph_store") else {}
+            graph_stats = self.get_graph_stats() if self._graph_attachment is not None else {}
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             graph_stats = {}
         total_iocs = graph_stats.get("nodes", 0) if isinstance(graph_stats, dict) else 0
@@ -2081,82 +2101,80 @@ class DuckDBShadowStore:
             },
         }
 
-    def _graph_store(self) -> Any:
-        """Lazy-init GraphAttachmentStore."""
-        _attr = "_DuckDBShadowStore__graph_store"
-        if not hasattr(self, _attr):
-            object.__setattr__(self, _attr, None)
-        _store = object.__getattribute__(self, _attr)
-        if _store is None:
-            from hledac.universal.knowledge.graph_attachment import GraphAttachmentStore
+    # F360: Graph attachment via extracted DuckDBGraphAttachment
+    # Replaces 15 deprecated thin wrappers (inject_graph, get_graph_stats, etc.)
+    # NOTE: _graph_attachment is declared in __slots__ (L1843) — do NOT add class-level default here
+    def _ensure_graph_attachment(self) -> Any:
+        """Lazy-init DuckDBGraphAttachment."""
+        if self._graph_attachment is None:
+            from hledac.universal.knowledge.duckdb_graph_attachment import DuckDBGraphAttachment
 
-            _store = GraphAttachmentStore()
-            object.__setattr__(self, _attr, _store)
-        return _store
+            self._graph_attachment = DuckDBGraphAttachment()
+        return self._graph_attachment
 
     def inject_graph(self, graph: Any) -> None:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_graph()."""
-        self._graph_store().inject_graph(graph)
+        """Inject DuckPGQGraph or IOCGraph for entity enrichment."""
+        self._ensure_graph_attachment().inject_graph(graph)
 
     def get_graph_attachment_kind(self) -> str | None:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_graph_attachment_kind()."""
-        return self._graph_store().get_graph_attachment_kind()
+        """Return kind of attached graph or None."""
+        return self._ensure_graph_attachment().get_graph_attachment_kind()
 
     def graph_supports_buffered_writes(self) -> bool:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.graph_supports_buffered_writes()."""
-        return self._graph_store().graph_supports_buffered_writes()
+        """Return True if attached graph supports buffered writes."""
+        return self._ensure_graph_attachment().graph_supports_buffered_writes()
 
     def inject_stix_graph(self, graph: Any) -> None:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_stix_graph()."""
-        self._graph_store().inject_stix_graph(graph)
+        """Inject STIX synthesis graph."""
+        self._ensure_graph_attachment().inject_stix_graph(graph)
 
     def get_stix_graph(self) -> Any:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_stix_graph()."""
-        return self._graph_store().get_stix_graph()
+        """Return attached STIX graph."""
+        return self._ensure_graph_attachment().get_stix_graph()
 
     def inject_truth_write_graph(self, graph: Any) -> None:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.inject_truth_write_graph()."""
-        self._graph_store().inject_truth_write_graph(graph)
+        """Inject DuckPGQGraph for truth write path."""
+        self._ensure_graph_attachment().inject_truth_write_graph(graph)
 
     def get_truth_write_graph(self) -> Any:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_truth_write_graph()."""
-        return self._graph_store().get_truth_write_graph()
+        """Return attached truth-write graph."""
+        return self._ensure_graph_attachment().get_truth_write_graph()
 
     def truth_write_graph_supports_buffered_writes(self) -> bool:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.truth_write_graph_supports_buffered_writes()."""
-        return self._graph_store().truth_write_graph_supports_buffered_writes()
+        """Return True if truth-write graph supports buffered writes."""
+        return self._ensure_graph_attachment().truth_write_graph_supports_buffered_writes()
 
-    def get_top_seed_nodes(self, n: int = 5) -> list[dict]:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_top_seed_nodes()."""
-        return self._graph_store().get_top_seed_nodes(n=n)
+    def get_top_seed_nodes(self, n: int = 5) -> list[dict[str, Any]]:
+        """Return top N seed nodes for graph traversal."""
+        return self._ensure_graph_attachment().get_top_seed_nodes(n=n)
 
-    def get_graph_stats(self) -> dict:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_graph_stats()."""
-        return self._graph_store().get_graph_stats()
+    def get_graph_stats(self) -> dict[str, Any]:
+        """Return graph stats (nodes, edges, pgq_available)."""
+        return self._ensure_graph_attachment().get_graph_stats()
 
-    def get_connected_iocs(self, ioc_value: str, max_hops: int = 2) -> list:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_connected_iocs()."""
-        return self._graph_store().get_connected_iocs(ioc_value, max_hops=max_hops)
+    def get_connected_iocs(self, ioc_value: str, max_hops: int = 2) -> list[dict[str, Any]]:
+        """Return IOC nodes connected to given IOC within max_hops."""
+        return self._ensure_graph_attachment().get_connected_iocs(ioc_value, max_hops=max_hops)
 
-    def get_connected_iocs_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list]:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_connected_iocs_batch()."""
-        return self._graph_store().get_connected_iocs_batch(values, max_hops=max_hops)
+    def get_connected_iocs_batch(self, values: list[str], max_hops: int = 2) -> dict[str, list[dict[str, Any]]]:
+        """Batch graph traversal for multiple IOC values."""
+        return self._ensure_graph_attachment().get_connected_iocs_batch(values, max_hops=max_hops)
 
     def annotate_findings_with_graph_context(
-        self, findings: list[dict], max_hops: int = 2, max_annotations: int = 50
-    ) -> list[dict]:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.annotate_findings_with_graph_context()."""
-        return self._graph_store().annotate_findings_with_graph_context(
+        self, findings: list[Any], max_hops: int = 2, max_annotations: int = 50
+    ) -> list[Any]:
+        """Enrich findings with graph-derived context (aliases, relationships)."""
+        return self._ensure_graph_attachment().annotate_findings_with_graph_context(
             findings, max_hops=max_hops, max_annotations=max_annotations
         )
 
     def get_analytics_graph_for_synthesis(self) -> Any:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_analytics_graph_for_synthesis()."""
-        return self._graph_store().get_analytics_graph_for_synthesis()
+        """Return analytics graph for synthesis layer."""
+        return self._ensure_graph_attachment().get_analytics_graph_for_synthesis()
 
     def get_top_entities_for_ghost_global(self, n: int = 100) -> list[tuple[str, str, float]]:
-        """DEPRECATED (Sprint F222): Delegates to GraphAttachmentStore.get_top_entities_for_ghost_global()."""
-        return self._graph_store().get_top_entities_for_ghost_global(n=n)
+        """Return top N entities for ghost global identity resolution."""
+        return self._ensure_graph_attachment().get_top_entities_for_ghost_global(n=n)
 
     async def get_top_findings(self, limit: int = 10) -> list[dict]:
         """
@@ -2227,7 +2245,7 @@ class DuckDBShadowStore:
             3. Collect all observations → batch buffer_observation calls
             4. O(n) per-finding extraction → O(1) batched graph writes
         """
-        truth_graph = self._graph_store().get_truth_write_graph()
+        truth_graph = self._ensure_graph_attachment().get_truth_write_graph()
         if truth_graph is None:
             return
 
@@ -2673,7 +2691,7 @@ class DuckDBShadowStore:
         - Arrow->dict conversion helpers are shared
         """
 
-        _SQL_INSERT_SHADOW_FINDING = "INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING"
+        _SQL_INSERT_SHADOW_FINDING = "INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json, claims_json) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING"
         _SQL_INSERT_SHADOW_RUN = (
             "INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) VALUES (?, ?, ?, ?, ?)"
         )
@@ -2810,7 +2828,7 @@ class DuckDBShadowStore:
             conn = self._conn()
             if conn is None:
                 return False
-            params = [finding_id, query, source_type, confidence, ts, provenance_json]
+            params = [finding_id, query, source_type, confidence, ts, provenance_json, None]
             try:
                 stmt = self._get_insert_stmt(conn)
 
@@ -2829,14 +2847,23 @@ class DuckDBShadowStore:
             """
             Bulk insert shadow findings. Returns number of successfully inserted records.
             MUST be called on the worker thread.
+
+            F350M-R: Claims extraction — Rust batch_extract_claims_python enriches
+            findings with sentence-level claims (polarity, confidence) when
+            HLEDAC_ENABLE_CLAIMS_EXTRACTION=1 and findings have payload_text.
             """
             import logging as _logging
 
             _logger = _logging.getLogger(__name__)
             if not findings:
                 return 0
+
+            # F350M-R: Enrich findings with claims from Rust batch_extract_claims_python
+            if self._claims_enabled:
+                findings = self._enrich_findings_with_claims(findings)
+
             rows = [
-                [r["id"], r["query"], r["source_type"], r["confidence"], r.get("ts"), r.get("provenance_json")]
+                [r["id"], r["query"], r["source_type"], r["confidence"], r.get("ts"), r.get("provenance_json"), r.get("claims_json")]
                 for r in findings
             ]
             conn = self._conn()
@@ -2856,6 +2883,135 @@ class DuckDBShadowStore:
             except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
                 _logger.error(f"[D7] DuckDB bulk insert failed: {type(e).__name__}: {e}")
                 return 0
+
+        def _enrich_canonical_findings_for_arrow(self, findings: list[CanonicalFinding]) -> list[dict[str, Any]]:
+            """
+            F350M-R: Enrich CanonicalFinding list with claims for Arrow path.
+
+            Converts CanonicalFinding objects to dicts, extracts payload_text,
+            calls Rust batch_extract_claims_python, and returns enriched dicts
+            with claims_json field populated.
+
+            Thread-safe: MUST be called on the worker thread (called from
+            _sync_record_canonical_findings_batch_arrow before Arrow building).
+            Lazy import: claims_extraction module loaded only when _claims_enabled is True.
+
+            Returns list of dicts (same order as input) with claims_json added.
+            """
+            import logging as _logging
+
+            _logger = _logging.getLogger(__name__)
+
+            # Convert CanonicalFinding to dict and collect texts
+            findings_dicts = []
+            texts_data = []
+            for i, f in enumerate(findings):
+                d = {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance_json": _provenance_to_arrow_native(f.provenance),
+                    "claims_json": None,
+                    "_idx": i,
+                }
+                findings_dicts.append(d)
+                payload = f.payload_text or ""
+                if payload:
+                    texts_data.append((i, payload, "", f.query, f.source_type, "finding"))
+
+            if not texts_data:
+                # No texts to process — return dicts with null claims_json
+                return findings_dicts
+
+            indices = [item[0] for item in texts_data]
+            texts = [item[1] for item in texts_data]
+            titles = [item[2] for item in texts_data]
+            summaries = [item[3] for item in texts_data]
+            source_types = [item[4] for item in texts_data]
+            evidence_types = [item[5] for item in texts_data]
+
+            try:
+                # Lazy import — claims_extraction loaded only when needed
+                from hledac_rust_extensions import batch_extract_claims_python
+
+                # PyO3 zero-copy: single GIL acquisition for entire batch
+                claims_result: list[tuple[str, str, float, str, str]] = batch_extract_claims_python(
+                    texts, titles, summaries, source_types, evidence_types
+                )
+
+                # Map claims back to findings by index
+                import orjson
+
+                for i, finding_idx in enumerate(indices):
+                    if i < len(claims_result):
+                        claim = claims_result[i]
+                        claims_json = orjson.dumps([{
+                            "text": claim[0],
+                            "polarity": claim[1],
+                            "confidence": claim[2],
+                            "source": claim[3],
+                            "evidence_type": claim[4],
+                        }])
+                        findings_dicts[finding_idx]["claims_json"] = claims_json
+            except Exception as e:  # noqa: BLE001 — fail-soft: claims extraction is best-effort
+                _logger.debug(f"[F350M-R Arrow] Claims extraction failed: {type(e).__name__}: {e}")
+
+            return findings_dicts
+
+        def _enrich_findings_with_claims(self, findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            """
+            F350M-R: Enrich findings with claims extracted via Rust batch_extract_claims_python.
+
+            Calls Rust batch_extract_claims_python with (text, title, summary, source_type, evidence_type)
+            for each finding that has payload_text. Results are stored as claims_json.
+
+            Bounded: rayon parallel path activates only for batch >= adaptive_threshold
+            or total_bytes >= 16KB (per claims_extraction.rs design).
+
+            Thread-safe: MUST be called on the worker thread (called from insert_findings_bulk).
+            Lazy import: claims_extraction module loaded only when _claims_enabled is True.
+            """
+            import logging as _logging
+
+            _logger = _logging.getLogger(__name__)
+
+            # Filter findings that have text to process
+            texts_data = [(i, r.get("payload_text") or r.get("text", ""), r.get("title", ""), r.get("query", ""), r.get("source_type", "PUBLIC"), "finding") for i, r in enumerate(findings) if r.get("payload_text") or r.get("text")]
+
+            if not texts_data:
+                return findings
+
+            indices = [item[0] for item in texts_data]
+            texts = [item[1] for item in texts_data]
+            titles = [item[2] for item in texts_data]
+            summaries = [item[3] for item in texts_data]
+            source_types = [item[4] for item in texts_data]
+            evidence_types = [item[5] for item in texts_data]
+
+            try:
+                # Lazy import — claims_extraction loaded only when needed
+                from hledac_rust_extensions import batch_extract_claims_python
+
+                # PyO3 zero-copy: single GIL acquisition for entire batch
+                claims_result: list[tuple[str, str, float, str, str]] = batch_extract_claims_python(
+                    texts, titles, summaries, source_types, evidence_types
+                )
+
+                # Map claims back to findings by index
+                # claims_result is flat list of (text, polarity, confidence, source, evidence_type)
+                import orjson
+
+                for i, finding_idx in enumerate(indices):
+                    if i < len(claims_result):
+                        claim = claims_result[i]
+                        claims_json = orjson.dumps([{"text": claim[0], "polarity": claim[1], "confidence": claim[2], "source": claim[3], "evidence_type": claim[4]}])
+                        findings[finding_idx]["claims_json"] = claims_json
+            except Exception as e:  # noqa: BLE001 — fail-soft: claims extraction is best-effort
+                _logger.debug(f"[F350M-R] Claims extraction failed: {type(e).__name__}: {e}")
+
+            return findings
 
         @contextmanager
         def _wal_delete_mode(self):
@@ -2960,11 +3116,14 @@ class DuckDBShadowStore:
                         # B1-FIX: MERGE replaces 2× INSERT round-trips with 1.
                         # Handles both PK (id) and UK (query, source_type) conflicts.
                         # DuckDB supports MERGE since v0.10.0; this codebase requires v1.0+ (F275).
+                        # F350M-R: claims_json added to MERGE — matches _SQL_INSERT_SHADOW_FINDING 7-column schema.
+                        # Arrow batch path provides claims_json=null for pre-enrichment batches;
+                        # bulk path (_enrich_findings_with_claims) populates it before insert.
                         conn.execute(
                             f"MERGE INTO canonical_findings AS target USING {reg_name} AS source\n"
                             f"ON target.id = source.id\n"
-                            f"WHEN NOT MATCHED THEN INSERT (id, query, source_type, confidence, ts, provenance_json)\n"
-                            f"VALUES (source.id, source.query, source.source_type, source.confidence, source.ts, source.provenance_json)"
+                            f"WHEN NOT MATCHED THEN INSERT (id, query, source_type, confidence, ts, provenance_json, claims_json)\n"
+                            f"VALUES (source.id, source.query, source.source_type, source.confidence, source.ts, source.provenance_json, source.claims_json)"
                         )
                     finally:
                         try:
@@ -3677,9 +3836,11 @@ class DuckDBShadowStore:
         Extracts and awaits all async close() calls that _do_sync_close skips
         when emergency=True.
         """
-        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") else None
+        gs = self._graph_attachment if self._graph_attachment is not None else None
         if gs is not None:
-            truth_graph = getattr(gs, "_truth_write_graph", None)
+            # F360: DuckDBGraphAttachment wraps GraphAttachmentStore._store
+            store = getattr(gs, "_store", None) or gs
+            truth_graph = getattr(store, "_truth_write_graph", None)
             if truth_graph is not None:
                 try:
                     if callable(getattr(truth_graph, "close", None)):
@@ -3688,7 +3849,7 @@ class DuckDBShadowStore:
                             await result
                 except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
                     pass
-            ioc_graph = getattr(gs, "_ioc_graph", None)
+            ioc_graph = getattr(store, "_ioc_graph", None)
             if ioc_graph is not None:
                 try:
                     if callable(getattr(ioc_graph, "close", None)):
@@ -3697,7 +3858,7 @@ class DuckDBShadowStore:
                             await result
                 except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                     pass
-            stix_graph = getattr(gs, "_stix_graph", None)
+            stix_graph = getattr(store, "_stix_graph", None)
             if stix_graph is not None:
                 try:
                     if callable(getattr(stix_graph, "close", None)):
@@ -3748,7 +3909,7 @@ class DuckDBShadowStore:
             f.result(timeout=5)
         except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
             pass
-        gs = self._graph_store() if hasattr(self, "_DuckDBShadowStore__graph_store") else None
+        gs = self._graph_attachment if self._graph_attachment is not None else None
         if gs is not None:
             truth_graph = getattr(gs, "_truth_write_graph", None)
             if truth_graph is not None:
@@ -3908,8 +4069,8 @@ class DuckDBShadowStore:
                     str(_wal_root / "sprint_unified.lmdb"),
                     lazy=True,
                 )
-                self._wal_manager = WALManager(
-                    wal_path=str(_wal_root / "shadow_wal.lmdb"),
+                self._wal_manager = DuckDBWALManager(
+                    wal_root=_wal_root,
                     unified_store=_unified_lmdb,  # F272: shared mmap for WAL namespace
                 )
                 self._wal_manager.initialize()
@@ -5071,7 +5232,7 @@ class DuckDBShadowStore:
         """Sprint 8UC B.2: Zapsat sprint epizodu pro budoucí recall."""
         import time as _t
 
-        def _sync():
+        def _sync() -> None:
             conn = self._persistent_conn
             if conn is None:
                 return
@@ -5943,7 +6104,7 @@ class DuckDBShadowStore:
                 if _wal_root is None:
                     result["error"] = "no wal root"
                     return result
-                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
                 self._wal_manager.initialize()
             key = f"finding:{finding.finding_id}"
             wal_payload = {
@@ -6020,7 +6181,7 @@ class DuckDBShadowStore:
                     for f in findings:
                         ret.append({"lmdb_success": False, "duckdb_success": None, "error": "no wal root"})
                     return ret
-                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
                 self._wal_manager.initialize()
             # B2-FIX: pre-allocate items list — avoids O(n) list reallocation.
             n = len(findings)
@@ -6867,22 +7028,15 @@ class DuckDBShadowStore:
 
             # If Rust already rejected, respect that decision (no stateful checks needed)
             if not rust_accepted:
-                self._record_quality_rejection(f, FindingQualityDecision(
+                _decision = FindingQualityDecision(
                     accepted=False,
                     reason=rd.get("reason", "rejected"),
-                    rejection_reason=rd.get("rejection_reason"),
-                    entropy=entropy,
-                    normalized_hash=fp,
-                    duplicate=rd.get("duplicate", False),
-                ))
-                results[idx] = FindingQualityDecision(
-                    accepted=False,
-                    reason=rd.get("reason", "rejected"),
-                    rejection_reason=rd.get("rejection_reason"),
                     entropy=entropy,
                     normalized_hash=fp,
                     duplicate=rd.get("duplicate", False),
                 )
+                self._record_quality_rejection(f, _decision)
+                results[idx] = _decision
                 continue
 
             # --- Stateful checks start here ---
@@ -7565,14 +7719,14 @@ class DuckDBShadowStore:
                             decision = FindingQualityDecision(
                                 accepted=False,
                                 reason="batch_incomplete",
-                                rejection_reason="quality_gate_batch_incomplete",
-                                confidence=0.0,
-                                source_quality=0.0,
+                                entropy=0.0,
+                                normalized_hash=None,
+                                duplicate=False,
                             )
                         else:
                             decision = decisions[i_offset]
                     else:
-                        decision = self._assess_finding_quality(f)
+                        decision = self._quality_gate._assess_finding_quality(f)
                 except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                     fail_open_chunk_findings.append(f)
                     fail_open_chunk_indices.append(i)
@@ -7663,7 +7817,7 @@ class DuckDBShadowStore:
                     results[idx] = sr
                     if getattr(sr, "accepted", False):
                         all_accepted_findings.append(findings[idx])
-        truth_graph = self._graph_store().get_truth_write_graph() if all_accepted_findings else None
+        truth_graph = self._ensure_graph_attachment().get_truth_write_graph() if all_accepted_findings else None
         if truth_graph is not None:
             if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
                 try:
@@ -7915,10 +8069,20 @@ class DuckDBShadowStore:
 
         import pyarrow as _pa
 
+        # F350M-R: Enrich findings with claims before Arrow build.
+        # Claims extraction is best-effort; if enrichment fails we continue with null claims_json.
+        # After enrichment, findings_dicts is list[dict] with claims_json field.
+        findings_dicts = None
+        if self._claims_enabled:
+            findings_dicts = self._enrich_canonical_findings_for_arrow(findings)
+            if findings_dicts and any(d.get("claims_json") for d in findings_dicts):
+                _logger.debug(f"[F350M-R Arrow] Claims enriched for {sum(1 for d in findings_dicts if d.get('claims_json'))}/{len(findings_dicts)} findings")
+
         # P4-7: Try zero-copy column-path first (build_record_batch_from_structs).
         # This avoids the dict roundtrip of build_arrow_batch_from_findings by
         # accepting 6 pre-separated PyList columns and building IPC bytes in Rust.
-        if _RUST_RECORD_BATCH_COLS_AVAILABLE and _rust_record_batch_cols_func is not None:
+        # Skip Rust path if enrichment produced claims_json (Rust path doesn't support it).
+        if (findings_dicts is None or not any(d.get("claims_json") for d in findings_dicts)) and _RUST_RECORD_BATCH_COLS_AVAILABLE and _rust_record_batch_cols_func is not None:
             try:
                 # Extract columns as Python lists — passed by reference to Rust,
                 # which iterates them via PyO3 Bound API (zero GIL overhead per item).
@@ -7953,19 +8117,24 @@ class DuckDBShadowStore:
 
         # P4-7: Fallback A — dict-path (original build_arrow_batch_from_findings).
         # Retained for back-compat and as a safe fallback if column lengths mismatch.
+        # F350M-R: If enrichment already produced findings_dicts with claims_json, reuse it.
+        # Otherwise build fresh dicts with null claims_json (for non-enriched path).
         if _RUST_ARROW_AVAILABLE and _rust_arrow_func is not None:
             try:
-                findings_dicts = [
-                    {
-                        "id": f.finding_id,
-                        "query": f.query,
-                        "source_type": f.source_type,
-                        "confidence": f.confidence,
-                        "ts": f.ts,
-                        "provenance_json": _provenance_to_arrow_native(f.provenance),
-                    }
-                    for f in findings
-                ]
+                if findings_dicts is None:
+                    # No enrichment was done — build plain dicts with null claims_json
+                    findings_dicts = [
+                        {
+                            "id": f.finding_id,
+                            "query": f.query,
+                            "source_type": f.source_type,
+                            "confidence": f.confidence,
+                            "ts": f.ts,
+                            "provenance_json": _provenance_to_arrow_native(f.provenance),
+                            "claims_json": None,
+                        }
+                        for f in findings
+                    ]
                 ipc_bytes = _rust_arrow_func(findings_dicts)
                 if ipc_bytes and len(ipc_bytes) > 8:
                     reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
@@ -7987,18 +8156,33 @@ class DuckDBShadowStore:
         # because RecordBatch is a non-chunked, flat column container.
         # We still use list comprehensions here (N× allocations) but DuckDB
         # receives a RecordBatch which is the preferred Arrow载体.
+        # F350M-R: claims_json column added (nullable) to match 7-column MERGE schema.
+        # F350M-R: If enrichment produced findings_dicts, use it to extract claims_json.
+        # Otherwise build from CanonicalFinding objects (null claims for all).
         try:
-            provenance_arr = _pa.array([_provenance_to_arrow_native(f.provenance) for f in findings], type=_pa.string())
-            id_arr = _pa.array([f.finding_id for f in findings], type=_pa.string())
-            query_arr = _pa.array([f.query for f in findings], type=_pa.string())
-            src_arr = _pa.array([f.source_type for f in findings], type=_pa.string())
-            conf_arr = _pa.array([f.confidence for f in findings], type=_pa.float64())
-            ts_arr = _pa.array([f.ts for f in findings], type=_pa.float64())
+            if findings_dicts is not None:
+                # Use enriched dicts — claims_json already populated where applicable
+                provenance_arr = _pa.array([d["provenance_json"] for d in findings_dicts], type=_pa.string())
+                id_arr = _pa.array([d["id"] for d in findings_dicts], type=_pa.string())
+                query_arr = _pa.array([d["query"] for d in findings_dicts], type=_pa.string())
+                src_arr = _pa.array([d["source_type"] for d in findings_dicts], type=_pa.string())
+                conf_arr = _pa.array([d["confidence"] for d in findings_dicts], type=_pa.float64())
+                ts_arr = _pa.array([d["ts"] for d in findings_dicts], type=_pa.float64())
+                claims_arr = _pa.array([d.get("claims_json") for d in findings_dicts], type=_pa.string())
+            else:
+                # No enrichment — build from CanonicalFinding objects (null claims for all)
+                provenance_arr = _pa.array([_provenance_to_arrow_native(f.provenance) for f in findings], type=_pa.string())
+                id_arr = _pa.array([f.finding_id for f in findings], type=_pa.string())
+                query_arr = _pa.array([f.query for f in findings], type=_pa.string())
+                src_arr = _pa.array([f.source_type for f in findings], type=_pa.string())
+                conf_arr = _pa.array([f.confidence for f in findings], type=_pa.float64())
+                ts_arr = _pa.array([f.ts for f in findings], type=_pa.float64())
+                claims_arr = _pa.array([None] * len(findings), type=_pa.string())
             # P4-7: RecordBatch instead of Table — DuckDB bulk insert prefers
             # non-chunked RecordBatch (single IPC record batch = oneArrow payload)
             record_batch = _pa.RecordBatch.from_arrays(
-                [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr],
-                names=["id", "query", "source_type", "confidence", "ts", "provenance_json"],
+                [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr, claims_arr],
+                names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "claims_json"],
             )
         except Exception as e:  # noqa: BLE001 — best-effort; DB query failure; non-critical
             import logging as _logging
@@ -8028,7 +8212,7 @@ class DuckDBShadowStore:
                 if _wal_root is None:
                     _logger.warning("[P1-2 WAL] no wal_root")
                     return False
-                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
                 self._wal_manager.initialize()
             # B2-FIX: pre-allocate items list — avoids O(n) list reallocation
             # on each append() call when findings grows past CPython's 4× over-allocation.
@@ -8103,7 +8287,7 @@ class DuckDBShadowStore:
                     for i in range(n):
                         ret[i] = {"lmdb_success": False, "duckdb_success": None, "error": "no wal root"}
                     return ret
-                self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+                self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
                 self._wal_manager.initialize()
             # B2-FIX: pre-allocate items list — avoids O(n) list reallocation.
             items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
@@ -8737,7 +8921,7 @@ class DuckDBShadowStore:
             _wal_root = self._db_path.parent if self._db_path else None
             if _wal_root is None:
                 return False
-            self._wal_manager = WALManager(wal_path=str(_wal_root / "shadow_wal.lmdb"))
+            self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
             self._wal_manager.initialize()
         return self._wal_manager.wal_write_finding(
             finding_id=finding_id, query=query, source_type=source_type, confidence=confidence
@@ -9452,7 +9636,7 @@ class DuckDBShadowStore:
         try:
             def _sync_graph_update() -> None:
                 try:
-                    truth_graph = self._graph_store().get_truth_write_graph()
+                    truth_graph = self._ensure_graph_attachment().get_truth_write_graph()
                     if truth_graph is None:
                         return
                     rows = []

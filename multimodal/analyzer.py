@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
 if TYPE_CHECKING:
     from knowledge.duckdb_store import CanonicalFinding
@@ -427,10 +427,14 @@ class MultimodalEnricher:
                 except Exception as exc:
                     log.debug('Batch multimodal enrichment failed for %s: %s', finding_id, exc)
                     return (finding_id, None)
-        tasks = [enrich_one(f) for f in findings]
-        results = await safe_gather_ok(*tasks, label='analyzer:522')
+        # E2-FIX: parallel(taskgroup=True) replaces safe_gather_ok — bounded concurrency
+        results = await parallel(
+            [enrich_one(f) for f in findings],
+            taskgroup=True, policy="collect", concurrency=8,
+            ctx="multimodal_enrichment_batch",
+        )
         out = {}
-        for item in results:
+        for item in results.ok:
             if isinstance(item, Exception):
                 continue
             fid, enrich_data = item

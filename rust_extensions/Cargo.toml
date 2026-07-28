@@ -9,9 +9,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-# P1-FIX: pyo3 locked to 0.24.x — codebase written for 0.24 API
-# 0.29+ has breaking changes: Python::with_gil, into_py, etc.
-# P1-KEEP: pyo3 0.29 — gil.rs and ring_buffer.rs written for 0.29 API
+# R6: PyO3 0.29 — Python::attach + py.detach API (abi3-py312).
+# CI ban: with_gil / allow_threads removed from all code (only comments remain).
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py312"] }
 rayon = "1.10"
 regex = "1.11"
@@ -36,7 +35,11 @@ lz4_flex = "0.10"
 libc = "0.2"
 serde_json = "1"
 crossbeam-channel = "0.5"
-duckdb = { version = "1", optional = true }
+# R4 FIX: Use bundled DuckDB C++ source (v1.105) statically linked into the extension.
+# Eliminates: /opt/homebrew/lib/libduckdb.dylib runtime dependency, no Homebrew version
+# mismatch, no CI otool -L check failures for /opt/homebrew in release artifacts.
+# Python duckdb wheel (>=1.5.4) remains single authority for DuckDB SQL operations.
+duckdb = { version = "1.105", features = ["bundled"], optional = true }
 ipnetwork = "0.20"
 
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout

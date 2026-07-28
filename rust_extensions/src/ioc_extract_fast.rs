@@ -342,7 +342,7 @@ pub fn extract_structured_entities(text: &str) -> Vec<(usize, usize, String, Str
 /// Batch extract structured entities with rayon parallelization.
 ///
 /// M1 8GB: adaptive 1-2 threads, 1000 text batch limit.
-/// GIL is released via allow_threads so rayon workers don't block other coroutines.
+/// GIL is released via py.detach() so rayon workers don't block other coroutines.
 pub fn batch_extract_structured_entities(
     texts: Vec<String>,
 ) -> Vec<Vec<(usize, usize, String, String)>> {

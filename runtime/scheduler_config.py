@@ -89,7 +89,7 @@ class SprintSchedulerConfig(msgspec.Struct, gc=False):
         F285: Explicit windup_lead_s (non-default 180.0) passes through directly.
         F273B + F288: Aggressive mode → 15% ratio.
         """
-        if self.windup_lead_s != 180.0:
+        if self.windup_lead_s is not None and self.windup_lead_s != 180.0:
             return float(max(30.0, min(180.0, float(self.windup_lead_s))))
         if self.aggressive_mode:
             ratio = 0.15

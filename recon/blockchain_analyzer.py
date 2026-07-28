@@ -57,6 +57,7 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 import httpx
+from hledac.universal.utils.async_helpers import parallel
 logger = logging.getLogger(__name__)
 MAX_CACHE_SIZE = 1000
 try:
@@ -500,10 +501,19 @@ class BlockchainForensics:
         transactions = []
         if 'data' in data and address in data['data']:
             tx_data = data['data'][address].get('transactions', [])
-            for tx_hash in tx_data[:100]:
-                tx_detail = await self._fetch_bitcoin_transaction_detail(tx_hash)
-                if tx_detail:
-                    transactions.append(tx_detail)
+            if tx_data:
+                # ISSUE-XXX: parallel tx detail fetches — up to 100 tx hashes fetched concurrently.
+                # Prior: sequential for-loop (100 × ~100ms = 10s). New: bounded parallel at concurrency=8.
+                _TX_SEM = asyncio.Semaphore(8)
+
+                async def _fetch_one(tx_hash: str) -> dict[str, Any] | None:
+                    async with _TX_SEM:
+                        return await self._fetch_bitcoin_transaction_detail(tx_hash)
+
+                results = await parallel([_fetch_one(tx) for tx in tx_data[:100]], policy="collect", ctx="blockchain:tx_detail")
+                for tx_detail in results:
+                    if tx_detail:
+                        transactions.append(tx_detail)
         return transactions
 
     async def _fetch_bitcoin_transaction_detail(self, tx_hash: str) -> dict[str, Any] | None:
@@ -653,9 +663,19 @@ class BlockchainForensics:
         if len(addresses) < 2:
             return clusters
         address_txs: dict[str, list[Transaction]] = {}
-        for addr in addresses:
-            txs = await self.trace_transactions(addr, chain, depth=1, max_transactions=50)
-            address_txs[addr] = txs
+        if len(addresses) >= 2:
+            # ISSUE-XXX: parallel address clustering — trace multiple addresses concurrently.
+            # Prior: sequential for-loop (N × API latency). New: bounded parallel at concurrency=4.
+            _CLUSTER_SEM = asyncio.Semaphore(4)
+
+            async def _trace_one(addr: str) -> tuple[str, list[Transaction]]:
+                async with _CLUSTER_SEM:
+                    txs = await self.trace_transactions(addr, chain, depth=1, max_transactions=50)
+                return (addr, txs)
+
+            traced = await parallel([_trace_one(addr) for addr in addresses], policy="collect", ctx="blockchain:cluster_trace")
+            for addr, txs in traced:
+                address_txs[addr] = txs
         common_input_clusters = self._cluster_by_common_input(addresses, address_txs)
         clusters.extend(common_input_clusters)
         temporal_clusters = self._cluster_by_temporal_correlation(addresses, address_txs)

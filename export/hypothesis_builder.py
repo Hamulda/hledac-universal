@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC
 from typing import Any
 logger = logging.getLogger(__name__)
-HYPOTHESIS_ENABLED = os.environ.get('HLEDAC_ENABLE_HYPOTHESIS', '1') == '1'
+from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 RAM_THRESHOLD = 0.7
 
 class HypothesisResult(msgspec.Struct):
@@ -90,8 +90,8 @@ class HypothesisBuilder:
             HypothesisResult with execution metrics
         """
         start_time = time.time()
-        if not HYPOTHESIS_ENABLED:
-            return HypothesisResult(enabled=False, hypotheses_generated=0, entities_extracted=0, temporal_sequences=0, anomalies_detected=0, execution_time_s=time.time() - start_time, error='Hypothesis generation disabled (HLEDAC_ENABLE_HYPOTHESIS!=1)')
+        if not LANE_REGISTRY.is_enabled("hypothesis"):
+            return HypothesisResult(enabled=False, hypotheses_generated=0, entities_extracted=0, temporal_sequences=0, anomalies_detected=0, execution_time_s=time.time() - start_time, error='Hypothesis generation disabled (hypothesis lane not enabled)')
         if not self._check_ram():
             return HypothesisResult(enabled=True, hypotheses_generated=0, entities_extracted=0, temporal_sequences=0, anomalies_detected=0, execution_time_s=time.time() - start_time, error='RAM usage above threshold (70%), skipping')
         try:
@@ -157,4 +157,4 @@ async def run_hypothesis_if_enabled(findings: list[Any], sprint_id: str='', outp
     """
     builder = HypothesisBuilder(output_dir=output_dir)
     return await builder.run_hypothesis_generation(findings, sprint_id, output_dir)
-__all__ = ['HypothesisBuilder', 'HypothesisResult', 'run_hypothesis_if_enabled', 'HYPOTHESIS_ENABLED', 'RAM_THRESHOLD']
+__all__ = ['HypothesisBuilder', 'HypothesisResult', 'run_hypothesis_if_enabled', 'RAM_THRESHOLD']

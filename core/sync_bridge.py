@@ -104,7 +104,8 @@ async def stream_via_queue(
     try:
         while True:
             try:
-                item = await asyncio.wait_for(q.get(), timeout=_DRAIN_TIMEOUT_S)
+                async with asyncio.timeout(_DRAIN_TIMEOUT_S):
+                    item = await q.get()
             except asyncio.TimeoutError:
                 if done_event.is_set() and q.empty():
                     break

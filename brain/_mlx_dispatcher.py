@@ -46,6 +46,7 @@ from msgspec import field
 from pathlib import Path
 from typing import Any
 import numpy as np
+from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
 logger = logging.getLogger(__name__)
 PRIORITY_HIGH: int = 1
 PRIORITY_LOW: int = 10
@@ -132,13 +133,14 @@ class AsyncEmbeddingBatcher:
             return np.zeros((768,), dtype=np.float32)
         if self._stopping or not self._started:
             return await self._direct_encode(text)
+        request = _EmbeddingRequest(priority, text)
         try:
-            request = _EmbeddingRequest(priority, text)
-            await asyncio.wait_for(self._queue.put(request), timeout=5.0)
-        except asyncio.TimeoutError:
+            async with asyncio.timeout(5.0):
+                await self._queue.put(request)
+        except TimeoutError:
             logger.warning('[AsyncBatcher] Queue full, falling back to direct encode')
             return await self._direct_encode(text)
-        return await asyncio.wait_for(request.future, timeout=60.0)
+        return await safe_wait_for(request.future, timeout=60.0)
 
     async def _direct_encode(self, text: str) -> np.ndarray:
         """Direct encode bez fronty — fallback pro edge cases."""
@@ -167,17 +169,19 @@ class AsyncEmbeddingBatcher:
             batch: list[tuple[_EmbeddingRequest, int]] = []
             deadline = asyncio.get_event_loop().time() + self._max_wait_s
             try:
-                first = await asyncio.wait_for(self._queue.get(), timeout=self._max_wait_s * 2)
-                batch.append((first, 0))
-            except asyncio.TimeoutError:
+                async with asyncio.timeout(self._max_wait_s * 2):
+                    first = await self._queue.get()
+                    batch.append((first, 0))
+            except TimeoutError:
                 continue
             while len(batch) < self._batch_size:
                 remaining = deadline - asyncio.get_event_loop().time()
                 timeout = max(0.001, remaining)
                 try:
-                    request = await asyncio.wait_for(self._queue.get(), timeout=timeout)
-                    batch.append((request, len(batch)))
-                except asyncio.TimeoutError:
+                    async with asyncio.timeout(timeout):
+                        request = await self._queue.get()
+                        batch.append((request, len(batch)))
+                except TimeoutError:
                     break
             if batch:
                 await self._process_batch(batch)
@@ -666,7 +670,8 @@ class MLXDispatcher:
         if not batcher._started:
             await batcher.start()
         futures = [batcher.embed(text) for text in texts]
-        results = await asyncio.gather(*futures, return_exceptions=True)
+        # F3XX: parallel_ok() replaces asyncio.gather — preserves original order.
+        results = await parallel_ok(*futures, label="embed_batch")
         dim = self._ctx().embed_dim or 768
         embeddings: list[np.ndarray] = []
         for i, result in enumerate(results):

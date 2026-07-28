@@ -24,6 +24,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable
+from hledac.universal.utils.async_helpers import safe_wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -242,7 +243,7 @@ class BatchProcessor:
         processed = 0
         for item in items:
             try:
-                await asyncio.wait_for(
+                await safe_wait_for(
                     self._process_single(item),
                     timeout=item.timeout,
                 )
@@ -274,7 +275,7 @@ class BatchProcessor:
 
                 for item in items:
                     try:
-                        result = await asyncio.wait_for(
+                        result = await safe_wait_for(
                             self._process_single(item),
                             timeout=item.timeout,
                         )
@@ -332,7 +333,7 @@ class BatchProcessor:
         if self._worker_task:
             self._worker_task.cancel()
             try:
-                await asyncio.wait_for(self._worker_task, timeout=timeout)
+                await safe_wait_for(self._worker_task, timeout=timeout)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 

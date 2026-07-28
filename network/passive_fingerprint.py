@@ -1,20 +1,21 @@
 """
-Re-export from recon.network.passive_fingerprint — canonical implementation.
+Re-export from recon.passive_fingerprint — canonical passive fingerprinting.
 
-Migration (F350M-R):
-  - network/passive_fingerprint.py was a near-duplicate (99.9% similar)
-  - recon/network/passive_fingerprint.py is the canonical source
-  - This file is kept for backward compatibility with code that
-    imports from network.passive_fingerprint
-
-All production code should import from recon.network.passive_fingerprint directly.
+K2 (F350M-R): network/ is infrastructure facade.
+Canonical passive fingerprinting is recon.passive_fingerprint.
 """
-from hledac.universal.recon.network.passive_fingerprint import (  # noqa: F401, E402
-    PassiveFingerprint,
+from hledac.universal.recon.passive_fingerprint import (  # noqa: F401, E402
     PassiveFingerprintAdapter,
+    PassiveTechStackAdapter,
+    ServiceFingerprint,
+    FingerprintResult,
+    TechStack,
 )
 
 __all__ = [
-    "PassiveFingerprint",
     "PassiveFingerprintAdapter",
+    "PassiveTechStackAdapter",
+    "ServiceFingerprint",
+    "FingerprintResult",
+    "TechStack",
 ]

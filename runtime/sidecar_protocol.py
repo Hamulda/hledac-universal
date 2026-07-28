@@ -1,5 +1,5 @@
 """
-from __future__ import annotations
+from __future__ annotations
 runtime/sidecar_protocol.py — F350M-R: Protocol-Based Sidecar Registry
 ======================================================================
 
@@ -9,21 +9,21 @@ Replaces hardcoded DEFAULT_SIDECAR_RUNNERS list with dynamic discovery.
 Usage:
   1. Implement SidecarAdapterProtocol
   2. Add @SidecarRegistry.register("my_sidecar")
-  3. Set env_gate and ram_budget_mb
+  3. Set lane_id and ram_budget_mb
 
 GHOST_INVARIANTS:
 - Fail-safe: all methods wrapped in try/except
 - Bounded: ram_budget_mb is always checked before run
 - No blocking ops in async context
+- Lane enablement via LaneRegistry (replaces env_gate strings)
 """
-from __future__ import annotations
-
 
 import logging
-import os
 from typing import Any, Protocol, runtime_checkable
 
 import msgspec
+
+from runtime.lane_registry import LANE_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class SidecarAdapterProtocol(Protocol):
         @SidecarRegistry.register("my_sidecar")
         class MySidecarAdapter:
             sidecar_id: str = "my_sidecar"
-            env_gate: str = "HLEDAC_ENABLE_MY_SIDECAR"
+            lane_id: str = "HLEDAC_ENABLE_MY_SIDECAR"
             ram_budget_mb: int = 50
             priority: int = 5  # 1-10, higher = runs first
 
@@ -126,13 +126,13 @@ class SidecarAdapterProtocol(Protocol):
 
     Attributes:
         sidecar_id: Unique identifier (must match @register argument)
-        env_gate: Environment variable that gates availability
+        lane_id: Lane ID for enablement check via LaneRegistry (maps to HLEDAC_ENABLE_X)
         ram_budget_mb: Maximum RAM this sidecar may use
         priority: Execution priority (1-10), higher runs first
     """
 
     sidecar_id: str
-    env_gate: str
+    lane_id: str
     ram_budget_mb: int
     priority: int
 
@@ -171,15 +171,12 @@ class SidecarRegistry:
         @SidecarRegistry.register("fediverse")
         class FediverseSidecarAdapter:
             sidecar_id: str = "fediverse"
-            env_gate: str = "HLEDAC_ENABLE_FEDIVERSE"
+            lane_id: str = "fediverse"  # resolved via LaneRegistry
             ram_budget_mb: int = 50
             priority: int = 6
 
             async def run(self, ctx: SidecarContext) -> list[Any]:
                 ...
-
-            def is_available(self) -> bool:
-                return os.getenv(self.env_gate, "").lower() in ("1", "true", "yes", "on")
     """
 
     _registry: dict[str, type[SidecarAdapterProtocol]] = {}
@@ -329,9 +326,9 @@ class BaseSidecarAdapter:
     F314-3: Added __slots__ for M1 8GB RAM optimization.
 
     Subclasses should:
-    1. Set class attributes (sidecar_id, env_gate, ram_budget_mb, priority)
+    1. Set class attributes (sidecar_id, lane_id, ram_budget_mb, priority)
     2. Implement run_async() with the actual sidecar logic
-    3. Implement is_available() or inherit from _EnvGateMixin
+    3. Implement is_available() (inherits LaneRegistry check by default)
 
     The base class handles:
     - CanonicalFinding construction
@@ -344,15 +341,15 @@ class BaseSidecarAdapter:
     # F314-3: __slots__ removed — class variables via annotation conflict with __slots__
 
     sidecar_id: str = "base"
-    env_gate: str = ""
+    lane_id: str = "base"
     ram_budget_mb: int = 100
     priority: int = 5
 
     def is_available(self) -> bool:
-        """Default: check env gate only."""
-        if not self.env_gate:
+        """Check if this lane is enabled via LaneRegistry."""
+        if not self.lane_id:
             return True
-        return os.getenv(self.env_gate, "").lower() in ("1", "true", "yes", "on")
+        return LANE_REGISTRY.is_enabled(self.lane_id)
 
     async def run(self, ctx: SidecarContext) -> list[Any]:
         """

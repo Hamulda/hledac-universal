@@ -9,6 +9,8 @@ use std::sync::Arc;
 use xml::reader::{EventReader, XmlEvent};
 use xxhash_rust::xxh3::xxh3_64;
 
+use crate::gil::release_gil;
+
 /// Shared dedup state — parking_lot::Mutex for HashSet access.
 /// Using Mutex because UnfairLockGuard doesn't provide access to the protected data.
 struct SeenGuids {
@@ -263,8 +265,11 @@ pub fn feed_entry_pipeline(
     if entries.is_empty() { return Vec::new(); }
     // Release GIL during rayon parallel scan — rayon threads are pure Rust,
     // no Python callbacks. Allows concurrent HTTP I/O on other threads.
-    let results = _py.allow_threads(|| {
-        scan_entries_parallel(&entries, &patterns, &labels, &seen_guids, max_entries)
+    // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
+    let results = Python::attach(|py| {
+        release_gil(py, || {
+            scan_entries_parallel(&entries, &patterns, &labels, &seen_guids, max_entries)
+        })
     });
     results.into_iter().map(|r| {
         let combined_hits = r.combined_hits.into_iter().map(|h| (h.start, h.end, h.pattern, h.label, h.value)).collect();
@@ -287,25 +292,27 @@ pub fn feed_batch_pipeline(
     // Cross-feed dedup: single shared SeenGuids (OsUnfairLock + HashSet) passed to all feed scans.
     let seen_guids = Arc::new(SeenGuids::new());
     // Release GIL during rayon parallel feed processing.
-    // NESTED allow_threads is safe (PyO3 detects already-released GIL) but
-    // feed_entry_pipeline_xml no longer calls allow_threads internally.
+    // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
+    // feed_entry_pipeline_xml_impl no longer calls py.detach internally.
     // Pass &patterns / &labels (not clones) — String is Sync, sharing owned
     // Vec is unnecessary here since the closure doesn't consume patterns/labels.
-    _py.allow_threads(|| {
-        feeds.into_par_iter().map(|(xml, max_entries)| {
-            feed_entry_pipeline_xml_impl(
-                &xml,
-                max_entries,
-                &patterns,
-                &labels,
-                &automaton,
-                &seen_guids,
-            )
-        }).collect()
+    Python::attach(|py| {
+        release_gil(py, || {
+            feeds.into_par_iter().map(|(xml, max_entries)| {
+                feed_entry_pipeline_xml_impl(
+                    &xml,
+                    max_entries,
+                    &patterns,
+                    &labels,
+                    &automaton,
+                    &seen_guids,
+                )
+            }).collect()
+        })
     })
 }
 
-// Internal non-PyO3 version — called from feed_batch_pipeline within allow_threads scope.
+// Internal non-PyO3 version — called from feed_batch_pipeline within py.detach scope.
 // Shares automaton and seen_guids across all feeds for cross-feed dedup.
 fn feed_entry_pipeline_xml_impl(
     raw_xml: &str,

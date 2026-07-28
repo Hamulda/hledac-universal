@@ -92,6 +92,11 @@ from hledac.universal.runtime.acquisition_telemetry_reconcile import (
     complete_source_family_outcomes_from_prelude,
 )
 from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecycleManager
+# A2: Lazy import to avoid circular import with composition_root (which imports
+# _cancel_all_tasks from this module). build_runtime/run_runtime are resolved
+# inside _run_sprint_loop at call time.
+_build_runtime = None
+_run_runtime = None
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, parallel
 from hledac.universal.utils.config_introspection import safe_attr_get
 
@@ -1815,47 +1820,36 @@ async def run_sprint(
     # instead of via _run_sprint_loop which handles signals externally.
     _cancel_event: asyncio.Event = shutdown_event if shutdown_event is not None else asyncio.Event()
 
-    # M218A: GC tuning for M1 UMA stability — runs once per process
-    _gc_telemetry = _configure_gc_for_sprint()
+    # A2: GC tuning, malloc pressure relief, and pre-sprint checks are now
+    # handled in build_runtime() before run_sprint() is called.
+    # _cancel_event is the only signal-related setup needed here:
+    # build_runtime creates the event but run_sprint receives it as a parameter.
+    # NOTE: _gc_telemetry is no longer captured here (build_runtime handles it).
+    # NOTE: _pressure_relief_task and _gc_background_task are not started here
+    # (build_runtime uses the one-shot start_malloc_pressure_relief instead of loops).
 
-    # F266-U3: Start background malloc pressure-relief loop. M1 8GB UMA
-    # accumulates fragmentation between GCs; a 5-minute tick asks libmalloc
-    # (Darwin only) to release fragmented pages back to the kernel. On
-    # non-Darwin the function is a no-op. Idempotent — only one task per
-    # process. Returns None if no event loop is running.
-    _pressure_relief_task = _memory_cycle.start_pressure_relief_loop()
+    # A2-4: Early SprintSchedulerConfig for pre-flight F221 guard.
+    # Created here (before DuckDB init) so effective_windup_lead_s is available
+    # for the active-window budget check. Re-created with full params later.
+    # F500I: Lazy import — SprintSchedulerConfig heavy, only needed when --sprint runs
+    from hledac.universal.runtime.scheduler_config import SprintSchedulerConfig
 
-    # Issue #042: Start background gc.collect(2) loop. Runs a full
-    # generational sweep every 60s to prevent RSS drift on M1 8GB.
-    # Idempotent — only one task per process.
-    _gc_background_task = _memory_cycle.start_gc_background_loop()
-
-    # Pre-sprint checks
-    run_pre_sprint_checks()
+    _early_windup = 180.0 if windup_lead_s is None else float(windup_lead_s)
+    _early_config = SprintSchedulerConfig(
+        sprint_duration_s=float(duration_s),
+        windup_lead_s=_early_windup,
+        aggressive_mode=aggressive_mode,
+    )
 
     # F221-ABORT: Pre-flight guard — enforce minimum active-window budget.
-    # MUST run BEFORE LMDB init (DuckDBShadowStore below) to avoid orphaned
-    # lock files when the config is rejected up front. Replicates logic from
-    # SprintSchedulerConfig.effective_windup_lead_s so the guard rejects only
-    # what the scheduler would actually treat as zero-active-budget.
+    # MUST run BEFORE DuckDB init to avoid orphaned lock files when the config
+    # is rejected up front. Uses SprintSchedulerConfig internally to compute
+    # effective_windup_lead_s so the guard and the scheduler are always in sync.
     # sys.exit(2) = config error, distinguishable from exit(1) runtime failure.
     #
-    # F290: Adaptive windup ratio — short sprints get smaller windup overhead.
-    #   sprint <= 120s -> ratio 0.20  (windup = 20% of duration, e.g. 60s -> 12s)
-    #   sprint <= 300s -> ratio 0.25  (windup = 25% of duration, e.g. 300s -> 75s)
-    #   sprint > 300s  -> ratio 0.30  (windup = 30% of duration, e.g. 600s -> 180s cap)
-    # Clamped [15, 180]. F289 guard then enforces windup < 80% of active window.
-    # Non-MLX sprints get reduced windup via final_windup_lead_s in the scheduler.
-    _F272A_WINDUP_CLAMP_MIN_S: float = 15.0  # noqa: N806 — lowered from 30 for short sprints
-    _F272A_WINDUP_CLAMP_MAX_S: float = 180.0  # noqa: N806
-    if float(duration_s) <= 120.0:
-        _F272A_WINDUP_LEAD_FRAC: float = 0.20  # noqa: N806
-    elif float(duration_s) <= 300.0:
-        _F272A_WINDUP_LEAD_FRAC: float = 0.25  # noqa: N806
-    else:
-        _F272A_WINDUP_LEAD_FRAC: float = 0.30  # noqa: N806
-    _raw_windup = float(duration_s) * _F272A_WINDUP_LEAD_FRAC
-    _effective_windup_s = float(max(_F272A_WINDUP_CLAMP_MIN_S, min(_F272A_WINDUP_CLAMP_MAX_S, _raw_windup)))
+    # A2-4: config created early so effective_windup_lead_s is available here.
+    _force_override = (flags.force if flags else False) or force
+    _effective_windup_s = _early_config.effective_windup_lead_s
     _active_window_s = float(duration_s) - _effective_windup_s
     # Sprint F271C: fail-loud invariant — if we somehow compute a negative
     # active window, the guard is broken; surface it as a config error
@@ -1870,9 +1864,6 @@ async def run_sprint(
         )
         sys.exit(2)
     # F289-WINDUP: Sanity check — abort if windup consumes >= 80% of active window.
-    # This catches the case where effective_windup_s itself is too large relative
-    # to the active window (e.g. sprint 60s: windup=30s → active=30s → windup IS 100% of active).
-    _force_override = (flags.force if flags else False) or force
     if _effective_windup_s >= _active_window_s * 0.80:
         _pct = (_effective_windup_s / _active_window_s * 100) if _active_window_s > 0 else 100.0
         if _force_override:
@@ -1915,7 +1906,6 @@ async def run_sprint(
             sys.exit(2)  # exit(2) = config error, distinguishable from exit(1) runtime
 
     # F289: windup_lead_s sanity check — warn if it would consume >90% of sprint
-    # This catches the "instant windup" bug where windup_lead_s is set too high.
     if windup_lead_s is not None:
         _windup_fraction = float(windup_lead_s) / float(duration_s)
         if _windup_fraction > 0.90:
@@ -2070,16 +2060,17 @@ async def run_sprint(
         except asyncio.CancelledError:
             raise
 
-    # Gather both — max wall-clock instead of sequential sum.
-    _init_results: list[bool | Exception] = []
+    # F3XX: parallel_ok() replaces asyncio.gather — preserves original coroutine order.
+    # contextlib.suppress CancelledError: I6 invariant (re-raised, not swallowed).
+    _init_results: list[bool] = []
     with contextlib.suppress(asyncio.CancelledError):
-        _init_results = await asyncio.gather(
+        _init_results = await parallel_ok(
             _duckdb_init_coro(),
             _cb_reset_awaitable(),
-            return_exceptions=True,
+            label="pre_init",
         )
 
-    # Extract DuckDB result — gather maintains ordering.
+    # Extract DuckDB result (index 0) — parallel_ok maintains coroutine order.
     if _init_results:
         _duckdb_result = _init_results[0]
         if isinstance(_duckdb_result, Exception):
@@ -2090,30 +2081,9 @@ async def run_sprint(
         # Circuit-breaker result is _init_results[1] — already logged inside _cb_reset_awaitable.
 
     # Scheduler config
-    # F221: windup_lead_s param + active-budget guard for 'default' profile
-    # F228G: when windup_lead_s is not provided, compute the effective value
-    # (30% of duration, clamped [30, 180]) — same formula as
-    # SprintSchedulerConfig.effective_windup_lead_s. The previous default of
-    # 180s for short sprints (60-90s) was LARGER than the entire sprint,
-    # causing recommended_tool_mode() to return "prune" from cycle 1 and
-    # triggering the empty-cycle guard immediately.
-    # F290: Adaptive windup ratio — short sprints get smaller overhead to avoid
-    # consuming 50-100% of the sprint budget in windup (F221/F289 abort).
-    #   sprint <= 120s -> 20% (e.g. 60s -> 12s windup, 48s active)
-    #   sprint <= 300s -> 25% (e.g. 300s -> 75s windup, 225s active)
-    #   sprint > 300s  -> 30% (e.g. 600s -> 180s cap, 420s active)
-    # Clamped [15, 180]. Matches the F221-ABORT guard formula above.
-    if windup_lead_s is not None:
-        _windup_lead_s = float(windup_lead_s)
-    else:
-        if float(duration_s) <= 120.0:
-            _windup_frac = 0.20
-        elif float(duration_s) <= 300.0:
-            _windup_frac = 0.25
-        else:
-            _windup_frac = 0.30
-        _raw_windup = float(duration_s) * _windup_frac
-        _windup_lead_s = float(max(15.0, min(180.0, _raw_windup)))
+    # A2-4: windup_lead_s now derived from _early_config.effective_windup_lead_s
+    # (duplicated formula removed — guard and scheduler now use the same source)
+    _windup_lead_s = _early_config.effective_windup_lead_s
     # F228A: Defensive normalization — benchmark profile aliases must not reach
     # acquisition_strategy as raw values. Record all three phases for telemetry.
     _acq_input = acquisition_profile
@@ -3002,7 +2972,7 @@ async def run_sprint(
                 "checkpoint_zero_category": _ckpt_category,
                 "checkpoint_zero_reason": _checkpoint_zero_reason,
                 "observed_run_tuple": observed_run_tuple,
-                "canonical_sprint_owner": "core.__main__.run_sprint",
+                "canonical_sprint_owner": "runtime.sprint_entrypoint.run_sprint",
                 "canonical_path_used": "run_sprint",
                 "effective_source_mix": src_mix_str,
                 "effective_parallelism": len(live_feed_urls),
@@ -3045,7 +3015,9 @@ async def run_sprint(
             **_acq_payload_without_sfo(result, scheduler, query, duration_s),
             "timing_truth": timing_truth,
             # Sprint M218A: GC startup tuning telemetry
-            "gc_telemetry": _gc_telemetry,
+            # A2: gc_telemetry now computed in build_runtime() before run_sprint() is called.
+            # Retained as empty dict to avoid breaking report_dict contract.
+            "gc_telemetry": {},
             # Sprint F217B: Nonfeed mission controller telemetry
             "nonfeed_mission_active": getattr(result, "nonfeed_mission_active", False),
             "nonfeed_required_families": getattr(result, "nonfeed_required_families", ()),
@@ -3168,7 +3140,7 @@ async def run_sprint(
                     "checkpoint_zero_category": _ckpt_category,
                     "checkpoint_zero_reason": _checkpoint_zero_reason,
                     "observed_run_tuple": observed_run_tuple,
-                    "canonical_sprint_owner": "core.__main__.run_sprint",
+                    "canonical_sprint_owner": "runtime.sprint_entrypoint.run_sprint",
                     "canonical_path_used": "run_sprint",
                     "effective_source_mix": src_mix_str,
                     "effective_parallelism": len(live_feed_urls),
@@ -3313,27 +3285,9 @@ async def run_sprint(
             if failed_transports:
                 logger.debug(f"[TEARDOWN] transport close failures: {failed_transports}")
 
-        # F266-U2/U3: Finalize memory hygiene hooks. The cycle maintain
-        # call re-pins the surviving long-lived set into the permanent
-        # generation (bounds gen-2 growth across many sprints). Pressure
-        # relief stop is idempotent and bounded (5s timeout).
-        try:
-            await _memory_cycle.stop_pressure_relief_loop()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] pressure_relief stop failed: {e}")  # fail-soft
-
-        # Issue #042: Stop background gc.collect(2) loop. Idempotent,
-        # bounded 5s timeout.
-        try:
-            await _memory_cycle.stop_gc_background_loop()
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug(f"[TEARDOWN] gc_background stop failed: {e}")  # fail-soft
-        # F266-U4 FIX: gc.collect() can block the event loop — offload to
-        # a thread so teardown doesn't starve in-flight coroutines.
+        # A2: Memory hygiene loops (pressure_relief, gc_background) are started
+        # in build_runtime() and stopped there — not started here, so not stopped here.
+        # gc_cycle_maintain is a one-shot call — keep it.
         try:
             await asyncio.to_thread(_memory_cycle.gc_cycle_maintain, force=False)
         except Exception as e:
@@ -3538,11 +3492,25 @@ def _fatal(exc: BaseException, code: int = 1) -> None:
 
 def _run_sprint_loop(args: argparse.Namespace) -> None:
     """
-    Extracted CLI sprint wiring (Issue #7).
-    Owns: loop + signals + shutdown_event + task lifecycle.
-    Canonical state lives in run_sprint(), not here.
+    CLI sprint wiring — routes through build_runtime() as the SOLE canonical path.
+    A2: Eliminates dual bootstrap. All initialization (GC, malloc, signals,
+    DuckDB, telemetry) lives in composition_root; this function only:
+      1. Builds the runtime graph via build_runtime()
+      2. Runs it via run_runtime()
+      3. Handles exit codes
+
+    Canonical state lives in run_sprint() (inside the task).
     """
-    import contextlib
+    global _build_runtime, _run_runtime
+    if _build_runtime is None:
+        # A2: Lazy import to avoid circular dependency (composition_root imports
+        # _cancel_all_tasks from this module at module level).
+        from hledac.universal.core.composition_root import (
+            build_runtime as _br,
+            run_runtime as _rr,
+        )
+        _build_runtime = _br
+        _run_runtime = _rr
 
     sprint_flags = SprintFlags(
         force=args.force,
@@ -3553,71 +3521,28 @@ def _run_sprint_loop(args: argparse.Namespace) -> None:
         production=getattr(args, "production", False),
         hermes_force=getattr(args, "force_hermes", False),
     )
-    # F4XX: uvloop EventLoopPolicy — 2× I/O speedup on M1 kqueue.
-    # Installed BEFORE loop creation so new_event_loop() returns uvloop.
-    # Lazy import: uvloop only loaded on Darwin ARM64 where it's installed.
-    if sys.platform == "darwin" and sys.platform.machine() == "arm64":
-        with contextlib.suppress(ImportError):
-            import uvloop as _uvloop
-            asyncio.set_event_loop_policy(_uvloop.EventLoopPolicy())
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    # E3: Apply USER_INITIATED QoS to the main thread so asyncio event loop
-    # gets P-core scheduling on Apple Silicon M1. Rayon pools already have this.
-    apply_qos_to_main_thread()
-    shutdown_event = asyncio.Event()
-    restore_signals = _install_signal_handler_for_loop(loop, shutdown_event)
-    pending: set = set()
+    # A2: Single canonical path through build_runtime() — no duplicated
+    # loop/signal/GC/malloc setup. uvloop, QoS, signals all handled inside.
+    loop, sprint_task, _shutdown_event, restore_signals = _build_runtime(
+        query=args.query,
+        duration_s=float(args.duration),
+        export_dir=args.export_dir,
+        aggressive_mode=args.aggressive,
+        deep_probe_enabled=args.deep_probe,
+        deep_research=args.deep_research,
+        extreme_mode=args.extreme,
+        no_communication=getattr(args, "no_communication", False),
+        ui_mode=getattr(args, "ui", False),
+        windup_lead_s=None,
+        acquisition_profile=args.acquisition_profile,
+        rl_train_mode=args.rl_train,
+        force=args.force,
+        flags=sprint_flags,
+    )
     try:
-        sprint_task = loop.create_task(
-            run_sprint(
-                args.query,
-                float(args.duration),
-                args.export_dir,
-                args.aggressive,
-                args.deep_probe,
-                deep_research=args.deep_research,
-                extreme_mode=args.extreme,
-                acquisition_profile=args.acquisition_profile,
-                rl_train_mode=args.rl_train,
-                flags=sprint_flags,
-            )
-        )
-        sig_task = loop.create_task(shutdown_event.wait())
-        done, pending = loop.run_until_complete(
-            asyncio.wait([sprint_task, sig_task], return_when=asyncio.FIRST_COMPLETED)
-        )
-        exc = sprint_task.exception()
-        if exc is not None:
-            raise exc
-        if sprint_task not in done:
-            sprint_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                loop.run_until_complete(sprint_task)
-    except (NameError, TypeError) as _prog_err:
-        logger.exception(
-            "[MAIN] Fatal programmer error in core/__main__.py --sprint: %s",
-            _prog_err,
-        )
-        sys.exit(1)
+        _run_runtime(loop, sprint_task, restore_signals)
     except SystemExit:
-        raise
-    finally:
-        restore_signals()
-        # F350M-R ISSUE #4 FIX: bounded task drain — replaces raw task.cancel()
-        # loop.  Uses canonical _cancel_all_tasks so all three shutdown paths
-        # (composition_root, _dispatch_sprint, _run_sprint_loop) share one impl.
-        try:
-            loop.run_until_complete(_cancel_all_tasks(timeout_s=5.0))
-        except Exception:
-            pass
-        loop.close()
-        try:
-            import gc as _gc
-            _gc.collect()
-        except Exception:
-            pass
+        raise  # never swallow sys.exit() calls
 
 
 def main() -> None:

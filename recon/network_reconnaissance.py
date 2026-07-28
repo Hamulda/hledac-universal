@@ -146,10 +146,26 @@ class DNSEnumerator:
             Dictionary with all DNS findings
         """
         results = {'domain': domain, 'records': {}, 'subdomains': [], 'zone_transfer_attempted': False, 'zone_transfer_successful': False}
-        for record_type in [RecordType.A, RecordType.AAAA, RecordType.MX, RecordType.NS, RecordType.TXT, RecordType.SOA, RecordType.CNAME]:
-            records = await self.query_records(domain, record_type)
+        # ISSUE-XXX: parallel DNS queries — 7 record types run concurrently via bounded semaphore.
+        # Prior: sequential for-loop (7 × ~50ms = 350ms). New: parallel at concurrency=4 (~100ms wall).
+        RTYPES = [RecordType.A, RecordType.AAAA, RecordType.MX, RecordType.NS, RecordType.TXT, RecordType.SOA, RecordType.CNAME]
+
+        async def _query_one(rt: RecordType) -> tuple[str, list[dict] | None]:
+            records = await self.query_records(domain, rt)
             if records:
-                results['records'][record_type.value] = [{'name': r.name, 'value': r.value, 'ttl': r.ttl, 'priority': r.priority} for r in records]
+                return (rt.value, [{'name': r.name, 'value': r.value, 'ttl': r.ttl, 'priority': r.priority} for r in records])
+            return (rt.value, None)
+
+        sem = asyncio.Semaphore(4)
+
+        async def _query_bounded(rt: RecordType):
+            async with sem:
+                return await _query_one(rt)
+
+        q_results = await parallel([_query_bounded(rt) for rt in RTYPES], policy="collect", ctx="enumerate_all:dns")
+        for rtype, data in q_results:
+            if data is not None:
+                results['records'][rtype] = data
         zone_transfer = await self.attempt_zone_transfer(domain)
         results['zone_transfer_attempted'] = True
         results['zone_transfer_successful'] = zone_transfer is not None
@@ -506,7 +522,8 @@ class SSLAnalyzer:
         import asyncio
 
         tasks = [self.ja4_fingerprint(host, port, timeout_ms) for host, port in hosts]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # F3XX: parallel_ok() replaces asyncio.gather — preserves original order.
+        results = await parallel_ok(*tasks, label="batch_ja4")
         return [r for r in results if isinstance(r, dict)]
 
 class NetworkReconnaissance:
@@ -702,10 +719,22 @@ class NetworkReconnaissance:
             if 'MX' in dns_results['records']:
                 for record in dns_results['records']['MX']:
                     dns_records.append(DNSRecord(record_type=RecordType.MX, name=domain, value=record['value'], ttl=record.get('ttl', 3600), priority=record.get('priority')))
-        reverse_dns = []
-        for ip in ip_addresses:
-            rdns = await self.dns.reverse_lookup(ip)
-            reverse_dns.extend(rdns)
+        # ISSUE-XXX: parallel reverse DNS lookups — N IPs queried concurrently via semaphore.
+        # Prior: sequential for-loop. New: bounded parallel (M1 8GB safe, concurrency=8).
+        _DNS_SEM = asyncio.Semaphore(8)
+
+        async def _revlookup(ip: str) -> list[str]:
+            async with _DNS_SEM:
+                return await self.dns.reverse_lookup(ip)
+
+        if ip_addresses:
+            rdns_results = await parallel([_revlookup(ip) for ip in ip_addresses], policy="collect", ctx="recon_domain:reverse_dns")
+            reverse_dns = []
+            for rdns_list in rdns_results:
+                if rdns_list:
+                    reverse_dns.extend(rdns_list)
+        else:
+            reverse_dns = []
         return HostInfo(hostname=domain, ip_addresses=ip_addresses, reverse_dns=list(set(reverse_dns)), whois_data=whois_data if isinstance(whois_data, WHOISData) else None, dns_records=dns_records, ssl_cert=ssl_cert if isinstance(ssl_cert, SSLCertificate) else None, open_ports=[], service_banners=[], geolocation=None, asn_info=None, technology_stack=[])
 
     async def _recon_ip(self, ip: str) -> HostInfo:
@@ -777,15 +806,39 @@ class PassiveDNSClient:
 
         Returns count of new IOCs buffered.
         """
-        count = 0
         ips = await self.resolve_domain(domain)
-        for ip in ips[:5]:
-            await ioc_graph.buffer_ioc('ipv4', ip, confidence=0.7)
-            count += 1
-            for hostname in (await self.reverse_lookup(ip))[:3]:
+        ips_slice = ips[:5]
+        if not ips_slice:
+            return 0
+        # ISSUE-XXX: parallel pivot — reverse lookups + IOC buffers run concurrently.
+        # Prior: sequential for-loop (5 IPs × ~20ms each = 100ms+). New: parallel.
+        # buffer_ioc is fire-and-forget (no return value), reverse_lookup is I/O-bound.
+        _PIVOT_SEM = asyncio.Semaphore(5)
+
+        async def _buffer_ip(ip: str) -> tuple[str, int]:
+            async with _PIVOT_SEM:
+                await ioc_graph.buffer_ioc('ipv4', ip, confidence=0.7)
+            return (ip, 1)
+
+        async def _buffer_hostnames(ip: str) -> list[tuple[str, int]]:
+            async with _PIVOT_SEM:
+                hostnames = await self.reverse_lookup(ip)
+            results = []
+            for hostname in hostnames[:3]:
                 if hostname and hostname != domain:
                     await ioc_graph.buffer_ioc('domain', hostname, confidence=0.6)
-                    count += 1
+                    results.append((hostname, 1))
+            return results
+
+        # Phase 1: resolve all hostnames in parallel (no blocking on per-IP sequential)
+        hostname_coros = [_buffer_hostnames(ip) for ip in ips_slice]
+        all_hostname_results = await parallel(hostname_coros, policy="collect", ctx="pivot_domain:reverse_lookups")
+        # Phase 2: buffer IP IOCs in parallel
+        await parallel([_buffer_ip(ip) for ip in ips_slice], policy="collect", ctx="pivot_domain:buffer_ips")
+        # Count total
+        count = len(ips_slice)
+        for hostnames in all_hostname_results:
+            count += len(hostnames)
         return count
 
     async def close(self) -> None:

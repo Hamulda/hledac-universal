@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.wayback_cdx_deep_adapter. Auto-gen ISSUE #20 F2."""
-from recon.wayback_cdx_deep_adapter import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.wayback_cdx_deep_adapter" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.wayback_cdx_deep_adapter"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.wayback_cdx_deep_adapter.
+"""
+import warnings
+
+warnings.warn(
+    "intel.wayback_cdx_deep_adapter is deprecated — import from \"recon.wayback_cdx_deep_adapter\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.wayback_cdx_deep_adapter import *

@@ -1,6 +1,15 @@
-"""Backward-compat stub — canonical: recon.github_secret_scanner. Auto-gen ISSUE #20 F2."""
-from recon.github_secret_scanner import *
-from importlib import import_module
+"""Backward-compat stub — DEPRECATED: import from "recon.github_secret_scanner" directly.
 
-def __getattr__(name):
-    return getattr(import_module("recon.github_secret_scanner"), name)
+Auto-gen ISSUE #20 F2.
+DEPRECATED (F350M-R A4): all intel/ stubs emit DeprecationWarning.
+Migrate to canonical path: recon.github_secret_scanner.
+"""
+import warnings
+
+warnings.warn(
+    "intel.github_secret_scanner is deprecated — import from \"recon.github_secret_scanner\" directly instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from recon.github_secret_scanner import *

@@ -82,6 +82,9 @@
 
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use rayon::prelude::*;
+
+use crate::gil::release_gil;
 
 // ---------------------------------------------------------------------------
 // NEON detection + scalar fallback
@@ -555,14 +558,17 @@ pub fn batch_compute_scores(
 
     // Dispatch: NEON on aarch64, scalar elsewhere.
     // Release GIL — NEON/scalar are pure CPU work, no Python callbacks.
-    let results = _py.allow_threads(|| {
-        #[cfg(target_arch = "aarch64")]
-        let r = unsafe {
-            compute_scores_neon_inner(&fetched, &accepted, &current_weights, &novelty)
-        };
-        #[cfg(not(target_arch = "aarch64"))]
-        let r = compute_scores_scalar(&fetched, &accepted, &current_weights, &novelty);
-        r
+    // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
+    let results = Python::attach(|py| {
+        release_gil(py, || {
+            #[cfg(target_arch = "aarch64")]
+            let r = unsafe {
+                compute_scores_neon_inner(&fetched, &accepted, &current_weights, &novelty)
+            };
+            #[cfg(not(target_arch = "aarch64"))]
+            let r = compute_scores_scalar(&fetched, &accepted, &current_weights, &novelty);
+            r
+        })
     });
 
     Ok(results)
@@ -623,14 +629,17 @@ pub fn batch_aggregate_signals(
     }
 
     // Use NEON aggregation on aarch64, release GIL during pure-Rust computation.
-    let result = _py.allow_threads(|| {
-        #[cfg(target_arch = "aarch64")]
-        let r = unsafe {
-            aggregate_signals_neon(&signal_vecs, &weight_vec, normalize)
-        };
-        #[cfg(not(target_arch = "aarch64"))]
-        let r = aggregate_signals_inner(&signal_vecs, &weight_vec, normalize);
-        r
+    // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
+    let result = Python::attach(|py| {
+        release_gil(py, || {
+            #[cfg(target_arch = "aarch64")]
+            let r = unsafe {
+                aggregate_signals_neon(&signal_vecs, &weight_vec, normalize)
+            };
+            #[cfg(not(target_arch = "aarch64"))]
+            let r = aggregate_signals_inner(&signal_vecs, &weight_vec, normalize);
+            r
+        })
     });
 
     if result.is_empty() && !signal_vecs.is_empty() && !weight_vec.is_empty() {
@@ -642,6 +651,182 @@ pub fn batch_aggregate_signals(
 }
 
 // ---------------------------------------------------------------------------
+// Page quality scoring — rayon parallel MAP
+// ---------------------------------------------------------------------------
+
+/// Compute page quality scores for a batch of pages in parallel via rayon.
+///
+/// This is the Rust-accelerated equivalent of `_score_one` in ExtractStage,
+/// applied across a full batch using rayon for parallel execution.
+///
+/// # Arguments
+/// * `text_lens` — List of page text lengths (usize).
+/// * `texts` — List of page text strings (for entropy computation).
+/// * `fetch_errors` — List of fetch error strings (None = success).
+/// * `failure_stages` — List of failure stage strings (None = success).
+///
+/// # Returns
+/// List of (quality_signal: f32, value_tier: &str, waste_category: &str,
+///           structural_quality: &str, is_fp: bool, skip_reason: Option<&str>)
+/// tuples per page. Uses the same formula as `_score_one`:
+///
+/// - quality_signal = entropy_score * 0.4 + length_score * 0.6
+///   where entropy_score = min(unique_chars / 50.0, 1.0)
+///   and length_score = min(text_len / 5000.0, 1.0)
+///
+/// - value_tier: "high" (>=0.7), "medium" (>=0.4), "low" (>=0.15), "waste"
+/// - waste_category: "error", "signalless", "thin", "dead"
+/// - structural_quality: "healthy", "thin", "dead"
+/// - is_fp: false (discovery FP not applicable at extract stage)
+/// - skip_reason: Some(msg) if page was skipped
+///
+/// # Fail-soft
+/// - Empty input → empty list
+/// - Any processing error → scalar fallback
+#[pyfunction]
+pub fn batch_quality_score(
+    _py: Python<'_>,
+    text_lens: &Bound<'_, PyList>,
+    texts: &Bound<'_, PyList>,
+    fetch_errors: &Bound<'_, PyList>,
+    failure_stages: &Bound<'_, PyList>,
+) -> PyResult<Vec<(f32, String, String, String, bool, Option<String>)>> {
+    use rayon::prelude::*;
+
+    let n = text_lens.len();
+    if n == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Extract all data into owned Vecs before rayon pool (Python<'_> not Send).
+    let lens: Vec<usize> = (0..n)
+        .filter_map(|i| text_lens.get_item(i).ok().and_then(|v| v.extract().ok()))
+        .collect();
+
+    let texts_str: Vec<String> = (0..n)
+        .filter_map(|i| texts.get_item(i).ok().and_then(|v| v.str().ok().map(|s| s.to_string())))
+        .collect();
+
+    let errors: Vec<Option<String>> = (0..n)
+        .filter_map(|i| {
+            fetch_errors.get_item(i).ok().and_then(|v| {
+                if v.is_none() {
+                    Some(None)
+                } else {
+                    v.str().ok().map(|s| Some(s.to_string()))
+                }
+            })
+        })
+        .collect();
+
+    let failures: Vec<Option<String>> = (0..n)
+        .filter_map(|i| {
+            failure_stages.get_item(i).ok().and_then(|v| {
+                if v.is_none() {
+                    Some(None)
+                } else {
+                    v.str().ok().map(|s| Some(s.to_string()))
+                }
+            })
+        })
+        .collect();
+
+    // rayon parallel scoring — release GIL.
+    // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
+    let results: Vec<(f32, String, String, String, bool, Option<String>)> = Python::attach(|py| {
+        release_gil(py, || {
+            (0..n)
+                .into_par_iter()
+                .map(|i| {
+                    let text_len = *lens.get(i).unwrap_or(&0);
+                    let text = texts_str.get(i).map(|s| s.as_str()).unwrap_or("");
+                    let fetch_error = errors.get(i).and_then(|e| e.as_ref());
+                    let failure_stage = failures.get(i).and_then(|f| f.as_ref());
+
+                    _score_page_quality(text, text_len, fetch_error, failure_stage)
+                })
+                .collect()
+        })
+    });
+
+    Ok(results)
+}
+
+/// Score a single page — same logic as Python _score_one.
+#[inline]
+fn _score_page_quality(
+    text: &str,
+    text_len: usize,
+    fetch_error: Option<&str>,
+    failure_stage: Option<&str>,
+) -> (f32, String, String, String, bool, Option<String>) {
+    const DISCOVERY_SKIP_THRESHOLD: f32 = 0.15;
+    const PRE_FETCH_TEXT_MIN_CHARS: usize = 80;
+
+    // Error case.
+    if let Some(err) = fetch_error {
+        let msg = format!("fetch_error:{}", &err[..err.len().min(50)]);
+        return (0.0_f32, "waste".to_string(), "error".to_string(),
+                String::new(), false, Some(msg));
+    }
+
+    // Empty page.
+    if text.is_empty() || text_len < PRE_FETCH_TEXT_MIN_CHARS {
+        return (0.0_f32, "waste".to_string(), "signalless".to_string(),
+                "thin".to_string(), false, Some("text_too_short".to_string()));
+    }
+
+    // Failure stage.
+    if let Some(stage) = failure_stage {
+        let msg = format!("failure_stage:{}", stage);
+        return (0.0_f32, "waste".to_string(), "error".to_string(),
+                String::new(), false, Some(msg));
+    }
+
+    // Compute quality signal.
+    let signal = _compute_quality_signal(text, text_len);
+
+    // Determine tier.
+    let tier = if signal >= 0.7 {
+        "high"
+    } else if signal >= 0.4 {
+        "medium"
+    } else if signal >= DISCOVERY_SKIP_THRESHOLD {
+        "low"
+    } else {
+        "waste"
+    };
+
+    // Structural quality.
+    let structural = if text_len > 1000 {
+        "healthy"
+    } else if text_len > 200 {
+        "thin"
+    } else {
+        "dead"
+    };
+
+    (signal, tier.to_string(), String::new(), structural.to_string(), false, None)
+}
+
+#[inline]
+fn _compute_quality_signal(text: &str, text_len: usize) -> f32 {
+    if text.is_empty() {
+        return 0.0_f32;
+    }
+
+    // Entropy-based signal (simple heuristic).
+    let unique_chars = text.chars().collect::<std::collections::HashSet<_>>().len();
+    let entropy_score = (unique_chars as f32 / 50.0_f32).min(1.0_f32);
+
+    // Length-based signal.
+    let length_score = (text_len as f32 / 5000.0_f32).min(1.0_f32);
+
+    // Combined signal.
+    (entropy_score * 0.4_f32) + (length_score * 0.6_f32)
+}
+
+// ---------------------------------------------------------------------------
 // Module registration
 // ---------------------------------------------------------------------------
 
@@ -649,6 +834,7 @@ pub fn batch_aggregate_signals(
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_compute_scores, m)?)?;
     m.add_function(wrap_pyfunction!(batch_aggregate_signals, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_quality_score, m)?)?;
     Ok(())
 }
 

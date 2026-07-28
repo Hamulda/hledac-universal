@@ -26,6 +26,7 @@ import msgspec.json as _json
 
 from hledac.universal.tools.url_dedup import get_default_bloom_filter
 from hledac.universal.utils.locks import LazyAsyncioLock
+from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 
 logger = logging.getLogger(__name__)
 
@@ -3013,7 +3014,7 @@ async def async_run_live_public_pipeline(
             if self.store is not None:
                 try:
                     # Check env gate and academic keywords
-                    academic_enabled = os.environ.get("HLEDAC_ENABLE_ACADEMIC", "1").strip().lower() in ("1", "true", "yes", "on")  # noqa: E501
+                    academic_enabled = LANE_REGISTRY.is_enabled("academic")  # noqa: E501
                     query_lower = self.query.lower()
                     academic_keywords = ["paper", "research", "academic", "scholar", "study", "journal", "citation", "doi", "arxiv", "publication", "conference", "thesis"]  # noqa: E501
                     has_academic_keywords = any(kw in query_lower for kw in academic_keywords)
@@ -4571,11 +4572,11 @@ async def async_run_live_public_pipeline(
             logger.debug(f"[F198C] Document discovery failed: {e}")
 
     # ── Part B: Sprint Synthesis Activation (Sprint HERMES3_WIRING)
-    # Gate: len(findings) >= 5 AND HLEDAC_ENABLE_SYNTHESIS=1
+    # Gate: len(findings) >= 5 AND hermes_synthesis lane enabled
     # Cap: max 50 findings for M1 8GB RAM safety
     # Timeout: 90 seconds max
     synthesis_finding = None
-    if total_accepted >= 5 and os.environ.get("HLEDAC_ENABLE_SYNTHESIS", "1") == "1":
+    if total_accepted >= 5 and LANE_REGISTRY.is_enabled("hermes_synthesis"):
         try:
             # Check RAM constraint: skip if RSS > 5.5GB
             try:
@@ -4648,7 +4649,7 @@ async def async_run_live_public_pipeline(
                             logger.info("[SYNTHESIS] Report produced: confidence=%.3f", synthesis_finding.confidence)
 
                         # Also run DSPy query expansion for next sprint seeds
-                        if os.environ.get("HLEDAC_ENABLE_DSPY") == "1":
+                        if LANE_REGISTRY.is_enabled("dspy"):
                             try:
                                 from hledac.universal.brain import dspy_service
                                 expanded = await dspy_service.expand_query(query)
@@ -4822,12 +4823,8 @@ def _patch_discovery(search_fn: Any) -> None:
 def _ensure_discovery_patched() -> None:
     global _ASYNC_DISCOVERY_SEARCH
     if _ASYNC_DISCOVERY_SEARCH is None:
-        # Sprint F206AO: env-gated providerless cascade wiring
-        # HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=1 → use cascade (DDG→Historical→Wayback)
-        # Default (0/false/off) → use direct DDG (unchanged behavior)
-        _env = os.environ.get("HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY", "1").strip().lower()
-        _providerless = _env in ("1", "true", "yes", "on")
-        if _providerless:
+        # Sprint F206AO: env-gated providerless cascade wiring via LaneRegistry
+        if LANE_REGISTRY.is_enabled("providerless_discovery"):
             from hledac.universal.discovery.cascade import (
                 async_search_providerless,
             )

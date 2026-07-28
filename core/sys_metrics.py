@@ -45,7 +45,7 @@ def get_system_memory() -> dict:
     """
     # Delegate to uma_budget for consistent caching/calculation
     try:
-        from utils.uma_budget import get_system_memory_mb
+        from hledac.universal.utils.uma_budget import get_system_memory_mb
 
         total_mb, used_mb, available_mb = get_system_memory_mb()
         return {

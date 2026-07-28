@@ -202,7 +202,7 @@ impl BloomFilter {
         }
 
         // Parallel: hash all items in parallel, collect indices per item.
-        // ISSUE-D1: py.allow_threads() enables true parallelism — rayon workers
+        // ISSUE-D1: py.detach() enables true parallelism — rayon workers
         // don't block the GIL, so asyncio coroutines on the same thread can progress.
         let results: Vec<(Vec<usize>, bool)> = Python::attach(|py| {
             release_gil(py, || {
@@ -301,7 +301,7 @@ impl BloomFilter {
     /// M1 8GB: rayon short-lived pool, no persistent threads.
     /// ~10-50× faster than sequential Python `contains()` calls due to:
     ///   - Parallel xxHash3-64 hashing via rayon
-    ///   - ISSUE-D1: GIL released via py.allow_threads() so asyncio coroutines can progress
+    ///   - ISSUE-D1 / R6: GIL released via py.detach() (PyO3 0.29) so asyncio coroutines can progress
     ///   - Sequential bitmap probe after parallel hash phase
     fn contains_batch(&self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
@@ -310,7 +310,7 @@ impl BloomFilter {
         }
 
         // Parallel: hash all items, collect contains result per item.
-        // ISSUE-D1: py.allow_threads() enables true parallelism — rayon workers
+        // ISSUE-D1: py.detach() enables true parallelism (PyO3 0.29) — rayon workers
         // don't block the GIL, so asyncio coroutines can make progress.
         Python::attach(|py| {
             release_gil(py, || {
@@ -876,7 +876,7 @@ impl MmapBloomFilter {
     /// is now Sync via parking_lot::RwLock<NonNull<u64>>. Phase1: parallel
     /// xxHash3-64 hashing (SIMD on M1). Phase2: sequential bitmap probe.
     /// ISSUE-7 fix: check_indices() avoids per-item Vec<usize> allocation.
-    /// ISSUE-D1: GIL released via py.allow_threads() so asyncio coroutines can progress.
+    /// ISSUE-D1 / R6: GIL released via py.detach() (PyO3 0.29) so asyncio coroutines can progress.
     /// ~3-5× faster than serial for large batches.
     fn contains_batch(&self, items: Vec<String>) -> Vec<bool> {
         use rayon::prelude::*;
