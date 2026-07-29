@@ -49,15 +49,14 @@ from typing import TYPE_CHECKING, Any, cast
 import msgspec
 if TYPE_CHECKING:
     pass
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for, parallel
+from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for, parallel
 logger = logging.getLogger(__name__)
 _PIPELINE_QUEUE_SIZE: int = 500
 _PIPELINE_CHUNK_SIZE: int = 1024
 _PIPELINE_WORKERS_ENRICH: int = 2
 _PIPELINE_WORKERS_STORE: int = 2
-_STORE_FLUSH_CONCURRENCY: int = 4  # P4-2: max concurrent flush operations
-_STORE_FLUSH_CHUNK_SIZE: int = 256  # P4-2: per-chunk size for parallel flush
-
+_STORE_FLUSH_CONCURRENCY: int = 4
+_STORE_FLUSH_CHUNK_SIZE: int = 256
 
 class PipelineStats(msgspec.Struct, gc=False):
     """Statistics for the finding pipeline.
@@ -74,7 +73,6 @@ class PipelineStats(msgspec.Struct, gc=False):
     queue_size: int = 0
     enrich_time_ms: float = 0.0
     store_time_ms: float = 0.0
-
 
 class FindingPipeline:
     """
@@ -189,7 +187,7 @@ class FindingPipeline:
         for task in self._store_workers:
             all_tasks.append(task)
         try:
-            await safe_wait_for(safe_gather_ok(*all_tasks, label='finding_pipeline:shutdown'), timeout=timeout, label='finding_pipeline:shutdown')
+            await safe_wait_for(parallel_ok(*all_tasks, label='finding_pipeline:shutdown'), timeout=timeout, label='finding_pipeline:shutdown')
         except TimeoutError:
             logger.warning('FindingPipeline: shutdown timeout, force-killing workers')
         self._enrich_workers.clear()
@@ -312,7 +310,6 @@ class FindingPipeline:
                 except TimeoutError:
                     pass
                 if pending and (len(pending) >= _PIPELINE_CHUNK_SIZE or time.monotonic() - last_flush >= flush_interval_s):
-                    # P4-2: parallel chunk flush — all chunks concurrently
                     await self._flush_store_batch_concurrent(pending)
                     pending.clear()
                     last_flush = time.monotonic()
@@ -337,7 +334,6 @@ class FindingPipeline:
         if not batch:
             return
         t0 = time.monotonic()
-        # Small batch: no chunking overhead
         if len(batch) <= _STORE_FLUSH_CHUNK_SIZE:
             await self._flush_store_batch(batch)
             dt = (time.monotonic() - t0) * 1000
@@ -345,7 +341,6 @@ class FindingPipeline:
                 self._stats.store_time_ms += dt
                 self._stats.stored += len(batch)
             return
-        # Chunk the batch
         chunks: list[list[Any]] = []
         for i in range(0, len(batch), _STORE_FLUSH_CHUNK_SIZE):
             chunk = batch[i:i + _STORE_FLUSH_CHUNK_SIZE]
@@ -353,24 +348,14 @@ class FindingPipeline:
                 chunks.append(chunk)
         if not chunks:
             return
-        # Launch all chunks concurrently; cap at _STORE_FLUSH_CONCURRENCY
         sem = asyncio.Semaphore(_STORE_FLUSH_CONCURRENCY)
 
         async def _flush_chunk(chunk: list[Any]) -> None:
             async with sem:
                 await self._flush_store_batch(chunk)
-
-        # P4-2: all chunks flush concurrently — DuckDB ‖ graph within each,
-        # chunks themselves run in parallel
         flush_tasks = [_flush_chunk(chunk) for chunk in chunks]
-        _result = await parallel(
-            flush_tasks,  # type: ignore[arg-type]  # Awaitable[None] is compatible
-            taskgroup=True,
-            policy='collect',
-            ctx='finding_pipeline:store_concurrent',
-            logger_instance=logger,
-        )
-        total_stored = sum(len(chunk) for chunk in chunks)
+        _result = await parallel(flush_tasks, taskgroup=True, policy='collect', ctx='finding_pipeline:store_concurrent', logger_instance=logger)
+        total_stored = sum((len(chunk) for chunk in chunks))
         dt = (time.monotonic() - t0) * 1000
         async with self._stats_lock:
             self._stats.store_time_ms += dt
@@ -388,25 +373,13 @@ class FindingPipeline:
         """
         if not batch:
             return
-        # async_ingest_findings_batch is async def; await it directly.
-        # It internally uses run_in_executor(duckdb_arrow_executor, ...) for
-        # thread-bound DuckDB work — no additional to_thread needed.
         duckdb_coro: Awaitable[None] = self._duckdb_store.async_ingest_findings_batch(batch)
         graph_coro: Awaitable[None]
         if self._graph_service is not None:
-            # _graph_upsert_batch is sync; run on thread pool to avoid blocking
             graph_coro = asyncio.to_thread(self._graph_upsert_batch, batch)
         else:
             graph_coro = asyncio.sleep(0)
-        _result = await parallel(
-            [duckdb_coro, graph_coro],  # type: ignore[arg-type]  # Awaitable[None] compatible
-            taskgroup=True,
-            policy='collect',
-            ctx='finding_pipeline:store',
-            logger_instance=logger,
-        )
-        # Guard: ok[] access only when items present (policy='collect' returns all results,
-        # but guard is defensive — protects against future policy changes or empty results)
+        _result = await parallel([duckdb_coro, graph_coro], taskgroup=True, policy='collect', ctx='finding_pipeline:store', logger_instance=logger)
         duckdb_ok = _result.ok[0] if len(_result.ok) > 0 else None
         graph_ok = _result.ok[1] if len(_result.ok) > 1 else None
         if duckdb_ok is None or isinstance(duckdb_ok, BaseException):
@@ -441,7 +414,6 @@ class FindingPipeline:
     async def get_queue_size(self) -> int:
         """Return current queue size."""
         return self._queue.qsize()
-
 
 async def find_and_accumulate_pipeline(findings: list[Any], pipeline: FindingPipeline) -> int:
     """

@@ -59,7 +59,7 @@ from hledac.universal.runtime.nonfeed_candidate_ledger import extract_domain_can
 from hledac.universal.runtime.acquisition_strategy import FeedDominanceBudget, _feed_budget_to_dict, _load_feed_budget_from_env, _expand_keyword_query, _has_threat_indicator, _has_crypto_indicator, build_acquisition_report
 from hledac.universal.runtime.acquisition.profile import AcquisitionProfile, normalize_acquisition_profile, is_academic_profile, is_deep_osint_m1_profile
 from hledac.universal.runtime.source_finding_bridge import MAX_SAMPLE_REJECTIONS, ct_results_to_findings, passive_dns_results_to_findings, wayback_results_to_findings
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, first_completed  # ISSUE-15
+from hledac.universal.utils.async_helpers import parallel_ok, first_completed
 __all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details']
 ACQUISITION_REPORT_SCHEMA_VERSION = 'f208.v1'
 
@@ -1882,7 +1882,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         tasks.append(safe_create_task(lane_runners[lane](plan), name='acquisition:lane_runner'))
     if not tasks:
         return tuple(outcomes)
-    results = await safe_gather_ok(*tasks, label='acquisition_strategy:4211')
+    results = await parallel_ok(*tasks, label='acquisition_strategy:4211')
     for result in results:
         if isinstance(result, AcquisitionLaneOutcome):
             outcomes.append(result)
@@ -1898,7 +1898,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
     Early-exit when min_finished lanes done (min_finished=0 means wait for all).
 
     GHOST_INVARIANTS:
-      - safe_gather_ok(return_exceptions=True) preserves fail-soft
+      - parallel_ok(return_exceptions=True) preserves fail-soft
       - per-lane asyncio.timeout enforced
       - STEALTH never auto-enabled
       - M1 8GB safe: Semaphore(clearnet_max), bounded [1, 4] for M1 8GB safety
@@ -2052,7 +2052,6 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             for t in pending:
                 t.cancel()
             break
-        # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
         _, winner_task = await first_completed(*pending)
         pending.discard(winner_task)
         try:
@@ -2071,7 +2070,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                 pass
         yield tuple(outcomes)
     if pending:
-        remaining = await safe_gather_ok(*pending, label='acquisition_strategy:streaming_remainder')
+        remaining = await parallel_ok(*pending, label='acquisition_strategy:streaming_remainder')
         for result in remaining:
             if isinstance(result, AcquisitionLaneOutcome):
                 outcomes.append(result)
@@ -2260,7 +2259,6 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
     indicators = ips + domains
     if indicators:
         return indicators[0]
-    # All three sources exhausted — this is genuinely empty
     logger.warning('passive_dns empty_query: seed_domains=%s, seed_ips=%s, raw_query=%r, extracted_ips=%r, extracted_domains=%r', len(seed_context.domains) if seed_context else 0, len(seed_context.ips) if seed_context else 0, base_query, ips, domains)
     return ''
 

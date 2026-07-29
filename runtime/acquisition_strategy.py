@@ -89,11 +89,16 @@ from hledac.universal.runtime.acquisition_strategy_planner import (
     passive_dns_results_to_findings,
     wayback_results_to_findings,
     MAX_SAMPLE_REJECTIONS,
+    # Internal helpers (used by lanes/__init__.py)
+    _feed_budget_to_dict,
+    _has_threat_indicator,
+    _has_crypto_indicator,
 )
 
 # Re-export async runner symbols (RUNNER section)
 from hledac.universal.runtime.acquisition_strategy_runner import (
     run_enabled_acquisition_lanes,
+    _get_ct_adapter,
 )
 
 # Keep legacy module-level constants for backward compatibility

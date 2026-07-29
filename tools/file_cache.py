@@ -103,23 +103,27 @@ def madv_nocache_on_path(path: str | os.PathLike) -> bool:
 QOS_CLASS_BACKGROUND: int = 0x1
 QOS_CLASS_UTILITY: int = 0x2
 QOS_CLASS_DEFAULT: int = 0x3
-QOS_CLASS_INTERACTIVE: int = 0x5
+QOS_CLASS_INTERACTIVE: int = 0x6  # Fixed: was 0x5 (B-5)
 QOS_CLASS_USER_INITIATED: int = 0x9
 
 
 def apply_thread_qos(qos_class: int) -> bool:
     """
-    F350M-R 4.6: Set QoS class for the current thread.
+    F350M-R 5.5: Set QoS class for the current thread (B-5 fix).
 
     QoS classes on macOS:
         0x1 = QOS_CLASS_BACKGROUND — lowest priority (vacuum/close threads)
         0x2 = QOS_CLASS_UTILITY
         0x3 = QOS_CLASS_DEFAULT
-        0x5 = QOS_CLASS_INTERACTIVE
+        0x6 = QOS_CLASS_INTERACTIVE  # Fixed: was 0x5 (B-5)
         0x9 = QOS_CLASS_USER_INITIATED — highest priority (inference threads)
 
-    Uses Rust apply_thread_qos(pthread_id=0, qos_class) where 0 means current thread.
+    Uses Rust apply_current_thread_qos(qos_class) internally.
     Falls back silently on non-macOS or if unavailable.
+
+    B-5 fix: pthread_id parameter removed from Rust API. The old
+    apply_thread_qos(pthread_id=0, ...) always set the CALLING thread
+    regardless of pthread_id value — now fixed with apply_current_thread_qos.
 
     Args:
         qos_class: QoS class constant (e.g. QOS_CLASS_BACKGROUND for vacuum).
@@ -130,8 +134,8 @@ def apply_thread_qos(qos_class: int) -> bool:
     try:
         from hledac.universal.core.rust_backend import rust
         if rust.is_available:
-            # 0 = current thread
-            return rust.apply_thread_qos(0, qos_class) == 0
+            # B-5: new API — no pthread_id needed (always sets calling thread)
+            return rust.apply_current_thread_qos(qos_class) == 0
     except Exception:
         pass
     return False

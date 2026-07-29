@@ -19,7 +19,7 @@ import msgspec
 from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 S2AG_BASE = 'https://api.semanticscholar.org/graph/v1'
 S2AG_PAPER_FIELDS = 'paperId,title,authors,year,abstract,venue,citationCount,referenceCount,openAccessPdf,externalIds,influentialCitationCount'
@@ -171,7 +171,7 @@ class S2ORCAdapter:
                 tasks.append(self._enrich_one(p))
             else:
                 tasks.append(asyncio.sleep(0, p))
-        results = await safe_gather_ok(*tasks, label='s2orc_adapter:268')
+        results = await parallel_ok(*tasks, label='s2orc_adapter:268')
         enriched = []
         for r in results:
             if isinstance(r, S2Paper):

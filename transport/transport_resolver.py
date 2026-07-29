@@ -15,6 +15,7 @@ NOT AUTHORITY FOR:
   - Runtime fetch truth (FetchCoordinator._fetch_url())
   - Tor session pool management
 """
+import asyncio
 import logging
 from dataclasses import dataclass
 import msgspec
@@ -173,20 +174,63 @@ class TransportResolver:
         self._checked = True
 
     def _check_tor_available(self) -> bool:
-        """Check if Tor is running by probing the SOCKS port (9050)."""
+        """Check if Tor is running by probing the SOCKS port (9050).
+        D-22 fix: reduced timeout from 2.0s to 0.5s — only called once at init
+        via _check_transports(), cached thereafter.
+        """
         import socket
+
         try:
             s = socket.socket()
-            s.settimeout(2.0)
+            s.settimeout(0.5)
             s.connect(('127.0.0.1', 9050))
             s.close()
             return True
         except OSError:
             return False
 
+    async def _check_tor_available_async(self) -> bool:
+        """Check if Tor is running by probing the SOCKS port (9050).
+        D-22 fix: asyncio.to_thread + 0.5s timeout to avoid blocking the
+        event loop when called from async routing contexts.
+        """
+        import socket
+
+        def _probe() -> bool:
+            try:
+                s = socket.socket()
+                s.settimeout(0.5)
+                s.connect(('127.0.0.1', 9050))
+                s.close()
+                return True
+            except OSError:
+                return False
+
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(_probe), timeout=0.5)
+        except asyncio.TimeoutError:
+            return False
+
     def is_tor_available(self) -> bool:
         """Return Tor runtime availability (probed, cached after first call)."""
         self._check_transports()
+        return self._tor_available
+
+    async def async_is_tor_available(self) -> bool:
+        """Async version of is_tor_available for use in async routing decisions.
+        D-22 fix: avoids blocking the event loop with 2s socket timeout.
+        Probes dynamically if not yet checked; uses cached value otherwise.
+        """
+        if not self._checked:
+            self._tor_available = await self._check_tor_available_async()
+            logger.debug(f'Tor runtime available (async): {self._tor_available}')
+            try:
+                from .tor_transport import TorTransport
+                self._tor_class = TorTransport
+                logger.debug('Tor transport importable')
+            except ImportError:
+                pass
+            self._checked = True
         return self._tor_available
 
     def is_i2p_available(self) -> bool:
@@ -251,7 +295,7 @@ class TransportResolver:
                     return transport
                 except Exception as e:
                     logger.warning(f'Nym transport init failed: {e}')
-            if self._tor_class and self.is_tor_available():
+            if self._tor_class and await self.async_is_tor_available():
                 try:
                     transport = self._tor_class()
                     await transport.start()
@@ -269,7 +313,7 @@ class TransportResolver:
                     return transport
                 except Exception:
                     pass
-            if self._tor_class and self.is_tor_available():
+            if self._tor_class and await self.async_is_tor_available():
                 try:
                     transport = self._tor_class()
                     await transport.start()
@@ -380,6 +424,21 @@ def get_route_decision(url: str) -> RouteDecision:
     if transport is Transport.TOR:
         resolver = _get_transport_resolver()
         return RouteDecision.TOR_OK if resolver.is_tor_available() else RouteDecision.TOR_UNAVAILABLE
+    return RouteDecision.CLEARNET
+
+
+async def async_get_route_decision(url: str) -> RouteDecision:
+    """
+    D-22 fix: async version of get_route_decision for use in async contexts.
+    Uses async_is_tor_available() to avoid blocking the event loop.
+    """
+    transport = get_transport_for_url(url)
+    if transport is Transport.I2P:
+        # is_i2p_available is sync (~2ms) so not worth async-ifying
+        return RouteDecision.I2P_OK if is_i2p_available() else RouteDecision.I2P_UNAVAILABLE
+    if transport is Transport.TOR:
+        resolver = _get_transport_resolver()
+        return RouteDecision.TOR_OK if await resolver.async_is_tor_available() else RouteDecision.TOR_UNAVAILABLE
     return RouteDecision.CLEARNET
 _resolver_instance: 'TransportResolver | None' = None
 

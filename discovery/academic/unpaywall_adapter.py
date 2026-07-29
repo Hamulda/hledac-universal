@@ -20,7 +20,7 @@ import msgspec
 from typing import NamedTuple
 import orjson
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 UNPAYWALL_BASE = 'https://api.unpaywall.org/v2'
 RATE_LIMIT = 10
@@ -130,7 +130,7 @@ class UnpaywallAdapter:
             async with semaphore:
                 result = await self.resolve_doi(doi)
                 return result.paper
-        results = await safe_gather_ok(*[lookup_one(doi) for doi in dois[:MAX_DOI_LOOKUPS]], label='unpaywall_adapter:182')
+        results = await parallel_ok(*[lookup_one(doi) for doi in dois[:MAX_DOI_LOOKUPS]], label='unpaywall_adapter:182')
         return [r if isinstance(r, OAPaper) else None for r in results]
 
     def to_canonical_findings(self, papers: list[OAPaper], query: str) -> list[CanonicalFinding]:

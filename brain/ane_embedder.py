@@ -8,6 +8,7 @@ Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector 
 """
 from __future__ import annotations
 import asyncio
+import itertools
 import inspect
 import logging
 import threading
@@ -283,7 +284,13 @@ except ImportError:
     _mlx_embeddings_load = None
 MODELS_DIR = Path.home() / '.hledac' / 'models'
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
-_ANE_TELEMETRY = {'ane_embed_attempted': 0, 'ane_embed_fallback_used': 0, 'ane_warmup_executed': 0, 'ane_warmup_error': 0}
+# E-34: itertools.count() is atomic in CPython — GIL protects += operation.
+# Using dict values with += from concurrent asyncio + ThreadPoolExecutor caused
+# undercounting (non-atomic read-modify-write). count() objects are thread-safe.
+_ANE_COUNTER_ATTEMPTED: itertools.count[int] = itertools.count()
+_ANE_COUNTER_FALLBACK: itertools.count[int] = itertools.count()
+_ANE_COUNTER_WARMUP_OK: itertools.count[int] = itertools.count()
+_ANE_COUNTER_WARMUP_ERR: itertools.count[int] = itertools.count()
 
 class ANEStatus(Enum):
     """ANE status codes."""
@@ -326,14 +333,22 @@ def get_ane_status(embedder: ANEEmbedder | None=None) -> ANEStatusResult:
 
 def get_ane_telemetry() -> dict:
     """Sprint F228B: Returns a copy of ANE telemetry counters."""
-    return dict(_ANE_TELEMETRY)
+    # E-34: Read atomic counters — next() is atomic in CPython (GIL)
+    return {
+        'ane_embed_attempted': next(_ANE_COUNTER_ATTEMPTED),
+        'ane_embed_fallback_used': next(_ANE_COUNTER_FALLBACK),
+        'ane_warmup_executed': next(_ANE_COUNTER_WARMUP_OK),
+        'ane_warmup_error': next(_ANE_COUNTER_WARMUP_ERR),
+    }
 
 def reset_ane_telemetry() -> None:
     """Sprint F228B: Reset telemetry counters (for testing)."""
-    _ANE_TELEMETRY['ane_embed_attempted'] = 0
-    _ANE_TELEMETRY['ane_embed_fallback_used'] = 0
-    _ANE_TELEMETRY['ane_warmup_executed'] = 0
-    _ANE_TELEMETRY['ane_warmup_error'] = 0
+    # E-34: Recreate atomic counters — old objects become garbage
+    global _ANE_COUNTER_ATTEMPTED, _ANE_COUNTER_FALLBACK, _ANE_COUNTER_WARMUP_OK, _ANE_COUNTER_WARMUP_ERR
+    _ANE_COUNTER_ATTEMPTED = itertools.count()
+    _ANE_COUNTER_FALLBACK = itertools.count()
+    _ANE_COUNTER_WARMUP_OK = itertools.count()
+    _ANE_COUNTER_WARMUP_ERR = itertools.count()
 _HF_TOKENIZER = None
 
 def _get_hf_tokenizer():
@@ -501,8 +516,8 @@ class ANEEmbedder:
         R-4: If LLM is active on Metal GPU, skip Metal-backed embedding
         and use hash fallback to avoid GPU bandwidth contention.
         """
-        global _ANE_TELEMETRY
-        _ANE_TELEMETRY['ane_embed_attempted'] += 1
+        # E-34: next() on itertools.count is atomic in CPython (GIL)
+        next(_ANE_COUNTER_ATTEMPTED)
 
         # R-4: Avoid Metal GPU contention with active LLM inference.
         # If Hermes LLM is running (holds 'llm' slot), use hash fallback.
@@ -511,7 +526,7 @@ class ANEEmbedder:
         # would be re-entrant — we just check LLM state instead).
         try:
             if _MLXFamilyMutex().is_llm_active():
-                _ANE_TELEMETRY['ane_embed_fallback_used'] += 1
+                next(_ANE_COUNTER_FALLBACK)
                 return self._hash_embed(texts if isinstance(texts, list) else [texts])
         except Exception:
             pass  # Mutex unavailable — proceed with normal path
@@ -524,7 +539,7 @@ class ANEEmbedder:
                 return np.array([_coreml_embed(self.model, t) for t in texts], dtype=np.float32)
             return await asyncio.to_thread(_run)
         if self._mlx_model is not None:
-            _ANE_TELEMETRY['ane_embed_attempted'] += 1
+            next(_ANE_COUNTER_ATTEMPTED)
 
             def _run():
                 import mlx.core as mx
@@ -541,22 +556,23 @@ class ANEEmbedder:
                 return np.array(result, dtype=np.float32)
             return await asyncio.to_thread(_run)
         if self._fallback_embedder is not None:
-            _ANE_TELEMETRY['ane_embed_fallback_used'] += 1
+            next(_ANE_COUNTER_FALLBACK)
             fb = self._fallback_embedder
             if inspect.iscoroutinefunction(fb):
                 return await fb(texts)
             else:
                 return await asyncio.to_thread(fb, texts)
-        _ANE_TELEMETRY['ane_embed_fallback_used'] += 1
+        next(_ANE_COUNTER_FALLBACK)
         return self._hash_embed(texts)
 
     def _hash_embed(self, texts: str | list[str]) -> np.ndarray:
         """Deterministic hash-based fallback — always works, no model needed."""
+        import xxhash
         if isinstance(texts, str):
             texts = [texts]
         vecs = []
         for t in texts:
-            h = hash(t[:512]) % 2 ** 32
+            h = xxhash.xxh3_64(t[:512].encode("utf-8")).intdigest() % (2 ** 32)
             vec = np.zeros(self.hidden_dim, dtype=np.float32)
             for i in range(min(self.hidden_dim, 384)):
                 vec[i] = float(h >> i % 32 & 1) * 2 - 1
@@ -569,20 +585,19 @@ class ANEEmbedder:
         Sprint F228B: Fixed warmup — awaits embed() correctly.
         Never passes async embed() directly to run_in_executor.
         """
-        global _ANE_TELEMETRY
         if not ANE_AVAILABLE:
             logger.debug('ANEEmbedder warmup skipped: ANE not available')
             return
         if not self._loaded or self.model is None:
             logger.debug('ANEEmbedder warmup skipped: model not loaded')
             return
-        _ANE_TELEMETRY['ane_warmup_executed'] += 1
+        next(_ANE_COUNTER_WARMUP_OK)
         try:
             dummy = ['warmup probe osint security']
             await self.embed(dummy)
             logger.debug('ANEEmbedder warmed up (ANE cache primed)')
         except Exception as e:
-            _ANE_TELEMETRY['ane_warmup_error'] += 1
+            next(_ANE_COUNTER_WARMUP_ERR)
             logger.debug(f'ANEEmbedder warmup failed: {e}')
 
     @property

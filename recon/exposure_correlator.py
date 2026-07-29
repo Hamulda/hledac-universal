@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import TYPE_CHECKING
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 if TYPE_CHECKING:
     import httpx
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -200,7 +200,7 @@ async def _detect_open_buckets_async(entity_name: str) -> list[dict]:
         tasks.append(safe_create_task(_check_with_sem(candidate)))
     if not tasks:
         return []
-    results = await safe_gather_ok(*tasks, label='exposure_correlator:353')
+    results = await parallel_ok(*tasks, label='exposure_correlator:353')
     findings = []
     for r in results:
         if isinstance(r, Exception):
@@ -365,7 +365,7 @@ def scan_open_storage(domains: list[str]) -> list[OpenStorageResult]:
 
     async def _scan_all():
         tasks = [scanner.scan_domain(d) for d in domains]
-        return await safe_gather_ok(*tasks, label='exposure_correlator:562')
+        return await parallel_ok(*tasks, label='exposure_correlator:562')
     try:
         loop = asyncio.new_event_loop()
         try:

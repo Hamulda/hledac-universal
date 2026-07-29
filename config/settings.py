@@ -354,7 +354,7 @@ class CooldownSettings(msgspec.Struct, frozen=True, gc=False):
     cb_boot_recovery_timeout_s: float = 5.0
     cb_base_recovery_timeout_s: float = 15.0
     cb_boot_phase_duration_s: float = 60.0
-    cb_failure_threshold: int = 3
+    cb_failure_threshold: int = 5  # M1AirConfig.circuit_breaker_threshold=5 (tightened for M1 thermal envelope)
     cb_half_open_probes: int = 3
     cb_timeout_accumulator_weight: float = 0.5
     cb_consecutive_timeout_threshold: int = 4
@@ -375,7 +375,7 @@ class CooldownSettings(msgspec.Struct, frozen=True, gc=False):
             cb_boot_recovery_timeout_s=ENV.get_float("HLEDAC_CB_BOOT_RECOVERY_TIMEOUT_S", 5.0),
             cb_base_recovery_timeout_s=ENV.get_float("HLEDAC_CB_BASE_RECOVERY_TIMEOUT_S", 15.0),
             cb_boot_phase_duration_s=ENV.get_float("HLEDAC_CB_BOOT_PHASE_DURATION_S", 60.0),
-            cb_failure_threshold=ENV.get_int("HLEDAC_CB_CIRCUIT_FAILURE_THRESHOLD", 3),
+            cb_failure_threshold=ENV.get_int("HLEDAC_CB_CIRCUIT_FAILURE_THRESHOLD", 5),  # M1AirConfig=5
             cb_half_open_probes=ENV.get_int("HLEDAC_CB_CIRCUIT_HALF_OPEN_PROBES", 3),
             cb_timeout_accumulator_weight=ENV.get_float("HLEDAC_CB_TIMEOUT_ACCUMULATOR_WEIGHT", 0.5),
             cb_consecutive_timeout_threshold=ENV.get_int("HLEDAC_CB_CONSECUTIVE_TIMEOUT_THRESHOLD", 4),

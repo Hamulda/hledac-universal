@@ -26,7 +26,7 @@ import threading
 import time as _time
 import typing
 
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 
 logger = typing.cast(typing.Any, __import__("logging").getLogger(__name__))
 
@@ -181,12 +181,48 @@ class PrewarmDaemon:
                 errors.append(f"mlx_embed: {exc}")
                 logger.debug(f"[PREENABLE] MLXEmbed prewarm failed: {exc}")
 
+        async def _prewarm_slm_decomposer() -> None:
+            """
+            ISSUE-2.4 FIX: Preload Qwen2.5-0.5B-4bit SLM via get_slm_decomposer singleton.
+
+            Model is loaded once and shared across all sprints. Eliminates the
+            ~400MB-1GB Metal allocation + 10-15s reload penalty per sprint.
+            Uses a no-op governor/cache for prewarm — real instances injected later.
+            """
+            try:
+                from hledac.universal.planning import get_slm_decomposer
+
+                class _NoOpCache:
+                    async def get(self, _key: str, _version: int): return None
+                    async def put(self, _key: str, _value: object, _version: int): pass
+
+                class _NoOpGovernor:
+                    pass
+
+                # get_slm_decomposer is idempotent — calling it multiple times
+                # returns the same singleton instance
+                decomposer = get_slm_decomposer(
+                    governor=_NoOpGovernor(),
+                    cache=_NoOpCache(),
+                    model_name=os.environ.get(
+                        "HLEDAC_SLM_MODEL_NAME", "mlx-community/Qwen2.5-0.5B-4bit"
+                    ),
+                )
+                # Trigger eager load by awaiting _load_model
+                if hasattr(decomposer, "_load_model"):
+                    await decomposer._load_model()
+                logger.info("[PREENABLE] SLMDecomposer prewarmed via get_slm_decomposer singleton")
+            except Exception as exc:
+                errors.append(f"slm_decomposer: {exc}")
+                logger.debug(f"[PREENABLE] SLMDecomposer prewarm failed: {exc}")
+
         # Load Hermes and embeddings in parallel — total wall-clock = max(hermes, embeddings)
         # ~60-90s (Hermes) vs ~10-15s (embeddings) — dominated by Hermes
-        # F314: migrated asyncio.gather -> safe_gather_ok (fail-soft invariant preserved)
-        await safe_gather_ok(
+        # F314: migrated asyncio.gather -> parallel_ok (fail-soft invariant preserved)
+        await parallel_ok(
             _prewarm_hermes(),
             _prewarm_mlx_embed(),
+            _prewarm_slm_decomposer(),
             label="prewarm_daemon:_prewarm_models",
         )
 

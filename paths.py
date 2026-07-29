@@ -405,8 +405,6 @@ _LMDB_STORE_DEFAULT = str(RAMDISK_ROOT / 'lmdb_store') if RAMDISK_ACTIVE else '~
 LMDB_STORE_ROOT: Path = Path(os.environ['HLEDAC_LMDB_STORE']) if 'HLEDAC_LMDB_STORE' in os.environ else Path(_LMDB_STORE_DEFAULT)
 _LANCEDB_STORE_DEFAULT = str(RAMDISK_ROOT / 'lancedb_store') if RAMDISK_ACTIVE else '~/.hledac/lancedb_store'
 LANCEDB_STORE_ROOT: Path = Path(os.environ['HLEDAC_LANCEDB_STORE']) if 'HLEDAC_LANCEDB_STORE' in os.environ else Path(_LANCEDB_STORE_DEFAULT)
-_LMDB_ROOT_FALLBACK: Path = Path('~/.hledac/lmdb_store').expanduser()
-_LMDB_ROOT_FALLBACK: Path = Path('~/.hledac/lmdb_store').expanduser()
 _UNRESOLVED: object = object()
 _DEDUP_PATHS_CACHE: dict[str, Path] | object = _UNRESOLVED
 _DEDUP_PATHS_LOCK = make_lock(LockCategory.CONFIG, "paths._DEDUP_PATHS_LOCK", prefer_unfair=True)
@@ -414,16 +412,13 @@ _DEDUP_PATHS_LOCK = make_lock(LockCategory.CONFIG, "paths._DEDUP_PATHS_LOCK", pr
 def resolve_dedup_paths(env_prefix: str='HLEDAC_DEDUP') -> dict[str, Path]:
     """
     Resolve all dedup storage paths.
-
     Env precedence for LMDB root:
       1. HLEDAC_DEDUP_LMDB_PATH (full path override)
       2. HLEDAC_LMDB_STORE (LMDB_STORE_ROOT env)
       3. ~/.hledac/lmdb_store (default)
-
     Env precedence for Bloom directory:
       1. HLEDAC_DEDUP_BLOOM_DIR
       2. <lmdb_root>/bloom (co-located)
-
     Returns dict with keys: lmdb_root, dedup_lmdb, bloom_dir,
                             bloom_active, bloom_previous, bloom_lock
     """
@@ -439,7 +434,7 @@ def resolve_dedup_paths(env_prefix: str='HLEDAC_DEDUP') -> dict[str, Path]:
     try:
         lmdb_root.mkdir(parents=True, exist_ok=True)
     except Exception:
-        lmdb_root = _LMDB_ROOT_FALLBACK
+        lmdb_root = Path('~/.hledac/lmdb_store').expanduser()
         lmdb_root.mkdir(parents=True, exist_ok=True)
     try:
         bloom_dir.mkdir(parents=True, exist_ok=True)

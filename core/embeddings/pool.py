@@ -33,12 +33,14 @@ from hledac.universal.utils.mlx_cache import get_dynamic_metal_cache_limit
 
 logger = logging.getLogger(__name__)
 
-# === Safe MLX detection (no mlx.core at module level) ===
+# === Safe MLX detection (ISSUE 3.2 fix) ===
 def _detect_mlx_available() -> bool:
+    """Uses importlib.metadata — find_spec loads mlx.core on macOS, violating PLANNER: ZERO MLX."""
     try:
-        spec = importlib.util.find_spec("mlx.core")
-        return spec is not None
-    except (ValueError, ModuleNotFoundError, ImportError):
+        import importlib.metadata
+        importlib.metadata.version("mlx")
+        return True
+    except Exception:
         return False
 
 

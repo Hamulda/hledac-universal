@@ -297,13 +297,13 @@ __all__ = [
     "chunked_taskgroup",
     "monotonic_ms",
     "parallel",  # ISSUE-006: single canonical parallel runner
-    "parallel_ok",  # ISSUE-003: drop-in for safe_gather_ok, variadic *coros
+    "parallel_ok",  # ISSUE-003: canonical drop-in for safe_gather_ok, variadic *coros
     "first_completed",  # ISSUE-15: asyncio.wait(FIRST_COMPLETED) replacement
     "try_group",  # ISSUE-003: TaskGroup + except* for structured groups
     "parallel_taskgroup_star",  # C6: PEP 654 except* TaskGroup variant
     # Deprecated (Python 3.13+ warnings.deprecated; use parallel() instead):
     "safe_gather",  # → parallel(coros, policy="collect")
-    "safe_gather_ok",  # → parallel_ok(*coros)
+    "safe_gather_ok",  # ISSUE 6.1: deprecated alias → parallel_ok(*coros)
     "safe_gather_fire_and_forget",  # → parallel(coros, policy="log")
     "safe_gather_strict",  # → parallel(coros, policy="raise")
     "safe_create_task",
@@ -1350,12 +1350,12 @@ async def parallel[T](
 
 
 # =============================================================================
-# ISSUE-003 consolidation: parallel_ok — drop-in for safe_gather_ok
+# ISSUE-003 consolidation: parallel_ok — drop-in for parallel_ok
 # ===========================================================================
-# Drop-in replacement for safe_gather_ok: returns list[T] (successes only),
+# Drop-in replacement for parallel_ok: returns list[T] (successes only),
 # all exceptions silently dropped (logged at DEBUG). Variadic *coros.
 # Equivalent to parallel(*coros, policy="log").
-# Deprecated: safe_gather_ok redirects here.
+# Deprecated: parallel_ok redirects here.
 
 
 async def parallel_ok[T](
@@ -1363,7 +1363,7 @@ async def parallel_ok[T](
     label: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> list[T]:
-    """ISSUE-003: Drop-in replacement for safe_gather_ok.
+    """ISSUE-003: Drop-in replacement for parallel_ok.
 
     Returns a plain list of successful results, in original order, with all
     Exception instances filtered out. CancelledError / non-Exception
@@ -1371,7 +1371,7 @@ async def parallel_ok[T](
 
     Equivalent to: ``parallel(*coros, policy="log", ctx=label)``
 
-    DEPRECATED alias: safe_gather_ok. Use parallel_ok() directly.
+    DEPRECATED alias: parallel_ok. Use parallel_ok() directly.
 
     Args:
         *coros: Coroutines or awaitables to gather. Plain values pass through.
@@ -1551,13 +1551,13 @@ async def safe_gather[T](
 
 
 # =============================================================================
-# Sprint F261: _BoundedExceptionLog + safe_gather_fire_and_forget + safe_gather_ok
+# Sprint F261: _BoundedExceptionLog + safe_gather_fire_and_forget + parallel_ok
 # Cutting-edge follow-up to F26X safe_gather.
 #
 # Three call shapes cover the 157 gather sites identified in the F260 audit:
 #   1. safe_gather (struct)  — returns SafeGatherResult with .ok + .errors
 #      → 28 sites with explicit _check_gathered() post-process
-#   2. safe_gather_ok  — returns list[T], filters exceptions silently
+#   2. parallel_ok  — returns list[T], filters exceptions silently
 #      → 17 sites with isinstance(r, Exception) filter
 #      → 172 sites with for-loop / extend() pattern
 #   3. safe_gather_fire_and_forget — returns None, log + bounded
@@ -1756,39 +1756,20 @@ async def safe_gather_fire_and_forget[T](
     return _BoundedExceptionLog(sample=tuple(sample), suppressed_count=suppressed)
 
 
+
 @warnings.deprecated("Use parallel_ok(*coros) instead", category=DeprecationWarning)
 async def safe_gather_ok[T](
     *coros: Awaitable[T] | T,
     label: str = "",
     logger_instance: logging.Logger | None = None,
 ) -> list[T]:
-    """F261: asyncio.gather wrapper returning only successful results.
+    """ISSUE 6.1: Deprecated alias for parallel_ok.
 
-    Returns a plain list of successful results, in original order, with all
-    Exception instances filtered out. CancelledError / non-Exception
-    BaseException are re-raised (same policy as safe_gather struct).
+    Returns a plain list of successful results, exceptions silently dropped.
+    Equivalent to: ``parallel(*coros, policy="log", ctx=label)``
 
-    Use this when the caller does one of:
-        results = await asyncio.gather(..., return_exceptions=True)
-        results = [r for r in results if not isinstance(r, Exception)]
-        for r in results: ...  (with implicit exception skip)
-        results.extend(...)  (then assign to a downstream list)
-
-    Args:
-        *coros: Coroutines or awaitables to gather.
-        label:  Context string for log messages.
-        logger_instance: Optional logger override.
-
-    Returns:
-        list[T] of successful results, exceptions silently dropped (logged at DEBUG).
-
-    Raises:
-        asyncio.CancelledError: if any coro was cancelled.
-        BaseException: for non-Exception BaseException (KeyboardInterrupt, SystemExit).
-
-    DEPRECATED: Use ``parallel_ok(*coros)`` or ``parallel(coros, policy="log")`` instead.
+    DEPRECATED: Use ``parallel_ok(*coros)`` directly.
     """
-    # Delegate to parallel_ok — redirect ensures the same implementation is used
     return await parallel_ok(*coros, label=label, logger_instance=logger_instance)
 
 
@@ -2027,7 +2008,7 @@ async def race_first_success(
 # ISSUE-006: asyncio.TaskGroup helpers — Python 3.11+ PEP 654 cutting-edge
 #
 # Problem: sequential `for url in urls: await fetch(url)` is N×latency serial.
-# asyncio.gather() / safe_gather_ok() handles parallel but has no concurrency
+# asyncio.gather() / parallel_ok() handles parallel but has no concurrency
 # cap built-in. Use parallel() with concurrency=N instead.
 #
 # Solution: chunked_taskgroup() — memory-safe batch processing for M1 8GB

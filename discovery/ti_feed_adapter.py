@@ -10,7 +10,6 @@ No browser, no JS rendering, no auth-required APIs, no cloud-only dependencies.
 Sprint 8BN — Structured TI Ingest V1
 """
 from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -18,15 +17,12 @@ import os
 import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
-
 import httpx
 import msgspec
-
 from hledac.universal.network.session_runtime import async_get_httpx_session
 from hledac.universal.tools.discovery_replay import read_cassette, replay_enabled, replay_strict_enabled, write_cassette
 from hledac.universal.transport.circuit_breaker import checked_httpx_get, checked_httpx_post
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
-
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
     SELECTOLAX_AVAILABLE = True
@@ -143,7 +139,7 @@ class SourceAdapter(ABC):
     def _hash_fields(*fields: str) -> str:
         """Compute deterministic xxhash over pipe-separated fields."""
         import xxhash
-        return xxhash.xxh3_64('|'.join(f or '' for f in fields)).hexdigest()
+        return xxhash.xxh3_64('|'.join((f or '' for f in fields))).hexdigest()
 
     @staticmethod
     async def _fetch_text(url: str, timeout_s: float=30.0, max_bytes: int=5000000) -> tuple[str | None, str | None]:
@@ -533,8 +529,6 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
     if not ip_findings:
         return findings
     logger.info(f'[GreyNoise/community] enriching {len(ip_findings)} IPs (cap={max_lookups})')
-
-    # P1-02: Rate-limit semaphore místo sekvenčního sleep — concurrency=1 kvůli rate limitu
     sem = asyncio.Semaphore(1)
 
     async def _enrich_with_rate_limit(finding: dict) -> None:
@@ -546,12 +540,10 @@ async def enrich_findings_greynoise_community(session: httpx.AsyncClient, findin
                     finding['confidence'] = min(finding.get('confidence', 0.5) + 0.15, 1.0)
                 if result['riot']:
                     finding['confidence'] = min(finding.get('confidence', 0.5) * 0.5, 0.3)
-            await asyncio.sleep(0.3)  # Rate limit mezi requesty
-
+            await asyncio.sleep(0.3)
     from hledac.universal.utils.async_helpers import parallel
-    await parallel([_enrich_with_rate_limit(f) for f in ip_findings], policy="log", ctx="ti_feed:greynoise_enrich")
-
-    enriched = sum(1 for f in ip_findings if 'greynoise' in f)
+    await parallel([_enrich_with_rate_limit(f) for f in ip_findings], policy='log', ctx='ti_feed:greynoise_enrich')
+    enriched = sum((1 for f in ip_findings if 'greynoise' in f))
     logger.info(f'[GreyNoise/community] enriched {enriched}/{len(ip_findings)} IPs')
     return findings
 
@@ -590,24 +582,8 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
             soup = BeautifulSoup(html_text, 'html.parser')
             paste_urls = [f"https://pastebin.com/raw{a['href']}" for tr in soup.select('table.maintable tr')[1:21] for a in tr.select('td a')[:1] if a.get('href')]
         paste_urls = paste_urls[:max_pastes]
-        # F350M-R: Parallel batch fetch — replaces sequential await loop.
-        # Original: 1 URL × 1s sleep = N seconds serial. New: N URLs in one
-        # asyncio.gather with concurrency=None (UMA-aware via ConcurrencyBudgetRegistry).
-        # F1 FIX: concurrency=None → dynamic limit adapts to Pastebin WARN/CRITICAL
-        # states automatically (PASTE_SCRAPE category: OK=4, WARN=2, CRITICAL=1).
         from hledac.universal.fetching.public_fetcher import async_fetch_public_text_batch
-
-        batch_results = await async_fetch_public_text_batch(
-            paste_urls,
-            timeout_s=8.0,
-            max_bytes=200_000,
-            use_stealth=False,
-            use_js=False,
-            use_doh=False,
-            js_confidence=0.0,
-            priority=5,
-            concurrency=None,  # F1 FIX: UMA-aware via ConcurrencyBudgetRegistry
-        )
+        batch_results = await async_fetch_public_text_batch(paste_urls, timeout_s=8.0, max_bytes=200000, use_stealth=False, use_js=False, use_doh=False, js_confidence=0.0, priority=5, concurrency=None)
         for raw_url, fetch_result in zip(paste_urls, batch_results):
             try:
                 if fetch_result.error or fetch_result.text is None:
@@ -615,13 +591,7 @@ async def scrape_pastebin_for_keyword(keyword: str, max_pastes: int=10) -> list[
                     continue
                 content_str = fetch_result.text
                 if keyword.lower() in content_str.lower():
-                    results.append({
-                        'url': raw_url,
-                        'content': content_str[:2000],
-                        'content_hash': hashlib.sha256(content_str.encode()).hexdigest()[:16],
-                        'title': f'Pastebin hit: {keyword}',
-                        'source': 'pastebin_scrape',
-                    })
+                    results.append({'url': raw_url, 'content': content_str[:2000], 'content_hash': hashlib.sha256(content_str.encode()).hexdigest()[:16], 'title': f'Pastebin hit: {keyword}', 'source': 'pastebin_scrape'})
             except Exception as e:
                 logger.debug(f'[Pastebin] Paste processing error for {raw_url}: {e}')
     except Exception as e:
@@ -653,7 +623,6 @@ async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
             except Exception:
                 pass
         if not results:
-            # F-FIX: selectolax primary (faster), bs4 fallback
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html_text, 'html.parser')
             for item in soup.select('.gist-snippet')[:max_results]:
@@ -843,21 +812,19 @@ class WaybackArchiveAdapter(SourceAdapter):
         return tuple(entries)
 from hledac.universal.tool_registry import register_task
 
-
 @register_task('domain_to_pdns')
 async def _handle_domain_to_pdns(task, scheduler):
     from hledac.universal.discovery.ti_feed_adapter import query_circl_pdns
     results = await query_circl_pdns(task.ioc_value)
     if not results:
         return
-    # P1-02 FIX: Parallelizace pres safe_gather_ok (stejny vzor jako domain_to_ct nize)
     sem = asyncio.Semaphore(4)
 
     async def _buffer_one(r) -> None:
         async with sem:
             await scheduler._buffer_ioc_pivot(r.get('ioc_type', 'domain'), r.get('ioc', ''), 0.75)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:domain_to_pdns')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:domain_to_pdns')
     if scheduler._duckdb_store is not None:
         from hledac.universal.knowledge.duckdb_store import CanonicalFinding
         findings = []
@@ -878,7 +845,7 @@ async def _handle_domain_to_ct(task, scheduler):
         async with sem:
             await scheduler._buffer_ioc_pivot('domain', r.get('ioc', ''), 0.7)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:domain_to_ct')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:domain_to_ct')
 
 @register_task('ct_live_monitor')
 async def _handle_ct_live_monitor(task, scheduler):
@@ -890,7 +857,7 @@ async def _handle_ct_live_monitor(task, scheduler):
         async with sem:
             await scheduler._buffer_ioc_pivot('domain', r.get('ioc', ''), 0.65)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:ct_live_monitor')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:ct_live_monitor')
 
 @register_task('multi_engine_search')
 async def _handle_multi_engine_search(task, scheduler):
@@ -902,7 +869,7 @@ async def _handle_multi_engine_search(task, scheduler):
         async with sem:
             await scheduler._buffer_ioc_pivot('url', r.get('url', ''), 0.7)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:multi_engine_search')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:multi_engine_search')
 
 @register_task('github_dork')
 async def _handle_github_dork(task, scheduler):
@@ -914,7 +881,7 @@ async def _handle_github_dork(task, scheduler):
         async with sem:
             await scheduler._buffer_ioc_pivot('url', r.get('url', ''), 0.7)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:github_dork')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:github_dork')
 
 @register_task('shodan_enrich')
 async def _handle_shodan_enrich(task, scheduler):
@@ -984,7 +951,7 @@ async def _handle_ahmia_search(task, scheduler):
         async with sem:
             await scheduler._buffer_ioc_pivot('url', r.get('url', ''), 0.65)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:ahmia_search')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:ahmia_search')
 
 @register_task('paste_keyword_search')
 async def _handle_paste_keyword_search(task, scheduler):
@@ -996,7 +963,7 @@ async def _handle_paste_keyword_search(task, scheduler):
         async with sem:
             await scheduler._buffer_ioc_pivot('url', r.get('url', ''), 0.6)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:paste_keyword_search')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:paste_keyword_search')
 
 @register_task('wayback_search')
 async def _handle_wayback_search(task, scheduler):
@@ -1008,7 +975,7 @@ async def _handle_wayback_search(task, scheduler):
         async with sem:
             await scheduler._buffer_ioc_pivot('url', r.get('url', ''), 0.65)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:wayback_search')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:wayback_search')
 
 @register_task('commoncrawl_search')
 async def _handle_commoncrawl_search(task, scheduler):
@@ -1020,7 +987,7 @@ async def _handle_commoncrawl_search(task, scheduler):
         async with sem:
             await scheduler._buffer_ioc_pivot('url', r.get('url', ''), 0.65)
     if results:
-        await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:commoncrawl_search')
+        await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:commoncrawl_search')
 
 def _register_structured_adapters() -> None:
     """Register the structured TI adapters. Called once at module load."""
@@ -1083,9 +1050,8 @@ async def _handle_i2p_eepsite_fetch(task, scheduler):
             async with sem:
                 await scheduler._buffer_ioc_pivot('url', r['url'], 0.55)
         if results:
-            await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:i2p_eepsite_fetch')
+            await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:i2p_eepsite_fetch')
 import re as _cid_re_mod
-
 _CID_PATTERN = _cid_re_mod.compile('\\b(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58})\\b')
 _IPFS_GATEWAYS = ['https://ipfs.io/ipfs/', 'https://cloudflare-ipfs.com/ipfs/', 'https://gateway.pinata.cloud/ipfs/']
 
@@ -1168,7 +1134,7 @@ async def _handle_ipfs_fetch(task, scheduler):
                 finding = CanonicalFinding(finding_id=f'ipfs_search_{cid}_{int(ts_now * 1000)}', query=f'ipfs_search:{ioc}', source_type='ipfs', confidence=0.65, ts=ts_now, provenance=(cid, 'ipfs_search', ioc), payload_text=r.get('title', '')[:500] if r.get('title') else None)
                 findings.append(finding)
         if search_results:
-            await safe_gather_ok(*[_process_one(r) for r in search_results], label='ti_feed_adapter:ipfs_fetch')
+            await parallel_ok(*[_process_one(r) for r in search_results], label='ti_feed_adapter:ipfs_fetch')
     if findings and scheduler._duckdb_store is not None:
         try:
             await scheduler._duckdb_store.async_ingest_findings_batch(findings)
@@ -1242,11 +1208,9 @@ async def _handle_gopher_fetch(task, scheduler):
                 await scheduler._buffer_ioc_pivot('url', gopher_url, 0.5)
     items = result.get('items', [])
     if items:
-        await safe_gather_ok(*[_buffer_one(item) for item in items], label='ti_feed_adapter:gopher_fetch')
+        await parallel_ok(*[_buffer_one(item) for item in items], label='ti_feed_adapter:gopher_fetch')
 import re as _ip_re_mod
-
-from hledac.universal.utils.async_helpers import safe_gather_ok
-
+from hledac.universal.utils.async_helpers import parallel_ok
 _IP_PATTERN = _ip_re_mod.compile('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$')
 
 def _is_valid_ip(s: str) -> bool:
@@ -1306,7 +1270,7 @@ async def _handle_bgp_asn_lookup(task, scheduler):
     ioc = task.ioc_value
     if not _is_valid_ip(ioc):
         return
-    ripe, cymru = await safe_gather_ok(query_ripe_stat_asn(ioc), query_team_cymru_asn(ioc), label='ti_feed_adapter:1871')
+    ripe, cymru = await parallel_ok(query_ripe_stat_asn(ioc), query_team_cymru_asn(ioc), label='ti_feed_adapter:1871')
     if ripe.get('asn') or cymru.get('asn'):
         await scheduler._buffer_ioc_pivot('ipv4', ioc, 0.8)
 
@@ -1378,7 +1342,7 @@ async def fetch_malwarebazaar_recent(tag: str | None=None, max_items: int=25) ->
 async def _handle_malwarebazaar_search(task, scheduler):
     """MalwareBazaar malware sample lookup — hash nebo tag."""
     ioc = task.ioc_value
-    if len(ioc) == 64 and all(c in '0123456789abcdefABCDEF' for c in ioc):
+    if len(ioc) == 64 and all((c in '0123456789abcdefABCDEF' for c in ioc)):
         try:
             s = await async_get_httpx_session()
             resp, err = await checked_httpx_post(s, 'https://mb-api.abuse.ch/api/v1/', json={'query': 'get_info', 'hash': ioc}, timeout=httpx.Timeout(15), failure_kind='malwarebazaar_info')
@@ -1398,7 +1362,7 @@ async def _handle_malwarebazaar_search(task, scheduler):
             async with sem:
                 await scheduler._buffer_ioc_pivot('sha256', item['sha256'], 0.75)
         if results:
-            await safe_gather_ok(*[_buffer_one(item) for item in results], label='ti_feed_adapter:malwarebazaar_search')
+            await parallel_ok(*[_buffer_one(item) for item in results], label='ti_feed_adapter:malwarebazaar_search')
 
 @register_task('cve_to_github')
 async def _handle_cve_to_github(task, scheduler):
@@ -1428,6 +1392,6 @@ async def _handle_cve_to_github(task, scheduler):
             async with sem:
                 await scheduler._buffer_ioc_pivot('url', r.get('url', ''), 0.7)
         if results:
-            await safe_gather_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:cve_to_github')
+            await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:cve_to_github')
     except Exception:
         pass

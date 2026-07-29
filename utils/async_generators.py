@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from dataclasses import dataclass
 import msgspec
 
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 
 T = typing.TypeVar("T", default=object)
 R = typing.TypeVar("R", default=object)

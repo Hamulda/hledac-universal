@@ -31,26 +31,29 @@ def _get_rss_gb() -> float:
 _EMBED_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'mlx_embed'
 _EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _PREWARM_LOCK = threading.Lock()
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    warnings.warn('MLX not available. Install: pip install mlx>=0.15.0', stacklevel=2)
+
+# MLX_AVAILABLE — deferred to lazy accessor (ISSUE 3.2 fix)
+# Previously: top-level `import mlx.core as mx` loaded MLX into RAM at module import,
+# breaking PLANNER: ZERO MLX invariant when imported by runtime/acquisition_strategy_planner.
+# Fix: lazy probe via _get_mx(), first access only when MLXEmbeddingManager is instantiated.
+MLX_AVAILABLE: bool | None = None
 
 # Lazy mlx.core accessor
 _MLX_CORE: Any | None = None
 
 
 def _get_mx() -> Any | None:
-    """Lazy accessor for mlx.core — imports once and caches. Returns None if unavailable."""
-    global _MLX_CORE
+    """Lazily cached mlx.core module reference. Returns None if unavailable."""
+    global _MLX_CORE, MLX_AVAILABLE
     if _MLX_CORE is None:
         try:
             import mlx.core as _mx
             _MLX_CORE = _mx
+            MLX_AVAILABLE = True
         except ImportError:
             _MLX_CORE = False
+            MLX_AVAILABLE = False
+            warnings.warn('MLX not available. Install: pip install mlx>=0.15.0', stacklevel=2)
     return _MLX_CORE if _MLX_CORE is not False else None
 
 
@@ -304,6 +307,9 @@ class MLXEmbeddingManager:
             raise RuntimeError(f'Attempt to index non-document embedding. Current task: {self._current_task}. Use embed_document() for indexing.')
         if not self._is_loaded:
             self._load_model()
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError('MLX not available — cannot call _embed_task')
         batch_size = min(batch_size, self.BATCH_SIZE)
         if isinstance(texts, str):
             texts = [texts]
@@ -343,6 +349,9 @@ class MLXEmbeddingManager:
         Returns:
             Pooled embeddings tvaru (batch, hidden)
         """
+        mx = _get_mx()
+        if mx is None:
+            raise RuntimeError('MLX not available — cannot call _mean_pooling')
         mask_expanded = mx.expand_dims(attention_mask, -1)
         mask_expanded = mx.broadcast_to(mask_expanded, token_embeddings.shape)
         sum_embeddings = mx.sum(token_embeddings * mask_expanded, axis=1)

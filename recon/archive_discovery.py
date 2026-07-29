@@ -645,7 +645,7 @@ class ArchiveResurrector:
             async with semaphore:
                 return await self._extract_snapshot(snapshot)
         tasks = [extract_with_limit(s) for s in snapshots]
-        results = await safe_gather_ok(*tasks, label='archive_discovery:1113')
+        results = await parallel_ok(*tasks, label='archive_discovery:1113')
         return [r for r in results if r is not None and (not isinstance(r, Exception))]
 
     async def _extract_snapshot(self, snapshot: Snapshot) -> dict[str, Any] | None:
@@ -825,7 +825,7 @@ async def discover_from_wayback(url: str, limit: int=50) -> list[DiscoveredEndpo
     return endpoints
 import orjson
 import xxhash
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 
 class WaybackCDX:
     """Wayback Machine CDX API — low-level domain/URL snapshot discovery.

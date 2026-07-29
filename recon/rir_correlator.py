@@ -34,7 +34,7 @@ import msgspec
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 import httpx
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ async def _resolve_domains_async(domains: list[str]) -> dict[str, str]:
             except Exception:
                 return (domain, None)
     tasks = [_resolve_one(d) for d in domains]
-    results = await safe_gather_ok(*tasks, label='rir_correlator:178')
+    results = await parallel_ok(*tasks, label='rir_correlator:178')
     for r in results:
         if isinstance(r, tuple) and r[1]:
             resolved[r[0]] = r[1]
@@ -166,7 +166,6 @@ async def _lookup_ip_batch_http(ips: list[str]) -> dict[str, dict[str, Any]]:
         payload = [{'query': ip} for ip in batch]
         try:
             async with asyncio.timeout(RIR_TIMEOUT_S):
-                # F-01: session_pool.httpx() returns shared singleton
                 from hledac.universal.transport.session_pool import session_pool
                 session = await session_pool.httpx()
                 resp = await session.post(_RIR_API_URL, json=payload, timeout=httpx.Timeout(RIR_TIMEOUT_S))

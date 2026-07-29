@@ -4,12 +4,24 @@ Starts/stops the FastAPI microservice as a subprocess.
 """
 import asyncio
 import logging
+import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
 logger = logging.getLogger('coreml-manager')
-_COREML_PYTHON = Path.home() / 'coremltools' / 'envs' / 'coremltools-py3.12' / 'bin' / 'python'
+
+# E-16 FIX: auto-detect python3.12 — hardcoded py3.14-only path broke on python3.12 systems
+# HLEDAC_COREML_PYTHON env var overrides everything; otherwise try shutil.which('python3.12'),
+# then fall back to legacy venv path.
+_venv_python = Path.home() / 'coremltools' / 'envs' / 'coremltools-py3.12' / 'bin' / 'python'
+_which_312 = shutil.which('python3.12')
+_COREML_PYTHON: Path = (
+    Path(os.environ['HLEDAC_COREML_PYTHON'])
+    if 'HLEDAC_COREML_PYTHON' in os.environ
+    else (Path(_which_312) if _which_312 else _venv_python)
+)
 _SERVICE_SCRIPT = Path(__file__).resolve().parent / 'service.py'
 _PID_FILE = Path('/tmp/hledac-coreml.pid')
 _LOG_DIR = Path.home() / 'Library' / 'Logs' / 'hledac'
@@ -77,7 +89,9 @@ class CoreMLServiceManager:
         log_fd = open(_LOG_FILE, 'a')
         try:
             self._proc = subprocess.Popen([str(_COREML_PYTHON), str(_SERVICE_SCRIPT)], stdout=log_fd, stderr=subprocess.STDOUT)
+            log_fd.close()  # E-17: child inherited fd via Popen; close parent copy so EMFILE never accumulates
         except FileNotFoundError:
+            log_fd.close()
             raise CoreMLServiceError(f'CoreML Python not found at {_COREML_PYTHON}. Ensure the coremltools py3.12 venv exists.')
         t0 = time.perf_counter()
         while time.perf_counter() - t0 < _STARTUP_TIMEOUT:
@@ -105,7 +119,9 @@ class CoreMLServiceManager:
         log_fd = open(_LOG_FILE, 'a')
         try:
             self._proc = subprocess.Popen([str(_COREML_PYTHON), str(_SERVICE_SCRIPT)], stdout=log_fd, stderr=subprocess.STDOUT)
+            log_fd.close()  # E-17: child inherited fd via Popen; close parent copy so EMFILE never accumulates
         except FileNotFoundError:
+            log_fd.close()
             raise CoreMLServiceError(f'CoreML Python not found at {_COREML_PYTHON}. Ensure the coremltools py3.12 venv exists.')
         t0 = time.perf_counter()
         while time.perf_counter() - t0 < _STARTUP_TIMEOUT:
@@ -142,6 +158,17 @@ class CoreMLServiceManager:
         """Stop and start the service."""
         self.stop()
         self.start()
+
+    async def restart_async(self) -> None:
+        """
+        ISSUE 4.4 E-18 FIX: Async restart — non-blocking for event loop.
+
+        Stops the current service and starts it asynchronously using
+        start_async(). Eliminates the ~10s event-loop stall that sync
+        restart() causes via time.sleep() polling in start().
+        """
+        self.stop()
+        await self.start_async()
 
     async def __aenter__(self) -> CoreMLServiceManager:
         await self.start_async()

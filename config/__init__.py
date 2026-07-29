@@ -13,6 +13,12 @@ from typing import Any
 from hledac.universal.project_types import AgentManagerConfig, CommunicationConfig, CoordinationConfig, DeepResearchConfig, GhostConfig, MemoryConfig, ResearchConfig, ResearchMode
 
 class M1Presets:
+    """Research-mode presets for M1 hardware.
+
+    NOTE: Hardware limits (memory, thermal, circuit_breaker_threshold) are
+    centralized in M1AirConfig (core/config/m1_air_config.py).
+    These presets are for research-mode behavior tuning only.
+    """
     MEMORY_LIMIT_MB = 5500.0
     THERMAL_THRESHOLD_C = 85.0
     HERMES_MODEL = 'mlx-community/DeepHermes-3-Llama-3-3B-Preview-4bit'
@@ -20,7 +26,6 @@ class M1Presets:
     GLINER_MODEL = 'knowledgator/gliner-relex-large-v0.5'
     MAX_CONCURRENT_AGENTS = 6
     AGENT_TIMEOUT_SECONDS = 25.0
-    CIRCUIT_BREAKER_THRESHOLD = 3
     CONTEXT_SWAP_ENABLED = True
     MLX_CACHE_CLEAR_INTERVAL = 10
 
@@ -206,6 +211,8 @@ class UniversalConfig(msgspec.Struct, frozen=True):
         return config
 
     def _apply_m1_optimizations(self) -> None:
+        # ISSUE-7.1: circuit_breaker_threshold from M1AirConfig (=5, not M1Presets=3)
+        from hledac.universal.core.config.m1_air_config import M1AirConfig
         self.memory.memory_limit_mb = M1Presets.MEMORY_LIMIT_MB
         self.memory.thermal_threshold_c = M1Presets.THERMAL_THRESHOLD_C
         self.research.hermes_model = M1Presets.HERMES_MODEL
@@ -213,7 +220,7 @@ class UniversalConfig(msgspec.Struct, frozen=True):
         self.research.gliner_model = M1Presets.GLINER_MODEL
         self.agent_manager.max_concurrent_agents = min(self.agent_manager.max_concurrent_agents, M1Presets.MAX_CONCURRENT_AGENTS)
         self.agent_manager.agent_timeout_seconds = M1Presets.AGENT_TIMEOUT_SECONDS
-        self.agent_manager.circuit_breaker_threshold = M1Presets.CIRCUIT_BREAKER_THRESHOLD
+        self.agent_manager.circuit_breaker_threshold = M1AirConfig.circuit_breaker_threshold  # 5 (tightened for M1)
         if self.research.max_concurrent_agents > 4:
             self.enable_knowledge_layer = False
         self.coordination.max_context_length = 1024
@@ -373,7 +380,7 @@ class AdaptiveConfig:
             return max(min_val, min(max_val, float(raw)))
         except (ValueError, TypeError):
             return default
-CB_CONFIG_DEFAULTS: Final[dict[str, tuple[str, int | float, int | float, int | float]]] = {'MAX_TRACKED_DOMAINS': ('CB_MAX_TRACKED_DOMAINS', 500, 50, 2000), 'MAX_RECOVERY_TIMEOUT_S': ('CB_MAX_RECOVERY_TIMEOUT_S', 120.0, 15.0, 300.0), 'BOOT_RECOVERY_TIMEOUT_S': ('CB_BOOT_RECOVERY_TIMEOUT_S', 5.0, 1.0, 30.0), 'BASE_RECOVERY_TIMEOUT_S': ('CB_BASE_RECOVERY_TIMEOUT_S', 15.0, 5.0, 120.0), 'BOOT_PHASE_DURATION_S': ('CB_BOOT_PHASE_DURATION_S', 60.0, 10.0, 300.0), 'CIRCUIT_FAILURE_THRESHOLD': ('CB_CIRCUIT_FAILURE_THRESHOLD', 3, 1, 10), 'CIRCUIT_HALF_OPEN_PROBES': ('CB_CIRCUIT_HALF_OPEN_PROBES', 3, 1, 5), 'TIMEOUT_ACCUMULATOR_WEIGHT': ('CB_TIMEOUT_ACCUMULATOR_WEIGHT', 0.5, 0.1, 1.0), 'CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD': ('CB_CONSECUTIVE_TIMEOUT_THRESHOLD', 4, 1, 10), 'JITTER_MIN_MULTIPLIER': ('CB_JITTER_MIN_MULT', 0.5, 0.1, 1.0), 'JITTER_MAX_MULTIPLIER': ('CB_JITTER_MAX_MULT', 1.5, 1.0, 3.0), 'JITTER_MIN_FRACTION': ('CB_JITTER_MIN_FRACTION', 0.1, 0.01, 0.5)}
+CB_CONFIG_DEFAULTS: Final[dict[str, tuple[str, int | float, int | float, int | float]]] = {'MAX_TRACKED_DOMAINS': ('CB_MAX_TRACKED_DOMAINS', 500, 50, 2000), 'MAX_RECOVERY_TIMEOUT_S': ('CB_MAX_RECOVERY_TIMEOUT_S', 120.0, 15.0, 300.0), 'BOOT_RECOVERY_TIMEOUT_S': ('CB_BOOT_RECOVERY_TIMEOUT_S', 5.0, 1.0, 30.0), 'BASE_RECOVERY_TIMEOUT_S': ('CB_BASE_RECOVERY_TIMEOUT_S', 15.0, 5.0, 120.0), 'BOOT_PHASE_DURATION_S': ('CB_BOOT_PHASE_DURATION_S', 60.0, 10.0, 300.0), 'CIRCUIT_FAILURE_THRESHOLD': ('CB_CIRCUIT_FAILURE_THRESHOLD', 5, 1, 10), 'CIRCUIT_HALF_OPEN_PROBES': ('CB_CIRCUIT_HALF_OPEN_PROBES', 3, 1, 5), 'TIMEOUT_ACCUMULATOR_WEIGHT': ('CB_TIMEOUT_ACCUMULATOR_WEIGHT', 0.5, 0.1, 1.0), 'CONSECUTIVE_TIMEOUT_ACCUMULATOR_THRESHOLD': ('CB_CONSECUTIVE_TIMEOUT_THRESHOLD', 4, 1, 10), 'JITTER_MIN_MULTIPLIER': ('CB_JITTER_MIN_MULT', 0.5, 0.1, 1.0), 'JITTER_MAX_MULTIPLIER': ('CB_JITTER_MAX_MULT', 1.5, 1.0, 3.0), 'JITTER_MIN_FRACTION': ('CB_JITTER_MIN_FRACTION', 0.1, 0.01, 0.5)}
 
 def _cb_int(key: str) -> int:
     entry = CB_CONFIG_DEFAULTS[key]

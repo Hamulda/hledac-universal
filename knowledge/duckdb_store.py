@@ -477,6 +477,9 @@ class RemoteParquetSource:
         "batch_size", "sql_where", "_conn", "_total_rows",
     ))
 
+    # E-33: Whitelisted URI schemes for remote Parquet sources
+    _URI_SCHEMES: frozenset[str] = frozenset(("s3", "https", "az", "gs", "postgres"))
+
     def __init__(
         self,
         uri: str,
@@ -487,6 +490,18 @@ class RemoteParquetSource:
         batch_size: int = 50000,
         sql_where: str | None = None,
     ) -> None:
+        # E-33: Validate URI scheme before storing — reject any uri with quote chars
+        if not isinstance(uri, str) or "'" in uri or '"' in uri:
+            raise ValueError(f"[RemoteParquet] URI contains illegal characters (quote): {uri!r}")
+        # E-33: alias must be safe identifier — alphanumeric + underscore only
+        if not isinstance(alias, str) or not alias.isidentifier():
+            raise ValueError(f"[RemoteParquet] alias must be a valid SQL identifier, got: {alias!r}")
+        # E-33: sql_where must not contain dangerous patterns (nested queries, stacked statements)
+        if sql_where is not None:
+            _forbidden = (";", "--", "/*", "*/", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE")
+            upper = sql_where.upper()
+            if any(kw in upper for kw in _forbidden):
+                raise ValueError(f"[RemoteParquet] sql_where contains forbidden SQL: {sql_where!r}")
         self.uri = uri
         self.source_type = source_type
         self.credentials = credentials or {}
@@ -538,6 +553,9 @@ class RemoteParquetSource:
 
     def _attach_source(self, conn: Any) -> None:
         """ATTACH remote source based on type. Failures are logged and recovered."""
+        # E-33: Whitelist source_type to prevent ATTACH to arbitrary paths
+        if self.source_type not in self._URI_SCHEMES:
+            raise ValueError(f"[RemoteParquet] Unsupported source_type={self.source_type!r}; must be one of {sorted(self._URI_SCHEMES)}")
         try:
             if self.source_type == "s3":
                 self._attach_s3(conn)
@@ -549,28 +567,27 @@ class RemoteParquetSource:
                 self._attach_gcs(conn)
             elif self.source_type == "postgres":
                 self._attach_postgres(conn)
-            else:
-                logger.warning(f"[RemoteParquet] Unknown source_type={self.source_type!r}, attempting S3 fallback")
-                self._attach_s3(conn)
         except Exception as e:  # noqa: BLE001 — best-effort; remote attach; non-critical
             logger.warning(f"[RemoteParquet] Failed to ATTACH {self.uri}: {e}")
 
     def _attach_s3(self, conn: Any) -> None:
         """Attach S3 Parquet via CREATE SECRET + ATTACH."""
+        duckdb = self._get_duckdb()
         secret_name = f"_s3_secret_{id(self)}"
-        key_id = self.credentials.get("key_id", "").replace("'", "''")
-        secret = self.credentials.get("secret", "").replace("'", "''")
-        region = self.credentials.get("region", "us-east-1").replace("'", "''")
+        key_id = duckdb.escape_string(self.credentials.get("key_id", ""))
+        secret = duckdb.escape_string(self.credentials.get("secret", ""))
+        region = duckdb.escape_string(self.credentials.get("region", "us-east-1"))
         if key_id and secret:
             conn.execute(f"""
                 CREATE SECRET {secret_name} (
                     TYPE S3,
-                    KEY_ID '{key_id}',
-                    SECRET '{secret}',
-                    REGION '{region}'
+                    KEY_ID {key_id},
+                    SECRET {secret},
+                    REGION {region}
                 )
             """)
-        conn.execute(f"ATTACH '{self.uri}' AS {self.alias} (TYPE PARQUET)")
+        safe_uri = duckdb.escape_string(self.uri)
+        conn.execute(f"ATTACH {safe_uri} AS {self.alias} (TYPE PARQUET)")
 
     def _attach_https(self, conn: Any) -> None:
         """Attach HTTPS Parquet — DuckDB handles via httpfs extension."""
@@ -578,35 +595,41 @@ class RemoteParquetSource:
             conn.execute("LOAD httpfs")
         except Exception:  # noqa: BLE001 — best-effort; httpfs load; non-critical
             pass
-        conn.execute(f"ATTACH '{self.uri}' AS {self.alias} (TYPE PARQUET)")
+        duckdb = self._get_duckdb()
+        safe_uri = duckdb.escape_string(self.uri)
+        conn.execute(f"ATTACH {safe_uri} AS {self.alias} (TYPE PARQUET)")
 
     def _attach_azure(self, conn: Any) -> None:
         """Attach Azure Blob Parquet via CREATE SECRET + ATTACH."""
+        duckdb = self._get_duckdb()
         secret_name = f"_azure_secret_{id(self)}"
-        account = self.credentials.get("account", "").replace("'", "''")
-        access_key = self.credentials.get("access_key", "").replace("'", "''")
+        account = duckdb.escape_string(self.credentials.get("account", ""))
+        access_key = duckdb.escape_string(self.credentials.get("access_key", ""))
         if account and access_key:
             conn.execute(f"""
                 CREATE SECRET {secret_name} (
                     TYPE AZURE,
-                    ACCOUNT_NAME '{account}',
-                    ACCOUNT_KEY '{access_key}'
+                    ACCOUNT_NAME {account},
+                    ACCOUNT_KEY {access_key}
                 )
             """)
-        conn.execute(f"ATTACH '{self.uri}' AS {self.alias} (TYPE PARQUET)")
+        safe_uri = duckdb.escape_string(self.uri)
+        conn.execute(f"ATTACH {safe_uri} AS {self.alias} (TYPE PARQUET)")
 
     def _attach_gcs(self, conn: Any) -> None:
         """Attach GCS Parquet via CREATE SECRET + ATTACH."""
+        duckdb = self._get_duckdb()
         secret_name = f"_gcs_secret_{id(self)}"
-        credentials_json = self.credentials.get("credentials_json", "").replace("'", "''")
+        credentials_json = duckdb.escape_string(self.credentials.get("credentials_json", ""))
         if credentials_json:
             conn.execute(f"""
                 CREATE SECRET {secret_name} (
                     TYPE GCS,
-                    CREDENTIALS_JSON '{credentials_json}'
+                    CREDENTIALS_JSON {credentials_json}
                 )
             """)
-        conn.execute(f"ATTACH '{self.uri}' AS {self.alias} (TYPE PARQUET)")
+        safe_uri = duckdb.escape_string(self.uri)
+        conn.execute(f"ATTACH {safe_uri} AS {self.alias} (TYPE PARQUET)")
 
     def _attach_postgres(self, conn: Any) -> None:
         """Attach Postgres table via DuckDB postgres scanner."""
@@ -614,16 +637,14 @@ class RemoteParquetSource:
             conn.execute("LOAD postgres")
         except Exception:  # noqa: BLE001 — best-effort; postgres load; non-critical
             pass
-        host = self.credentials.get("host", "localhost")
-        port = self.credentials.get("port", "5432")
-        db = self.credentials.get("database", "postgres")
-        user = self.credentials.get("user", "")
-        password = self.credentials.get("password", "")
+        # E-33: Use urllib.parse for safe URL construction — no manual string formatting
+        from urllib.parse import quote_plus
+        host = quote_plus(self.credentials.get("host", "localhost"))
+        port = quote_plus(self.credentials.get("port", "5432"))
+        db = quote_plus(self.credentials.get("database", "postgres"))
+        user = quote_plus(self.credentials.get("user", ""))
+        password = quote_plus(self.credentials.get("password", ""))
         # Escape single quotes in all credentials — prevents SQL injection in ATTACH URL
-        user = user.replace("'", "''")
-        password = password.replace("'", "''")
-        host = host.replace("'", "''")
-        db = db.replace("'", "''")
         conn.execute(f"""
             ATTACH 'postgres://{user}:{password}@{host}:{port}/{db}'
             AS {self.alias} (TYPE POSTGRES)
@@ -1764,7 +1785,7 @@ from hledac.universal.utils.msgspec_json import encode_for_arrow
 _MAX_INFLIGHT_GRAPH_UPDATES: int = 16
 
 
-def _duckdb_at_exit_shutdown(instance: DuckDBShadowStore) -> None:
+def _duckdb_at_exit_shutdown(instance: "weakref.ProxyType[DuckDBShadowStore]") -> None:
     """Called by weakref.finalize at interpreter exit if explicit aclose() was not called.
 
     DuckDBShadowStore keeps _shared_executor alive per Sprint 8L contract
@@ -1968,7 +1989,12 @@ class DuckDBShadowStore:
         self._read_pool_idx: int = 0
         self._adjust_executor_pool()
         try:
-            self._finalizer = weakref.finalize(self, _duckdb_at_exit_shutdown, self)
+            # ISSUE 2.1 fix: use weakref.proxy to avoid strong-ref cycle
+            # weakref.finalize holds a strong ref to self via the callback arg,
+            # creating a cycle (self → _finalizer → callback(self)) → never GC'd
+            # until atexit. proxy(self) breaks the cycle while still allowing
+            # the callback to access the instance.
+            self._finalizer = weakref.finalize(self, _duckdb_at_exit_shutdown, weakref.proxy(self))
             atexit.register(self._finalizer)
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             self._finalizer = None

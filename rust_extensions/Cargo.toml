@@ -35,11 +35,11 @@ lz4_flex = "0.10"
 libc = "0.2"
 serde_json = "1"
 crossbeam-channel = "0.5"
-# R4 FIX: Use bundled DuckDB C++ source (v1.105) statically linked into the extension.
-# Eliminates: /opt/homebrew/lib/libduckdb.dylib runtime dependency, no Homebrew version
-# mismatch, no CI otool -L check failures for /opt/homebrew in release artifacts.
+# R4 FIX (B-10): Remove bundled — Rust links against the shared DuckDB library
+# provided by the Python duckdb wheel (single authority). This eliminates the
+# ~15MB duplication of DuckDB C++ source in the Rust extension's address space.
 # Python duckdb wheel (>=1.5.4) remains single authority for DuckDB SQL operations.
-duckdb = { version = "1.105", features = ["bundled"], optional = true }
+duckdb = { version = "1.105", optional = true }
 ipnetwork = "0.20"
 
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout

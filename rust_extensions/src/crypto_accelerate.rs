@@ -62,9 +62,9 @@ use pbkdf2::pbkdf2_hmac_array;
 use rand::RngCore;
 
 /// Derive AES-256 key from password and salt using PBKDF2-HMAC-SHA256.
-/// Returns 32-byte key. Iterations: 310,000 (matching vault_manager.py).
+/// Returns 32-byte key. Iterations: 600,000 (OWASP 2025 recommendation).
 fn derive_key(password: &str, salt: &[u8]) -> [u8; 32] {
-    pbkdf2_hmac_array::<sha2::Sha256, 32>(password.as_bytes(), salt, 310_000)
+    pbkdf2_hmac_array::<sha2::Sha256, 32>(password.as_bytes(), salt, 600_000)
 }
 
 /// Encrypt a single plaintext with AES-GCM-256.

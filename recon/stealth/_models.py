@@ -392,6 +392,14 @@ class HeaderSpoofer:
 
         return result
 
+    def rotate(self) -> None:
+        """Re-randomize header values from pools (no-op in new model, kept for API compat)."""
+        pass
+
+    def get_statistics(self) -> dict[str, Any]:
+        """Return header spoofing statistics (API compat for StealthManager)."""
+        return {"profile": self.default_profile, "header_count": len(self.headers)}
+
 
 class SearchResult(msgspec.Struct):
     """Represents a single search result from stealth search."""

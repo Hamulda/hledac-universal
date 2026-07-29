@@ -10,7 +10,24 @@ Vysokoúrovňový unified embedder je v `embeddings/ane/__init__.py`.
 import logging
 from pathlib import Path
 from typing import Any
+
 logger = logging.getLogger(__name__)
+
+
+def _parse_coreml_version() -> tuple[int, ...] | None:
+    """
+    E-31 FIX: Parse coremltools version as tuple for safe semantic comparison.
+
+    Reason: string comparison '10.0' < '6.0' is True (lexicographic),
+    but (10, 0) > (6, 0) correctly identifies 10.x > 6.x.
+    Returns None if coremltools is not installed.
+    """
+    try:
+        import coremltools as ct
+        parts = ct.__version__.split('.')
+        return tuple(int(p) for p in parts[:2] if p.isdigit())
+    except Exception:
+        return None
 _MODELS_DIR = Path.home() / '.hledac' / 'models'
 _ANNOT_MODEL_PATH = _MODELS_DIR / 'modernbert_ane.mlpackage'
 
@@ -29,8 +46,12 @@ def _check_coreml_engine_available() -> bool:
         return False
     try:
         import coremltools as ct
-        if ct.__version__ < '6.0':
-            logger.debug(f'[CoreML-ANE] coremltools {ct.__version__} < 6.0')
+        version_tuple = _parse_coreml_version()
+        if version_tuple is None:
+            logger.debug('[CoreML-ANE] coremltools not installed')
+            return False
+        if version_tuple < (6, 0):
+            logger.debug(f'[CoreML-ANE] coremltools {".".join(map(str, version_tuple))} < 6.0')
             return False
     except ImportError:
         logger.debug('[CoreML-ANE] coremltools not installed')

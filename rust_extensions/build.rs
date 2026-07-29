@@ -14,8 +14,47 @@
 //    and maturin version upgrades that could alter ABI flags.
 
 use pyo3_build_config::use_pyo3_cfgs;
+use std::io::Read;
+
+fn extract_features_from_cargo_toml() -> Vec<String> {
+    // Build.rs runs after Cargo parses features, but there's no CARGO_FEATURE_*
+    // env var from maturin. Parse Cargo.toml directly to get feature names.
+    let cargo_toml = std::fs::read_to_string("Cargo.toml").ok();
+    let Some(toml_text) = cargo_toml else {
+        return Vec::new();
+    };
+    let features_section = toml_text.split("[features]").nth(1)
+        .and_then(|s| s.split('\n').take_while(|l| !l.starts_with('[')).collect::<String>().into());
+    let Some(features_text) = features_section else {
+        return Vec::new();
+    };
+    features_text
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            // Feature line format: "name = [...]" or "name/"
+            let name = line.split('=').next().unwrap_or(line).split('/').next().unwrap_or(line).trim();
+            if name.is_empty() || name == "[features]" {
+                None
+            } else {
+                Some(name.to_string())
+            }
+        })
+        .collect()
+}
 
 fn main() {
+    // Parse Cargo.toml [features] section and emit as compile-time env var.
+    // __features__() in lib.rs reads this via option_env!.
+    let features = extract_features_from_cargo_toml();
+    if !features.is_empty() {
+        let features_list = features.join(",");
+        println!("cargo:rustc-env=CARGO_FEATURES_LIST={}", features_list);
+    }
+
     // Triggers pyo3's auto-detection and emits the necessary rustc-cfgs
     // (PyPy3, Py_3_x, etc.). Linking flags are still set by maturin
     // via PyO3's build script — we just need pyo3-build-config to run.

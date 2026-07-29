@@ -744,6 +744,7 @@ class ModelCircuitBreaker:
         default_factory=lambda: _cb_float("BASE_RECOVERY_TIMEOUT_S")
     )
     _failure_count: int = dataclasses.field(default=0, init=False, repr=False)
+    _warmup_failure_count: int = dataclasses.field(default=0, init=False, repr=False)
     _last_failure_time: float = dataclasses.field(default=0.0, init=False, repr=False)
     _last_failure_kind: str = dataclasses.field(default="", init=False, repr=False)
     _state: CBState = dataclasses.field(default=CBState.CLOSED, init=False)
@@ -753,17 +754,32 @@ class ModelCircuitBreaker:
         if self._state_lock is None:
             self._state_lock = threading.RLock()
 
-    def record_failure(self, kind: str = "unknown") -> None:
-        """Record inference failure. Trips breaker at failure_threshold."""
+    def record_failure(
+        self,
+        is_timeout: bool = False,
+        failure_kind: str = "",
+        *,
+        kind: str = "",  # Backward compat alias
+        is_warmup: bool = False,
+        sprint_remaining_s: float | None = None,
+    ) -> None:
+        """Record inference failure. Trips breaker at failure_threshold.
+
+        Matches CircuitBreaker.record_failure signature for consistent API.
+        Supports both `kind` (legacy) and `failure_kind` parameter names.
+        """
         with self._state_lock:
+            if is_warmup:
+                self._warmup_failure_count += 1
+                return
             self._failure_count += 1
             self._last_failure_time = time.monotonic()
-            self._last_failure_kind = kind
+            self._last_failure_kind = failure_kind or kind or "unknown"
             if self._failure_count >= self.failure_threshold:
                 self._state = CBState.OPEN
                 logger.warning(
                     f"ModelCircuitBreaker OPEN: model={self.model_id!r} "
-                    f"after {self._failure_count} failures, last={kind!r}"
+                    f"after {self._failure_count} failures, last={self._last_failure_kind!r}"
                 )
 
     def record_success(self) -> None:

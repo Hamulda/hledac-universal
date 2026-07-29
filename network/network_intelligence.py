@@ -120,7 +120,7 @@ class NetworkIntelAdapter:
 
     async def _query_bgp(self, target: str) -> list[dict]:
         """Query BGP for the target (IP only)."""
-        from hledac.universal.intel.bgp_monitor import BGP_AVAILABLE, monitor_bgp
+        from hledac.universal.network.bgp_monitor import BGP_AVAILABLE, monitor_bgp
         if not BGP_AVAILABLE:
             return []
         if not _is_ip(target):
@@ -145,7 +145,7 @@ class _PassiveDNSAdapter:
     __slots__ = tuple(('_inner',))
 
     def __init__(self):
-        from hledac.universal.intel.passive_dns import PassiveDNSAdapter as _cls
+        from hledac.universal.recon.dns.passive_dns import PassiveDNSAdapter as _cls
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:
@@ -159,7 +159,7 @@ class _PassiveFingerprintAdapter:
     __slots__ = tuple(('_inner',))
 
     def __init__(self):
-        from hledac.universal.intel.passive_fingerprint import PassiveFingerprintAdapter as _cls
+        from hledac.universal.network.passive_fingerprint import PassiveFingerprintAdapter as _cls
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:

@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import msgspec
 from pathlib import Path
 from typing import Any, TypeVar
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for
+from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
 from hledac.universal.core.sync_bridge import stream_via_queue
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.lru_cache import LRUCache
@@ -202,7 +202,7 @@ _mx_resolver = lazy('mlx.core')
 MLX_AVAILABLE = _mx_resolver() is not None
 mx = _mx_resolver() if MLX_AVAILABLE else None
 _FALLBACK_CACHE_BYTES: int = 32 * 1024 * 1024
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for, parallel
+from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for, parallel
 _INJECTION_PATTERNS: list = [_re_pi.compile('ignore\\s+(?:all\\s+)?previous\\s+(?:instructions?|commands?)', _re_pi.I), _re_pi.compile('(?:system|prompt)\\s*:\\s*you\\s+are\\s+(?:now\\s+)?a', _re_pi.I), _re_pi.compile('#{3,}\\s*system\\s*[:\\s]', _re_pi.I), _re_pi.compile('<\\|system\\|>', _re_pi.I), _re_pi.compile('\\bROLE\\s*:\\s*(?:admin|root|superuser)', _re_pi.I), _re_pi.compile('(?:jailbreak|DAN|do\\s+anything\\s+now)', _re_pi.I), _re_pi.compile('```\\s*system', _re_pi.I)]
 
 def _detect_prompt_injection(prompt: str) -> tuple[bool, list[str]]:
@@ -1109,19 +1109,21 @@ class DeepHermes3Engine:
 
     async def initialize(self) -> None:
         """Inicializovat model"""
-        global KV_CACHE_AVAILABLE
         try:
             await self._ensure_model_loaded()
             logger.info('✓ Hermes-3 loaded successfully')
             if self._model_breaker is not None:
                 self._model_breaker.reset()
                 logger.info('[GAP-3/1] Circuit breaker reset after successful model load')
+            # ISSUE #5.5: Removed global KV_CACHE_AVAILABLE write — only self._kv_cache_enabled
+            # is the authoritative instance flag. KV_CACHE_AVAILABLE at module level is a
+            # static capability flag (True/False based on mlx_lm availability at import time),
+            # not a mutable state that should be written at runtime.
             if KV_CACHE_AVAILABLE:
                 try:
                     from mlx_lm.utils import make_prompt_cache  # type: ignore[attr-defined]
                     self._prompt_cache = make_prompt_cache(self._model)
                     self._kv_cache_enabled = True
-                    KV_CACHE_AVAILABLE = True
                     logger.info('✓ Prompt cache initialized (MLX)')
                 except Exception as e:
                     logger.warning(f'Prompt cache init failed: {e}, continuing without it')
@@ -1130,6 +1132,7 @@ class DeepHermes3Engine:
             else:
                 logger.info('[HERMES] KV_CACHE not available – KV cache disabled')
                 self._prompt_cache = None
+                self._kv_cache_enabled = False
                 self._kv_cache_enabled = False
             if OUTLINES_AVAILABLE:
                 try:
@@ -3444,15 +3447,15 @@ class DeepHermes3Engine:
                 mc, lc = len(cache)  # type: ignore[arg-type]
                 logger.info(f'[HERMES] Model cached ({mc} models, {lc} loras)')
             self.config.model_path = model_id
-            global KV_CACHE_AVAILABLE
+            # ISSUE #5.5: Removed global KV_CACHE_AVAILABLE write — only self._kv_cache_enabled
+            # is authoritative. The module-level KV_CACHE_AVAILABLE is a static capability flag
+            # set once at import time and should never be mutated at runtime.
             try:
                 self._prompt_cache = make_prompt_cache(self._model)
                 self._kv_cache_enabled = True
-                KV_CACHE_AVAILABLE = True
             except Exception:
                 self._prompt_cache = None
                 self._kv_cache_enabled = False
-                KV_CACHE_AVAILABLE = False
             # M-08 NOTE: End-of-load invalidation NOT needed here because:
             # 1. _invalidate_all_prompt_caches() was already called at model_swap_start
             # 2. Fresh prompt_cache was just created via make_prompt_cache() above

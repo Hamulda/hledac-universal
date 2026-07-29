@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ruff_ext"
+version = "0.1.0"
+description = "RUFF022: Banned import paths — custom ruff rule for hledac.universal"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["ruff_ext"]

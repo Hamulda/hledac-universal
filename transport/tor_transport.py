@@ -38,19 +38,17 @@ class TorUnavailableError(RuntimeError):
 
 class TorTransport(Transport):
     available: bool = True
-    __slots__ = tuple(('_aiohttp_web', '_circuit_failures', '_circuit_lock', '_circuit_request_count', '_circuits_created', '_domain_circuits', '_httpx', '_httpx_socks', '_max_circuit_requests', '_ready', '_session_direct', '_session_tor', 'available', 'control_port', 'data_dir', 'handlers', 'hidden_service_dir', 'http_port', 'http_server', 'onion_address', 'runner', 'security_level', 'socks_port', 'tor_process'))
+    __slots__ = tuple(('_circuit_failures', '_circuit_lock', '_circuit_request_count', '_circuits_created', '_domain_circuits', '_httpx', '_httpx_socks', '_max_circuit_requests', '_ready', '_session_direct', '_session_tor', 'available', 'control_port', 'data_dir', 'handlers', 'hidden_service_dir', 'http_port', 'http_server', 'onion_address', 'security_level', 'socks_port', 'tor_process'))
 
     def __init__(self, data_dir: str | None=None, control_port: int=9051, socks_port: int=9050):
         self.available = True
         try:
-            import aiohttp.web
             import httpx
             import httpx_socks
         except ImportError as e:
             logger.critical(f'TorTransport unavailable: {e}')
             self.available = False
             return
-        self._aiohttp_web = aiohttp.web
         self._httpx = httpx
         self._httpx_socks = httpx_socks
         from hledac.universal.paths import TOR_ROOT
@@ -65,8 +63,7 @@ class TorTransport(Transport):
         self.hidden_service_dir.mkdir(exist_ok=True)
         self.onion_address: str | None = None
         self.tor_process: asyncio.subprocess.Process | None = None
-        self.http_server = None
-        self.runner = None
+        self.http_server: asyncio.Server | None = None
         self.handlers: dict[str, Callable] = {}
         self._ready = asyncio.Event()
         self.http_port: int = 0
@@ -93,19 +90,58 @@ class TorTransport(Transport):
         if await self.is_circuit_established():
             logger.info('Tor already running + circuit OK')
             return True
-        app = self._aiohttp_web.Application()
-        app.router.add_post('/message', self._handle_message)
-        app.router.add_get('/health', self._handle_health)
-        self.runner = self._aiohttp_web.AppRunner(app)
-        await self.runner.setup()
-        self.http_server = self._aiohttp_web.TCPSite(self.runner, '127.0.0.1', 0)
-        await self.http_server.start()
-        site = self.http_server
-        server = site._server if site is not None else None
-        sockets = getattr(server, 'sockets', None) if server is not None else None
-        if not sockets:
+        # E-41 FIX: replaced aiohttp.web with asyncio.start_server + minimal HTTP parser
+        # ~100 LOC for /message + /health, zero new deps, ~2KB resident
+        async def _http_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            """Minimal HTTP handler: parses HTTP/1.1 request line + headers, dispatches to handlers."""
+            try:
+                request_line = await reader.readline()
+                if not request_line:
+                    writer.close()
+                    return
+                method, path, _ = request_line.decode('utf-8', errors='ignore').strip().split()
+                # Read headers
+                headers: dict[str, str] = {}
+                while True:
+                    line = await reader.readline()
+                    if not line or line == b'\r\n':
+                        break
+                    if b':' in line:
+                        k, v = line.decode('utf-8', errors='ignore').strip().split(':', 1)
+                        headers[k.strip().lower()] = v.strip()
+                # Dispatch
+                if path == '/message' and method == 'POST':
+                    content_length = int(headers.get('content-length', 0))
+                    body = await reader.read(content_length) if content_length else b''
+                    try:
+                        import json as _json
+                        data = _json.loads(body.decode('utf-8', errors='ignore'))
+                        msg_type = data.get('type')
+                        handler = self.handlers.get(msg_type)
+                        if handler:
+                            await handler(data)
+                    except Exception:
+                        pass
+                    writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK')
+                    await writer.drain()
+                elif path == '/health' and method == 'GET':
+                    writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK')
+                    await writer.drain()
+                else:
+                    writer.write(b'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n')
+                    await writer.drain()
+                writer.close()
+            except Exception:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+
+        self.http_server = await asyncio.start_server(_http_handler, '127.0.0.1', 0)
+        sock = self.http_server.sockets[0] if self.http_server.sockets else None
+        if not sock:
             raise RuntimeError('Tor HTTP server failed to bind (no sockets)')
-        self.http_port = sockets[0].getsockname()[1]
+        self.http_port = sock.getsockname()[1]
         try:
             self.tor_process = await asyncio.create_subprocess_exec(tor_bin, '-f', str(torrc_path), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
             pid_path.parent.mkdir(parents=True, exist_ok=True)
@@ -189,9 +225,7 @@ class TorTransport(Transport):
         if self._session_tor and self._session_tor is not self._session_direct:
             await self._session_tor.aclose()
         if self.http_server:
-            await self.http_server.stop()
-        if self.runner:
-            await self.runner.cleanup()
+            self.http_server.close()
         logger.info('Tor stopped')
 
     def telemetry(self) -> dict:
@@ -397,18 +431,9 @@ class TorTransport(Transport):
             return ''
         data = {'sender': self.onion_address, 'type': msg_type, 'payload': payload, 'signature': signature, 'msg_id': msg_id}
         resp = await session.post(url, json=data)
-        return await resp.text()
+        return resp.text
 
-    async def _handle_message(self, request):
-        data = await request.json()
-        msg_type = data.get('type')
-        handler = self.handlers.get(msg_type)
-        if handler:
-            await handler(data)
-        return self._aiohttp_web.Response(text='OK')
 
-    async def _handle_health(self, request):
-        return self._aiohttp_web.Response(text='OK')
 KNOWN_MALICIOUS_JARM: dict[str, str] = {'2ad2ad0002ad2ad00042d42d000000ad': 'Cobalt Strike 4.x', '07d14d16d21d21d07c42d41d00041d24': 'Metasploit Framework', '3fd21b20d00000021c43d21b21b43d41': 'AsyncRAT', '1dd28d28d00028d1c1c1c00d1c1c41e7': 'Havoc C2', '29d3fd00029d29d21c41d21b21b41c41': 'Covenant C2'}
 
 async def jarm_fingerprint(host: str, port: int=443) -> str | None:

@@ -72,7 +72,7 @@ import os
 import socket
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
 from hledac.universal.utils.locks import LazyAsyncioLock
@@ -96,15 +96,16 @@ class MlxcelIpcStats:
     calls_total: int = 0
     calls_failed: int = 0
     last_error: str | None = None
-    _cumulative_savings_mb: float = field(default=0.0, repr=False)
 
     def record_call(self, latency_ms: float, rss_before: float=0.0, rss_after: float=0.0) -> None:
         self.ipc_latency_ms = latency_ms
         self.rss_before_mb = rss_before
         self.rss_after_mb = rss_after
-        per_call_savings = 300.0
-        self._cumulative_savings_mb += per_call_savings
-        self.memory_saved_mb = self._cumulative_savings_mb
+        # One-time RSS savings flag: mlx-lm Python bindings + MLX Metal runtime ≈ 2GB
+        # in-process; with mlxcel subprocess that RSS is released when process exits.
+        # Set once on first successful call; caller records actual RSS delta.
+        if self.calls_total == 0:
+            self.memory_saved_mb = 300.0
         self.calls_total += 1
 
     def record_failure(self, error: str) -> None:
@@ -137,7 +138,7 @@ class MlxcelIpcClient:
     Thread-safe for asyncio use with a single in-flight request at a time
     (mlxcel is single-threaded Rust inference server).
     """
-    __slots__ = ('_binary_path', '_socket_path', '_process', '_reader', '_writer', '_lock', '_stats', '_connected', '_version', '_pid')
+    __slots__ = ('_binary_path', '_socket_path', '_process', '_reader', '_writer', '_lock', '_stats', '_connected', '_version', '_pid', '_next_id')
 
     def __init__(self, binary_path: Path | None=None, socket_path: Path | None=None) -> None:
         """
@@ -155,6 +156,7 @@ class MlxcelIpcClient:
         self._version = 'unknown'
         self._pid: int | None = None
         self._stats = MlxcelIpcStats()
+        self._next_id: int = 0
 
     @property
     def stats(self) -> MlxcelIpcStats:
@@ -262,38 +264,41 @@ class MlxcelIpcClient:
         Uses socket if available, falls back to subprocess pipes.
         Raises MlxcelUnavailable on timeout, connection error, or protocol error.
         """
-        if not self._connected:
-            await self._connect_socket()
-        request = {'jsonrpc': '2.0', 'method': method, 'params': params, 'id': id(params) & 65535}
-        request_bytes = json.dumps(request) + b'\n'
-        start = time.monotonic()
-        try:
-            if self._writer is None:
-                raise MlxcelUnavailable('Not connected to mlxcel')
-            reader = self._reader
-            if reader is None:
-                raise MlxcelUnavailable('Reader not available')
-            self._writer.write(request_bytes)
-            await self._writer.drain()
-            async with asyncio.timeout(self._RPC_TIMEOUT_S):
-                response_line = await reader.readline()
-            latency_ms = (time.monotonic() - start) * 1000
-            if not response_line:
-                raise MlxcelUnavailable('mlxcel closed connection')
-            response = json.loads(response_line)
-            if 'error' in response:
-                err = response['error']
-                raise MlxcelProtocolError(f"RPC error {err.get('code', -1)}: {err.get('message', 'unknown')}")
-            self._stats.record_call(latency_ms)
-            return response.get('result', {})
-        except asyncio.TimeoutError:
-            self._stats.record_failure('RPC timeout')
-            self._connected = False
-            raise MlxcelUnavailable(f'RPC timeout after {self._RPC_TIMEOUT_S}s for {method}')
-        except (OSError, ValueError, asyncio.CancelledError) as e:
-            self._stats.record_failure(str(e))
-            self._connected = False
-            raise MlxcelUnavailable(f'RPC failed: {e}') from e
+        async with self._lock:
+            if not self._connected:
+                await self._connect_socket()
+            req_id = self._next_id
+            self._next_id = req_id + 1
+            request = {'jsonrpc': '2.0', 'method': method, 'params': params, 'id': req_id}
+            request_bytes = json.dumps(request) + b'\n'
+            start = time.monotonic()
+            try:
+                if self._writer is None:
+                    raise MlxcelUnavailable('Not connected to mlxcel')
+                reader = self._reader
+                if reader is None:
+                    raise MlxcelUnavailable('Reader not available')
+                self._writer.write(request_bytes)
+                await self._writer.drain()
+                async with asyncio.timeout(self._RPC_TIMEOUT_S):
+                    response_line = await reader.readline()
+                latency_ms = (time.monotonic() - start) * 1000
+                if not response_line:
+                    raise MlxcelUnavailable('mlxcel closed connection')
+                response = json.loads(response_line)
+                if 'error' in response:
+                    err = response['error']
+                    raise MlxcelProtocolError(f"RPC error {err.get('code', -1)}: {err.get('message', 'unknown')}")
+                self._stats.record_call(latency_ms)
+                return response.get('result', {})
+            except asyncio.TimeoutError:
+                self._stats.record_failure('RPC timeout')
+                self._connected = False
+                raise MlxcelUnavailable(f'RPC timeout after {self._RPC_TIMEOUT_S}s for {method}')
+            except (OSError, ValueError, asyncio.CancelledError) as e:
+                self._stats.record_failure(str(e))
+                self._connected = False
+                raise MlxcelUnavailable(f'RPC failed: {e}') from e
 
     async def ping(self) -> str:
         """
@@ -361,39 +366,55 @@ class MlxcelIpcClient:
         Yields:
             Token chunks as they are generated.
         """
-        if not self._connected:
-            await self._connect_socket()
-        request = {'jsonrpc': '2.0', 'method': 'generate_stream', 'params': {'prompt': prompt, 'temperature': temperature, 'max_tokens': max_tokens, 'system_msg': system_msg, 'thinking': thinking, 'adapter_path': adapter_path}, 'id': id(prompt) & 65535}
-        request_bytes = json.dumps(request) + b'\n'
-        if self._writer is None:
-            raise MlxcelUnavailable('Not connected to mlxcel')
-        reader = self._reader
-        if reader is None:
-            raise MlxcelUnavailable('Reader not available')
-        self._writer.write(request_bytes)
-        await self._writer.drain()
-        while True:
-            async with asyncio.timeout(self._RPC_TIMEOUT_S):
-                line = await reader.readline()
-            if not line:
-                break
-            try:
-                resp = json.loads(line)
-                if 'error' in resp:
-                    err = resp['error']
-                    logger.warning('[MLXCEL] stream error: %s', err.get('message'))
+        async with self._lock:
+            if not self._connected:
+                await self._connect_socket()
+            req_id = self._next_id
+            self._next_id = req_id + 1
+            request = {'jsonrpc': '2.0', 'method': 'generate_stream', 'params': {'prompt': prompt, 'temperature': temperature, 'max_tokens': max_tokens, 'system_msg': system_msg, 'thinking': thinking, 'adapter_path': adapter_path}, 'id': req_id}
+            request_bytes = json.dumps(request) + b'\n'
+            if self._writer is None:
+                raise MlxcelUnavailable('Not connected to mlxcel')
+            reader = self._reader
+            if reader is None:
+                raise MlxcelUnavailable('Reader not available')
+            self._writer.write(request_bytes)
+            await self._writer.drain()
+            stream_start = time.monotonic()
+            while True:
+                async with asyncio.timeout(self._RPC_TIMEOUT_S):
+                    line = await reader.readline()
+                if not line:
+                    # Connection closed without done signal
                     break
-                result = resp.get('result', {})
-                chunk = result.get('chunk', '')
-                done = result.get('done', False)
-                if chunk:
-                    yield chunk
-                if done:
-                    break
-            except ValueError:
-                continue
-            except asyncio.TimeoutError:
-                raise MlxcelUnavailable(f'Stream chunk timeout after {self._RPC_TIMEOUT_S}s')
+                try:
+                    resp = json.loads(line)
+                    if 'error' in resp:
+                        err = resp['error']
+                        logger.warning('[MLXCEL] stream error: %s', err.get('message'))
+                        break
+                    result = resp.get('result', {})
+                    chunk = result.get('chunk', '')
+                    done = result.get('done', False)
+                    if chunk:
+                        yield chunk
+                    if done:
+                        latency_ms = (time.monotonic() - stream_start) * 1000
+                        self._stats.record_call(latency_ms)
+                        break
+                except ValueError:
+                    # Malformed JSON line — skip and keep reading
+                    continue
+                except asyncio.TimeoutError:
+                    self._stats.record_failure('Stream chunk timeout')
+                    self._connected = False
+                    raise MlxcelUnavailable(f'Stream chunk timeout after {self._RPC_TIMEOUT_S}s')
+                except (OSError, asyncio.CancelledError) as e:
+                    # OSError: socket broken pipe / connection reset
+                    # CancelledError: caller cancelled the generator mid-stream
+                    self._stats.record_failure(str(e))
+                    self._connected = False
+                    raise MlxcelUnavailable(f'Stream failed: {e}') from e
 
     async def close(self) -> None:
         """Close connection to mlxcel gracefully."""

@@ -58,6 +58,8 @@ class ResourceBudget(msgspec.Struct):
     priority: int
     request_id: str
     context: Any = None
+    # C-9 fix: task reference umožňuje task.cancel() při emergency brake
+    task: Any = None
 
 class ResourceExhausted(Exception):
     """Raised when resources cannot be allocated."""
@@ -132,12 +134,12 @@ class ResourceAllocator:
             return False
         return True
 
-    def acquire(self, request_id: str, ctx: Any, priority: int) -> ResourceBudget:
+    def acquire(self, request_id: str, ctx: Any, priority: int, task: Any = None) -> ResourceBudget:
         """Acquire resources for a new request."""
         if not self.can_accept(ctx):
             raise ResourceExhausted(f'Cannot accept request {request_id}: resources exhausted')
         predicted = self.predict_ram(ctx)
-        budget = ResourceBudget(ram_mb=int(predicted), time_sec=300.0, priority=priority, request_id=request_id, context=ctx)
+        budget = ResourceBudget(ram_mb=int(predicted), time_sec=300.0, priority=priority, request_id=request_id, context=ctx, task=task)
         self.active_requests[request_id] = budget
         self.total_ram_mb += predicted
         logger.debug(f'Allocated {predicted:.0f} MB for request {request_id} (priority {priority})')
@@ -181,11 +183,19 @@ class ResourceAllocator:
             return None
 
     def cancel(self, request_id: str):
-        """Cancel a specific request."""
+        """Cancel a specific request. C-9 fix: volá task.cancel() pokud je task known."""
         if request_id in self.active_requests:
             budget = self.active_requests.pop(request_id)
             self.total_ram_mb -= budget.ram_mb
-            logger.info(f'Cancelled request {request_id}')
+            task = getattr(budget, 'task', None)
+            if task is not None:
+                try:
+                    task.cancel()
+                    logger.info(f'Cancelled request {request_id} via task.cancel()')
+                except Exception:  # noqa: BLE001 — best-effort; task.cancel() failure is non-fatal
+                    logger.info(f'Cancelled request {request_id} (task.cancel() failed)')
+            else:
+                logger.info(f'Cancelled request {request_id}')
 
     def get_stats(self) -> dict[str, Any]:
         """Get current allocator statistics."""
@@ -282,7 +292,7 @@ class AdaptiveSemaphore:
     _CEILING = _CONCURRENCY_CEILING
     __slots__ = tuple(('_active_holders', '_check_interval', '_effective_limit', '_last_check', '_lock', '_sem'))
 
-    def __init__(self, initial_limit: int=_CONCURRENCY_CEILING) -> Self:
+    def __init__(self, initial_limit: int=_CONCURRENCY_CEILING) -> None:
         self._effective_limit = initial_limit
         self._sem = asyncio.Semaphore(self._CEILING)
         self._active_holders = 0
@@ -300,18 +310,47 @@ class AdaptiveSemaphore:
         return self._effective_limit
 
     async def __aenter__(self) -> AdaptiveSemaphore:
-        async with self._lock:
-            await self._compute_effective_limit()
-            if self._active_holders >= self._effective_limit:
-                raise RuntimeError(f'AdaptiveSemaphore: concurrency limit ({self._effective_limit}) reached ({self._active_holders} active)')
-            self._active_holders += 1
+        # C-10 fix: backpressure místo raise RuntimeError.
+        # Kombajn asyncio.Semaphore (hard cap await) + soft cap backpressure.
+        #
+        # Race guard: _did_release tracks whether WE released sem inside the
+        # backpressure loop. On CancelledError we must undo only our own release,
+        # not a release from __aexit__ running concurrently on another task.
+        _did_release = False
         await self._sem.acquire()
+        try:
+            async with self._lock:
+                await self._compute_effective_limit()
+                while self._active_holders >= self._effective_limit:
+                    self._sem.release()
+                    _did_release = True
+                    try:
+                        await asyncio.wait_for(self._sem.acquire(), timeout=1.0)
+                    except asyncio.CancelledError:
+                        # We released sem but acquire was interrupted —
+                        # undo our own release before propagating.
+                        self._sem.release()
+                        raise
+                    except asyncio.TimeoutError:
+                        # Timed out waiting for a slot — retry from top of loop
+                        # (will re-check effective_limit after next _compute)
+                        _did_release = False
+                        continue
+                    _did_release = False
+                    break
+                self._active_holders += 1
+        except asyncio.CancelledError:
+            # Cancelled before we entered the while loop (no release needed)
+            self._sem.release()
+            raise
         return self
 
     async def __aexit__(self, *args) -> None:
-        self._sem.release()
         async with self._lock:
-            self._active_holders -= 1
+            # __aexit__ must NOT decrement below 0 — defensive guard
+            if self._active_holders > 0:
+                self._active_holders -= 1
+        self._sem.release()
 
     @property
     def current_limit(self) -> int:

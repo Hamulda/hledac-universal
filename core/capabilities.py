@@ -208,7 +208,6 @@ COREMLTOOLS = Capability("coremltools", "coremltools", install_hint="pip install
 
 # PDF / Document processing
 PYPDF = Capability("pypdf", "pypdf", install_hint="pip install pypdf")
-PYPDF2 = Capability("pypdf2", "PyPDF2", install_hint="pip install PyPDF2")
 FITZ = Capability("fitz", "fitz", install_hint="pip install pymupdf")
 PIEXIF = Capability("piexif", "piexif", install_hint="pip install piexif")
 DOCX = Capability("docx", "docx", install_hint="pip install python-docx")

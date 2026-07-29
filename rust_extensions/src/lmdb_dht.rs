@@ -26,7 +26,9 @@
 //! - io_pool (2 threads) for I/O-bound operations
 //!
 //! ## PyO3 Version
-//! PyO3 =0.28.2 — `py.detach()` IS available (lesson #1985: 0.29 removed it)
+//! PyO3 =0.29 — `py.detach()` is the GIL-release API. `allow_threads`
+//! was removed in 0.29 and is NOT used here. The `py.detach()` pattern
+//! follows the same approach as `lmdb_async_*` functions in this module.
 
 use pyo3::prelude::*;
 
@@ -122,7 +124,10 @@ fn lmdb_put_two(
 /// value:          encrypted node features (raw bytes from Python)
 /// neighbors_json: JSON-encoded list of neighbor node_ids
 ///
-/// Returns Ok(()) or Err(message)
+/// B-14 fix: GIL released via py.detach() during LMDB I/O. The pattern
+/// mirrors lmdb_async_* functions — Python data extracted before detach,
+/// LMDB I/O runs in detached closure, then re-acquires GIL on return.
+/// This prevents blocking the GIL during I/O-bound LMDB writes.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_put_node")]
 pub fn lmdb_dht_put_node<'py>(
@@ -133,16 +138,20 @@ pub fn lmdb_dht_put_node<'py>(
     neighbors_json: Vec<u8>,
 ) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
-    let neigh_key = {
-        let mut k = b"neighbors:".to_vec();
-        k.extend_from_slice(&key);
-        k
-    };
-    // TEMP FIX: allow_threads removed - GIL held during LMDB I/O
-    // TODO: Refactor to extract data before allow_threads
-    {
-        lmdb_put_two(&env, &key, &value, &neigh_key, &neighbors_json)
-    }
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
+    // B-14: all owned data (path, key, value, neighbors_json) moved into closure
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let neigh_key = {
+                let mut k = b"neighbors:".to_vec();
+                k.extend_from_slice(&key);
+                k
+            };
+            lmdb_put_two(&env, &key, &value, &neigh_key, &neighbors_json)
+        })
+    })
 }
 
 /// Retrieve a graph node's raw value + neighbors.
@@ -151,6 +160,9 @@ pub fn lmdb_dht_put_node<'py>(
 /// key:   node_id bytes
 ///
 /// Returns (value_bytes, neighbors_json) or None if not found.
+///
+/// B-14 fix: GIL released via py.detach() during LMDB I/O. Read transaction
+/// runs detached so other Python threads can make progress.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_get_node")]
 pub fn lmdb_dht_get_node<'py>(
@@ -159,16 +171,23 @@ pub fn lmdb_dht_get_node<'py>(
     key: Vec<u8>,
 ) -> PyResult<Option<(Vec<u8>, Vec<u8>)>> {
     let env = get_lmdb_env(py, &path)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let neigh_key = {
         let mut k = b"neighbors:".to_vec();
         k.extend_from_slice(&key);
         k
     };
-    let result = lmdb_get_two(&env, &key, &neigh_key)?;
-    match result {
-        (Some(v), Some(n)) => Ok(Some((v, n))),
-        _ => Ok(None),
-    }
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            lmdb_get_two(&env, &key, &neigh_key)
+        })
+    })
+    .map(|(v, n): (Option<Vec<u8>>, Option<Vec<u8>>)| match (v, n) {
+        (Some(v), Some(n)) => Some((v, n)),
+        _ => None,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,6 +199,9 @@ pub fn lmdb_dht_get_node<'py>(
 /// path:     LMDB directory path
 /// node_id:  40-char hex peer ID
 /// value:    encrypted JSON bytes
+///
+/// B-14 fix: GIL released via py.detach() during LMDB I/O. Write transaction
+/// runs detached so other Python threads can make progress.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_put_dht_node")]
 pub fn lmdb_dht_put_dht_node<'py>(
@@ -189,12 +211,22 @@ pub fn lmdb_dht_put_dht_node<'py>(
     value: Vec<u8>,
 ) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let mut key = b"dht_node:".to_vec();
     key.extend_from_slice(&node_id);
-    lmdb_put(&env, &key, &value)
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            lmdb_put(&env, &key, &value)
+        })
+    })
 }
 
 /// Retrieve a DHT node's encrypted record.
+///
+/// B-14 fix: GIL released via py.detach() during LMDB I/O. Read transaction
+/// runs detached so other Python threads can make progress.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_get_dht_node")]
 pub fn lmdb_dht_get_dht_node<'py>(
@@ -203,12 +235,21 @@ pub fn lmdb_dht_get_dht_node<'py>(
     node_id: Vec<u8>,
 ) -> PyResult<Option<Vec<u8>>> {
     let env = get_lmdb_env(py, &path)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let mut key = b"dht_node:".to_vec();
     key.extend_from_slice(&node_id);
-    lmdb_get(&env, &key)
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            lmdb_get(&env, &key)
+        })
+    })
 }
 
 /// Scan all DHT node records, return Vec of (node_id, encrypted_value).
+///
+/// B-14 fix: GIL released via py.detach() during cursor iteration.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_get_all_dht_nodes")]
 pub fn lmdb_dht_get_all_dht_nodes<'py>(
@@ -217,37 +258,46 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
     limit: usize,
 ) -> PyResult<Vec<(Vec<u8>, Vec<u8>)>> {
     let env = get_lmdb_env(py, &path)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
     let prefix = b"dht_node:".to_vec();
 
-    let txn = env.getattr("begin")?.call1((false,))?;
-    let cursor = txn.call_method0("cursor")?;
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
+            let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
 
-    let py_iter = cursor.call_method0("iter")?;
-    let rust_iter = py_iter.try_iter()?;
-    let mut out = Vec::with_capacity(limit.min(1000));
+            let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
+            let rust_iter = py_iter.try_iter()?;
+            let mut out = Vec::with_capacity(limit.min(1000));
 
-    for item in rust_iter {
-        let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
-        let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
-        if pair.len() != 2 {
-            continue;
-        }
-        let k = &pair[0];
-        if k.starts_with(&prefix) {
-            out.push((k[9..].to_vec(), pair[1].clone()));
-            if out.len() >= limit {
-                break;
+            for item in rust_iter {
+                let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
+                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
+                if pair.len() != 2 {
+                    continue;
+                }
+                let k = &pair[0];
+                if k.starts_with(&prefix) {
+                    out.push((k[9..].to_vec(), pair[1].clone()));
+                    if out.len() >= limit {
+                        break;
+                    }
+                }
             }
-        }
-    }
-    drop(cursor);
-    drop(txn);
+            drop(cursor);
+            drop(txn);
 
-    Ok(out)
+            Ok(out)
+        })
+    })
 }
 
 /// Count total DHT nodes in store.
+///
+/// B-14 fix: GIL released via py.detach() during cursor iteration.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_count_dht_nodes")]
 pub fn lmdb_dht_count_dht_nodes<'py>(
@@ -255,29 +305,40 @@ pub fn lmdb_dht_count_dht_nodes<'py>(
     path: String,
 ) -> PyResult<usize> {
     let env = get_lmdb_env(py, &path)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let prefix = b"dht_node:".to_vec();
 
-    let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
-    let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
-    let mut count = 0;
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
+            let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
+            let mut count = 0;
 
-    let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
-    let rust_iter = py_iter.try_iter()?;
-    for item in rust_iter {
-        let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
-        let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
-        if pair.len() != 2 || !pair[0].starts_with(&prefix) {
-            continue;
-        }
-        count += 1;
-    }
-    drop(cursor);
-    drop(txn);
+            let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
+            let rust_iter = py_iter.try_iter()?;
+            for item in rust_iter {
+                let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
+                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
+                if pair.len() != 2 || !pair[0].starts_with(&prefix) {
+                    continue;
+                }
+                count += 1;
+            }
+            drop(cursor);
+            drop(txn);
 
-    Ok(count)
+            Ok(count)
+        })
+    })
 }
 
 /// Delete all DHT node records.
+///
+/// B-14 fix: GIL released via py.detach() during LMDB I/O. The cursor
+/// iteration and write transaction both run detached from the GIL, preventing
+/// blocking of other Python threads during this potentially slow operation.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_clear_dht_nodes")]
 pub fn lmdb_dht_clear_dht_nodes<'py>(
@@ -285,40 +346,50 @@ pub fn lmdb_dht_clear_dht_nodes<'py>(
     path: String,
 ) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let prefix = b"dht_node:".to_vec();
 
-    // TEMP FIX: allow_threads removed - GIL held during LMDB I/O
-    // TODO: Refactor to extract data before allow_threads
-    {
-        // Collect keys first (can't delete while iterating cursor)
-        let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
-        let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
-        let mut to_delete: Vec<Vec<u8>> = Vec::new();
+    // B-14: all LMDB I/O runs in py.detach() — GIL released during cursor
+    // iteration and write transaction.
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
 
-        let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
-        let rust_iter = py_iter.try_iter()?;
-        for item in rust_iter {
-            let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
-            let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
-            if pair.len() != 2 {
-                continue;
+            // Collect keys first (can't delete while iterating cursor)
+            let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
+            let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
+            let mut to_delete: Vec<Vec<u8>> = Vec::new();
+
+            let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
+            let rust_iter = py_iter.try_iter()?;
+            for item in rust_iter {
+                let item = item.map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e))
+                })?;
+                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e))
+                })?;
+                if pair.len() != 2 {
+                    continue;
+                }
+                if pair[0].starts_with(&prefix) {
+                    to_delete.push(pair[0].clone());
+                }
             }
-            if pair[0].starts_with(&prefix) {
-                to_delete.push(pair[0].clone());
+            drop(cursor);
+            drop(txn);
+
+            // Delete in write transaction
+            let write_txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((true,))?;
+            for key in &to_delete {
+                let _ = write_txn.call_method1("delete", (key,));
             }
-        }
-        drop(cursor);
-        drop(txn);
+            write_txn.call_method0("commit")?;
 
-        // Delete in write transaction
-        let write_txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((true,))?;
-        for key in &to_delete {
-            let _ = write_txn.call_method1("delete", (key,));
-        }
-        write_txn.call_method0("commit")?;
-    };
-
-    Ok(())
+            Ok(())
+        })
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -326,6 +397,8 @@ pub fn lmdb_dht_clear_dht_nodes<'py>(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Save routing table snapshot (encrypted by Python).
+///
+/// B-14 fix: GIL released via py.detach() during LMDB write.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_save_routing_snapshot")]
 pub fn lmdb_dht_save_routing_snapshot<'py>(
@@ -334,10 +407,19 @@ pub fn lmdb_dht_save_routing_snapshot<'py>(
     payload: Vec<u8>,
 ) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
-    lmdb_put(&env, b"routing_table_v1", &payload)
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            lmdb_put(&env, b"routing_table_v1", &payload)
+        })
+    })
 }
 
 /// Load routing table snapshot.
+///
+/// B-14 fix: GIL released via py.detach() during LMDB read.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_load_routing_snapshot")]
 pub fn lmdb_dht_load_routing_snapshot<'py>(
@@ -345,7 +427,14 @@ pub fn lmdb_dht_load_routing_snapshot<'py>(
     path: String,
 ) -> PyResult<Option<Vec<u8>>> {
     let env = get_lmdb_env(py, &path)?;
-    lmdb_get(&env, b"routing_table_v1")
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            lmdb_get(&env, b"routing_table_v1")
+        })
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -359,6 +448,8 @@ pub fn lmdb_dht_load_routing_snapshot<'py>(
 ///
 /// Returns all raw node_id keys (excluding "neighbors:*" entries).
 /// This replaces the Python fallback full-cursor scan.
+///
+/// B-14 fix: GIL released via py.detach() during cursor iteration.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_scan_all_nodes")]
 pub fn lmdb_dht_scan_all_nodes<'py>(
@@ -367,34 +458,41 @@ pub fn lmdb_dht_scan_all_nodes<'py>(
     limit: usize,
 ) -> PyResult<Vec<Vec<u8>>> {
     let env = get_lmdb_env(py, &path)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
     let neigh_prefix = b"neighbors:".to_vec();
 
-    let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
-    let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
+            let cursor: Bound<'_, PyAny> = txn.call_method0("cursor")?;
 
-    let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
-    let rust_iter = py_iter.try_iter()?;
-    let mut out: Vec<Vec<u8>> = Vec::with_capacity(limit.min(1000));
+            let py_iter: Bound<'_, PyAny> = cursor.call_method0("iter")?;
+            let rust_iter = py_iter.try_iter()?;
+            let mut out: Vec<Vec<u8>> = Vec::with_capacity(limit.min(1000));
 
-    for item in rust_iter {
-        let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
-        let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
-        if pair.len() != 2 {
-            continue;
-        }
-        let k = &pair[0];
-        if !k.starts_with(&neigh_prefix) {
-            out.push(k.clone());
-            if out.len() >= limit {
-                break;
+            for item in rust_iter {
+                let item = item.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht iterator error: {}", e)))?;
+                let pair: Vec<Vec<u8>> = item.extract().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lmdb_dht extract error: {}", e)))?;
+                if pair.len() != 2 {
+                    continue;
+                }
+                let k = &pair[0];
+                if !k.starts_with(&neigh_prefix) {
+                    out.push(k.clone());
+                    if out.len() >= limit {
+                        break;
+                    }
+                }
             }
-        }
-    }
-    drop(cursor);
-    drop(txn);
+            drop(cursor);
+            drop(txn);
 
-    Ok(out)
+            Ok(out)
+        })
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -412,6 +510,10 @@ pub fn lmdb_dht_scan_all_nodes<'py>(
 /// max_hops:   Maximum traversal depth
 ///
 /// Returns all reachable node_ids within max_hops (deduplicated).
+///
+/// B-14 fix: GIL released via py.detach() during entire BFS traversal.
+/// All LMDB reads and JSON parsing run detached so other Python threads
+/// can make progress during the multi-hop traversal.
 #[pyfunction]
 #[pyo3(name = "lmdb_dht_bfs_traverse")]
 pub fn lmdb_dht_bfs_traverse<'py>(
@@ -421,52 +523,60 @@ pub fn lmdb_dht_bfs_traverse<'py>(
     max_hops: usize,
 ) -> PyResult<Vec<Vec<u8>>> {
     let env = get_lmdb_env(py, &path)?;
+    let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let max_hops = max_hops.min(10);
     let neigh_prefix = b"neighbors:".to_vec();
 
-    let mut visited: std::collections::HashSet<Vec<u8>> =
-        std::collections::HashSet::new();
-    let mut frontier: Vec<Vec<u8>> = start_keys;
+    // B-14: entire BFS traversal runs in detached closure — GIL released
+    // during all LMDB reads and JSON parsing.
+    py.detach(move || {
+        let env_owned = env_owned;
+        Python::attach(|py| {
+            let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
+            let mut visited: std::collections::HashSet<Vec<u8>> =
+                std::collections::HashSet::new();
+            let mut frontier: Vec<Vec<u8>> = start_keys;
 
-    for _ in 0..max_hops {
-        if frontier.is_empty() {
-            break;
-        }
-        let mut next_frontier: Vec<Vec<u8>> = Vec::new();
+            for _ in 0..max_hops {
+                if frontier.is_empty() {
+                    break;
+                }
+                let mut next_frontier: Vec<Vec<u8>> = Vec::new();
 
-        for key in frontier {
-            let neigh_key = {
-                let mut k = neigh_prefix.clone();
-                k.extend_from_slice(&key);
-                k
-            };
+                for key in frontier {
+                    let neigh_key = {
+                        let mut k = neigh_prefix.clone();
+                        k.extend_from_slice(&key);
+                        k
+                    };
 
-            let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
-            let py_bytes = pyo3::types::PyBytes::new(py, &neigh_key);
-            let neigh_data: Option<Vec<u8>> = txn.call_method1("get", (py_bytes,))?
-                .extract()
-                .ok()
-                .unwrap_or(None);
-            drop(txn);
+                    let txn: Bound<'_, PyAny> = env.getattr("begin")?.call1((false,))?;
+                    let py_bytes = pyo3::types::PyBytes::new(py, &neigh_key);
+                    let neigh_data: Option<Vec<u8>> = txn.call_method1("get", (py_bytes,))?
+                        .extract()
+                        .ok()
+                        .unwrap_or(None);
+                    drop(txn);
 
-            if let Some(data) = neigh_data {
-                // Parse JSON neighbor list
-                if let Ok(neighbors) =
-                    serde_json::from_slice::<Vec<String>>(&data)
-                {
-                    for neighbor in neighbors {
-                        let n_bytes = neighbor.into_bytes();
-                        if visited.insert(n_bytes.clone()) {
-                            next_frontier.push(n_bytes);
+                    if let Some(data) = neigh_data {
+                        if let Ok(neighbors) =
+                            serde_json::from_slice::<Vec<String>>(&data)
+                        {
+                            for neighbor in neighbors {
+                                let n_bytes = neighbor.into_bytes();
+                                if visited.insert(n_bytes.clone()) {
+                                    next_frontier.push(n_bytes);
+                                }
+                            }
                         }
                     }
                 }
+                frontier = next_frontier;
             }
-        }
-        frontier = next_frontier;
-    }
 
-    Ok(visited.into_iter().collect())
+            Ok(visited.into_iter().collect::<Vec<Vec<u8>>>())
+        })
+    })
 }
 
 /// Close and release all cached LMDB environments.

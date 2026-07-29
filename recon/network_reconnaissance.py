@@ -37,7 +37,7 @@ from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 import httpx
 import dns.asyncresolver
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import safe_gather_ok, parallel
+from hledac.universal.utils.async_helpers import parallel_ok, parallel
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
 logger = logging.getLogger(__name__)
 

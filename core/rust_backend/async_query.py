@@ -16,14 +16,16 @@ import asyncio
 from typing import Any
 
 
-def get_domain() -> "AsyncQueryDomain":
-    from hledac.universal.rust_extensions import hledac_rust_extensions as _ext
+def get_domain(ext: object | None = None) -> "AsyncQueryDomain | PythonFallbackAsyncQueryDomain":
+    """Return Rust AsyncQueryDomain if rust_async_query is available, else PythonFallback.
 
-    _probe = getattr(_ext, "rust_async_query", None)
-    if _probe is None:
-        msg = "hledac_rust_extensions.rust_async_query not available"
-        raise ImportError(msg)
-    return AsyncQueryDomain(_ext)
+    Args:
+        ext: The hledac_rust_extensions module (from probe_result.ext).
+            If None, falls back to Python (standalone usage).
+    """
+    if ext is not None and hasattr(ext, "rust_async_query"):
+        return AsyncQueryDomain(ext)
+    return PythonFallbackAsyncQueryDomain()
 
 
 class AsyncQueryDomain:

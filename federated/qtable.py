@@ -37,14 +37,19 @@ class FederatedQTable:
     State is a hashable tuple, action is a string. Each (state, action)
     pair has a single Q-value. When MAX_QTABLE_ENTRIES is exceeded,
     the entry with the lowest Q-value is evicted.
+
+    ISSUE 4.4 D-24 FIX: Secondary max-Q index dict[state, float] for O(1)
+    next_max_q lookup instead of O(n) scan. Update is O(1) amortized.
     """
-    __slots__ = tuple(('_alpha', '_gamma', '_max_entries', '_q'))
+    __slots__ = tuple(('_alpha', '_gamma', '_max_entries', '_q', '_max_q_per_state'))
 
     def __init__(self, alpha: float=0.1, gamma: float=0.9, max_entries: int=MAX_QTABLE_ENTRIES) -> None:
         self._alpha: float = float(alpha)
         self._gamma: float = float(gamma)
         self._max_entries: int = max(1, int(max_entries))
         self._q: dict[tuple[Any, str], float] = {}
+        # ISSUE 4.4 D-24 FIX: secondary index for O(1) max-Q per state
+        self._max_q_per_state: dict[tuple, float] = {}
 
     def get_q(self, state: tuple, action: str) -> float:
         """Return Q(state, action), or 0.0 if unseen. Never raises."""
@@ -74,18 +79,22 @@ class FederatedQTable:
     def update(self, state: tuple, action: str, reward: float, next_state: tuple) -> None:
         """
         Q-learning update. Q(s,a) <- Q(s,a) + alpha * (reward + gamma*max_a' Q(s',a') - Q(s,a))
+
+        ISSUE 4.4 D-24 FIX: O(1) next_max_q via _max_q_per_state index
+        instead of O(n) scan over all entries.
         Bounded: evicts the lowest-Q entry when MAX_QTABLE_ENTRIES is exceeded.
         """
         try:
             key = (state, action)
             current_q = self._q.get(key, 0.0)
-            next_max_q = 0.0
-            for (st, _), q in self._q.items():
-                if st == next_state and q > next_max_q:
-                    next_max_q = q
+            # ISSUE 4.4 D-24 FIX: O(1) lookup via secondary index
+            next_max_q = self._max_q_per_state.get(next_state, 0.0)
             target = float(reward) + self._gamma * next_max_q
             new_q = current_q + self._alpha * (target - current_q)
             self._q[key] = new_q
+            # ISSUE 4.4 D-24 FIX: update secondary max-Q index
+            if new_q > self._max_q_per_state.get(state, 0.0):
+                self._max_q_per_state[state] = new_q
             if len(self._q) > self._max_entries:
                 self._evict_lowest()
         except Exception as e:
@@ -97,7 +106,15 @@ class FederatedQTable:
             return
         try:
             min_key = min(self._q, key=lambda k: self._q[k])
+            evicted_state = min_key[0]
             self._q.pop(min_key, None)
+            # ISSUE 4.4 D-24 FIX: rebuild max-Q index for evicted state if needed
+            if evicted_state in self._max_q_per_state:
+                remaining_qs = [q for (s, _), q in self._q.items() if s == evicted_state]
+                if remaining_qs:
+                    self._max_q_per_state[evicted_state] = max(remaining_qs)
+                else:
+                    self._max_q_per_state.pop(evicted_state, None)
         except Exception as e:
             logger.debug(f'[FED-Q] evict failed: {e}')
 
@@ -118,12 +135,21 @@ class FederatedQTable:
                     state_str, action = k.rsplit('|', 1)
                     state = (state_str,)
                     qt._q[state, action] = float(v)
+            # ISSUE 4.4 D-24 FIX: rebuild max-Q index after loading
+            for (state, _), q in qt._q.items():
+                if q > qt._max_q_per_state.get(state, 0.0):
+                    qt._max_q_per_state[state] = q
             return qt
         except Exception:
             return cls(alpha=alpha, gamma=gamma, max_entries=max_entries)
 
     def __len__(self) -> int:
         return len(self._q)
+
+    def reset(self) -> None:
+        """Reset all state including max-Q index."""
+        self._q.clear()
+        self._max_q_per_state.clear()
 
 
 # --- ISSUE-23: Rust-backed Q-table with rayon parallel batch updates ---

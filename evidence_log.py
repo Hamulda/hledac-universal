@@ -61,6 +61,7 @@ import uuid
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
+import sys as _sys
 from typing import Any, Iterator, Literal, cast
 import aiosqlite
 import msgspec
@@ -68,7 +69,6 @@ import orjson
 from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
-from hledac.universal.utils.async_helpers import safe_wait_for
 
 # ISSUE-14: Structured logging via structlog
 # Lazy import to avoid early import overhead — structlog is optional
@@ -192,7 +192,8 @@ def _get_arrow():
                 import pyarrow.ipc as _ipc
                 _arrow = (_pa, _ipc)
             except ImportError:
-                logger.debug("arrow_not_available_falling_back_to_sqlite")
+                import logging as _logger
+                _logger.getLogger("evidence_log").debug("arrow_not_available_falling_back_to_sqlite")
                 _arrow = False
         else:
             _arrow = False
@@ -364,13 +365,11 @@ class _RustMPSCBytes:
 
     M1 8GB: ~1 MiB total (2048 slots × 512B), negligible overhead.
 
-    D4 FIX: Lazy retry with exponential backoff.
-    - If Rust extension is not available at init time (e.g. maturin develop
-      hasn't run yet), the asyncio fallback is used temporarily.
-    - A retry is scheduled via call_later() — attempts to re-import the Rust
-      extension every 5s/10s/20s/40s/60s (exponential backoff, capped at 60s).
-    - On success: silently switches to Rust MPSC, asyncio.Queue is abandoned.
-    - This enables "maturin develop" mid-process workflow without restart.
+    F-15 FIX: No reload — permanent fallback.
+    - If Rust extension is not available at init time, asyncio.Queue is used.
+    - Extension absence is cached permanently via _rust_unavailable flag.
+    - No retry scheduling — PyO3 C extension cannot be safely reloaded.
+    - "maturin develop" + process restart is required for Rust MPSC.
     """
     __slots__ = tuple(('_impl', '_pool', '_queue', '_sender_ptr', '_wake_fd', 'fallback', '_retry_handle', '_retry_delay', '_capacity', '_asyncio_fallback', '_pending_retry'))
 
@@ -393,6 +392,8 @@ class _RustMPSCBytes:
         self._capacity: int = capacity
         self._asyncio_fallback: bool = asyncio_fallback
         self._pending_retry: bool = False  # True when a retry is scheduled
+        # F-15: cached "Rust extension not available" flag — never retry a PyO3 C ext reload
+        self._rust_unavailable: bool = False
         self._init_rust(capacity, asyncio_fallback)
 
     def _init_rust(self, capacity: int, asyncio_fallback: bool) -> None:
@@ -423,8 +424,11 @@ class _RustMPSCBytes:
                 self._queue = None
             self.fallback = True
             self._impl = 'asyncio'
-            # D4 FIX: Schedule lazy retry — Rust extension may be built mid-process
-            self._schedule_retry()
+            # F-15 FIX: Mark Rust extension as permanently unavailable.
+            # No retry — if it wasn't compiled at startup, "maturin develop"
+            # + process restart is required. asyncio.Queue is functionally equivalent.
+            self._rust_unavailable = True
+            self._pending_retry = False
 
     def _schedule_retry(self) -> None:
         """Schedule a retry attempt to re-import Rust extension.
@@ -432,8 +436,8 @@ class _RustMPSCBytes:
         Uses exponential backoff: 5s → 10s → 20s → 40s → 60s (cap).
         Cancel previous retry if one is scheduled (call_later is idempotent per loop).
         """
-        # Don't reschedule if already pending or not in fallback
-        if self._pending_retry or not self.fallback:
+        # Don't reschedule if already pending, not in fallback, or Rust permanently unavailable
+        if self._pending_retry or not self.fallback or self._rust_unavailable:
             return
 
         try:
@@ -475,20 +479,36 @@ class _RustMPSCBytes:
     def _do_retry_init(self) -> None:
         """Attempt to re-initialize Rust MPSC.
 
-        Called by retry callback. If Rust is now available, switches over.
-        Otherwise, reschedules another retry at the current backoff delay.
+        F-15 FIX: Replaced importlib.reload(hledac_rust_extensions) with
+        sys.modules.get() check. Reloading a PyO3 C extension mid-process
+        risks type registry corruption, double-free, and segfaults. If the
+        extension was not available at startup, "maturin develop" must be
+        run and the process restarted. We cache 'unavailable' permanently
+        and never retry to avoid pointless 5-60s backoff loops.
         """
         if not self.fallback:
             # Already using Rust — nothing to do
             self._pending_retry = False
             return
 
-        try:
-            # Use importlib to re-import (avoids cached failed import)
-            import importlib
-            import hledac_rust_extensions as ext  # type: ignore[import]
-            importlib.reload(ext)
+        # F-15: Check if Rust extension is already in sys.modules
+        ext = _sys.modules.get("hledac_rust_extensions")
+        if ext is None:
+            # Extension was never imported — mark permanently unavailable, no retry
+            logger.debug("rust_mpsc_extension_never_imported_marking_unavailable")
+            self._rust_unavailable = True
+            self._pending_retry = False
+            return
 
+        # F-15: Extension is in sys.modules — check if it has MPSCPool
+        # (if it was imported but failed to compile, it won't have it)
+        if not hasattr(ext, "MPSCPool"):
+            logger.debug("rust_mpsc_extension_missing_mpscpool_marking_unavailable")
+            self._rust_unavailable = True
+            self._pending_retry = False
+            return
+
+        try:
             from hledac_rust_extensions import MPSCPool as _MPSC  # type: ignore[import]
             pool = _MPSC(capacity=self._capacity)
             sender_ptr = pool.add_sender()
@@ -519,9 +539,10 @@ class _RustMPSCBytes:
 
             logger.info("rust_mpsc_now_available_switched_from_asyncio_fallback")
         except Exception:  # noqa: BLE001
-            logger.debug("rust_mpsc_not_available_scheduling_retry", exc_info=True)
-            self._pending_retry = True
-            self._schedule_retry()
+            logger.debug("rust_mpsc_init_failed_marking_unavailable", exc_info=True)
+            # F-15: On any error, mark permanently unavailable — no more retries
+            self._rust_unavailable = True
+            self._pending_retry = False
 
     def send(self, item: bytes) -> bool:
         """Send raw bytes to the pool. Non-blocking (Rust) or blocking (asyncio).

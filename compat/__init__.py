@@ -9,12 +9,13 @@ during the transition period.
 
 | Deprecated stub              | Canonical module                        |
 |-----------------------------|----------------------------------------|
-| ``compat.core_watchdog``     | ``utils.uma_budget.Watchdog``          |
-| ``compat.core_mlx_embeddings`` | ``core.mlx_embeddings``              |
-| ``compat.core_http``         | ``transport.http_utils``               |
-| ``compat.core_resilience``   | ``hledac.core.resilience``             |
-| ``compat.core_unified_ai_orchestrator`` | ``brain.unified_research_bridge`` |
-| ``compat.cortex_director``  | REMOVED (stub was never functional)   |
+| ``compat.core_watchdog``     | ``hledac.core.watchdog.Watchdog``       |
+| ``compat.core_mlx_embeddings`` | ``hledac.core.mlx_embeddings``         |
+| ``compat.core_http``         | ``hledac.universal.fetching.public_fetcher`` |
+| ``compat.core_resilience``   | **REMOVED** (F350M-R A-01)             |
+| ``compat.core_unified_ai_orchestrator`` | **REMOVED** (never functional)    |
+| ``compat.cortex_director``  | **REMOVED** (stub was never functional)   |
+| ``compat.security_*``       | ``hledac.security.<SymbolName>``        |
 
 **Migration complete (F350M-R A-01):**
 - All import sites migrated to canonical paths
@@ -27,10 +28,8 @@ DO NOT add new imports here — use canonical module paths directly.
 
 __all__ = [
     # Core compat — deprecated, re-export from canonical
-    "core_resilience",
+    # NOTE: core_resilience, core_unified_ai_orchestrator, cortex_director removed (F350M-R A-01)
     "core_watchdog",
     "core_http",
     "core_mlx_embeddings",
-    "core_unified_ai_orchestrator",
-    # REMOVED: cortex_director (was a non-functional stub)
 ]

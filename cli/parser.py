@@ -15,8 +15,28 @@ import argparse
 import pathlib
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    pass
+from hledac.universal.core.cli.args import resolve_rl_args
+
+
+async def async_main() -> int:
+    """
+    Async CLI entry point — parses args and dispatches to async handlers.
+
+    P0-03: Uses asyncio.to_thread() for boot-sensitive operations.
+    """
+    parser = build_parser()
+    args = parser.parse_args()
+    args = resolve_rl_args(args)
+    return await dispatch_async(args)
+
+
+def main() -> int:
+    """Synchronous entry point — runs the async main loop."""
+    import asyncio
+    try:
+        return asyncio.run(async_main())
+    except KeyboardInterrupt:
+        return 130  # SIGINT
 
 
 # --------------------------------------------------------------------------- #

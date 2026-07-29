@@ -2013,7 +2013,7 @@ class SynthesisRunner:
                 return False
 
         # Phase 1: Check all model sizes in parallel
-        # F314-4: migrated asyncio.gather -> safe_gather_ok (fail-soft, preserves order)
+        # F314-4: migrated asyncio.gather -> parallel_ok (fail-soft, preserves order)
         _size_result = await parallel(
             [_check_model_size(mid, mgb) for mid, mgb in model_candidates],
             policy="log",

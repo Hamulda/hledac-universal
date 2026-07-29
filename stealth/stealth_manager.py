@@ -21,19 +21,13 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from urllib.parse import urlparse
-try:
-    from curl_cffi.requests import AsyncSession as _AsyncSession
-    CURL_CFFI_AVAILABLE = True
-except ImportError:
-    CURL_CFFI_AVAILABLE = False
-    _AsyncSession = None
-
 import httpx
 
 _IMPERSONATE_PROFILES = ['chrome136', 'safari17_0']
 from hledac.universal.transport.http3_lane import _cache_get as _h3_cache_get
 from hledac.universal.transport.http3_lane import fetch_http3_aioquic, is_dark_web_url, record_h3_support
-from ..recon.stealth_crawler import HeaderConfig, HeaderSpoofer
+# D-6: HeaderSpoofer presunut do recon.stealth._models — odstranen cross-import stealth→recon
+from hledac.universal.recon.stealth import HeaderConfig, HeaderSpoofer
 from ..layers.stealth_layer import BrowserProfile, FingerprintConfig, FingerprintRandomizer
 from ..utils.rate_limiter import RateLimitConfig, RateLimiter, RateLimitExceeded
 from ..utils.lru_cache import LRUCache
@@ -88,7 +82,7 @@ class StealthManager:
         ...     headers = session.get_headers()
         ...     await session.request('https://example.com')
     """
-    __slots__ = tuple(('_cache', '_cache_lock', '_cache_ttl', '_cb_available', '_cb_blocks', '_cb_fallbacks', '_cb_last_reason', '_concurrency', '_domain_stats', '_failure_count', '_hosts', '_max_sessions', '_profile_index', '_request_count', '_sessions', '_sessions_lock', '_success_count', 'config', 'fingerprint_randomizer', 'header_spoofer', 'rate_limiter'))
+    __slots__ = tuple(('_cache', '_cache_lock', '_cache_ttl', '_cb_available', '_cb_blocks', '_cb_fallbacks', '_cb_last_reason', '_concurrency', '_domain_stats', '_failure_count', '_hosts', '_max_sessions', '_profile_index', '_request_count', '_sessions', '_sessions_lock', '_success_count', 'config', 'fingerprint_randomizer', 'header_spoofer', 'rate_limiter'))  # noqa: E501
 
     def __init__(self, config: StealthManagerConfig | None=None):
         self.config = config or StealthManagerConfig()
@@ -104,13 +98,15 @@ class StealthManager:
                 capacity = getattr(cfg, 'burst_size', 30)
             self.rate_limiter = RateLimiter(rate=rate, capacity=capacity)
         if self.config.enable_header_spoofer:
-            self.header_spoofer = HeaderSpoofer(self.config.header_config)
+            # header_config is HeaderConfig | None, wrap in list for HeaderSpoofer.__init__
+            cfg = self.config.header_config
+            self.header_spoofer = HeaderSpoofer([cfg] if cfg else None)
         if self.config.enable_fingerprint_randomizer:
             self.fingerprint_randomizer = FingerprintRandomizer(self.config.fingerprint_config)
-        self._sessions: LRUCache[str, _AsyncSession] = LRUCache(max_size=5)
+        # D-19: _sessions LRUCache removed — was dead code (initialized but never populated).
+        # _max_sessions retained as constant for telemetry compatibility.
         self._max_sessions = 5
         self._profile_index = 0
-        self._sessions_lock = asyncio.Lock()
         self._hosts: LRUCache[str, HostTelemetry] = LRUCache(max_size=500)
         self._cache: LRUCache[str, tuple[str, float, str | None, str | None]] = LRUCache(max_size=500)
         self._cache_ttl = 300
@@ -119,7 +115,7 @@ class StealthManager:
         self._request_count = 0
         self._success_count = 0
         self._failure_count = 0
-        self._domain_stats: dict[str, dict[str, Any]] = {}
+        self._domain_stats: LRUCache[str, dict[str, Any]] = LRUCache(max_size=500)
         self._cb_blocks = 0
         self._cb_fallbacks = 0
         self._cb_last_reason: str | None = None
@@ -190,15 +186,18 @@ class StealthManager:
             else:
                 result = await coro
             self._success_count += 1
-            if domain not in self._domain_stats:
+            stats = self._domain_stats.get(domain)
+            if stats is None:
                 self._domain_stats[domain] = {'requests': 0, 'success': 0, 'failure': 0}
-            self._domain_stats[domain]['requests'] += 1
-            self._domain_stats[domain]['success'] += 1
+                stats = self._domain_stats[domain]
+            stats['requests'] += 1
+            stats['success'] += 1
             return result
         except Exception as e:
             self._failure_count += 1
-            if domain in self._domain_stats:
-                self._domain_stats[domain]['failure'] += 1
+            stats = self._domain_stats.get(domain)
+            if stats is not None:
+                stats['failure'] += 1
             if self.config.safety_mode and self.rate_limiter:
                 logger.warning(f'Request failed, backing off: {e}')
                 await asyncio.sleep(2.0)
@@ -240,7 +239,9 @@ class StealthManager:
 
     def get_statistics(self) -> dict[str, Any]:
         """Get comprehensive stealth statistics"""
-        stats = {'requests_total': self._request_count, 'success_count': self._success_count, 'failure_count': self._failure_count, 'success_rate': self._success_count / self._request_count if self._request_count > 0 else 1.0, 'domain_stats': self._domain_stats, 'components': {'rate_limiter': self.rate_limiter is not None, 'header_spoofer': self.header_spoofer is not None, 'fingerprint_randomizer': self.fingerprint_randomizer is not None}}
+        # _domain_stats is now LRUCache — convert to dict for serialization
+        domain_stats_dict = dict(self._domain_stats) if hasattr(self._domain_stats, '_data') else self._domain_stats
+        stats = {'requests_total': self._request_count, 'success_count': self._success_count, 'failure_count': self._failure_count, 'success_rate': self._success_count / self._request_count if self._request_count > 0 else 1.0, 'domain_stats': domain_stats_dict, 'components': {'rate_limiter': self.rate_limiter is not None, 'header_spoofer': self.header_spoofer is not None, 'fingerprint_randomizer': self.fingerprint_randomizer is not None}}
         if self.rate_limiter:
             stats['rate_limits'] = {'tokens': self.rate_limiter.available_tokens}
         if self.header_spoofer:
@@ -256,9 +257,10 @@ class StealthManager:
         Returns bounded telemetry WITHOUT altering transport behavior.
         No live network calls. No session creation.
         """
-        session_count = len(self._sessions) if hasattr(self, '_sessions') else 0
+        # D-19: _sessions removed — always 0
+        session_count = 0
         max_sessions = getattr(self, '_max_sessions', MAX_SESSION_POOL_SIZE)
-        cache_count = len(self._cache) if hasattr(self, '_cache') and isinstance(self._cache, dict) else 0
+        cache_count = len(self._cache) if hasattr(self, '_cache') else 0
         estimated_cache_bytes = cache_count * 50 * 1024
         m1_memory_risk = 'medium' if estimated_cache_bytes > 20 * 1024 * 1024 else 'low'
         return {'phase': STEALTH_MANAGER_PHASE, 'transport_authority': STEALTH_MANAGER_TRANSPORT_AUTHORITY, 'profile_count': MAX_STEALTH_PROFILES, 'max_clients_per_profile': MAX_CLIENTS_PER_PROFILE, 'session_pool_size_current': session_count, 'session_pool_size_max': max_sessions, 'estimated_max_connections': ESTIMATED_MAX_CONNECTIONS, 'circuit_breaker_used': False, 'canonical_curl_runtime_used': False, 'cache_entry_count': cache_count, 'cache_entries_max': MAX_ETAG_CACHE_ENTRIES, 'estimated_cache_bytes': estimated_cache_bytes, 'm1_memory_risk': m1_memory_risk, 'fallback_reason': 'stealth_manager has independent session pool; not wired to FetchCoordinator transport seam', 'MAX_STEALTH_PROFILES': MAX_STEALTH_PROFILES, 'MAX_CLIENTS_PER_PROFILE': MAX_CLIENTS_PER_PROFILE, 'MAX_SESSION_POOL_SIZE': MAX_SESSION_POOL_SIZE, 'MAX_ETAG_CACHE_ENTRIES': MAX_ETAG_CACHE_ENTRIES, 'circuit_breaker_used': self._cb_available is True, 'circuit_breaker_blocks': self._cb_blocks, 'circuit_breaker_fallbacks': self._cb_fallbacks, 'last_circuit_breaker_reason': self._cb_last_reason}
@@ -314,14 +316,9 @@ class StealthManager:
     async def close(self):
         """Cleanup resources"""
         logger.info('Closing StealthManager...')
-        if hasattr(self, '_sessions'):
-            for session in self._sessions.values():
-                try:
-                    if hasattr(session, 'aclose'):
-                        await session.aclose()
-                except Exception as e:
-                    logger.debug(f'Failed to close session during cleanup: {e}')
-            self._sessions.clear()
+        # D-19: _sessions block removed — was dead code, never populated
+        if hasattr(self, '_domain_stats'):
+            self._domain_stats.clear()
         logger.info('✓ StealthManager closed')
 
 class SkipFetch(Exception):
@@ -464,6 +461,20 @@ class StealthSession:
         jitter = base_delay * RETRY_JITTER_PCT * (2 * _JITTER_RNG.random() - 1)
         return base_delay + jitter
 
+    @staticmethod
+    def _is_onion_url(url: str) -> bool:
+        """Check if URL is a Tor/.onion darknet destination."""
+        try:
+            parsed = urlparse(url)
+            netloc = parsed.netloc.lower()
+            return (
+                netloc.endswith('.onion')
+                or netloc.startswith('tor:')
+                or netloc.endswith('.onion.')
+            )
+        except Exception:
+            return False
+
     async def request(self, method: str, url: str, max_bytes: int=DEFAULT_MAX_BYTES, allow_redirects: bool=True, headers: dict[str, str] | None=None, data: Any=None, **kwargs) -> StealthResponse:
         """
         Make real stealth HTTP request with M1 8GB constraints and retry policy.
@@ -494,7 +505,15 @@ class StealthSession:
         if not allowed:
             raise SkipFetch(f'circuit_breaker_open:{reason}')
         for attempt in range(MAX_RETRY_ATTEMPTS):
-            await asyncio.sleep(_JITTER_RNG.uniform(0.3, 1.8))
+            # D-9: Per-request jitter — Tor anti-correlation (0.3-1.8s) on attempt 0
+            # only; retry attempts use _calculate_retry_delay() which already has
+            # exponential-backoff jitter built in. Applying full jitter on every
+            # attempt was burning 3× to 9× the intended latency budget.
+            if attempt == 0:
+                if self._is_onion_url(url):
+                    await asyncio.sleep(_JITTER_RNG.uniform(0.3, 1.8))
+                else:
+                    await asyncio.sleep(_JITTER_RNG.uniform(0.05, 0.15))
             self._request_count += 1
             if self._request_count >= 10:
                 self._request_count = 0
@@ -760,98 +779,6 @@ class TokenBucketController:
     async def release(self):
         pass
 
-class StealthManagerExtensions:
-    """Rozšíření StealthManager o per-profil sessions a ETag cache."""
-
-    async def _get_session(self, profile: str) -> AsyncSession:
-        """Získat nebo vytvořit session pro profil."""
-        async with self._sessions_lock:
-            if profile in self._sessions:
-                self._sessions.move_to_end(profile)
-                return self._sessions[profile]
-            if len(self._sessions) >= self._max_sessions:
-                oldest_profile, oldest_session = self._sessions.pop_lru()
-                try:
-                    await oldest_session.aclose()
-                except Exception as e:
-                    logger.debug(f'Failed to close oldest session for profile {oldest_profile}: {e}')
-            if CURL_CFFI_AVAILABLE and AsyncSession:
-                new_session = AsyncSession(impersonate=profile, timeout=10.0, max_clients=15)
-            else:
-                raise RuntimeError('curl_cffi not available')
-            self._sessions[profile] = new_session
-            return new_session
-
-    def _next_profile(self) -> str:
-        """Rotace profilu."""
-        p = _IMPERSONATE_PROFILES[self._profile_index % len(_IMPERSONATE_PROFILES)]
-        self._profile_index += 1
-        return p
-
-    async def _get_host_telemetry(self, host: str) -> HostTelemetry:
-        """Získat telemetry pro host."""
-        if host not in self._hosts:
-            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-            sem = get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
-            self._hosts[host] = HostTelemetry(sem)
-        self._hosts.move_to_end(host)
-        return self._hosts[host]
-
-    async def get_with_cache(self, url: str, **kwargs) -> str:
-        """GET s ETag/Last-Modified cache."""
-        parsed_url = urlparse(url)
-        domain = parsed_url.netloc
-        async with self._cache_lock:
-            entry = self._cache.get(url)
-            if entry is not None:
-                text, ts, etag, last_modified = entry
-                if time.time() - ts < self._cache_ttl:
-                    return text
-        ht = await self._get_host_telemetry(domain)
-        if ht.errors > 0:
-            backoff = min(60, 2 ** ht.errors)
-            jitter = _JITTER_RNG.uniform(0.5, 1.5) * backoff
-            await asyncio.sleep(jitter)
-        await ht.semaphore.acquire()
-        await self._concurrency.acquire()
-        try:
-            start = time.time()
-            prof = self._next_profile()
-            session = await self._get_session(prof)
-            headers = {}
-            async with self._cache_lock:
-                entry = self._cache.get(url)
-                if entry is not None:
-                    _, _, etag, last_modified = entry
-                    if etag:
-                        headers['If-None-Match'] = etag
-                    elif last_modified:
-                        headers['If-Modified-Since'] = last_modified
-            resp = await session.get(url, headers=headers, follow_redirects=True, **kwargs)
-            if resp.status_code == 304:
-                async with self._cache_lock:
-                    entry = self._cache.get(url)
-                    if entry is not None:
-                        text, ts, _, _ = entry
-                return text
-            resp.raise_for_status()
-            text = resp.text
-            lat = time.time() - start
-            ht.latencies.append(lat)
-            if len(ht.latencies) > 100:
-                ht.latencies = ht.latencies[-100:]
-            ht.errors = 0
-            ht.last_success = time.time()
-            async with self._cache_lock:
-                self._cache[url] = (text, time.time(), resp.headers.get('etag'), resp.headers.get('last-modified'))
-            return text
-        except Exception:
-            ht.errors += 1
-            ht.last_error = time.time()
-            raise
-        finally:
-            await self._concurrency.release()
-            ht.semaphore.release()
 
 async def with_stealth(coro, domain: str='default', config: StealthManagerConfig | None=None):
     """

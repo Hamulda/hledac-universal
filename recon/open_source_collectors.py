@@ -37,7 +37,6 @@ import logging
 import re
 import time
 from collections import OrderedDict
-
 from hledac.universal.utils.locks import LazyAsyncioLock
 from dataclasses import dataclass, field
 import msgspec
@@ -46,7 +45,7 @@ if TYPE_CHECKING:
     pass
 from hledac.universal.fetching.public_fetcher import FetchResult, async_fetch_public_text
 from hledac.universal.runtime.resource_governor import M1ResourceGovernor
-from hledac.universal.utils.async_helpers import safe_gather_ok, parallel
+from hledac.universal.utils.async_helpers import parallel_ok, parallel
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 logger = logging.getLogger(__name__)
 MAX_PASTE_RESULTS: int = 50
@@ -459,7 +458,7 @@ async def search_paste_sites(query: str, max_results: int=MAX_PASTE_RESULTS) -> 
                 if not (emails or ips or secrets):
                     return None
                 return PasteFinding(uri=f'https://pastebin.com/{pid}', source='pastebin', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=text[:200])
-            scraped = await safe_gather_ok(*tuple((_scrape_one(pid) for pid in paste_id_list)), label='pastebin_scrape')
+            scraped = await parallel_ok(*tuple((_scrape_one(pid) for pid in paste_id_list)), label='pastebin_scrape')
             results = [r for r in scraped if r is not None]
             return results
         except Exception as e:
@@ -484,7 +483,7 @@ async def search_paste_sites(query: str, max_results: int=MAX_PASTE_RESULTS) -> 
                 if not (emails or ips or secrets):
                     return None
                 return PasteFinding(uri=f'https://paste.gg/{paste_id}', source='paste_gg', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=text[:200])
-            scraped = await safe_gather_ok(*tuple((_scrape_one(item) for item in item_list)), label='paste_gg_scrape')
+            scraped = await parallel_ok(*tuple((_scrape_one(item) for item in item_list)), label='paste_gg_scrape')
             results = [r for r in scraped if r is not None]
             return results
         except Exception as e:
@@ -517,7 +516,7 @@ async def search_paste_sites(query: str, max_results: int=MAX_PASTE_RESULTS) -> 
                 if not (emails or ips or secrets):
                     return None
                 return PasteFinding(uri=f'https://rentry.co/{path}', source='rentry', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=text[:200])
-            scraped = await safe_gather_ok(*tuple((_scrape_one(p) for p in path_list)), label='rentry_scrape')
+            scraped = await parallel_ok(*tuple((_scrape_one(p) for p in path_list)), label='rentry_scrape')
             results = [r for r in scraped if r is not None]
             return results
         except Exception as e:

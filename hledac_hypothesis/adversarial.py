@@ -28,7 +28,7 @@ import re
 from collections import OrderedDict
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 from ._types import AdversarialReport, Contradiction, CrossReferenceResult, Event, Evidence, HypothesisType, SourceCredibility
 if TYPE_CHECKING:
     from hledac.universal.brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
@@ -238,15 +238,11 @@ class AdversarialVerifier:
             return (True, [])
         contradictions: list[Contradiction] = []
         sorted_events = sorted(events, key=lambda e: e.timestamp)
-        # ISSUE-006 fix: O(N²) → O(N) via pre-indexing
-        # Index event_ids for O(1) lookup instead of O(N) linear scan
         event_id_to_event = {e.event_id: e for e in sorted_events}
         for event_a in sorted_events:
             claims_after_id = event_a.metadata.get('claims_after')
             if claims_after_id and claims_after_id in event_id_to_event:
                 event_b = event_id_to_event[claims_after_id]
-                # event_b is guaranteed to be after event_a in sorted order (by timestamp)
-                # so we only need to check if event_a claims to be AFTER event_b
                 contradiction = Contradiction(claim_a=f'{event_a.description} (at {event_a.timestamp})', claim_b=f'{event_b.description} (at {event_b.timestamp})', contradiction_type='temporal', severity=0.9, evidence_supporting_a=[event_a.source], evidence_supporting_b=[event_b.source], resolution_notes=f'Event {event_a.event_id} claims to occur after {event_b.event_id} but has earlier timestamp')
                 contradictions.append(contradiction)
         for event in sorted_events:
@@ -276,18 +272,15 @@ class AdversarialVerifier:
         contradictions: list[Contradiction] = []
         window_size = min(len(evidence_list), self.max_contradiction_window)
         evidence_window = evidence_list[:window_size]
-        # ISSUE-006 fix: O(w²) pairwise with negator-bucket pre-filtering
-        # Bucket by negator presence: contradictions only occur across buckets
         negated_bucket: list[tuple[int, Evidence]] = []
         non_negated_bucket: list[tuple[int, Evidence]] = []
         for idx, ev in enumerate(evidence_window):
             content_lower = ev.content.lower()
-            has_neg = any(n in content_lower for n in negators)
+            has_neg = any((n in content_lower for n in negators))
             if has_neg:
                 negated_bucket.append((idx, ev))
             else:
                 non_negated_bucket.append((idx, ev))
-        # Only check cross-bucket pairs (contradictions can't exist within same negator bucket)
         checked = 0
         for _, ev_a in negated_bucket:
             for _, ev_b in non_negated_bucket:
@@ -317,7 +310,7 @@ class AdversarialVerifier:
         results: list[CrossReferenceResult] = []
         databases = ['knowledge_graph', 'fact_check_db', 'academic_sources', 'news_archive']
         tasks = [self._query_database(db, claim) for db in databases]
-        db_results = await safe_gather_ok(*tasks, label='adversarial:509')
+        db_results = await parallel_ok(*tasks, label='adversarial:509')
         for db_id, result in zip(databases, db_results, strict=False):
             if isinstance(result, Exception):
                 logger.warning(f'Database query failed for {db_id}: {result}')

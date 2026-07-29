@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Any
-from .async_helpers import safe_gather_ok
+from .async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 
 class TaskType(Enum):
@@ -217,7 +217,7 @@ class WorkflowEngine:
                         workflow.tasks[task_id].error = str(e)
                         workflow.tasks[task_id].status = TaskStatus.FAILED
                         logger.error(f'Task {task_id} permanently failed: {e}')
-            results = await safe_gather_ok(*[run_task(tid) for tid in level_tasks], label='workflow_engine:242')
+            results = await parallel_ok(*[run_task(tid) for tid in level_tasks], label='workflow_engine:242')
             for tid, result in zip(level_tasks, results, strict=False):
                 if isinstance(result, Exception):
                     logger.error(f'Task {tid} unexpected exception: {result}')

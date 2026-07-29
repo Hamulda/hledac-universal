@@ -25,7 +25,7 @@ from enum import Enum
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 import compression.zstd as _zstd
 ZSTD_AVAILABLE = True
 try:

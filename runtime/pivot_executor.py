@@ -12,7 +12,7 @@ Bounds:
 - MAX_PIVOT_FINDINGS = 50  (findings cap per pivot execution)
 
 GHOST_INVARIANTS:
-- safe_gather_ok() (fail-soft, exceptions filtered)
+- parallel_ok() (fail-soft, exceptions filtered)
 - asyncio.CancelledError re-raised
 - No blocking calls in event loop; network/IO via async clients or run_in_executor
 - Canonical write path: async_ingest_findings_batch()
@@ -22,7 +22,7 @@ GHOST_INVARIANTS:
 - Fail-soft: one pivot failure does not block others or sprint
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 import logging
 import time
 from dataclasses import dataclass
@@ -121,7 +121,7 @@ class AutonomousPivotExecutor:
         async def _execute_one(pivot: Any) -> PivotExecutionResult:
             return await self._execute_pivot_with_semaphore(pivot, semaphore)
         try:
-            gathered = await safe_gather_ok(*[_execute_one(p) for p in to_execute], label='pivot_executor:execute_top')
+            gathered = await parallel_ok(*[_execute_one(p) for p in to_execute], label='pivot_executor:execute_top')
             for item in gathered:
                 if isinstance(item, PivotExecutionResult):
                     results.append(item)

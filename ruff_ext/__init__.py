@@ -1,8 +1,7 @@
 """
 ruff_ext — RUFF022: Banned Import Paths
 
-Custom Ruff linter rule for banning dual-namespace / bare-package imports.
-
+Custom lint rule for banning dual-namespace / bare-package imports.
 Rule ID: RUFF022 (banned-imports)
 
 Banned patterns:
@@ -17,14 +16,11 @@ Allowed patterns:
   - from unittest, from pytest (test-only)
   - Internal aliases: _asyncio, _threading (explicit internal intent)
 
+Installation:
+  uv sync --group dev  # installs ruff_ext as local editable package
+
 CI gate:
-  ruff check . --extend-select RUFF022
-
-Installation (injected by pre-commit hook when ruff_ext is available):
-  ruff plugin install ruff_ext
-
-Alternatively, run standalone:
-  python -m ruff_ext.check <path>
+  python -m ruff_ext --ci
 """
 
 from __future__ import annotations
@@ -188,13 +184,24 @@ def check_directory(root: Path, exclude_dirs: frozenset[str] | None = None) -> l
     if exclude_dirs is None:
         exclude_dirs = frozenset({
             "__pycache__", ".venv", ".venv-test", ".git", ".claude",
-            "archive", "probe_", "tests", "benchmarks", ".mypy_cache",
+            "archive", "tests", "benchmarks", ".mypy_cache",
             ".pytest_cache", "stubs", "tools/audit",
         })
 
+    # Substring-based exclusions (prefix / partial path matches)
+    EXCLUDE_SUBSTRINGS: frozenset[str] = frozenset({
+        "tools/probe/", "tools/_archive/", "tools/probe_",
+        "probe/",  # probe/ subdirectories (e.g. probe/probe_f229g_...)
+    })
+
     all_violations = []
     for py_file in root.rglob("*.py"):
+        rel = str(py_file.relative_to(root))
+        # Exact part-match exclusions
         if any(excluded in py_file.parts for excluded in exclude_dirs):
+            continue
+        # Substring exclusions (partial path)
+        if any(excluded in rel for excluded in EXCLUDE_SUBSTRINGS):
             continue
         violations = check_file(py_file)
         all_violations.extend(violations)

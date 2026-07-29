@@ -1606,7 +1606,7 @@ def _register_atexit_cleanup() -> None:
     atexit.register(_close_tor_session_sync)
     atexit.register(_close_i2p_session_sync)
 _register_atexit_cleanup()
-_SERP_HOST_RE = re.compile('(google\\.|bing\\.|duckduckgo\\.|yahoo\\.|baidu\\.|yandex\\.|so\\.|startpage\\.|search\\.|serp)|searchresults|webcache|googlesyndication|googletagmanager| DoubleClick|search\\?q=|/search\\?|\\?q=|\\&oq=|\\&gs_l=', re.IGNORECASE)
+_SERP_HOST_RE = re.compile('(google\\.|bing\\.|duckduckgo\\.|yahoo\\.|baidu\\.|yandex\\.|so\\.|startpage\\.|search\\.|serp)|searchresults|webcache|googlesyndication|googletagmanager|doubleclick|search\\?q=|/search\\?|\\?q=|\\&oq=|\\&gs_l=', re.IGNORECASE)
 _CONTENT_LENGTH_RE = re.compile('content-length\\s*[=:]\\s*(\\d+)', re.IGNORECASE)
 _NOSCRIPT_RE = re.compile('<noscript[^>]*>|enable javascript', re.IGNORECASE)
 _FEED_URL_RE = re.compile('/?(?:rss|feed|atom|xml|sitemap|opensearch)', re.IGNORECASE)

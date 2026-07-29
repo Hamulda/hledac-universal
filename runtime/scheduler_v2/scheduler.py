@@ -173,7 +173,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             from hledac.universal.runtime.pivot_planner import (
                 generate_pivot_candidates_from_query as _gen_pivots,
             )
-            from hledac.universal.runtime.scheduler.lanes import NonfeedSeedContext
+            from hledac.universal.runtime.acquisition.nonfeed_outcomes import NonfeedSeedContext
 
             _pivot_seeds = _gen_pivots(query)
             if _pivot_seeds:
@@ -468,6 +468,18 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             except Exception:
                 pass
 
+            # ISSUE-2.4 FIX: unload SLM model from Metal via HTNPlanner.teardown().
+            # Releases ~400MB-1GB Metal memory held by Qwen2.5-0.5B-4bit.
+            # Singleton decomposer (via get_slm_decomposer) is shared across sprints —
+            # model stays loaded after teardown for next sprint reuse.
+            try:
+                _planner = getattr(self, "_pivot_planner", None)
+                if _planner is not None and hasattr(_planner, "teardown"):
+                    _t4 = safe_create_task_tracked(_planner.teardown(), name="teardown:pivot_planner", scope=TaskScope.TEARDOWN)
+                    _bg_tasks.append(_t4)
+            except Exception:
+                pass
+
             # Await all background tasks before the outer timeout fires.
             # If any task raises, we catch and continue so the rest complete.
             for _task in _bg_tasks:
@@ -475,6 +487,17 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                     await _task
                 except Exception:
                     pass
+
+            # ISSUE-2.5 FIX: Stop UmaWatchdog monitoring loop.
+            # SprintLifecycleManager._stop_uma_watchdog() sets _running=False and
+            # cancels the task, preventing orphaned tasks from accumulating across sprints.
+            # Fails silently if lifecycle is unavailable or watchdog already stopped.
+            try:
+                _lc = getattr(self, "_lifecycle", None)
+                if _lc is not None and hasattr(_lc, "_stop_uma_watchdog"):
+                    _lc._stop_uma_watchdog()
+            except Exception:
+                pass
 
             sys.stdout.write("[aclean] done\n")
             sys.stdout.flush()

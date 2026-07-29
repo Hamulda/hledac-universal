@@ -201,15 +201,15 @@ async def consumer_fn_to_thread(fn: Callable[[_T], _R], items: list[_T], *, batc
 
     M1 8GB: batch_size=64 is the threshold that matches compress.rs Rayon pattern.
     """
-    from hledac.universal.utils.async_helpers import safe_gather_ok
+    from hledac.universal.utils.async_helpers import parallel_ok
     if not items:
         return []
     if len(items) < batch_size:
-        gathered = await safe_gather_ok(*[asyncio.to_thread(fn, item) for item in items])
+        gathered = await parallel_ok(*[asyncio.to_thread(fn, item) for item in items])
         return [r for r in gathered if not isinstance(r, Exception)]
     results: list[_R] = []
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
-        gathered = await safe_gather_ok(*[asyncio.to_thread(fn, item) for item in batch])
+        gathered = await parallel_ok(*[asyncio.to_thread(fn, item) for item in batch])
         results.extend((r for r in gathered if not isinstance(r, Exception)))
     return results

@@ -138,12 +138,9 @@ if TYPE_CHECKING:
     from .pipeline_compose import PipelineComposeDomain, get_domain as _pipeline_compose_get_domain
     from .signal_batch import SignalBatchDomain, get_domain as _signal_batch_get_domain
     from .federated_qtable import FederatedQTableDomain, get_domain as _federated_qtable_get_domain
-    from .async_query import AsyncQueryDomain, get_domain as _async_query_get_domain
+    from .async_query import AsyncQueryDomain, PythonFallbackAsyncQueryDomain, get_domain as _async_query_get_domain
     from .feed_decision import FeedDecisionDomain, get_domain as _feed_decision_get_domain
     from .feed_pipeline import FeedPipelineDomain, get_domain as _feed_pipeline_get_domain
-    from .misc import (
-        _PythonHtmlDomain, _RustHtmlDomain,
-    )
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +166,7 @@ class AccelInfo(msgspec.Struct, frozen=True, gc=False):
     available: bool
     version_str: str
     version_tuple: tuple[int, int, int]
-    abi_version: int  # ISSUE-040: ABI version from Rust extension (0 = unknown/unavailable)
+    abi_version: tuple[int, int, int]  # ISSUE-040: ABI version from Rust extension ((0,0,0) = unknown/unavailable)
     backend: str  # "rust" | "python"
     capability_score: float = 0.0  # ISSUE-2: fraction of reference symbols present
     so_mtime: float | None = None  # ISSUE-2: mtime of loaded .so at probe time
@@ -461,17 +458,14 @@ class AccelBackend:
             return None
 
     @property
-    def async_query(self) -> AsyncQueryDomain | None:
-        """Rust DuckDB async query functions.
+    def async_query(self) -> AsyncQueryDomain | PythonFallbackAsyncQueryDomain:
+        """Rust DuckDB async query functions (falls back to Python if unavailable).
 
         rust_async_query: O(1) connection pool, lock-held-throughout.
         rust_async_query_batch: rayon parallel N queries.
-        Returns None if hledac_rust_extensions is unavailable.
+        Always returns a domain (Rust or Python fallback) — never None.
         """
-        try:
-            return _async_query_get_domain()
-        except Exception:
-            return None
+        return _async_query_get_domain(self._probe_result.ext if self._probe_result else None)
 
     @property
     def feed_decision(self) -> FeedDecisionDomain | None:
@@ -503,7 +497,7 @@ class AccelBackend:
             return None
 
     @property
-    def html(self) -> "_RustHtmlDomain | _PythonHtmlDomain":
+    def html(self) -> Any:
         return self._get_domain("html", _get_submodule("html").get_html_domain)
 
     # -------------------------------------------------------------------------
@@ -738,7 +732,22 @@ class _RustCompatShim:
         probe = self._accel._ensure_probe()
         raw_fn = getattr(probe.ext, "extract_tls_metadata", None)
         if raw_fn is not None:
-            return _get_submodule("misc")._TlsDomain(raw_fn)
+            # Inline minimal wrapper — same pattern as _TlsDomain removed from misc.py
+            class _TlsMetadataWrapper:
+                __slots__ = ("_fn",)
+                def __init__(self, fn: object) -> None:
+                    self._fn = fn
+                def extract_tls_metadata(
+                    self,
+                    san_entries: list[tuple[int, str]],
+                    issuer_org: str | None,
+                    der_bytes: bytes | None,
+                ) -> tuple[list[str], str | None, str | None]:
+                    try:
+                        return self._fn(san_entries, issuer_org, der_bytes)  # type: ignore
+                    except Exception:  # noqa: BLE001
+                        return ([], None, None)
+            return _TlsMetadataWrapper(raw_fn)
         return None
 
     def set_container(self, container: Any) -> None:

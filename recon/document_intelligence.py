@@ -1002,7 +1002,6 @@ class StegdetectServer:
                     pass
             self._procs = []
             self._initialized = False
-        self._proc = None
         await self.ensure_running()
 
     def close(self) -> None:

@@ -208,7 +208,6 @@ dependencies = [
     "debugpy>=1.8.21",
     "pydantic-settings>=2.14.2",
     "structlog>=24.4.0",
-    "cyclopts>=4.22.2",
     "diskcache>=5.6.3",
 ]
 
@@ -378,6 +377,7 @@ dev = [
     "iniconfig>=2.0.0",
     "pygments>=2.15.0",
     "ruff>=0.1.0",
+    "ruff-ext @ file:///Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal/ruff_ext",  # RUFF022: banned-imports custom rule (local dev plugin)
     "maturin>=1.0.0",
     "numpy>=2.5.0,<3.0.0",  # M1 8GB: cap at <3.0.0 for ABI stability
     "pyright>=1.1.410",
@@ -394,9 +394,10 @@ dev = [
 ]
 
 # ── Setuptools namespace ──────────────────────────────────────────────────────
-[tool.setuptools]
-packages = ["hledac.universal"]
-package-dir = { "hledac.universal" = "." }
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hledac.universal*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 "hledac.universal" = ["py.typed"]
@@ -424,7 +425,7 @@ line-length = 120
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901", "F811"]  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality; F811: redefinition (C-1 double-def guard)
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "DTZ", "T10", "ISC", "BLE001", "YTT", "ANN", "PIE790", "C901", "F811"]  # noqa: E501  # I002: dual-namespace guard; YTT/ANN/PIE790/C901: code quality; F811: redefinition (C-1 double-def guard); RUFF022 is enforced via python -m ruff_ext --ci
 ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Issue #32
 # E911: P1-1 custom — forbid asyncio.run() outside allowed entry points.
 # Allowed: __main__, tools/, tests/. Use: grep -rn 'asyncio\.run(' ... | grep -v __main__ | grep -v 'tools/' | grep -v 'tests/'
@@ -478,9 +479,8 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 #      → CI catches regressions automatically
 #   3. RUFF022 custom plugin: banned-imports rule in ruff_ext/__init__.py
 #      → requires ruff_ext to be installed; CI gate is the ruff_ext check or skip
-# CI gate: `ruff check . --extend-select RUFF022` (RUFF022 = banned-imports)
-#   Run: uv run ruff check . --no-cache 2>&1 | grep RUFF022 || true
-# Codemod: scripts/codemod_dual_namespace.py (one-shot, reversible via git)
+# CI gate: `python -m ruff_ext --ci` (standalone checker — not a ruff plugin)
+#   Codemod: scripts/codemod_dual_namespace.py (one-shot, reversible via git)
 
 # I002 = isort required-import order; dual-namespace files MIX two groups → caught
 # UP035 = deprecated imports; I005 = missing import for isort

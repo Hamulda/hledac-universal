@@ -44,7 +44,7 @@ import time
 from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
+from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
@@ -229,7 +229,7 @@ class BannerGrabber:
     async def grab_ip(self, ip: str) -> list[BannerResult]:
         """Grab banners from all standard ports on one IP."""
         tasks = [self.grab(ip, port) for port in PORT_TIMEOUTS]
-        results = await safe_gather_ok(*tasks, label='banner_grabber:1116')
+        results = await parallel_ok(*tasks, label='banner_grabber:1116')
         banners: list[BannerResult] = []
         for res in results:
             if isinstance(res, BannerResult):
@@ -240,7 +240,7 @@ class BannerGrabber:
         """Grab banners from a batch of (ip, port) tuples, bounded."""
         batch = targets[:MAX_BANNER_GRABS]
         tasks = [self.grab(ip, port) for ip, port in batch]
-        results = await safe_gather_ok(*tasks, label='banner_grabber:1160')
+        results = await parallel_ok(*tasks, label='banner_grabber:1160')
         banners: list[BannerResult] = []
         for res in results:
             if isinstance(res, BannerResult):
@@ -381,7 +381,7 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
         except Exception:
             return None
     try:
-        results = await safe_gather_ok(*[_grab_one(p) for p in ports], label='banner_grabber:1740')
+        results = await parallel_ok(*[_grab_one(p) for p in ports], label='banner_grabber:1740')
         results = [r for r in results if r is not None and (not isinstance(r, Exception))]
     except Exception:
         results = []

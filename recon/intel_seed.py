@@ -17,7 +17,7 @@ Confidence tiers:
   - unconfirmed → NOT seeded automatically — requires CT verification
 
 Usage:
-  from hledac.universal.intel.intel_seed import AptOnionSeeder
+  from hledac.universal.recon.intel_seed import AptOnionSeeder
   seeder = AptOnionSeeder()
   candidates = seeder.get_candidates_for_query("LockBit BlackCat")
   # Returns list of (domain, confidence) tuples

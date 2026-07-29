@@ -68,10 +68,8 @@ from collections import OrderedDict
 from typing import Any
 from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.dht.local_graph import LocalGraphStore
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget, safe_wait_for
+from hledac.universal.utils.async_helpers import parallel_ok, safe_gather_fire_and_forget, safe_wait_for
 logger = logging.getLogger(__name__)
-
-# Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
 MAX_ITEM_BYTES = 256 * 1024
 MAX_PENDING_RPCS = 5000
@@ -158,22 +156,25 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
     def _bdecode(data: bytes) -> dict[str, Any] | None:
         """Minimal bencode decoder for DHT responses."""
         return safe_bdecode(data)
+MAX_PENDING_FUTURES = 5000
 
 class BEP5UDPProtocol(asyncio.DatagramProtocol):
     """
     F214: Real BEP-5 asyncio.DatagramProtocol with future-based pending map.
+    D-23 FIX: _pending dict now bounded via TTL cleanup + size cap.
 
     Bound to local UDP socket on construction. Caller invokes send_and_wait()
     which encodes a bencode message, registers a Future keyed by transaction id,
     and awaits response matched by transaction id. Datagram responses with
     unknown tids are silently dropped (malformed packets).
     """
-    __slots__ = ('_handler', '_transport', '_pending', '_loop')
+    __slots__ = ('_handler', '_transport', '_pending', '_pending_created', '_loop')
 
     def __init__(self, message_handler):
         self._handler = message_handler
         self._transport: asyncio.DatagramTransport | None = None
         self._pending: dict[bytes, asyncio.Future] = {}
+        self._pending_created: dict[bytes, float] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
@@ -186,6 +187,7 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
             tid = msg.get(b't') if isinstance(msg, dict) else None
             if tid and tid in self._pending:
                 fut = self._pending.pop(tid)
+                self._pending_created.pop(tid, None)
                 if not fut.done():
                     fut.set_result((msg, addr))
         except Exception:
@@ -194,6 +196,27 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
     def error_received(self, exc: Exception) -> None:
         logger.debug(f'[DHT] UDP transport error: {exc}')
 
+    def _cleanup_pending(self) -> None:
+        """
+        D-23: TTL + size-based cleanup for _pending dict.
+
+        Evicts:
+          1. Already-done / cancelled futures
+          2. Entries older than DHT_REQUEST_TIMEOUT_S (5s TTL)
+          3. If still over MAX_PENDING_FUTURES, evicts oldest by creation time (FIFO)
+        """
+        now = time.time()
+        expired_tids = [tid for tid, ts in list(self._pending_created.items()) if tid not in self._pending or self._pending[tid].done() or self._pending[tid].cancelled() or (now - ts > DHT_REQUEST_TIMEOUT_S)]
+        for tid in expired_tids:
+            self._pending.pop(tid, None)
+            self._pending_created.pop(tid, None)
+        if len(self._pending) > MAX_PENDING_FUTURES:
+            excess = len(self._pending) - MAX_PENDING_FUTURES
+            sorted_tids = sorted(self._pending_created, key=lambda t: self._pending_created[t])
+            for tid in sorted_tids[:excess]:
+                self._pending.pop(tid, None)
+                self._pending_created.pop(tid, None)
+
     async def send_and_wait(self, addr: tuple[str, int], msg_dict: dict, timeout: float=5.0) -> tuple[dict, tuple] | None:
         """
         Bencode msg_dict, send via UDP, await response matched by transaction id.
@@ -201,12 +224,14 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
         Returns:
             (decoded_response_dict, source_addr) on success, or None on timeout.
         """
+        self._cleanup_pending()
         tid = os.urandom(4)
         msg_dict[b't'] = tid
         data = bencode(msg_dict)
         loop = self._loop or asyncio.get_running_loop()
         fut = loop.create_future()
         self._pending[tid] = fut
+        self._pending_created[tid] = time.time()
         try:
             if self._transport:
                 self._transport.sendto(data, addr)
@@ -216,6 +241,7 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
             return None
         finally:
             self._pending.pop(tid, None)
+            self._pending_created.pop(tid, None)
 
 def bencode(obj: Any) -> bytes:
     """
@@ -365,7 +391,7 @@ async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: 
             for token in new_tokens:
                 searched_tokens.add(token)
             tasks = [search_token(t) for t in new_tokens]
-            found = await safe_gather_ok(*tasks, label='kademlia_node:506')
+            found = await parallel_ok(*tasks, label='kademlia_node:506')
             for item in found:
                 if isinstance(item, dict) and item:
                     results.append(item)
@@ -482,6 +508,7 @@ class KademliaNode:
         async def _query_one(host: str, port: int) -> None:
             async with DHT_BOOTSTRAP_SEMAPHORE:
                 try:
+                    assert self._bep5_protocol is not None, 'DHT bootstrap requires start_udp() to be called first'
                     msg = {b'y': b'q', b'q': b'find_node', b'a': {b'id': our_id, b'target': our_id}}
                     result = await self._bep5_protocol.send_and_wait((host, port), msg, timeout=DHT_BOOTSTRAP_TIMEOUT_S)
                     if not result:
@@ -787,7 +814,7 @@ class KademliaNode:
             if not futures:
                 break
             async with asyncio.timeout(3.0):
-                results = await safe_gather_ok(*futures, label='kademlia_node:1028')
+                results = await parallel_ok(*futures, label='kademlia_node:1028')
             for rid in rpc_ids:
                 self._pending_rpcs.pop(rid, None)
                 self._pending_rpcs_created.pop(rid, None)
@@ -1029,7 +1056,7 @@ class KademliaNode:
             tasks = [_query_peer(h, p) for h, p in new_sources[:10]]
             if not tasks:
                 break
-            results = await safe_gather_ok(*tasks, label='kademlia_node:1307')
+            results = await parallel_ok(*tasks, label='kademlia_node:1307')
             got_new_peers = False
             for res in results:
                 if not isinstance(res, dict):
@@ -1072,7 +1099,7 @@ class KademliaNode:
         results: list[dict] = []
         start_time = time.monotonic()
         seen_hashes: set[str] = set()
-        sock: socket.socket | None = None  # type: ignore[assignment]
+        sock: socket.socket | None = None
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(2.0)

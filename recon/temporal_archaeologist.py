@@ -40,7 +40,7 @@ from typing import Any
 import httpx
 from urllib.parse import quote, urlparse
 import numpy as np
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
 logger = logging.getLogger(__name__)
@@ -298,7 +298,7 @@ class TemporalArchaeologist:
                     logger.warning(f'Recovery from {source} failed: {e}')
                     return ([], str(e))
         tasks = [check_source(source) for source in sources]
-        results = await safe_gather_ok(*tasks, label='temporal_archaeologist:391')
+        results = await parallel_ok(*tasks, label='temporal_archaeologist:391')
         for source, result in zip(sources, results, strict=False):
             if isinstance(result, Exception):
                 errors.append(TemporalError.SOURCE_ERROR.format(source=source, error=str(result)))
@@ -369,17 +369,7 @@ class TemporalArchaeologist:
         anomalies = []
         if not timeline.snapshots:
             return anomalies
-
-        # ISSUE-026 FIX #2: Run all 5 independent detectors sequentially.
-        # All detectors are pure functions on the same timeline — no shared state.
-        # Removed ThreadPoolExecutor: overhead for 5 small tasks outweighs parallelism gain.
-        for _detector_name, _detector_fn in [
-            ('disappearance', self._detect_disappearances),
-            ('content_wipe', self._detect_content_wipes),
-            ('activity_gap', self._detect_activity_gaps),
-            ('sudden_change', self._detect_sudden_changes),
-            ('frequency_shift', self._detect_frequency_shifts),
-        ]:
+        for _detector_name, _detector_fn in [('disappearance', self._detect_disappearances), ('content_wipe', self._detect_content_wipes), ('activity_gap', self._detect_activity_gaps), ('sudden_change', self._detect_sudden_changes), ('frequency_shift', self._detect_frequency_shifts)]:
             try:
                 anomalies.extend(_detector_fn(timeline))
             except Exception as e:
@@ -402,33 +392,11 @@ class TemporalArchaeologist:
             TemporalCorrelation with correlation analysis
         """
         logger.info(f'Analyzing cross-temporal correlation: {entity_a} vs {entity_b}')
-
-        # ISSUE-026 FIX #1: Parallel reconstruction — both timelines are independent.
-        # Run simultaneously instead of sequentially to halve wall-clock time.
-        # safe_gather_ok drops failed coroutines, so we validate we got both results.
-        results = await safe_gather_ok(
-            self.reconstruct_version_history(entity_a, id_type),
-            self.reconstruct_version_history(entity_b, id_type),
-            label='cross_temporal_correlation:reconstruct',
-        )
-
+        results = await parallel_ok(self.reconstruct_version_history(entity_a, id_type), self.reconstruct_version_history(entity_b, id_type), label='cross_temporal_correlation:reconstruct')
         if len(results) < 2:
-            # At least one reconstruction failed — fall back to empty correlation.
-            # Log warning but don't crash; caller gets a zero-score result.
-            logger.warning(
-                f'cross_temporal_correlation: only {len(results)}/2 timelines succeeded '
-                f'for {entity_a} vs {entity_b}'
-            )
-            return TemporalCorrelation(
-                entity_a=entity_a,
-                entity_b=entity_b,
-                correlation_score=0.0,
-                overlapping_periods=[],
-                shared_attributes={},
-                temporal_proximity=[],
-            )
-
-        timeline_a, timeline_b = results[0], results[1]
+            logger.warning(f'cross_temporal_correlation: only {len(results)}/2 timelines succeeded for {entity_a} vs {entity_b}')
+            return TemporalCorrelation(entity_a=entity_a, entity_b=entity_b, correlation_score=0.0, overlapping_periods=[], shared_attributes={}, temporal_proximity=[])
+        timeline_a, timeline_b = (results[0], results[1])
         overlapping_periods = self._find_overlapping_periods(timeline_a, timeline_b)
         correlation_score = self._calculate_correlation_score(timeline_a, timeline_b, overlapping_periods)
         shared_attributes = self._find_shared_attributes(timeline_a, timeline_b)
@@ -491,9 +459,7 @@ class TemporalArchaeologist:
             except Exception as e:
                 logger.warning(f'Search on {source} failed: {e}')
                 return (source, [])
-
-        # ISSUE-003: Parallelize across sources with bounded concurrency
-        results_gathered = await safe_gather_ok(*[_search_source(s) for s in sources], label='deep_historical_search')
+        results_gathered = await parallel_ok(*[_search_source(s) for s in sources], label='deep_historical_search')
         all_results = []
         for source, results in results_gathered:
             all_results.extend(results)
@@ -574,7 +540,7 @@ class TemporalArchaeologist:
                                 return None
                             return ArchivedVersion(url=wayback_url, timestamp=timestamp, content_hash=meta['content_hash'], content=content, source='wayback', is_deleted=False, metadata={'status_code': meta['status_code'], 'mimetype': meta['mimetype'], 'length': meta['length']})
                     tasks = [fetch_snapshot(entry) for entry in cdx_entries]
-                    results = await safe_gather_ok(*tasks, label='temporal_archaeologist:_recover_from_wayback')
+                    results = await parallel_ok(*tasks, label='temporal_archaeologist:_recover_from_wayback')
                     for result in results:
                         if result is not None and isinstance(result, ArchivedVersion):
                             versions.append(result)
@@ -889,15 +855,12 @@ class TemporalArchaeologist:
         """
         if not snapshots:
             return []
-        # Fast path: use Rust parallel implementation.
         try:
             from hledac_rust_extensions import group_similar_texts
             texts = [s.content or '' for s in snapshots]
             group_indices = group_similar_texts(texts, float(threshold))
-            # Convert index groups back to ArchivedVersion groups.
             return [[snapshots[idx] for idx in group] for group in group_indices]
         except Exception:
-            # Slow path: pure-Python serial fallback.
             groups: list[list[ArchivedVersion]] = []
             for snapshot in snapshots:
                 added = False

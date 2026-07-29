@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from hledac.universal.transport.gopher_transport import GopherItem, GopherTransport, get_gopher_transport
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 MAX_CRAWL_DEPTH: int = 5
 MAX_ITEMS_PER_HOST: int = 500
 MAX_TEXT_SIZE: int = 256 * 1024
@@ -161,7 +161,7 @@ class GopherCrawler:
                     return None
                 return await self.crawl(host, port, item.selector, depth)
         tasks = [crawl_dir(item, depth) for item, depth in directory_items]
-        sub_results = await safe_gather_ok(*tasks, label='gopher_crawler:214')
+        sub_results = await parallel_ok(*tasks, label='gopher_crawler:214')
         for sub_result in sub_results:
             if isinstance(sub_result, Exception):
                 result.errors.append(f'sub-crawl error: {sub_result}')
@@ -191,7 +191,7 @@ class GopherCrawler:
     async def crawl_seed_servers(self) -> list[GopherCrawlResult]:
         """Crawl all seed servers concurrently."""
         tasks = [self.crawl(host, port, '/', depth=0) for host, port in SEED_SERVERS]
-        results = await safe_gather_ok(*tasks, label='gopher_crawler:279')
+        results = await parallel_ok(*tasks, label='gopher_crawler:279')
         return [r for r in results if isinstance(r, GopherCrawlResult)]
 
     @staticmethod

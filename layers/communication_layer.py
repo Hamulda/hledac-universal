@@ -22,7 +22,7 @@ from collections.abc import Callable, Coroutine
 from hledac.universal.project_types import CommunicationConfig, MessagePriority
 logger = logging.getLogger(__name__)
 import itertools
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 _counter = itertools.count()
 
 class _Subscriber(msgspec.Struct):
@@ -596,7 +596,7 @@ class CommunicationLayer:
                 return await self._execute_query(query.prompt, query.complexity, q.get('max_tokens', 1024), q.get('temperature', 0.7))
             except Exception as e:
                 return {'success': False, 'error': str(e), 'response': None}
-        return await safe_gather_ok(*[run_one(q) for q in queries], label='communication_layer:596')
+        return await parallel_ok(*[run_one(q) for q in queries], label='communication_layer:596')
 
     async def _process_batch(self, batch: list[dict]) -> None:
         """Process a batch of queries (Sprint 26)."""

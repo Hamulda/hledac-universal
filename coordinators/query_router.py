@@ -9,7 +9,7 @@ import os
 from typing import Any
 from hledac.universal.dht.kademlia_node import DHT_REAL_UDP, crawl_dht_for_keyword
 from hledac.universal.discovery.discovery_planner import get_discovery_planner
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for
+from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
 DHT = 'dht'
 DDG = 'ddg'
 WAYBACK = 'wayback'
@@ -54,7 +54,7 @@ class QueryRouter:
             tasks.append(safe_create_task(self._discovery_search(query, remaining_budget_s), name='qr:discovery'))
         if not tasks:
             return []
-        gathered = await safe_wait_for(safe_gather_ok(*tasks, label='query_router'), timeout=self._timeout * 2, label='query_router_gather')
+        gathered = await safe_wait_for(parallel_ok(*tasks, label='query_router'), timeout=self._timeout * 2, label='query_router_gather')
         merged: list[dict] = []
         for batch in gathered:
             if isinstance(batch, BaseException):

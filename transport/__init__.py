@@ -62,7 +62,8 @@ def __getattr__(name: str):
         }[name]
     # transport_resolver lazy exports
     if name in ('RouteDecision', 'TransportContext', 'TransportResolver',
-                'get_route_decision', 'is_i2p_available'):
+                'get_route_decision', 'async_get_route_decision',
+                'is_i2p_available', 'async_is_tor_available'):
         from . import transport_resolver
 
         return getattr(transport_resolver, name)
@@ -97,7 +98,9 @@ __all__ = [
     'TransportContext',
     'RouteDecision',
     'get_route_decision',
+    'async_get_route_decision',
     'is_i2p_available',
+    'async_is_tor_available',
     'GopherTransport',
     'get_gopher_transport',
     # DTOs

@@ -67,22 +67,85 @@ def _extract_class_name(line: str) -> tuple[str, str] | None:
     return (module, class_name)
 
 
+def _extract_register_functions_body(module_name: str, lib_rs_text: str) -> list[str]:
+    """
+    Parse the body of a module's register_functions function.
+
+    Two patterns exist:
+      1. Block body with module prefix (defined in lib.rs):
+             module_name::register_functions(m: &Bound<...>) -> PyResult<()> {
+                 m.add_function(wrap_pyfunction!(module_name::SYM, m))?;
+             }
+      2. Block body WITHOUT module prefix (defined in module's own .rs file):
+             pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
+                 m.add_function(wrap_pyfunction!(content_hash_64, m))?;
+             }
+         In this case the module qualifier is NOT present in the .rs file,
+         so we match on 'register_functions' followed by the opening brace.
+
+    Returns a list of function names (SYM) registered inside the body.
+    """
+    # Try prefixed form first (lib.rs pattern)
+    pattern = rf"({re.escape(module_name)}::register_functions\s*\([^)]*\)\s*(->\s*PyResult<[^>]*>\s*)?{{)"
+    match = re.search(pattern, lib_rs_text)
+    if not match:
+        # Try bare form (module .rs file — no module_name:: prefix)
+        # Match: 'register_functions(...) -> PyResult<()> {'  OR  'register_functions(...) {'
+        pattern = rf"(register_functions\s*\([^)]*\)\s*(->\s*PyResult<[^>]*>\s*)?{{)"
+        match = re.search(pattern, lib_rs_text)
+        if not match:
+            return []
+
+    # Find the matching closing brace by counting braces from the opening {
+    start = match.end() - 1  # position of opening {
+    depth = 1
+    pos = start + 1
+    while pos < len(lib_rs_text) and depth > 0:
+        c = lib_rs_text[pos]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        pos += 1
+    body = lib_rs_text[start + 1:pos - 1]
+
+    # Extract all wrap_pyfunction! calls within the body
+    # Two forms:
+    #   Qualified:  wrap_pyfunction!(module_name::func_name, m)  ← lib.rs
+    #   Bare:      wrap_pyfunction!(func_name, m)              ← module .rs files
+    symbols: list[str] = []
+    for line in body.splitlines():
+        if "wrap_pyfunction!" not in line:
+            continue
+        qualified = re.search(r"wrap_pyfunction!\((\w+)::(\w+)\s*,\s*m\)", line)
+        if qualified:
+            mod_name, func_name = qualified.group(1), qualified.group(2)
+            if mod_name == module_name:
+                symbols.append(func_name)
+        else:
+            bare = re.search(r"wrap_pyfunction!\((\w+)\s*,\s*m\)", line)
+            if bare:
+                symbols.append(bare.group(1))
+    return symbols
+
+
 def parse_lib_rs_symbols(lib_rs_text: str) -> dict[str, list[str]]:
     """
     Parse lib.rs and extract all PyO3-exported symbols per module.
 
-    Handles four export patterns:
+    Handles five export patterns:
       1. m.add_class::<module::ClassName>()?  → (module, ClassName)
       2. m.add_function(wrap_pyfunction!(module::func, m))? → (module, func)
       3. module_name::register...(m)?           → (module_name, "module_name.register...")
          (catches register, register_functions, register_class, register_module)
+      4. Inside register_functions body: extract individual function symbols
+         for modules that expose many symbols via one register_functions call
 
     Returns: {module_name: [symbol, ...]}
     """
     result: dict[str, list[str]] = {}
 
     for line in lib_rs_text.splitlines():
-        stripped = line.strip()
         # Pattern 1: m.add_class
         if "m.add_class" in line:
             extracted = _extract_class_name(line)
@@ -93,8 +156,9 @@ def parse_lib_rs_symbols(lib_rs_text: str) -> dict[str, list[str]]:
 
         # Pattern 2: m.add_function(wrap_pyfunction!(module::func, m))
         # e.g. m.add_function(wrap_pyfunction!(content_hasher::batch_content_hash, m))?;
+        # Regex handles optional spaces around the comma: "func, m" or "func , m"
         if "wrap_pyfunction!" in line:
-            m = re.search(r"wrap_pyfunction!\((\w+)::(\w+),", line)
+            m = re.search(r"wrap_pyfunction!\((\w+)::(\w+)\s*,\s*m\)", line)
             if m:
                 mod_name, func_name = m.group(1), m.group(2)
                 result.setdefault(mod_name, []).append(func_name)
@@ -110,6 +174,15 @@ def parse_lib_rs_symbols(lib_rs_text: str) -> dict[str, list[str]]:
 
         if "register_functions(m)" in line:
             result.setdefault(module, []).append(f"{module}.register_functions")
+            # Extract individual functions — first try lib.rs block body,
+            # then (for one-liner calls) the module's own .rs file
+            inner = _extract_register_functions_body(module, lib_rs_text)
+            if not inner:
+                # One-liner: body is in module_name.rs, not in lib.rs
+                inner = _extract_register_functions_body(module, _read_rust_module(module))
+            for sym in inner:
+                if sym not in result.get(module, []):
+                    result.setdefault(module, []).append(sym)
         elif "register_module(m)" in line:
             result.setdefault(module, []).append(f"{module}.register_module")
         elif "register_class(m)" in line:
@@ -118,6 +191,28 @@ def parse_lib_rs_symbols(lib_rs_text: str) -> dict[str, list[str]]:
             result.setdefault(module, []).append(f"{module}.register")
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Rust module file reader
+# ---------------------------------------------------------------------------
+
+_SRC_DIR = _REPO_ROOT / "src"  # _REPO_ROOT = rust_extensions/ dir
+
+
+def _read_rust_module(module_name: str) -> str:
+    """Read the .rs source file for a Rust module, or return empty string."""
+    candidates = [
+        _SRC_DIR / f"{module_name}.rs",
+        _SRC_DIR / f"{module_name}_rs.rs",
+    ]
+    for path in candidates:
+        if path.exists():
+            try:
+                return path.read_text()
+            except Exception:
+                pass
+    return ""
 
 
 # ---------------------------------------------------------------------------

@@ -413,46 +413,98 @@ pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
     }
 }
 
-/// F350M-R 4.6: Set QoS class for any thread by pthread_t.
+/// F350M-R 5.5: Set QoS class for the CURRENT thread (calling thread).
 ///
-/// QoS classes on macOS (raw numeric values):
-///   0x1 = QOS_CLASS_BACKGROUND (lowest priority — for vacuum/close threads)
+/// QoS classes on macOS:
+///   0x1 = QOS_CLASS_BACKGROUND (lowest priority — vacuum/close threads)
 ///   0x2 = QOS_CLASS_UTILITY
 ///   0x3 = QOS_CLASS_DEFAULT
 ///   0x6 = QOS_CLASS_INTERACTIVE
-///   0x9 = QOS_CLASS_USER_INITIATED (highest — for inference threads)
+///   0x9 = QOS_CLASS_USER_INITIATED (highest priority — inference threads)
 ///
-/// This allows Python ThreadPoolExecutor workers to set their QoS class
-/// before starting I/O-bound work (vacuum) or after completion (close).
+/// B-5 fix: pthread_id removed — pthread_set_qos_class_self_np ALWAYS sets
+/// the calling thread, so the target pthread_id parameter was meaningless.
+/// Callers (ThreadPoolExecutor workers) invoke this from the target thread,
+/// so calling-thread semantics are correct.
+///
+/// B-13 fix: qos_class_i32_to_qos_class_t() uses a local #[repr(i32)] enum
+/// for safe conversion instead of raw transmute, with a compile-time size
+/// assertion that sizeof(qos_class_t) == 4 bytes.
 ///
 /// Returns 0 on success, -1 on failure (errno set).
+#[cfg(target_os = "macos")]
+mod qos_class_helpers {
+    use libc::qos_class_t;
+
+    /// macOS QoS class raw values — mirrors libc::qos_class_t layout.
+    #[derive(Debug, Clone, Copy)]
+    #[repr(i32)]
+    pub enum QosClassRaw {
+        Background = 0x1,
+        Utility = 0x2,
+        Default = 0x3,
+        Interactive = 0x6,
+        UserInitiated = 0x9,
+    }
+
+    // Compile-time assertion: qos_class_t must be 4 bytes (i32/u32).
+    // Catches libc version changes that alter the type layout.
+    const _: () = assert!(std::mem::size_of::<qos_class_t>() == 4,
+        "qos_class_t must be 4 bytes (i32); check libc version");
+
+    /// Safely convert a raw i32 QoS class constant to libc::qos_class_t.
+    #[inline]
+    pub fn qos_class_i32_to_qos_class_t(raw: i32) -> qos_class_t {
+        // SAFETY: raw values 0x1/0x2/0x3/0x6/0x9 are valid QoS class discriminants
+        // guaranteed by the macOS ABI for qos_class_t (which is a signed int).
+        // The #[repr(i32)] enum has identical memory layout.
+        let qos: QosClassRaw = match raw {
+            0x1 => QosClassRaw::Background,
+            0x2 => QosClassRaw::Utility,
+            0x3 => QosClassRaw::Default,
+            0x6 => QosClassRaw::Interactive,
+            0x9 => QosClassRaw::UserInitiated,
+            _ => QosClassRaw::Default,
+        };
+        // transmute from our known-#[repr(i32)] enum to libc::qos_class_t.
+        // Both are i32-sized; transmute is sound because QosClassRaw is
+        // #[repr(i32)] and qos_class_t verified == 4 bytes above.
+        unsafe { std::mem::transmute(qos as i32) }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[pyfunction]
+pub fn apply_current_thread_qos(qos_class: i32) -> i32 {
+    use qos_class_helpers::qos_class_i32_to_qos_class_t;
+    let qos = qos_class_i32_to_qos_class_t(qos_class);
+    // SAFETY: pthread_set_qos_class_self_np sets the QoS of the calling thread
+    // (no target pthread needed — that's why pthread_id was removed in B-5).
+    unsafe {
+        libc::pthread_set_qos_class_self_np(qos, 0);
+    }
+    0
+}
+
+#[cfg(not(target_os = "macos"))]
+#[pyfunction]
+pub fn apply_current_thread_qos(_qos_class: i32) -> i32 {
+    0 // No-op on non-macOS
+}
+
+/// B-5 backward-compatible wrapper: ignores pthread_id and delegates to
+/// apply_current_thread_qos. Kept so Python callers don't need to change.
+#[cfg(target_os = "macos")]
 #[pyfunction]
 pub fn apply_thread_qos(pthread_id: usize, qos_class: i32) -> i32 {
-    #[cfg(target_os = "macos")]
-    {
-        use libc::pthread_t;
-        let _thread = pthread_id as pthread_t;
-        // Raw QoS class values — constants removed from newer libc/macOS SDKs
-        // Cast to qos_class_t via transmute through i32
-        let qos: libc::qos_class_t = match qos_class {
-            0x1 => unsafe { std::mem::transmute(0x1_i32) },  // QOS_CLASS_BACKGROUND
-            0x2 => unsafe { std::mem::transmute(0x2_i32) },  // QOS_CLASS_UTILITY
-            0x3 => unsafe { std::mem::transmute(0x3_i32) },  // QOS_CLASS_DEFAULT
-            0x6 => unsafe { std::mem::transmute(0x6_i32) },  // QOS_CLASS_INTERACTIVE
-            0x9 => unsafe { std::mem::transmute(0x9_i32) },  // QOS_CLASS_USER_INITIATED
-            _ => unsafe { std::mem::transmute(0x3_i32) },     // QOS_CLASS_DEFAULT fallback
-        };
-        unsafe {
-            libc::pthread_set_qos_class_self_np(qos, 0);
-        }
-        0
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = pthread_id;
-        let _ = qos_class;
-        0 // No-op on non-macOS
-    }
+    let _ = pthread_id as usize; // intentionally ignored (B-5 fix)
+    apply_current_thread_qos(qos_class)
+}
+
+#[cfg(not(target_os = "macos"))]
+#[pyfunction]
+pub fn apply_thread_qos(_pthread_id: usize, _qos_class: i32) -> i32 {
+    0 // No-op on non-macOS
 }
 
 
@@ -680,6 +732,27 @@ fn __apple_target__() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// __features__() -> Vec<String>
+/// Returns the list of enabled Cargo feature flags at build time.
+/// Python uses this for feature-aware capability validation against the manifest:
+///   features = set(ext.__features__())
+///   manifest = json.loads(...)
+///   # Filter symbols to only those whose module is in enabled features
+///   enabled_symbols = [s for s in manifest["all_lib_rs"]
+///                     if _module_for_symbol(s, manifest["lib_rs_symbols"]) in features
+///                     or _is_core_symbol(s)]
+fn __features__() -> Vec<String> {
+    // CARGO_FEATURES_LIST is set by build.rs — format: "feature1,feature2,feature3"
+    let env_val = option_env!("CARGO_FEATURES_LIST")
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    if env_val.is_empty() {
+        Vec::new()
+    } else {
+        env_val.split(',').map(|s| s.to_string()).collect()
+    }
+}
+
 #[pymodule]
 fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Expose package version for Python-side ABI compatibility checking (F275).
@@ -694,6 +767,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(__py_version__, m)?)?;
     // Apple target triple for M1/M2/M3 vs Intel detection
     m.add_function(wrap_pyfunction!(__apple_target__, m)?)?;
+    // Feature-aware capability: list of enabled Cargo features at build time
+    m.add_function(wrap_pyfunction!(__features__, m)?)?;
 
     m.add_class::<aho_corasick::AhoCorasickMatcher>()?;
     m.add_class::<aho_corasick::PatternHit>()?;  // Issue #37: zero-copy hit struct
@@ -1047,7 +1122,12 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "advanced")]
     feed_pipeline::register(m)?;
 
-    // F350M-R 4.6: Thread QoS for DuckDB I/O threads (vacuum/close)
+    // F350M-R 5.5: Thread QoS — renamed to apply_current_thread_qos (B-5 fix)
+    m.add_function(wrap_pyfunction!(apply_current_thread_qos, m)?)?;
+
+    // F350M-R 5.5: Backward-compatible alias — ignores pthread_id, calls
+    // apply_current_thread_qos. The pthread_id was unused (always set calling
+    // thread); keeping the name preserves the Python-side API without a bump.
     m.add_function(wrap_pyfunction!(apply_thread_qos, m)?)?;
 
     // R24: OpenTelemetry tracing

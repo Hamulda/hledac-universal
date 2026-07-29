@@ -350,10 +350,8 @@ class PyCacheDict[K, V]:
 # in the OrderedDict; WeakValueDictionary only affects GC timing, not allocation.
 
 import asyncio
-import time
 import weakref
 from collections import OrderedDict
-from typing import Any, TypeVar
 
 # K and V are already defined at module level (lines 26-27) for PyCacheDict.
 # AsyncPyCacheDict reuses the same TypeVars — no redefinition needed.

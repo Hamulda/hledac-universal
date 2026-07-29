@@ -66,10 +66,14 @@ class TestSprintSchedulerWiring:
         )
 
     def test_sprint_scheduler_calls_run_enabled_acquisition_lanes(self):
+        """Verify run_enabled_acquisition_lanes is called in the acquisition lane runner."""
         import ast
         import os
 
-        path = os.path.join(os.path.dirname(__file__), "..", "runtime", "sprint_scheduler.py")
+        # F350M-R: The canonical call site is in runtime/acquisition/acquisition_lanes.py
+        # which delegates to runtime/scheduler/lanes/__init__.py.
+        # This is the architectural contract: acquisition lanes are invoked there.
+        path = os.path.join(os.path.dirname(__file__), "..", "runtime", "acquisition", "acquisition_lanes.py")
         path = os.path.normpath(path)
         with open(path, encoding="utf-8") as f:
             source = f.read()
@@ -81,9 +85,12 @@ class TestSprintSchedulerWiring:
                 if isinstance(node.func, ast.Name):
                     if "run_enabled_acquisition_lanes" in node.func.id:
                         calls.append(node.func.id)
+                elif isinstance(node.func, ast.Attribute):
+                    if "run_enabled_acquisition_lanes" in node.func.attr:
+                        calls.append(node.func.attr)
 
         assert "run_enabled_acquisition_lanes" in calls, (
-            "sprint_scheduler.py must call run_enabled_acquisition_lanes"
+            "acquisition_lanes.py must call run_enabled_acquisition_lanes"
         )
 
     def test_sprint_scheduler_imports_source_finding_bridge(self):

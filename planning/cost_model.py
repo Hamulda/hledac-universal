@@ -13,16 +13,17 @@ import numpy as np
 logger = logging.getLogger(__name__)
 EvidenceLog = None
 
-class OnlineRidge(msgspec.Struct):
+class OnlineRidge:
     """Online ridge regrese přes Sherman-Morrison."""
-    n_features: int
-    alpha: float = 1.0
+    __slots__ = tuple(('n_features', 'alpha', 'A', 'A_inv', 'b', 'coef_', 'n_samples'))
 
-    def __post_init__(self) -> None:
-        self.A = np.eye(self.n_features) * self.alpha
-        self.A_inv = np.eye(self.n_features) / self.alpha
-        self.b = np.zeros(self.n_features)
-        self.coef_ = np.zeros(self.n_features)
+    def __init__(self, n_features: int, alpha: float = 1.0) -> None:
+        self.n_features = n_features
+        self.alpha = alpha
+        self.A = np.eye(n_features) * alpha
+        self.A_inv = np.eye(n_features) / alpha
+        self.b = np.zeros(n_features)
+        self.coef_ = np.zeros(n_features)
         self.n_samples = 0
 
     def update(self, x: np.ndarray, y: float):
@@ -198,13 +199,10 @@ class AdaptiveCostModel:
                 pred = model(X_mlx)
                 return nn.losses.mse_loss(pred, Y_mlx)
             loss, grads = nn.value_and_grad(self.model, loss_fn)(self.model)
-            leaves, treedef = mutils.tree_flatten(grads)
-            flat_grads = [mx.reshape(g, (-1,)) for g in leaves]
-            total_norm = mx.sqrt(mx.sum(mx.concatenate(flat_grads) ** 2))
+            total_norm = mx.sqrt(mx.sum(mx.concatenate([mx.reshape(g, (-1,)) for g in mx.flatten(grads)]) ** 2))
             if total_norm > self.grad_clip:
                 scale = self.grad_clip / total_norm
-                scaled_leaves = [g * scale for g in leaves]
-                grads = mutils.tree_unflatten(treedef, scaled_leaves)
+                grads = mutils.tree_map(lambda g: g * scale, grads)
             self.optimizer.update(self.model, grads)
             mx.eval(self.model.parameters(), self.optimizer.state)
             if self._prev_loss is not None and loss.item() > self._prev_loss * 1.5:

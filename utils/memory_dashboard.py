@@ -7,6 +7,7 @@ Sprint 81: Core Stability & Memory Safety
 """
 import logging
 from dataclasses import dataclass
+from typing import Any
 import msgspec
 logger = logging.getLogger(__name__)
 import platform
@@ -17,12 +18,26 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     psutil = None
+# MLX — lazy (ISSUE 3.2 fix): moved from top-level to lazy accessor.
+# Top-level `import mlx.core as mx` loaded MLX at module import time,
+# breaking PLANNER: ZERO MLX invariant when async_utils → duckdb_store chain
+# imported memory_dashboard during planner module load.
+# mx is only used inside UnifiedMemoryMonitor.snapshot() — lazy accessor is safe.
 MLX_AVAILABLE = False
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    mx = None
+_mx_module: Any | None = None
+
+
+def _get_mx() -> Any | None:
+    """Lazily cached mlx.core module reference. Returns None if unavailable."""
+    global _mx_module
+    if _mx_module is None:
+        try:
+            import mlx.core as _mx
+            _mx_module = _mx
+            MLX_AVAILABLE = True
+        except ImportError:
+            _mx_module = False
+    return _mx_module if _mx_module is not False else None
 
 class UnifiedMemorySnapshot(msgspec.Struct, frozen=True, gc=False):
     """
@@ -101,7 +116,8 @@ class UnifiedMemoryMonitor:
         metal_active_gb = None
         metal_peak_gb = None
         metal_cache_gb = None
-        if MLX_AVAILABLE and IS_DARWIN:
+        mx = _get_mx()
+        if mx is not None and IS_DARWIN:
             try:
                 if hasattr(mx.metal, 'get_active_memory'):
                     metal_active_gb = mx.get_active_memory() / 1024 ** 3

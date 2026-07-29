@@ -34,7 +34,7 @@ from hledac.universal.utils.deduplication import DeduplicationConfig, Deduplicat
 from hledac.universal.utils.deduplication import QueryItem as DedupItem
 from hledac.universal.utils.msgspec_json import decode, encode
 from hledac.universal.utils.query_expansion import DomainSpecificExpansionStrategy, ExpansionStrategy, MultiStrategyExpander, QueryVariation, SemanticExpansionStrategy, SyntacticExpansionStrategy
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 from hledac.universal.utils.two_pass_pipeline import TwoPassPipeline, TwoPassPipelineConfig, consumer_fn_to_thread
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,6 @@ class QueryAnalysis:
 
     def __post_init__(self) -> None:
         if not self.key_terms:
-            # Use object.__setattr__ because frozen=True dataclass prohibits direct assignment
             object.__setattr__(self, 'key_terms', self._extract_key_terms())
 
     def _extract_key_terms(self) -> list[str]:
@@ -641,7 +640,7 @@ class AcademicSearchEngine:
                 task = search_with_limit(source_name, adapter, query)
                 tasks.append(task)
                 task_info.append((source_name, query))
-        search_results = await safe_gather_ok(*tasks, label='academic_search:1033')
+        search_results = await parallel_ok(*tasks, label='academic_search:1033')
         source_results_map: dict[str, list[SearchResult]] = {}
         source_times: dict[str, list[float]] = {}
         source_success: dict[str, bool] = {}
@@ -682,7 +681,7 @@ class AcademicSearchEngine:
         for i in range(0, len(results), batch_size):
             batch = results[i:i + batch_size]
             try:
-                batch_items = await safe_gather_ok(*[make_dedup_item(r) for r in batch], label=f'academic_dedup:{i}')
+                batch_items = await parallel_ok(*[make_dedup_item(r) for r in batch], label=f'academic_dedup:{i}')
                 items.extend((item for item in batch_items if isinstance(item, DedupItem)))
             except Exception:
                 for r in batch:
@@ -737,7 +736,7 @@ class AcademicSearchEngine:
         for i in range(0, len(results), batch_size):
             batch = results[i:i + batch_size]
             try:
-                batch_scored = await safe_gather_ok(*[asyncio.to_thread(score_one, r) for r in batch], label=f'academic_rank:{i}')
+                batch_scored = await parallel_ok(*[asyncio.to_thread(score_one, r) for r in batch], label=f'academic_rank:{i}')
                 scored.extend((item for item in batch_scored if isinstance(item, tuple) and len(item) == 2))
             except Exception:
                 for r in batch:
@@ -798,13 +797,13 @@ class AcademicSearchEngine:
                 except Exception:
                     return DedupItem(id=result.url[:12] if result.url else '', title=result.title, content=result.snippet, url=result.url, source=result.source, metadata=result.metadata)
             if len(results) <= 50:
-                items = await safe_gather_ok(*[make_dedup_item(r) for r in results], label='academic_dedup_rank:build')
+                items = await parallel_ok(*[make_dedup_item(r) for r in results], label='academic_dedup_rank:build')
                 return [it for it in items if isinstance(it, DedupItem)]
             all_items: list[DedupItem] = []
             for i in range(0, len(results), 50):
                 batch = results[i:i + 50]
                 try:
-                    batch_items = await safe_gather_ok(*[make_dedup_item(r) for r in batch], label=f'academic_dedup_rank:build:{i}')
+                    batch_items = await parallel_ok(*[make_dedup_item(r) for r in batch], label=f'academic_dedup_rank:build:{i}')
                     all_items.extend((it for it in batch_items if isinstance(it, DedupItem)))
                 except Exception:
                     for r in batch:

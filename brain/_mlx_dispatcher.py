@@ -165,9 +165,10 @@ class AsyncEmbeddingBatcher:
         4. Distribuuje výsledky přes Futures
         5. Opakuje
         """
+        loop = asyncio.get_running_loop()
         while not self._stopping:
             batch: list[tuple[_EmbeddingRequest, int]] = []
-            deadline = asyncio.get_event_loop().time() + self._max_wait_s
+            deadline = loop.time() + self._max_wait_s
             try:
                 async with asyncio.timeout(self._max_wait_s * 2):
                     first = await self._queue.get()
@@ -175,7 +176,7 @@ class AsyncEmbeddingBatcher:
             except TimeoutError:
                 continue
             while len(batch) < self._batch_size:
-                remaining = deadline - asyncio.get_event_loop().time()
+                remaining = deadline - loop.time()
                 timeout = max(0.001, remaining)
                 try:
                     async with asyncio.timeout(timeout):
@@ -376,8 +377,10 @@ def _check_ane_availability() -> bool:
         return False
     try:
         import coremltools as ct
-        if ct.__version__ < '6.0':
-            logger.debug(f'[MLXDispatcher-ANE] coremltools {ct.__version__} < 6.0')
+        parts = ct.__version__.split('.')
+        version_tuple = tuple(int(p) for p in parts[:2] if p.isdigit())
+        if version_tuple < (6, 0):
+            logger.debug(f'[MLXDispatcher-ANE] coremltools {".".join(map(str, version_tuple))} < 6.0')
             _ANE_AVAILABLE = False
             return False
     except ImportError:
@@ -600,7 +603,6 @@ class MLXDispatcher:
         async with ctx._load_lock:
             if ctx.embed_loaded and ctx.embedder is not None:
                 return True
-            ane_loaded = False
             if _check_ane_availability():
                 ane = await _load_ane_embedder()
                 if ane is not None:
@@ -806,9 +808,11 @@ class MLXDispatcher:
         ctx.outlines_loaded = False
         ctx._preload_tasks.clear()
         ctx._model_priorities.clear()
-        global _ANE_EMBEDDER, _EMBEDDER
-        _ANE_EMBEDDER = None
-        _EMBEDDER = None
+        # ISSUE #5.5: Removed redundant global _ANE_EMBEDDER, _EMBEDDER writes.
+        # Module-level globals (_ANE_EMBEDDER, _EMBEDDER, _GLINER2, _OUTLINES)
+        # are lazily loaded caches used only by _load_* helpers — not state that
+        # unload() needs to manage. After ctx.* = None, the next load call
+        # re-initializes the global via its own `if ... is not None` guard.
         mx = _get_mx()
         if mx:
             try:

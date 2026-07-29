@@ -886,15 +886,6 @@ class ModelManager:
         import os
         if output_path is None:
             output_path = os.path.expanduser('~/hledac_report.md')
-        async with self.acquire_model_ctx('hermes'):
-            pass
-        from .deephermes3_engine import DeepHermes3Engine
-        engine = DeepHermes3Engine()
-        try:
-            await engine.initialize()
-        except Exception as e:
-            logger.warning(f'[GENERATE_REPORT] Hermes init failed: {e}')
-            return ''
         MAX_CONTEXT = 4000
         MAX_HYPOTHESES = 10
         MAX_FINDINGS = 20
@@ -908,11 +899,14 @@ class ModelManager:
             finding_lines.append(f'- {finding_str}')
         finding_text = '\n'.join(finding_lines)
         prompt = f"Vytvoř strukturovaný OSINT report v Markdown formátu.\n\nGrafový souhrn:\n{graph_summary[:MAX_CONTEXT]}\n\nHypotézy:\n{hypo_text}\n\nZjištění (findings):\n{(finding_text if finding_text else 'Žádná zjištění')}\n\nReport musí obsahovat:\n1. # OSINT Report -标题\n2. ## Shrnutí (Executive Summary) - max 3 věty\n3. ## Klíčová zjištění (Key Findings)\n4. ## Hypotézy a výsledky\n5. ## Doporučení (Recommendations)\n6. ## Metadata (timestamp, version)\n\nPiš v češtině, buď konkrétní a stručný."
-        try:
-            report = await engine.generate(prompt=prompt, temperature=0.3, max_tokens=2048, system_msg='Jsi OSINT research assistant. Vytvářej strukturované reporty v češtině.')
-        except Exception as e:
-            logger.warning(f'[GENERATE_REPORT] Generation failed: {e}')
-            report = f'# Report Generation Failed\n\nError: {e}'
+
+        async with self.acquire_model_ctx('hermes') as engine:
+            try:
+                report = await engine.generate(prompt=prompt, temperature=0.3, max_tokens=2048, system_msg='Jsi OSINT research assistant. Vytvářej strukturované reporty v češtině.')
+            except Exception as e:
+                logger.warning(f'[GENERATE_REPORT] Generation failed: {e}')
+                report = f'# Report Generation Failed\n\nError: {e}'
+
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         final_report = f'---\nGenerated: {timestamp}\nHledac OSINT Report\n---\n\n{report}'
         try:
@@ -922,10 +916,6 @@ class ModelManager:
             logger.info(f'[GENERATE_REPORT] Saved to {output_path}')
         except Exception as e:
             logger.warning(f'[GENERATE_REPORT] Failed to save: {e}')
-        try:
-            await engine.unload()
-        except Exception:
-            pass
         return final_report
 
     async def with_phase(self, phase_name: str):

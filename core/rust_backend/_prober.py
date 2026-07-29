@@ -20,11 +20,14 @@ ISSUE-3.3: Graceful degradation for ABI major version mismatch
     - Added __py_version__ and __apple_target__ detection
 """
 
+import importlib
+import json as _json
 import logging
 import os
 import platform
 import sys
 import msgspec
+from pathlib import Path as _Path
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +86,8 @@ _SO_MTIME_WARNED: bool = False
 _CAP_SCORE: float = 0.0
 # ISSUE-2: Cached .so mtime from the last successful probe.
 _CAP_SO_MTIME: float | None = None
+# ISSUE-5.1: Cached Cargo feature flags from the last successful probe.
+_CAP_FEATURES: frozenset[str] = frozenset()
 
 
 class ProbeResult(msgspec.Struct, frozen=True, gc=False):
@@ -99,6 +104,7 @@ class ProbeResult(msgspec.Struct, frozen=True, gc=False):
     so_mtime: float | None = None  # ISSUE-2: mtime of the loaded .so at probe time
     py_version: tuple[int, int, int] | None = None  # ISSUE-3.3: Python version compiled-for
     apple_target: str | None = None  # ISSUE-3.3: Apple target triple
+    features: frozenset[str] = frozenset()  # Enabled Cargo feature flags at build time
 
     @property
     def is_compatible(self) -> bool:
@@ -112,6 +118,19 @@ class ProbeResult(msgspec.Struct, frozen=True, gc=False):
     def abi_major_mismatch(self) -> bool:
         """ISSUE-3.3: True if extension's ABI major > required major (needs rebuild)."""
         return self.abi_major > _RUST_MIN_ABI_VERSION[0]
+
+    def has_symbol(self, name: str) -> bool:
+        """Return True if the given symbol is present in the Rust extension.
+
+        Useful for feature-gated capability checks without exposing the raw module.
+        """
+        if not self.available or self.ext is None:
+            return False
+        return hasattr(self.ext, name)
+
+    def has_feature(self, feature: str) -> bool:
+        """Return True if the given Cargo feature flag is enabled in the build."""
+        return feature in self.features
 
 
 def _parse_version(ext: object | None) -> tuple[tuple[int, int, int], str]:
@@ -238,6 +257,24 @@ def _parse_apple_target(ext: object | None) -> str | None:
     return None
 
 
+def _parse_features(ext: object | None) -> set[str]:
+    """Extract enabled Cargo feature flags from extension.
+
+    Returns an empty set if __features__ is not available.
+    """
+    if ext is None:
+        return set()
+    try:
+        features_fn = getattr(ext, "__features__", None)
+        if callable(features_fn):
+            result = features_fn()
+            if isinstance(result, (list, tuple, set)):
+                return set(result)
+    except Exception as e:
+        logger.debug(f"[RustProbe] __features__() raised {type(e).__name__}: {e}")
+    return set()
+
+
 def _check_capability(ext: object | None) -> float:
     """ISSUE-2: Score how many reference symbols are present in the extension.
 
@@ -300,7 +337,7 @@ def probe() -> ProbeResult:
     - Capability probe validates ≥70 % reference symbols present.
     - .so mtime tracked and logged if binary changed since last probe.
     """
-    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME
+    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME, _CAP_FEATURES
 
     if _PROBED is not None:
         # Already probed — return cached values from the initial probe.
@@ -315,6 +352,7 @@ def probe() -> ProbeResult:
             abi_major=abi_ver[0], backend=backend,
             capability_score=_CAP_SCORE, so_mtime=_CAP_SO_MTIME,
             py_version=py_ver, apple_target=apple_tgt,
+            features=_CAP_FEATURES,
         )
 
     # First call — do the probe
@@ -357,6 +395,7 @@ def probe() -> ProbeResult:
                 current_mtime = _so_mtime()
                 py_ver = _parse_py_version(ext)
                 apple_tgt = _parse_apple_target(ext)
+                features = frozenset(_parse_features(ext))
 
                 # ISSUE-3.3: Apple target mismatch = hard fail (M1 vs Intel is binary incompatible)
                 if _check_apple_target_mismatch(apple_tgt):
@@ -401,10 +440,11 @@ def probe() -> ProbeResult:
                         _SO_MTIME = current_mtime
                         _CAP_SCORE = cap_score
                         _CAP_SO_MTIME = current_mtime
+                        _CAP_FEATURES = features
                         logger.debug(
                             f"[RustProbe] hledac_rust_extensions loaded "
                             f"(version {ver_str}, ABI {_abi_tuple_str(abi_ver)}, "
-                            f"capability {cap_score:.0%}, apple_target={apple_tgt})"
+                            f"capability {cap_score:.0%}, features={sorted(features)}, apple_target={apple_tgt})"
                         )
     except Exception as e:
         # Catch ALL: ImportError, OSError, AttributeError, etc.
@@ -423,18 +463,20 @@ def probe() -> ProbeResult:
         abi_major=abi_ver[0], backend=backend,
         capability_score=cap_score, so_mtime=current_mtime,
         py_version=py_ver, apple_target=apple_tgt,
+        features=frozenset(),
     )
 
 
 def force_python() -> ProbeResult:
     """Force Python fallbacks (HLEDAC_FORCE_PYTHON=1)."""
-    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME
+    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME, _CAP_FEATURES
     _PROBED = False
     _EXT = None
     _SO_MTIME = None
     _SO_MTIME_WARNED = False
     _CAP_SCORE = 0.0
     _CAP_SO_MTIME = None
+    _CAP_FEATURES = frozenset()
     logger.debug("[RustProbe] Python fallback FORCED via HLEDAC_FORCE_PYTHON=1")
     return ProbeResult(
         available=False, ext=None, version_str="unknown",
@@ -442,12 +484,13 @@ def force_python() -> ProbeResult:
         abi_major=0, backend="python",
         capability_score=0.0, so_mtime=None,
         py_version=None, apple_target=None,
+        features=frozenset(),
     )
 
 
 def force_rust() -> ProbeResult:
     """Force Rust path, warn if unavailable or incompatible (HLEDAC_FORCE_RUST=1)."""
-    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME
+    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME, _CAP_FEATURES
     result = probe()
     if not result.available:
         logger.warning("[RustProbe] HLEDAC_FORCE_RUST=1 but Rust extension unavailable")
@@ -463,12 +506,14 @@ def force_rust() -> ProbeResult:
         _SO_MTIME_WARNED = False
         _CAP_SCORE = 0.0
         _CAP_SO_MTIME = None
+        _CAP_FEATURES = frozenset()
         return ProbeResult(
             available=False, ext=None, version_str=result.version_str,
             version_tuple=result.version_tuple, abi_version=result.abi_version,
             abi_major=result.abi_major, backend="python",
             capability_score=0.0, so_mtime=None,
             py_version=None, apple_target=None,
+            features=frozenset(),
         )
     _PROBED = result.available
     _EXT = result.ext if result.available else None
@@ -476,15 +521,17 @@ def force_rust() -> ProbeResult:
     _SO_MTIME_WARNED = False
     _CAP_SCORE = result.capability_score
     _CAP_SO_MTIME = result.so_mtime
+    _CAP_FEATURES = result.features
     return result
 
 
 def reset() -> None:
     """Reset probe cache — for testing only."""
-    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME
+    global _PROBED, _EXT, _SO_MTIME, _SO_MTIME_WARNED, _CAP_SCORE, _CAP_SO_MTIME, _CAP_FEATURES
     _PROBED = None
     _EXT = None
     _SO_MTIME = None
     _SO_MTIME_WARNED = False
     _CAP_SCORE = 0.0
     _CAP_SO_MTIME = None
+    _CAP_FEATURES = frozenset()

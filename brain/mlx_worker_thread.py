@@ -52,7 +52,7 @@ import threading
 import time
 import weakref
 from typing import TYPE_CHECKING, Any
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_gather_fire_and_forget
+from hledac.universal.utils.async_helpers import parallel_ok, safe_gather_fire_and_forget
 if TYPE_CHECKING:
     from collections.abc import Coroutine
 logger = logging.getLogger(__name__)
@@ -204,17 +204,15 @@ class MLXWorkerThread:
         Falls back to slow asyncio path if SPSC init fails.
         """
         import json as _json
-
         from hledac.universal.core.rust_backend import rust as _rust
 
         class _ResultSignal:
             __slots__ = ('value', 'exc')
+
             def __init__(self) -> None:
                 self.value: Any = None
                 self.exc: BaseException | None = None
-
         while not self._stopped:
-            # Blocking recv — ~30ns when queue has data, parks thread otherwise
             _item_ptr = _rust.spsc.recv_blocking(self._spsc_receiver_ptr)
             if _item_ptr == 0:
                 continue
@@ -225,13 +223,10 @@ class MLXWorkerThread:
                     if _data_ptr == 0 or _data_len == 0:
                         continue
                     import ctypes as _ct
-                    _buf = _ct.pythonapi.PyBytes_FromStringAndSize(
-                        _data_ptr, _data_len
-                    )
+                    _buf = _ct.pythonapi.PyBytes_FromStringAndSize(_data_ptr, _data_len)
                     _req = _json.loads(bytes(_buf))
                 finally:
                     _rust.spsc.item_free(_item_ptr)
-
                 _signal = _ResultSignal()
                 self._spsc_result = _signal
                 self._spsc_result_ready.clear()
@@ -242,12 +237,9 @@ class MLXWorkerThread:
                     except BaseException as _exc:
                         _signal.exc = _exc
                     loop.call_soon_threadsafe(self._spsc_result_ready.set)
-
                 _coro = _req['coro']
                 _fut = asyncio.ensure_future(_coro, loop=loop)
                 _fut.add_done_callback(_done_callback)
-
-                # Block here until done — this IS the MLX inference time
                 self._spsc_result_ready.wait(timeout=60.0)
                 if _signal.exc is not None:
                     raise _signal.exc
@@ -276,26 +268,15 @@ class MLXWorkerThread:
                 _stream_ctx.__enter__()
             except Exception:
                 pass
-
-            # R8: Extract the receiver pointer from the SPSC pair.
-            # Safe to call here because:
-            # 1. Main thread blocked in start() → _init_spsc() → returns → start() returns
-            # 2. Worker thread calls _run_loop() → this code runs
-            # 3. No concurrent access to _spsc_pair after this point (submit() hasn't run yet)
             if self._spsc_pair is not None:
                 try:
                     self._spsc_receiver_ptr = self._spsc_pair.receiver_ptr()
                     if self._spsc_receiver_ptr == 0:
-                        # receiver_ptr() returns 0 if take_receiver() not yet called.
-                        # Call it directly here (worker thread, single-consumer invariant).
                         self._spsc_receiver_ptr = self._spsc_pair.take_receiver()
                 except Exception as _e:
                     logger.debug('[MLXWorker] SPSC receiver init failed: %s', _e)
                     self._spsc_pair = None
-
             self._ready.set()
-            # R8: If SPSC receiver is ready, run the recv loop; otherwise fall back
-            # to run_forever and let submit() use the asyncio slow path.
             if self._spsc_pair is not None and self._spsc_receiver_ptr != 0:
                 self._spsc_recv_loop(loop)
             else:
@@ -316,7 +297,6 @@ class MLXWorkerThread:
                         except Exception:
                             pass
                     loop.close()
-                    # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
                     gc.collect()
             except Exception as e:
                 logger.debug('[MLXWorker] cleanup error: %s', e)
@@ -369,10 +349,8 @@ class MLXWorkerThread:
             self.start()
         if self._failed or not self.is_active():
             raise RuntimeError(f"mlx_worker_unavailable: {self._failure_reason or 'not_active'}")
-
         if self._spsc_sender is not None and self._spsc_sender.has_space():
             return self._submit_spsc(coro, timeout)
-
         return self._submit_asyncio(coro, timeout)
 
     async def _submit_asyncio(self, coro: Coroutine[Any, Any, Any], timeout: float) -> Any:
@@ -417,47 +395,30 @@ class MLXWorkerThread:
         The worker thread reconstructs the coroutine and calls run_until_complete.
         """
         import json as _json
-
         self._busy = True
         try:
-            # Serialize the inference params from the bound coroutine's frame.
-            # We extract args/kwargs by inspecting the coroutine since
-            # DeepHermes3Engine.generate() is a bound async method.
             try:
                 _code = coro.cr_code
                 _frame = coro.cr_frame
                 if _frame is None:
-                    raise AttributeError("coro.cr_frame is None")
+                    raise AttributeError('coro.cr_frame is None')
                 _locals = _frame.f_locals
                 _prompt = _locals.get('prompt', '')
                 _temperature = _locals.get('temperature')
                 _max_tokens = _locals.get('max_tokens')
                 _system_msg = _locals.get('system_msg')
             except Exception:
-                # Fall back to asyncio path if we can't inspect the coroutine
                 return await self._submit_asyncio(coro, timeout)
-
-            _req = _json.dumps({
-                'prompt': _prompt,
-                'temperature': _temperature,
-                'max_tokens': _max_tokens,
-                'system_msg': _system_msg,
-            }).encode('utf-8')
-
-            # Non-blocking SPSC send — ~30-50ns vs ~5µs for run_coroutine_threadsafe
+            _req = _json.dumps({'prompt': _prompt, 'temperature': _temperature, 'max_tokens': _max_tokens, 'system_msg': _system_msg}).encode('utf-8')
             if not self._spsc_sender.send(_req):
                 return await self._submit_asyncio(coro, timeout)
-
         except Exception:
             return await self._submit_asyncio(coro, timeout)
-
         self._request_count += 1
         self._inflight_count += 1
         if self._inflight_count > self._peak_inflight:
             self._peak_inflight = self._inflight_count
         try:
-            # Wait on threading.Event instead of asyncio — no selector lock contention.
-            # The SPSC recv loop sets this event when run_until_complete finishes.
             _ok = self._spsc_result_ready.wait(timeout=timeout)
             if not _ok:
                 raise asyncio.TimeoutError
@@ -557,7 +518,7 @@ class MLXWorkerThread:
             raise RuntimeError(f'mlx_worker_unavailable: worker not active (failed={self._failed}, reason={self._failure_reason})')
 
         async def _gather_all() -> None:
-            result = await safe_gather_ok(*coros, label='mlx_worker:prewarm')
+            result = await parallel_ok(*coros, label='mlx_worker:prewarm')
             for r in result:
                 if isinstance(r, Exception):
                     logger.debug('[MLXWorker] prewarm coroutine raised: %s', r)

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 
 class OptimizationStrategy(Enum):
@@ -165,13 +165,13 @@ class ResearchOptimizer:
         """
         if not self.config.result_batching or len(queries) <= self.config.batch_size:
             tasks = [self.execute(q, research_func, **kwargs) for q in queries]
-            return await safe_gather_ok(*tasks, label='research_optimizer:247')
+            return await parallel_ok(*tasks, label='research_optimizer:247')
         all_results = []
         for i in range(0, len(queries), self.config.batch_size):
             batch = queries[i:i + self.config.batch_size]
             unique_queries = list(dict.fromkeys(batch))
             tasks = [self.execute(q, research_func, **kwargs) for q in unique_queries]
-            batch_results = await safe_gather_ok(*tasks, label='research_optimizer:261')
+            batch_results = await parallel_ok(*tasks, label='research_optimizer:261')
             result_map = dict(zip(unique_queries, batch_results, strict=False))
             for q in batch:
                 all_results.append(result_map[q])

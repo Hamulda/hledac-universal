@@ -24,7 +24,7 @@ GHOST_INVARIANTS:
   - Fail-soft: resolver error returns empty list, never raises
 """
 import asyncio
-from hledac.universal.utils.async_helpers import safe_gather_ok, parallel
+from hledac.universal.utils.async_helpers import parallel_ok, parallel
 from hledac.universal.utils.async_helpers import retry_backoff_async
 import logging
 import time

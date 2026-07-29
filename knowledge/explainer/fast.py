@@ -3,7 +3,7 @@ Fast explainer – delta‑evidence na základě odebírání hran.
 """
 import logging
 from hledac.universal.core.resource_governor import ResourceGovernor
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 
 class FastExplainer:
@@ -25,7 +25,7 @@ class FastExplainer:
         nodes = path['nodes']
         edges = list(zip(nodes, nodes[1:]))
         tasks = [self._delta_for_edge(edge, start_node, end_node, max_hops) for edge in edges]
-        results = await safe_gather_ok(*tasks, label='fast:37')
+        results = await parallel_ok(*tasks, label='fast:37')
         important_edges = []
         for edge, res in zip(edges, results, strict=False):
             if isinstance(res, Exception):

@@ -25,7 +25,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 from hledac.universal.tools.ocr_engine import VisionOCR, recognize_async
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 MAX_URL_HITS: int = 20
 'Max embedded URLs/domains extracted from OCR text.'
@@ -214,7 +214,7 @@ class EvidenceTriageCoordinator:
             metadata_task = safe_create_task(self._extract_metadata(path))
             ocr_task = safe_create_task(self._extract_ocr_with_timeout(path))
             async with asyncio.timeout(METADATA_TIMEOUT_S + OCR_TIMEOUT_S):
-                results = await safe_gather_ok(metadata_task, ocr_task, label='evidence_triage:269')
+                results = await parallel_ok(metadata_task, ocr_task, label='evidence_triage:269')
                 md_result, ocr_text = results
                 if md_result and (not isinstance(md_result, BaseException)):
                     self._apply_metadata_to_facets(md_result, path, facets)
@@ -273,9 +273,9 @@ class EvidenceTriageCoordinator:
             return ''
 
     async def _ocr_pdf_page(self, path: Path) -> str:
-        """Extract text from first PDF page via PyPDF2 for OCR."""
+        """Extract text from first PDF page via pypdf for OCR."""
         try:
-            from PyPDF2 import PdfReader
+            from pypdf import PdfReader
             reader = PdfReader(str(path))
             if not reader.pages:
                 return ''
@@ -285,7 +285,7 @@ class EvidenceTriageCoordinator:
                 return text[:MAX_OCR_CHARS]
             return text[:MAX_OCR_CHARS]
         except ImportError:
-            logger.debug('[EvidenceTriage] PyPDF2 not available for PDF OCR')
+            logger.debug('[EvidenceTriage] pypdf not available for PDF OCR')
             return ''
         except Exception as e:
             logger.debug('[EvidenceTriage] PDF OCR failed: %s', e)

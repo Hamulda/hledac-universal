@@ -23,18 +23,12 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import Enum
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
 logger = logging.getLogger(__name__)
-
-# Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
-
-# AP-09 fix: batched yields — yield every N iterations instead of every iteration.
-# Rationale: await asyncio.sleep(0) every node creates ~1µs overhead per call.
-# Batched yields amortize the overhead while still yielding to the event loop.
-_YIELD_EVERY_COT = 4   # CoT: yield every 4 steps (typical max_steps 8-20)
-_YIELD_EVERY_TOT = 16  # ToT: yield every 16 child nodes (inner loop granularity)
+_YIELD_EVERY_COT = 4
+_YIELD_EVERY_TOT = 16
 
 class ReasoningStrategy(Enum):
     """Available reasoning strategies."""
@@ -165,8 +159,6 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             steps.append(step)
             if step.confidence < min_confidence:
                 break
-            # AP-09 fix: yield every _YIELD_EVERY_COT steps instead of every step.
-            # Typical max_steps=8-20, so this yields 2-5 times vs 8-20 times.
             steps_since_yield += 1
             if steps_since_yield >= _YIELD_EVERY_COT:
                 await asyncio.sleep(0)
@@ -187,7 +179,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         leaves = [root]
         best_path = []
         best_value = float('-inf')
-        nodes_since_yield = 0  # AP-09: count across all inner-loop iterations
+        nodes_since_yield = 0
         for depth in range(max_depth):
             new_leaves = []
             for leaf in leaves:
@@ -198,8 +190,6 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                     leaf.children.append(child.node_id)
                     nodes[child.node_id] = child
                     new_leaves.append(child)
-                    # AP-09 fix: yield every _YIELD_EVERY_TOT nodes in the inner loop
-                    # (vs the original pattern which had no yields at all in ToT).
                     nodes_since_yield += 1
                     if nodes_since_yield >= _YIELD_EVERY_TOT:
                         await asyncio.sleep(0)
@@ -243,7 +233,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         """Execute ensemble reasoning with multiple strategies."""
         strategies = [ReasoningStrategy.CHAIN_OF_THOUGHT, ReasoningStrategy.TREE_OF_THOUGHTS, ReasoningStrategy.GRAPH_REASONING]
         tasks = [self.reason(query, s) for s in strategies]
-        results = await safe_gather_ok(*tasks, label='meta_reasoning_coordinator:422')
+        results = await parallel_ok(*tasks, label='meta_reasoning_coordinator:422')
         successful = [r for r in results if isinstance(r, dict) and r.get('success')]
         if not successful:
             return {'success': False, 'error': 'All reasoning strategies failed'}

@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass
 import msgspec
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 MAX_RERANK_DOCS = 50
 try:
@@ -168,7 +168,7 @@ class LightweightReranker:
             List of reranked results for each request
         """
         tasks = [self.rerank(req.query, req.documents, req.top_k, req.return_all) for req in requests]
-        return await safe_gather_ok(*tasks, label='reranker:255')
+        return await parallel_ok(*tasks, label='reranker:255')
 
     def get_memory_usage(self) -> dict[str, Any]:
         """Get estimated memory usage."""

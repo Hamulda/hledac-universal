@@ -464,10 +464,6 @@ class AnalyzerResult(msgspec.Struct, gc=False):
         Returns a typed dict that CapabilityRouter.route() can process.
         """
         return {'tools': self.tools, 'sources': self.sources, 'privacy_level': self.privacy_level, 'use_tor': self.use_tor, 'depth': self.depth, 'use_tot': self.use_tot, 'tot_mode': self.tot_mode, 'requires_embeddings': bool(self.models_needed & {'modernbert'}), 'requires_ner': bool(self.models_needed & {'gliner'}), 'requires_temporal': 'temporal_analyzer' in self.tools, 'requires_crypto': 'blockchain_analyzer' in self.tools}
-AgentCapability = dict[str, Any]
-TaskDefinition = dict[str, Any]
-PlanStep = dict[str, Any]
-KnowledgeNode = dict[str, Any]
 
 class OrchestratorError(Exception):
     """Base orchestrator error"""

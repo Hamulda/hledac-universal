@@ -26,7 +26,7 @@ inject_* methods on SprintSchedulerV2 follow two patterns:
 Ordering constraints
 --------------------
   1. duckdb_store MUST be injected before any oracle or graph wiring.
-  2. prefetch_oracle MUST be injected before P3-1 oracle wiring block.
+  2. prefetch_oracle (optional, env-gated): if injected, must be before P3-1 oracle wiring.
   3. Layers (communication/stealth/ghost) should be injected before
      security_coordinator so the coordinator can see them.
   4. EvidenceLog is special: initialised with async .initialize() and
@@ -194,11 +194,17 @@ def _security_coordinator_factory() -> Any:
 
 
 # -------------------------------------------------------------------
-# PrefetchOracle — unconditional, fail-soft
+# PrefetchOracle — GATED (HLEDAC_ENABLE_PREFETCH_ORACLE=1 to activate)
+# Default: 0 — archived 2026-07-28 (dead experimental code, ~140MB
+# resident with no signal; stubbed to avoid import errors)
 # -------------------------------------------------------------------
 
 
 def _prefetch_oracle_factory() -> Any:
+    import os
+
+    if not os.environ.get("HLEDAC_ENABLE_PREFETCH_ORACLE", "0") == "1":
+        return None
     from hledac.universal.prefetch.prefetch_oracle_integration import PrefetchOracleIntegration
 
     return PrefetchOracleIntegration()
@@ -300,7 +306,8 @@ INJECTIONS: tuple[_Injection, ...] = (
         fail_soft=True,
         order=5,
     ),
-    # 6: PrefetchOracle — unconditional
+    # 6: PrefetchOracle — factory-gated via HLEDAC_ENABLE_PREFETCH_ORACLE env;
+    # default=0 (archived 2026-07-28 — returns None when disabled)
     _Injection(
         name="prefetch_oracle",
         factory=_prefetch_oracle_factory,
@@ -344,9 +351,9 @@ async def apply_injections(
     2. PolicyManager (order=1): factory → inject (no try/except)
     3. Layers (order=2-4): factory → inject with gate check
     4. SecurityCoordinator (order=5): factory → inject with gate check
-    5. PrefetchOracle (order=6): factory → inject
+    5. PrefetchOracle (order=6): factory → inject (env-gated, may return None)
     6. PrefetchPipeline (order=7): factory → inject both pipeline + predictor
-    7. Oracle wiring: inject duckdb_store + ioc_graph into oracle
+    7. Oracle wiring: inject duckdb_store + ioc_graph into oracle (skipped if None)
 
     Parameters
     ----------

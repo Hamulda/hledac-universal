@@ -18,7 +18,7 @@ import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from .async_helpers import safe_create_task, safe_gather_ok, safe_gather_fire_and_forget
+from .async_helpers import parallel_ok, safe_gather_fire_and_forget
 from .lru_cache import LRUCache
 _MLX_AVAILABLE = None
 _MLX_CORE = None
@@ -468,7 +468,7 @@ class IntelligentCache:
     async def _warm_cache(self, keys: list[str], loader: Callable) -> None:
         """Warm cache with keys using async loader (Fix 4)."""
         tasks = [loader(key) for key in keys]
-        results = await safe_gather_ok(*tasks, label='intelligent_cache:639')
+        results = await parallel_ok(*tasks, label='intelligent_cache:639')
         for key, value in zip(keys, results, strict=False):
             if not isinstance(value, Exception):
                 await self.set(key, value)

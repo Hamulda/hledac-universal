@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec.json as _json
 import numpy as np
 import psutil
-from .async_helpers import safe_create_task, safe_gather_ok, parallel
+from .async_helpers import parallel_ok, parallel
 from .lru_cache import LRUCache
 if TYPE_CHECKING:
     pass
@@ -316,8 +316,6 @@ class ParallelExecutionOptimizer:
     def _determine_optimal_workers(self, tasks: list[Any], task_type: TaskType) -> int:
         """Determine optimal number of workers based on task type and system resources"""
         cpu_count = multiprocessing.cpu_count()
-        # E3 FIX: virtual_memory().total is stable system-wide (total RAM never changes at runtime).
-        # Called only during worker-sizing decisions, not per-task — not a hot path.
         memory_gb = psutil.virtual_memory().total / 1024 ** 3
         if task_type == TaskType.CPU_INTENSIVE:
             return min(cpu_count, self.config['execution']['max_workers'])
@@ -360,7 +358,7 @@ class ParallelExecutionOptimizer:
                 results.append(result)
             return results
         chunk_tasks = [execute_chunk(chunk) for chunk in task_chunks]
-        chunk_results_raw = await safe_gather_ok(*chunk_tasks, label='execution_optimizer:489')
+        chunk_results_raw = await parallel_ok(*chunk_tasks, label='execution_optimizer:489')
         chunk_results: list[list[Any]] = [r for r in chunk_results_raw if isinstance(r, list)]
         return [result for chunk_result in chunk_results for result in chunk_result]
 
@@ -380,7 +378,7 @@ class ParallelExecutionOptimizer:
                     results.append(None)
             return results
         worker_tasks = [execute_worker_tasks(worker_id, tasks) for worker_id, tasks in task_distribution.items()]
-        worker_results_raw = await safe_gather_ok(*worker_tasks, label='execution_optimizer:521')
+        worker_results_raw = await parallel_ok(*worker_tasks, label='execution_optimizer:521')
         worker_results: list[list[Any]] = [r for r in worker_results_raw if isinstance(r, list)]
         return [result for worker_result in worker_results for result in worker_result]
 
@@ -701,9 +699,6 @@ class ParallelExecutionOptimizer:
                 _start_time = stored.get('ts', datetime.now(UTC))
             else:
                 _start_time = group.created_at
-            # E3 FIX: use cached system_snapshot instead of raw psutil calls
-            # cpu_percent removed — was non-blocking but still ~µs overhead per call
-            # memory from mach host_statistics64 via get_system_snapshot (cached, zero-syscall warm)
             try:
                 from hledac.universal.core.system_metrics import get_system_snapshot
                 snap = get_system_snapshot()
@@ -743,7 +738,7 @@ class ParallelExecutionOptimizer:
         atexit.register(shutdown_all) in domain_executors.
         """
         await self._concurrency_controller.stop_monitoring()
-        self.thread_pool = None  # type: ignore[assignment]
+        self.thread_pool = None
         logger.info('Parallel execution optimizer cleaned up')
 
 class LoadBalancer:
@@ -773,12 +768,7 @@ class ResourceMonitor:
         try:
             from hledac.universal.core.system_metrics import get_system_snapshot
             snap = get_system_snapshot()
-            return {
-                'cpu_usage': 0.0,  # Not available from mach without blocking call
-                'memory_usage': snap.memory_percent / 100.0,
-                'available_memory_gb': snap.memory_available_gb,
-                'cpu_count': multiprocessing.cpu_count(),
-            }
+            return {'cpu_usage': 0.0, 'memory_usage': snap.memory_percent / 100.0, 'available_memory_gb': snap.memory_available_gb, 'cpu_count': multiprocessing.cpu_count()}
         except Exception:
             return {'cpu_usage': 0.0, 'memory_usage': 0.0, 'available_memory_gb': 0.0, 'cpu_count': multiprocessing.cpu_count()}
 
@@ -1198,7 +1188,7 @@ class MemoryAwareScheduler:
                 logger.warning(f'Memory high ({snap.memory_percent:.1f}%), throttling task {task_id}')
                 await asyncio.sleep(1)
         except Exception:
-            pass  # fail-safe: proceed without blocking
+            pass
         async with self._semaphore:
             self.active_tasks[task_id] = {'start_time': time.time(), 'estimated_memory': estimated_memory_mb}
             try:

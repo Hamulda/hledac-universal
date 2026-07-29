@@ -42,6 +42,9 @@ _VisionEncoder: type | None = None
 _MambaFusion: type | None = None
 _MOBILECLIP_AVAILABLE = False
 _MLX_CORE: Any | None = None  # lazy singleton for mlx.core
+# F-17 FIX: lazy CLIP model singleton — loaded once, reused across calls
+_CLIP_MODEL: Any | None = None  # (model, tokenizer, preprocess) tuple
+_CLIP_TOKENIZER: Any | None = None
 
 
 def _get_mx() -> Any | None:
@@ -59,7 +62,7 @@ def _get_mx() -> Any | None:
 def _lazy_load_modules() -> None:
     """Load multimodal modules lazily on first use."""
     global _VisionEncoder, _MambaFusion, _MOBILECLIP_AVAILABLE
-    global _PdfReader, _PYPDF2_AVAILABLE, _PIL_AVAILABLE
+    global _PdfReader, _PYPDF_AVAILABLE, _PIL_AVAILABLE
     if _VisionEncoder is not None:
         return
     try:
@@ -78,12 +81,12 @@ def _lazy_load_modules() -> None:
     except ImportError:
         _MOBILECLIP_AVAILABLE = False
     try:
-        import PyPDF2
-        _PdfReader = PyPDF2.PdfReader
-        _PYPDF2_AVAILABLE = True
+        import pypdf
+        _PdfReader = pypdf.PdfReader
+        _PYPDF_AVAILABLE = True
     except ImportError:
         _PdfReader = None
-        _PYPDF2_AVAILABLE = False
+        _PYPDF_AVAILABLE = False
     try:
         from PIL import Image
         _PIL_AVAILABLE = True
@@ -93,7 +96,7 @@ _SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif
 _DOCUMENT_SOURCE_TYPE = 'document'
 _MAX_ENVELOPE_SIZE = 4098
 _PdfReader: type | None = None
-_PYPDF2_AVAILABLE = False
+_PYPDF_AVAILABLE = False
 _PIL_AVAILABLE = False
 
 def _extract_file_path_from_payload(payload_text: str | None) -> str | None:
@@ -370,10 +373,35 @@ class MultimodalEnricher:
             log.debug('Failed to read file %s: %s', file_path, exc)
             return None
 
+    async def _get_clip_model(self) -> tuple[Any, Any, Any] | None:
+        """
+        F-17 FIX: Lazy CLIP model singleton — loaded once, reused across calls.
+        Returns (model, tokenizer, preprocess) or None on failure.
+        """
+        global _CLIP_MODEL, _CLIP_TOKENIZER
+        if _CLIP_MODEL is not None:
+            return _CLIP_MODEL
+        try:
+            from mobileclip import create_model_and_transforms, get_tokenizer
+            model, _, preprocess = create_model_and_transforms('mobileclip_s0')
+            tokenizer = get_tokenizer('mobileclip_s0')
+            _CLIP_TOKENIZER = tokenizer
+            _CLIP_MODEL = (model, tokenizer, preprocess)
+            return _CLIP_MODEL
+        except Exception as exc:
+            log.debug('CLIP model load failed: %s', exc)
+            _CLIP_MODEL = ()  # sentinel — don't retry
+            return None
+
     async def _clip_similarity_score(self, file_path: str, vision_embedding: list[float]) -> float | None:
         """
         Compute CLIP text↔image similarity score.
         Returns a float in [0.0, 1.0] or None on failure.
+
+        F-17 FIXES:
+          - Lazy CLIP singleton: model loaded once per process, reused
+          - with Image.open(): prevents fd leak
+          - Correct semaphore: MULTIMODAL_ENRICHMENT
         """
         if not _MOBILECLIP_AVAILABLE:
             return None
@@ -381,17 +409,19 @@ class MultimodalEnricher:
             mx = _get_mx()
             if mx is None:
                 return None
-            from mobileclip import create_model_and_transforms, get_tokenizer
             from PIL import Image
 
+            model_tuple = await self._get_clip_model()
+            if model_tuple is None:
+                return None
+            model, tokenizer, preprocess = model_tuple
+
             def _score():
-                model, _, preprocess = create_model_and_transforms('mobileclip_s0')
-                tokenizer = get_tokenizer('mobileclip_s0')
                 text = Path(file_path).stem.replace('_', ' ')
                 text_tokens = tokenizer([text])
                 text_emb = model.encode_text(text_tokens)
-                image = Image.open(file_path).convert('RGB')
-                image_preprocessed = preprocess(image)
+                with Image.open(file_path) as image:  # F-17: with prevents fd leak
+                    image_preprocessed = preprocess(image.convert('RGB'))
                 image_batch = mx.stack([image_preprocessed])
                 image_emb = model.encode_image(image_batch)
                 text_norm = text_emb / mx.linalg.norm(text_emb)
@@ -416,7 +446,7 @@ class MultimodalEnricher:
         """
         if not findings:
             return {}
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.MULTIMODAL_ENRICHMENT)
 
         async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:
             async with semaphore:
@@ -427,10 +457,10 @@ class MultimodalEnricher:
                 except Exception as exc:
                     log.debug('Batch multimodal enrichment failed for %s: %s', finding_id, exc)
                     return (finding_id, None)
-        # E2-FIX: parallel(taskgroup=True) replaces safe_gather_ok — bounded concurrency
+        # E2-FIX: parallel replaces safe_gather_ok — semaphore inside enrich_one (MULTIMODAL_ENRICHMENT=4) is the concurrency gate
         results = await parallel(
             [enrich_one(f) for f in findings],
-            taskgroup=True, policy="collect", concurrency=8,
+            policy="collect",
             ctx="multimodal_enrichment_batch",
         )
         out = {}
@@ -480,7 +510,7 @@ class DocumentExtractor:
 
 
     Supported formats:
-        - PDF (.pdf) — via PyPDF2
+        - PDF (.pdf) — via pypdf
         - Image (.jpg, .jpeg, .png, .tiff, .tif, .bmp, .gif, .webp) — via PIL + OCR
 
     Fail-safe: all methods return None or empty on failure — never raise.
@@ -636,7 +666,7 @@ class DocumentExtractor:
         """
         if not file_paths:
             return []
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
+        semaphore = get_semaphore_for_testing(ConcurrencyCategory.MULTIMODAL_ENRICHMENT)
 
         async def extract_one(fp: str) -> CanonicalFinding | None:
             async with semaphore:
@@ -646,27 +676,26 @@ class DocumentExtractor:
                     log.debug('DocumentExtractor batch extract failed for %s: %s', fp, exc)
                     return None
         tasks = [extract_one(fp) for fp in file_paths]
-        results = await safe_gather_ok(*tasks, label='analyzer:798')
+        result = await parallel(tasks, policy="collect")
         findings = []
-        for item in results:
-            if isinstance(item, Exception):
-                continue
+        for item in result.ok:
             if item is not None:
                 findings.append(item)
         return findings
 
     async def _extract_pdf(self, file_path: str) -> tuple[str | None, int]:
         """
-        Extract text from PDF using PyPDF2.
+        Extract text from PDF using pypdf.
 
 
         Returns (text_content, page_count). Fail-safe — returns (None, 0) on error.
         """
-        if not _PYPDF2_AVAILABLE or _PdfReader is None:
+        if not _PYPDF_AVAILABLE or _PdfReader is None:
             return (None, 0)
         try:
 
             def _read_pdf():
+                assert _PdfReader is not None  # narrowed by outer check
                 reader = _PdfReader(file_path)
                 page_count = len(reader.pages)
                 if page_count > self.MAX_PDF_PAGES:
@@ -701,9 +730,9 @@ class DocumentExtractor:
             def _read_image() -> str | None:
                 try:
                     from PIL import Image
-                    img = Image.open(file_path)
-                    w, h = img.size
-                    return f'[image: {w}x{h}, mode={img.mode}]'
+                    with Image.open(file_path) as img:  # F-17: with prevents fd leak
+                        w, h = img.size
+                        return f'[image: {w}x{h}, mode={img.mode}]'
                 except Exception as exc:
                     log.debug('DocumentExtractor: image open failed for %s: %s', file_path, exc)
                     return None

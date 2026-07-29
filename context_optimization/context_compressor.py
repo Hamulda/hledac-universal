@@ -19,7 +19,7 @@ from typing import Any
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 import numpy as np
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 FASTEMBED_AVAILABLE = False
 try:
@@ -416,7 +416,7 @@ class ContextCompressor:
         for context, metadata in zip(contexts, metadata_list, strict=False):
             task = self.compress_context(context, metadata=metadata)
             tasks.append(task)
-        return await safe_gather_ok(*tasks, label='context_compressor:701')
+        return await parallel_ok(*tasks, label='context_compressor:701')
 
     async def batch_decompress(self, context_ids: list[str], detail_level: str | None=None, query: str | None=None) -> list[DecompressionResult]:
         """Batch decompress multiple contexts."""
@@ -424,7 +424,7 @@ class ContextCompressor:
         for context_id in context_ids:
             task = self.decompress_context(context_id, detail_level, query)
             tasks.append(task)
-        return await safe_gather_ok(*tasks, label='context_compressor:715')
+        return await parallel_ok(*tasks, label='context_compressor:715')
 
     def list_compressed_contexts(self) -> list[dict[str, Any]]:
         """List all compressed contexts with metadata."""

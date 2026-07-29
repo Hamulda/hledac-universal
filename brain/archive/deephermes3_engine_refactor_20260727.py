@@ -46,7 +46,7 @@ from typing import Any, TypeVar
 import msgspec
 from pathlib import Path
 
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok, safe_wait_for
+from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
 from hledac.universal.core.sync_bridge import stream_via_queue
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.lru_cache import LRUCache

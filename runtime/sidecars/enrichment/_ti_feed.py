@@ -11,7 +11,7 @@ class TIFeedSidecarAdapter(SchedulerBackedSidecarAdapter):
 
     Fetches structured TI feeds (NVD API + CISA KEV catalog) in parallel
     via SprintScheduler._run_ti_feed_sidecar(). Registered adapters are
-    dispatched with safe_gather_ok for bounded concurrent execution.
+    dispatched with parallel_ok for bounded concurrent execution.
     """
 
     sidecar_id: str = "ti_feed"

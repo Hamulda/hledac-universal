@@ -29,12 +29,9 @@ import secrets
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any, TypeVar, cast
-from .async_helpers import safe_create_task, safe_gather_ok, parallel
+from .async_helpers import parallel_ok, parallel
 logger = logging.getLogger(__name__)
-
-# Crypto-safe jitter — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
-
 T = TypeVar('T', default=Any)
 
 class TaskResult:
@@ -119,7 +116,7 @@ async def bounded_map[T](tasks: Sequence[tuple[Callable[..., Awaitable[T]], tupl
         result = await parallel(coros, taskgroup=True, policy='raise', ctx=f'async_utils:run[{len(tasks)}]')
         return result.ok
     coros = [_run(i, fn, a, k) for i, (fn, a, k) in enumerate(tasks)]
-    gathered = await safe_gather_ok(*coros, label='async_utils:149')
+    gathered = await parallel_ok(*coros, label='async_utils:149')
     if cancel_on_error:
         for res in gathered:
             if isinstance(res, BaseException):
@@ -197,7 +194,7 @@ async def bounded_gather[T](*coros: Awaitable[T], max_concurrent: int=3, return_
                 async with asyncio.timeout(per_task_timeout):
                     return await coro
             return await coro
-    return await safe_gather_ok(*(_run(c) for c in coros), label='async_utils:242')
+    return await parallel_ok(*(_run(c) for c in coros), label='async_utils:242')
 
 class BoundedTaskSet:
     """

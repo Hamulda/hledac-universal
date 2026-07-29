@@ -1,10 +1,11 @@
 """
-Intel — Backward-Compat Facade
-==============================
+Intel — Backward-Compat Facade (stub-free)
+==========================================
 
 ARCHITECTURE (post-F350M-R Phase 2):
   recon/           — Canonical OSINT namespace (capability forest + primitives)
-  intel/          — DEPRECATED facade → recon/ (emits DeprecationWarning)
+  network/         — Network primitives (passive_dns, bgp_monitor, etc.)
+  intel/          — DEPRECATED facade → recon/ + network/ (emits DeprecationWarning)
 
 RECON/ SUBSTRUCTURE:
   recon/dns/          — passive_dns, dns_tunnel_detector
@@ -13,17 +14,17 @@ RECON/ SUBSTRUCTURE:
   recon/protocols/    — jarm_fingerprinter, gemini_transport
   recon/              — intel_seed + 35+ capability forest modules
 
-All production code should import from canonical paths (recon/*).
-This facade preserves backward compatibility for `from intel.X` imports.
-
 DEPRECATED (F350M-R A4):
-  All intel/ re-exports now emit DeprecationWarning (stacklevel=2).
-  Physical stub files removed (A4-5) — intel/__init__.__getattr__ handles
-  all redirects via _RECON_MAP. The canonical path is recon/*.
+  Physical stub files removed — ``__getattr__`` handles all redirects.
+  All ``from intel.X`` imports emit DeprecationWarning and delegate
+  to canonical paths in ``recon/*`` or ``network/*``.
 
-SIDE CAR ADAPTERS (recon/):
-  greynoise_lane, shodan_lane, doh_lane, dark_web_lane,
-  network_reconnaissance_lane, ct_lane, bgp_lane, ...
+Migration (search+replace):
+  ``from hledac.universal.intel.X`` → ``from hledac.universal.recon.X``
+  ``from hledac.universal.intel.bgp_monitor`` → ``from hledac.universal.network.bgp_monitor``
+  ``from hledac.universal.intel.passive_dns`` → ``from hledac.universal.recon.dns.passive_dns``
+  ``from hledac.universal.intel.passive_fingerprint`` → ``from hledac.universal.network.passive_fingerprint``
+  ``from hledac.universal.intel.ct_log_scanner`` → ``from hledac.universal.network.ct_log_scanner``
 """
 
 from __future__ import annotations
@@ -32,21 +33,20 @@ import warnings
 from importlib import import_module
 
 
-# ── Module-level __getattr__ for lazy re-exports ─────────────────────────────────
-# DEPRECATED (F350M-R A4): emits DeprecationWarning on every attribute access.
-
+# Canonical redirect map — all physical stubs removed (F350M-R A4-5)
 _RECON_MAP: dict[str, str] = {
-    # primitives (moved from intel/ to network/ or recon/dns/ subdirs)
-    # network/ = infrastructure facade → canonical paths below
+    # network/ primitives
     "bgp_monitor": "network.bgp_monitor",
     "passive_fingerprint": "network.passive_fingerprint",
+    "ct_log_scanner": "network.ct_log_scanner",
     "passive_dns": "recon.dns.passive_dns",
     "dns_tunnel_detector": "recon.dns.dns_tunnel_detector",
-    "ct_log_scanner": "recon.cert.ct_log_scanner",
+    # recon/protocols/
     "jarm_fingerprinter": "recon.protocols.jarm_fingerprinter",
     "gemini_transport": "recon.protocols.gemini_transport",
+    # recon/ root
     "intel_seed": "recon.intel_seed",
-    # capability forest (moved from intelligence/ to recon/)
+    # capability forest (recon/)
     "greynoise_lane": "recon.greynoise_lane",
     "shodan_lane": "recon.shodan_lane",
     "doh_lane": "recon.doh_lane",

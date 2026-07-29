@@ -13,8 +13,9 @@ Package Structure
 - ``explainer.py``       — SimpleNodeAblationExplainer + explain_with_mlx
 - ``packs.py``           — HypothesisPack + SourceHint (bounded query packs)
 - ``dempster_shafer.py`` — Dempster-Shafer evidence theory
-- ``eig.py``             — Evidence Inference Graph
+- ``eig.py``              — Evidence Inference Graph
 - ``hypothesisgenerator.py`` — HypothesisGenerator (heuristic + DSPy)
+- ``types/``             — Canonical type subpackage (Evidence, HypothesisType, etc.)
 
 Naming Conflict Resolution
 -------------------------
@@ -22,12 +23,10 @@ The pip ``hypothesis`` package (property-based testing) is unrelated.
 All homegrown OSINT hypothesis code lives in this package (``hledac_hypothesis``),
 not in a package named ``hypothesis``.
 
-Backward Compatibility
----------------------
-``brain/hypothesis_engine/`` is a backward-compat shim that re-exports from
-this package. Existing imports continue to work:
-    from hledac.universal.brain.hypothesis_engine import AdversarialVerifier  # OK (shim)
-    from hledac_hypothesis import AdversarialVerifier      # Preferred
+M1 8GB Lazy Invariant:
+  All submodules are loaded lazily via ``__getattr__`` — no MLX, numpy, or
+  DSPy is loaded at import time. Only ``_types`` constants (enums/ints) and
+  ``LANE_REGISTRY`` are imported eagerly.
 
 Canonical Imports (NEW)
 ----------------------
@@ -36,14 +35,23 @@ Canonical Imports (NEW)
     from hledac_hypothesis.adversarial import AdversarialVerifier
     from hledac_hypothesis.causal import CausalReasoner
     from hledac_hypothesis.packs import HypothesisPack, SourceHint
+
+Backward Compatibility
+---------------------
+``brain/hypothesis_engine/`` and ``brain.research_hypothesis_engine`` are
+backward-compat shims that re-export from this package.
 """
 
+from __future__ import annotations
 
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
-# Re-export types from submodules for convenience
+logger = logging.getLogger(__name__)
+
+# ── Eager: only type constants and lane registry (no MLX/numpy/DSPy) ───────────
+from hledac.universal.runtime.lane_registry import LANE_REGISTRY
+
 from ._types import (
     CO_OCCURRENCE_FP16,
     MAX_CAUSAL_ENTITIES,
@@ -73,44 +81,48 @@ from ._types import (
     _to_operator_shortlist,
 )
 
-from .adversarial import (
-    AdversarialVerifier,
+# ── Lazy __getattr__ — all submodules loaded on first use ──────────────────────
+_SUPMOD_LAZY: tuple[str, ...] = (
+    "AdversarialVerifier",
+    "CausalReasoner",
+    "SimpleNodeAblationExplainer",
+    "explain_with_mlx",
+    "HypothesisPack",
+    "SourceHint",
 )
 
-from .causal import (
-    CausalReasoner,
+_ENGINE_LAZY: tuple[str, ...] = (
+    "HypothesisEngine",
+    "Hypothesis",
+    "FalsificationResult",
+    "DarkQuery",
+    "DarkQueryType",
+    "InferenceEngineProtocol",
+    "ResearchHypothesis",
+    "HypothesisGenerator",
 )
 
-from .explainer import (
-    SimpleNodeAblationExplainer,
-    explain_with_mlx,
-)
 
-from .packs import (
-    HypothesisPack,
-    SourceHint,
-)
-
-logger = logging.getLogger(__name__)
-from hledac.universal.runtime.lane_registry import LANE_REGISTRY
-
-def _is_dspy_enabled() -> bool:
-    """DSPy lane enablement check via LaneRegistry."""
-    return LANE_REGISTRY.is_enabled("dspy")
-
-
-# Lazy exports for HypothesisEngine and related classes from brain.research_hypothesis_engine
 def __getattr__(name: str) -> Any:
-    if name in (
-        "HypothesisEngine",
-        "Hypothesis",
-        "FalsificationResult",
-        "DarkQuery",
-        "DarkQueryType",
-        "InferenceEngineProtocol",
-        "ResearchHypothesis",
-        "HypothesisGenerator",
-    ):
+    # AdversarialVerifier, CausalReasoner, explainer, packs — lazy submodules
+    if name in _SUPMOD_LAZY:
+        import sys
+        mod_map: dict[str, str] = {
+            "AdversarialVerifier": "adversarial",
+            "CausalReasoner": "causal",
+            "SimpleNodeAblationExplainer": "explainer",
+            "explain_with_mlx": "explainer",
+            "HypothesisPack": "packs",
+            "SourceHint": "packs",
+        }
+        mod_name = mod_map[name]
+        module = __import__(f"hledac_hypothesis.{mod_name}", fromlist=[name])
+        val = getattr(module, name)
+        globals()[name] = val
+        return val
+
+    # HypothesisEngine + engine-bound types — from brain shim (lazy)
+    if name in _ENGINE_LAZY:
         try:
             from hledac.universal.brain.research_hypothesis_engine import (
                 FalsificationResult,
@@ -121,7 +133,7 @@ def __getattr__(name: str) -> Any:
             )
             from hledac_hypothesis.hypothesisgenerator import HypothesisGenerator, ResearchHypothesis
 
-            exports = {
+            exports: dict[str, Any] = {
                 "HypothesisEngine": HypothesisEngine,
                 "HypothesisStatus": HypothesisStatus,
                 "HypothesisPack": HypothesisPack,
@@ -149,6 +161,7 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+# ── TYPE_CHECKING block — IDE autocompletion without runtime cost ──────────────
 if TYPE_CHECKING:
     from hledac.universal.brain.research_hypothesis_engine import (
         DarkQuery,
@@ -167,8 +180,8 @@ if TYPE_CHECKING:
     from hledac_hypothesis.hypothesisgenerator import HypothesisGenerator, ResearchHypothesis
 
 
-__all__ = [
-    # Types from _types
+__all__: list[str] = [
+    # Eager: type constants (no runtime cost — enums/ints)
     "HypothesisType",
     "HypothesisStatus",
     "TestType",
@@ -193,16 +206,15 @@ __all__ = [
     "Contradiction",
     "CrossReferenceResult",
     "AdversarialReport",
-    # Classes from submodules
+    # Lazy submodules (adversarial, causal, explainer, packs)
     "AdversarialVerifier",
     "SimpleNodeAblationExplainer",
     "SourceHint",
     "HypothesisPack",
     "CausalReasoner",
     "InferenceEngineProtocol",
-    # Utilities
     "_to_operator_shortlist",
-    # Lazy exports
+    # Lazy engine exports
     "HypothesisEngine",
     "Hypothesis",
     "ResearchHypothesis",

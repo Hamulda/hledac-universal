@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 import msgspec
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 
 class LinkCheckResult(msgspec.Struct):
@@ -124,7 +124,7 @@ class LinkRotDetector:
             async with semaphore:
                 return await self.check(url)
         tasks = [check_with_limit(url) for url in urls]
-        return await safe_gather_ok(*tasks, label='utils:179')
+        return await parallel_ok(*tasks, label='utils:179')
 
     async def close(self):
         """Close HTTP session"""

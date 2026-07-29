@@ -222,7 +222,6 @@ def _get_mlx_memory_module() -> Any:
 def _probe_gpu_fraction() -> float:
     """Probe MLX Metal GPU memory fraction (active / dynamic_limit)."""
     try:
-        global mx
         limit = 0
         mod = _get_mlx_memory_module()
         if mod is not None:
@@ -231,6 +230,9 @@ def _probe_gpu_fraction() -> float:
             except Exception:
                 pass
         if limit <= 0:
+            return 0.0
+        mx = _get_mlx_core()
+        if mx is None:
             return 0.0
         try:
             active = mx.get_active_memory()
@@ -328,20 +330,51 @@ def get_gpu_arbiter() -> GPUArbiter:
                 _arbiter = GPUArbiter()
     return _arbiter
 
-# ── MLX import ────────────────────────────────────────────────────────────────
+# ── MLX import — LAZY (ISSUE 3.2 + F350M-R A-07) ────────────────────────────
+# Top-level mlx.core / mlx_embeddings imports moved to lazy accessors.
+# Breaks the PLANNER: ZERO MLX invariant when imported by runtime planners.
+# Fix: defer to first actual use, not module-load time.
 
-try:
-    import mlx.core as mx
-    MLX_AVAILABLE = True
-except ImportError:
-    MLX_AVAILABLE = False
-    warnings.warn('MLX not available. Install: pip install mlx>=0.15.0', stacklevel=2)
-try:
-    from mlx_embeddings import load as mlx_embeddings_load
-    MLX_EMBEDDINGS_AVAILABLE = True
-except ImportError:
-    MLX_EMBEDDINGS_AVAILABLE = False
-    warnings.warn('mlx-embeddings not available. Install: pip install mlx-embeddings', stacklevel=2)
+MLX_AVAILABLE: bool | None = None
+MLX_EMBEDDINGS_AVAILABLE: bool | None = None
+
+# Lazy mlx.core accessor (reused from legacy.py to ensure single init point)
+_mlx_core_module: Any | None = None
+
+
+def _get_mlx_core() -> Any | None:
+    """Lazily cached mlx.core module reference. Returns None if unavailable."""
+    global _mlx_core_module
+    if _mlx_core_module is None:
+        try:
+            import mlx.core as _mx
+            _mlx_core_module = _mx
+        except ImportError:
+            _mlx_core_module = False
+    return _mlx_core_module if _mlx_core_module is not False else None
+
+
+def _lazy_mlx_init() -> None:
+    """Lazy MLX init — called on first use of MLXEmbeddingManager, not at module load."""
+    global MLX_AVAILABLE, MLX_EMBEDDINGS_AVAILABLE
+    if MLX_AVAILABLE is not None:
+        return  # Already initialized
+    _get_mlx_core()  # Probe availability
+    MLX_AVAILABLE = _mlx_core_module is not None
+    if not MLX_AVAILABLE:
+        warnings.warn('MLX not available. Install: pip install mlx>=0.15.0', stacklevel=2)
+    try:
+        from mlx_embeddings import load as _load
+        globals()['mlx_embeddings_load'] = _load
+        MLX_EMBEDDINGS_AVAILABLE = True
+    except ImportError:
+        MLX_EMBEDDINGS_AVAILABLE = False
+        warnings.warn('mlx-embeddings not available. Install: pip install mlx-embeddings', stacklevel=2)
+
+
+def _check_mlx_available() -> None:
+    """Call before using MLXEmbeddingManager — triggers lazy init."""
+    _lazy_mlx_init()
 _EMBED_CACHE_DIR = Path.home() / '.hledac' / 'cache' / 'mlx_embed'
 _EMBED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _PREWARM_LOCK = threading.Lock()

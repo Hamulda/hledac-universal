@@ -23,7 +23,6 @@ Anti-patterns:
 import asyncio
 import logging
 import re
-
 from hledac.universal.utils.locks import LazyAsyncioLock
 import time
 from dataclasses import dataclass
@@ -31,7 +30,7 @@ import msgspec
 from msgspec import field
 from typing import Any
 import httpx
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 _TIMEOUT_10 = httpx.Timeout(10.0)
 _TIMEOUT_15 = httpx.Timeout(15.0)
@@ -270,7 +269,7 @@ async def _search_pastebin(query: str, session: httpx.AsyncClient) -> list[Paste
             if not (emails or ips or secrets):
                 return None
             return PasteFinding(uri=uri, source='pastebin', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=_make_snippet(text))
-        gathered = await safe_gather_ok(*[_scrape_one(p) for p in paste_ids], label='pastebin')
+        gathered = await parallel_ok(*[_scrape_one(p) for p in paste_ids], label='pastebin')
         for r in gathered:
             if r is not None:
                 findings.append(r)
@@ -308,7 +307,7 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
             if not (emails or ips or secrets):
                 return None
             return PasteFinding(uri=uri, source='paste_gg', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=_make_snippet(text))
-        gathered = await safe_gather_ok(*[_scrape_one(it) for it in items_batch], label='paste_gg')
+        gathered = await parallel_ok(*[_scrape_one(it) for it in items_batch], label='paste_gg')
         for r in gathered:
             if r is not None:
                 findings.append(r)
@@ -354,7 +353,7 @@ async def _search_rentry(query: str, session: httpx.AsyncClient) -> list[PasteFi
             if not (emails or ips or secrets):
                 return None
             return PasteFinding(uri=uri, source='rentry', extracted_secrets=secrets, emails=emails, ip_addresses=ips, context_snippet=_make_snippet(text))
-        gathered = await safe_gather_ok(*[_scrape_one(p) for p in raw_paths_batch], label='rentry')
+        gathered = await parallel_ok(*[_scrape_one(p) for p in raw_paths_batch], label='rentry')
         for r in gathered:
             if r is not None:
                 findings.append(r)

@@ -59,17 +59,18 @@ class RouterMLP:
     __slots__ = ('_nn', 'fc1', 'fc2')
 
     def __init__(self, input_dim: int, num_experts: int, hidden_dim: int=128):
-        global _torch_nn
+        # ISSUE #5.5: Removed redundant global _torch_nn + double self._nn assignment.
+        # self._nn is instance-only; torch.nn is module-level cache for lazy import.
         if MLX_AVAILABLE and mlx_nn is not None:
             _nn = mlx_nn
         else:
+            global _torch_nn
             if _torch_nn is None:
                 import torch.nn as _torch_nn
             _nn = _torch_nn
         self._nn = _nn
         self.fc1 = _nn.Linear(input_dim, hidden_dim)
         self.fc2 = _nn.Linear(hidden_dim, num_experts)
-        self._nn = _nn
 
     def __call__(self, x) -> mx.array:
         """Forward pass vrací logits pro každého experta"""

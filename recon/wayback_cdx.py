@@ -32,7 +32,7 @@ import msgspec
 from typing import Any
 import httpx
 from hledac.universal.transport.session_pool import session_pool
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 except ImportError:
@@ -212,7 +212,7 @@ async def cdx_deep_search_batch(domains: list[str], session: httpx.AsyncClient, 
             for r in unique:
                 seen_urls.add(r.original)
             return unique
-    gathered = await safe_gather_ok(*[_fetch_one(d) for d in domains], label='wayback_cdx:315')
+    gathered = await parallel_ok(*[_fetch_one(d) for d in domains], label='wayback_cdx:315')
     for res in gathered:
         if isinstance(res, list):
             all_results.extend(res)
@@ -274,7 +274,7 @@ class WaybackCDXDeepSearch:
                     await asyncio.sleep(RATE_LIMIT_S - elapsed)
                 last_request = time.monotonic()
                 return await cdx_deep_search(domain, session, match_type=match_type, from_date=from_date, to_date=to_date, limit=limit_per_domain)
-        gathered = await safe_gather_ok(*[_fetch_one(d) for d in domains_or_urls], label='wayback_cdx:410')
+        gathered = await parallel_ok(*[_fetch_one(d) for d in domains_or_urls], label='wayback_cdx:410')
         all_results: list[CDXSearchResult] = []
         for res in gathered:
             if isinstance(res, list):

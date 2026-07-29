@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import psutil
-from hledac.universal.utils.async_helpers import safe_gather_ok, safe_wait_for
+from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
 logger = logging.getLogger(__name__)
 MLX_LM_AVAILABLE = True
 try:
@@ -17,7 +17,7 @@ except ImportError:
     logger.warning('mlx_lm not available, SLM decomposer will use fallback')
 
 class SLMDecomposer:
-    __slots__ = tuple(('_model', '_model_version', '_tokenizer', 'cache', 'governor', 'max_parallel', 'model_name'))
+    __slots__ = tuple(('_model', '_model_version', '_tokenizer', 'cache', 'governor', 'max_parallel', 'model_name', '_loaded'))
 
     def __init__(self, governor, cache, model_name: str='mlx-community/Qwen2.5-0.5B-4bit', max_parallel: int=2):
         self.governor = governor
@@ -27,11 +27,34 @@ class SLMDecomposer:
         self._model = None
         self._tokenizer = None
         self._model_version = 1
+        self._loaded = False
+
+    async def unload(self) -> None:
+        """
+        ISSUE-2.4 FIX: Unload model from Metal and reclaim memory.
+
+        Sets _model/_tokenizer to None and calls metal_reclaim() to flush
+        Metal active memory. Prevents ~400MB-1GB per-sprint leak on M1 8GB.
+        Idempotent — safe to call multiple times.
+        """
+        if not self._loaded and self._model is None:
+            return
+        self._model = None
+        self._tokenizer = None
+        self._loaded = False
+        if MLX_LM_AVAILABLE:
+            try:
+                from hledac.universal.utils.mlx_memory import metal_reclaim
+                metal_reclaim()
+            except Exception as e:
+                logger.debug(f'SLMDecomposer.unload: metal_reclaim error: {e}')
+        logger.info(f'SLM model {self.model_name} unloaded')
 
     async def _load_model(self):
         if self._model is None and MLX_LM_AVAILABLE:
             loop = asyncio.get_running_loop()
             self._model, self._tokenizer = await loop.run_in_executor(None, lambda: load(self.model_name))
+            self._loaded = True
             logger.info(f'SLM model {self.model_name} loaded')
 
     async def decompose(self, task_description: str, context: dict) -> list[dict]:
@@ -53,7 +76,7 @@ class SLMDecomposer:
                     parallel = 3
         prompts = self._build_prompts(task_description, context, parallel)
         tasks = [self._call_slm(prompt, timeout=2.0) for prompt in prompts]
-        results = await safe_gather_ok(*tasks, label='slm_decomposer:71')
+        results = await parallel_ok(*tasks, label='slm_decomposer:71')
         best = None
         best_score = -1
         for res in results:

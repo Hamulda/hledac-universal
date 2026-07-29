@@ -25,7 +25,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 from .confidence_policy import compute_confidence as _compute_confidence
 _AC_MATCHER: Any = None
 
@@ -37,8 +37,6 @@ def _get_ac_matcher() -> Any:
             from hledac.universal.core.rust_backend import rust as _rust_backend
             if _rust_backend.is_available and _rust_backend.aho is not None:
                 patterns = [p[1].pattern for p in _PLATFORM_PATTERNS]
-                # labels=[] avoids unnecessary allocation; social_identity_miner only
-                # calls find_any() — scan() results are never used here.
                 _AC_MATCHER = _rust_backend.aho.AhoCorasickMatcher(patterns, labels=[])
             else:
                 _AC_MATCHER = None
@@ -179,7 +177,7 @@ class SocialIdentityMiner:
         gathered: list[Any] = []
         try:
             async with asyncio.timeout(30.0):
-                gathered = await safe_gather_ok(*tasks, label='social_identity_miner:331')
+                gathered = await parallel_ok(*tasks, label='social_identity_miner:331')
         except TimeoutError:
             for t in tasks:
                 try:

@@ -158,9 +158,6 @@ class DeepSourceRegistry:
         if self._lmdb_path is None:
             return None
         try:
-            # Lazy import uvnitř — open_lmdb je sám lazy wrapper,
-            # ale import samotného paths modulu může mít side-effects.
-            # Kompletní lazy loading: nic se nestane dokud není _open_env zavolána.
             from pathlib import Path as _Path
             from hledac.universal.paths import open_lmdb as _open_lmdb
             self._env = _open_lmdb(_Path(self._lmdb_path), map_size=LMDB_MAP_SIZE, max_dbs=2)
@@ -200,7 +197,7 @@ class DeepSourceRegistry:
                     count = 0
                     for k, v in cur:
                         try:
-                            sid = k.decode('utf-8')  # S-02: key IS the source_id (already plain str), decode only once
+                            sid = k.decode('utf-8')
                             payload = orjson.loads(v)
                             ts = payload.get('last_verified')
                             existing = self._sources.get(sid)
@@ -297,7 +294,6 @@ class DeepSourceRegistry:
             return False
         try:
             async with self._get_semaphore():
-                # F-01: session_pool.httpx() returns shared singleton AsyncClient
                 session = await session_pool.httpx()
                 async with session.head(url, follow_redirects=True) as resp:
                     return resp.status_code < 500
@@ -340,8 +336,8 @@ class DeepSourceRegistry:
         tasks = [_one(sid) for sid in self._sources]
         if not tasks:
             return results
-        from hledac.universal.utils.async_helpers import safe_gather_ok
-        outcomes = await safe_gather_ok(*tasks, return_exceptions=True)
+        from hledac.universal.utils.async_helpers import parallel_ok
+        outcomes = await parallel_ok(*tasks, return_exceptions=True)
         for outcome in outcomes:
             if isinstance(outcome, BaseException):
                 continue

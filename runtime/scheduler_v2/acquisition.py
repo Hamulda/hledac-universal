@@ -483,7 +483,7 @@ class AcquisitionOrchestrator:
     ) -> CycleResult:
         """Stable mode: feed and public discovery run concurrently.
 
-        Issue #8 fix: both branches launch together via create_task + safe_gather_ok.
+        Issue #8 fix: both branches launch together via create_task + parallel_ok.
         """
         _config = ctx.config
         _result = ctx.result

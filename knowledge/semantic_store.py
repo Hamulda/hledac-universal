@@ -1,16 +1,15 @@
 """
-Sprint 8SB — SemanticStore: FastEmbed + LanceDB Semantic IOC Search
+Sprint 8SB — SemanticStore: MLX + LanceDB Semantic IOC Search
 Sprint F228B: CoreML/ANE embedder as preferred backend.
 
 Singleton lifecycle — initialize() v BOOT, close() v TEARDOWN.
 ROLE: Consumer/Enrichment (NOT backend owner, NOT grounding authority)
 
-FastEmbed BAAI/bge-small-en-v1.5 ONNX model (dim=384, ~33MB, CoreML-friendly).
+MLXEmbeddingManager (ModernBERT, unified memory) + LanceDB ANN index.
 LanceDB ANN index pod ~/.hledac/lancedb/ — append mode, nikdy drop+recreate.
 
 ANE path (preferred): CoreMLEmbedder → CoreML (.mlmodelc) → ANE
-CPU fallback: FastEmbed TextEmbedding (onnxruntime)
-Hash fallback: always works, zero RAM.
+Hash fallback: deterministic zero-RAM hash when MLX/ANE unavailable
 
 NENÍ owner backend storage → persistent_layer (depr!)
 
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ── Constants ───────────────────────────────────────────────────────────────────
-_EMBED_DIM = 384
+_EMBED_DIM = 256  # E-22 FIX: standardize to 256d to match EmbeddingCache + pipeline MRL
 _MAX_PENDING = 2000  # Bounded pending buffer
 _MAX_TEXT_LEN = 4096
 _TABLE_NAME = "semantic_ioc_v1"
@@ -71,11 +70,10 @@ except ImportError:
 
 class SemanticStore:
     """
-    FastEmbed + LanceDB pro sémantické vyhledávání findings.
+    MLX + LanceDB pro sémantické vyhledávání findings.
 
     ANE path (F228B): CoreMLEmbedder.embed() → CoreML → ANE (preferred)
-    CPU fallback: self._model.embed() — FastEmbed TextEmbedding
-    Hash fallback: always works.
+    Hash fallback: deterministic zero-RAM hash when MLX/ANE unavailable.
 
     Lifecycle:
         await store.initialize()  # BOOT — load model + open LanceDB
@@ -107,7 +105,7 @@ class SemanticStore:
         self._db: lancedb.LanceDBConnection | None = None  # lancedb.LanceDBConnection
         self._table: lancedb.Table | None = None  # lancedb.Table
         self._vec_db: Any = None  # Issue 4.3: sqlite-vec.Connection fallback
-        self._model: Any = None  # FastEmbed TextEmbedding
+        self._model: Any = None  # removed FastEmbed (E-23) — hash fallback only
         # Sprint F228B: CoreML/ANE embedder — lazy async init in initialize()
         # (get_coreml_embedder() is now async; __init__ cannot await)
         self._coreml_embedder: CoreMLEmbedder | None = None
@@ -121,7 +119,7 @@ class SemanticStore:
     # -------------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        """BOOT — load FastEmbed model + open LanceDB conn."""
+        """BOOT — load MLX/CoreML embedder + open LanceDB conn."""
         if self._initialized:
             return
 
@@ -165,20 +163,9 @@ class SemanticStore:
             logger.debug("[SEMSTORE] MLXEmbeddingManager not available: %s", e)
             self._mlx_embedder = None
 
-        # CPU fallback: load FastEmbed (always works, if mlx-embeddings unavailable)
+        # E-23 FIX: FastEmbed removed — zero-RAM hash fallback is sufficient when MLX/ANE unavailable.
+        # FastEmbed (ONNX Runtime ~100MB + BGE model ~33MB) was redundant with MLXEmbeddingManager.
         self._model = None
-        if self._mlx_embedder is None:
-            try:
-                from fastembed import TextEmbedding
-
-                self._model = TextEmbedding("BAAI/bge-small-en-v1.5")
-                # Warm-up embed
-                list(self._model.embed(["warmup"]))
-                logger.info("[SEMSTORE] FastEmbed loaded (CPU fallback)")
-            except ImportError:
-                logger.warning("[SEMSTORE] FastEmbed not available — MLX only")
-            except Exception as e:
-                logger.warning("[SEMSTORE] FastEmbed load failed: %s", e)
 
         # Open LanceDB (primary) — falls back to sqlite-vec on failure
         try:
@@ -280,7 +267,7 @@ class SemanticStore:
         Batch embed + LanceDB upsert.
 
         ANE path: CoreMLEmbedder.embed() → CoreML → ANE (F228B, preferred)
-        CPU fallback: self._model.embed() → FastEmbed onnxruntime
+        Hash fallback: deterministic zero-RAM hash when MLX/ANE unavailable
         """
         if not self._initialized or self._table is None:
             return 0
@@ -315,10 +302,8 @@ class SemanticStore:
                 )
             except Exception as e:
                 logger.warning("[SEMSTORE] MLXEmbeddingManager embed failed: %s", e)
-                embeddings = await loop.run_in_executor(
-                    None, lambda: list(self._model.embed(texts))
-                )
-                backend_name = "cpu_fallback"
+                # E-23: FastEmbed removed — fall through to hash_only below
+                embeddings = None
         # Sprint F228B: ANE path preferred — use CoreMLEmbedder (sync, must run in executor)
         elif self._coreml_embedder is not None and self._coreml_embedder.is_loaded:
             backend_name = "ane"
@@ -331,23 +316,13 @@ class SemanticStore:
                 )
             except Exception as e:
                 logger.warning("[SEMSTORE] CoreMLEmbedder embed failed: %s", e)
-                embeddings = await loop.run_in_executor(
-                    None, lambda: list(self._model.embed(texts))
-                )
-                backend_name = "cpu_fallback"
-        # FastEmbed CPU path
-        elif self._model is not None:
-            backend_name = "cpu_fallback"
-            embeddings = await loop.run_in_executor(
-                None, lambda: list(self._model.embed(texts))
-            )
-        else:
-            # Hash fallback — deterministic zero-RAM
+                # E-23: FastEmbed removed — fall through to hash_only below
+                embeddings = None
+        # E-23 FIX: FastEmbed removed — hash-only fallback when MLX/ANE unavailable
+        if embeddings is None:
             backend_name = "hash_only"
             logger.debug("[SEMSTORE] Using hash fallback embed")
             import hashlib
-
-            import numpy as np
 
             emb_dim = self._embed_dim
             embeddings = []
@@ -429,14 +404,15 @@ class SemanticStore:
         Returns list of dicts with keys: text, source_type, finding_id, ts,
         ioc_types, score (0.0–1.0 where 1.0 = identical).
         """
-        if self._model is None:
-            return []
+        # E-23: FastEmbed removed — use hash fallback for query vector
+        import hashlib
 
-        loop = asyncio.get_running_loop()
-        q_vec = await loop.run_in_executor(
-            None,
-            lambda: list(self._model.embed([query]))[0],
-        )
+        h = int(hashlib.sha256(query[:512].encode()).hexdigest()[:16], 16)
+        q_vec = np.zeros(self._embed_dim, dtype=np.float32)
+        for j in range(min(self._embed_dim, 384)):
+            q_vec[j] = float((h >> (j % 32)) & 1) * 2.0 - 1.0
+        norm = np.linalg.norm(q_vec)
+        q_vec = q_vec / norm if norm > 1e-9 else q_vec
 
         # Issue 4.3: LanceDB (primary) or sqlite-vec (fallback)
         if self._table is not None:
@@ -523,12 +499,7 @@ class SemanticStore:
             except Exception:  # noqa: BLE001
                 pass
 
-        if self._model is not None:
-            return await loop.run_in_executor(
-                None, lambda: list(self._model.embed([query]))[0]
-            )
-
-        # Hash fallback
+        # E-23: FastEmbed removed — fall through to hash fallback below
         import hashlib
 
         h = int(hashlib.sha256(query[:512].encode()).hexdigest()[:16], 16)

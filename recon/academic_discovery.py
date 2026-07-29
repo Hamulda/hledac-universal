@@ -37,7 +37,7 @@ from typing import Any
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads, dumps_str as _msgspec_dumps_str
 
 from hledac.universal.core.concurrency_registry import ConcurrencyBudgetRegistry, ConcurrencyCategory
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 
 logger = logging.getLogger(__name__)
 
@@ -579,7 +579,7 @@ async def search_academic_all(
         async with semaphore:
             return await search_func(query, max_results)
 
-    # F262D: migrated asyncio.gather → safe_gather_ok (fail-soft invariant preserved)
+    # F262D: migrated asyncio.gather → parallel_ok (fail-soft invariant preserved)
     _acad_result = await parallel(
         [
             limited_search("arxiv", search_arxiv),

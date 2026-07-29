@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import msgspec
 from enum import StrEnum
 from typing import TYPE_CHECKING
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 if TYPE_CHECKING:
     import httpx
 else:
@@ -142,7 +142,7 @@ async def full_doh_profile(domain: str, session: httpx.AsyncClient, *, limit: in
     for rt in record_types:
         for provider in DOH_PROVIDERS:
             tasks.append(resolve_doh(domain, rt, session, provider=provider, timeout=timeout))
-    results = await safe_gather_ok(*tasks, label='doh_lane:235')
+    results = await parallel_ok(*tasks, label='doh_lane:235')
     all_findings: list[DOHFinding] = []
     for r in results:
         if isinstance(r, list):
@@ -167,7 +167,7 @@ async def subdomain_probe(domain: str, session: httpx.AsyncClient, wordlist: lis
     if wordlist is None:
         wordlist = COMMON_SUBDOMAINS
     tasks = [resolve_doh(f'{sub}.{domain}', RecordType.A, session, timeout=timeout) for sub in wordlist]
-    results = await safe_gather_ok(*tasks, label='doh_lane:274')
+    results = await parallel_ok(*tasks, label='doh_lane:274')
     alive: list[str] = []
     for sub, res in zip(wordlist, results, strict=False):
         if isinstance(res, list) and res and res[0].value:
@@ -207,7 +207,7 @@ class DOHAdapter:
         """Run DOH profile + subdomain probe concurrently."""
         profile_task = full_doh_profile(domain, session)
         sub_task = subdomain_probe(domain, session)
-        profile_findings, subdomains = await safe_gather_ok(profile_task, sub_task, label='doh_lane:339')
+        profile_findings, subdomains = await parallel_ok(profile_task, sub_task, label='doh_lane:339')
         if isinstance(profile_findings, Exception):
             profile_findings = []
         if isinstance(subdomains, Exception):

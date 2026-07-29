@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 import msgspec
 import httpx
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 FEDIVERSE_TIMEOUT = 10.0
 MAX_RESULTS_PER_INSTANCE = 50
@@ -121,7 +121,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True):
             if len(tasks) >= MAX_CONCURRENT_INSTANCES:
                 break
             tasks.append(self._search_instance(instance, query, max_results))
-        results = await safe_gather_ok(*tasks, label='fediverse_adapter:104')
+        results = await parallel_ok(*tasks, label='fediverse_adapter:104')
         all_statuses = []
         for result in results:
             if isinstance(result, list):
@@ -176,7 +176,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True):
             if len(tasks) >= MAX_CONCURRENT_INSTANCES:
                 break
             tasks.append(self._fetch_hashtag(instance, hashtag, max_results))
-        results = await safe_gather_ok(*tasks, label='fediverse_adapter:187')
+        results = await parallel_ok(*tasks, label='fediverse_adapter:187')
         all_statuses = []
         for result in results:
             if isinstance(result, list):
@@ -219,7 +219,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True):
             if len(tasks) >= MAX_CONCURRENT_INSTANCES:
                 break
             tasks.append(self._fetch_account(instance, account, limit))
-        results = await safe_gather_ok(*tasks, label='fediverse_adapter:254')
+        results = await parallel_ok(*tasks, label='fediverse_adapter:254')
         for result in results:
             if isinstance(result, list) and result:
                 return result[:limit]
@@ -281,7 +281,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True):
             return []
         cells: list[tuple[str, str]] = [(inst, term) for inst in chosen_instances for term in clean_terms]
         tasks = [self._search_cell(inst, term, max_results) for inst, term in cells]
-        raw_results: list[list[dict]] = await safe_gather_ok(*tasks, label='fediverse_adapter:search_multiple_instances')
+        raw_results: list[list[dict]] = await parallel_ok(*tasks, label='fediverse_adapter:search_multiple_instances')
         out: list[FediverseResult] = []
         for (inst, term), raw in zip(cells, raw_results, strict=True):
             if not isinstance(raw, list):

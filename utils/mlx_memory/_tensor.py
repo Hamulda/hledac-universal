@@ -15,14 +15,15 @@ __all__ = ["SharedTensor"]
 
 
 def _get_mx():
-    """Lazy MLX accessor."""
-    import sys
+    """Lazily cached mlx.core module reference (ISSUE 3.2 fix).
+
+    Replaced find_spec + sys.modules.get with direct import —
+    find_spec loads mlx.core on macOS, violating PLANNER: ZERO MLX invariant.
+    """
     try:
-        spec = __import__("importlib.util").find_spec("mlx.core")
-        if spec is None:
-            return None
-        return sys.modules.get("mlx.core")
-    except Exception:
+        import mlx.core as _mx
+        return _mx
+    except ImportError:
         return None
 
 

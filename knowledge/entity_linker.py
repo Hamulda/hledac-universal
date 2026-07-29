@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 
 def _ensure_utc_aware(value: datetime) -> datetime:
@@ -487,7 +487,7 @@ class EntityLinker:
                     return None
                 return LinkedEntity(original_text=entity_text, start_pos=start, end_pos=end, canonical_id=best_candidate.wikidata_id, canonical_label=best_candidate.label, entity_type=entity_type, confidence=best_candidate.final_score, candidates_considered=len(candidates))
         tasks = [process_entity(e) for e in extracted]
-        results = await safe_gather_ok(*tasks, label='entity_linker:743')
+        results = await parallel_ok(*tasks, label='entity_linker:743')
         for result in results:
             if isinstance(result, LinkedEntity):
                 linked_entities.append(result)
@@ -516,7 +516,7 @@ class EntityLinker:
                     return (entity, best.label)
                 return (entity, None)
         tasks = [resolve_one(e) for e in entities]
-        results = await safe_gather_ok(*tasks, label='entity_linker:776')
+        results = await parallel_ok(*tasks, label='entity_linker:776')
         for result in results:
             if isinstance(result, tuple):
                 entity, canonical = result
@@ -564,7 +564,7 @@ class EntityLinker:
         if len(texts) != len(contexts):
             raise ValueError('texts and contexts must have same length')
         tasks = [self.link_entities(text, context) for text, context in zip(texts, contexts, strict=False)]
-        return await safe_gather_ok(*tasks, label='entity_linker:842')
+        return await parallel_ok(*tasks, label='entity_linker:842')
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics."""

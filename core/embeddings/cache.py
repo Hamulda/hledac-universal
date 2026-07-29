@@ -33,6 +33,13 @@ import asyncio
 import gc
 import hashlib
 import logging
+
+try:
+    import xxhash
+    XXHASH_AVAILABLE = True
+except ImportError:
+    XXHASH_AVAILABLE = False
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -193,12 +200,16 @@ class EmbeddingCache:
     __slots__ = tuple(
         (
             "_file_size",
+            "_hash_index",  # E-5 FIX: text_hash → slot_idx for real L2
+            "_free_list",  # E-10 FIX: in-memory free_list — O(1) alloc/evict
             "_l1",
             "_l1_lock",
             "_memmap_path",
             "_meta_path",
             "_mmap",
+            "_mmap_init_lock",  # E-4 FIX: threading.Lock for sync init
             "_mmap_lock",
+            "_pending_meta_save",  # E-10 FIX: coalesced meta flush
             "_version",
             "cache_dir",
             "dim",
@@ -223,6 +234,10 @@ class EmbeddingCache:
         self._memmap_path = self.cache_dir / f"embeddings_d{dim}.dat"
         self._meta_path = self.cache_dir / f"embeddings_d{dim}.meta.json"
         self._l1: dict[str, CacheEntry] = {}
+        self._hash_index: dict[str, int] = {}  # E-5: text_hash → slot_idx
+        # E-10 FIX: in-memory free_list — O(1) alloc/evict, no per-op I/O
+        self._free_list: list[int] = []
+        self._pending_meta_save: bool = False  # E-10: coalesced flush
         # ISSUE-2984: lazy lock — NEVER asyncio.Lock() at __init__ (macOS crash vector)
         self._l1_lock: asyncio.Lock | None = None
         self._mmap: np.memmap | None = None
@@ -230,15 +245,11 @@ class EmbeddingCache:
         self.stats = CacheStats()
         self._file_size = 0
         self._version: int = _CACHE_VERSION
-        # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
-        # Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
-        # This is M1 Metal-safe and prevents event loop leak on M1 8GB.
-        try:
-            import asyncio
-            with asyncio.Runner() as runner:
-                runner.run(self._init_memmap())
-        except Exception:
-            pass
+        # E-4 FIX: asyncio.Runner() removed — raises RuntimeError when called from
+        # within an existing event loop (e.g. async module init). Replaced by
+        # sync _init_memmap_sync() using threading.Lock (no event loop required).
+        self._mmap_init_lock = threading.Lock()
+        self._init_memmap_sync()
 
     # ISSUE-2984: lazy lock helpers — NEVER instantiate asyncio.Lock() in __init__
     async def _get_l1_lock(self) -> asyncio.Lock:
@@ -252,6 +263,180 @@ class EmbeddingCache:
         if self._mmap_lock is None:
             self._mmap_lock = asyncio.Lock()
         return self._mmap_lock
+
+    # E-4 FIX: sync version for __init__ — threading.Lock (no event loop)
+    def _init_memmap_sync(self) -> None:
+        """Synchronous memmap init (thread-safe via _mmap_init_lock)."""
+        with self._mmap_init_lock:
+            try:
+                if self._memmap_path.exists():
+                    self._load_meta_sync()
+                    file_size = self._memmap_path.stat().st_size
+                    read_size = min(_HEADER_SIZE, file_size)
+                    header_arr = np.memmap(
+                        str(self._memmap_path),
+                        dtype=np.uint8,
+                        mode="r",
+                        shape=(read_size,),
+                    )
+                    raw_header = bytes(header_arr)
+                    try:
+                        decoded = msgspec.json.decode(raw_header)
+                        self._version = decoded.get("version", _VERSION_FLOAT16)
+                    except Exception:
+                        self._version = _VERSION_FLOAT16
+
+                    if self._version >= _VERSION_INT8:
+                        self._mmap = np.memmap(
+                            str(self._memmap_path),
+                            dtype=np.int8,
+                            mode="r+",
+                            offset=_HEADER_SIZE,
+                            shape=(self._max_shape()[0], self._INT8_BYTES_PER_ENTRY),
+                        )
+                    else:
+                        self._mmap = np.memmap(
+                            str(self._memmap_path),
+                            dtype=np.float16,
+                            mode="r+",
+                            offset=_HEADER_SIZE,
+                            shape=(self._max_shape()[0], self.dim),
+                        )
+                    self._file_size = self._memmap_path.stat().st_size
+                    logger.info(
+                        f"[EmbedCache] Opened memmap v{self._version}: "
+                        f"{self._file_size / 1024 / 1024:.1f} MB"
+                    )
+                else:
+                    self._create_memmap_sync()
+                    logger.info(f"[EmbedCache] Created new memmap v{self._version}")
+            except Exception as e:
+                logger.warning(
+                    f"[EmbedCache] memmap init failed (fallback to encode-only): {e}"
+                )
+                self.stats.memmap_errors += 1
+                self._mmap = None
+
+    def _load_meta_sync(self) -> None:
+        """Sync version of _load_meta for __init__ — also rebuilds _hash_index + _free_list."""
+        try:
+            if self._meta_path.exists():
+                content = self._meta_path.read_text()
+                meta = _msgspec_decode(content) if _msgspec_decode else msgspec.json.decode(content)
+                max_entries = meta.get("max_entries", self._max_shape()[0])
+                self._version = meta.get("version", _VERSION_INT8)
+                free_list = set(meta.get("free_list", []))
+                all_slots = set(range(max_entries))
+                used_slots = all_slots - free_list
+                entry_bytes = self._bytes_per_entry()
+                has_scale = self._version >= _VERSION_INT8
+                slot_scales = meta.get("slot_scales", {})
+                # E-5: rebuild hash_index from meta
+                self._hash_index: dict[str, int] = {}
+                for slot_idx in used_slots:
+                    offset = slot_idx * entry_bytes
+                    # BUG FIX: restore actual scale from slot_scales, not default [1.0]
+                    scale_val = slot_scales.get(str(slot_idx)) if has_scale else None
+                    scale = np.array([scale_val], dtype=np.float32) if scale_val is not None else None
+                    th = meta.get("slot_hashes", {}).get(str(slot_idx), f"_slot_{slot_idx}")
+                    self._hash_index[th] = slot_idx
+                    self._l1[f"_slot_{slot_idx}"] = CacheEntry(
+                        offset=offset,
+                        length=self.dim,
+                        mtime=meta.get("slot_mtimes", {}).get(str(slot_idx), 0),
+                        text_hash=th,
+                        scale=scale,
+                    )
+                # E-10 FIX: populate in-memory free_list from meta — O(1) alloc after this
+                self._free_list = sorted(free_list)
+                logger.debug(
+                    f"[EmbedCache] meta loaded: {len(used_slots)} slots, "
+                    f"hash_index size={len(self._hash_index)}, free_list size={len(self._free_list)}"
+                )
+        except Exception as e:
+            logger.debug(f"[EmbedCache] meta load failed (recreating): {e}")
+
+    def _save_meta_sync(self) -> None:
+        """Sync version of _save_meta for use in _create_memmap_sync."""
+        try:
+            slot_mtimes = {}
+            slot_hashes = {}
+            slot_scales = {}
+            for key, entry in self._l1.items():
+                if key.startswith("_slot_"):
+                    slot_idx = int(key.split("_slot_")[1])
+                    slot_mtimes[str(slot_idx)] = entry.mtime
+                    slot_hashes[str(slot_idx)] = entry.text_hash
+                    if entry.scale is not None and self._version >= _VERSION_INT8:
+                        slot_scales[str(slot_idx)] = float(entry.scale[0])
+                    # None scale for int8 = corruption signal; omit from meta so load
+                    # defaults to [1.0] fallback (harmless identity dequantization)
+            meta = {
+                "version": self._version,
+                "dim": self.dim,
+                "max_entries": self._max_shape()[0],
+                "free_list": self._free_list,  # E-10: use in-memory free_list
+                "used": len(self._l1),
+                "slot_mtimes": slot_mtimes,
+                "slot_hashes": slot_hashes,  # E-5: persist hash_index
+                "slot_scales": slot_scales,  # BUG FIX: persist per-slot scales for int8
+                "format": "int8_scale" if self._version >= _VERSION_INT8 else "float16",
+            }
+            if _msgspec_encode:
+                data = _msgspec_encode(meta).decode()
+                mode = "w"
+            else:
+                data = orjson.dumps(meta).decode() if ORJSON_AVAILABLE else str(meta)
+                mode = "w"
+            with open(self._meta_path, mode) as f:
+                f.write(data)
+            self._pending_meta_save = False
+        except Exception as e:
+            logger.debug(f"[EmbedCache] meta save failed (non-fatal): {e}")
+
+    def _create_memmap_sync(self) -> None:
+        """Sync version of _create_memmap for __init__."""
+        max_entries, entry_bytes = self._max_shape()
+        total_size = _HEADER_SIZE + max_entries * entry_bytes
+        try:
+            with open(self._memmap_path, "wb") as f:
+                header = {
+                    "version": self.VERSION,
+                    "dim": self.dim,
+                    "max_entries": max_entries,
+                    "free_list": list(range(max_entries)),
+                    "used": 0,
+                    "format": "int8_scale",
+                }
+                if ORJSON_AVAILABLE:
+                    _header_str = _msgspec_dumps_str(header)
+                    header_bytes: bytes = _header_str.encode()
+                else:
+                    header_bytes = str(header).encode()
+                padding = _HEADER_SIZE - len(header_bytes)
+                if padding > 0:
+                    header_bytes = header_bytes + b"\x00" * padding
+                f.write(header_bytes)
+                f.seek(total_size - 1)
+                f.write(b"\x00")
+
+            self._mmap = np.memmap(
+                str(self._memmap_path),
+                dtype=np.int8,
+                mode="r+",
+                offset=_HEADER_SIZE,
+                shape=(max_entries, entry_bytes),
+            )
+            self._file_size = total_size
+            self._version = _VERSION_INT8
+            # E-10 FIX: init free_list for new cache, set pending to flush meta
+            self._free_list = []
+            self._pending_meta_save = True
+            self._save_meta_sync()
+        except Exception as e:
+            logger.warning(f"[EmbedCache] memmap create failed: {e}")
+            self.stats.memmap_errors += 1
+            raise
 
     def _bytes_per_entry(self) -> int:
         """ISSUE #022: Return bytes per entry based on version."""
@@ -353,6 +538,9 @@ class EmbeddingCache:
             )
             self._file_size = total_size
             self._version = _VERSION_INT8
+            # E-10 FIX: init free_list for new cache, set pending to flush meta
+            self._free_list = []
+            self._pending_meta_save = True
             await self._save_meta()
         except Exception as e:
             logger.warning(f"[EmbedCache] memmap create failed: {e}")
@@ -371,37 +559,54 @@ class EmbeddingCache:
                 used_slots = all_slots - free_list
                 entry_bytes = self._bytes_per_entry()
                 has_scale = self._version >= _VERSION_INT8
+                slot_scales = meta.get("slot_scales", {})
+                # E-5: rebuild hash_index from meta
+                self._hash_index: dict[str, int] = {}
                 for slot_idx in used_slots:
                     offset = slot_idx * entry_bytes
-                    scale = None
-                    if has_scale:
-                        scale = np.array([1.0], dtype=np.float32)
+                    # BUG FIX: restore actual scale from slot_scales, not default [1.0]
+                    scale_val = slot_scales.get(str(slot_idx)) if has_scale else None
+                    scale = np.array([scale_val], dtype=np.float32) if scale_val is not None else None
+                    th = meta.get("slot_hashes", {}).get(str(slot_idx), f"_slot_{slot_idx}")
+                    self._hash_index[th] = slot_idx
                     self._l1[f"_slot_{slot_idx}"] = CacheEntry(
                         offset=offset,
                         length=self.dim,
                         mtime=meta.get("slot_mtimes", {}).get(str(slot_idx), 0),
-                        text_hash=f"_slot_{slot_idx}",
+                        text_hash=th,
                         scale=scale,
                     )
+                # E-10 FIX: populate in-memory free_list from meta
+                self._free_list = sorted(free_list)
         except Exception as e:
             logger.debug(f"[EmbedCache] meta load failed (recreating): {e}")
 
     async def _save_meta(self) -> None:
+        """E-10 FIX: coalesced meta flush — only write if pending_meta_save is set."""
+        if not self._pending_meta_save:
+            return
         try:
-            free_slots = []
             slot_mtimes = {}
+            slot_hashes = {}
+            slot_scales = {}
             for key, entry in self._l1.items():
                 if key.startswith("_slot_"):
                     slot_idx = int(key.split("_slot_")[1])
-                    free_slots.append(slot_idx)
                     slot_mtimes[str(slot_idx)] = entry.mtime
+                    slot_hashes[str(slot_idx)] = entry.text_hash
+                    if entry.scale is not None and self._version >= _VERSION_INT8:
+                        slot_scales[str(slot_idx)] = float(entry.scale[0])
+                    # None scale for int8 = corruption signal; omit from meta so load
+                    # defaults to [1.0] fallback (harmless identity dequantization)
             meta = {
                 "version": self._version,
                 "dim": self.dim,
                 "max_entries": self._max_shape()[0],
-                "free_list": free_slots,
+                "free_list": self._free_list,  # E-10: use in-memory free_list
                 "used": len(self._l1),
                 "slot_mtimes": slot_mtimes,
+                "slot_hashes": slot_hashes,  # E-5: persist hash_index
+                "slot_scales": slot_scales,  # BUG FIX: persist per-slot scales for int8
                 "format": "int8_scale" if self._version >= _VERSION_INT8 else "float16",
             }
             def _write_sync():
@@ -414,10 +619,18 @@ class EmbeddingCache:
                 with open(self._meta_path, mode) as f:
                     f.write(data)
             await asyncio.to_thread(_write_sync)
+            self._pending_meta_save = False
         except Exception as e:
             logger.debug(f"[EmbedCache] meta save failed (non-fatal): {e}")
 
     def _hash_text(self, text: str) -> str:
+        """
+        E-36 FIX: Use xxhash.xxh3_64_hexdigest for non-cryptographic hashing.
+        xxhash is ~10x faster than SHA-256 for cache key hashing (no security needed here).
+        Falls back to SHA-256 if xxhash is unavailable.
+        """
+        if XXHASH_AVAILABLE:
+            return xxhash.xxh3_64_hexdigest(text)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     async def get_or_encode(
@@ -462,8 +675,12 @@ class EmbeddingCache:
         return result
 
     async def _l2_lookup(self, text_hash: str) -> CacheEntry | None:
+        # E-5 FIX: real L2 lookup using _hash_index, not just L1 re-query
         async with await self._get_l1_lock():
-            return self._l1.get(text_hash)
+            slot_idx = self._hash_index.get(text_hash)
+            if slot_idx is None:
+                return None
+            return self._l1.get(f"_slot_{slot_idx}")
 
     async def _read_memmap(self, entry: CacheEntry) -> np.ndarray | None:
         if self._mmap is None:
@@ -517,7 +734,7 @@ class EmbeddingCache:
                     int8_vec, scale = _quantize_int8(embedding)
                     # Write int8 vector (256B)
                     self._mmap[slot_idx, : self.dim] = int8_vec
-                    # Write scale factor (4B) at offset 256
+                    # Write scale factor (4B) at offset 256 — store as raw int8 bytes (float32 layout)
                     scale_bytes = scale.tobytes()
                     self._mmap[slot_idx, self.dim : self.dim + 4] = np.frombuffer(
                         scale_bytes, dtype=np.int8
@@ -548,9 +765,10 @@ class EmbeddingCache:
                     if len(self._l1) >= self.max_entries:
                         await self._evict_lru()
                     self._l1[text_hash] = entry
+                    self._hash_index[text_hash] = slot_idx  # E-5: L2 index
 
-                if len(self._l1) % 100 == 0:
-                    await self._save_meta()
+                # E-10 FIX: removed periodic _save_meta every 100 inserts.
+                # Meta is now coalesced — only written on close() or explicit flush.
                 return True
             return False
         except Exception as e:
@@ -559,50 +777,32 @@ class EmbeddingCache:
             return False
 
     async def _allocate_slot(self) -> int | None:
+        """E-10 FIX: O(1) in-memory free_list pop — no per-op meta I/O."""
         try:
-            if self._meta_path.exists():
-                with open(self._meta_path) as f:
-                    content = f.read()
-                meta = _msgspec_decode(content) if _msgspec_decode else msgspec.json.decode(content)
-                free_list = meta.get("free_list", [])
-                if free_list:
-                    slot = free_list.pop()
-                    if _msgspec_encode:
-                        data: str | bytes = _msgspec_encode(meta).decode()
-                        mode = "w"
-                    else:
-                        data = orjson.dumps(meta)
-                        mode = "wb"
-                    with open(self._meta_path, mode) as f:
-                        f.write(data)
-                    return slot
+            if self._free_list:
+                slot = self._free_list.pop()
+                self._pending_meta_save = True
+                return slot
+            # Fallback: no free slots — evict will repopulate
         except Exception:
             pass
         return None
 
     async def _evict_lru(self) -> None:
+        """E-10 FIX: O(1) in-memory free_list append — no per-evict meta I/O."""
         async with await self._get_l1_lock():
             if not self._l1:
                 return
             lru_key = min(self._l1.keys(), key=lambda k: self._l1[k].mtime)
             entry = self._l1.pop(lru_key)
+            # E-5: also remove from L2 hash_index
+            self._hash_index.pop(entry.text_hash, None)
             try:
-                if self._meta_path.exists():
-                    with open(self._meta_path) as f:
-                        content = f.read()
-                    meta = (
-                        _msgspec_decode(content)
-                        if _msgspec_decode
-                        else msgspec.json.decode(content)
-                    )
-                    entry_bytes = self._bytes_per_entry()
-                    slot_idx = entry.offset // entry_bytes
-                    meta.setdefault("free_list", []).append(slot_idx)
-                    with open(self._meta_path, "w") as f:
-                        if _msgspec_encode:
-                            f.write(_msgspec_encode(meta).decode())
-                        else:
-                            f.write(msgspec.json.encode(meta).decode())
+                entry_bytes = self._bytes_per_entry()
+                slot_idx = entry.offset // entry_bytes
+                # E-10 FIX: update in-memory free_list, set pending flag
+                self._free_list.append(slot_idx)
+                self._pending_meta_save = True
             except Exception as e:
                 logger.debug(f"[EmbedCache] slot free failed: {e}")
             self.stats.evictions += 1
@@ -610,6 +810,7 @@ class EmbeddingCache:
     async def clear(self) -> None:
         async with await self._get_l1_lock():
             self._l1.clear()
+            self._hash_index.clear()
         if self._mmap is not None:
             del self._mmap
             self._mmap = None
@@ -629,7 +830,9 @@ class EmbeddingCache:
         Clears L1 and resets mmap without awaiting locks.
         """
         self._l1.clear()
+        self._hash_index.clear()
         if self._mmap is not None:
+            self._mmap.flush()  # E-37 twin: flush before del — same data-loss guard as close()
             del self._mmap
             self._mmap = None
         try:
@@ -648,6 +851,7 @@ class EmbeddingCache:
     async def close(self) -> None:
         await self._save_meta()
         if self._mmap is not None:
+            self._mmap.flush()  # E-37: flush before del — data loss guard between writes and close
             del self._mmap
             self._mmap = None
 

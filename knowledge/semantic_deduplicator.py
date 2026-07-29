@@ -39,12 +39,13 @@ import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
 import msgspec
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from datasketch import MinHash, MinHashLSH
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    from hledac.universal.core.rust_backend import AccelBackend
 
 __all__ = [
     "SemanticDeduplicator",
@@ -93,13 +94,42 @@ def _normalize_text(text: str) -> str:
     return " ".join(text.lower().split())
 
 
+# ISSUE 6.2 E-26: Lazy Rust simhash — avoid import-time cost, fail-soft if unavailable
+_rust_simhash: Any = None
+
+
+def _get_rust_simhash() -> Any:
+    """Lazily resolve Rust simhash domain. Cached after first call."""
+    global _rust_simhash
+    if _rust_simhash is None:
+        try:
+            from hledac.universal.core.rust_backend import get_accel
+
+            accel = get_accel()
+            if accel.is_available:
+                _rust_simhash = accel.simhash
+        except Exception:
+            pass
+    return _rust_simhash
+
+
 def _compute_simhash(text: str) -> int:
     """
     Compute 64-bit SimHash for normalized text.
 
-    Algorithm: tokenize → hash tokens → accumulate bit counts → threshold.
+    ISSUE 6.2 E-26: Uses Rust NEON SIMD when available (hledac_rust_extensions.compute_simhash).
+    Falls back to pure-Python MD5 accumulation (same algorithm, GIL-bound).
     """
-    tokens = text.split()
+    rust = _get_rust_simhash()
+    if rust is not None:
+        try:
+            return rust.compute_simhash(text)  # type: ignore[attr-defined]
+        except Exception:
+            pass  # Rust failed — fall through to pure-Python
+
+    # Pure-Python fallback: tokenize → hash tokens → accumulate bit counts → threshold.
+    normalized = _normalize_text(text)
+    tokens = normalized.split()
     if not tokens:
         return 0
 
@@ -163,8 +193,13 @@ class SemanticDeduplicator:
     Near-duplicate finding detector using SimHash + MinHash.
 
     Two-tier strategy:
-    1. SimHash (fast) — compute 64-bit fingerprint, check Hamming distance
-    2. MinHash + LSH (accurate) — Jaccard similarity via locality-sensitive hashing
+    1. MinHash + LSH (O(1) ANN) — run FIRST, sub-ms lookup
+    2. SimHash Hamming distance (O(n) scan) — fallback when LSH misses
+
+    ISSUE 4.3 E-11 FIX: ANN first, O(n) scan only as fallback.
+    Rationale: MinHash LSH is O(1) hash-table lookup; SimHash requires
+    scanning up to 5K recent entries. LRU cache covers exact-match hit
+    overlay so repeated checks within a sprint are free after first call.
 
     Storage is in-memory only (no LMDB to avoid blocking canonical path).
     On M1 8GB, 100K SimHash entries ≈ 1.6 MB, 20K MinHash entries ≈ 2.5 MB.
@@ -203,9 +238,9 @@ class SemanticDeduplicator:
         """
         Check if text is near-duplicate of any known finding.
 
-        Two-tier check:
-        1. SimHash: Hamming distance ≤ MAX_SIMHASH_DISTANCE → duplicate
-        2. MinHash: Jaccard similarity via LSH ≥ MIN_MINHASH_SIMILARITY → duplicate
+        Two-tier check (ISSUE 4.3 E-11 FIX: ANN first):
+        1. MinHash + LSH: O(1) Jaccard similarity via LSH — run FIRST
+        2. SimHash: Hamming distance ≤ MAX_SIMHASH_DISTANCE — fallback
 
         Args:
             finding_id: Unique ID of the new finding
@@ -229,19 +264,10 @@ class SemanticDeduplicator:
             sim_fp = _compute_simhash(combined_text)
             self._stats["simhash_checks"] += 1
 
-            # ── Tier 1: SimHash Hamming distance ──────────────────────────────
-            dup_dist = await self._check_simhash(finding_id, sim_fp)
-            if dup_dist is not None:
-                self._stats["duplicates_found"] += 1
-                return DedupDecision(
-                    is_duplicate=True,
-                    reason=f"simhash_distance_{dup_dist}",
-                    confidence=1.0 - (dup_dist / SIMHASH_BITS),
-                    fingerprint=sim_fp,
-                    minhash_bytes=None,
-                )
-
-            # ── Tier 2: MinHash LSH Jaccard similarity ────────────────────────
+            # ── Tier 1: MinHash LSH Jaccard similarity (O(1) ANN) ──────────
+            # ISSUE 4.3 E-11 FIX: ANN first — sub-ms hash-table lookup.
+            # MinHash LSH is O(1) regardless of store size; run BEFORE
+            # expensive SimHash O(n) scan.
             mh_bytes = _minhash_to_bytes(_compute_minhash(combined_text))
             self._stats["minhash_checks"] += 1
 
@@ -254,6 +280,22 @@ class SemanticDeduplicator:
                     confidence=MIN_MINHASH_SIMILARITY,
                     fingerprint=sim_fp,
                     minhash_bytes=mh_bytes,
+                )
+
+            # ── Tier 2: SimHash Hamming distance (O(n) scan, fallback) ─────
+            # ISSUE 4.3 E-11 FIX: Only if MinHash LSH missed.
+            # SimHash O(n) scan is sub-1ms for up to 5K entries; LRU cache
+            # covers exact-match hit overlay so repeated checks within a sprint
+            # are free after the first call.
+            dup_dist = await self._check_simhash(finding_id, sim_fp)
+            if dup_dist is not None:
+                self._stats["duplicates_found"] += 1
+                return DedupDecision(
+                    is_duplicate=True,
+                    reason=f"simhash_distance_{dup_dist}",
+                    confidence=1.0 - (dup_dist / SIMHASH_BITS),
+                    fingerprint=sim_fp,
+                    minhash_bytes=None,
                 )
 
             # ── Not a duplicate: store fingerprints ───────────────────────────
@@ -349,6 +391,11 @@ class SemanticDeduplicator:
                     evict_count = MAX_MINHASH_STORE // 10
                     keys_to_remove = list(self._minhash_store.keys())[:evict_count]
                     for k in keys_to_remove:
+                        # E-27 FIX: remove from LSH index to prevent false positives
+                        try:
+                            self._minhash_lsh.remove(k)
+                        except Exception:
+                            pass  # datasketch remove is best-effort
                         del self._minhash_store[k]
 
                 try:

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
 from typing import Any
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 MODULE_TIMEOUT = 60
 
@@ -176,7 +176,7 @@ class WorkflowPlan(msgspec.Struct, frozen=True):
         parallel_groups: Optional grouping for parallel execution
     """
     modules: list[str] = field(default_factory=list)
-    execution_mode: str = 'sequential'
+    execution_mode: str = 'parallel'
     parallel_groups: list[list[str]] | None = None
 
 class IntelligenceConfig(msgspec.Struct, frozen=True):
@@ -246,8 +246,9 @@ class WorkflowOrchestrator:
         self._add_timeline_event('workflow_start', {'modules': workflow.modules, 'mode': workflow.execution_mode})
         context = SharedContext(input_data=input_data, intermediate_results={}, module_status=dict.fromkeys(workflow.modules, 'pending'), resource_usage={})
         try:
-            if workflow.execution_mode == 'parallel' and workflow.parallel_groups:
-                results = await self._execute_parallel(workflow.parallel_groups, input_data, context)
+            if workflow.execution_mode == 'parallel':
+                groups = workflow.parallel_groups if workflow.parallel_groups else [[m] for m in workflow.modules]
+                results = await self._execute_parallel(groups, input_data, context)
             else:
                 results = await self._execute_sequential(workflow.modules, input_data, context)
             self._add_timeline_event('modules_complete', {'completed': len(results), 'failed': len(workflow.modules) - len(results)})
@@ -310,7 +311,7 @@ class WorkflowOrchestrator:
                 async with asyncio.timeout(self.config.module_timeout):
                     return await self._execute_module(module, input_data, context)
             tasks = [safe_create_task(_run_with_timeout(module), name=f'workflow:module:{module}') for module in group]
-            group_results = await safe_gather_ok(*tasks, label='workflow_orchestrator:526')
+            group_results = await parallel_ok(*tasks, label='workflow_orchestrator:526')
             for module, result in zip(group, group_results, strict=False):
                 if isinstance(result, Exception):
                     logger.error(f'Module {module} failed: {result}')

@@ -1,102 +1,386 @@
 {
   "version": "1.0.0",
-  "generated_at": "2026-07-15T07:29:13.842870+00:00",
-  "git_rev": "4855e651",
-  "note": "Pruned 2026-07-26: async_query, text_similarity (dead code), hnsw/lancedb_bridge/embedding_index (R20-ANN), sprint_policies/query_terms/ip_parse/xml_sanitize/xxhash_ext/content_hasher/rolling_hash/graph_lru (0 Python callers, 0 internal users). regex_lz4/parquet_reader registrations COMMENTED OUT in lib.rs (dead code).",
+  "generated_at": "2026-07-29T11:58:44.688572+00:00",
+  "git_rev": "6256518f",
   "lib_rs_symbols": {
+    "aho_corasick": [
+      "AhoCorasickMatcher",
+      "PatternHit"
+    ],
+    "query_terms": [
+      "query_terms.register_functions",
+      "scan_query_context",
+      "extract_payload_context"
+    ],
     "bloom": [
       "BloomFilter",
       "bloom.register",
       "bloom_check_batch"
     ],
+    "url_set": [
+      "MmapUrlSet",
+      "UrlSet"
+    ],
     "dns_tunnel": [
-      "dns_tunnel.register_functions"
+      "dns_tunnel.register_functions",
+      "rust_calculate_entropy",
+      "rust_fast_entropy_screen",
+      "rust_ngram_analysis",
+      "rust_wavelet_preprocess",
+      "rust_entropy_ngram",
+      "rust_majority_vote",
+      "rust_batch_entropy_analysis"
     ],
     "ioc_extract": [
-      "ioc_extract.register_functions"
+      "ioc_extract.register_functions",
+      "fast_ioc_extract",
+      "url_normalize",
+      "batch_dedup_urls",
+      "fast_ioc_extract_batch",
+      "batch_ioc_extract_fast",
+      "extract_iocs",
+      "extract_iocs_flat",
+      "chi_square",
+      "batch_sha256",
+      "detect_encoding_patterns"
+    ],
+    "ioc_extract_fast": [
+      "ioc_extract_unified",
+      "batch_ioc_extract_unified",
+      "batch_ioc_extract_unified_python",
+      "extract_structured_entities_py",
+      "batch_extract_structured_entities_py"
     ],
     "ioc_extract_simd": [
-      "ioc_extract_simd.register_functions"
+      "ioc_extract_simd.register_functions",
+      "extract_iocs_simd",
+      "batch_extract_iocs_simd",
+      "batch_extract_iocs_simd_indexed",
+      "batch_extract_iocs_simd_python"
+    ],
+    "pdf": [
+      "extract_text",
+      "extract_text_from_bytes",
+      "extract_text_and_iocs",
+      "extract_text_and_iocs_from_bytes",
+      "extract_iocs",
+      "extract_iocs_from_bytes",
+      "extract_metadata",
+      "extract_metadata_from_bytes",
+      "PdfMetadata"
+    ],
+    "office": [
+      "extract_text",
+      "extract_text_from_bytes",
+      "extract_iocs",
+      "extract_iocs_from_bytes",
+      "extract_metadata",
+      "extract_metadata_from_bytes",
+      "OfficeMetadata"
     ],
     "url_engine": [
-      "url_engine.register_functions"
+      "url_engine.register_functions",
+      "normalize",
+      "fingerprint",
+      "strip_tracking_params",
+      "get_tracking_params",
+      "canonicalize_batch",
+      "batch_fingerprint",
+      "is_valid_url",
+      "filter_valid_urls",
+      "extract_domain"
     ],
     "url_ops": [
       "url_ops.register_functions",
+      "classify_url",
+      "batch_classify",
+      "priority_classify_urls",
+      "extract_host",
+      "looks_like_feed_url",
+      "canonical_url",
+      "canonical_url_batch",
+      "strip_tracking",
+      "url_dedup_key",
+      "url_dedup_hash",
       "UrlClassifyCachePy"
     ],
     "ioc_dedup": [
       "ioc_dedup.register_class"
     ],
+    "ioc_cooccurrence_rs": [
+      "compute_cooccurrence_edges_py",
+      "batch_cooccurrence_edges_py"
+    ],
     "simhash_ext": [
-      "simhash_ext.register_functions"
+      "simhash_ext.register_functions",
+      "simhash",
+      "compute_simhash",
+      "batch_compute_simhash",
+      "hamming_dist",
+      "is_near_duplicate"
     ],
     "lsh_index": [
-      "lsh_index.register_functions"
+      "lsh_index.register_functions",
+      "lsh_index_new",
+      "lsh_get_bands",
+      "lsh_estimate_recall"
+    ],
+    "text_similarity": [
+      "text_similarity.register_functions"
+    ],
+    "content_hasher": [
+      "batch_xxh3_64_hex",
+      "ContentHasher"
+    ],
+    "xxhash_ext": [
+      "xxhash_ext.register_functions",
+      "content_hash_64",
+      "content_hash_hex",
+      "batch_content_hash",
+      "batch_content_hash_parallel",
+      "batch_content_hash_hex",
+      "batch_content_hash_hex_parallel",
+      "batch_xxh3_64_bytes",
+      "double_hash_64"
     ],
     "tls_metadata": [
-      "tls_metadata.register_functions"
+      "tls_metadata.register_functions",
+      "extract_tls_metadata"
+    ],
+    "tls13": [
+      "tls13.register_functions",
+      "ja4_from_client_hello",
+      "ja4_from_client_hello_bytes",
+      "connect_and_ja4",
+      "batch_ja4"
+    ],
+    "quic": [
+      "quic.register"
+    ],
+    "dns": [
+      "dns.register_functions",
+      "resolve_async",
+      "resolve_happy_eyeballs",
+      "prefetch",
+      "resolve_many",
+      "get_stats",
+      "clear_cache"
     ],
     "crypto_accelerate": [
-      "crypto_accelerate.register_functions"
+      "crypto_accelerate.register_functions",
+      "batch_sha256_hw",
+      "batch_encrypt_aes_gcm",
+      "batch_decrypt_aes_gcm"
     ],
     "adaptive_scheduler": [
-      "adaptive_scheduler.register_functions"
+      "adaptive_scheduler.register_functions",
+      "get_adaptive_cpu_threads",
+      "get_adaptive_io_threads",
+      "get_adaptive_mixed_threshold",
+      "get_adaptive_mixed_threshold_via_metal",
+      "get_metal_limit_bytes_py",
+      "sync_metal_memory_pressure_py",
+      "sync_adaptive_state"
     ],
     "rate_limit": [
       "rate_limit.register_module"
     ],
+    "sprint_policies": [
+      "sprint_policies.register"
+    ],
     "int_counter_layout": [
-      "int_counter_layout.register_functions"
+      "int_counter_layout.register_functions",
+      "bulk_bump_aggregate",
+      "bulk_snapshot_dict",
+      "build_layout",
+      "chain_hash_snapshot"
     ],
     "hot_edges_rs": [
       "hot_edges_rs.register_functions"
     ],
     "telemetry_agg": [
-      "telemetry_agg.register_functions"
+      "telemetry_agg.register_functions",
+      "create_telemetry_aggregator"
     ],
     "quality_gate": [
-      "quality_gate.register_functions"
+      "quality_gate.register_functions",
+      "normalize_quality_text",
+      "compute_entropy",
+      "compute_entropy_fast",
+      "entropy",
+      "dedup_fingerprint",
+      "url_fingerprint",
+      "batch_entropy",
+      "batch_dedup_fingerprints",
+      "batch_url_fingerprints",
+      "batch_normalize_quality_text",
+      "assess_findings_quality_batch"
     ],
     "text_norm": [
-      "text_norm.register_functions"
+      "text_norm.register_functions",
+      "nfc_normalize",
+      "nfd_normalize",
+      "batch_nfc_normalize",
+      "batch_nfc_normalize_fast",
+      "strip_diacritics",
+      "batch_strip_diacritics",
+      "batch_strip_diacritics_fast"
+    ],
+    "xml_sanitize": [
+      "sanitize_xml",
+      "batch_sanitize_xml"
     ],
     "madvise": [
-      "madvise.register_functions"
+      "madvise.register_functions",
+      "madvise_lmdb_mmap",
+      "madvise_on_mmap_region",
+      "madvise_hugepage",
+      "mmap_alloc_with_hugepage",
+      "mmap_free_hugepage",
+      "mmap_hugepage",
+      "munmap_hugepage",
+      "get_hugepage_size",
+      "madvise_free_reusable"
     ],
     "lmdb_dht": [
-      "lmdb_dht.register_functions"
+      "lmdb_dht.register_functions",
+      "lmdb_dht_put_node",
+      "lmdb_dht_get_node",
+      "lmdb_dht_put_dht_node",
+      "lmdb_dht_get_dht_node",
+      "lmdb_dht_get_all_dht_nodes",
+      "lmdb_dht_count_dht_nodes",
+      "lmdb_dht_clear_dht_nodes",
+      "lmdb_dht_scan_all_nodes",
+      "lmdb_dht_bfs_traverse",
+      "lmdb_dht_close_env",
+      "lmdb_async_put",
+      "lmdb_async_get",
+      "lmdb_async_put_batch",
+      "lmdb_async_get_many",
+      "lmdb_async_scan_prefix",
+      "lmdb_async_delete"
+    ],
+    "ip_parse": [
+      "parse_ip_fast",
+      "is_private_ip",
+      "is_public_ip",
+      "batch_ip_classify",
+      "cidr_contains"
     ],
     "compress": [
       "compress.register_functions",
+      "compress_page",
+      "decompress_page",
+      "batch_compress_pages",
+      "batch_decompress_pages",
       "lz4_compress_raw",
       "lz4_decompress_raw",
       "lz4_compress_jsonl_batch",
       "lz4_decompress_jsonl_batch"
     ],
     "graph_traverse": [
-      "graph_traverse.register_functions"
+      "graph_traverse.register_functions",
+      "batch_graph_traverse",
+      "graph_traverse_single",
+      "batch_graph_traverse_flat",
+      "graph_stats",
+      "drop_connections"
+    ],
+    "async_query": [
+      "async_query.register"
+    ],
+    "rolling_hash": [
+      "rolling_hash.register"
     ],
     "html_parse": [
-      "html_parse.register_functions"
+      "html_parse.register_functions",
+      "extract_links",
+      "extract_links_with_text",
+      "extract_links_zero_copy",
+      "extract_emails",
+      "extract_html_text",
+      "extract_meta_description",
+      "extract_title",
+      "batch_extract_links",
+      "batch_extract_links_with_text",
+      "batch_extract_emails",
+      "batch_extract_titles",
+      "batch_extract_html_text",
+      "extract_microdata",
+      "batch_extract_microdata"
     ],
     "memory": [
-      "memory.register_functions"
+      "memory.register_functions",
+      "get_process_rss_gib",
+      "get_total_memory_gib",
+      "get_available_memory_gib",
+      "current_rss_bytes",
+      "peak_rss_bytes",
+      "memory_pressure_level",
+      "advise_free",
+      "get_metal_active_memory_bytes",
+      "get_metal_active_memory_gib",
+      "get_memory_snapshot",
+      "get_uma_state_u8",
+      "set_uma_state_u8"
     ],
     "signal_batch": [
-      "signal_batch.register_functions"
+      "signal_batch.register_functions",
+      "batch_compute_scores",
+      "batch_aggregate_signals",
+      "batch_quality_score"
+    ],
+    "simd": [
+      "simd.register"
     ],
     "simd_similarity": [
-      "simd_similarity.register_functions"
+      "simd_similarity.register_functions",
+      "batch_cosine_scores",
+      "batch_cosine_scores_npy",
+      "batch_hamming_scores",
+      "batch_hamming_scores_batched",
+      "batch_topk_indices"
     ],
     "zero_copy": [
-      "zero_copy.register_functions"
+      "zero_copy.register_functions",
+      "batch_entropy_zc",
+      "batch_url_fingerprints_zc",
+      "batch_dedup_fingerprints_zc",
+      "buffer_entropy",
+      "batch_ioc_extract_into",
+      "sha256_buffer",
+      "blake3_buffer",
+      "blake2b_128_buffer"
     ],
     "serde_json_rs": [
-      "serde_json_rs.register_functions"
+      "serde_json_rs.register_functions",
+      "serde_json_pretty",
+      "serde_json_compact",
+      "serde_json_pretty_sorted",
+      "serde_json_compact_sorted",
+      "serde_json_reexport",
+      "serde_json_parse",
+      "batch_serde_json",
+      "batch_serde_json_pretty",
+      "batch_serde_json_compact",
+      "batch_serde_json_pretty_sorted",
+      "batch_serde_json_compact_sorted",
+      "serde_json_compact_bytes",
+      "serde_json_pretty_bytes",
+      "serde_json_dumps_compact_bytes",
+      "serde_json_dumps_pretty_bytes"
+    ],
+    "stix_2_1": [
+      "stix_2_1.register_functions"
     ],
     "spsc_queue": [
       "spsc_queue.register"
+    ],
+    "sendfile": [
+      "sendfile.register_functions",
+      "sendfile_to_socket_py",
+      "sendfile_available"
     ],
     "mpsc_pool": [
       "mpsc_pool.register"
@@ -104,14 +388,39 @@
     "arrow_batch_builder": [
       "arrow_batch_builder.register"
     ],
+    "regex_lz4": [
+      "regex_lz4.register",
+      "regex_lz4.register"
+    ],
+    "parquet_reader": [
+      "parquet_reader.register",
+      "parquet_reader.register"
+    ],
     "pool_run": [
-      "pool_run.register_functions"
+      "pool_run.register_functions",
+      "cpu_pool_run_",
+      "io_pool_run_",
+      "mixed_pool_run_",
+      "rayon_submit_channel_",
+      "rayon_join_channel_",
+      "rayon_abort_channel_",
+      "rayon_shutdown_channel_"
     ],
     "federated_qtable": [
       "federated_qtable.register"
     ],
+    "hnsw": [
+      "PyHNSWBridge",
+      "PyHNSWIndex"
+    ],
     "graph_cache": [
       "PyGraphLRUCache"
+    ],
+    "graph_centrality": [
+      "graph_centrality.register_functions",
+      "batch_centrality_all",
+      "betweenness_single",
+      "betweenness_batch"
     ],
     "dedup_bloom": [
       "PyDistributedBloomFilter"
@@ -119,17 +428,41 @@
     "health": [
       "health.register"
     ],
+    "os_unfair_lock": [
+      "os_unfair_lock.register"
+    ],
     "claims_extraction": [
-      "claims_extraction.register_functions"
+      "claims_extraction.register_functions",
+      "extract_claims",
+      "batch_extract_claims",
+      "batch_extract_claims_python"
+    ],
+    "circuit_breaker": [
+      "circuit_breaker.register_functions",
+      "circuit_breaker_is_open",
+      "circuit_breaker_record_success",
+      "circuit_breaker_record_failure",
+      "circuit_breaker_half_open_probe",
+      "circuit_breaker_clear_all",
+      "circuit_breaker_get_stats"
+    ],
+    "aimd_controller": [
+      "aimd_controller.register"
     ],
     "pipeline_compose": [
       "pipeline_compose.register"
     ],
-    "gil": [
-      "gil.register_functions"
-    ],
     "mlx_bridge": [
       "mlx_bridge.register"
+    ],
+    "ane": [
+      "ane.register_functions"
+    ],
+    "accelerate": [
+      "accelerate.register"
+    ],
+    "metal_compute": [
+      "metal_compute.register"
     ],
     "data": [
       "data.register_functions"
@@ -138,63 +471,342 @@
       "collections.register_functions"
     ],
     "feed_decision": [
-      "feed_decision.register_functions"
+      "feed_decision.register_functions",
+      "feed_decision_classify",
+      "feed_stage_diagnose",
+      "feed_branch_hint",
+      "feed_economics_verdict",
+      "feed_branch_verdict"
     ],
     "feed_pipeline": [
       "feed_pipeline.register"
+    ],
+    "tracing": [
+      "tracing.register"
     ]
   },
   "all_lib_rs": [
+    "AhoCorasickMatcher",
     "BloomFilter",
+    "ContentHasher",
+    "MmapUrlSet",
+    "OfficeMetadata",
+    "PatternHit",
+    "PdfMetadata",
     "PyDistributedBloomFilter",
     "PyGraphLRUCache",
+    "PyHNSWBridge",
+    "PyHNSWIndex",
     "UrlClassifyCachePy",
+    "UrlSet",
+    "accelerate.register",
     "adaptive_scheduler.register_functions",
+    "advise_free",
+    "aimd_controller.register",
+    "ane.register_functions",
     "arrow_batch_builder.register",
+    "assess_findings_quality_batch",
+    "async_query.register",
+    "batch_aggregate_signals",
+    "batch_centrality_all",
+    "batch_classify",
+    "batch_compress_pages",
+    "batch_compute_scores",
+    "batch_compute_simhash",
+    "batch_content_hash",
+    "batch_content_hash_hex",
+    "batch_content_hash_hex_parallel",
+    "batch_content_hash_parallel",
+    "batch_cooccurrence_edges_py",
+    "batch_cosine_scores",
+    "batch_cosine_scores_npy",
+    "batch_decompress_pages",
+    "batch_decrypt_aes_gcm",
+    "batch_dedup_fingerprints",
+    "batch_dedup_fingerprints_zc",
+    "batch_dedup_urls",
+    "batch_encrypt_aes_gcm",
+    "batch_entropy",
+    "batch_entropy_zc",
+    "batch_extract_claims",
+    "batch_extract_claims_python",
+    "batch_extract_emails",
+    "batch_extract_html_text",
+    "batch_extract_iocs_simd",
+    "batch_extract_iocs_simd_indexed",
+    "batch_extract_iocs_simd_python",
+    "batch_extract_links",
+    "batch_extract_links_with_text",
+    "batch_extract_microdata",
+    "batch_extract_structured_entities_py",
+    "batch_extract_titles",
+    "batch_fingerprint",
+    "batch_graph_traverse",
+    "batch_graph_traverse_flat",
+    "batch_hamming_scores",
+    "batch_hamming_scores_batched",
+    "batch_ioc_extract_fast",
+    "batch_ioc_extract_into",
+    "batch_ioc_extract_unified",
+    "batch_ioc_extract_unified_python",
+    "batch_ip_classify",
+    "batch_ja4",
+    "batch_nfc_normalize",
+    "batch_nfc_normalize_fast",
+    "batch_normalize_quality_text",
+    "batch_quality_score",
+    "batch_sanitize_xml",
+    "batch_serde_json",
+    "batch_serde_json_compact",
+    "batch_serde_json_compact_sorted",
+    "batch_serde_json_pretty",
+    "batch_serde_json_pretty_sorted",
+    "batch_sha256",
+    "batch_sha256_hw",
+    "batch_strip_diacritics",
+    "batch_strip_diacritics_fast",
+    "batch_topk_indices",
+    "batch_url_fingerprints",
+    "batch_url_fingerprints_zc",
+    "batch_xxh3_64_bytes",
+    "batch_xxh3_64_hex",
+    "betweenness_batch",
+    "betweenness_single",
+    "blake2b_128_buffer",
+    "blake3_buffer",
     "bloom.register",
     "bloom_check_batch",
+    "buffer_entropy",
+    "build_layout",
+    "bulk_bump_aggregate",
+    "bulk_snapshot_dict",
+    "canonical_url",
+    "canonical_url_batch",
+    "canonicalize_batch",
+    "chain_hash_snapshot",
+    "chi_square",
+    "cidr_contains",
+    "circuit_breaker.register_functions",
+    "circuit_breaker_clear_all",
+    "circuit_breaker_get_stats",
+    "circuit_breaker_half_open_probe",
+    "circuit_breaker_is_open",
+    "circuit_breaker_record_failure",
+    "circuit_breaker_record_success",
     "claims_extraction.register_functions",
+    "classify_url",
+    "clear_cache",
     "collections.register_functions",
     "compress.register_functions",
+    "compress_page",
+    "compute_cooccurrence_edges_py",
+    "compute_entropy",
+    "compute_entropy_fast",
+    "compute_simhash",
+    "connect_and_ja4",
+    "content_hash_64",
+    "content_hash_hex",
+    "cpu_pool_run_",
+    "create_telemetry_aggregator",
     "crypto_accelerate.register_functions",
+    "current_rss_bytes",
     "data.register_functions",
+    "decompress_page",
+    "dedup_fingerprint",
+    "detect_encoding_patterns",
+    "dns.register_functions",
     "dns_tunnel.register_functions",
+    "double_hash_64",
+    "drop_connections",
+    "entropy",
+    "extract_claims",
+    "extract_domain",
+    "extract_emails",
+    "extract_host",
+    "extract_html_text",
+    "extract_iocs",
+    "extract_iocs_flat",
+    "extract_iocs_from_bytes",
+    "extract_iocs_simd",
+    "extract_links",
+    "extract_links_with_text",
+    "extract_links_zero_copy",
+    "extract_meta_description",
+    "extract_metadata",
+    "extract_metadata_from_bytes",
+    "extract_microdata",
+    "extract_payload_context",
+    "extract_structured_entities_py",
+    "extract_text",
+    "extract_text_and_iocs",
+    "extract_text_and_iocs_from_bytes",
+    "extract_text_from_bytes",
+    "extract_title",
+    "extract_tls_metadata",
+    "fast_ioc_extract",
+    "fast_ioc_extract_batch",
     "federated_qtable.register",
+    "feed_branch_hint",
+    "feed_branch_verdict",
     "feed_decision.register_functions",
+    "feed_decision_classify",
+    "feed_economics_verdict",
     "feed_pipeline.register",
-    "gil.register_functions",
+    "feed_stage_diagnose",
+    "filter_valid_urls",
+    "fingerprint",
+    "get_adaptive_cpu_threads",
+    "get_adaptive_io_threads",
+    "get_adaptive_mixed_threshold",
+    "get_adaptive_mixed_threshold_via_metal",
+    "get_available_memory_gib",
+    "get_hugepage_size",
+    "get_memory_snapshot",
+    "get_metal_active_memory_bytes",
+    "get_metal_active_memory_gib",
+    "get_metal_limit_bytes_py",
+    "get_process_rss_gib",
+    "get_stats",
+    "get_total_memory_gib",
+    "get_tracking_params",
+    "get_uma_state_u8",
+    "graph_centrality.register_functions",
+    "graph_stats",
     "graph_traverse.register_functions",
+    "graph_traverse_single",
+    "hamming_dist",
     "health.register",
     "hot_edges_rs.register_functions",
     "html_parse.register_functions",
     "int_counter_layout.register_functions",
+    "io_pool_run_",
     "ioc_dedup.register_class",
     "ioc_extract.register_functions",
     "ioc_extract_simd.register_functions",
+    "ioc_extract_unified",
+    "is_near_duplicate",
+    "is_private_ip",
+    "is_public_ip",
+    "is_valid_url",
+    "ja4_from_client_hello",
+    "ja4_from_client_hello_bytes",
+    "lmdb_async_delete",
+    "lmdb_async_get",
+    "lmdb_async_get_many",
+    "lmdb_async_put",
+    "lmdb_async_put_batch",
+    "lmdb_async_scan_prefix",
     "lmdb_dht.register_functions",
+    "lmdb_dht_bfs_traverse",
+    "lmdb_dht_clear_dht_nodes",
+    "lmdb_dht_close_env",
+    "lmdb_dht_count_dht_nodes",
+    "lmdb_dht_get_all_dht_nodes",
+    "lmdb_dht_get_dht_node",
+    "lmdb_dht_get_node",
+    "lmdb_dht_put_dht_node",
+    "lmdb_dht_put_node",
+    "lmdb_dht_scan_all_nodes",
+    "looks_like_feed_url",
+    "lsh_estimate_recall",
+    "lsh_get_bands",
     "lsh_index.register_functions",
+    "lsh_index_new",
     "lz4_compress_jsonl_batch",
     "lz4_compress_raw",
     "lz4_decompress_jsonl_batch",
     "lz4_decompress_raw",
     "madvise.register_functions",
+    "madvise_free_reusable",
+    "madvise_hugepage",
+    "madvise_lmdb_mmap",
+    "madvise_on_mmap_region",
     "memory.register_functions",
+    "memory_pressure_level",
+    "metal_compute.register",
+    "mixed_pool_run_",
     "mlx_bridge.register",
+    "mmap_alloc_with_hugepage",
+    "mmap_free_hugepage",
+    "mmap_hugepage",
     "mpsc_pool.register",
+    "munmap_hugepage",
+    "nfc_normalize",
+    "nfd_normalize",
+    "normalize",
+    "normalize_quality_text",
+    "os_unfair_lock.register",
+    "parquet_reader.register",
+    "parse_ip_fast",
+    "peak_rss_bytes",
     "pipeline_compose.register",
     "pool_run.register_functions",
+    "prefetch",
+    "priority_classify_urls",
     "quality_gate.register_functions",
+    "query_terms.register_functions",
+    "quic.register",
     "rate_limit.register_module",
+    "rayon_abort_channel_",
+    "rayon_join_channel_",
+    "rayon_shutdown_channel_",
+    "rayon_submit_channel_",
+    "regex_lz4.register",
+    "resolve_async",
+    "resolve_happy_eyeballs",
+    "resolve_many",
+    "rolling_hash.register",
+    "rust_batch_entropy_analysis",
+    "rust_calculate_entropy",
+    "rust_entropy_ngram",
+    "rust_fast_entropy_screen",
+    "rust_majority_vote",
+    "rust_ngram_analysis",
+    "rust_wavelet_preprocess",
+    "sanitize_xml",
+    "scan_query_context",
+    "sendfile.register_functions",
+    "sendfile_available",
+    "sendfile_to_socket_py",
+    "serde_json_compact",
+    "serde_json_compact_bytes",
+    "serde_json_compact_sorted",
+    "serde_json_dumps_compact_bytes",
+    "serde_json_dumps_pretty_bytes",
+    "serde_json_parse",
+    "serde_json_pretty",
+    "serde_json_pretty_bytes",
+    "serde_json_pretty_sorted",
+    "serde_json_reexport",
     "serde_json_rs.register_functions",
+    "set_uma_state_u8",
+    "sha256_buffer",
     "signal_batch.register_functions",
+    "simd.register",
     "simd_similarity.register_functions",
+    "simhash",
     "simhash_ext.register_functions",
+    "sprint_policies.register",
     "spsc_queue.register",
+    "stix_2_1.register_functions",
+    "strip_diacritics",
+    "strip_tracking",
+    "strip_tracking_params",
+    "sync_adaptive_state",
+    "sync_metal_memory_pressure_py",
     "telemetry_agg.register_functions",
     "text_norm.register_functions",
+    "text_similarity.register_functions",
+    "tls13.register_functions",
     "tls_metadata.register_functions",
+    "tracing.register",
+    "url_dedup_hash",
+    "url_dedup_key",
     "url_engine.register_functions",
+    "url_fingerprint",
+    "url_normalize",
     "url_ops.register_functions",
+    "xxhash_ext.register_functions",
     "zero_copy.register_functions"
   ]
 }

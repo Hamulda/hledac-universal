@@ -58,7 +58,7 @@ def _ensure_bootstrap() -> None:
             return
 
         try:
-            from hledac.universal.hledac._namespace_bootstrap import ensure_namespace_paths
+            from hledac._namespace_bootstrap import ensure_namespace_paths
 
             ensure_namespace_paths()
             _BOOTSTRAPPED = True  # Set ONLY after successful bootstrap
@@ -99,24 +99,12 @@ _AUTO_MODULE_PATHS = [
     # Utils
     "hledac.universal.utils.action_result",
     "hledac.universal.utils",
-    # Sibling re-exports (hledac.core) — compat shims, no __all__
-    "hledac.universal.compat.core_resilience",
-    "hledac.universal.compat.core_http",
-    "hledac.universal.compat.core_unified_ai_orchestrator",
-    "hledac.universal.compat.core_watchdog",
-    # MLX embeddings (local universal/core/mlx_embeddings.py)
-    "hledac.universal.core.mlx_embeddings",
-    # Sibling re-exports (hledac.security) — compat shims, no __all__
-    "hledac.universal.compat.security_stealth_engine",
-    "hledac.universal.compat.security_threat_intelligence",
-    "hledac.universal.compat.security_quantum_resistant_crypto",
-    "hledac.universal.compat.security_zkp_research_engine",
-    "hledac.universal.compat.security_temporal_anonymizer",
-    "hledac.universal.compat.security_zero_attribution_engine",
-    # KeyManager: local security/key_manager.py
-    "hledac.universal.security.key_manager",
-    # Sibling re-exports (hledac.cortex) — compat shim, no __all__
-    "hledac.universal.compat.cortex_director",
+    # Sibling re-exports (hledac.core) — bootstrap wired in _namespace_bootstrap._bootstrap_core()
+    "hledac.core",
+    # MLX embeddings (hledac.core.mlx_embeddings — sibling re-export)
+    "hledac.core.mlx_embeddings",
+    # Sibling re-exports (hledac.security) — bootstrap wired in _namespace_bootstrap._bootstrap_security()
+    "hledac.security",
 ]
 
 # Explicit whitelist: canonical public API per module.
@@ -169,34 +157,81 @@ _EXPLICIT_ATTRS_BY_MODULE: dict[str, frozenset[str]] = {
     # Utils
     "hledac.universal.utils.action_result": frozenset({"ActionResult"}),
     "hledac.universal.utils": frozenset({"get_uuid7_compat_status"}),
-    # Sibling re-exports (hledac.core) — compat shims, no __all__
-    "hledac.universal.compat.core_resilience": frozenset({"AgentExecutionError", "CircuitBreakerOpen"}),
-    "hledac.universal.compat.core_http": frozenset({"fetch_json", "safe_fetch"}),
-    "hledac.universal.compat.core_unified_ai_orchestrator": frozenset({"UnifiedAIOrchestrator"}),
-    "hledac.universal.compat.core_watchdog": frozenset({"Watchdog"}),
-    # MLX embeddings
-    "hledac.universal.core.mlx_embeddings": frozenset({
+    # Sibling re-exports (hledac.core) — wired via _namespace_bootstrap._bootstrap_core()
+    "hledac.core": frozenset({"AgentExecutionError", "CircuitBreakerOpen", "CircuitBreakerOpenError"}),
+    "hledac.core.mlx_embeddings": frozenset({
         "MLXEmbeddingManager", "get_embedding_manager", "get_mlx_embedder",
     }),
-    # Sibling re-exports (hledac.security) — compat shims
-    "hledac.universal.compat.security_stealth_engine": frozenset({"StealthEngine"}),
-    "hledac.universal.compat.security_threat_intelligence": frozenset({"ThreatIntelligence"}),
-    "hledac.universal.compat.security_quantum_resistant_crypto": frozenset({"QuantumResistantCrypto"}),
-    "hledac.universal.compat.security_zkp_research_engine": frozenset({"ZKPResearchEngine"}),
-    "hledac.universal.compat.security_temporal_anonymizer": frozenset({"TemporalAnonymizer"}),
-    "hledac.universal.compat.security_zero_attribution_engine": frozenset({"ZeroAttributionEngine"}),
-    # KeyManager: local
-    "hledac.universal.security.key_manager": frozenset({"KeyManager"}),
-    # Sibling re-exports (hledac.cortex)
-    "hledac.universal.compat.cortex_director": frozenset({"GhostDirector"}),
+    # Sibling re-exports (hledac.security) — wired via _namespace_bootstrap._bootstrap_security()
+    "hledac.security": frozenset({
+        "KeyManager",
+        "StealthEngine",
+        "ThreatIntelligence",
+        "QuantumResistantCrypto",
+        "ZKPResearchEngine",
+        "TemporalAnonymizer",
+        "ZeroAttributionEngine",
+    }),
 }
 
-# Ghost entries: deleted symbols that must raise ImportError with a helpful msg
+# Ghost entries: deleted/migrated symbols that must raise ImportError with a helpful msg
 _GHOST_ENTRIES: dict[str, str] = {
-    # FullyAutonomousOrchestrator, MARLCoordinator, PressureLevel,
-    # ParallelExecutionOptimizer, RayClusterManager, LanguageDetector,
-    # SemanticFilter — deleted in prior sprints; removed from __all__ and
-    # _ghosts_and_special to eliminate dead-weight entries.
+    # ---- REMOVED COMPAT SHIMS (F350M-R A-01) ----
+    "GhostDirector": (
+        "GhostDirector was a non-functional compat stub and has been removed (F350M-R A-01). "
+        "No replacement — this symbol never existed in any backend."
+    ),
+    "AgentExecutionError": (
+        "AgentExecutionError is at hledac.core.resilience.AgentExecutionError. "
+        "Use: from hledac.core.resilience import AgentExecutionError"
+    ),
+    "CircuitBreakerOpen": (
+        "CircuitBreakerOpen was removed (F350M-R A-01). "
+        "Use hledac.core.resilience.CircuitBreakerOpenError instead. "
+        "From hledac.core.resilience import CircuitBreakerOpenError"
+    ),
+    # ---- NEVER-EXISTED STUBS ----
+    "UnifiedAIOrchestrator": (
+        "UnifiedAIOrchestrator was a non-functional compat stub and has been removed (F350M-R A-01). "
+        "No replacement."
+    ),
+    "Watchdog": (
+        "Watchdog is at hledac.core.watchdog.Watchdog. "
+        "Use: from hledac.core.watchdog import Watchdog"
+    ),
+    "fetch_json": (
+        "fetch_json was a compat stub removed in F350M-R A-01. "
+        "Use hledac.universal.fetching.public_fetcher.async_fetch_public_text directly."
+    ),
+    "safe_fetch": (
+        "safe_fetch was a compat stub removed in F350M-R A-01. "
+        "Use hledac.universal.fetching.public_fetcher.async_fetch_public_text directly."
+    ),
+    # ---- REMOVED SECURITY SHIMS (F350M-R A-01) ----
+    "StealthEngine": (
+        "StealthEngine is at hledac.security.StealthEngine. "
+        "Use: from hledac.security import StealthEngine"
+    ),
+    "ThreatIntelligence": (
+        "ThreatIntelligence is at hledac.security.ThreatIntelligence. "
+        "Use: from hledac.security import ThreatIntelligence"
+    ),
+    "QuantumResistantCrypto": (
+        "QuantumResistantCrypto is at hledac.security.QuantumResistantCrypto. "
+        "Use: from hledac.security import QuantumResistantCrypto"
+    ),
+    "ZKPResearchEngine": (
+        "ZKPResearchEngine is at hledac.security.ZKPResearchEngine. "
+        "Use: from hledac.security import ZKPResearchEngine"
+    ),
+    "TemporalAnonymizer": (
+        "TemporalAnonymizer is at hledac.security.TemporalAnonymizer. "
+        "Use: from hledac.security import TemporalAnonymizer"
+    ),
+    "ZeroAttributionEngine": (
+        "ZeroAttributionEngine is at hledac.security.ZeroAttributionEngine. "
+        "Use: from hledac.security import ZeroAttributionEngine"
+    ),
 }
 
 # -----------------------------------------------------------------------------

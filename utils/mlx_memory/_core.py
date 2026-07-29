@@ -48,11 +48,16 @@ logger = logging.getLogger(__name__)
 # ── MLX Availability Detection ────────────────────────────────────────────────
 
 def _detect_mlx_available() -> bool:
-    """Return True only if mlx.core is importable (spec found, not None)."""
+    """Return True only if mlx package is installed (no module import — ISSUE 3.2 fix).
+
+    Uses importlib.metadata instead of find_spec — find_spec loads mlx.core on macOS
+    which violates PLANNER: ZERO MLX when these modules are imported by planners.
+    """
     try:
-        spec = importlib.util.find_spec("mlx.core")
-        return spec is not None
-    except (ValueError, ModuleNotFoundError, ImportError):
+        import importlib.metadata
+        importlib.metadata.version("mlx")
+        return True
+    except Exception:
         return False
 
 

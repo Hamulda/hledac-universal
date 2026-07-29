@@ -40,7 +40,7 @@ class CTLogCacheStore:
 
     MIGRATION:
         # Old
-        from hledac.universal.intel.ct_log_scanner import CTLogScanner
+        from hledac.universal.network.ct_log_scanner import CTLogScanner
         scanner = CTLogScanner()
         subdomains = scanner._get_cached(domain)
 

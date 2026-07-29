@@ -11,7 +11,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 import msgspec
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
-from hledac.universal.utils.async_helpers import safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 if TYPE_CHECKING:
     from hledac.universal.utils.sprint_lifecycle import SprintLifecycleManager
 from hledac.universal.planning.cost_model import AdaptiveCostModel
@@ -401,7 +401,7 @@ class HTNPlanner:
         if not requests:
             return []
         coros = [self._execute_single_request(req, engine) for req in requests]
-        raw_results: list[tuple[PlannerRuntimeResult, float]] = await safe_gather_ok(*coros, label='htn_planner:592')
+        raw_results: list[tuple[PlannerRuntimeResult, float]] = await parallel_ok(*coros, label='htn_planner:592')
         results_with_elapsed: list[tuple[PlannerRuntimeResult, float]] = []
         for item in raw_results:
             if isinstance(item, Exception):
@@ -643,3 +643,17 @@ class HTNPlanner:
             return result
         except Exception:
             return None
+
+    async def teardown(self) -> None:
+        """
+        ISSUE-2.4 FIX: Graceful teardown — unload SLM model from Metal.
+
+        Called from SprintSchedulerV2.aclean() via HTNPlanner.teardown().
+        Releases ~400MB-1GB Metal memory held by the Qwen2.5-0.5B-4bit model.
+        Idempotent — safe to call multiple times.
+        """
+        if self.decomposer is not None and hasattr(self.decomposer, 'unload'):
+            try:
+                await self.decomposer.unload()
+            except Exception as e:
+                logger.debug(f'HTNPlanner.teardown: decomposer.unload error: {e}')

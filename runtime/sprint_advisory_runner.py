@@ -196,7 +196,7 @@ class SprintAdvisoryRunner:
           5. local_search → local_search_*
           6. federated_research → federated_* (F350M-FED-P3-FOLLOWUP)
 
-        Parallel execution via safe_gather_ok with _ADVISORY_PARALLEL_SEMAPHORE_LIMIT=4.
+        Parallel execution via parallel_ok with _ADVISORY_PARALLEL_SEMAPHORE_LIMIT=4.
         Each step is fail-soft; exceptions are collected and merged into outcome.error.
 
         CancelledError: re-raised to caller.
@@ -206,14 +206,14 @@ class SprintAdvisoryRunner:
             AdvisoryRunOutcome with counts/flags for each step.
         """
         try:
-            from hledac.universal.utils.async_helpers import safe_gather_ok
+            from hledac.universal.utils.async_helpers import parallel_ok
         except ImportError:
-            safe_gather_ok = None
+            parallel_ok = None
         outcome = AdvisoryRunOutcome()
         try:
             outcome = await self._run_pivot_planner_advisory(outcome)
             outcome = await self._run_pivot_executor_advisory(outcome)
-            if safe_gather_ok is not None:
+            if parallel_ok is not None:
                 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
                 sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
 
@@ -227,7 +227,7 @@ class SprintAdvisoryRunner:
                         except Exception as e:
                             log.debug('[P2-4] advisory step %s failed (fail-soft): %s', step_name, e)
                             return AdvisoryRunOutcome(error=str(e))
-                parallel_results = await safe_gather_ok(bounded_step(self._run_resource_governor_advisory(outcome), 'resource_governor'), bounded_step(self._run_analyst_brief_advisory(outcome), 'analyst_brief'), bounded_step(self._run_local_search_advisory(outcome), 'local_search'), bounded_step(self._run_federated_research_advisory(outcome), 'federated_research'), label='advisory_parallel:3-6')
+                parallel_results = await parallel_ok(bounded_step(self._run_resource_governor_advisory(outcome), 'resource_governor'), bounded_step(self._run_analyst_brief_advisory(outcome), 'analyst_brief'), bounded_step(self._run_local_search_advisory(outcome), 'local_search'), bounded_step(self._run_federated_research_advisory(outcome), 'federated_research'), label='advisory_parallel:3-6')
                 for r in parallel_results:
                     if isinstance(r, AdvisoryRunOutcome):
                         outcome = _merge_outcomes(outcome, r)

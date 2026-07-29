@@ -30,7 +30,7 @@ Extended from evidence_network_analyzer.py comments:
 """
 import asyncio
 import threading
-from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_ok
+from hledac.universal.utils.async_helpers import parallel_ok
 from hledac.universal.utils.sync_bridge import run_sync_async
 import logging
 import re
@@ -39,15 +39,12 @@ from dataclasses import dataclass, field
 import msgspec
 from functools import partial
 from typing import Any
-
-# numpy — strict import with fallback
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
 except ImportError:
     np = None
     NUMPY_AVAILABLE = False
-
 
 def _get_numpy():
     """Lazy getter for numpy with availability check."""
@@ -198,7 +195,7 @@ class GraphRAGOrchestrator:
                 except Exception:
                     pass
                 return (node_id, None, None)
-        fetch_results: list[tuple[str, np.ndarray | None, float | None]] = await safe_gather_ok(*[fetch_node_with_semaphore(n) for n in nodes_to_score], label='graph_rag:score_node_embeddings')
+        fetch_results: list[tuple[str, np.ndarray | None, float | None]] = await parallel_ok(*[fetch_node_with_semaphore(n) for n in nodes_to_score], label='graph_rag:score_node_embeddings')
         node_embeddings: list[np.ndarray] = []
         confidences: list[float] = []
         for result in fetch_results:
@@ -271,7 +268,7 @@ class GraphRAGOrchestrator:
         async def score_with_semaphore(path: list[str]) -> float:
             async with semaphore:
                 return await self.score_path(path, hypothesis, hypothesis_emb, max_nodes)
-        results = await safe_gather_ok(*[score_with_semaphore(path) for path in paths], label='graph_rag:score_paths_parallel')
+        results = await parallel_ok(*[score_with_semaphore(path) for path in paths], label='graph_rag:score_paths_parallel')
         return [float(r) if isinstance(r, (int, float)) else 0.0 for r in results]
 
     async def multi_hop_search(self, query: str, hops: int=2, max_nodes: int=20, timeline: bool=False, time_min: str | None=None, time_max: str | None=None, prefer_recent: bool=True, bucket: str='month', max_timeline_points: int=12) -> dict[str, Any]:
@@ -371,16 +368,13 @@ class GraphRAGOrchestrator:
         for the no-loop case. For worker threads with a running loop,
         run_until_complete is safe to use directly.
         """
-        # Worker thread with running loop — run_until_complete is safe
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             return run_sync_async(coro)
-        # Running loop: if in a worker thread, run_until_complete is safe
         if threading.get_ident() != threading.main_thread().ident:
             loop = asyncio.get_running_loop()
             return loop.run_until_complete(coro)
-        # Main thread with running loop — delegate to run_sync_async
         return run_sync_async(coro)
 
     def multi_hop_search_sync(self, query: str, hops: int=2, max_nodes: int=20, timeline: bool=False, time_min: str | None=None, time_max: str | None=None, prefer_recent: bool=True, bucket: str='month', max_timeline_points: int=12) -> dict[str, Any]:
@@ -596,11 +590,8 @@ class GraphRAGOrchestrator:
             return hashlib.sha256(name.encode('utf-8')).hexdigest()[:16]
         entity1_id = get_entity_id(entity1)
         entity2_id = get_entity_id(entity2)
-        # ISSUE 3.1 FIX: Use RustWorkerPool with io pool for proper rayon dispatch.
-        # Previously used run_in_io_pool from utils.rayon_pool which was a GIL wrapper
-        # that doesn't actually dispatch to the rayon pool - it just runs in asyncio.to_thread.
         from hledac.universal.runtime.worker_pool import get_rust_pool
-        pool = get_rust_pool("io")
+        pool = get_rust_pool('io')
         bfs_fn = partial(self._find_paths_bfs, entity1_id, entity2_id, max_hops, [], set())
         paths = await pool.submit(bfs_fn)
         logger.info(f"Found {len(paths)} paths between '{entity1}' and '{entity2}'")
@@ -675,9 +666,6 @@ class GraphRAGOrchestrator:
         n = len(node_ids)
         for node_id in node_ids:
             scores = CentralityScores(node_id=node_id)
-            # B8-fix: handle edge case where ig_centrality exists but is empty/partial.
-            # If Rust returned a non-empty dict with all nodes, use it directly.
-            # Otherwise, fall back to per-node computation with the cached result.
             if ig_centrality and node_id in ig_centrality:
                 c = ig_centrality[node_id]
                 scores.degree = c.get('degree', 0.0)
@@ -686,11 +674,8 @@ class GraphRAGOrchestrator:
                 scores.eigenvector = c.get('eigenvector', 0.0)
                 scores.pagerank = c.get('pagerank', 0.0)
             else:
-                # Rust returned empty/partial — compute degree directly, use cached
-                # centrality dict for other metrics (avoids O(4n) redundant recomputation).
                 if node_id in adjacency:
                     scores.degree = len(adjacency[node_id]) / max(n - 1, 1)
-                # _cached_centrality=ig_centrality (may be empty) prevents re-computation
                 scores.betweenness = self._calculate_betweenness(node_id, adjacency, node_ids, _cached_centrality=ig_centrality)
                 scores.closeness = self._calculate_closeness(node_id, adjacency, node_ids, _cached_centrality=ig_centrality)
                 scores.eigenvector = self._calculate_eigenvector(node_id, adjacency, node_ids, _cached_centrality=ig_centrality)
@@ -888,20 +873,14 @@ class GraphRAGOrchestrator:
         Betweenness uses Brandes algorithm with parallel source-node dispatch.
         For large graphs (>2000 nodes), betweenness uses sampling approximation.
         """
-        # Try Rust first (primary path — rayon parallel across all metrics)
         try:
             import hledac_rust_extensions as _rust_ext
-            # Convert dict[str, set[str]] → list of (node_id, Vec<neighbor_id>)
-            adj_list: list[tuple[str, list[str]]] = [
-                (node_id, list(neighbors)) for node_id, neighbors in adjacency.items()
-            ]
+            adj_list: list[tuple[str, list[str]]] = [(node_id, list(neighbors)) for node_id, neighbors in adjacency.items()]
             rust_result = _rust_ext.batch_centrality_all(adj_list)
             if rust_result:
                 return dict(rust_result)
         except Exception:
             pass
-
-        # Fallback to igraph C-core
         if not _check_ram_for_igraph():
             return {}
         ig_mod = lazy_ig()

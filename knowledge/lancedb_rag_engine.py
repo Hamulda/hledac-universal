@@ -195,7 +195,7 @@ class LanceDBRAGEngine:
             if embedder is None:
                 break
             try:
-                result = await asyncio.to_thread(embedder.embed_documents, texts)
+                result = await asyncio.to_thread(embedder._embed_for_indexing, texts)
                 embeddings = result.tolist() if hasattr(result, 'tolist') else list(result)
             except Exception as e:
                 logger.debug(f'[LANCEDB:RAG] batch embedding failed: {e}')
