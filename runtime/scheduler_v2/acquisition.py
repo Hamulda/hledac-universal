@@ -1195,6 +1195,77 @@ class AcquisitionOrchestrator:
         """Check feed dominance budget before fetching."""
         return (True, "ok")
 
+    # ── Nonfeed probe lane helpers ───────────────────────────────────────
+
+    async def _run_one_sidecar_lane(
+        self,
+        lane_name: str,
+        sidecar: Any,
+        sidecar_ctx: Any,
+        lane_budget: float,
+    ) -> tuple[str, bool, int]:
+        """Run a single registered sidecar. Returns (name, attempted, count)."""
+        try:
+            async with asyncio.timeout(lane_budget):
+                _findings = await sidecar.run(sidecar_ctx)
+            _count = len(_findings) if _findings else 0
+            return (lane_name, True, _count)
+        except TimeoutError:
+            return (lane_name, True, 0)
+        except Exception:
+            return (lane_name, False, 0)
+
+    def _build_sidecar_context(self, ctx: Any) -> Any | None:
+        """Build SidecarContext from ctx. Returns None on import failure."""
+        try:
+            from hledac.universal.runtime.sidecar_protocol import SidecarContext, ensure_adapters_registered
+        except Exception:
+            return None
+
+        _query = ctx.query
+        _sprint_id = getattr(ctx, "sprint_id", "") or "unknown"
+        _mode = ctx.config.aggressive_mode and "aggressive" or "active"
+        # ISSUE #011 FIX: pressure_ratio does not exist on _CycleState — always 0.0
+        _pressure = getattr(ctx._cycle, "pressure_ratio", 0.0)
+
+        return SidecarContext(
+            query=_query,
+            sprint_id=_sprint_id,
+            findings=[],
+            sprint_mode=_mode,
+            memory_pressure=_pressure,
+        )
+
+    def _get_adaptive_concurrency(self) -> int:
+        """Get adaptive concurrency from Rust adaptive_scheduler. Default 5."""
+        try:
+            from hledac.universal.rust_extensions import hledac_rust_extensions
+            return getattr(hledac_rust_extensions, "get_adaptive_mixed_threshold", lambda: 32)()
+        except Exception:
+            return 5
+
+    def _build_probe_lane_coros(
+        self,
+        available: list,
+        sidecar_ctx: Any,
+        lane_budget: float,
+    ) -> list[tuple[str, Any]]:
+        """Filter registry to probe lanes and return (name, coroutine) list."""
+        _probe_env_gates: set[str] = {
+            "HLEDAC_ENABLE_WAYBACK",
+            "HLEDAC_ENABLE_PDNS",
+            "HLEDAC_ENABLE_DOH",
+            "HLEDAC_ENABLE_IPFS",
+            "HLEDAC_ENABLE_BGP",
+        }
+        _coros: list[tuple[str, Any]] = []
+        for _adapter in available:
+            _gate = getattr(_adapter, "env_gate", "") or ""
+            if _gate in _probe_env_gates:
+                _sid = getattr(_adapter, "sidecar_id", "") or _gate
+                _coros.append((_sid, self._run_one_sidecar_lane(_sid, _adapter, sidecar_ctx, lane_budget)))
+        return _coros
+
     async def _maybe_dispatch_nonfeed_probe_lanes(
         self,
         ctx: Any,
@@ -1211,84 +1282,27 @@ class AcquisitionOrchestrator:
         Adaptive concurrency: Rust adaptive_scheduler.mixed_threshold() (16/32/64)
         when available, default 5 for clearnet.
         """
-        try:
-            from hledac.universal.runtime.sidecar_protocol import SidecarContext, SidecarRegistry, ensure_adapters_registered
-        except Exception:
+        _sidecar_ctx = self._build_sidecar_context(ctx)
+        if _sidecar_ctx is None:
             return
 
-        # Build SidecarContext
-        _query = ctx.query
-        _sprint_id = getattr(ctx, "sprint_id", "") or "unknown"
-        _mode = ctx.config.aggressive_mode and "aggressive" or "active"
-        # ISSUE #011 FIX: pressure_ratio does not exist on _CycleState — always 0.0
-        _pressure = getattr(ctx._cycle, "pressure_ratio", 0.0)
-
-        # ISSUE #011 FIX: findings must be a list, not int.
-        # accepted_findings is int — list(int) produces list of digits (e.g. list(42) → [4, 2]).
-        _sidecar_ctx = SidecarContext(
-            query=_query,
-            sprint_id=_sprint_id,
-            findings=[],  # findings field is for cross-sprint context; empty is correct
-            sprint_mode=_mode,
-            memory_pressure=_pressure,
-        )
-
-        # Adaptive concurrency from Rust adaptive_scheduler — 16/32/64 based on MLX memory pressure
-        _concurrency: int = 5  # clearnet default
-        try:
-            from hledac.universal.rust_extensions import hledac_rust_extensions
-
-            _concurrency = getattr(hledac_rust_extensions, "get_adaptive_mixed_threshold", lambda: 32)()
-        except Exception:
-            pass  # fallback: 5
+        _concurrency = self._get_adaptive_concurrency()
 
         # Remaining time budget per lane — 5% of remaining sprint time, min 2s
         _wall_clock_start = ctx._cycle.wall_clock_start if ctx._cycle else 0.0
         _remaining = ctx.config.sprint_duration_s - (_time.monotonic() - _wall_clock_start)
         _lane_budget = max(_remaining * 0.05, 2.0)
 
-        # Probe lane env gates — used to filter SidecarRegistry results
-        _probe_env_gates: set[str] = {
-            "HLEDAC_ENABLE_WAYBACK",
-            "HLEDAC_ENABLE_PDNS",
-            "HLEDAC_ENABLE_DOH",
-            "HLEDAC_ENABLE_IPFS",
-            "HLEDAC_ENABLE_BGP",
-        }
-
-        async def _run_one_registered_sidecar(
-            lane_name: str,
-            sidecar: Any,
-            sidecar_ctx: SidecarContext,
-            lane_budget: float,
-        ) -> tuple[str, bool, int]:
-            """Run a single registered sidecar. Returns (name, attempted, count)."""
-            try:
-                async with asyncio.timeout(lane_budget):
-                    _findings = await sidecar.run(sidecar_ctx)
-                _count = len(_findings) if _findings else 0
-                return (lane_name, True, _count)
-            except TimeoutError:
-                return (lane_name, True, 0)
-            except Exception:
-                return (lane_name, False, 0)
-
         # ISSUE #011 FIX: Use SidecarRegistry — the canonical discovery path.
         # Avoids broken factory __import__ paths for pdns/doh/ipfs/bgp.
         try:
+            from hledac.universal.runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
             ensure_adapters_registered()
             _available = SidecarRegistry.get_available(memory_budget_mb=512)
         except Exception:
             _available = []
 
-        # Filter to probe lanes only and build coroutines
-        _coros: list[tuple[str, Any]] = []
-        for _adapter in _available:
-            _gate = getattr(_adapter, "env_gate", "") or ""
-            if _gate in _probe_env_gates:
-                _sid = getattr(_adapter, "sidecar_id", "") or _gate
-                _coros.append((_sid, _run_one_registered_sidecar(_sid, _adapter, _sidecar_ctx, _lane_budget)))
-
+        _coros = self._build_probe_lane_coros(_available, _sidecar_ctx, _lane_budget)
         if not _coros:
             return  # no probe lanes available — fail-soft
 
@@ -1299,7 +1313,6 @@ class AcquisitionOrchestrator:
             _inner_coros = [coro for _, coro in _coros]
             _build = await parallel(_inner_coros, concurrency=_concurrency, policy="collect", taskgroup=True, ctx="probe_lanes")
             _ok_results: list = _build.ok
-            _error_results: list = list(_build.errors) if _build.errors else []
             for _r in _ok_results:
                 if isinstance(_r, tuple) and len(_r) == 3:
                     _name, _attempted, _count = _r

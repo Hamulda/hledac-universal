@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 #
 # MIGRATION STATUS (F350M-R, 2026-07):
-# ✅ COMPLETE: DuckDBRAGStore + DuckDBEntityStore (duckdb_rag_store.py)
+# Migration complete: DuckDBRAGStore + DuckDBEntityStore (duckdb_rag_store.py)
 #   fully replace LanceDBIdentityStore, LanceDBRAGEngine, SemanticStore.
 #   Exported via knowledge/__init__.py as DuckDBRAGStore, DuckDBEntityStore,
 #   get_identity_store(), get_rag_store().

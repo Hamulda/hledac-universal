@@ -275,7 +275,7 @@ def _extract_domains_from_ct_name_value(name_value: str) -> list[tuple[str, bool
     return results
 
 
-def _classify_domain_shape(domain: str, url: str, ct_name_value: str) -> str:
+def _classify_domain_shape(domain: str, url: str, ct_name_value: str | None) -> str:
     """Classify the candidate shape for quarantine entry classification."""
     if domain.startswith("*."):
         return "wildcard"
@@ -701,7 +701,6 @@ def _ct_evaluate_candidate(
 
 def _make_ct_conversion_summary(
     raw_hits_count: int,
-    ct_raw_entries: int,
     built: int,
     stored: int,
     storage_rejected: int,
@@ -888,29 +887,6 @@ def ct_results_to_findings(
             if finding is not None:
                 findings.append(finding)
                 ct_candidate_domains += 1
-
-    # Tally per-category rejections from the rejection list
-    ct_rejected_wildcard = sum(1 for r in rejections if r == REJECTION_WILDCARD_DOMAIN)
-    ct_rejected_invalid = sum(
-        1 for r in rejections
-        if r in (REJECTION_PRIVATE_OR_RESERVED_DOMAIN, REJECTION_LOW_INFORMATION)
-    )
-    ct_rejected_duplicate = sum(1 for r in rejections if r == REJECTION_DUPLICATE_CANDIDATE)
-
-    # F231B: CT expansion clue tracking — domain expansion evidence that is NOT
-    # an accepted CanonicalFinding. These clues make CT analytically visible even
-    # when accepted_findings == 0.
-    ct_raw_domains_seen = ct_raw_entries
-    ct_unique_domains_seen = ct_extracted_domains
-    # Valid public domains = candidate domains that passed all structural checks
-    # (not wildcards, not private/reserved, not single-label, not duplicates)
-    ct_valid_public_domains = ct_candidate_domains
-    ct_wildcard_domains = ct_rejected_wildcard
-    ct_private_reserved_domains = ct_rejected_invalid
-    ct_duplicate_candidates = ct_rejected_duplicate
-    # Bounded examples of quarantine entries (max 5) — these are expansion clues
-    ct_candidate_examples: list[dict[str, Any]] = ct_quarantine_entries[:MAX_EXPANSION_CLUE_EXAMPLES]
-    ct_expansion_clues_count = len(ct_candidate_examples)
 
     telemetry = _build_ct_telemetry(
         rejections=rejections,
@@ -1561,7 +1537,6 @@ def summarize_ct_conversion(
         "ctRawSample": ct_raw_sample,
         "ctConversionSummary": _make_ct_conversion_summary(
             raw_hits_count=raw_hits_count,
-            ct_raw_entries=ct_raw_entries,
             built=ct_candidates_built,
             stored=ct_candidates_stored,
             storage_rejected=ct_storage_rejected,
@@ -1674,23 +1649,21 @@ def doh_results_to_findings(
             f"sprint:{sprint_id[:16]}",
         )
 
-        # Build enriched payload_text
+        # Build enriched payload_text — consolidated field mapping
+        field_map = [
+            ("spf_policy", spf),
+            ("dmarc_policy", dmarc),
+            ("dkim_selector", dkim),
+            ("mail_provider", mail),
+            ("ca_restriction", caa),
+        ]
         lines = [
             f"domain: {domain}",
             f"record_type: {record_type}",
             f"value: {value}",
             f"provider: {provider}",
         ]
-        if spf:
-            lines.append(f"spf_policy: {spf}")
-        if dmarc:
-            lines.append(f"dmarc_policy: {dmarc}")
-        if dkim:
-            lines.append(f"dkim_selector: {dkim}")
-        if mail:
-            lines.append(f"mail_provider: {mail}")
-        if caa:
-            lines.append(f"ca_restriction: {caa}")
+        lines.extend(f"{key}: {val}" for key, val in field_map if val)
         payload_text = "\n".join(lines)
 
         finding = _canonical_finding(
@@ -2496,7 +2469,6 @@ def academic_results_to_findings(
             payload_text = "\n".join(parts)
 
 
-            url_hash = url_hash if 'url_hash' in dir() else url[:16]
             finding_id_str = f"acad-{url_hash[:20]}"
             if sprint_id:
                 finding_id_str = f"{sprint_id[:12]}-{url_hash[:16]}"
@@ -2507,7 +2479,7 @@ def academic_results_to_findings(
                 confidence=0.75,
                 query=query[:256] if query else "",
                 ts=time.time(),
-                payload_text=payload_text if 'payload_text' in dir() else "",
+                payload_text=payload_text,
                 provenance=(
                     f"source:{source}",
                     f"url:{url[:200]}",

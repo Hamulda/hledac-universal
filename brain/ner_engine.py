@@ -1,24 +1,21 @@
 """
-✅ CANONICAL - NER Engine s GLiNER-X pro CPU inference
-======================================================
+NER Engine — Named Entity Recognition using GLiNER-X on CPU.
 
-Toto je CANONICAL implementace pro Named Entity Recognition.
+Uses knowledgator/gliner-relex-large-v0.5 model for joint NER + RE extraction
+with lazy loading and explicit CPU-only mode.
 
-Používá knowledgator/gliner-relex-large-v0.5 model pro extrakci named entities a vztahů (joint NER + RE)
-s podporou lazy loading a explicitního CPU-only režimu.
+Alternative: utils/entity_extractor.py (regex-based, faster but less accurate)
 
-Alternativa: utils/entity_extractor.py (regex-based, rychlejší ale méně přesný)
-
-Pro NER vždy používejte tento modul:
+Usage:
     from hledac.universal.brain.ner_engine import NEREngine, get_ner_engine
 
 Features:
-- Lazy loading modelu (načte se až při prvním použití)
+- Lazy model loading (loaded on first use)
 - CPU-only inference (map_location="cpu")
-- Podpora batch i single prediction
-- Explicitní unload pro uvolnění paměti
-- Sprint 76: ANE acceleration via NaturalLanguage framework (PyObjC)
-- Sprint 76: CoreML NER model fallback
+- Batch and single prediction support
+- Explicit unload for memory release
+- ANE acceleration via NaturalLanguage framework (PyObjC)
+- CoreML NER model fallback
 """
 from __future__ import annotations
 import asyncio

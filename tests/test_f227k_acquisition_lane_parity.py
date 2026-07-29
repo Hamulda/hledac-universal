@@ -70,7 +70,7 @@ def _ctx(
     has_long_duration = False  # default scenario duration < 300s
 
     from hledac.universal.runtime.acquisition_strategy import (
-        _has_explicit_cid,
+        _has_explicit_ipfs_cid as _has_explicit_cid,
         is_academic_profile,
         is_deep_osint_m1_profile,
     )

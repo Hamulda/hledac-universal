@@ -2,14 +2,14 @@
 Adaptive Cache — Memory-Aware LRU/TinyLFU Cache for M1 8GB UMA
 ================================================================
 
-Cutting-edge adaptive cache s dynamickým sizingom podľa dostupnej RAM.
-Využíva existujúcu Rust infraštruktúru (PyGraphLRUCache + get_memory_snapshot).
+Adaptive cache with dynamic sizing based on available RAM.
+Uses existing Rust infrastructure (PyGraphLRUCache + get_memory_snapshot).
 
 Features:
-- TinyLFU admission policy (W-TinyLFU) pre lepší hit ratio
-- Adaptívny max_size podľa available_memory_gib
+- TinyLFU admission policy (W-TinyLFU) for better hit ratio
+- Adaptive max_size based on available_memory_gib
 - Memory pressure awareness (normal/elevated/critical)
-- M1 8GB safe: max 512 MB pre cache layer
+- M1 8GB safe: max 512 MB for cache layer
 
 Invariant: Always-on, bounded, fail-safe
 """

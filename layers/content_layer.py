@@ -203,7 +203,7 @@ class ResiliparseCleaner:
     Ultra-fast HTML cleaner using Resiliparse (C++ optimized).
 
     Features:
-        - Lightning-fast text extraction (C++ backend)
+        - Fast text extraction via C++ backend
         - Automatic removal of scripts, styles, navigation
         - Best for large-scale content processing
     """

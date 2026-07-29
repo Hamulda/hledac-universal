@@ -36,7 +36,7 @@ INVARIANTS:
   [TP-1] public_fetcher imports ONLY from transport.base and transport.provider_utils
   [TP-2] TransportConfig/TransportResult are msgspec.Struct frozen=True (immutable, ~3× faster)
   [TP-3] Circuit breaker state flows through config, not direct fetcher state
-  [TP-4] All transport functions are fail-soft — exceptions handled gracefully
+  [TP-4] All transport functions are fail-soft — exceptions return None/false
   [TP-5] CancelledError is always re-raised by transport functions
 """
 from __future__ import annotations

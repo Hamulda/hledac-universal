@@ -1,15 +1,12 @@
 """
-✅ CANONICAL - DeepHermes3Engine for Decision Making
-=====================================================
+DeepHermes3Engine — LLM-based decision making with ChatML formatting.
 
-This is the CANONICAL implementation for decision making and orchestration.
 DeepHermes 3 3B 4bit with deep thinking support is the default primary reasoning model.
 Supports ChatML formatting, AI-driven query analysis, and research synthesis.
 
-NOTE (Sprint 8VH): brain/inference_engine.py is FUNKČNĚ ODLIŠNÝ:
+NOTE (Sprint 8VH): brain/inference_engine.py is functionally distinct:
   - inference_engine: abductive reasoning, evidence chaining, entity resolution, inference rules
   - deephermes3_engine: LLM-based decision making, ChatML, structured generation
-  Both are canonical for their domains — no deduplication needed.
 """
 from __future__ import annotations
 import asyncio

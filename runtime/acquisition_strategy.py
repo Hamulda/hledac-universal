@@ -82,6 +82,7 @@ from hledac.universal.runtime.acquisition_strategy_planner import (
     normalize_acquisition_profile,
     is_academic_profile,
     is_deep_osint_m1_profile,
+    LaneSpecFeedNFD,
     reconcile_lane_detail_fields,
     complete_source_family_outcomes_from_lane_details,
     # Bridge helpers (used by runner)
@@ -154,6 +155,7 @@ __all__ = [
     'normalize_acquisition_profile',
     'is_academic_profile',
     'is_deep_osint_m1_profile',
+    'LaneSpecFeedNFD',
     'reconcile_lane_detail_fields',
     'complete_source_family_outcomes_from_lane_details',
     'TERMINAL_STATES',
