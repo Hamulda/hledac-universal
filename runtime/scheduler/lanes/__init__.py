@@ -1,45 +1,9 @@
-"""
-Sprint F206BG — Canonical Acquisition Strategy Layer.
+"""Sprint F206BG — Canonical Acquisition Strategy Layer.
 
-ROLE: Model-free planner/admission layer that decides which acquisition lanes
-are allowed per sprint/cycle under M1 constraints.
-
-ARCHITECTURAL RULE:
-  AcquisitionStrategy does NOT fetch network.
-  It only emits a bounded plan dict per lane.
-
-Lane plan fields:
-  lane, enabled, reason, max_items, timeout_s, concurrency, risk_level
-
-LANES:
-  FEED         — structured TI feeds (always allowed unless hardware critical)
-  PUBLIC       — public discovery pipeline
-  CT           — certificate transparency log discovery
-  WAYBACK      — Wayback Machine archive enumeration
-  PASSIVE_DNS  — passive DNS lookup
-  BLOCKCHAIN   — blockchain analyzer (wallet/hash/crypto indicators)
-  STEALTH      — stealth/dark web (disabled by default)
-  PIVOT_EXECUTOR — pivot-driven domain/IP expansion
-
-STRATEGY RULES:
-  - FEED: always unless hardware critical
-  - PUBLIC: unless transport degraded or hardware critical
-  - CT: domain-like query OR aggressive mode
-  - WAYBACK: query has URL/domain OR enough budget (duration >= 300s)
-  - PASSIVE_DNS: query has domain/IP indicator
-  - BLOCKCHAIN: query has wallet/hash/crypto indicator
-  - STEALTH: disabled by default unless explicit flag AND transport phase >= breaker_seam
-  - PIVOT_EXECUTOR: always allowed (lightweight, advisory)
-  - Concurrency reduced under UMA warn/critical
-  - Heavy optional lanes hard-disabled under swap/critical
-
-INVARIANTS (GHOST_INVARIANTS):
-  - No network I/O
-  - No model/MLX load
-  - No asyncio.run() / loop.run_until_complete()
-  - Bounded: max 8 lanes in plan
-  - Fail-soft: returns minimal plan on any error
-  - Deterministic: same inputs always produce same plan
+Model-free planner/admission layer deciding which acquisition lanes are
+allowed per sprint/cycle under M1 constraints. AcquisitionStrategy does NOT
+fetch network — it only emits a bounded plan dict per lane. See
+:ref:`acquisition-strategy` for lane definitions, strategy rules, and invariants.
 """
 import logging
 import re

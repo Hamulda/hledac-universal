@@ -1,122 +1,85 @@
 ---
-children_hash: 97d06da0ebe0e2abd2e7f6856aee299a723fe6e09d53f457b250b53ed4687e31
-compression_ratio: 0.3431151241534989
+children_hash: df7edaa99cedc523142638b4efca2ea5ed01cd367c1761cebd96e3c84de211ea
+compression_ratio: 0.2800409941070971
 condensation_order: 1
-covers: [context.md, issue_007_mpsc_batch_send_optimization.md, m1-8gb-memory-budget-fragmentation.md, m1-8gb-unified-memory-as-system-wide-constraint.md, m1_8gb_ram_priority_optimizations.md, m1resourcegovernor_implementation.md, rust_mpsc_architecture_issue_007.md, zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md]
-covers_token_total: 3544
+covers: [context.md, issue_007_mpsc_batch_send_optimization.md, m1-8gb-memory-budget-fragmentation.md, m1-8gb-unified-memory-as-system-wide-constraint.md, m1-bounds-configuration-fragmentation.md, m1_8gb_ram_priority_optimizations.md, m1resourcegovernor_implementation.md, rust_mpsc_architecture_issue_007.md, zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md]
+covers_token_total: 3903
 summary_level: d1
-token_count: 1216
+token_count: 1093
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries about the resource_governor topic. I need to synthesize these child entries into a concise overview that:
-- Preserves key facts, relationships, and patterns
-- References entry names for drill-down
-- Targets ~20-30% compression
-- Preserves entity names, file paths, API signatures, architectural decisions
-- Discards verbose examples, repeated explanations
+The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries. These are all related to memory/resource_governor topic.
 
-Let me analyze the entries:
+Let me analyze the key content:
 
-1. **context.md** - Overview of resource_governor: UMA memory management, threshold configuration, concurrency control, swap safety policies
+1. **context.md** - Overview of UMA memory management with threshold configuration, concurrency control, swap safety policies, and dual-channel TTL cache
 
-2. **issue_007_mpsc_batch_send_optimization.md** - MPSC batch send optimization using Rust send_batch, 1 MiB memory budget, GIL reduction
+2. **issue_007_mpsc_batch_send_optimization.md** - MPSC batch send optimization with 2048 slots, 512B per slot, ~1 MiB budget, single Python→Rust call, GIL overhead reduction
 
-3. **m1-8gb-memory-budget-fragmentation.md** - Memory budget hardcoded across 4 domains without canonical allocation
+3. **m1-8gb-memory-budget-fragmentation.md** - Memory budget fragmentation across domains (DuckDB 600MB, Metal cache formula, etc.)
 
-4. **m1-8gb-unified-memory-as-system-wide-constraint.md** - M1 8GB hardware limit shapes architecture across storage, concurrency, ML inference
+4. **m1-8gb-unified-memory-as-system-wide-constraint.md** - M1 8GB hardware limit affecting all subsystems with 5-state hysteresis
 
-5. **m1_8gb_ram_priority_optimizations.md** - P0-P3 priority matrix for M1 8GB RAM optimizations
+5. **m1-bounds-configuration-fragmentation.md** - Configuration fragmentation across duckdb_store, transport_layers, resource_governor
 
-6. **m1resourcegovernor_implementation.md** - 5-state hysteresis machine, dual-channel TTL cache, concurrency presets
+6. **m1_8gb_ram_priority_optimizations.md** - P0-P3 priority matrix with msgspec gc=False, GHOST_INVARIANTS CI, Rust graph analytics
 
-7. **rust_mpsc_architecture_issue_007.md** - MPSC architecture for Python-Rust batch communication
+7. **m1resourcegovernor_implementation.md** - ResourceGovernor implementation with 5-state machine, dual-channel TTL cache, concurrency presets
 
-8. **zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md** - msgspec.msgpack with gc=False for zero-copy serialization
+8. **rust_mpsc_architecture_issue_007.md** - Rust MPSC architecture with crossbeam bounded channels
 
-Key patterns and relationships:
-- M1 8GB UMA is the system-wide constraint
-- ResourceGovernor uses 5-state hysteresis machine
-- MPSC optimization reduces GIL overhead
+9. **zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md** - msgspec zero-copy spanning memory and architecture
+
+Key patterns:
+- M1 8GB UMA budget is the core constraint
+- ResourceGovernor manages memory via 5-state hysteresis (NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED)
 
 
-- msgspec.msgpack with gc=False eliminates serialization overhead and enables zero-copy optimization
-- DuckDB constrained to 600MB with 2 threads; Metal cache capped at 1.5 GiB
-- Concurrency presets dynamically adjust worker count based on system state
-
-I'll organize this into thematic clusters: the M1 8GB hardware boundary, ResourceGovernor's memory management and state transitions, performance optimizations through MPSC batching and zero-copy serialization, priority-based optimization strategy, and the fragmentation challenge across domains.
+- MPSC optimization reduces batch sends to a single Python→Rust call with ~1µs/event, and msgspec with gc=False provides zero-copy benefits. Configuration values are scattered across DuckDB (600MB/2threads), Metal cache (1.5GiB), MPSC pool (1 MiB), and RSS (5.5GiB/512 LRU), creating fragmentation. The 5-state machine controls concurrency through presets like emergency=0 workers, critical=1, warn=3, soft_warn=5, ok=5, and dual-channel TTL cache manages memory with swap tiered policy.
 </think>
 
 # Resource Governor
 
-## Overview
+UMA memory management for M1 8GB unified memory — threshold configuration, concurrency control, swap safety policies, and MPSC batch optimization.
 
-The `resource_governor` domain manages M1 8GB Unified Memory Architecture (UMA) as a system-wide constraint, covering threshold configuration, concurrency control, swap safety policies, and zero-copy IPC optimization.
+## Core Architecture
 
-## M1 8GB Unified Memory Architecture
+- **5-State Hysteresis Machine**: NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED
+- **Dual-Channel TTL Cache**: Alongside swap tiered policy for memory reclamation
+- **Concurrency Presets**: emergency=0, critical=1, warn=3, soft_warn=5, ok=5 workers
+- **Flow**: memory_check → hysteresis_state → concurrency_adjust → action_take
 
-Hardware constraint: ~6.25GB usable budget with swap detection at 3.8 GiB.
+## Key Subsystems
 
-**Memory Allocation:**
-- DuckDB: 600MB cap, 2 threads, 1GB temp, chunk size 500
-- Metal cache: ceiling 1.5 GiB (kv_bits=4, max_kv_size=8192)
-- MPSC pool: 1 MiB total (2048 × 512B slots)
+### MPSC Batch Optimization (Issue-007)
+- **m1resourcegovernor_implementation.md**: ResourceGovernor 5-state machine with swap tiers, thermal 82°C, lock ordering rules
+- **rust_mpsc_architecture_issue_007.md**: Crossbeam bounded channel architecture
+- **issue_007_mpsc_batch_send_optimization.md**: Batch send optimization — 2048 slots × 512B = ~1 MiB budget, ~1µs/event vs 5µs
+- **zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md**: msgspec gc=False zero-copy spanning memory and LayerStack UDS IPC
 
-**Problem:** Memory budgets hardcoded across 4 domains without canonical source of truth (`m1-8gb-memory-budget-fragmentation.md`).
+## M1 8GB Constraints
 
-## ResourceGovernor 5-State Hysteresis
+### Fragmentation Issues
+- **m1-8gb-memory-budget-fragmentation.md**: DuckDB claims 600MB but duckdb_store.py overrides to 2 threads; no canonical budget doc
+- **m1-bounds-configuration-fragmentation.md**: Thresholds scattered across 4+ domains without shared constants
 
-State machine: NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED
+### Hardware Context
+- **m1-8gb-unified-memory-as-system-wide-constraint.md**: ~6.25GB usable, swap_detected at 3.8 GiB, affects storage/concurrency/ML/testing
+- **m1_8gb_ram_priority_optimizations.md**: P0 msgspec gc=False (~200B/future), P0 GHOST_INVARIANTS CI, P1 Rust graph analytics 10-100× speedup
 
-**Concurrency Presets** (emergency→ok):
-- emergency: 0 workers
-- critical: 1 worker
-- warn: 3 workers
-- soft_warn: 5 workers
-- ok: 5 workers
+## Memory Budget Distribution
 
-**Dependencies:** psutil for memory detection, concurrent.futures for worker pool management.
+| Subsystem | Limit | Config |
+|-----------|-------|--------|
+| DuckDB | 600MB, 2 threads | facts/project |
+| Metal Cache | 1.5 GiB, kv_bits=4 | resource_governor |
+| MPSC Pool | ~1 MiB | rust_extensions |
+| RSS Block | 5.5 GiB, LRU 512 | transport_layers |
 
-Flow: `memory_check → hysteresis_state → concurrency_adjust → action_take`
+## Related Entries
 
-See `m1resourcegovernor_implementation.md`, `uma_memory_management.md`
-
-## MPSC Batch Send Optimization (Issue-007)
-
-Python→Rust batch communication reduces GIL acquisition from N× to 1×.
-
-**Architecture:**
-- crossbeam bounded MPSC (capacity=2048)
-- Two channels: `_mpsc` (no asyncio), `_mpsc2` (asyncio integration)
-- Zero-copy via `msgspec.msgpack.encode()`
-
-**Performance:** ~1µs/event vs 5µs for N× individual calls
-
-**Constraint:** `Receiver<QueueItem>` is NOT Send — requires `#[pyclass(unsendable)]`
-
-See `rust_mpsc_architecture_issue_007.md`, `issue_007_mpsc_batch_send_optimization.md`
-
-## Zero-Copy Serialization Pattern
-
-`msgspec.Struct` with `gc=False` saves ~200 bytes per future instance.
-
-**Applications:**
-- MPSC batch events (2048 slots × 512B)
-- LayerStack UDS IPC via msgspec.msgpack
-
-**P0 Optimization:** Add `gc=False` to msgspec.Struct classes in evidence_log.py, finding.py, pipeline/*.py
-
-See `zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md`
-
-## Priority Optimization Matrix
-
-| Priority | Item | Impact |
-|----------|------|--------|
-| P0 | msgspec Struct gc=False | ~200B/future × 10K findings = 2MB saved |
-| P0 | GHOST_INVARIANTS CI enforcement | 10 invariants (I4, I6, etc.) |
-| P1 | Per-lane RSS delta telemetry | ResourceGovernor visibility |
-| P1 | Rust graph analytics | 10-100× speedup over Python igraph |
-| P2 | evidence_quality telemetry | findings_with_citation / total_findings |
-| P2 | Adaptive thresholds | Swap history-based adjustment |
-
-See `m1_8gb_ram_priority_optimizations.md`
+- `data/duckdb_store/duckdb_thread_count_and_settings.md` — DuckDB 600MB/2threads
+- `architecture/transport_layers/http_3_configuration_constants.md` — RSS 5.5 GiB config
+- `facts/project/configuration_constants.md` — HLEDAC_M1_MEMORY_* env vars
+- `facts/project/m1_8gb_unified_memory.md` — Hardware baseline

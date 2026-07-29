@@ -1,56 +1,7 @@
-"""
-Universal Memory Coordinator
-============================
+"""Universal Memory Coordinator — priority-based zones, MLX cache management, thread-safe operations.
 
-Memory management combining:
-- Priority-based zones (CRITICAL, HIGH, MEDIUM, LOW)
-- Aggressive garbage collection with MLX cache clearing via mlx_memory adapter
-- Thread-safe operations with locks
-- Memory pressure callbacks
-
-Features:
-- Single unified zone system (collapsed dual zones in F214)
-- MLX cache management delegated to utils/mlx_memory.py
-- Allocation tracking with eviction callbacks
-- Memory pressure monitoring with callbacks
-- Thread-safe operations
-
-Class Index
------------
-**Memory Allocation & Zones** (lines ~145-220):
-  - ``MemoryPressureLevel`` — Enum: NORMAL, ELEVATED, HIGH, CRITICAL
-  - ``ThermalState`` — IntEnum: NORMAL, WARM, HOT, CRITICAL
-  - ``MemoryZone`` — Enum: CRITICAL, HIGH, MEDIUM, LOW (priority-based memory zones)
-  - ``MemoryAllocation`` — dataclass: per-zone allocation entry with used/peak/frag
-  - ``MemoryStatistics`` — dataclass: global memory stats
-  - ``ZoneStatistics`` — dataclass: per-zone memory stats
-
-**Core Coordinator** (lines ~220+):
-  - ``UniversalMemoryCoordinator`` — main facade; thread-safe zone management, MLX coupling is lazy/fail-soft
-
-**Neuromorphic STDP Layer** (F320-10: moved to ``knowledge/neuromorphic.py`` behind ``HLEDAC_ENABLE_NEURO=1``):
-  - ``NeuromorphicMemoryZone`` — Enum: WORKING_MEMORY, LONG_TERM_MEMORY, EPISODIC_BUFFER
-  - ``NeuromorphicMemoryManager`` — STDP-based neuromorphic memory with zone transitions
-  - ``MemoryPattern`` — dataclass: temporal pattern with timestamp, intensity, frequency
-  - ``STDPParameters`` — dataclass: spike-timing-dependent plasticity config
-
-**Context Optimization** — MOVED to ``coordinators.memory`` (F320):
-  - ``ContextOptimizationManager`` — use ``from coordinators.memory import ContextOptimizationManager``
-  - ``ContextPriority``, ``ResearchPhase``, ``ContextItem``, ``CompressedContext`` — same import
-
-**Multi-Level Cache** — MOVED to ``coordinators.memory`` (F320):
-  - ``MultiLevelContextCache`` — use ``from coordinators.memory import MultiLevelContextCache``
-  - ``CacheType``, ``CacheLocation``, ``CacheEntry`` — same import
-
-**Memory Pressure Polling** (lines ~700+):
-  - ``MemoryPressurePoller`` — background poller with callbacks on pressure transitions
-
-Notes
------
-- MLX memory coupling is lazy and fail-soft: MLX is not loaded or initialized by this module
-- Neuromorphic subsystem (F320-10) is gated behind ``HLEDAC_ENABLE_NEURO=1`` (default OFF).
-  Import path: ``from knowledge.neuromorphic import NeuromorphicMemoryManager``
-- ``get_reranking_context()`` is the narrow seam for Lancedb/reranking with thermal/battery awareness
+See :ref:`memory-coordinator` for class index, neuromorphic STDP layer details,
+context optimization moved imports, and memory pressure polling.
 """
 import asyncio
 import ctypes

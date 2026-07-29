@@ -1,23 +1,8 @@
-"""
-Public-passive text/HTML fetcher using curl_cffi (primary) + httpx (HTTP/2).
-Always-on, bounded, fail-soft, typed via msgspec.Struct.
+"""Public-passive text/HTML fetcher using curl_cffi (primary) + httpx (HTTP/2).
 
-F4XX: HTTP transport modernization:
-- Primary: curl_cffi (stealth, JA3 fingerprint rotation)
-- HTTP/2: httpx (native HTTP/2, httpx-socks for SOCKS5)
-- Tor/I2P: httpx-socks via transport/session_pool.py:httpx_socks_client()
-
-P4: Tor + stealth layer integration:
-- .onion domains routed via Tor SOCKS5 proxy (9050)
-- Optional stealth mode via StealthManager
-- Circuit renewal every TOR_CIRCUIT_RENEWAL_REQUEST_COUNT requests
-- Random jitter before each request when using Tor/stealth
-
-F-GLOBAL: Global state refactoring (2026-06-30):
-- _body_hashes + _body_hashes_lock → _BodyHashStore class (encapsulated, __slots__)
-- _js_renderer_capability + _js_renderer_capability_lock → _JSRendererCapability class
-- _DRAIN_REGISTRY + _DRAIN_TOTAL_* → _DrainRegistry class (singleton, __slots__)
-- _session_source_telemetry → _SessionManager._session_source_telemetry (instance dict, __slots__)
+Always-on, bounded, fail-soft, typed via msgspec.Struct. See
+:ref:`public-fetcher` for HTTP transport modernization, Tor/stealth layer
+integration, and global state refactoring details.
 """
 from __future__ import annotations
 

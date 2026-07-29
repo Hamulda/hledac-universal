@@ -1,6 +1,5 @@
 # R0: Nonfeed Reality Lock Audit Report
 
-**Generated:** 2026-06-09T08:36:57+0200  
 **Total checks:** 13  
 **Passed:** 8  
 **Failed:** 5  

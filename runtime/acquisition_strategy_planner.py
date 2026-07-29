@@ -1,60 +1,9 @@
-"""
-Sprint F206BG + F350M-R — Canonical Acquisition Strategy Layer.
+"""Sprint F206BG + F350M-R — Canonical Acquisition Strategy Layer.
 
-ROLE:
-  Dual-role module combining admission planning and lane execution:
-  1. PLANNER: build_acquisition_plan() emits bounded per-lane plans (no I/O)
-  2. RUNNER: run_enabled_acquisition_lanes() executes lane adapters with network access
-     and graph/DB accumulation
-
-================================================================================
-PLANNER SECTION (lines ~40-1723) — PURE, NO NETWORK I/O
-================================================================================
-  - build_acquisition_plan() / _build_plan_impl()
-  - DOMAIN_EXPANSIONS, _THREAT_DICTIONARY lookup
-  - Lane planning, eligibility, budget, mission intent
-  - Pure dict/set/tuple manipulation
-  - ZERO network access, ZERO model load, ZERO asyncio
-
-PLANNER INVARIANTS (build_acquisition_plan / _build_plan_impl):
-  - No network I/O
-  - No model/MLX load
-  - No asyncio.run() / loop.run_until_complete()
-  - Bounded: max 12 lanes in plan
-  - Fail-soft: returns minimal snapshot on any error
-  - Deterministic: same inputs always produce same plan
-
-================================================================================
-RUNNER SECTION (lines ~1734-2181) — HAS NETWORK I/O
-================================================================================
-  - run_enabled_acquisition_lanes() — async, invokes network adapters
-  - Nested async closures: _run_ct_lane, _run_wayback_lane, _run_pdns_lane,
-    _run_doh_lane, _run_blockchain_lane, _run_ipfs_lane, etc.
-  - DOHAdapter via async_get_httpx_session() — HTTP fetch (line 2027-2029)
-  - All lane adapters (crtsh, wayback, passive_dns, shodan, censys, etc.)
-
-RUNNER INVARIANTS (run_enabled_acquisition_lanes variants):
-  - gather(return_exceptions=True) so one lane crash never fails others
-  - Per-lane asyncio.timeout enforced
-  - STEALTH never auto-enabled
-  - No MLX/model load
-
-================================================================================
-LANES
-================================================================================
-  FEED         — structured TI feeds (always allowed unless hardware critical)
-  PUBLIC       — public discovery pipeline
-  CT           — certificate transparency log discovery
-  WAYBACK      — Wayback Machine archive enumeration
-  PASSIVE_DNS  — passive DNS lookup
-  BLOCKCHAIN   — blockchain analyzer (wallet/hash/crypto indicators)
-  STEALTH      — stealth/dark web (disabled by default)
-  PIVOT_EXECUTOR — pivot-driven domain/IP expansion
-
-F350M-R CLEANUP:
-  - Removed duplicate lane runners (CT/WAYBACK/PDNS were defined twice)
-  - Removed dead helper converters (_hits_to_ct_findings, _ips_to_pdns_findings,
-    _wallet_to_findings — no callers anywhere in codebase)
+Dual-role: PLANNER (build_acquisition_plan, no I/O) + RUNNER
+(run_enabled_acquisition_lanes, has network I/O). See
+:ref:`acquisition-strategy` for architecture overview, lane definitions,
+Planner/Runner section boundaries, and F350M-R cleanup notes.
 """
 from __future__ import annotations
 import logging

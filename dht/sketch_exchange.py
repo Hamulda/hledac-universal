@@ -2,11 +2,15 @@ import asyncio
 import hashlib
 import logging
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from hledac.universal.core.resource_governor import Priority, ResourceGovernor
-from hledac.universal.dht.kademlia_node import KademliaNode
-from hledac.universal.dht.local_graph import LocalGraphStore
+from hledac.universal.dht.kademlia_node import DHTStoreProtocol, LocalGraphReaderProtocol
 from hledac.universal.utils.async_helpers import parallel, safe_create_task
+
+if TYPE_CHECKING:
+    from hledac.universal.dht.kademlia_node import KademliaNode
+    from hledac.universal.dht.local_graph import LocalGraphStore
+
 logger = logging.getLogger(__name__)
 MAX_SKETCH_ITEMS = 10000
 
@@ -30,10 +34,19 @@ class SketchExchange:
     Sketch-first exchange (CI-safe):
     - Publishes a bounded list of stable digests.
     - Compares via Jaccard on digests.
+
+    F350M-R: Uses Protocol interfaces instead of concrete dependencies,
+    reducing coupling from 4 to 2 direct dependencies.
     """
     __slots__ = tuple(('_background_tasks', '_digests', '_publish_task', '_running', 'dht', 'governor', 'local_graph', 'node_id'))
 
-    def __init__(self, governor: ResourceGovernor, node_id: str, dht_node: KademliaNode, local_graph: LocalGraphStore):
+    def __init__(
+        self,
+        governor: ResourceGovernor,
+        node_id: str,
+        dht_node: DHTStoreProtocol,
+        local_graph: LocalGraphReaderProtocol,
+    ):
         self.governor = governor
         self.node_id = node_id
         self.dht = dht_node
@@ -86,11 +99,13 @@ class SketchExchange:
     async def query_entity(self, entity: str, min_jaccard: float=0.1) -> list[dict[str, Any]]:
         """
         Query: compare local digests vs remote digests. If similarity high -> fetch subgraph (placeholder).
+        F350M-R: Uses get_all_entries() Protocol method instead of direct data_store access.
         """
         if not self._digests:
             await self._refresh_digests()
         results: list[dict[str, Any]] = []
-        for key, (payload, _ts) in list(self.dht.data_store.items()):
+        entries = await self.dht.get_all_entries()
+        for key, (payload, _ts) in entries:
             if not key.startswith('sketch:'):
                 continue
             if not isinstance(payload, dict):

@@ -1,6 +1,6 @@
 # Sprint F207Q-A: Pre-Windup Barrier
 
-## Status: COMPLETE
+## Verdict: COMPLETE
 
 ## Root Cause
 F207P-A clean live validation disproved F207M-A:

@@ -2,7 +2,7 @@
 
 ## Quick start
 
-- Default verification command: `cargo check` before calling work complete.
+- Default verification command: `python -m pytest tests/ -x --timeout=30 -q` (or `./run_tests.sh`). Project is Python, not Rust — ignore any auto-generated `cargo check` reference.
 
 ## Architecture & layout
 
@@ -19,7 +19,7 @@
 
 ## Testing
 
-- Default verification command: `cargo check`.
+- Default verification command: `python -m pytest tests/ -x --timeout=30 -q`.
 - Keep CI green by mirroring workflow steps locally before pushing.
 
 ## Performance & simplicity

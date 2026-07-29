@@ -1,6 +1,6 @@
 # Sprint F208N-A: Scheduler Prewindup Callback Wiring and Final Nonfeed Terminality
 
-## Status: COMPLETE
+## Summary
 
 ## Root Cause
 

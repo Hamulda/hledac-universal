@@ -48,7 +48,7 @@ _derive_run_quality_verdict
 | `_has_scheduler_exit_path` | 399–403 | 1 | — | LOW |
 | `_was_family_attempted` | 1350–1356 | 2 | — | LOW |
 
-**Key insight**: All 5 functions are pure boolean tests with 0–2 args. All are used by `_derive_run_quality_verdict` (Phase 1) and `_derive_live_kpi` (Phase 4). Extract FIRST.
+All 5 functions are pure boolean tests with 0–2 args and are used by both `_derive_run_quality_verdict` (Phase 1) and `_derive_live_kpi` (Phase 4) — extract these first.
 
 **Duplicate detected**: `_has_terminal_source_outcomes` and `_has_scheduler_exit_path` also exist in `benchmarks/live_measurement_parser.py` (lines 20–35 and 38–54). The parser copies are used by the parser; these are the measurement versions.
 

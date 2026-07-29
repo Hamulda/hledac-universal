@@ -1,12 +1,6 @@
 {
   "active_context": [
     {
-      "order": 3,
-      "path": "_index.md",
-      "tokens": 555,
-      "type": "summary"
-    },
-    {
       "order": 2,
       "path": "architecture/_index.md",
       "tokens": 644,
@@ -15,13 +9,7 @@
     {
       "order": 2,
       "path": "data/_index.md",
-      "tokens": 548,
-      "type": "summary"
-    },
-    {
-      "order": 1,
-      "path": "architecture/core/_index.md",
-      "tokens": 187,
+      "tokens": 1308,
       "type": "summary"
     },
     {
@@ -249,6 +237,12 @@
       "type": "context"
     },
     {
+      "importance": 50,
+      "path": "data/duckdb_store/duckdb-dual-role-sql-store-graph-analytics-donor.md",
+      "tokens": 322,
+      "type": "context"
+    },
+    {
       "abstractPath": "data/duckdb_store/duckdb_remote_parquet_support.abstract.md",
       "abstractTokens": 42,
       "importance": 50,
@@ -270,54 +264,6 @@
       "importance": 50,
       "path": "data/duckdb_store/duckdb_shadow_store_deep_dive.md",
       "tokens": 62,
-      "type": "context"
-    },
-    {
-      "abstractPath": "data/duckdb_store/duckdb_shadow_store_extended.abstract.md",
-      "abstractTokens": 63,
-      "importance": 50,
-      "path": "data/duckdb_store/duckdb_shadow_store_extended.md",
-      "tokens": 63,
-      "type": "context"
-    },
-    {
-      "abstractPath": "data/duckdb_store/duckdb_shadow_store_sprint_facts.abstract.md",
-      "abstractTokens": 51,
-      "importance": 50,
-      "path": "data/duckdb_store/duckdb_shadow_store_sprint_facts.md",
-      "tokens": 51,
-      "type": "context"
-    },
-    {
-      "abstractPath": "data/duckdb_store/duckdb_thread_count_and_settings.abstract.md",
-      "abstractTokens": 59,
-      "importance": 50,
-      "path": "data/duckdb_store/duckdb_thread_count_and_settings.md",
-      "tokens": 59,
-      "type": "context"
-    },
-    {
-      "abstractPath": "data/duckdb_store/duckpgqgraph_api.abstract.md",
-      "abstractTokens": 47,
-      "importance": 50,
-      "path": "data/duckdb_store/duckpgqgraph_api.md",
-      "tokens": 47,
-      "type": "context"
-    },
-    {
-      "abstractPath": "data/duckdb_store/duckpgqgraph_storage_trinity_gap_fill.abstract.md",
-      "abstractTokens": 46,
-      "importance": 50,
-      "path": "data/duckdb_store/duckpgqgraph_storage_trinity_gap_fill.md",
-      "tokens": 46,
-      "type": "context"
-    },
-    {
-      "abstractPath": "data/duckdb_store/issue_032_write_serialization_fix.abstract.md",
-      "abstractTokens": 75,
-      "importance": 50,
-      "path": "data/duckdb_store/issue_032_write_serialization_fix.md",
-      "tokens": 75,
       "type": "context"
     },
     {
@@ -353,13 +299,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-28T14:41:52.368Z",
+  "generated_at": "2026-07-29T21:55:21.607Z",
   "lane_tokens": {
-    "contexts": 4000,
+    "contexts": 3981,
     "stubs": 0,
-    "summaries": 1934
+    "summaries": 1952
   },
-  "source_fingerprint": "4006bfed7efca27b1b865e033f42baeea7679d0921392cf4641c95199106a033",
-  "total_tokens": 5934,
+  "source_fingerprint": "8cdb4a185e2737de504c0e00f0e7a6ba98d27babd895149adbbffb031a7717d5",
+  "total_tokens": 5933,
   "version": 1
 }

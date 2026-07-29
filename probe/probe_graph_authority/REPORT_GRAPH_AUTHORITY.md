@@ -6,7 +6,7 @@
 
 ---
 
-## Executive Summary
+## Summary
 
 All graph write paths have been classified. No deprecated module can silently become an active truth writer. Every write method has a declared owner with explicit deprecation risk ratings.
 

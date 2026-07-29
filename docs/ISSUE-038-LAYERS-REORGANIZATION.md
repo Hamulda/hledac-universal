@@ -1,6 +1,4 @@
-# ISSUE #38: WebSocket/UDS Layer Protocol - Layers Reorganization
-
-## Status: Částečně implementováno
+# ISSUE #38: WebSocket/UDS Layer Protocol - Layers Reorganization (Částečně implementováno)
 
 ### Provedené změny
 

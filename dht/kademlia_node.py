@@ -56,6 +56,34 @@ def is_dht_production_ready() -> bool:
         DHT_REAL_UDP — True only when HLEDAC_ENABLE_DHT=1 (real UDP active).
     """
     return DHT_REAL_UDP
+
+
+def _parse_compact_nodes(compact: bytes) -> list[tuple[bytes, str, int]]:
+    """Parse DHT compact node format: 20B node_id + 4B IP + 2B port → list of (nid, ip, port)."""
+    result: list[tuple[bytes, str, int]] = []
+    for i in range(0, len(compact) - 25, 26):
+        chunk = compact[i:i + 26]
+        if len(chunk) < 26:
+            break
+        nid = chunk[:20]
+        ip = _bytes_to_ipv4(chunk[20:24])
+        port = int.from_bytes(chunk[24:26], 'big')
+        result.append((nid, ip, port))
+    return result
+
+
+def _bytes_to_ipv4(b: bytes) -> str:
+    """Convert 4 bytes to dotted IPv4 string."""
+    return '.'.join((str(x) for x in b))
+
+
+def parse_compact_peer_6bytes(data: bytes) -> tuple[str, int] | None:
+    """Parse 6-byte compact peer format: 4B IP + 2B port → (ip_str, port). Returns None if invalid."""
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 6:
+        return None
+    return (_bytes_to_ipv4(data[:4]), int.from_bytes(data[4:6], 'big'))
+
+
 import asyncio
 import hashlib
 import logging
@@ -65,10 +93,37 @@ import socket
 import time
 import uuid
 from collections import OrderedDict
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.dht.local_graph import LocalGraphStore
-from hledac.universal.utils.async_helpers import parallel_ok, safe_gather_fire_and_forget, safe_wait_for
+from hledac.universal.utils.async_helpers import parallel_ok, safe_create_task, safe_gather_fire_and_forget, safe_wait_for
+
+if TYPE_CHECKING:
+    pass
+
+
+@runtime_checkable
+class DHTStoreProtocol(Protocol):
+    """Protocol for DHT store operations — decouples KademliaNode from SketchExchange."""
+
+    async def store(self, key: str, value: Any) -> None:
+        """Store a key-value pair in the DHT."""
+        ...
+
+    async def get_all_entries(self) -> list[tuple[str, tuple[Any, float]]]:
+        """Return all (key, (value, timestamp)) pairs from local store."""
+        ...
+
+
+@runtime_checkable
+class LocalGraphReaderProtocol(Protocol):
+    """Protocol for local graph read operations — decouples SketchExchange from LocalGraphStore."""
+
+    async def get_all_nodes(self, limit: int = ...) -> list[dict[str, Any]]:
+        """Return all nodes from the local graph."""
+        ...
+
+
 logger = logging.getLogger(__name__)
 _RNG = secrets.SystemRandom()
 MAX_ITEM_BYTES = 256 * 1024
@@ -90,6 +145,7 @@ else:
     STATUS_LINE = 'STATUS: DHT SIMULATED — set HLEDAC_ENABLE_DHT=1 to activate real UDP'
 DHT_BOOTSTRAP_PEERS = [('router.bittorrent.com', 6881), ('dht.transmissionbt.com', 6881), ('router.utorrent.com', 6881), ('dht.libtorrent.org', 25401)]
 BOOTSTRAP_PEERS = DHT_BOOTSTRAP_PEERS
+
 
 class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
     """
@@ -136,15 +192,7 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
             compact = r.get('nodes', b'')
             if not compact or len(compact) < 26:
                 return
-            for i in range(0, len(compact) - 25, 26):
-                chunk = compact[i:i + 26]
-                if len(chunk) < 26:
-                    break
-                nid = chunk[:20]
-                ip_bytes = chunk[20:24]
-                raw_port = chunk[24:26]
-                ip = '.'.join((str(b) for b in ip_bytes))
-                port = int.from_bytes(raw_port, 'big')
+            for nid, ip, port in _parse_compact_nodes(compact):
                 self._nodes_found[nid.hex()] = {'id': nid.hex(), 'host': ip, 'port': port}
         except Exception as e:
             logger.debug(f'[DHT] node parse failed: {e}')
@@ -156,40 +204,71 @@ class _DHTBootstrapProtocol(asyncio.DatagramProtocol):
     def _bdecode(data: bytes) -> dict[str, Any] | None:
         """Minimal bencode decoder for DHT responses."""
         return safe_bdecode(data)
+
 MAX_PENDING_FUTURES = 5000
+
+
+class _DHTTransportInterface:
+    """
+    BEP-5 DHT transport interface for dependency inversion.
+
+    Abstracts asyncio.DatagramTransport to enable testability and
+    reduce direct asyncio coupling in protocol implementations.
+    """
+    __slots__ = ()
+
+    def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class _AsyncioDHTTransport(_DHTTransportInterface):
+    """asyncio.DatagramTransport wrapper implementing DHT transport interface."""
+    __slots__ = ('_transport',)
+
+    def __init__(self, transport: asyncio.DatagramTransport) -> None:
+        self._transport = transport
+
+    def sendto(self, data: bytes, addr: tuple[str, int]) -> None:
+        self._transport.sendto(data, addr)
+
+    def close(self) -> None:
+        self._transport.close()
+
 
 class BEP5UDPProtocol(asyncio.DatagramProtocol):
     """
     F214: Real BEP-5 asyncio.DatagramProtocol with future-based pending map.
     D-23 FIX: _pending dict now bounded via TTL cleanup + size cap.
 
-    Bound to local UDP socket on construction. Caller invokes send_and_wait()
-    which encodes a bencode message, registers a Future keyed by transaction id,
-    and awaits response matched by transaction id. Datagram responses with
-    unknown tids are silently dropped (malformed packets).
+    Uses _DHTTransportInterface for transport abstraction to reduce
+    direct asyncio.DatagramTransport coupling.
     """
     __slots__ = ('_handler', '_transport', '_pending', '_pending_created', '_loop')
 
-    def __init__(self, message_handler):
+    def __init__(self, message_handler: Any) -> None:
         self._handler = message_handler
-        self._transport: asyncio.DatagramTransport | None = None
+        self._transport: _DHTTransportInterface | None = None
         self._pending: dict[bytes, asyncio.Future] = {}
         self._pending_created: dict[bytes, float] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def connection_made(self, transport: asyncio.DatagramTransport) -> None:
-        self._transport = transport
+        self._transport = _AsyncioDHTTransport(transport)
         self._loop = asyncio.get_running_loop()
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         try:
             msg = bdecode(data)
             tid = msg.get(b't') if isinstance(msg, dict) else None
-            if tid and tid in self._pending:
-                fut = self._pending.pop(tid)
-                self._pending_created.pop(tid, None)
-                if not fut.done():
-                    fut.set_result((msg, addr))
+            if not tid or tid not in self._pending:
+                return
+            fut = self._pending.pop(tid)
+            self._pending_created.pop(tid, None)
+            if not fut.done():
+                fut.set_result((msg, addr))
         except Exception:
             pass
 
@@ -197,33 +276,28 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
         logger.debug(f'[DHT] UDP transport error: {exc}')
 
     def _cleanup_pending(self) -> None:
-        """
-        D-23: TTL + size-based cleanup for _pending dict.
-
-        Evicts:
-          1. Already-done / cancelled futures
-          2. Entries older than DHT_REQUEST_TIMEOUT_S (5s TTL)
-          3. If still over MAX_PENDING_FUTURES, evicts oldest by creation time (FIFO)
-        """
+        """TTL + size-based cleanup for _pending dict."""
         now = time.time()
-        expired_tids = [tid for tid, ts in list(self._pending_created.items()) if tid not in self._pending or self._pending[tid].done() or self._pending[tid].cancelled() or (now - ts > DHT_REQUEST_TIMEOUT_S)]
+        expired_tids = [
+            tid for tid, ts in list(self._pending_created.items())
+            if (tid not in self._pending
+                or self._pending[tid].done()
+                or self._pending[tid].cancelled()
+                or (now - ts > DHT_REQUEST_TIMEOUT_S))
+        ]
         for tid in expired_tids:
             self._pending.pop(tid, None)
             self._pending_created.pop(tid, None)
-        if len(self._pending) > MAX_PENDING_FUTURES:
-            excess = len(self._pending) - MAX_PENDING_FUTURES
-            sorted_tids = sorted(self._pending_created, key=lambda t: self._pending_created[t])
-            for tid in sorted_tids[:excess]:
-                self._pending.pop(tid, None)
-                self._pending_created.pop(tid, None)
+        if len(self._pending) <= MAX_PENDING_FUTURES:
+            return
+        excess = len(self._pending) - MAX_PENDING_FUTURES
+        sorted_tids = sorted(self._pending_created, key=lambda t: self._pending_created[t])
+        for tid in sorted_tids[:excess]:
+            self._pending.pop(tid, None)
+            self._pending_created.pop(tid, None)
 
     async def send_and_wait(self, addr: tuple[str, int], msg_dict: dict, timeout: float=5.0) -> tuple[dict, tuple] | None:
-        """
-        Bencode msg_dict, send via UDP, await response matched by transaction id.
-
-        Returns:
-            (decoded_response_dict, source_addr) on success, or None on timeout.
-        """
+        """Bencode msg_dict, send via UDP, await response matched by transaction id."""
         self._cleanup_pending()
         tid = os.urandom(4)
         msg_dict[b't'] = tid
@@ -354,19 +428,7 @@ async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: 
     governor = ResourceGovernor()
     node = KademliaNode(node_id=f'hledac-crawl-{uuid.uuid4().hex[:8]}', governor=governor, bootstrap_nodes=BOOTSTRAP_PEERS)
     try:
-        loop = asyncio.get_running_loop()
-        for host, port in BOOTSTRAP_PEERS:
-            sock = None
-            try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                sock.setblocking(False)
-                await safe_wait_for(loop.sock_connect(sock, (host, port)), timeout=2.0, label='dht_bootstrap')
-                logger.debug(f'[DHT] Bootstrap peer {host}:{port} reachable')
-            except (TimeoutError, OSError) as e:
-                logger.debug(f'[DHT] Bootstrap peer {host}:{port} unreachable: {e}')
-            finally:
-                if sock:
-                    sock.close()
+        await _bootstrap_dht_peers()
         keyword_lower = keyword.lower()
         searched_tokens: set[str] = set()
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_QUERIES)
@@ -383,25 +445,19 @@ async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: 
                 except Exception as e:
                     logger.debug(f'[DHT] result collection failed: {e}')
                 return None
+
         while time.monotonic() - start_time < duration_s and len(results) < max_results:
             tokens = keyword_lower.split()
             new_tokens = [t for t in tokens if t not in searched_tokens]
             if not new_tokens:
                 break
-            for token in new_tokens:
-                searched_tokens.add(token)
-            tasks = [search_token(t) for t in new_tokens]
-            found = await parallel_ok(*tasks, label='kademlia_node:506')
+            searched_tokens.update(new_tokens)
+            found = await parallel_ok(*[search_token(t) for t in new_tokens], label='kademlia_node:506')
             for item in found:
                 if isinstance(item, dict) and item:
                     results.append(item)
             if not results:
-                for key, (val, _ts) in list(node.data_store.items())[:50]:
-                    if isinstance(val, dict) and 'name' in val:
-                        if keyword_lower in str(val.get('name', '')).lower():
-                            results.append({'info_hash': key, 'name': val.get('name', ''), 'files': val.get('files', []), 'size_bytes': val.get('size_bytes', 0), 'peers': val.get('peers', 0), 'source': 'dht'})
-                            if len(results) >= max_results:
-                                break
+                _harvest_from_data_store(node.data_store, keyword_lower, results, max_results)
             await asyncio.sleep(0.5)
     except Exception as e:
         logger.warning(f'[DHT] crawl error: {e}')
@@ -409,6 +465,45 @@ async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: 
         await node.stop()
     logger.info(f"[DHT] crawl '{keyword}': {len(results)} results in {time.monotonic() - start_time:.1f}s")
     return results[:max_results]
+
+
+async def _bootstrap_dht_peers() -> None:
+    """Bootstrap DHT peers — extracted to reduce crawl_dht_for_keyword complexity."""
+    loop = asyncio.get_running_loop()
+    for host, port in BOOTSTRAP_PEERS:
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setblocking(False)
+            await safe_wait_for(loop.sock_connect(sock, (host, port)), timeout=2.0, label='dht_bootstrap')
+            logger.debug(f'[DHT] Bootstrap peer {host}:{port} reachable')
+        except (TimeoutError, OSError) as e:
+            logger.debug(f'[DHT] Bootstrap peer {host}:{port} unreachable: {e}')
+        finally:
+            if sock:
+                sock.close()
+
+
+def _harvest_from_data_store(
+    data_store: OrderedDict,
+    keyword_lower: str,
+    results: list[dict],
+    max_results: int,
+) -> None:
+    """Harvest matching entries from data_store — fallback when no results found."""
+    for key, (val, _ts) in list(data_store.items())[:50]:
+        if isinstance(val, dict) and 'name' in val:
+            if keyword_lower in str(val.get('name', '')).lower():
+                results.append({
+                    'info_hash': key,
+                    'name': val.get('name', ''),
+                    'files': val.get('files', []),
+                    'size_bytes': val.get('size_bytes', 0),
+                    'peers': val.get('peers', 0),
+                    'source': 'dht',
+                })
+                if len(results) >= max_results:
+                    break
 
 async def lookup_info_hash_metadata(info_hash: str, timeout_s: float=15.0) -> dict:
     """
@@ -452,6 +547,20 @@ class KademliaNode:
         self._nodes_since_snapshot = 0
         self._pending_rpcs: dict[str, asyncio.Future] = {}
         self._pending_rpcs_created: dict[str, float] = {}
+
+    # ── Protocol interface (F350M-R: decouples SketchExchange from internals) ───
+
+    async def get_all_entries(self) -> list[tuple[str, tuple[Any, float]]]:
+        """
+        Return all (key, (value, timestamp)) pairs from local store.
+        Implements DHTStoreProtocol — used by SketchExchange instead of direct data_store access.
+        """
+        now = time.time()
+        result: list[tuple[str, tuple[Any, float]]] = []
+        for key, (value, ts) in list(self.data_store.items()):
+            if now - ts <= self.data_store_ttl:
+                result.append((key, (value, ts)))
+        return result
 
     def set_transport(self, transport):
         self._transport = transport
@@ -610,13 +719,7 @@ class KademliaNode:
                     compact = r.get(b'nodes', b'')
                     if not isinstance(compact, bytes) or len(compact) < 26:
                         return
-                    for i in range(0, len(compact) - 25, 26):
-                        chunk = compact[i:i + 26]
-                        if len(chunk) < 26:
-                            break
-                        nid = chunk[:20]
-                        nip = '.'.join((str(b) for b in chunk[20:24]))
-                        nport = int.from_bytes(chunk[24:26], 'big')
+                    for nid, nip, nport in _parse_compact_nodes(compact):
                         self._update_routing(nid.hex(), {'host': nip, 'port': nport})
                 except Exception:
                     pass
@@ -792,45 +895,81 @@ class KademliaNode:
         local = self._local_get(key)
         if local is not None:
             return local
-        queried = set()
+        queried: set[str] = set()
         shortlist = self._find_closest_nodes(key, self.alpha)
         while shortlist:
-            rpc_ids: list[str] = []
-            send_tasks: list[asyncio.Task] = []
-            for peer in shortlist[:self.alpha]:
-                pid = peer['id']
-                if pid in queried or pid == self.node_id:
-                    continue
-                queried.add(pid)
-                rpc_id = str(uuid.uuid4())
-                rpc_ids.append(rpc_id)
-                fut = asyncio.get_running_loop().create_future()
-                self._pending_rpcs[rpc_id] = fut
-                self._pending_rpcs_created[rpc_id] = time.time()
-                send_tasks.append(safe_create_task(self._send_find_value(pid, key, rpc_id), name=f'kademlia:send_find_value:{pid[:8]}'))
+            rpc_ids, send_tasks = self._launch_find_value_rpcs(shortlist, queried, key)
             if not rpc_ids:
                 break
-            futures = [self._pending_rpcs[rid] for rid in rpc_ids if rid in self._pending_rpcs]
-            if not futures:
+            results = await self._await_find_value_results(rpc_ids)
+            if results is None:
                 break
+            value = self._process_find_value_results(results, queried, shortlist, key)
+            if value is not None:
+                return value
+            shortlist = self._prune_shortlist(shortlist, queried, key)
+        return None
+
+    def _launch_find_value_rpcs(self, shortlist: list, queried: set[str], key: str) -> tuple[list[str], list[asyncio.Task]]:
+        """Launch FIND_VALUE RPCs to alpha closest unqueried peers. Returns (rpc_ids, send_tasks)."""
+        rpc_ids: list[str] = []
+        send_tasks: list[asyncio.Task] = []
+        for peer in shortlist[:self.alpha]:
+            pid = peer['id']
+            if pid in queried or pid == self.node_id:
+                continue
+            queried.add(pid)
+            rpc_id = str(uuid.uuid4())
+            rpc_ids.append(rpc_id)
+            fut = asyncio.get_running_loop().create_future()
+            self._pending_rpcs[rpc_id] = fut
+            self._pending_rpcs_created[rpc_id] = time.time()
+            send_tasks.append(safe_create_task(
+                self._send_find_value(pid, key, rpc_id),
+                name=f'kademlia:send_find_value:{pid[:8]}',
+            ))
+        return rpc_ids, send_tasks
+
+    async def _await_find_value_results(self, rpc_ids: list[str]) -> list | None:
+        """Await futures for issued RPCs, clean up pending state. Returns results or None on timeout."""
+        futures = [self._pending_rpcs[rid] for rid in rpc_ids if rid in self._pending_rpcs]
+        if not futures:
+            return None
+        try:
             async with asyncio.timeout(3.0):
-                results = await parallel_ok(*futures, label='kademlia_node:1028')
+                return await parallel_ok(*futures, label='kademlia_node:1028')
+        except TimeoutError:
             for rid in rpc_ids:
                 self._pending_rpcs.pop(rid, None)
                 self._pending_rpcs_created.pop(rid, None)
-            for res in results:
-                if isinstance(res, BaseException):
-                    continue
-                if isinstance(res, dict) and 'value' in res:
-                    self._local_put(key, res['value'])
-                    return res['value']
-                if isinstance(res, dict) and 'nodes' in res:
-                    for n in res['nodes']:
-                        if n.get('id') and n['id'] not in queried:
-                            shortlist.append(n)
-            shortlist.sort(key=lambda n: self._distance(n['id'], key))
-            shortlist = shortlist[:self.k]
+            return None
+        finally:
+            for rid in rpc_ids:
+                self._pending_rpcs.pop(rid, None)
+                self._pending_rpcs_created.pop(rid, None)
+
+    def _process_find_value_results(
+        self, results: list, queried: set[str], shortlist: list, key: str,
+    ) -> Any | None:
+        """Process FIND_VALUE responses. Returns value if found, None otherwise."""
+        for res in results:
+            if isinstance(res, BaseException):
+                continue
+            if not isinstance(res, dict):
+                continue
+            if 'value' in res:
+                self._local_put(key, res['value'])
+                return res['value']
+            if 'nodes' in res:
+                for n in res['nodes']:
+                    if n.get('id') and n['id'] not in queried:
+                        shortlist.append(n)
         return None
+
+    def _prune_shortlist(self, shortlist: list, queried: set[str], key: str) -> list:
+        """Sort shortlist by distance and keep only k closest unqueried nodes."""
+        shortlist.sort(key=lambda n: self._distance(n['id'], key))
+        return shortlist[:self.k]
 
     async def _ping(self, peer_id: str) -> bool:
         if not self._transport:
@@ -1032,32 +1171,22 @@ class KademliaNode:
 
         def _peers_from_response(r_norm: dict) -> list[tuple[str, int]]:
             """Extract (ip, port) peer addresses from a get_peers response."""
-            out: list[tuple[str, int]] = []
             values = r_norm.get(b'values') or r_norm.get('values') or []
             if not isinstance(values, list):
-                return out
+                return []
+            out: list[tuple[str, int]] = []
             for val in values:
-                if isinstance(val, bytes) and len(val) == 6:
-                    ip = '.'.join((str(b) for b in val[:4]))
-                    p = int.from_bytes(val[4:6], 'big')
-                    out.append((ip, p))
+                peer = parse_compact_peer_6bytes(val)
+                if peer:
+                    out.append(peer)
             return out
 
         def _nodes_from_response(r_norm: dict) -> list[tuple[str, str, int]]:
             """Extract (nid, ip, port) nodes from a get_peers response."""
-            out: list[tuple[str, str, int]] = []
             compact = r_norm.get(b'nodes') or r_norm.get('nodes') or b''
             if not isinstance(compact, (bytes, bytearray)):
-                return out
-            for i in range(0, len(compact) - 25, 26):
-                chunk = compact[i:i + 26]
-                if len(chunk) < 26:
-                    break
-                nid = chunk[:20].hex()
-                nip = '.'.join((str(b) for b in chunk[20:24]))
-                nport = int.from_bytes(chunk[24:26], 'big')
-                out.append((nid, nip, nport))
-            return out
+                return []
+            return [(nid.hex(), ip, port) for nid, ip, port in _parse_compact_nodes(compact)]
 
         def _update_routing_batch(results: list[dict | None]) -> bool:
             """Update routing table from response results. Returns True if new peers found."""
@@ -1119,53 +1248,95 @@ class KademliaNode:
         seen_hashes: set[str] = set()
         sock: socket.socket | None = None
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(2.0)
-            sock.setblocking(False)
-            asyncio.get_running_loop()
-            for peer_host, peer_port in BOOTSTRAP_PEERS:
-                try:
-                    await self._dht_send_ping(sock, peer_host, peer_port)
-                except Exception as e:
-                    logger.debug(f'DHT bootstrap ping to {peer_host}:{peer_port} failed: {e}')
-            keyword_lower = keyword.lower()
-            tokens = keyword_lower.split()
-            info_hashes = []
-            for token in tokens[:5]:
-                hash_input = token.encode()
-                btih_hash = hashlib.sha256(hash_input).hexdigest()[:40]
-                info_hash = bytes.fromhex(btih_hash)
-                info_hashes.append((token, info_hash))
-            combined = keyword_lower.replace(' ', '_')[:50]
-            combined_hash = hashlib.sha256(combined.encode()).hexdigest()[:40]
-            info_hashes.append((combined, bytes.fromhex(combined_hash)))
-            while time.monotonic() - start_time < duration_s and len(results) < max_results:
-                for token, info_hash in info_hashes:
-                    if len(results) >= max_results:
-                        break
-                    for _ in range(3):
-                        peer_host = _RNG.choice([p[0] for p in BOOTSTRAP_PEERS])
-                        peer_port = _RNG.choice([p[1] for p in BOOTSTRAP_PEERS])
-                        try:
-                            peers_response = await self._dht_send_get_peers(sock, peer_host, peer_port, info_hash)
-                            if peers_response:
-                                await self._handle_get_peers_response(peers_response, info_hash, token, results, seen_hashes)
-                        except Exception as e:
-                            logger.debug(f'get_peers query failed: {e}')
-                        await asyncio.sleep(0.1)
-                self._refresh_routing_from_results()
-                await asyncio.sleep(1.0)
+            sock = self._create_dht_socket()
+            await self._bootstrap_network(sock)
+            info_hashes = self._generate_info_hashes(keyword)
+            await self._run_crawl_loop(sock, info_hashes, duration_s, max_results, results, seen_hashes, start_time)
         finally:
             if sock:
                 sock.close()
-        if results:
-            try:
-                await self._store_dht_results(keyword, results)
-            except Exception as e:
-                logger.debug(f'DHT results storage failed: {e}')
+        await self._store_results_safe(keyword, results)
         elapsed = time.monotonic() - start_time
         logger.info(f"DHT crawl '{keyword}': {len(results)} results in {elapsed:.1f}s")
         return results[:max_results]
+
+    def _create_dht_socket(self) -> socket.socket:
+        """Create non-blocking UDP socket for DHT communication."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(2.0)
+        sock.setblocking(False)
+        return sock
+
+    async def _bootstrap_network(self, sock: socket.socket) -> None:
+        """Ping all bootstrap peers to join DHT network."""
+        for peer_host, peer_port in BOOTSTRAP_PEERS:
+            try:
+                await self._dht_send_ping(sock, peer_host, peer_port)
+            except Exception as e:
+                logger.debug(f'DHT bootstrap ping to {peer_host}:{peer_port} failed: {e}')
+
+    def _generate_info_hashes(self, keyword: str) -> list[tuple[str, bytes]]:
+        """Generate info_hash candidates from keyword using BTIH hashing."""
+        keyword_lower = keyword.lower()
+        tokens = keyword_lower.split()
+        info_hashes: list[tuple[str, bytes]] = []
+        for token in tokens[:5]:
+            hash_input = token.encode()
+            btih_hash = hashlib.sha256(hash_input).hexdigest()[:40]
+            info_hash = bytes.fromhex(btih_hash)
+            info_hashes.append((token, info_hash))
+        combined = keyword_lower.replace(' ', '_')[:50]
+        combined_hash = hashlib.sha256(combined.encode()).hexdigest()[:40]
+        info_hashes.append((combined, bytes.fromhex(combined_hash)))
+        return info_hashes
+
+    async def _run_crawl_loop(
+        self,
+        sock: socket.socket,
+        info_hashes: list[tuple[str, bytes]],
+        duration_s: int,
+        max_results: int,
+        results: list[dict],
+        seen_hashes: set[str],
+        start_time: float,
+    ) -> None:
+        """Main crawl loop with early-exit conditions."""
+        while time.monotonic() - start_time < duration_s and len(results) < max_results:
+            for token, info_hash in info_hashes:
+                if len(results) >= max_results:
+                    return
+                await self._query_info_hash_with_retries(sock, info_hash, token, results, seen_hashes)
+            self._refresh_routing_from_results()
+            await asyncio.sleep(1.0)
+
+    async def _query_info_hash_with_retries(
+        self,
+        sock: socket.socket,
+        info_hash: bytes,
+        token: str,
+        results: list[dict],
+        seen_hashes: set[str],
+    ) -> None:
+        """Query single info_hash with up to 3 retries using random bootstrap peers."""
+        for _ in range(3):
+            peer_host = _RNG.choice([p[0] for p in BOOTSTRAP_PEERS])
+            peer_port = _RNG.choice([p[1] for p in BOOTSTRAP_PEERS])
+            try:
+                peers_response = await self._dht_send_get_peers(sock, peer_host, peer_port, info_hash)
+                if peers_response:
+                    await self._handle_get_peers_response(peers_response, info_hash, token, results, seen_hashes)
+            except Exception as e:
+                logger.debug(f'get_peers query failed: {e}')
+            await asyncio.sleep(0.1)
+
+    async def _store_results_safe(self, keyword: str, results: list[dict]) -> None:
+        """Store DHT results to knowledge store, fail-safe."""
+        if not results:
+            return
+        try:
+            await self._store_dht_results(keyword, results)
+        except Exception as e:
+            logger.debug(f'DHT results storage failed: {e}')
 
     async def _dht_send_ping(self, sock: socket.socket, host: str, port: int) -> dict | None:
         """Send DHT ping and receive response."""
@@ -1202,20 +1373,15 @@ class KademliaNode:
             if not r:
                 return
             nodes = r.get('nodes', '')
-            if nodes and len(nodes) >= 26:
-                num_peers = len(nodes) // 26
-                for i in range(num_peers):
-                    node_data = nodes[i * 26:(i + 1) * 26]
-                    peer_id = node_data[:20]
-                    peer_host = '.'.join((str(b) for b in node_data[20:24]))
-                    peer_port = int.from_bytes(node_data[24:26], 'big')
-                    self._update_routing(peer_id.hex(), {'host': peer_host, 'port': peer_port})
+            if nodes:
+                for nid, peer_host, peer_port in _parse_compact_nodes(nodes):
+                    self._update_routing(nid.hex(), {'host': peer_host, 'port': peer_port})
             values = r.get('values', [])
             if isinstance(values, list):
                 for value in values[:5]:
-                    if len(value) == 6:
-                        peer_host = '.'.join((str(b) for b in value[:4]))
-                        peer_port = int.from_bytes(value[4:6], 'big')
+                    peer = parse_compact_peer_6bytes(value)
+                    if peer:
+                        peer_host, peer_port = peer
                         info_hash_str = info_hash.hex()
                         if info_hash_str not in seen_hashes:
                             seen_hashes.add(info_hash_str)
@@ -1232,69 +1398,99 @@ class KademliaNode:
         Connects to peer via TCP and performs BitTorrent handshake + extension
         handshake to download metadata (info dict) without downloading content.
         """
+        reader, writer = await self._connect_with_timeout(peer_host, peer_port)
+        if reader is None or writer is None:
+            return None
+
+        ok = await self._perform_bep9_handshake(reader, writer, info_hash)
+        if not ok:
+            await self._close_writer(writer)
+            return None
+
+        ok, metadata_parts, metadata_size = await self._fetch_metadata_pieces(reader, writer)
+        await self._close_writer(writer)
+
+        if not ok or not metadata_parts or metadata_size <= 0:
+            return None
+        full_metadata = b''.join((metadata_parts.get(i, b'') for i in range(len(metadata_parts))))
+        return self._bdecode(full_metadata)
+
+    async def _connect_with_timeout(self, host: str, port: int) -> tuple[asyncio.StreamReader | None, asyncio.StreamWriter | None]:
+        """Establish TCP connection with 5s timeout. Returns (reader, writer) or (None, None) on failure."""
         try:
             async with asyncio.timeout(5.0):
-                reader, writer = await asyncio.open_connection(peer_host, peer_port)
-            protocol = bytes([19]) + b'BitTorrent protocol'
-            handshake = protocol + bytes(8) + info_hash[:20].ljust(20, b'\x00') + self.node_id.encode()[:20].ljust(20, b'\x00')
-            writer.write(handshake)
-            await writer.drain()
+                return await asyncio.open_connection(host, port)
+        except Exception:
+            return None, None
+
+    async def _perform_bep9_handshake(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, info_hash: bytes,
+    ) -> bool:
+        """Perform BitTorrent protocol handshake + BEP-10 extension negotiation. Returns True if successful."""
+        protocol = bytes([19]) + b'BitTorrent protocol'
+        handshake = protocol + bytes(8) + info_hash[:20].ljust(20, b'\x00') + self.node_id.encode()[:20].ljust(20, b'\x00')
+        writer.write(handshake)
+        await writer.drain()
+        try:
             async with asyncio.timeout(5.0):
                 response = await reader.read(68)
-            if len(response) < 68:
-                writer.close()
-                await writer.wait_closed()
-                return None
-            if response[25] & 16 == 0:
-                writer.close()
-                await writer.wait_closed()
-                return None
-            ext_handshake = {'m': {'ut_metadata': 1}, 'ut_metadata': 1}
-            ext_msg = self._build_ext_message(20, ext_handshake)
-            writer.write(ext_msg)
-            await writer.drain()
+        except Exception:
+            return False
+        if len(response) < 68 or response[25] & 16 == 0:
+            return False
+
+        ext_handshake = {'m': {'ut_metadata': 1}, 'ut_metadata': 1}
+        ext_msg = self._build_ext_message(20, ext_handshake)
+        writer.write(ext_msg)
+        await writer.drain()
+        try:
             async with asyncio.timeout(5.0):
                 ext_response = await reader.read(65535)
-            if not ext_response:
-                writer.close()
-                await writer.wait_closed()
-                return None
-            metadata_size = 0
-            metadata_parts = {}
-            piece_index = 0
-            while True:
-                request = {'msg_type': 2, 'piece': piece_index}
-                req_msg = self._build_ext_message(3, request)
-                writer.write(req_msg)
-                await writer.drain()
-                try:
-                    async with asyncio.timeout(5.0):
-                        data = await reader.read(65535)
-                    if not data:
-                        break
-                    msg = self._parse_ext_message(data)
-                    if msg and msg.get('msg_type') == 1:
-                        piece = msg.get('piece', 0)
-                        total_size = msg.get('total_size', 0)
-                        if total_size > 0 and metadata_size == 0:
-                            metadata_size = total_size
-                        if 'metadata' in msg:
-                            metadata_parts[piece] = msg['metadata']
-                        if len(metadata_parts) * 16384 >= metadata_size:
-                            break
-                except TimeoutError:
+        except Exception:
+            return False
+        return bool(ext_response)
+
+    async def _fetch_metadata_pieces(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
+    ) -> tuple[bool, dict[int, bytes], int]:
+        """
+        Request and collect metadata pieces from peer via BEP-9 ut_metadata.
+        Returns (success, metadata_parts, metadata_size).
+        """
+        metadata_size = 0
+        metadata_parts: dict[int, bytes] = {}
+        piece_index = 0
+        while piece_index <= 1000:
+            request = {'msg_type': 2, 'piece': piece_index}
+            req_msg = self._build_ext_message(3, request)
+            writer.write(req_msg)
+            await writer.drain()
+            try:
+                async with asyncio.timeout(5.0):
+                    data = await reader.read(65535)
+            except Exception:
+                break
+            if not data:
+                break
+            msg = self._parse_ext_message(data)
+            if msg and msg.get('msg_type') == 1:
+                total_size = msg.get('total_size', 0)
+                if total_size > 0 and metadata_size == 0:
+                    metadata_size = total_size
+                if 'metadata' in msg:
+                    metadata_parts[piece] = msg['metadata']
+                if len(metadata_parts) * 16384 >= metadata_size:
                     break
-                piece_index += 1
-                if piece_index > 1000:
-                    break
+            piece_index += 1
+        return True, metadata_parts, metadata_size
+
+    async def _close_writer(self, writer: asyncio.StreamWriter) -> None:
+        """Safely close stream writer."""
+        try:
             writer.close()
             await writer.wait_closed()
-            if metadata_parts and metadata_size > 0:
-                full_metadata = b''.join((metadata_parts.get(i, b'') for i in range(len(metadata_parts))))
-                return self._bdecode(full_metadata)
-        except Exception as e:
-            logger.debug(f'_fetch_torrent_metadata failed: {e}')
-        return None
+        except Exception:
+            pass
 
     def _build_ext_message(self, msg_id: int, payload: dict) -> bytes:
         """Build BEP-10 extension protocol message."""

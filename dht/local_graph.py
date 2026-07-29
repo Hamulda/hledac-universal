@@ -57,6 +57,50 @@ MAX_NODES_FOR_SCAN = 10000
 MAX_DHT_GRAPH_NODES: int = 1024
 
 
+def _scan_lmdb_by_prefix(
+    env,
+    prefix: bytes,
+    limit: int,
+    *,
+    include_prefix: bool = True,
+) -> list[bytes]:
+    """
+    Parameterized LMDB prefix scan — replaces 4 Type-2 renamed clones.
+
+    Common pattern:
+        with env.begin() as txn:
+            cur = txn.cursor()
+            for k, _v in cur:
+                if k.startswith(prefix):
+                    out.append(decode_prefix(k))
+                    if len(out) >= limit:
+                        break
+
+    Args:
+        env: LMDB environment
+        prefix: Byte prefix to filter keys (e.g. b"dht_node:")
+        limit: Maximum number of results to return
+        include_prefix: If True, strips prefix from decoded keys
+
+    Returns:
+        List of decoded key bytes (prefix stripped)
+    """
+    out: list[bytes] = []
+
+    def _scan():
+        with env.begin() as txn:
+            cur = txn.cursor()
+            for k, _v in cur:
+                if k.startswith(prefix):
+                    key = k[len(prefix):] if not include_prefix else k
+                    out.append(key)
+                    if len(out) >= limit:
+                        break
+
+    _scan()
+    return out
+
+
 def _evict_oldest_graph_node(graph: Any) -> None:
     """
     Drop the oldest node from the mlx_graphs graph. Best-effort:
@@ -264,20 +308,10 @@ class LocalGraphStore:
             return [{"id": k.decode(errors="replace")} for k in all_keys[:limit]]
 
         # Fallback: asyncio.to_thread scan
-        out: list[dict[str, str]] = []
-
-        def _scan():
-            with self.env.begin() as txn:
-                cur = txn.cursor()
-                for k, _v in cur:
-                    if k.startswith(b"neighbors:"):
-                        continue
-                    out.append({"id": k.decode()})
-                    if len(out) >= limit:
-                        break
-
-        await _get_lmdb_pool().run_lmdb(_scan)
-        return out
+        keys = await _get_lmdb_pool().run_lmdb(
+            lambda: _scan_lmdb_by_prefix(self.env, b"neighbors:", limit, include_prefix=False)
+        )
+        return [{"id": k.decode(errors="replace")} for k in keys]
 
     async def put_dht_node(
         self, node_id: str, host: str, port: int
@@ -356,20 +390,10 @@ class LocalGraphStore:
             return [{"id": k.decode()} for k, _ in results]
 
         # Fallback: asyncio.to_thread scan
-        out: list[dict[str, Any]] = []
-
-        def _scan():
-            with self.env.begin() as txn:
-                cur = txn.cursor()
-                for k, _v in cur:
-                    if not k.startswith(b"dht_node:"):
-                        continue
-                    out.append({"id": k.decode().replace("dht_node:", "")})
-                    if len(out) >= limit:
-                        break
-
-        await _get_lmdb_pool().run_lmdb(_scan)
-        return out
+        keys = await _get_lmdb_pool().run_lmdb(
+            lambda: _scan_lmdb_by_prefix(self.env, b"dht_node:", limit, include_prefix=True)
+        )
+        return [{"id": k.decode().replace("dht_node:", "")} for k in keys]
 
     async def count_dht_nodes(self) -> int:
         """
@@ -382,16 +406,10 @@ class LocalGraphStore:
             path_str = str(self.db_path.parent)
             return _get_lmdb_dht().lmdb_dht_count_dht_nodes(path_str)
 
-        def _count() -> int:
-            count = 0
-            with self.env.begin() as txn:
-                cur = txn.cursor()
-                for k, _v in cur:
-                    if k.startswith(b"dht_node:"):
-                        count += 1
-            return count
-
-        return await _get_lmdb_pool().run_lmdb(_count)
+        keys = await _get_lmdb_pool().run_lmdb(
+            lambda: _scan_lmdb_by_prefix(self.env, b"dht_node:", 1_000_000, include_prefix=True)
+        )
+        return len(keys)
 
     async def clear_dht_nodes(self) -> None:
         """Clear all persisted DHT nodes (e.g., on startup)."""

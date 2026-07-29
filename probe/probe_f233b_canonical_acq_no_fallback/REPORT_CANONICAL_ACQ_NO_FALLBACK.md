@@ -1,6 +1,6 @@
 # Sprint F233B: Canonical Acquisition Report No-Fallback Seal
 
-## Executive Summary
+## Summary
 
 Sprint F233B adds explicit `acquisition_report_fallback_used: bool` and `fallback_reason: str | None` markers to all acquisition reports, so downstream tools (exporter, parser, KPI) can distinguish canonical from fallback without inspecting the schema_version suffix.
 

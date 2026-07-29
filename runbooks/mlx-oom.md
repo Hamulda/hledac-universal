@@ -1,4 +1,4 @@
-# Runbook: MLX OOM (Out of Memory)
+# Runbook: MLX OOM
 
 ## Symptoms
 - `RuntimeError: metal memory allocation failed`

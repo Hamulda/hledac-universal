@@ -2,38 +2,10 @@
 
 ROLE: Canonical store for sprint-level facts and derived analytics.
 
-⚠️  "Shadow" in the class name refers to historical naming (Sprint 8AO/8AS).
-    This store IS the canonical sprint facts authority for the analytics
-    subsystem, not a shadow of anything.
-
-F360 ARCHITECTURE:
-    This module contains DuckDBShadowStore (monolithic, backward-compatible).
-    Extracted components live in:
-      - duckdb_protocol.py      — DuckDBStoreProtocol (interface contract)
-      - duckdb_vector_store.py — DuckDBVectorStore (HNSW/vector operations)
-      - duckdb_quality_gate.py — DuckDBQualityGate (quality assessment)
-      - duckdb_graph_attachment.py — DuckDBGraphAttachment (graph attachment)
-      - duckdb_wal_manager.py  — DuckDBWALManager (WAL + LMDB lifecycle)
-      - duckdb_canonical.py    — DuckDBCanonical (future refactor target)
-
-    The 15 "DEPRECATED" graph methods (inject_graph, get_graph_stats, etc.)
-    are now delegated to DuckDBGraphAttachment instead of inline lazy-init.
-    See duckdb_graph_attachment.py for the extracted implementation.
-
-FACTS HIERARCHY (3 tiers):
-
-TIER 1 -- SPRINT FACTS (DuckDB, durable):
-    sprint_delta       -- per-sprint metrics: query, duration, new_findings, dedup_hits, ioc_nodes
-    sprint_scorecard   -- per-sprint aggregated scores: fpm, ioc_density, synthesis_confidence
-    source_hit_log     -- per-sprint source attribution: source_type, hit_rate
-
-TIER 2 -- SHADOW FINDINGS (DuckDB, durable):
-    canonical_findings    -- finding-level records forwarded from EvidenceLog.append()
-    shadow_runs        -- run-level metadata
-    -- F272: DuckDB ioc_graph table removed; IOC storage via DuckPGQGraph (graph/quantum_pathfinder.py)
-
-TIER 3 -- CROSS-SPRINT (DuckDB, append-only, pruneable):
-    temporal_events    -- time-indexed events for temporal archaeology
+See :ref:`duckdb-store-internals` for architecture overview, F360 extracted
+components, and the 3-tier facts hierarchy (Sprint Facts / Shadow Findings /
+Cross-Sprint). The 15 deprecated graph methods are now delegated to
+DuckDBGraphAttachment.
 """
 
 from __future__ import annotations

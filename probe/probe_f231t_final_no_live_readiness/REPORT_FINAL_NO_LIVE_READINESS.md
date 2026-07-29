@@ -6,7 +6,7 @@
 
 ---
 
-## Executive Summary
+## Summary
 
 F231 pack is ready. Provider surface is no longer the main blocker. After restart (swap freed), `nonfeed_diagnostic180` can run.
 

@@ -6,7 +6,7 @@
 
 ---
 
-## Executive Summary
+## Summary
 
 This audit maps every HTTP client instantiation in `hledac/universal/` against the canonical transport policy infrastructure:
 - `transport/circuit_breaker.py` — domain circuit breaker (TEST-SEAM ONLY)

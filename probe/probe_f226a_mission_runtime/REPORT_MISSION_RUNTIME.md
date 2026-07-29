@@ -1,8 +1,6 @@
 # Sprint F226A — Mission Intent Runtime Wiring
 
-## Status: COMPLETE
-
-Mission intent is now operational. It influences existing acquisition planning and pivot scoring without creating a new scheduler framework.
+## Verdict: COMPLETE
 
 ## What Changed
 
