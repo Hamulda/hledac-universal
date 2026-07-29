@@ -219,6 +219,7 @@ check_model_allowed = lazy_callable('hledac.universal.brain.model_inference_guar
 classify_failure_kind = lazy('hledac.universal.brain.model_inference_guard.classify_failure_kind')
 record_model_failure = lazy('hledac.universal.brain.model_inference_guard.record_model_failure')
 record_model_success = lazy('hledac.universal.brain.model_inference_guard.record_model_success')
+_lane_priority_resolver = lazy('hledac.universal.core.mlx_unified_scheduler.LanePriority')
 logger = logging.getLogger(__name__)
 _outlines_resolver = lazy('outlines')
 _outlines_module = _outlines_resolver()
@@ -2346,7 +2347,6 @@ class DeepHermes3Engine:
             return self._mlx_scheduler
         try:
             from hledac.universal.core.mlx_unified_scheduler import MLXUnifiedScheduler
-            from hledac.universal.core.mlx_unified_scheduler import LanePriority
             worker = self._ensure_mlx_worker_thread()
             batcher = await self._ensure_mlx_batcher()
             self._mlx_scheduler = MLXUnifiedScheduler(llm_engine=self, worker_thread=worker, batcher=batcher)
@@ -2438,6 +2438,18 @@ class DeepHermes3Engine:
             loop = asyncio.get_running_loop()
             return await safe_wait_for(loop.run_in_executor(self._inference_executor, lambda: fn(*args, **kwargs)), timeout=timeout, label='deephermes_executor')
 
+    # ------------------------------------------------------------------
+    # generate() exit paths (for complexity analysis)
+    # ------------------------------------------------------------------
+    # Path 1: scheduler.submit_inference() -> return
+    # Path 2: batcher.execute() -> return
+    # Path 3: response -> return (main success)
+    # Path 4: TimeoutError -> raise
+    # Path 5: CancelledError -> raise
+    # Path 6: Exception -> return f'Error: {str(e)}'
+    # Path 7: RuntimeError (context rejected, circuit breaker) -> raise
+    # ------------------------------------------------------------------
+
     @_otel_instrumented('hermes.generate', component='mlx')
     async def generate(self, prompt: str, temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, *, thinking: bool=True, adapter_path: str | None=None, logits_processors: list[Any] | None=None, prompt_tokens: list[int] | None=None) -> str:
         """
@@ -2462,134 +2474,59 @@ class DeepHermes3Engine:
         Returns:
             Vygenerovaný text
         """
+        # Guard: model initialization
         if self._model is None:
             await self._ensure_model_loaded()
             if self._model is None:
                 raise RuntimeError('Model not initialized — Hermes load failed')
+
+        # Guard: wait for ongoing compilation
         while self._compile_in_progress:
             await asyncio.sleep(0.1)
-        _max_tokens_for_batch = max_tokens if max_tokens is not None else self.config.max_tokens
+
+        # Path 1: Try scheduler routing (ISSUE-120)
         try:
             scheduler = await self._ensure_mlx_scheduler()
             if scheduler is not None:
-                from hledac.universal.core.mlx_unified_scheduler import LanePriority
-                return await scheduler.submit_inference(prompt=prompt, temperature=temperature, max_tokens=max_tokens or 1024, system_msg=system_msg, priority=LanePriority.INTERACTIVE)
+                LanePriority = _lane_priority_resolver()
+                return await scheduler.submit_inference(
+                    prompt=prompt, temperature=temperature,
+                    max_tokens=max_tokens or 1024, system_msg=system_msg,
+                    priority=LanePriority.INTERACTIVE)
         except Exception as _scheduler_err:
             logger.debug('[ISSUE-120] Scheduler routing failed, falling back to batcher: %s', _scheduler_err)
+
+        # Path 2: Try batcher routing (P0-2)
+        _max_tokens_for_batch = max_tokens if max_tokens is not None else self.config.max_tokens
         try:
             batcher = await self._ensure_mlx_batcher()
-            if batcher is not None and batcher.is_batch_safe(prompt=prompt, system_msg=system_msg, priority=1.0, active_iteration_count=self._active_iteration_count, max_tokens=_max_tokens_for_batch):
-                return await batcher.execute(prompt=prompt, temperature=temperature, max_tokens=max_tokens, system_msg=system_msg, priority=1.0)
+            if batcher is not None and batcher.is_batch_safe(
+                prompt=prompt, system_msg=system_msg, priority=1.0,
+                active_iteration_count=self._active_iteration_count,
+                max_tokens=_max_tokens_for_batch):
+                return await batcher.execute(
+                    prompt=prompt, temperature=temperature,
+                    max_tokens=max_tokens, system_msg=system_msg, priority=1.0)
         except Exception as _batching_err:
             logger.debug('[P0-2] batching routing failed, falling back to direct: %s', _batching_err)
+
+        # Guards: model admission + circuit breaker
         if check_model_allowed is not None:
             decision = check_model_allowed('hermes')
             if not decision.allowed:
                 raise RuntimeError(f'model inference blocked: hermes, retry after {decision.retry_after_s:.1f}s')
+
         if self._model_breaker is not None and self._model_breaker.is_open():
             snap = self._model_breaker.get_snapshot()
-            raise RuntimeError(f"GAP-3/1: ModelCircuitBreaker OPEN for {snap['model_id']!r} (failures={snap['failure_count']}, last={snap['last_failure_kind']!r})")
+            raise RuntimeError(f"GAP-3/1: ModelCircuitBreaker OPEN for {snap['model_id']!r} "
+                             f"(failures={snap['failure_count']}, last={snap['last_failure_kind']!r})")
+
+        # Direct inference path with full exception handling
         try:
-            temp = temperature or self.config.temperature
-            max_tok = max_tokens or self.config.max_tokens
-            if decide_context_budget is not None and apply_context_budget is not None:
-                decision = decide_context_budget(prompt, requested_context_window=self.config.context_window)
-                if decision.mode == 'reject':
-                    logger.warning(f'[CONTEXT] memory_admission_blocked: {decision.reason}' + (f' uma_state={decision.uma_state}' if decision.uma_state else ''))
-                    if record_model_failure is not None:
-                        record_model_failure('hermes', failure_kind='memory_admission_blocked')
-                    raise RuntimeError(f'hermes context preflight rejected: {decision.reason}')
-                if decision.truncated:
-                    prompt = apply_context_budget(prompt, decision)
-                    logger.debug(f'[CONTEXT] truncated {decision.original_chars}→{decision.final_chars} chars, mode={decision.mode}' + (f' uma_state={decision.uma_state}' if decision.uma_state else ''))
-                    self._telemetry_counters['adaptive_context_truncated'] = self._telemetry_counters.get('adaptive_context_truncated', 0) + 1
-                    self._telemetry_counters['adaptive_context_mode'] = decision.mode
-                    if decision.uma_state:
-                        self._telemetry_counters['uma_state'] = decision.uma_state
-            if sanitize_prompt_injection_patterns is not None:
-                validation_result = sanitize_prompt_injection_patterns(prompt)
-                if validation_result.suspicious:
-                    logger.debug(f'[P1G-A] prompt_injection_guard: suspicious=True, patterns={len(validation_result.patterns)}, reason={validation_result.reason}')
-                prompt = validation_result.safe_text
-            is_injection, patterns = _detect_prompt_injection(prompt if isinstance(prompt, str) else str(prompt))
-            if is_injection:
-                import logging as _log
-                _log.getLogger(__name__).warning(f'GAP-5: Prompt injection patterns detected: {patterns[:3]} — proceeding with sanitized input (fail-soft)')
-                        # Issue #14: Stage 1 — CPU prep in thread pool (parallel across prompts)
-            loop = asyncio.get_running_loop()
-            bandit = self._get_prompt_bandit()
-            arm_used = ''
-            if bandit is not None:
-                try:
-                    arm_used = bandit.select_arm()
-                    bandit.get_prompt_modifier(arm_used)
-                    self._last_bandit_arm = arm_used
-                    logger.debug(f'[GENERATE] Bandit arm: {arm_used}')
-                except Exception as e:
-                    logger.debug(f'[GENERATE] Bandit select failed: {e}')
-            sanitized_for_prep = prompt if isinstance(prompt, str) else str(prompt)
-            system_for_prep = system_msg or 'You are a helpful research assistant.'
-            if thinking:
-                system_for_prep = f'{self._DEEP_THINKING_PREFIX}\n\n{system_for_prep}'
-            formatted_prompt, _, tokenizer, prefix_tokens = await loop.run_in_executor(
-                self._prep_executor,
-                self._prep_generate,
-                sanitized_for_prep,
-                system_for_prep,
-                self._sanitize_for_llm,
-                self._tokenizer,
-                self._prefix_cache,
-                self._prefix_cache_maxsize,
-                self._prefix_cache_stats,
-                MAX_LLM_PROMPT_CHARS,
-            )
-            if adapter_path is not None:
-                await self.apply_lora_adapter_async(adapter_path)
-            logger.debug(f'Generating with temp={temp}, max_tokens={max_tok}, lora={adapter_path}')
-            prefix_cache = None
-            if self._kv_cache_enabled:
-                if system_msg:
-                    try:
-                        prefix_cache = self._get_prefix_cache(system_msg)
-                    except Exception:
-                        pass
-                elif self._system_prompt_cache is not None:
-                    prefix_cache = self._system_prompt_cache
-            session_result = self._get_session_cache(formatted_prompt)
-            if session_result is not None:
-                cached_kv, _ = session_result
-                prefix_cache = cached_kv
-                logger.debug('[SESSION-CACHE] Using cached KV for inference')
-            # M-03: Tokenize once here — avoids double encode in _build_generate_kwargs
-            try:
-                gen_prompt_tokens = self._tokenizer.encode(formatted_prompt)
-            except Exception:
-                gen_prompt_tokens = None
-            timeout_s = _get_hermes_timeout_s()
-            # M-01: _run_inference returns (response, populated_kv_cache)
-            # — store the populated cache, NOT the input prefix_cache
-            # M-03: Pass prompt_tokens to avoid double encode
-            # M-10: Pass logits_processors for constrained generation
-            response, populated_kv = await self._submit_inference(timeout_s, self._run_inference, formatted_prompt, temp, max_tok, prefix_cache, adapter_path, gen_prompt_tokens, logits_processors)
-            if self._kv_cache_enabled and session_result is None:
-                try:
-                    estimated_size = len(formatted_prompt) * 64
-                    self._store_session_cache(formatted_prompt, populated_kv, estimated_size)
-                except Exception:
-                    pass
-            if record_model_success is not None:
-                record_model_success('hermes')
-            if self._model_breaker is not None:
-                self._model_breaker.record_success()
-            if bandit is not None and arm_used and response:
-                try:
-                    response_len_norm = min(1.0, len(response) / 4000.0)
-                    reward = response_len_norm * 0.8
-                    bandit.update_reward(arm_used, reward, reward)
-                    logger.debug(f'[GENERATE] Bandit reward: arm={arm_used} reward={reward:.3f}')
-                except Exception as e:
-                    logger.debug(f'[GENERATE] Bandit update failed: {e}')
-            return response
+            return await self._generate_direct(
+                prompt=prompt, temperature=temperature, max_tokens=max_tokens,
+                system_msg=system_msg, thinking=thinking, adapter_path=adapter_path,
+                logits_processors=logits_processors, prompt_tokens=prompt_tokens)
         except TimeoutError:
             logger.warning('Hermes inference timed out')
             if record_model_failure is not None:
@@ -2599,24 +2536,196 @@ class DeepHermes3Engine:
             logger.warning('Hermes inference cancelled')
             raise
         except Exception as e:
-            if record_model_failure is not None and classify_failure_kind is not None:
-                kind = classify_failure_kind(e)
-                record_model_failure('hermes', failure_kind=kind)
-            if self._model_breaker is not None:
-                if isinstance(e, (IndexError, KeyError)):
-                    self._model_breaker.record_failure('internal_error')
+            raise self._classify_and_record_failure(e)
+
+    # ------------------------------------------------------------------
+    # _generate_direct: extracted from generate() to reduce complexity
+    # ------------------------------------------------------------------
+    async def _generate_direct(
+        self,
+        prompt: str,
+        temperature: float | None,
+        max_tokens: int | None,
+        system_msg: str | None,
+        thinking: bool,
+        adapter_path: str | None,
+        logits_processors: list[Any] | None,
+        prompt_tokens: list[int] | None,
+    ) -> str:
+        """Direct MLX inference path (called after scheduler/batcher failures)."""
+        temp = temperature or self.config.temperature
+        max_tok = max_tokens or self.config.max_tokens
+
+        # ---- Context budget decision ----
+        if decide_context_budget is not None and apply_context_budget is not None:
+            decision = decide_context_budget(prompt, requested_context_window=self.config.context_window)
+            if decision.mode == 'reject':
+                reason = f'[CONTEXT] memory_admission_blocked: {decision.reason}'
+                if decision.uma_state:
+                    reason += f' uma_state={decision.uma_state}'
+                logger.warning(reason)
+                if record_model_failure is not None:
+                    record_model_failure('hermes', failure_kind='memory_admission_blocked')
+                raise RuntimeError(f'hermes context preflight rejected: {decision.reason}')
+            if decision.truncated:
+                prompt = apply_context_budget(prompt, decision)
+                dbg = f'[CONTEXT] truncated {decision.original_chars}→{decision.final_chars} chars, mode={decision.mode}'
+                if decision.uma_state:
+                    dbg += f' uma_state={decision.uma_state}'
+                logger.debug(dbg)
+                self._telemetry_counters['adaptive_context_truncated'] = self._telemetry_counters.get('adaptive_context_truncated', 0) + 1
+                self._telemetry_counters['adaptive_context_mode'] = decision.mode
+                if decision.uma_state:
+                    self._telemetry_counters['uma_state'] = decision.uma_state
+
+        # ---- Prompt injection detection ----
+        if sanitize_prompt_injection_patterns is not None:
+            validation_result = sanitize_prompt_injection_patterns(prompt)
+            if validation_result.suspicious:
+                logger.debug(f'[P1G-A] prompt_injection_guard: suspicious=True, '
+                           f'patterns={len(validation_result.patterns)}, reason={validation_result.reason}')
+            prompt = validation_result.safe_text
+
+        is_injection, patterns = _detect_prompt_injection(prompt if isinstance(prompt, str) else str(prompt))
+        if is_injection:
+            logger.warning(
+                f'GAP-5: Prompt injection patterns detected: {patterns[:3]} — proceeding with sanitized input (fail-soft)')
+
+        # ---- Bandit arm selection ----
+        loop = asyncio.get_running_loop()
+        bandit = self._get_prompt_bandit()
+        arm_used = ''
+        if bandit is not None:
+            try:
+                arm_used = bandit.select_arm()
+                bandit.get_prompt_modifier(arm_used)
+                self._last_bandit_arm = arm_used
+                logger.debug(f'[GENERATE] Bandit arm: {arm_used}')
+            except Exception as e:
+                logger.debug(f'[GENERATE] Bandit select failed: {e}')
+
+        # ---- Prompt formatting ----
+        sanitized_for_prep = prompt if isinstance(prompt, str) else str(prompt)
+        system_for_prep = system_msg or 'You are a helpful research assistant.'
+        if thinking:
+            system_for_prep = f'{self._DEEP_THINKING_PREFIX}\n\n{system_for_prep}'
+        formatted_prompt, _, tokenizer, prefix_tokens = await loop.run_in_executor(
+            self._prep_executor,
+            self._prep_generate,
+            sanitized_for_prep,
+            system_for_prep,
+            self._sanitize_for_llm,
+            self._tokenizer,
+            self._prefix_cache,
+            self._prefix_cache_maxsize,
+            self._prefix_cache_stats,
+            MAX_LLM_PROMPT_CHARS,
+        )
+
+        # ---- LoRA adapter ----
+        if adapter_path is not None:
+            await self.apply_lora_adapter_async(adapter_path)
+
+        logger.debug(f'Generating with temp={temp}, max_tokens={max_tok}, lora={adapter_path}')
+
+        # ---- KV cache resolution ----
+        prefix_cache = self._resolve_kv_cache(system_msg, formatted_prompt)
+        timeout_s = _get_hermes_timeout_s()
+
+        # M-03: Tokenize once — avoids double encode in _build_generate_kwargs
+        try:
+            gen_prompt_tokens = self._tokenizer.encode(formatted_prompt)
+        except Exception:
+            gen_prompt_tokens = None
+
+        # ---- Inference ----
+        response, populated_kv = await self._submit_inference(
+            timeout_s, self._run_inference, formatted_prompt, temp, max_tok,
+            prefix_cache, adapter_path, gen_prompt_tokens, logits_processors)
+
+        # ---- Post-inference: cache KV, record success, update bandit ----
+        await self._handle_inference_result(
+            formatted_prompt, populated_kv, response, bandit, arm_used)
+
+        return response
+
+    def _resolve_kv_cache(self, system_msg: str | None, formatted_prompt: str) -> Any | None:
+        """Resolve the appropriate KV cache prefix for inference."""
+        prefix_cache = None
+        if self._kv_cache_enabled:
+            if system_msg:
+                try:
+                    prefix_cache = self._get_prefix_cache(system_msg)
+                except Exception:
+                    pass
+            elif self._system_prompt_cache is not None:
+                prefix_cache = self._system_prompt_cache
+
+        session_result = self._get_session_cache(formatted_prompt)
+        if session_result is not None:
+            cached_kv, _ = session_result
+            prefix_cache = cached_kv
+            logger.debug('[SESSION-CACHE] Using cached KV for inference')
+
+        return prefix_cache
+
+    async def _handle_inference_result(
+        self,
+        formatted_prompt: str,
+        populated_kv: Any,
+        response: str,
+        bandit: Any,
+        arm_used: str,
+    ) -> None:
+        """Handle post-inference tasks: KV cache storage, success recording, bandit update."""
+        # ---- Store KV cache ----
+        if self._kv_cache_enabled:
+            session_result = self._get_session_cache(formatted_prompt)
+            if session_result is None:
+                try:
+                    estimated_size = len(formatted_prompt) * 64
+                    self._store_session_cache(formatted_prompt, populated_kv, estimated_size)
+                except Exception:
+                    pass
+
+        # ---- Record success ----
+        if record_model_success is not None:
+            record_model_success('hermes')
+        if self._model_breaker is not None:
+            self._model_breaker.record_success()
+
+        # ---- Update bandit reward ----
+        if bandit is not None and arm_used and response:
+            try:
+                response_len_norm = min(1.0, len(response) / 4000.0)
+                reward = response_len_norm * 0.8
+                bandit.update_reward(arm_used, reward, reward)
+                logger.debug(f'[GENERATE] Bandit reward: arm={arm_used} reward={reward:.3f}')
+            except Exception as e:
+                logger.debug(f'[GENERATE] Bandit update failed: {e}')
+
+    def _classify_and_record_failure(self, e: Exception) -> Exception:
+        """Classify inference exception and record to telemetry/circuit breaker."""
+        if record_model_failure is not None and classify_failure_kind is not None:
+            kind = classify_failure_kind(e)
+            record_model_failure('hermes', failure_kind=kind)
+
+        if self._model_breaker is not None:
+            if isinstance(e, (IndexError, KeyError)):
+                self._model_breaker.record_failure('internal_error')
+            else:
+                err_str = str(e).lower()
+                if 'memory' in err_str or 'oom' in err_str or 'alloc' in err_str:
+                    self._model_breaker.record_failure('oom')
+                elif 'timeout' in err_str or 'deadline' in err_str:
+                    self._model_breaker.record_failure('timeout')
+                elif 'metal' in err_str or 'gpu' in err_str:
+                    self._model_breaker.record_failure('metal_driver')
                 else:
-                    err_str = str(e).lower()
-                    if 'memory' in err_str or 'oom' in err_str or 'alloc' in err_str:
-                        self._model_breaker.record_failure('oom')
-                    elif 'timeout' in err_str or 'deadline' in err_str:
-                        self._model_breaker.record_failure('timeout')
-                    elif 'metal' in err_str or 'gpu' in err_str:
-                        self._model_breaker.record_failure('metal_driver')
-                    else:
-                        self._model_breaker.record_failure('runtime_error')
-            logger.error(f'Generation failed: {e}')
-            return f'Error: {str(e)}'
+                    self._model_breaker.record_failure('runtime_error')
+
+        logger.error(f'Generation failed: {e}')
+        return e
 
     async def generate_stream(self, prompt: str, max_tokens: int=512, system_msg: str | None=None, temperature: float | None=None, *, thinking: bool=True) -> AsyncIterator[str]:
         """

@@ -38,7 +38,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import msgspec
 from functools import partial
-from typing import Any
+from typing import Any, Literal
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
@@ -676,10 +676,10 @@ class GraphRAGOrchestrator:
             else:
                 if node_id in adjacency:
                     scores.degree = len(adjacency[node_id]) / max(n - 1, 1)
-                scores.betweenness = self._calculate_betweenness(node_id, adjacency, node_ids, _cached_centrality=ig_centrality)
-                scores.closeness = self._calculate_closeness(node_id, adjacency, node_ids, _cached_centrality=ig_centrality)
-                scores.eigenvector = self._calculate_eigenvector(node_id, adjacency, node_ids, _cached_centrality=ig_centrality)
-                scores.pagerank = self._calculate_pagerank(node_id, adjacency, node_ids, _cached_centrality=ig_centrality)
+                scores.betweenness = self._get_centrality_metric(node_id, 'betweenness', adjacency, node_ids, ig_centrality)
+                scores.closeness = self._get_centrality_metric(node_id, 'closeness', adjacency, node_ids, ig_centrality)
+                scores.eigenvector = self._get_centrality_metric(node_id, 'eigenvector', adjacency, node_ids, ig_centrality)
+                scores.pagerank = self._get_centrality_metric(node_id, 'pagerank', adjacency, node_ids, ig_centrality)
             scores.overall_influence = scores.degree * 0.15 + scores.betweenness * 0.25 + scores.closeness * 0.2 + scores.eigenvector * 0.2 + scores.pagerank * 0.2
             centrality_scores.append(scores)
         centrality_scores.sort(key=lambda x: x.overall_influence, reverse=True)
@@ -927,53 +927,28 @@ class GraphRAGOrchestrator:
             scores[str(name)] = {'degree': degree_norm[i] if i < len(degree_norm) else 0.0, 'betweenness': between_norm[i] if i < len(between_norm) else 0.0, 'closeness': closeness_list[i] if i < len(closeness_list) else 0.0, 'eigenvector': ev_norm[i] if i < len(ev_norm) else 0.0, 'pagerank': pr_norm[i] if i < len(pr_norm) else 0.0}
         return scores
 
-    def _calculate_betweenness(self, node_id: str, adjacency: dict[str, set[str]], all_nodes: list[str], _cached_centrality: dict[str, dict[str, float]] | None=None) -> float:
-        """Calculate betweenness centrality via igraph C-core (50-100x faster).
+    def _get_centrality_metric(
+        self,
+        node_id: str,
+        metric: Literal['betweenness', 'closeness', 'eigenvector', 'pagerank'],
+        adjacency: dict[str, set[str]],
+        all_nodes: list[str],
+        _cached_centrality: dict[str, dict[str, float]] | None = None,
+    ) -> float:
+        """Extract a named centrality metric, using cache or computing via igraph.
 
         Args:
-            node_id: Target node ID
-            adjacency: Graph adjacency dict
-            all_nodes: List of all node IDs
-            _cached_centrality: Pre-computed centrality dict (from Rust or igraph).
-                When provided, avoids redundant re-computation of all metrics.
+            node_id: Target node ID.
+            metric: One of the four supported metrics.
+            adjacency: Graph adjacency dict.
+            all_nodes: List of all node IDs.
+            _cached_centrality: Pre-computed centrality dict. When provided, avoids
+                redundant re-computation of all metrics.
         """
         if _cached_centrality is not None:
-            return _cached_centrality.get(node_id, {}).get('betweenness', 0.0)
+            return _cached_centrality.get(node_id, {}).get(metric, 0.0)
         centrality = self._calculate_centrality_igraph(adjacency, all_nodes)
-        return centrality.get(node_id, {}).get('betweenness', 0.0)
-
-    def _calculate_closeness(self, node_id: str, adjacency: dict[str, set[str]], all_nodes: list[str], _cached_centrality: dict[str, dict[str, float]] | None=None) -> float:
-        """Calculate closeness centrality via igraph C-core.
-
-        Args:
-            _cached_centrality: Pre-computed centrality dict. When provided, avoids O(n) re-computation.
-        """
-        if _cached_centrality is not None:
-            return _cached_centrality.get(node_id, {}).get('closeness', 0.0)
-        centrality = self._calculate_centrality_igraph(adjacency, all_nodes)
-        return centrality.get(node_id, {}).get('closeness', 0.0)
-
-    def _calculate_eigenvector(self, node_id: str, adjacency: dict[str, set[str]], all_nodes: list[str], iterations: int=10, _cached_centrality: dict[str, dict[str, float]] | None=None) -> float:
-        """Calculate eigenvector centrality via igraph C-core.
-
-        Args:
-            _cached_centrality: Pre-computed centrality dict. When provided, avoids O(n) re-computation.
-        """
-        if _cached_centrality is not None:
-            return _cached_centrality.get(node_id, {}).get('eigenvector', 0.0)
-        centrality = self._calculate_centrality_igraph(adjacency, all_nodes)
-        return centrality.get(node_id, {}).get('eigenvector', 0.0)
-
-    def _calculate_pagerank(self, node_id: str, adjacency: dict[str, set[str]], all_nodes: list[str], damping: float=0.85, iterations: int=10, _cached_centrality: dict[str, dict[str, float]] | None=None) -> float:
-        """Calculate PageRank via igraph C-core.
-
-        Args:
-            _cached_centrality: Pre-computed centrality dict. When provided, avoids O(n) re-computation.
-        """
-        if _cached_centrality is not None:
-            return _cached_centrality.get(node_id, {}).get('pagerank', 0.0)
-        centrality = self._calculate_centrality_igraph(adjacency, all_nodes)
-        return centrality.get(node_id, {}).get('pagerank', 0.0)
+        return centrality.get(node_id, {}).get(metric, 0.0)
 
     def _label_propagation_igraph(self, adjacency: dict[str, set[str]], node_ids: list[str], num_communities: int) -> dict[int, list[str]] | None:
         """Community detection via igraph C-core label propagation (5-10x faster).

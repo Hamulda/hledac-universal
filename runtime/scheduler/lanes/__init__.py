@@ -47,13 +47,14 @@ from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
 import msgspec
 from enum import Enum, StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from hledac.universal.network.session_runtime import async_get_httpx_session
 logger = logging.getLogger(__name__)
 try:
-    from hledac.universal.utils.source_types import SourceType
+    from hledac.universal.utils.source_types import SourceType as _SourceType
 except ImportError:
-    SourceType = None
+    _SourceType = None
+SourceType = _SourceType  # pyright: ignore[invalid-assignment]
 from hledac.universal.runtime.acquisition_telemetry_reconcile import complete_source_family_outcomes_from_lane_details, reconcile_lane_detail_fields
 from hledac.universal.runtime.nonfeed_candidate_ledger import extract_domain_candidates_from_text
 from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane
@@ -291,7 +292,7 @@ class MandatoryLaneTerminality(msgspec.Struct, gc=False):
     max_attempts: int = 1
     timeout_s: int = 60
 
-def required_terminal_lanes(snapshot: AcquisitionStrategySnapshot, query: str, uma_state: str, swap_detected: bool) -> tuple[MandatoryLaneTerminality, ...]:
+def required_terminal_lanes(snapshot: AcquisitionStrategySnapshot, query: str, uma_state: str, _swap_detected: bool) -> tuple[MandatoryLaneTerminality, ...]:
     """[F208A] Determine which lanes are mandatory for terminality.
 
     Rules:
@@ -968,7 +969,7 @@ class NonfeedMissionController:
                 accepted_families.append(family)
             elif status == 'provider_failure':
                 provider_failure_families.append(family)
-        snapshot.any_accepted = accepted_families
+        snapshot.any_accepted = bool(accepted_families)
         snapshot.provider_failures = tuple(provider_failure_families)
         terminal_statuses = {'accepted', 'terminal', 'provider_failure', 'memory_skip'}
         snapshot.all_required_terminal = all((snapshot.family_status.get(f, 'missing') in terminal_statuses for f in snapshot.required_families))

@@ -1003,19 +1003,24 @@ class SynthesisRunner:
     # Public synthesis API
     # ------------------------------------------------------------------
 
-    async def synthesize_findings(
+    # =======================================================================
+    # Sub-pipeline steps — each is a focused async method.
+    # Complexity per method: 1-7 (vs original 43).
+    # =======================================================================
+
+    async def _synth_phase1_guards(
         self,
         query: str,
         findings: list[dict],
-        max_findings: int = 10,
-        force_synthesis: bool = False,
-    ) -> OSINTReport | None:
+        force_synthesis: bool,
+    ) -> bool:
         """
-        Synthesize top findings into OSINTReport.
+        Phase 1: Pre-flight guard checks.
 
-        WINDUP-only (B.7): skip pokud není WINDUP fáze a force_synthesis=False.
-        B.7: skip pokud RSS > 5.5GiB (M1 8GB UMA safety).
-        STIX context (B.6): injektuje se z ioc_graph.export_stix_bundle().
+        Returns True to proceed, False to abort (method sets outcome and returns None).
+        Guards:
+          - WINDUP lifecycle gate
+          - M1 8GB UMA RSS ceiling (5.5 GiB)
         """
         findings_count = len(findings)
 
@@ -1036,7 +1041,7 @@ class SynthesisRunner:
                 confidence=0.0,
                 operator_note="windup guard blocked — not in WINDUP phase",
             )
-            return None
+            return False
 
         # B.7: UMA RSS > 5.5GiB guard
         if not self._check_uma_guard():
@@ -1059,38 +1064,45 @@ class SynthesisRunner:
                 confidence=0.0,
                 operator_note="UMA RSS > 5.5GiB or EMERGENCY state",
             )
-            return None
+            return False
 
-        # Issue #12.1: PARALLEL DISCOVERY — model + stix + episode + RAG
-        # All independent I/O-bound tasks run concurrently via TaskGroup.
-        # Serial cost: ~5-12s. Parallel cost: ~max of individual tasks (3-5s).
-        model_path = None
+        return True
+
+    async def _synth_phase2_parallel_discovery(
+        self,
+        query: str,
+        findings: list[dict],
+    ) -> tuple[str | None, str, str, str]:
+        """
+        Phase 2: Parallel I/O-bound discovery — model + stix + episode + RAG.
+
+        Returns (model_path, stix_context, episode_ctx, rag_context).
+        All four tasks run concurrently via TaskGroup (eager_start=True).
+        Serial cost: ~5-12s. Parallel cost: ~max of individual tasks (3-5s).
+        Fail-soft: individual task failures return empty string / None.
+        """
+        model_path: str | None = None
         stix_context = ""
         episode_ctx = ""
         rag_context = ""
 
         try:
             async with asyncio.TaskGroup() as tg:
-                # F350M-R ISSUE #31: eager_start=True (parallel discovery is hot path)
-                # Task 1: Model discovery (I/O — file scan or HTTP download)
                 tg_model = tg.create_task(self._ensure_model(), name="syn:model", eager_start=True)
-                # Task 2: STIX context (async DB export)
                 tg_stix = tg.create_task(self._build_stix_context(), name="syn:stix", eager_start=True)
-                # Task 3: Episode context (DB query, conditional)
                 if self._duckdb_store is not None:
                     tg_ep = tg.create_task(
                         self._build_episode_context(self._duckdb_store, query), name="syn:ep", eager_start=True
                     )
                 else:
                     tg_ep = None
-                # Task 4: RAG retrieval (I/O — vector search)
                 tg_rag = tg.create_task(
                     self._rag_query_safe(query, findings), name="syn:rag", eager_start=True
                 )
         except ExceptionGroup as eg:
             logger.debug("[SYNTHESIS] Parallel discovery partial failure: %s", eg)
 
-        # Extract results (re-raise cancellation if any task was cancelled)
+        # Extract results — re-raise cancellation as None/empty
         try:
             model_path = tg_model.result()
         except asyncio.CancelledError:
@@ -1112,31 +1124,22 @@ class SynthesisRunner:
         except asyncio.CancelledError:
             rag_context = ""
 
-        if model_path is None:
-            logger.warning("[SYNTHESIS] No model available — skipping")
-            self._last_synthesis_outcome = SynthesisOutcome(
-                status="skipped",
-                primary_reason="no_model",
-                # Issue #12.5: __slots__ attrs always initialized — direct access
-                lifecycle_gate_source=self._lifecycle_gate_source,
-                lifecycle_gate_mode=self._lifecycle_gate_mode,
-                stix_status=self._stix_status,
-                stix_reason="model discovery and download failed — no usable model",
-                stix_backend=self._stix_backend,
-                engine_used="none",
-                findings_considered=findings_count,
-                report_produced=False,
-                confidence=0.0,
-                operator_note="no model available after discovery and download attempt",
-            )
-            return None
+        return model_path, stix_context, episode_ctx, rag_context
 
-        # Update lifecycle model path for structured_generate
-        self._lifecycle._model_path = model_path
-        self._lifecycle._loaded = False  # force reload with new path
+    async def _synth_phase3_rerank_and_graphrag(
+        self,
+        query: str,
+        findings: list[dict],
+        max_findings: int,
+    ) -> tuple[list[dict], str]:
+        """
+        Phase 3: Rerank findings (ONNX thread) + GraphRAG IOC relationships.
 
-        # Issue #12.2: Rerank in thread — ONNX sync inference must not block event loop.
-        # Cost: ~200-500ms. Falls back to confidence-sort on error.
+        Returns (top_findings, graph_context).
+        Rerank falls back to confidence-sort on error (~200-500ms).
+        GraphRAG is fail-soft (returns "" on error).
+        """
+        # Issue #12.2: Flashrank ONNX rerank in thread — avoid blocking event loop
         top = findings
         try:
             top = await self._rerank_findings(query, findings, max_findings)
@@ -1153,59 +1156,81 @@ class SynthesisRunner:
         if top_iocs:
             graph_context = await self._graphrag_safe(query, top_iocs)
 
-        # [P0-1] Zero-findings path: build query-focused prompt instead of findings-focused
+        return top, graph_context
+
+    async def _synth_phase4_build_prompt(
+        self,
+        query: str,
+        stix_context: str,
+        episode_ctx: str,
+        rag_context: str,
+        graph_context: str,
+        top: list[dict],
+        findings_count: int,
+    ) -> str:
+        """
+        Phase 4: Build synthesis prompt from findings + RAG + GraphRAG + STIX context.
+
+        Zero-findings path: query-focused fallback prompt.
+        Normal path: structured prompt with context layers.
+        """
         if findings_count == 0:
-            findings_text = "[No findings collected during this sprint]"
-            prompt = (
+            return (
                 f"Query: {query}{stix_context}\n"
-                f"Findings:\n{findings_text}\n"
+                f"Findings:\n[No findings collected during this sprint]\n"
                 f"Current timestamp: {time.time()}\n"
                 f"Note: Provide a threat intelligence report based on the query and general knowledge."
             )
+
+        findings_text = "\n".join(
+            f"- [{f.get('source_type', '?')}] {f.get('text', '')[:200]}"
+            for f in top
+        )
+
+        context_parts = []
+        if episode_ctx:
+            context_parts.append(episode_ctx)
+        if rag_context:
+            context_parts.append(rag_context)
+        if graph_context:
+            context_parts.append(graph_context)
+
+        if context_parts:
+            return (
+                f"{chr(10).join(context_parts)}\n\n---\n"
+                f"Query: {query}{stix_context}\n"
+                f"Findings:\n{findings_text}\n"
+                f"Current timestamp: {time.time()}"
+            )
         else:
-            # Sestavit prompt z top findings
-            findings_text = "\n".join(
-                f"- [{f.get('source_type', '?')}] {f.get('text', '')[:200]}"
-                for f in top
+            return (
+                f"Query: {query}{stix_context}\n"
+                f"Findings:\n{findings_text}\n"
+                f"Current timestamp: {time.time()}"
             )
 
-            # Sprint 8VA B.2 + C.2: Sestavit synthesis prompt s RAG + GraphRAG context
-            context_parts = []
-            if episode_ctx:
-                context_parts.append(episode_ctx)
-            if rag_context:
-                context_parts.append(rag_context)
-            if graph_context:
-                context_parts.append(graph_context)
+    async def _synth_phase5_prompt_optimization(
+        self,
+        prompt: str,
+    ) -> str:
+        """
+        Phase 5: DSPy optimized prompts + Bandit arm selection + modifier injection.
 
-            if context_parts:
-                prompt = (
-                    f"{chr(10).join(context_parts)}\n\n---\n"
-                    f"Query: {query}{stix_context}\n"
-                    f"Findings:\n{findings_text}\n"
-                    f"Current timestamp: {time.time()}"
-                )
-            else:
-                prompt = (
-                    f"Query: {query}{stix_context}\n"
-                    f"Findings:\n{findings_text}\n"
-                    f"Current timestamp: {time.time()}"
-                )
-
+        Returns the (possibly modified) prompt.
+        DSPy and Bandit are fail-soft — on error, prompt is returned unchanged.
+        """
         # Sprint F234: DSPy optimized prompts — try to load from cache first
         dspy_prompts = _get_dspy_prompts()
         if dspy_prompts:
             dspy_opt = _get_dspy_optimizer(self._lifecycle)
             if dspy_opt is not None:
                 try:
-                    # Check for optimized prompt for analysis task
                     optimized = dspy_opt.get_prompt('analysis', {'complexity': 'medium'})
                     if optimized:
                         self.set_custom_prompt(optimized)
                         logger.info(f"[SYNTHESIS] DSPy optimized prompt loaded ({len(optimized)} chars)")
                 except Exception:  # noqa: BLE001
                     pass
-            # Fallback: use cached prompts directly
             elif dspy_prompts.get('analysis:medium'):
                 self.set_custom_prompt(dspy_prompts['analysis:medium'])
 
@@ -1227,48 +1252,211 @@ class SynthesisRunner:
         if self._prompt_modifier:
             prompt = prompt.rstrip() + self._prompt_modifier + "\n"
 
-        raw_dict = None
+        return prompt
+
+    async def _synth_phase6_inference(
+        self,
+        prompt: str,
+    ) -> tuple[dict | None, str]:
+        """
+        Phase 6: Context compression → model load → race inference → unload on fallback.
+
+        Returns (raw_dict, used_engine).
+        unload() + gc.collect() is called only when ALL engines failed (raw_dict is None).
+        Fail-soft: compression errors use original prompt.
+        """
+        # F234: Context compression — compress prompt if it exceeds threshold
+        if self._compression_threshold > 0 and self._compressor is not None:
+            prompt_len = len(prompt)
+            if prompt_len > self._compression_threshold:
+                try:
+                    compressed = await self._compressor.compress_context(prompt)
+                    compressed_prompt = compressed.critical_content
+                    logger.info(
+                        f"[SYNTHESIS] Context compressed: {prompt_len} → {len(compressed_prompt)} chars "
+                        f"(ratio={compressed.compression_ratio:.2f})"
+                    )
+                    prompt = compressed_prompt
+                except Exception as e:
+                    logger.warning(f"[SYNTHESIS] Context compression failed (using original prompt): {e}")
+
+        # Issue #12.3 + #12.4: RACE inference — parallel xgrammar + streaming + constrained.
+        # Pre-load model once, then race all three engines. Take first successful result.
+        raw_dict: dict | None = None
         used_engine = "none"
         try:
-            # F234: Context compression — compress prompt if it exceeds threshold
-            if self._compression_threshold > 0 and self._compressor is not None:
-                prompt_len = len(prompt)
-                if prompt_len > self._compression_threshold:
-                    try:
-                        compressed = await self._compressor.compress_context(prompt)
-                        # Use critical content tier (most concise)
-                        compressed_prompt = compressed.critical_content
-                        logger.info(
-                            f"[SYNTHESIS] Context compressed: {prompt_len} → {len(compressed_prompt)} chars "
-                            f"(ratio={compressed.compression_ratio:.2f})"
-                        )
-                        prompt = compressed_prompt
-                    except Exception as e:
-                        # F234: fail-soft — synthesis continues with original prompt
-                        logger.warning(f"[SYNTHESIS] Context compression failed (using original prompt): {e}")
+            model, tokenizer, _model_path = await self._lifecycle._ensure_loaded()
+        except RuntimeError as e:
+            logger.warning("[SYNTHESIS] Model load failed for race: %s", e)
+            raw_dict, used_engine = None, "none"
+        else:
+            raw_dict, used_engine = await self._race_inference(prompt)
 
-            # Issue #12.3 + #12.4: RACE inference — parallel xgrammar + streaming + constrained.
-            # Pre-load model once, then race all three engines. Take first successful result.
-            # Benefits: ~3s sequential cascade → ~1s first-success (37-67% speedup).
-            # Issue #12.4: unload() only on real fallback (raw_dict is None), not on success path.
+        # Issue #12.4: unload() only when ALL engines failed (real fallback happened)
+        if raw_dict is None:
+            await self._lifecycle.unload()
+            gc.collect()
+
+        return raw_dict, used_engine
+
+    async def _synth_phase7_parse_and_validate(
+        self,
+        raw_dict: dict,
+        used_engine: str,
+        findings: list[dict],
+        bandit: Any,
+        arm_used: str,
+        query: str,
+        findings_count: int,
+    ) -> OSINTReport | None:
+        """
+        Phase 7: Parse raw_dict → OSINTReport → validate → confidence → bandit reward → hypothesis.
+
+        Returns OSINTReport on success, None on parse failure.
+        All validations are fail-soft — never block report production.
+        """
+        used_outlines = used_engine in ("streaming", "constrained")
+        report = self._parse_raw_to_osintreport(raw_dict)
+        if report is None:
+            return None
+
+        report.confidence = self._compute_confidence(report, used_outlines)
+
+        # GAP-8: Evidence grounding validation (fail-soft)
+        _, grounding_warnings = validate_evidence_grounding(report, findings)
+        if grounding_warnings:
+            logger.warning(
+                f"[SYNTHESIS] GAP-8 grounding warnings: "
+                f"{len(grounding_warnings)} unverified IOCs"
+            )
+
+        # GAP-7: Semantic constraint validation (fail-soft — log only, never block)
+        sem_ok, sem_errors = validate_report_semantics(report)
+        if not sem_ok:
+            logger.warning(f"[SYNTHESIS] GAP-7 semantic errors: {sem_errors}")
+
+        # Sprint F234: Update bandit UCB1 reward — reward = response_length_normalized × confidence
+        if bandit is not None and arm_used:
             try:
-                model, tokenizer, _model_path = await self._lifecycle._ensure_loaded()
-            except RuntimeError as e:
-                logger.warning("[SYNTHESIS] Model load failed for race: %s", e)
-                raw_dict, used_engine = None, "none"
-            else:
-                raw_dict, used_engine = await self._race_inference(prompt)
+                response_text = (
+                    report.threat_summary + " " +
+                    " ".join(str(e) for e in report.ioc_entities) +
+                    " ".join(report.threat_actors)
+                )
+                response_len_norm = min(1.0, len(response_text) / 2000.0)
+                reward = response_len_norm * report.confidence
+                bandit.update_reward(arm_used, reward, reward)
+                logger.info(f"[SYNTHESIS] Bandit reward: arm={arm_used} reward={reward:.3f}")
+            except Exception as e:
+                logger.debug(f"[SYNTHESIS] Bandit update failed: {e}")
 
-            # Issue #12.4: unload() only when ALL engines failed (real fallback happened)
-            if raw_dict is None:
-                await self._lifecycle.unload()
-                gc.collect()
+        # F214: Extract testable hypotheses from synthesis output
+        if self._hypothesis_engine is not None:
+            try:
+                ctx = {
+                    "query": query,
+                    "report_summary": report.threat_summary[:500] if report.threat_summary else "",
+                    "iocs": [i.ioc_value for i in (report.ioc_entities or [])[:10]],
+                    "source": "synthesis_runner",
+                }
+                hyp_strings = await self._hypothesis_engine.generate_hypotheses_async(
+                    context=ctx,
+                    hermes_engine=getattr(self._hypothesis_engine, "_inference_engine", None),
+                )
+                if hyp_strings:
+                    logger.debug(
+                        f"[SYNTHESIS] Extracted {len(hyp_strings[:10])} hypotheses from report"
+                    )
+            except Exception as e:
+                logger.debug(f"[SYNTHESIS] Hypothesis extraction skipped: {e}")
+
+        return report
+
+    # =======================================================================
+    # Public synthesis API — orchestrates 8 sub-pipeline steps
+    # =======================================================================
+
+    async def synthesize_findings(
+        self,
+        query: str,
+        findings: list[dict],
+        max_findings: int = 10,
+        force_synthesis: bool = False,
+    ) -> OSINTReport | None:
+        """
+        Synthesize top findings into OSINTReport.
+
+        WINDUP-only (B.7): skip pokud není WINDUP fáze a force_synthesis=False.
+        B.7: skip pokud RSS > 5.5GiB (M1 8GB UMA safety).
+        STIX context (B.6): injektuje se z ioc_graph.export_stix_bundle().
+
+        Pipeline:
+          Phase 1: Guard checks (windup_allowed, uma_guard)
+          Phase 2: Parallel discovery (model, stix, episode, rag)
+          Phase 3: Rerank + GraphRAG
+          Phase 4: Prompt construction
+          Phase 5: DSPy + Bandit optimization
+          Phase 6: Compression + race inference
+          Phase 7: Parse + validate + reward + hypothesis
+          Phase 8: (inline) All-engines-failed outcome
+        """
+        findings_count = len(findings)
+
+        # ── Phase 1: Guards ──────────────────────────────────────────────
+        if not await self._synth_phase1_guards(query, findings, force_synthesis):
+            return None
+
+        # ── Phase 2: Parallel discovery ──────────────────────────────────
+        model_path, stix_context, episode_ctx, rag_context = (
+            await self._synth_phase2_parallel_discovery(query, findings)
+        )
+
+        if model_path is None:
+            logger.warning("[SYNTHESIS] No model available — skipping")
+            self._last_synthesis_outcome = SynthesisOutcome(
+                status="skipped",
+                primary_reason="no_model",
+                lifecycle_gate_source=self._lifecycle_gate_source,
+                lifecycle_gate_mode=self._lifecycle_gate_mode,
+                stix_status=self._stix_status,
+                stix_reason="model discovery and download failed — no usable model",
+                stix_backend=self._stix_backend,
+                engine_used="none",
+                findings_considered=findings_count,
+                report_produced=False,
+                confidence=0.0,
+                operator_note="no model available after discovery and download attempt",
+            )
+            return None
+
+        # Update lifecycle model path for structured_generate
+        self._lifecycle._model_path = model_path
+        self._lifecycle._loaded = False  # force reload with new path
+
+        # ── Phase 3: Rerank + GraphRAG ──────────────────────────────────
+        top, graph_context = await self._synth_phase3_rerank_and_graphrag(
+            query, findings, max_findings
+        )
+
+        # ── Phase 4: Build prompt ────────────────────────────────────────
+        prompt = await self._synth_phase4_build_prompt(
+            query, stix_context, episode_ctx, rag_context, graph_context,
+            top, findings_count,
+        )
+
+        # ── Phase 5: DSPy + Bandit ──────────────────────────────────────
+        prompt = await self._synth_phase5_prompt_optimization(prompt)
+
+        # ── Phase 6: Inference ──────────────────────────────────────────
+        raw_dict: dict | None = None
+        used_engine = "none"
+        try:
+            raw_dict, used_engine = await self._synth_phase6_inference(prompt)
         except Exception as e:
             logger.error("Synthesis error: %s", e)
             self._last_synthesis_outcome = SynthesisOutcome(
                 status="failed",
                 primary_reason="generation_failed",
-                # Issue #12.5: __slots__ attrs always initialized — direct access
                 lifecycle_gate_source=self._lifecycle_gate_source,
                 lifecycle_gate_mode=self._lifecycle_gate_mode,
                 stix_status=self._stix_status,
@@ -1286,47 +1474,19 @@ class SynthesisRunner:
         logger.info(f"[SYNTHESIS] Engine used: {used_engine}")
         self._last_synthesis_engine = used_engine
 
+        # ── Phase 7: Parse + validate ───────────────────────────────────
+        bandit = _get_prompt_bandit()
+        arm_used = getattr(self, "_last_arm", "") or ""
+
         if raw_dict is not None:
-            # Sprint 8TA B.1: _parse_raw_to_osintreport s defaulty
-            used_outlines = used_engine in ("streaming", "constrained")
-            report = self._parse_raw_to_osintreport(raw_dict)
+            report = await self._synth_phase7_parse_and_validate(
+                raw_dict, used_engine, findings,
+                bandit, arm_used, query, findings_count,
+            )
             if report is not None:
-                report.confidence = self._compute_confidence(report, used_outlines)
-
-                # GAP-8: Evidence grounding validation (fail-soft)
-                _, grounding_warnings = validate_evidence_grounding(report, findings)
-                if grounding_warnings:
-                    logger.warning(
-                        f"[SYNTHESIS] GAP-8 grounding warnings: "
-                        f"{len(grounding_warnings)} unverified IOCs"
-                    )
-
-                # GAP-7: Semantic constraint validation (fail-soft — log only, never block)
-                sem_ok, sem_errors = validate_report_semantics(report)
-                if not sem_ok:
-                    logger.warning(f"[SYNTHESIS] GAP-7 semantic errors: {sem_errors}")
-
-                # Sprint F234: Update bandit UCB1 reward — reward = response_length_normalized × confidence
-                # Note: LinUCB update() is NOT called — select_arm() uses UCB1 algorithm.
-                # UCB1 state (arm_counts, arm_rewards) requires persistence fix — see prompt_bandit.py.
-                if bandit is not None and arm_used:
-                    try:
-                        response_text = (
-                            report.threat_summary + " " +
-                            " ".join(str(e) for e in report.ioc_entities) +
-                            " ".join(report.threat_actors)
-                        )
-                        response_len_norm = min(1.0, len(response_text) / 2000.0)  # 2k chars = 1.0
-                        reward = response_len_norm * report.confidence
-                        bandit.update_reward(arm_used, reward, reward)
-                        logger.info(f"[SYNTHESIS] Bandit reward: arm={arm_used} reward={reward:.3f}")
-                    except Exception as e:
-                        logger.debug(f"[SYNTHESIS] Bandit update failed: {e}")
-
                 self._last_synthesis_outcome = SynthesisOutcome(
                     status="success",
                     primary_reason="success",
-                    # Issue #12.5: __slots__ attrs always initialized — direct access
                     lifecycle_gate_source=self._lifecycle_gate_source,
                     lifecycle_gate_mode=self._lifecycle_gate_mode,
                     stix_status=self._stix_status,
@@ -1338,30 +1498,9 @@ class SynthesisRunner:
                     confidence=report.confidence,
                     operator_note=f"report produced with confidence {report.confidence:.3f}",
                 )
-                # F214: Extract testable hypotheses from synthesis output
-                # Fail-soft: hypothesis pipeline error must not affect canonical report
-                if self._hypothesis_engine is not None:
-                    try:
-                        ctx = {
-                            "query": query,
-                            "report_summary": report.threat_summary[:500] if report.threat_summary else "",
-                            "iocs": [i.ioc_value for i in (report.ioc_entities or [])[:10]],
-                            "source": "synthesis_runner",
-                        }
-                        hyp_strings = await self._hypothesis_engine.generate_hypotheses_async(
-                            context=ctx,
-                            hermes_engine=getattr(self._hypothesis_engine, "_inference_engine", None),
-                        )
-                        if hyp_strings:
-                            logger.debug(
-                                f"[SYNTHESIS] Extracted {len(hyp_strings[:10])} hypotheses from report"
-                            )
-                    except Exception as e:
-                        logger.debug(f"[SYNTHESIS] Hypothesis extraction skipped: {e}")
-
                 return report
 
-        # All engines failed or parse failed
+        # ── Phase 8 (inline): All engines failed or parse failed ────────
         self._last_synthesis_outcome = SynthesisOutcome(
             status="failed",
             primary_reason="generation_failed" if raw_dict is None else "parse_failed",

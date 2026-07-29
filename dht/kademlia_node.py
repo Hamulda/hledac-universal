@@ -989,7 +989,7 @@ class KademliaNode:
                             data = await loop.sock_recv(sock, 65535)
                             resp = self._bdecode(data) if data else None
                         finally:
-                            if sock:
+                            if sock is not None:
                                 sock.close()
                     if not isinstance(resp, dict):
                         return None
@@ -1005,7 +1005,33 @@ class KademliaNode:
                 except Exception:
                     return None
 
+        # ── routing helpers ───────────────────────────────────────────────────────
+
+        def _collect_candidate_peers(depth: int, info_hash: str) -> list[tuple[str, int]]:
+            """Collect candidate (host, port) peers for a crawl depth.
+
+            Deduplicates bootstrap_nodes against routing_table entries on depth=0
+            to avoid sending redundant queries to the same peer.
+            """
+            if depth == 0 or not self.routing_table:
+                # Build seen set from routing table first (avoids O(n²) dedup below)
+                seen: set[tuple[str, int]] = set()
+                for bucket in self.routing_table.values():
+                    for n in bucket:
+                        h, p = n.get('host'), n.get('port')
+                        if h and p:
+                            seen.add((h, int(p)))
+                candidates: list[tuple[str, int]] = []
+                for h, p in self.bootstrap_nodes:
+                    if (h, p) not in seen:
+                        candidates.append((h, p))
+            else:
+                closest = self._find_closest_nodes(info_hash, self.alpha)
+                candidates = [(n['host'], int(n['port'])) for n in closest if n.get('host') and n.get('port')]
+            return candidates
+
         def _peers_from_response(r_norm: dict) -> list[tuple[str, int]]:
+            """Extract (ip, port) peer addresses from a get_peers response."""
             out: list[tuple[str, int]] = []
             values = r_norm.get(b'values') or r_norm.get('values') or []
             if not isinstance(values, list):
@@ -1018,6 +1044,7 @@ class KademliaNode:
             return out
 
         def _nodes_from_response(r_norm: dict) -> list[tuple[str, str, int]]:
+            """Extract (nid, ip, port) nodes from a get_peers response."""
             out: list[tuple[str, str, int]] = []
             compact = r_norm.get(b'nodes') or r_norm.get('nodes') or b''
             if not isinstance(compact, (bytes, bytearray)):
@@ -1031,32 +1058,9 @@ class KademliaNode:
                 nport = int.from_bytes(chunk[24:26], 'big')
                 out.append((nid, nip, nport))
             return out
-        for depth in range(MAXCRAWLDEPTH):
-            if depth == 0 or not self.routing_table:
-                candidates: list[tuple[str, int]] = list(self.bootstrap_nodes)
-                for bucket in self.routing_table.values():
-                    for n in bucket:
-                        h = n.get('host')
-                        p = n.get('port')
-                        if h and p:
-                            candidates.append((h, int(p)))
-            else:
-                closest = self._find_closest_nodes(info_hash, self.alpha)
-                candidates = []
-                for n in closest:
-                    h = n.get('host')
-                    p = n.get('port')
-                    if h and p:
-                        candidates.append((h, int(p)))
-            new_sources = [(h, p) for h, p in candidates if (h, p) not in queried]
-            if not new_sources:
-                break
-            for h, p in new_sources[:10]:
-                queried.add((h, p))
-            tasks = [_query_peer(h, p) for h, p in new_sources[:10]]
-            if not tasks:
-                break
-            results = await parallel_ok(*tasks, label='kademlia_node:1307')
+
+        def _update_routing_batch(results: list[dict | None]) -> bool:
+            """Update routing table from response results. Returns True if new peers found."""
             got_new_peers = False
             for res in results:
                 if not isinstance(res, dict):
@@ -1068,6 +1072,20 @@ class KademliaNode:
                         got_new_peers = True
                 for nid, nip, nport in _nodes_from_response(res):
                     self._update_routing(nid, {'host': nip, 'port': nport})
+            return got_new_peers
+        # ── iterative crawl loop ──────────────────────────────────────────────────
+        for depth in range(MAXCRAWLDEPTH):
+            candidates = _collect_candidate_peers(depth, info_hash)
+            new_sources = [(h, p) for h, p in candidates if (h, p) not in queried]
+            if not new_sources:
+                break
+            for h, p in new_sources[:10]:
+                queried.add((h, p))
+            tasks = [_query_peer(h, p) for h, p in new_sources[:10]]
+            if not tasks:
+                break
+            results = await parallel_ok(*tasks, label='kademlia_node:get_peers')
+            got_new_peers = _update_routing_batch(results)
             if not got_new_peers and depth > 0:
                 break
         return peers[:50]

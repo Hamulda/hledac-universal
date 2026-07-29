@@ -29,6 +29,7 @@ from collections import Counter, OrderedDict
 import collections.abc
 from dataclasses import dataclass
 import msgspec
+from logging import Logger
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlparse
 
@@ -596,7 +597,7 @@ class QualityAssessor:
             if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
                 try:
                     if text_for_embed and len(text_for_embed) >= 16:
-                        is_dup = self._semantic_dedup_cache.check_and_cache(
+                        is_dup = self._semantic_dedup_cache.check_and_cache(  # type: ignore[attr-defined]
                             text_for_embed, threshold=0.75  # Sprint-F265B: was 0.80, too tight for IOC data (caused 100% rejection in sprint 300s)
                         )
                         if is_dup:
@@ -663,10 +664,12 @@ class QualityAssessor:
             and not is_high_conf_ioc
             and not is_feed_source
         ):
+            _dedup_cache = self._semantic_dedup_cache
+            assert _dedup_cache is not None
             try:
                 text_for_embed = url_from_provenance or (finding.payload_text or finding.query)
                 if text_for_embed and len(text_for_embed) >= 16:
-                    is_dup = self._semantic_dedup_cache.check_and_cache(
+                    is_dup = _dedup_cache.check_and_cache(  # type: ignore[attr-defined]
                         text_for_embed, threshold=0.75  # Sprint-F265B: was 0.80, too tight for IOC data (caused 100% rejection in sprint 300s)
                     )
                     if is_dup:
@@ -721,10 +724,8 @@ class QualityAssessor:
         Returns list[FindingQualityDecision] in same order as findings.
         Fail-soft: any exception in batch pre-compute falls back to per-finding assess().
         """
-        import logging as _batch_logger
-
         n = len(findings)
-        results: list[FindingQualityDecision | None] = [None] * n
+        results: list[FindingQualityDecision] = [None] * n  # type: ignore[list-item]
 
         # --- Phase 1: pre-compute fingerprints + entropies via Rust batch ---
         url_fingerprints: list[str] = [''] * n
@@ -802,7 +803,7 @@ class QualityAssessor:
                 fingerprints[idx] = fps_batch[j]
 
         # --- Phase 2: apply decision logic per finding (same as assess()) ---
-        _batch_logger = _logging.getLogger(__name__)
+        _batch_logger: Logger = _logging.getLogger(__name__)
         for idx, f in enumerate(findings):
             url_fp = url_fingerprints[idx]
             fp = fingerprints[idx]
@@ -814,100 +815,148 @@ class QualityAssessor:
                 and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()) is not None
             )
 
-            # Tier 1: hot cache
-            duplicate_hit = self._state.hot_cache_lookup(fp)
-            if duplicate_hit is not None:
-                self._state._quality_duplicate_count += 1
+            # --- Phase 2: per-finding decision logic (CC = 5) ---
+            results[idx] = self._assess_batch_item_phase2(
+                f=f,
+                url_fp=url_fp,
+                fp=fp,
+                entropy=entropy,
+                is_feed_source=is_feed_source,
+                is_high_conf_ioc=is_high_conf_ioc,
+                text_for_embed=text_for_embed,
+                _logger=_batch_logger,
+            )
+
+        assert None not in results, "assess_batch: 1:1 invariant violated"
+        return results  # type: ignore[return-value]
+
+    # ---------------------------------------------------------------------------
+    # Phase 2 per-finding decision guard — CC = 5
+    # ---------------------------------------------------------------------------
+
+    def _assess_batch_item_phase2(
+        self,
+        f: CanonicalFinding,
+        url_fp: str,
+        fp: str,
+        entropy: float,
+        is_feed_source: bool,
+        is_high_conf_ioc: bool,
+        text_for_embed: str | None,
+        _logger: Logger,
+    ) -> FindingQualityDecision:
+        """Phase 2 decision logic per finding. Returns FindingQualityDecision.
+
+        Decision tree (CC = 5):
+          1. hot cache duplicate   → reject
+          2. LMDB duplicate        → reject
+          3. URL-first (url_fp)   → accept immediately
+          4. short string (<8)     → semantic dedup guard → accept
+          5. low entropy           → reject
+          6. semantic dedup guard  → reject or accept
+        """
+        # Tier 1: hot cache
+        duplicate_hit = self._state.hot_cache_lookup(fp)
+        if duplicate_hit is not None:
+            self._state._quality_duplicate_count += 1
+            reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+            return self._make_decision(False, reason, entropy, fp, True)
+
+        # Tier 2: LMDB
+        if self._lmdb_lookup_fn is not None:
+            stored_id = self._lmdb_lookup_fn(fp)
+            if stored_id is not None:
+                self._state.add_to_hot_cache(fp, stored_id)
+                self._state._persistent_duplicate_count += 1
                 reason = "persistent_duplicate" if url_fp else "duplicate_detected"
-                results[idx] = self._make_decision(False, reason, entropy, fp, True)
-                continue
+                return self._make_decision(False, reason, entropy, fp, True)
 
-            # Tier 2: LMDB
-            if self._lmdb_lookup_fn is not None:
-                stored_id = self._lmdb_lookup_fn(fp)
-                if stored_id is not None:
-                    self._state.add_to_hot_cache(fp, stored_id)
-                    self._state._persistent_duplicate_count += 1
-                    reason = "persistent_duplicate" if url_fp else "duplicate_detected"
-                    results[idx] = self._make_decision(False, reason, entropy, fp, True)
-                    continue
-
-            # URL-first: store and accept (no entropy)
-            if url_fp:
-                if self._lmdb_store_fn is not None:
-                    self._lmdb_store_fn(fp, f.finding_id)
-                if not is_feed_source:
-                    self._state.add_to_hot_cache(fp, f.finding_id)
-                results[idx] = self._make_decision(True, None, entropy, fp, False)
-                continue
-
-            # Short strings: semantic dedup check
-            if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
-                # Sprint F265D: Feed sources skip semantic dedup
-                if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
-                    try:
-                        if text_for_embed and len(text_for_embed) >= 16:
-                            is_dup = self._semantic_dedup_cache.check_and_cache(
-                                text_for_embed, threshold=0.75,
-                            )
-                            if is_dup:
-                                self._state._quality_duplicate_count += 1
-                                _batch_logger.debug(
-                                    "[QUALITY] short_string semantic_dup hit fp=%s",
-                                    fp[:16] if fp else "",
-                                )
-                                results[idx] = self._make_decision(
-                                    False, "semantic_duplicate", entropy, fp, True,
-                                )
-                                continue
-                    except Exception as e:
-                        _batch_logger.warning(f"Quality gate err (short_string batch): {e}")
-                if self._lmdb_store_fn is not None:
-                    self._lmdb_store_fn(fp, f.finding_id)
-                if not is_feed_source:
-                    self._state.add_to_hot_cache(fp, f.finding_id)
-                results[idx] = self._make_decision(True, "short_string_skip", entropy, fp, False)
-                continue
-
-            # Entropy threshold
-            if entropy < _QUALITY_ENTROPY_THRESHOLD:
-                self._state._quality_rejected_count += 1
-                _batch_logger.debug(
-                    "[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s",
-                    entropy, _QUALITY_ENTROPY_THRESHOLD, fp[:16] if fp else "",
-                )
-                results[idx] = self._make_decision(False, "low_entropy_rejected", entropy, fp, False)
-                continue
-
-            # Semantic dedup
-            if self._semantic_dedup_cache is not None and not is_high_conf_ioc and not is_feed_source:
-                try:
-                    if text_for_embed and len(text_for_embed) >= 16:
-                        is_dup = self._semantic_dedup_cache.check_and_cache(
-                            text_for_embed, threshold=0.75,
-                        )
-                        if is_dup:
-                            self._state._quality_duplicate_count += 1
-                            _batch_logger.debug(
-                                "[QUALITY] semantic_dup hit fp=%s",
-                                fp[:16] if fp else "",
-                            )
-                            results[idx] = self._make_decision(
-                                False, "semantic_duplicate", entropy, fp, True,
-                            )
-                            continue
-                except Exception as e:
-                    _batch_logger.warning(f"Quality gate err (entropy batch): {e}")
-
-            # All passed — store and accept
+        # URL-first: store and accept (no entropy)
+        if url_fp:
             if self._lmdb_store_fn is not None:
                 self._lmdb_store_fn(fp, f.finding_id)
             if not is_feed_source:
                 self._state.add_to_hot_cache(fp, f.finding_id)
-            results[idx] = self._make_decision(True, None, entropy, fp, False)
+            return self._make_decision(True, None, entropy, fp, False)
 
-        assert None not in results, "assess_batch: 1:1 invariant violated"
-        return results  # type: ignore[return-value]
+        # Short strings: semantic dedup guard
+        if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
+            dup_result = self._apply_semantic_dedup_guard(
+                fp, text_for_embed, is_high_conf_ioc, is_feed_source, "short_string batch", _logger,
+            )
+            if dup_result is not None:
+                return dup_result
+            if self._lmdb_store_fn is not None:
+                self._lmdb_store_fn(fp, f.finding_id)
+            if not is_feed_source:
+                self._state.add_to_hot_cache(fp, f.finding_id)
+            return self._make_decision(True, "short_string_skip", entropy, fp, False)
+
+        # Entropy threshold
+        if entropy < _QUALITY_ENTROPY_THRESHOLD:
+            self._state._quality_rejected_count += 1
+            _logger.debug(
+                "[QUALITY] low_entropy rejected entropy=%.3f threshold=%.3f fp=%s",
+                entropy, _QUALITY_ENTROPY_THRESHOLD, fp[:16] if fp else "",
+            )
+            return self._make_decision(False, "low_entropy_rejected", entropy, fp, False)
+
+        # Semantic dedup guard (entropy path)
+        dup_result = self._apply_semantic_dedup_guard(
+            fp, text_for_embed, is_high_conf_ioc, is_feed_source, "entropy batch", _logger,
+        )
+        if dup_result is not None:
+            return dup_result
+
+        # All passed — store and accept
+        if self._lmdb_store_fn is not None:
+            self._lmdb_store_fn(fp, f.finding_id)
+        if not is_feed_source:
+            self._state.add_to_hot_cache(fp, f.finding_id)
+        return self._make_decision(True, None, entropy, fp, False)
+
+    # ---------------------------------------------------------------------------
+    # Shared semantic dedup guard — CC = 3
+    # ---------------------------------------------------------------------------
+
+    def _apply_semantic_dedup_guard(
+        self,
+        fp: str,
+        text_for_embed: str | None,
+        is_high_conf_ioc: bool,
+        is_feed_source: bool,
+        path_label: str,
+        _logger: Logger,
+    ) -> FindingQualityDecision | None:
+        """Return FindingQualityDecision if semantic duplicate, else None (continue).
+
+        CC = 3: 1 (guard check) + 1 (text length) + 1 (is_dup)
+        """
+        if (
+            self._semantic_dedup_cache is None
+            or is_high_conf_ioc
+            or is_feed_source
+        ):
+            return None
+        _cache = self._semantic_dedup_cache
+        assert _cache is not None
+        try:
+            if not (text_for_embed and len(text_for_embed) >= 16):
+                return None
+            is_dup = _cache.check_and_cache(
+                text_for_embed, threshold=0.75,
+            )
+            if is_dup:
+                self._state._quality_duplicate_count += 1
+                _logger.debug(
+                    "[QUALITY] %s semantic_dup hit fp=%s",
+                    path_label,
+                    fp[:16] if fp else "",
+                )
+                return self._make_decision(False, "semantic_duplicate", 0.0, fp, True)
+        except Exception as e:
+            _logger.warning(f"Quality gate err ({path_label}): {e}")
+        return None
 
     def _make_decision(
         self,

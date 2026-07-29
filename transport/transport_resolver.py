@@ -51,6 +51,36 @@ def _extract_host(url: str) -> str:
     except Exception:
         return ''
 
+def _probe_tcp_port(host: str, port: int, timeout: float = 2.0) -> bool:
+    """
+    Parameterized TCP port probe — replaces 4 duplicated socket probing fragments.
+
+    Duplication targets (Type-2 renamed):
+      1. _check_tor_available()        — host=127.0.0.1, port=9050, timeout=0.5
+      2. _check_tor_available_async()  — host=127.0.0.1, port=9050, timeout=0.5
+      3. is_i2p_available()            — host=127.0.0.1, port=7654, timeout=2.0
+      4. _is_i2p_available_uncached()  — host=127.0.0.1, port=7654, timeout=2.0
+
+    Invariants:
+      [PROBE-I1] Fail-closed — returns False on any error (OSError, timeout)
+      [PROBE-I2] No side effects — socket always closed, even on exception
+      [PROBE-I3] Thread-safe — no shared state
+      [PROBE-I4] Socket always closed — no fd leak on connect error
+    """
+    import socket
+    s = socket.socket()
+    try:
+        s.settimeout(timeout)
+        s.connect((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
 class RouteDecision(Enum):
     """
     Issue #37: Strict fail-closed routing decisions.
@@ -178,36 +208,19 @@ class TransportResolver:
         D-22 fix: reduced timeout from 2.0s to 0.5s — only called once at init
         via _check_transports(), cached thereafter.
         """
-        import socket
-
-        try:
-            s = socket.socket()
-            s.settimeout(0.5)
-            s.connect(('127.0.0.1', 9050))
-            s.close()
-            return True
-        except OSError:
-            return False
+        return _probe_tcp_port('127.0.0.1', 9050, timeout=0.5)
 
     async def _check_tor_available_async(self) -> bool:
         """Check if Tor is running by probing the SOCKS port (9050).
         D-22 fix: asyncio.to_thread + 0.5s timeout to avoid blocking the
         event loop when called from async routing contexts.
+        Single timeout source: asyncio.wait_for (socket timeout redundant).
         """
-        import socket
-
-        def _probe() -> bool:
-            try:
-                s = socket.socket()
-                s.settimeout(0.5)
-                s.connect(('127.0.0.1', 9050))
-                s.close()
-                return True
-            except OSError:
-                return False
-
         try:
-            return await asyncio.wait_for(asyncio.to_thread(_probe), timeout=0.5)
+            return await asyncio.wait_for(
+                asyncio.to_thread(_probe_tcp_port, '127.0.0.1', 9050, 0.5),
+                timeout=0.6,
+            )
         except asyncio.TimeoutError:
             return False
 
@@ -251,15 +264,7 @@ class TransportResolver:
 
         Returns True if I2P SOCKS proxy is reachable, False otherwise.
         """
-        import socket
-        try:
-            s = socket.socket()
-            s.settimeout(2.0)
-            s.connect(('127.0.0.1', 7654))
-            s.close()
-            return True
-        except OSError:
-            return False
+        return _probe_tcp_port('127.0.0.1', 7654, timeout=2.0)
 
     def resolve_url(self, url: str) -> Transport:
         """
@@ -381,15 +386,7 @@ _i2p_available_cache: tuple[bool, float] | None = None
 
 def _is_i2p_available_uncached() -> bool:
     """Probe I2P SOCKS port 7654 — internal uncached check."""
-    import socket
-    try:
-        s = socket.socket()
-        s.settimeout(2.0)
-        s.connect(('127.0.0.1', 7654))
-        s.close()
-        return True
-    except OSError:
-        return False
+    return _probe_tcp_port('127.0.0.1', 7654, timeout=2.0)
 
 def is_i2p_available() -> bool:
     """
@@ -468,8 +465,6 @@ def get_transport_hint_string(url: str) -> str:
         result = 'tor'
     elif transport == Transport.I2P:
         result = 'i2p'
-    elif transport == Transport.FREENET:
-        result = 'clearnet'
     else:
         result = 'clearnet'
     _get_transport_hint_cache.set(url, result)

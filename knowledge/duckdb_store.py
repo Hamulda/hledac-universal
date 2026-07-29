@@ -6969,6 +6969,31 @@ class DuckDBShadowStore:
         """
         self._quality_state.record_rejection(finding, decision)
 
+    def _check_semantic_duplicate(
+        self,
+        dedup_cache,
+        text_for_embed: str,
+        threshold: float,
+    ) -> tuple[bool, str | None]:
+        """
+        Sprint F350M-R: Shared helper for semantic dedup check.
+
+        ISSUE-022: Extracted from duplicated blocks in _apply_stateful_quality_checks
+        and _assess_finding_quality_batch. Eliminates 6+ copy-paste instances.
+
+        Returns (True, reason) if duplicate, (False, None) if not.
+        Fail-soft: any exception returns (False, None).
+        """
+        try:
+            if text_for_embed and len(text_for_embed) >= 16:
+                is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=threshold)
+                if is_dup:
+                    self._quality_state._quality_duplicate_count += 1
+                    return (True, "semantic_duplicate")
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            pass
+        return (False, None)
+
     def get_quality_rejection_ledger(self) -> tuple[QualityRejectionRecord, ...]:
         """
         Sprint F216G: Expose the quality rejection ledger to callers (e.g. scheduler).
@@ -7097,19 +7122,14 @@ class DuckDBShadowStore:
             if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
                 dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
                 if dedup_cache is not None and (not is_high_conf_ioc):
-                    try:
-                        if text_for_embed and len(text_for_embed) >= 16:
-                            _semantic_thresh = 0.8 if is_feed_source else 0.85
-                            is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
-                            if is_dup:
-                                self._quality_state._quality_duplicate_count += 1
-                                results[idx] = FindingQualityDecision(
-                                    accepted=False, reason="semantic_duplicate",
-                                    entropy=entropy, normalized_hash=fp, duplicate=True,
-                                )
-                                continue
-                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                        pass
+                    _semantic_thresh = 0.8 if is_feed_source else 0.85
+                    is_dup, dup_reason = self._check_semantic_duplicate(dedup_cache, text_for_embed, _semantic_thresh)
+                    if is_dup:
+                        results[idx] = FindingQualityDecision(
+                            accepted=False, reason=dup_reason,
+                            entropy=entropy, normalized_hash=fp, duplicate=True,
+                        )
+                        continue
                 _dedup_batch.append((fp, f.finding_id))
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
@@ -7126,19 +7146,14 @@ class DuckDBShadowStore:
                 continue
             dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
             if dedup_cache is not None and (not is_high_conf_ioc):
-                try:
-                    if text_for_embed and len(text_for_embed) >= 16:
-                        _semantic_thresh = 0.8 if is_feed_source else 0.85
-                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
-                        if is_dup:
-                            self._quality_state._quality_duplicate_count += 1
-                            results[idx] = FindingQualityDecision(
-                                accepted=False, reason="semantic_duplicate",
-                                entropy=entropy, normalized_hash=fp, duplicate=True,
-                            )
-                            continue
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    pass
+                _semantic_thresh = 0.8 if is_feed_source else 0.85
+                is_dup, dup_reason = self._check_semantic_duplicate(dedup_cache, text_for_embed, _semantic_thresh)
+                if is_dup:
+                    results[idx] = FindingQualityDecision(
+                        accepted=False, reason=dup_reason,
+                        entropy=entropy, normalized_hash=fp, duplicate=True,
+                    )
+                    continue
             new_iocs_for_batch: list[tuple[str, str, float]] = []
             if has_any_ioc[idx]:
                 ioc_start = ioc_offsets[idx]
@@ -7486,6 +7501,8 @@ class DuckDBShadowStore:
         # Batch: one txn.begin + N×cursor.putmulti + txn.commit per chunk.
         _dedup_batch: list[tuple[str, str]] = []
 
+        # F350M-R: Extracted per-finding logic to flatten complexity (was ~90 nested).
+        # Each guard applies one rejection/accept path and returns True to skip.
         for idx, f in enumerate(findings):
             url_fp = url_fingerprints[idx]
             fp = fingerprints[idx]
@@ -7493,92 +7510,91 @@ class DuckDBShadowStore:
             is_feed_source = f.source_type == "rss_atom_pipeline"
             text_for_embed = url_fp or (f.payload_text or f.query)
             is_high_conf_ioc = bool(text_for_embed and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()))
+
+            # Guard 1: hot cache duplicate
             if self._hot_cache_lookup(fp) is not None:
                 self._quality_state._quality_duplicate_count += 1
-                reason = "persistent_duplicate" if url_fp else "duplicate_detected"
                 results[idx] = FindingQualityDecision(
-                    accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True
+                    accepted=False,
+                    reason="persistent_duplicate" if url_fp else "duplicate_detected",
+                    entropy=entropy, normalized_hash=fp, duplicate=True,
                 )
                 continue
+
+            # Guard 2: persistent dedup store hit
             stored_id = self._lookup_persistent_dedup(fp)
             if stored_id is not None:
                 self._add_to_hot_cache(fp, stored_id)
                 self._quality_state._persistent_duplicate_count += 1
-                reason = "persistent_duplicate" if url_fp else "duplicate_detected"
                 results[idx] = FindingQualityDecision(
-                    accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True
+                    accepted=False,
+                    reason="persistent_duplicate" if url_fp else "duplicate_detected",
+                    entropy=entropy, normalized_hash=fp, duplicate=True,
                 )
                 continue
+
+            # Guard 3: URL-based finding — accept immediately
             if url_fp:
                 _dedup_batch.append((fp, f.finding_id))
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
                 results[idx] = FindingQualityDecision(
-                    accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
+                    accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
                 )
                 continue
+
+            # Guard 4: short fingerprint — semantic dedup only, then accept
             if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
                 dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
                 if dedup_cache is not None and (not is_high_conf_ioc):
-                    try:
-                        if text_for_embed and len(text_for_embed) >= 16:
-                            _semantic_thresh = 0.8 if is_feed_source else 0.85
-                            is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
-                            if is_dup:
-                                self._quality_state._quality_duplicate_count += 1
-                                results[idx] = FindingQualityDecision(
-                                    accepted=False,
-                                    reason="semantic_duplicate",
-                                    entropy=entropy,
-                                    normalized_hash=fp,
-                                    duplicate=True,
-                                )
-                                continue
-                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                        pass
+                    _semantic_thresh = 0.8 if is_feed_source else 0.85
+                    is_dup, dup_reason = self._check_semantic_duplicate(dedup_cache, text_for_embed, _semantic_thresh)
+                    if is_dup:
+                        results[idx] = FindingQualityDecision(
+                            accepted=False, reason=dup_reason,
+                            entropy=entropy, normalized_hash=fp, duplicate=True,
+                        )
+                        continue
                 _dedup_batch.append((fp, f.finding_id))
                 if not is_feed_source:
                     self._add_to_hot_cache(fp, f.finding_id)
                 results[idx] = FindingQualityDecision(
-                    accepted=True, reason="short_string_skip", entropy=entropy, normalized_hash=fp, duplicate=False
+                    accepted=True, reason="short_string_skip", entropy=entropy, normalized_hash=fp, duplicate=False,
                 )
                 continue
+
+            # Guard 5: low entropy — reject
             _threshold = 0.3 if is_feed_source else _QUALITY_ENTROPY_THRESHOLD
             if entropy < _threshold:
                 self._quality_state._quality_rejected_count += 1
                 results[idx] = FindingQualityDecision(
-                    accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False
+                    accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False,
                 )
                 continue
+
+            # Guard 6: semantic duplicate
             dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
             if dedup_cache is not None and (not is_high_conf_ioc):
-                try:
-                    if text_for_embed and len(text_for_embed) >= 16:
-                        _semantic_thresh = 0.8 if is_feed_source else 0.85
-                        is_dup = dedup_cache.check_and_cache(text_for_embed, threshold=_semantic_thresh)
-                        if is_dup:
-                            self._quality_state._quality_duplicate_count += 1
-                            results[idx] = FindingQualityDecision(
-                                accepted=False,
-                                reason="semantic_duplicate",
-                                entropy=entropy,
-                                normalized_hash=fp,
-                                duplicate=True,
-                            )
-                            continue
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    pass
+                _semantic_thresh = 0.8 if is_feed_source else 0.85
+                is_dup, dup_reason = self._check_semantic_duplicate(dedup_cache, text_for_embed, _semantic_thresh)
+                if is_dup:
+                    results[idx] = FindingQualityDecision(
+                        accepted=False, reason=dup_reason,
+                        entropy=entropy, normalized_hash=fp, duplicate=True,
+                    )
+                    continue
+
+            # Guard 7: IOC duplicate
             new_iocs_for_batch: list[tuple[str, str, float]] = []
             if has_any_ioc[idx]:
                 ioc_start = ioc_offsets[idx]
                 ioc_end = ioc_offsets[idx + 1]
                 finding_ioc_dup_flags = ioc_dup_flags[ioc_start:ioc_end]
                 finding_iocs = ioc_items[idx]
-                any_ioc_dup = any(finding_ioc_dup_flags)
-                if any_ioc_dup:
+                if any(finding_ioc_dup_flags):
                     self._quality_state._quality_duplicate_count += 1
                     results[idx] = FindingQualityDecision(
-                        accepted=False, reason="ioc_duplicate", entropy=entropy, normalized_hash=fp, duplicate=True
+                        accepted=False, reason="ioc_duplicate", entropy=entropy, normalized_hash=fp, duplicate=True,
                     )
                     continue
                 new_iocs_for_batch = [
@@ -7586,6 +7602,8 @@ class DuckDBShadowStore:
                     for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
                     if not is_dup
                 ]
+
+            # Accept: write dedup, hot_cache, IOC batch
             _dedup_batch.append((fp, f.finding_id))
             if not is_feed_source:
                 self._add_to_hot_cache(fp, f.finding_id)
@@ -7595,7 +7613,7 @@ class DuckDBShadowStore:
                 except (OSError, RuntimeError) as e:
                     logger.debug(f"[DUCKDB] add_ioc_batch failed: {e}")
             results[idx] = FindingQualityDecision(
-                accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
+                accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
             )
 
         # ISSUE-FXXX: Flush all dedup writes in one batch = one LMDB transaction.

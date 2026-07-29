@@ -14,6 +14,7 @@ Architecture (Issue 3.5 consolidation):
 
 import asyncio
 import functools
+import hashlib
 import itertools
 import logging
 import threading
@@ -984,6 +985,26 @@ def _extract_domain_from_url(url: str) -> str:
 
 
 # F265B: conditional cache wrapper for the curl_cffi stealth lane.
+
+# F350M-R: extracted helper eliminates nested try/runtime-import inside pre-probe block (CC=-3, depth=-2)
+async def _try_probe_h3(url: str) -> Any | None:
+    """Probe Alt-Svc for H3; return HttpVersion.v3 on success, None on failure."""
+    try:
+        from curl_cffi.requests import HttpVersion as _HttpVersion  # type: ignore[unresolved-import]
+
+        await _blocking_altsvc_probe_for_url(url)
+        from .http3_lane import _cache_get, extract_host as _probe_extract_host
+
+        _probe_host = _probe_extract_host(url)
+        if _probe_host and _cache_get(_probe_host) is True:
+            return _HttpVersion.v3
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 async def fetch_via_curl_cffi_cached(
     url: str,
     headers: dict[str, str] | None = None,
@@ -1056,31 +1077,15 @@ async def fetch_via_curl_cffi_cached(
         pass
 
     # F273G-H3FIX: Blocking pre-probe BEFORE primary fetch.
+    # F350M-R: guard clauses eliminate CC=7→4; inner try/imports extracted to helper.
     if _pre_probe and http_version is None and not _force_refresh:
         _url_lower = url.lower() if url else ""
-        _is_dark = _url_lower.endswith(".onion") or ".i2p" in _url_lower or ".b32.i2p" in _url_lower
-        if not _is_dark:
-            try:
-                await _blocking_altsvc_probe_for_url(url)
-                from .http3_lane import (
-                    _cache_get,
-                )
-                from .http3_lane import (
-                    extract_host as _probe_extract_host,
-                )
-
-                _probe_host = _probe_extract_host(url)
-                if _probe_host and _cache_get(_probe_host) is True:
-                    try:
-                        from curl_cffi.requests import HttpVersion as _HttpVersion  # type: ignore[unresolved-import]
-
-                        http_version = _HttpVersion.v3
-                    except Exception:  # noqa: BLE001
-                        pass
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001
-                pass
+        if _url_lower.endswith(".onion") or ".i2p" in _url_lower or ".b32.i2p" in _url_lower:
+            pass  # dark net — skip probe, no H3
+        else:
+            _http_version = await _try_probe_h3(url)
+            if _http_version is not None:
+                http_version = _http_version
 
     merged_headers: dict[str, str] = dict(headers) if headers else {}
     sent_conditional = False
@@ -1089,9 +1094,8 @@ async def fetch_via_curl_cffi_cached(
         try:
             cache_headers = conditional_headers_for(url, ttl_s=ttl_s)
             if cache_headers:
-                for k, v in cache_headers.items():
-                    if k not in merged_headers:
-                        merged_headers[k] = v
+                # F350M-R: comprehension eliminates for-loop nesting (depth -1)
+                merged_headers.update({k: v for k, v in cache_headers.items() if k not in merged_headers})
                 sent_conditional = True
         except Exception:  # noqa: BLE001
             pass
@@ -1112,44 +1116,49 @@ async def fetch_via_curl_cffi_cached(
 
     status = int(result.get("status_code", 0) or 0)
 
+    # F350M-R: guard clauses eliminate nested if inside try (CC -1, depth -1)
     if status == 304:
+        if sent_conditional:
+            try:
+                _cc_record(url, sent=True, response_status=status)
+            except Exception:  # noqa: BLE001
+                pass
         try:
             entry = _cc_lookup(url)
-            if entry is not None and entry.body:
-                if sent_conditional:
-                    _cc_record(url, sent=True, response_status=status)
-                # entry.body is already `bytes` from conditional_cache LMDB store
-                result["content"] = entry.body
-                result["final_url"] = url
-                result["conditional_304"] = True
-                return result
         except Exception:  # noqa: BLE001
-            pass
+            entry = None
+        if entry is not None and entry.body:
+            result["content"] = entry.body
+        result["final_url"] = url
         result["conditional_304"] = True
         return result
+
+    # F350M-R: extracted helpers eliminate 4-level nesting (was: if→try→for→if/elif/elif)
+    def _extract_resp_headers(resp_headers: dict) -> tuple[str, str, str]:
+        etag = last_modified = content_type = ""
+        for k, v in resp_headers.items():
+            kl = k.lower()
+            if kl == "etag":
+                etag = str(v)
+            elif kl == "last-modified":
+                last_modified = str(v)
+            elif kl == "content-type":
+                content_type = str(v)
+        return etag, last_modified, content_type
+
+    def _hash_body_bytes(body_bytes: bytes) -> str:
+        # F350M-R: hashlib at module top-level — no runtime import needed
+        try:
+            return hashlib.sha256(body_bytes).hexdigest()
+        except Exception:  # noqa: BLE001
+            return ""
 
     if 200 <= status < 300:
         try:
             resp_headers = result.get("headers") or {}
-            etag = ""
-            last_modified = ""
-            content_type = ""
-            for k, v in resp_headers.items():
-                kl = k.lower()
-                if kl == "etag":
-                    etag = str(v)
-                elif kl == "last-modified":
-                    last_modified = str(v)
-                elif kl == "content-type":
-                    content_type = str(v)
+            etag, last_modified, content_type = _extract_resp_headers(resp_headers)
             body_bytes = result.get("content", b"") or b""
-            sha_hex = ""
-            try:
-                import hashlib
-
-                sha_hex = hashlib.sha256(body_bytes).hexdigest()
-            except Exception:  # noqa: BLE001
-                pass
+            sha_hex = _hash_body_bytes(body_bytes)
             _cc_store(
                 url,
                 etag=etag,
