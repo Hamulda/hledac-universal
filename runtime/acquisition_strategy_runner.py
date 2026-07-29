@@ -29,6 +29,22 @@ from hledac.universal.utils.async_helpers import parallel_ok
 from hledac.universal.runtime.acquisition.profile import AcquisitionProfile
 logger = logging.getLogger(__name__)
 from hledac.universal.runtime.acquisition_strategy_planner import AcquisitionLane, AcquisitionLanePlan, AcquisitionLaneOutcome, AcquisitionStrategySnapshot, NonfeedSeedContext
+
+# Module-level constant — canonical lane→family mapping (F360M dedup).
+_LANE_TO_FAMILY: dict[str, str] = {
+    AcquisitionLane.FEED: 'feed',
+    AcquisitionLane.PUBLIC: 'public',
+    AcquisitionLane.CT: 'ct',
+    AcquisitionLane.WAYBACK: 'archive',
+    AcquisitionLane.PASSIVE_DNS: 'passive_dns',
+    AcquisitionLane.BLOCKCHAIN: 'blockchain',
+    AcquisitionLane.STEALTH: 'stealth',
+    AcquisitionLane.PIVOT_EXECUTOR: 'pivot',
+    AcquisitionLane.ACADEMIC: 'academic',
+    AcquisitionLane.OPEN_SOURCE: 'public',
+    AcquisitionLane.DOH: 'doh',
+}
+
 _ct_adapter: Any = None
 
 def _get_ct_adapter():
@@ -345,7 +361,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         from hledac.universal.runtime.acquisition_strategy_planner import _extract_crypto_from_query, _wallet_to_findings
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.blockchain_analyzer import BlockchainForensics
+                from hledac.universal.recon.blockchain_analyzer import BlockchainForensics
                 wallets = _extract_crypto_from_query(query)
                 accepted = 0
                 total_tx = 0
@@ -382,7 +398,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.shodan_lane import ShodanLane
+                from hledac.universal.recon.shodan_lane import ShodanLane
                 lane_obj = ShodanLane()
                 findings = await lane_obj.query(query)
                 if findings and graph_accumulator is not None:
@@ -401,7 +417,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.censys_lane import CensysLane
+                from hledac.universal.recon.censys_lane import CensysLane
                 lane_obj = CensysLane()
                 findings = await lane_obj.query(query)
                 if findings and graph_accumulator is not None:
@@ -420,7 +436,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.greynoise_lane import GreyNoiseLane
+                from hledac.universal.recon.greynoise_lane import GreyNoiseLane
                 lane_obj = GreyNoiseLane()
                 findings = await lane_obj.query(query)
                 if findings and graph_accumulator is not None:
@@ -436,7 +452,6 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
     if snapshot is None:
         return ()
     lane_runners = {AcquisitionLane.CT: _run_ct_lane, AcquisitionLane.WAYBACK: _run_wayback_lane, AcquisitionLane.PASSIVE_DNS: _run_pdns_lane, AcquisitionLane.BLOCKCHAIN: _run_blockchain_lane, AcquisitionLane.STEALTH: _stealth_never_run, AcquisitionLane.ACADEMIC: _run_academic_lane, AcquisitionLane.IPFS: _run_ipfs_lane, AcquisitionLane.OPEN_SOURCE: _run_open_source_lane, AcquisitionLane.DOH: _run_doh_lane, AcquisitionLane.SHODAN: _run_shodan_lane, AcquisitionLane.CENSYS: _run_censys_lane, AcquisitionLane.GREYNOISE: _run_greynoise_lane}
-    _LANE_TO_FAMILY: dict[str, str] = {AcquisitionLane.FEED: 'feed', AcquisitionLane.PUBLIC: 'public', AcquisitionLane.CT: 'ct', AcquisitionLane.WAYBACK: 'archive', AcquisitionLane.PASSIVE_DNS: 'passive_dns', AcquisitionLane.BLOCKCHAIN: 'blockchain', AcquisitionLane.STEALTH: 'stealth', AcquisitionLane.PIVOT_EXECUTOR: 'pivot', AcquisitionLane.ACADEMIC: 'academic', AcquisitionLane.OPEN_SOURCE: 'public', AcquisitionLane.DOH: 'doh'}
     for plan in snapshot.plans:
         lane = plan.lane
         if lane not in lane_runners:

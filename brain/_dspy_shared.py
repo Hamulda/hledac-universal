@@ -102,3 +102,28 @@ def is_dspy_available() -> bool:
         return _dspy is not None
     except ImportError:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Shared convenience: extract domain strings from SyntheticDomainCandidate list
+# Defined once here to eliminate clone between:
+#   - brain/concept_domain_expander.py::extract_domain_strings (≈line 555)
+#   - brain/insight_engine.py::extract_domain_strings        (≈line 552)
+# ---------------------------------------------------------------------------
+
+
+def extract_domain_strings(
+    candidates: "list[Any]",
+    min_confidence: float = 0.25,
+) -> "list[str]":
+    """
+    Extract plain domain strings from SyntheticDomainCandidate list.
+
+    Args:
+        candidates: List of domain candidate objects with .domain and .confidence.
+        min_confidence: Minimum confidence threshold (default 0.25).
+
+    Returns:
+        List of domain strings meeting the confidence threshold.
+    """
+    return [c.domain for c in candidates if c.confidence >= min_confidence]

@@ -1586,7 +1586,7 @@ class FetchCoordinator(UniversalCoordinator):
         # (lines 1445-1448) has valid values — was previously inside the while loop
         # causing NameError on first attempt for TOR/I2P URLs (url_transport used at
         # line 1411 before being assigned at line 1438).
-        from ..transport.transport_resolver import RouteDecision, Transport, async_get_route_decision, get_transport_for_url
+        from ..transport.transport_resolver import RouteDecision, Transport, async_get_route_decision
         url_transport = get_transport_for_url(url)
         route_decision = await async_get_route_decision(url)
         _pre_acquired_tor_session: Any | None = None

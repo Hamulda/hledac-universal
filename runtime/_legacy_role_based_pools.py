@@ -85,6 +85,7 @@ from hledac.universal.core.isolated_executors import (
     get_mlx_executor,
     is_pep734_available,
 )
+from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
 from hledac.universal.utils.async_helpers import safe_wait_for
 
 if TYPE_CHECKING:
@@ -109,8 +110,11 @@ _DB_WORKERS: int = 2  # DuckDB concurrent writer limit
 _HASH_WORKERS: int = 4  # P-core count for CPU-bound hash
 _REGEX_WORKERS: int = 4  # P-core count for regex matching
 _ASYNC_IO_WORKERS: int = 4  # asyncio.to_thread workers
-_LMDB_WORKERS: int = 2  # LMDB writer limit (1 writer + 1 reader)
+_EMBED_FALLBACK_WORKERS: int = 2  # Embedding fallback pool (when PEP 734 unavailable)
 _DUCKDB_FALLBACK_WORKERS: int = 4  # DuckDB fallback pool (when PEP 734 unavailable)
+
+# LMDB pool configuration — shared with runtime.lmdb_pool
+from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
 
 
 class RAMBudgetExceeded(Exception):
@@ -176,16 +180,15 @@ class RoleBasedPools:
         "_embed_executor",
         "_duckdb_executor",
         "_duckdb_fallback_executor",
+        "_embed_fallback_executor",
         "_hash_executor",
         "_regex_executor",
         "_async_io_executor",
-        "_lmdb_executor",
         "_embed_semaphore",
         "_db_semaphore",
         "_hash_semaphore",
         "_regex_semaphore",
         "_async_io_semaphore",
-        "_lmdb_semaphore",
         "_async_locks",
         "_init_lock",
         "_initialized",
@@ -201,7 +204,6 @@ class RoleBasedPools:
         self._hash_semaphore: asyncio.Semaphore | None = None
         self._regex_semaphore: asyncio.Semaphore | None = None
         self._async_io_semaphore: asyncio.Semaphore | None = None
-        self._lmdb_semaphore: asyncio.Semaphore | None = None
 
         # Per-role async locks for submit serialization
         self._async_locks: dict[str, asyncio.Lock] = {}
@@ -210,10 +212,10 @@ class RoleBasedPools:
         self._embed_executor: IsolatedMLXExecutor | None = None
         self._duckdb_executor: IsolatedDuckDBExecutor | None = None
         self._duckdb_fallback_executor: ThreadPoolExecutor | None = None
+        self._embed_fallback_executor: ThreadPoolExecutor | None = None
         self._hash_executor: ThreadPoolExecutor | None = None
         self._regex_executor: ThreadPoolExecutor | None = None
         self._async_io_executor: ThreadPoolExecutor | None = None
-        self._lmdb_executor: ThreadPoolExecutor | None = None
 
     def _ensure_initialized(self) -> None:
         """Lazy initialization of all executors (double-checked locking)."""
@@ -221,7 +223,7 @@ class RoleBasedPools:
             return
         with self._init_lock:
             if self._initialized:
-                return  # type: ignore[unreachable]
+                return
             self._initialized = True
 
             # Initialize semaphores
@@ -230,7 +232,6 @@ class RoleBasedPools:
             self._hash_semaphore = asyncio.Semaphore(_HASH_WORKERS)
             self._regex_semaphore = asyncio.Semaphore(_REGEX_WORKERS)
             self._async_io_semaphore = asyncio.Semaphore(_ASYNC_IO_WORKERS)
-            self._lmdb_semaphore = asyncio.Semaphore(_LMDB_WORKERS)
 
             # Initialize async locks
             self._async_locks = {
@@ -239,7 +240,6 @@ class RoleBasedPools:
                 "db": asyncio.Lock(),
                 "regex": asyncio.Lock(),
                 "async_io": asyncio.Lock(),
-                "lmdb": asyncio.Lock(),
             }
 
             # ThreadPoolExecutors for GIL-releasing work
@@ -260,9 +260,9 @@ class RoleBasedPools:
                 max_workers=_DUCKDB_FALLBACK_WORKERS,
                 thread_name_prefix="hledac-duckdb-fb",
             )
-            self._lmdb_executor = ThreadPoolExecutor(
-                max_workers=_LMDB_WORKERS,
-                thread_name_prefix="hledac-lmdb",
+            self._embed_fallback_executor = ThreadPoolExecutor(
+                max_workers=_EMBED_FALLBACK_WORKERS,
+                thread_name_prefix="hledac-embed-fb",
             )
 
             # PEP 734 executors (Python 3.14+, memory-isolated)
@@ -270,35 +270,30 @@ class RoleBasedPools:
                 self._embed_executor = get_mlx_executor()
                 self._duckdb_executor = get_duckdb_executor()
 
-    async def _get_embed_lock(self) -> asyncio.Lock:
+    # ------------------------------------------------------------------|
+    # Lock accessor (parameterized, replaces 5 duplicated methods)       |
+    # ------------------------------------------------------------------|
+
+    async def _get_lock(self, role: str) -> asyncio.Lock:
+        """Get async lock for a given role (embed, db, hash, regex, async_io)."""
         self._ensure_initialized()
         assert self._async_locks is not None
-        return self._async_locks["embed"]
+        return self._async_locks[role]
+
+    async def _get_embed_lock(self) -> asyncio.Lock:
+        return await self._get_lock("embed")
 
     async def _get_db_lock(self) -> asyncio.Lock:
-        self._ensure_initialized()
-        assert self._async_locks is not None
-        return self._async_locks["db"]
+        return await self._get_lock("db")
 
     async def _get_hash_lock(self) -> asyncio.Lock:
-        self._ensure_initialized()
-        assert self._async_locks is not None
-        return self._async_locks["hash"]
+        return await self._get_lock("hash")
 
     async def _get_regex_lock(self) -> asyncio.Lock:
-        self._ensure_initialized()
-        assert self._async_locks is not None
-        return self._async_locks["regex"]
+        return await self._get_lock("regex")
 
     async def _get_async_io_lock(self) -> asyncio.Lock:
-        self._ensure_initialized()
-        assert self._async_locks is not None
-        return self._async_locks["async_io"]
-
-    async def _get_lmdb_lock(self) -> asyncio.Lock:
-        self._ensure_initialized()
-        assert self._async_locks is not None
-        return self._async_locks["lmdb"]
+        return await self._get_lock("async_io")
 
     # ------------------------------------------------------------------|
     # RAM budget checks (M1 8GB)                                       |
@@ -328,7 +323,7 @@ class RoleBasedPools:
         """
         Check if DuckDB budget allows new work.
 
-        M1 8GB: DuckDB in-process uses ~100MB per connection.
+        M1 8GB: DuckDB in-process uses ~100mb per connection.
         We cap at 2 concurrent writers.
         """
         available = _get_available_memory_gib()
@@ -396,6 +391,44 @@ class RoleBasedPools:
     # Role: EMBED — MLX embedding generation (memory-heavy)             |
     # ------------------------------------------------------------------|
 
+    async def _run_embed_impl(
+        self,
+        fn: "Callable[..., T]",
+        /,
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> T | None:
+        """
+        Shared implementation for run_embed.
+
+        Uses PEP 734 executor if available, otherwise dedicated fallback pool.
+        """
+        if self._embed_executor is not None and self._embed_executor.is_available:
+            # PEP 734 available — use isolated interpreter
+            try:
+                if timeout is not None:
+                    coro = self._embed_executor.run_inference_async(fn, *args, **kwargs)
+                    return await safe_wait_for(coro, timeout=timeout, label="role_pool:embed")
+                return await self._embed_executor.run_inference_async(fn, *args, **kwargs)
+            except Exception:
+                return None
+        else:
+            # Fallback: use dedicated embed pool (MLX releases GIL)
+            assert self._embed_fallback_executor is not None
+            loop = asyncio.get_running_loop()
+            try:
+                if timeout is not None:
+                    coro = loop.run_in_executor(
+                        self._embed_fallback_executor, lambda: fn(*args, **kwargs)
+                    )
+                    return await safe_wait_for(coro, timeout=timeout, label="role_pool:embed")
+                return await loop.run_in_executor(
+                    self._embed_fallback_executor, lambda: fn(*args, **kwargs)
+                )
+            except Exception:
+                return None
+
     async def run_embed[T](
         self,
         fn: "Callable[..., T]",
@@ -438,28 +471,55 @@ class RoleBasedPools:
 
         async with self._embed_semaphore:
             async with await self._get_embed_lock():
-                if self._embed_executor is not None and self._embed_executor.is_available:
-                    # PEP 734 available — use isolated interpreter
-                    try:
-                        if timeout is not None:
-                            coro = self._embed_executor.run_inference_async(fn, *args, **kwargs)
-                            return await safe_wait_for(coro, timeout=timeout, label="role_pool:embed")
-                        return await self._embed_executor.run_inference_async(fn, *args, **kwargs)
-                    except Exception:
-                        return None
-                else:
-                    # Fallback: run directly (MLX releases GIL)
-                    try:
-                        if timeout is not None:
-                            coro = asyncio.to_thread(fn, *args, **kwargs)
-                            return await safe_wait_for(coro, timeout=timeout, label="role_pool:embed")
-                        return await asyncio.to_thread(fn, *args, **kwargs)
-                    except Exception:
-                        return None
+                return await self._run_embed_impl(fn, *args, timeout=timeout, **kwargs)
 
     # ------------------------------------------------------------------|
     # Role: DB — DuckDB operations (I/O-bound)                         |
     # ------------------------------------------------------------------|
+
+    async def _run_db_impl(
+        self,
+        fn: "Callable[..., Any]",
+        /,
+        *args: Any,
+        timeout: float | None = None,
+        label: str = "role_pool:db",
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Shared implementation for run_db and run_db_write.
+
+        Args:
+            fn: Function to execute
+            *args: Arguments passed to fn
+            timeout: Optional timeout in seconds
+            label: safe_wait_for label
+            **kwargs: Keyword arguments passed to fn
+        """
+        if self._duckdb_executor is not None and self._duckdb_executor.is_available:
+            # PEP 734 available — use isolated interpreter for memory isolation
+            try:
+                if timeout is not None:
+                    coro = self._duckdb_executor.execute_query_async(fn, *args, **kwargs)
+                    return await safe_wait_for(coro, timeout=timeout, label=label)
+                return await self._duckdb_executor.execute_query_async(fn, *args, **kwargs)
+            except Exception:
+                return None
+        else:
+            # P2-1 Fallback: use dedicated DuckDB pool (not default asyncio executor)
+            assert self._duckdb_fallback_executor is not None
+            loop = asyncio.get_running_loop()
+            try:
+                if timeout is not None:
+                    coro = loop.run_in_executor(
+                        self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
+                    )
+                    return await safe_wait_for(coro, timeout=timeout, label=label)
+                return await loop.run_in_executor(
+                    self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
+                )
+            except Exception:
+                return None
 
     async def run_db(
         self,
@@ -501,30 +561,9 @@ class RoleBasedPools:
 
         async with self._db_semaphore:
             async with await self._get_db_lock():
-                if self._duckdb_executor is not None and self._duckdb_executor.is_available:
-                    # PEP 734 available — use isolated interpreter
-                    try:
-                        if timeout is not None:
-                            coro = self._duckdb_executor.execute_query_async(fn, *args, **kwargs)
-                            return await safe_wait_for(coro, timeout=timeout, label="role_pool:db")
-                        return await self._duckdb_executor.execute_query_async(fn, *args, **kwargs)
-                    except Exception:
-                        return None
-                else:
-                    # P2-1 Fallback: use dedicated DuckDB pool (not default asyncio executor)
-                    assert self._duckdb_fallback_executor is not None
-                    loop = asyncio.get_running_loop()
-                    try:
-                        if timeout is not None:
-                            coro = loop.run_in_executor(
-                                self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
-                            )
-                            return await safe_wait_for(coro, timeout=timeout, label="role_pool:db")
-                        return await loop.run_in_executor(
-                            self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
-                        )
-                    except Exception:
-                        return None
+                return await self._run_db_impl(
+                    fn, *args, timeout=timeout, label="role_pool:db", **kwargs
+                )
 
     async def run_db_write(
         self,
@@ -566,30 +605,9 @@ class RoleBasedPools:
 
         async with self._db_semaphore:
             async with await self._get_db_lock():
-                if self._duckdb_executor is not None and self._duckdb_executor.is_available:
-                    # PEP 734 available — use isolated interpreter for memory isolation
-                    try:
-                        if timeout is not None:
-                            coro = self._duckdb_executor.execute_query_async(fn, *args, **kwargs)
-                            return await safe_wait_for(coro, timeout=timeout, label="role_pool:db_write")
-                        return await self._duckdb_executor.execute_query_async(fn, *args, **kwargs)
-                    except Exception:
-                        return None
-                else:
-                    # Fallback: use dedicated DuckDB pool
-                    assert self._duckdb_fallback_executor is not None
-                    loop = asyncio.get_running_loop()
-                    try:
-                        if timeout is not None:
-                            coro = loop.run_in_executor(
-                                self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
-                            )
-                            return await safe_wait_for(coro, timeout=timeout, label="role_pool:db_write")
-                        return await loop.run_in_executor(
-                            self._duckdb_fallback_executor, lambda: fn(*args, **kwargs)
-                        )
-                    except Exception:
-                        return None
+                return await self._run_db_impl(
+                    fn, *args, timeout=timeout, label="role_pool:db_write", **kwargs
+                )
 
     # ------------------------------------------------------------------|
     # Role: REGEX — Pattern matching (CPU-bound)                       |
@@ -704,41 +722,13 @@ class RoleBasedPools:
         """
         Run LMDB operations on dedicated 2-worker pool.
 
-        LMDB is single-writer but supports concurrent readers.
-        Pool has 2 workers: 1 writer + 1 reader (sufficient for LMDB's
-        mdb_reader_list API and write transactions).
+        .. deprecated::
+            This method is deprecated as of R-18.
+            Use ``runtime.lmdb_pool.get_lmdb_pool().run_lmdb()`` instead.
 
-        P2-1: Replaces unbounded asyncio.to_thread() default executor
-        for LMDB operations in local_graph.py, persistent_kv_cache.py, etc.
-
-        Args:
-            fn: Synchronous callable that performs LMDB operation.
-                Must NOT hold the write lock across await points.
-            timeout: Optional timeout in seconds.
-
-        Returns:
-            Result of fn(*args, **kwargs), or None on error/timeout.
-
-        Pool: ThreadPoolExecutor with 2 workers (LMDB write lock serializes anyway)
+        Delegates to the canonical ``LmdbPool`` singleton.
         """
-        self._ensure_initialized()
-        assert self._lmdb_semaphore is not None
-        assert self._lmdb_executor is not None
-
-        async with self._lmdb_semaphore:
-            async with await self._get_lmdb_lock():
-                loop = asyncio.get_running_loop()
-                try:
-                    if timeout is not None:
-                        coro = loop.run_in_executor(
-                            self._lmdb_executor, lambda: fn(*args, **kwargs)
-                        )
-                        return await safe_wait_for(coro, timeout=timeout, label="role_pool:lmdb")
-                    return await loop.run_in_executor(
-                        self._lmdb_executor, lambda: fn(*args, **kwargs)
-                    )
-                except Exception:
-                    return None
+        return await get_lmdb_pool().run_lmdb(fn, *args, timeout=timeout, **kwargs)
 
     def run_lmdb_sync[T](
         self,
@@ -750,20 +740,58 @@ class RoleBasedPools:
         """
         Synchronous version of run_lmdb for non-async contexts.
 
-        Note: Unlike run_lmdb, this does NOT use the thread pool because
-        it is called from synchronous code paths (e.g., shutdown hooks)
-        where the caller already owns the thread. The function is executed
-        directly with full exception shielding.
+        .. deprecated::
+            This method is deprecated as of R-18.
+            Use ``runtime.lmdb_pool.get_lmdb_pool().run_lmdb_sync()`` instead.
+
+        Delegates to the canonical ``LmdbPool`` singleton.
         """
-        self._ensure_initialized()
-        try:
-            return fn(*args, **kwargs)
-        except Exception:
-            return None
+        return get_lmdb_pool().run_lmdb_sync(fn, *args, **kwargs)
 
     # ------------------------------------------------------------------|
-    # Utility: batch processing                                        |
+    # Batch processing (parameterized, replaces 2 duplicated methods)      |
     # ------------------------------------------------------------------|
+
+    async def _run_batch[T, R](
+        self,
+        fn: "Callable[[T], R]",
+        items: list[T],
+        *,
+        role: str,
+        concurrency: int,
+        timeout: float | None = None,
+    ) -> list[R]:
+        """
+        Process items in parallel on a dedicated pool.
+
+        Args:
+            fn: Function to apply to each item
+            items: Items to process
+            role: Role name (hash, regex) for method dispatch
+            concurrency: Max concurrent workers
+            timeout: Optional timeout per item
+
+        Returns:
+            List of results (same order as items)
+        """
+        if not items:
+            return []
+
+        async def wrap(item: T) -> R | None:
+            if role == "hash":
+                return await self.run_hash(fn, item, timeout=timeout)
+            elif role == "regex":
+                return await self.run_regex(fn, item, timeout=timeout)
+            return None
+
+        from hledac.universal.utils.async_helpers import parallel
+
+        result = await parallel(
+            [wrap(item) for item in items],  # type: ignore[arg-type]
+            concurrency=concurrency,
+            ctx=f"role_pool:{role}_batch",
+        )
+        return [r for r in result.ok if r is not None]
 
     async def run_hash_batch[T, R](
         self,
@@ -772,31 +800,8 @@ class RoleBasedPools:
         *,
         timeout: float | None = None,
     ) -> list[R]:
-        """
-        Process hash items in parallel on dedicated pool.
-
-        Args:
-            fn: Function to apply to each item
-            items: Items to process
-            timeout: Optional timeout per item
-
-        Returns:
-            List of results (same order as items)
-        """
-        if not items:
-            return []
-
-        async def wrap(item: T) -> R | None:
-            return await self.run_hash(fn, item, timeout=timeout)
-
-        from hledac.universal.utils.async_helpers import parallel
-
-        result = await parallel(
-            [wrap(item) for item in items],  # type: ignore[arg-type]
-            concurrency=_HASH_WORKERS,
-            ctx="role_pool:hash_batch",
-        )
-        return [r for r in result.ok if r is not None]
+        """Process hash items in parallel on dedicated pool."""
+        return await self._run_batch(fn, items, role="hash", concurrency=_HASH_WORKERS, timeout=timeout)
 
     async def run_regex_batch[T, R](
         self,
@@ -805,31 +810,8 @@ class RoleBasedPools:
         *,
         timeout: float | None = None,
     ) -> list[R]:
-        """
-        Process regex items in parallel on dedicated pool.
-
-        Args:
-            fn: Function to apply to each item
-            items: Items to process
-            timeout: Optional timeout per item
-
-        Returns:
-            List of results (same order as items)
-        """
-        if not items:
-            return []
-
-        async def wrap(item: T) -> R | None:
-            return await self.run_regex(fn, item, timeout=timeout)
-
-        from hledac.universal.utils.async_helpers import parallel
-
-        result = await parallel(
-            [wrap(item) for item in items],  # type: ignore[arg-type]
-            concurrency=_REGEX_WORKERS,
-            ctx="role_pool:regex_batch",
-        )
-        return [r for r in result.ok if r is not None]
+        """Process regex items in parallel on dedicated pool."""
+        return await self._run_batch(fn, items, role="regex", concurrency=_REGEX_WORKERS, timeout=timeout)
 
     # ------------------------------------------------------------------|
     # Shutdown                                                         |
@@ -852,6 +834,12 @@ class RoleBasedPools:
         if self._async_io_executor is not None:
             self._async_io_executor.shutdown(wait=wait)
             self._async_io_executor = None
+        if self._duckdb_fallback_executor is not None:
+            self._duckdb_fallback_executor.shutdown(wait=wait)
+            self._duckdb_fallback_executor = None
+        if self._embed_fallback_executor is not None:
+            self._embed_fallback_executor.shutdown(wait=wait)
+            self._embed_fallback_executor = None
 
         # Close PEP 734 executors
         if self._embed_executor is not None:

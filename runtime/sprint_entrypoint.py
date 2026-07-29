@@ -97,7 +97,13 @@ from hledac.universal.runtime.sprint_lifecycle import _PHASE_ORDER, SprintLifecy
 # inside _run_sprint_loop at call time.
 _build_runtime = None
 _run_runtime = None
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, parallel
+from hledac.universal.utils.async_helpers import (
+    first_completed,
+    parallel,
+    parallel_ok,
+    safe_create_task,
+    safe_wait_for,
+)
 from hledac.universal.utils.config_introspection import safe_attr_get
 
 # E3: macOS P-core QoS — apply USER_INITIATED to main asyncio event loop thread.
@@ -954,6 +960,18 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
 
     # ── 9. Canonical build_acquisition_report — single try/except ──────────────
     __acq_report: dict[str, Any] = {}
+    _acq_profile = safe_attr_get(nd, "acquisition_profile", "default") if nd else (acq_effective or "default")
+    _feed_cap_reason = nd.get("feed_cap_reason") if nd else None
+    _nonfeed_priority_enabled = nd.get("nonfeed_priority_enabled", False) if nd else (acq_effective == "nonfeed_diagnostic")
+    _nonfeed_profile_expected_lanes = (
+        nd.get("nonfeed_profile_expected_lanes", [])
+        if nd
+        else (
+            ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
+            if acq_effective in ("nonfeed_diagnostic", "deep_osint_m1")
+            else []
+        )
+    )
     try:
         _acq_report = build_acquisition_report(
             plan=plan,
@@ -965,22 +983,10 @@ def acq_payload_to_dict(result: Any, scheduler: Any, query: str, _duration_s: fl
             scheduler_exit=se_dict,
             windup_guard_observation=wg_dict,
             query=query,
-            acquisition_profile=(
-                safe_attr_get(nd, "acquisition_profile", "default") if nd else (acq_effective or "default")
-            ),
-            feed_cap_reason=(nd.get("feed_cap_reason") if nd else None),
-            nonfeed_priority_enabled=(
-                nd.get("nonfeed_priority_enabled", False) if nd else (acq_effective == "nonfeed_diagnostic")
-            ),
-            nonfeed_profile_expected_lanes=(
-                nd.get("nonfeed_profile_expected_lanes", [])
-                if nd
-                else (
-                    ["CT", "WAYBACK", "PASSIVE_DNS", "PIVOT_EXECUTOR", "DOH"]
-                    if acq_effective in ("nonfeed_diagnostic", "deep_osint_m1")
-                    else []
-                )
-            ),
+            acquisition_profile=_acq_profile,
+            feed_cap_reason=_feed_cap_reason,
+            nonfeed_priority_enabled=_nonfeed_priority_enabled,
+            nonfeed_profile_expected_lanes=_nonfeed_profile_expected_lanes,
             # PUBLIC
             public_terminal_stage=r.public_terminal_stage,
             public_stage_counters=r.public_stage_counters,
@@ -1776,6 +1782,49 @@ def _print_dry_run_summary(report: dict) -> None:
 
 
 # =============================================================================
+# Helper functions (extracted to reduce run_sprint complexity)
+# =============================================================================
+
+
+def _cleanup_stale_locks(lock_dir: Path, logger: logging.Logger) -> int:
+    """
+    Sprint F320: Stale-lock janitor.
+
+    Scans lock_dir for *.lock files whose owning PID is dead.
+    Removes stale locks and returns count of removed entries.
+
+    Extracted from run_sprint to reduce nesting complexity (was depth 12-21).
+    """
+    removed_count = 0
+    try:
+        from hledac.universal.core.psutil_shim import psutil_module
+
+        _ps = psutil_module()
+        if _ps is None:
+            return 0
+        if not lock_dir.exists():
+            return 0
+
+        for lock_file in lock_dir.iterdir():
+            if not lock_file.name.endswith(".lock"):
+                continue
+            try:
+                pid_bytes = lock_file.read_bytes()
+                if len(pid_bytes) >= 4:
+                    lock_pid = int.from_bytes(pid_bytes[:4], byteorder="little")
+                    if not _ps.pid_exists(lock_pid):
+                        lock_file.unlink()
+                        removed_count += 1
+                        logger.info(
+                            f"[F320-JANITOR] Removed stale lock: {lock_file.name} (PID={lock_pid} dead)"
+                        )
+            except Exception:  # noqa: BLE001
+                pass  # best-effort
+    except Exception:  # noqa: BLE001
+        pass  # janitor failure is non-fatal
+    return removed_count
+
+# =============================================================================
 # Main sprint runner
 # =============================================================================
 
@@ -1946,40 +1995,22 @@ async def run_sprint(
     # Lock is released in the finally block at the bottom of this function.
     from hledac.universal.graph.lock_manager import GraphLockManager
 
+    # F266-LOCK: Sprint-level lock — prevent two sprints with the same query from
+    # running simultaneously. Uses GraphLockManager (fcntl.flock + PID header).
+    # Lock is released in the finally block at the bottom of this function.
+    from hledac.universal.graph.lock_manager import GraphLockManager
+    from hledac.universal.paths import get_sprint_lock_path
+
     _sprint_lock_mgr: GraphLockManager | None = None
+    _sprint_lock_path = get_sprint_lock_path(query)
+
+    # Sprint F320: Stale-lock janitor — scan locks/ directory before acquiring.
+    # Remove any lock whose owning PID is dead (crash, SIGKILL, orphaned).
+    # Uses psutil.pid_exists() for cross-platform liveness check.
+    # Extracted to reduce nesting complexity (was depth 12-21).
+    _janitor_removed = _cleanup_stale_locks(_sprint_lock_path.parent, logger)
+
     try:
-        from hledac.universal.paths import get_sprint_lock_path
-
-        _sprint_lock_path = get_sprint_lock_path(query)
-
-        # Sprint F320: Stale-lock janitor — scan locks/ directory before acquiring.
-        # Remove any lock whose owning PID is dead (crash, SIGKILL, orphaned).
-        # Uses psutil.pid_exists() for cross-platform liveness check.
-        try:
-            from hledac.universal.core.psutil_shim import psutil_module
-
-            _ps = psutil_module()
-            if _ps is not None:
-                lock_dir = _sprint_lock_path.parent
-                if lock_dir.exists():
-                    for lock_file in lock_dir.iterdir():
-                        if not lock_file.name.endswith(".lock"):
-                            continue
-                        try:
-                            # Read PID from lock file (first 4 bytes little-endian)
-                            pid_bytes = lock_file.read_bytes()
-                            if len(pid_bytes) >= 4:
-                                lock_pid = int.from_bytes(pid_bytes[:4], byteorder="little")
-                                if not _ps.pid_exists(lock_pid):
-                                    lock_file.unlink()
-                                    logger.info(
-                                        f"[F320-JANITOR] Removed stale lock: {lock_file.name} (PID={lock_pid} dead)"
-                                    )
-                        except Exception:  # noqa: BLE001
-                            pass  # best-effort
-        except Exception:  # noqa: BLE001
-            pass  # janitor failure is non-fatal
-
         _sprint_lock_mgr = GraphLockManager(str(_sprint_lock_path))
         if not _sprint_lock_mgr.acquire(timeout_s=5.0):
             _holder = _sprint_lock_mgr.holder_pid

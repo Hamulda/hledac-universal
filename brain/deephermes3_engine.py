@@ -1917,6 +1917,26 @@ class DeepHermes3Engine:
         except Exception:
             return True
 
+    # S6-REFACTOR: Extracted from _build_generate_kwargs and _stream_tokens —
+    # eliminates 4× identical quantization loops (~20 lines saved).
+    def _quantize_kv_cache(self, kv_cache: list) -> None:
+        """
+        Apply 4-bit quantization to KV cache layers. Fail-safe.
+
+        Called from both _build_generate_kwargs and _stream_tokens after
+        cache creation or prefix_cache assignment.
+        """
+        if not self._supports_kv_quant:
+            return
+        kv_bits = self._get_adaptive_kv_bits()
+        for layer in kv_cache:
+            if hasattr(layer, "quantize"):
+                try:
+                    layer.quantize(group_size=64, bits=kv_bits)
+                    self._kv_cache_stats["quantized_count"] += 1
+                except Exception:
+                    pass
+
     def _build_generate_kwargs(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache, adapter_path: str | None=None, prompt_tokens: list[int] | None=None) -> dict:
         """
         Build mlx_lm.generate() kwargs — shared between stream and direct paths.
@@ -1939,17 +1959,9 @@ class DeepHermes3Engine:
         once and passing the tokens list.
         """
         from mlx_lm.sample_utils import make_sampler
-        kv_bits = self._get_adaptive_kv_bits()
         if self._kv_cache_enabled and prefix_cache is not None:
             kv_cache = prefix_cache
-            if self._supports_kv_quant:
-                for layer in kv_cache:
-                    if hasattr(layer, 'quantize'):
-                        try:
-                            layer.quantize(group_size=64, bits=kv_bits)
-                            self._kv_cache_stats['quantized_count'] += 1
-                        except Exception:
-                            pass
+            self._quantize_kv_cache(kv_cache)
         elif self._kv_cache_enabled:
             if self._paged_kv_cache:
                 from mlx_lm.models.cache import RotatingKVCache
@@ -1958,14 +1970,7 @@ class DeepHermes3Engine:
                 logger.debug('[B.KV] Paged KV cache: keep=%d, max_size=%d, layers=%d', self._paged_kv_keep, max_tok, num_layers)
             else:
                 kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
-            if self._supports_kv_quant:
-                for layer in kv_cache:
-                    if hasattr(layer, 'quantize'):
-                        try:
-                            layer.quantize(group_size=64, bits=kv_bits)
-                            self._kv_cache_stats['quantized_count'] += 1
-                        except Exception:
-                            pass
+            self._quantize_kv_cache(kv_cache)
         else:
             kv_cache = None
         _active_model = self._model
@@ -2744,23 +2749,11 @@ class DeepHermes3Engine:
                     num_layers = len(self._model.layers)
                     kv_cache = [RotatingKVCache(max_size=max_tok, keep=self._paged_kv_keep) for _ in range(num_layers)]
                     logger.debug('[STREAM] RotatingKVCache: keep=%d, max_size=%d, layers=%d', self._paged_kv_keep, max_tok, num_layers)
-                    if self._supports_kv_quant:
-                        for layer in kv_cache:
-                            if hasattr(layer, 'quantize'):
-                                try:
-                                    layer.quantize(group_size=64, bits=kv_bits)
-                                    self._kv_cache_stats['quantized_count'] += 1
-                                except Exception:
-                                    pass
                 else:
                     kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
-                    if self._supports_kv_quant:
-                        for layer in kv_cache:
-                            if hasattr(layer, 'quantize'):
-                                try:
-                                    layer.quantize(group_size=64, bits=kv_bits)
-                                except Exception:
-                                    pass
+                # S6-REFACTOR: unified via _quantize_kv_cache (shared with _build_generate_kwargs)
+                if kv_cache is not None:
+                    self._quantize_kv_cache(kv_cache)
             else:
                 kv_cache = None
             # M-03: Use pre-computed prompt_tokens if available (avoids double encode)

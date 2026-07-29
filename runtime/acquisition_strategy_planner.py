@@ -76,7 +76,15 @@ from hledac.universal.runtime.nonfeed_candidate_ledger import extract_domain_can
 from hledac.universal.runtime.source_finding_bridge import MAX_SAMPLE_REJECTIONS, ct_results_to_findings, passive_dns_results_to_findings, wayback_results_to_findings
 from hledac.universal.utils.async_helpers import parallel_ok
 from hledac.universal.runtime.acquisition.profile import AcquisitionProfile, normalize_acquisition_profile, is_academic_profile, is_deep_osint_m1_profile
-DOMAIN_EXPANSIONS: dict[str, tuple[str, ...]] = {'ransomware': ('ransomware_tracker.abuse.ch', 'malwarebytes.com/threat-center', 'bleepingcomputer.com'), 'botnet': ('abuse.ch', 'feodotracker.nl', 'urlhaus.abuse.ch'), 'leak': ('haveibeenpwned.com', 'breachlevelindex.com'), 'c2': ('malware-traffic-analysis.net', 'otx.alienvault.com'), 'lockbit': ('ransomware_tracker.abuse.ch', 'bleepingcomputer.com', 'malwarebytes.com'), 'conti': ('ransomware_tracker.abuse.ch', 'bleepingcomputer.com', 'mandiant.com'), 'apt29': ('otx.alienvault.com', 'threatconnect.com', 'mandiant.com'), 'apt41': ('otx.alienvault.com', 'threatconnect.com', ' Recorded Future'), 'fin7': ('mandiant.com', 'threatconnect.com', 'otx.alienvault.com'), 'alphv': ('ransomware_tracker.abuse.ch', 'bleepingcomputer.com'), 'blackcat': ('ransomware_tracker.abuse.ch', 'bleepingcomputer.com'), 'revil': ('ransomware_tracker.abuse.ch', 'bleepingcomputer.com'), 'clop': ('ransomware_tracker.abuse.ch', 'bleepingcomputer.com'), 'emotet': ('malwarebytes.com', 'bleepingcomputer.com', 'urlhaus.abuse.ch'), 'qakbot': ('malwarebytes.com', 'bleepingcomputer.com', 'urlhaus.abuse.ch'), 'icedid': ('malwarebytes.com', 'bleepingcomputer.com'), 'raccoon': ('ransomware_tracker.abuse.ch', 'bleepingcomputer.com'), 'dridex': ('abuse.ch', 'malwarebytes.com'), 'trickbot': ('malwarebytes.com', 'bleepingcomputer.com'), 'ryuk': ('ransomware_tracker.abuse.ch', 'bleepingcomputer.com')}
+# Canonical domain expansion symbols — imported from domain_expansion module
+# (avoids Type-1 clone: identical DOMAIN_EXPANSIONS + _expand_keyword_query + _get_keyword_domain_expansion)
+from hledac.universal.runtime.acquisition.domain_expansion import (
+    DOMAIN_EXPANSIONS,
+    _expand_keyword_query,
+    _get_keyword_domain_expansion,
+)
+
+# Threat dictionary remains local (not in domain_expansion.py)
 _THREAT_DICTIONARY: dict[str, tuple[str, list[str]]] = {'lockbit': ('malware_family', ['lockbit 2.0', 'lockbit3', 'ldx']), 'lockbit 2.0': ('malware_family', ['lockbit', 'lockbit3', 'ldx']), 'lockbit3': ('malware_family', ['lockbit', 'lockbit 2.0', 'ldx']), 'conti': ('malware_family', ['conti ransomware', 'wizard spider']), 'conti ransomware': ('malware_family', ['conti', 'wizard spider']), 'wizard spider': ('malware_family', ['conti']), 'revil': ('malware_family', ['revil ransomware', 'sodinokibi']), 'sodinokibi': ('malware_family', ['revil', 'revil ransomware']), 'revil ransomware': ('malware_family', ['revil', 'sodinokibi']), 'blackcat': ('malware_family', ['alphv', 'blackcat ransomware']), 'alphv': ('malware_family', ['blackcat', 'blackcat ransomware']), 'blackcat ransomware': ('malware_family', ['blackcat', 'alphv']), 'clop': ('malware_family', ['clop ransomware', 'clopv2']), 'clop ransomware': ('malware_family', ['clop']), 'hive': ('malware_family', ['hive ransomware']), 'hive ransomware': ('malware_family', ['hive']), 'ryuk': ('malware_family', ['ryuk ransomware']), 'ryuk ransomware': ('malware_family', ['ryuk']), 'ransomexx': ('malware_family', ['ransomexx', 'nexway']), 'nexway': ('malware_family', ['ransomexx']), 'malware_family': ('malware_family', ['malware family']), 'emotet': ('malware_family', ['emotet trojan', 'heodo']), 'emotet trojan': ('malware_family', ['emotet']), 'heodo': ('malware_family', ['emotet']), 'qakbot': ('malware_family', ['qakbot trojan', 'qbot']), 'qbot': ('malware_family', ['qakbot']), 'qakbot trojan': ('malware_family', ['qakbot']), 'icedid': ('malware_family', ['icedid trojan', 'bokbot']), 'bokbot': ('malware_family', ['icedid']), 'icedid trojan': ('malware_family', ['icedid']), 'dridex': ('malware_family', ['dridex trojan', 'bugat']), 'bugat': ('malware_family', ['dridex']), 'dridex trojan': ('malware_family', ['dridex']), 'trickbot': ('malware_family', ['trickbot trojan', 'trickster']), 'trickbot trojan': ('malware_family', ['trickbot']), 'trickster': ('malware_family', ['trickbot']), 'raccoon stealer': ('malware_family', ['raccoon', 'raccoon malware']), 'raccoon malware': ('malware_family', ['raccoon', 'raccoon stealer']), 'raccoon': ('malware_family', ['raccoon stealer']), 'stealer': ('malware_family', ['stealer malware', 'infostealer']), 'infostealer': ('malware_family', ['stealer', 'infostealer malware']), 'vidar': ('malware_family', ['vidar stealer']), 'vidar stealer': ('malware_family', ['vidar']), 'aurora': ('malware_family', ['aurora stealer']), 'aurora stealer': ('malware_family', ['aurora']), 'redline': ('malware_family', ['redline stealer']), 'redline stealer': ('malware_family', ['redline']), 'rat': ('malware_family', ['remote access trojan', 'rat malware']), 'remote access trojan': ('malware_family', ['rat']), 'rat malware': ('malware_family', ['rat']), 'cobalt strike': ('malware_family', ['cobaltstrike', 'cs']), 'cobaltstrike': ('malware_family', ['cobalt strike']), 'cs': ('malware_family', ['cobalt strike']), 'metasploit': ('malware_family', ['metasploit framework', 'msf']), 'metasploit framework': ('malware_family', ['metasploit']), 'msf': ('malware_family', ['metasploit']), 'apt29': ('threat_actor', ['cozy bear', 'the dukens', 'midnight blizzard']), 'cozy bear': ('threat_actor', ['apt29', 'cozyduke', 'midnight blizzard']), 'cozyduke': ('threat_actor', ['apt29', 'cozy bear']), 'the dukens': ('threat_actor', ['apt29']), 'midnight blizzard': ('threat_actor', ['apt29', 'cozy bear']), 'apt41': ('threat_actor', ['barium', 'wicked panda', 'zinc']), 'barium': ('threat_actor', ['apt41', 'wicked panda']), 'wicked panda': ('threat_actor', ['apt41', 'barium']), 'zinc': ('threat_actor', ['apt41', 'lazarus group']), 'apt28': ('threat_actor', ['fancy bear', 'sofacy', 'sandworm']), 'fancy bear': ('threat_actor', ['apt28', 'sofacy', 'pawn storm']), 'sofacy': ('threat_actor', ['apt28', 'fancy bear']), 'pawn storm': ('threat_actor', ['apt28', 'fancy bear']), 'sandworm': ('threat_actor', ['apt28', 'voodoo bear', 'electrum']), 'voodoo bear': ('threat_actor', ['sandworm']), 'electrum': ('threat_actor', ['sandworm']), 'lazarus': ('threat_actor', ['lazarus group', 'hidden cobra', 'zinc']), 'lazarus group': ('threat_actor', ['lazarus', 'hidden cobra']), 'hidden cobra': ('threat_actor', ['lazarus', 'lazarus group']), 'fin7': ('threat_actor', ['carbanak', 'fin7', 'carbanak gang']), 'carbanak': ('threat_actor', ['fin7', 'carbanak gang', 'anunak']), 'carbanak gang': ('threat_actor', ['fin7', 'carbanak']), 'anunak': ('threat_actor', ['carbanak', 'fin7']), 'fin8': ('threat_actor', ['fin8', 'punkey']), 'punkey': ('threat_actor', ['fin8']), 'apt17': ('threat_actor', ['apt17', 'tailgater team']), 'tailgater team': ('threat_actor', ['apt17']), 'apt19': ('threat_actor', ['apt19', 'joe team']), 'joe team': ('threat_actor', ['apt19']), 'apt32': ('threat_actor', ['apt32', 'ocean lot']), 'ocean lot': ('threat_actor', ['apt32']), 'apt37': ('threat_actor', ['apt37', 'reaper group', 'geumseong']), 'reaper group': ('threat_actor', ['apt37']), 'geumseong': ('threat_actor', ['apt37']), 'apt38': ('threat_actor', ['apt38', 'zinc', 'lazarus group']), 'unc': ('threat_actor', ['unc2452', 'unc2890']), 'unc2452': ('threat_actor', ['unc2452', 'ta428']), 'unc2890': ('threat_actor', ['unc2890']), 'ta428': ('threat_actor', ['ta428', 'apt38']), 'menupass': ('threat_actor', ['menupass', 'princess threat']), 'princess threat': ('threat_actor', ['menupass']), 'passive': ('threat_actor', ['passive', 'apt']), 'laz': ('threat_actor', ['lazarus', 'lazarus group']), 'thorny': ('threat_actor', ['carbanak', 'fin7'])}
 
 def lookup_threat_entity(name: str) -> tuple[str, str] | None:
@@ -96,77 +104,6 @@ def lookup_threat_entity(name: str) -> tuple[str, str] | None:
     except Exception:
         return None
 
-def _expand_keyword_query(query: str) -> list[str]:
-    """
-    P1-2: Expand generic query to extract actionable indicators.
-
-    Returns up to 10 keywords spanning threat actors, TTPs, and IOCs.
-
-    GHOST_INVARIANTS:
-      - No network I/O, no model/MLX load
-      - Bounded: max 10 keywords returned
-      - Fail-safe: returns [query] on any error
-    """
-    try:
-        if not query or not query.strip():
-            return [query] if query else []
-        keywords: list[str] = []
-        seen: set[str] = set()
-        query_lower = query.lower()
-        for keyword in DOMAIN_EXPANSIONS:
-            if keyword in query_lower:
-                keywords.append(keyword)
-        _ttp_pattern = re.compile('\\bT\\d{4}(?:\\.\\d{3})?\\b', re.IGNORECASE)
-        for match in _ttp_pattern.findall(query):
-            if match not in seen:
-                seen.add(match)
-                keywords.append(match)
-        # Lazy import: brain.ner_engine may transitively load MLX — defer to first use
-        # inside this function (PLANNER: ZERO MLX invariant at module level).
-        try:
-            from hledac.universal.brain.ner_engine import extract_iocs_from_text as _ner_extract
-            iocs = _ner_extract(query)
-            for ioc in iocs[:5]:
-                val = ioc.get('value', '')
-                if val and val not in seen:
-                    seen.add(val)
-                    keywords.append(val)
-        except Exception:
-            pass
-        return keywords[:10] if keywords else [query]
-    except Exception:
-        return [query] if query else []
-
-def _get_keyword_domain_expansion(query: str) -> list[str]:
-    """
-    F1-3: Extract domain expansion seeds from keywords in query.
-
-    Maps threat-category keywords → expansion domains for lanes that need
-    a domain/IP seed (CT, WAYBACK, PASSIVE_DNS).
-
-    E.g. "ransomware C2" → ["ransomware_tracker.abuse.ch"]
-         "botnet"         → ["abuse.ch", "feodotracker.nl", "urlhaus.abuse.ch"]
-
-    Returns:
-        List of domain expansion strings (bounded, deduped, first-seen order).
-
-    GHOST_INVARIANTS:
-      - No network I/O, no model/MLX load
-      - Bounded: max 10 domains returned
-      - Fail-safe: returns [] on any error
-    """
-    try:
-        keywords = _expand_keyword_query(query)
-        seen: dict[str, None] = {}
-        for kw in keywords:
-            expansions = DOMAIN_EXPANSIONS.get(kw.lower(), ())
-            for exp in expansions:
-                if exp not in seen:
-                    seen[exp] = None
-        result = list(seen.keys())[:10]
-        return result
-    except Exception:
-        return []
 __all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details', 'DOMAIN_EXPANSIONS', '_expand_keyword_query']
 ACQUISITION_REPORT_SCHEMA_VERSION = 'f208.v1'
 
@@ -186,37 +123,13 @@ class AcquisitionLane:
     SHODAN = 'SHODAN'
     CENSYS = 'CENSYS'
     GREYNOISE = 'GREYNOISE'
-_CIDV0_RE = re.compile('^Qm[A-Za-z2-7]{44}$')
-_CIDV1_BASE32_RE = re.compile('^bafy[a-z2-7]{50,59}$')
 
-def _has_explicit_cid(value: str) -> bool:
-    """Return True if value is an explicit IPFS CID (CIDv0 or CIDv1 base32)."""
-    if not value or len(value) < 46 or len(value) > 70:
-        return False
-    if value.startswith('Qm') and len(value) == 46:
-        return bool(_CIDV0_RE.match(value))
-    if value.startswith('bafy'):
-        return bool(_CIDV1_BASE32_RE.match(value))
-    return False
+# IPFS CID functions imported from canonical cid_detection module
+from hledac.universal.runtime.acquisition.cid_detection import (
+    _has_explicit_cid,
+    _extract_cids_from_text,
+)
 
-def _extract_cids_from_text(text: str) -> list[str]:
-    """Extract unique explicit CIDs from arbitrary text. Bounded dedup."""
-    if not text:
-        return []
-    cids_seen: set[str] = set()
-    cids: list[str] = []
-    for word in text.split():
-        word = word.strip().rstrip('/').rstrip(')')
-        if _has_explicit_cid(word) and word not in cids_seen:
-            cids_seen.add(word)
-            cids.append(word)
-        if '/' in word or ':' in word:
-            for part in word.replace(':', '/').split('/'):
-                part = part.strip()
-                if _has_explicit_cid(part) and part not in cids_seen:
-                    cids_seen.add(part)
-                    cids.append(part)
-    return cids
 _MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
 _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
 
@@ -478,7 +391,7 @@ def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
             return 'hardware_critical'
         return 'non_academic_profile'
     return 'lane_disabled'
-LANE_RULES: tuple[LaneRule, ...] = (_lane_rule(AcquisitionLane.FEED, LaneSpecFeed, lambda ctx: ctx.uma_state not in ('critical', 'emergency'), lambda _: 'always_allowed', lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PUBLIC, LaneSpecPublic, lambda ctx: not ctx.transport_degraded if ctx.is_deep_osint_m1 else ctx.is_nonfeed_diagnostic and ctx.has_domain and (not ctx.transport_degraded) if ctx.is_nonfeed_diagnostic else ctx.uma_state not in ('critical', 'emergency') and (not ctx.transport_degraded), lambda ctx: 'deep_osint_m1_stage1' if ctx.is_deep_osint_m1 else 'nonfeed_diagnostic_domain' if ctx.is_nonfeed_diagnostic and ctx.has_domain else 'transport_degraded' if ctx.transport_degraded else 'hardware_critical' if ctx.uma_state in ('critical', 'emergency') else 'query_eligible', lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CT, LaneSpecCT, lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic) and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'domain_or_aggressive_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.DOH, LaneSpecDOH, lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'domain_or_ip_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.WAYBACK, LaneSpecWayback, lambda ctx: (ctx.has_url or ctx.has_long_duration or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'has_url_or_long_duration_or_nonfeed_domain', lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'has_domain_or_ip', lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain, lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'has_crypto_indicator', lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.STEALTH, LaneSpecStealth, lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_nonfeed_diagnostic), lambda _: 'stealth_ready', lambda _: 1), _lane_rule(AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot, lambda ctx: True, lambda _: 'always_allowed_lightweight', lambda ctx: ctx.base_concurrency + 1), _lane_rule(AcquisitionLane.ACADEMIC, LaneSpecAcademic, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'academic_profile', lambda _: 1), _lane_rule(AcquisitionLane.IPFS, LaneSpecIPFS, lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'explicit_cid_in_query', lambda _: 1), _lane_rule(AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'academic_profile', lambda _: 1), _lane_rule(AcquisitionLane.SHODAN, LaneSpecShodan, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CENSYS, LaneSpecCensys, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'domain_or_cert_indicator', lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.GREYNOISE, LaneSpecGreyNoise, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state)))
+LANE_RULES: tuple[LaneRule, ...] = (_lane_rule(AcquisitionLane.FEED, LaneSpecFeed, lambda ctx: ctx.uma_state not in ('critical', 'emergency'), lambda _: 'always_allowed', lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PUBLIC, LaneSpecPublic, lambda ctx: not ctx.transport_degraded if ctx.is_deep_osint_m1 else ctx.is_nonfeed_diagnostic and ctx.has_domain and (not ctx.transport_degraded) if ctx.is_nonfeed_diagnostic else ctx.uma_state not in ('critical', 'emergency') and (not ctx.transport_degraded), lambda ctx: 'deep_osint_m1_stage1' if ctx.is_deep_osint_m1 else 'nonfeed_diagnostic_domain' if ctx.is_nonfeed_diagnostic and ctx.has_domain else 'transport_degraded' if ctx.transport_degraded else 'hardware_critical' if ctx.uma_state in ('critical', 'emergency') else 'query_eligible', lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CT, LaneSpecCT, lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic) and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1 or ctx.aggressive_mode), lambda _: 'domain_or_aggressive_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.DOH, LaneSpecDOH, lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'domain_or_ip_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.WAYBACK, LaneSpecWayback, lambda ctx: (ctx.has_url or ctx.has_long_duration or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'has_url_or_long_duration_or_nonfeed_domain', lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'has_domain_or_ip', lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain, lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'has_crypto_indicator', lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.STEALTH, LaneSpecStealth, lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_nonfeed_diagnostic), lambda _: 'stealth_ready', lambda _: 1), _lane_rule(AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot, lambda ctx: True, lambda _: 'always_allowed_lightweight', lambda ctx: ctx.base_concurrency + 1), _lane_rule(AcquisitionLane.ACADEMIC, LaneSpecAcademic, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'academic_profile', lambda _: 1), _lane_rule(AcquisitionLane.IPFS, LaneSpecIPFS, lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'explicit_cid_in_query', lambda _: 1), _lane_rule(AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'academic_profile', lambda _: 1), _lane_rule(AcquisitionLane.SHODAN, LaneSpecShodan, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CENSYS, LaneSpecCensys, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'domain_or_cert_indicator', lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.GREYNOISE, LaneSpecGreyNoise, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state)))
 
 class NonfeedPlanDebug(msgspec.Struct, gc=False):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.

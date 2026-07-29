@@ -45,6 +45,27 @@ _JSON_FINAL_RE = re.compile(r'\{.*\}', re.DOTALL)
 _BRACKET_RE = re.compile(r'\[.*?\]', re.DOTALL)
 _SLUGIFY_RE = re.compile(r"[^a-z0-9]+")
 
+
+def _mlx_cleanup() -> None:
+    """
+    Shared MLX Metal cleanup — Issue #20-C, Sprint 3 dedup.
+
+    F300-MLX invariant: mx.eval([]) PŘED gc.collect().
+    Reused in both _run_streaming_generation (line ~1760) and
+    _run_xgrammar_generation (line ~1915) — identical 8-line block.
+    """
+    try:
+        import mlx.core as _mx
+
+        if _mx.metal.is_available():
+            _mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
+            gc.collect()  # collect Python refs that held MLX objects
+            if hasattr(_mx, "clear_cache"):
+                _mx.clear_cache()
+    except Exception:  # noqa: BLE001
+        pass  # Non-fatal
+
+
 try:
     import msgspec as _msgspec
     msgspec = _msgspec
@@ -79,7 +100,7 @@ def _synthesis_get_metal_tier_thresholds() -> tuple[int, int, int]:
     Fallback: static M1 8GB values.
     """
     try:
-        from hledac.universal.hledac.universal import rust_extensions as _rust
+        from hledac.universal.rust_extensions import rust_extensions as _rust
         limit_bytes = _rust.get_metal_limit_bytes_py()
         if limit_bytes > 0:
             return (
@@ -1022,7 +1043,6 @@ class SynthesisRunner:
             self._stix_status = "unavailable"
             self._stix_reason = "UMA guard blocked synthesis — RSS > 5.5GiB or EMERGENCY"
             self._stix_backend = ""
-            # Issue #12.5: __slots__ attrs always initialized — direct access
             self._lifecycle_gate_source = self._lifecycle_gate_source
             self._lifecycle_gate_mode = "blocked"
             self._last_synthesis_outcome = SynthesisOutcome(
@@ -1756,18 +1776,8 @@ class SynthesisRunner:
                     except Exception:  # noqa: BLE001
                         pass
 
-            # Issue #20-C: mx.eval() + gc.collect() cleanup (matches xgrammar pattern)
-            try:
-                import mlx.core as _mx
-                if _mx.metal.is_available():
-                    _mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
-                    import gc
-                    gc.collect()  # collect Python refs that held MLX objects
-                    if hasattr(_mx, "clear_cache"):
-                        _mx.clear_cache()
-            except Exception:  # noqa: BLE001
-                pass  # Non-fatal
-
+            # Issue #20-C: mx.eval() + gc.collect() cleanup — Sprint 3 dedup via _mlx_cleanup()
+            _mlx_cleanup()
             return (None, False)
 
         return await asyncio.to_thread(_stream_sync)
@@ -1910,18 +1920,8 @@ class SynthesisRunner:
                     else:
                         raise
                 finally:
-                    # Sprint 8UD B.2: Clear MLX Metal cache after inference
-                    # F300-MLX invariant: mx.eval([]) PŘED gc.collect()
-                    try:
-                        import mlx.core as _mx
-                        if _mx.metal.is_available():
-                            _mx.eval([])  # barrier: flush GPU queue BEFORE Python GC
-                            import gc
-                            gc.collect()  # collect Python refs that held MLX objects
-                            if hasattr(_mx, "clear_cache"):
-                                _mx.clear_cache()
-                    except Exception:  # noqa: BLE001
-                        pass  # noqa: BLE001  # Non-fatal
+                    # Sprint 8UD B.2: Clear MLX Metal cache — Sprint 3 dedup via _mlx_cleanup()
+                    _mlx_cleanup()
 
                 if output is None:
                     return None, False

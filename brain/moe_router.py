@@ -571,6 +571,39 @@ class MoERouter:
         else:
             return self._fallback_synthesis(expert_outputs)
 
+    # S6-REFACTOR: Shared formatter — eliminates 96.1% clone between
+    # _format_synthesis_input (numbered) and _fallback_synthesis (markdown).
+    def _format_expert_block(
+        self,
+        output: dict[str, Any],
+        index: int | None = None,
+        prefix: str = "###",
+        max_chars: int | None = None,
+    ) -> str:
+        """
+        Format a single expert output block for synthesis.
+
+        Args:
+            output: Expert output dict with 'expert', 'score', 'output' keys.
+            index: Optional number prefix (None = no number, e.g. "1. Expert: ...").
+            prefix: Markdown header prefix (e.g. "###" or "##").
+            max_chars: Optional truncation of output text (None = no truncation).
+
+        Returns:
+            Formatted block string.
+        """
+        label = output["expert"].upper()
+        score_label = "confidence" if prefix == "##" else "weight"
+        header = (
+            f"{prefix} {label} ({score_label}: {output['score']:.2f})"
+            if index is None
+            else f"\n{index}. {label} (confidence: {output['score']:.2f}):"
+        )
+        text = output["output"]
+        if max_chars is not None and len(text) > max_chars:
+            text = text[:max_chars]
+        return f"{header}\n{text}" if index is None else f"{header}\n{text}"
+
     def _format_synthesis_input(self, query: str, expert_outputs: list[dict[str, Any]]) -> str:
         """
         Formátovat vstup pro synthesis experta.
@@ -582,12 +615,11 @@ class MoERouter:
         Returns:
             Formátovaný synthesis prompt
         """
-        parts = [f'Original Query: {query}\n\nExpert Analyses:']
+        blocks = [f"Original Query: {query}\n\nExpert Analyses:"]
         for i, output in enumerate(expert_outputs, 1):
-            parts.append(f"\n{i}. {output['expert'].upper()} (confidence: {output['score']:.2f}):")
-            parts.append(output['output'][:2000])
-        parts.append('\n\nSynthesize a comprehensive answer combining these expert perspectives.')
-        return '\n'.join(parts)
+            blocks.append(self._format_expert_block(output, index=i, prefix="##", max_chars=2000))
+        blocks.append("\nSynthesize a comprehensive answer combining these expert perspectives.")
+        return "\n".join(blocks)
 
     def _fallback_synthesis(self, expert_outputs: list[dict[str, Any]]) -> str:
         """
@@ -599,11 +631,10 @@ class MoERouter:
         Returns:
             Spojený text
         """
-        parts = ['## Expert Analysis\n']
+        blocks = ["## Expert Analysis"]
         for output in expert_outputs:
-            parts.append(f"\n### {output['expert'].upper()} (weight: {output['score']:.2f})")
-            parts.append(output['output'])
-        return '\n\n'.join(parts)
+            blocks.append(self._format_expert_block(output, index=None, prefix="###"))
+        return "\n\n".join(blocks)
 
     async def cleanup(self) -> None:
         """Unload všech expertů a cleanup"""

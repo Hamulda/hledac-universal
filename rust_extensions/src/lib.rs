@@ -88,6 +88,7 @@ pub mod serde_json_rs;
 pub mod stix_2_1;
 #[cfg(feature = "data")]
 pub mod arrow_batch_builder;
+#[cfg(feature = "data")]
 pub mod parquet_reader; // F320+: Lazy parquet reader — paginated Arrow, 100GB+ IOC history bez OOM
 pub mod sendfile; // ISSUE 4.4: sendfile(2) zero-copy file-to-socket transfer (Darwin only)
 pub mod spsc_queue;
@@ -106,9 +107,6 @@ pub mod telemetry_agg;  // Real-time metrics aggregation
 pub mod health;         // Issue #22: health_check() endpoint
 #[cfg(feature = "otel")]
 pub mod tracing;        // R24: OpenTelemetry tracing for Rust-side observability
-// R23-CB-ARCHIVED: circuit_breaker module kept for reference but NOT compiled.
-// Python transport.circuit_breaker (threading.Lock) is the wired canonical CB.
-// circuit_breaker.rs is NEVER registered and NEVER called — compile-time waste.
 #[cfg(feature = "advanced")]
 pub mod circuit_breaker;
 #[cfg(feature = "data")]
@@ -133,9 +131,6 @@ pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB saf
 #[cfg(feature = "data")]
 pub mod async_query; // R26: Async DuckDB queries via Rust executor
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
-// ISSUE-026 + R25-DELETE: text_similarity.rs removed — SequenceMatcher in
-// metadata_dedup.py is sufficient for short-field comparison. Rust trigram
-// Jaccard (group_similar_texts) was never wired from Python.
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -951,7 +946,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     graph_traverse::register_functions(m)?;
 
     // R26: Async DuckDB queries via Rust executor — rust_async_query_batch()
-    // ISSUE-026 FIX: restored from git history, was never connected
     #[cfg(feature = "data")]
     async_query::register(m)?;
 
@@ -1069,22 +1063,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Pre-compiled regexes via LazyLock, mixed_pool adaptive threading.
     claims_extraction::register_functions(m)?;
 
-    // R23-CB-ARCHIVED: circuit_breaker — ARCHIVED 2026-07-26.
-    // R23-ROOT: Python transport/circuit_breaker.py uses threading.Lock (canonical CB — safe
-    // across asyncio.to_thread workers per surface_id=5257). Rust version existed as parallel
-    // alternative but was NEVER called from Python (0 call sites found).
-    // transport.circuit_breaker is the WIRED canonical implementation (fetch_coordinator,
-    // stealth_browser, sprint_entrypoint all use it).
-    // circuit_breaker::register_functions(m)?;
-
     // ISSUE 2.2: Lock-free AIMD controller — single AtomicU64 window,
     // replaces Python AIMDWindow + _AIMDSlotController duplication.
     #[cfg(feature = "data")]
     aimd_controller::register(m)?;
-
-    // ISSUE-013 + R26-DELETE: async_query.rs removed — IsolatedDuckDBExecutor
-    // (isolated_executors.py) is the single source for DuckDB async queries.
-    // rust_async_query() was never wired from Python.
 
     // ISSUE #014: Multi-stage pipeline operators via rayon — zero-copy Arc<T> between stages.
     // Replaces Python async Queue + dict overhead in sidecar_bus.py for 100+ events/sec.

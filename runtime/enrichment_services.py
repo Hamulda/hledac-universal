@@ -125,11 +125,53 @@ class EnrichmentServices:
         preserved as the primary forensic payload store; the DuckDB write
         is a derived finding for cross-source correlation.
         """
-        if not findings:
-            return
-        enricher = self._forensics_enricher
-        lmdb_env = self._forensics_lmdb_env
-        if enricher is None or lmdb_env is None:
+        await self._enrich_findings(
+            findings=findings,
+            enricher=self._forensics_enricher,
+            lmdb_env=self._forensics_lmdb_env,
+            result=result,
+            store=store,
+            counter_attr='forensics_enriched_ct_findings',
+            ctx='forensics_enrichment',
+            lmdb_label='forensics',
+        )
+
+    async def enrich_findings_multimodal(self, findings: list, result: Any=None) -> None:
+        """
+        Enrich PDF/image findings with multimodal analysis before storage.
+
+        Fail-safe: enrichment errors are silent — never crash or abort the sprint.
+        Enrichment is best-effort: absence of multimodal data is not an error.
+        """
+        await self._enrich_findings(
+            findings=findings,
+            enricher=self._multimodal_enricher,
+            lmdb_env=self._multimodal_lmdb_env,
+            result=result,
+            store=None,
+            counter_attr='multimodal_enriched_findings',
+            ctx='multimodal_enrichment',
+            lmdb_label='multimodal',
+        )
+
+    async def _enrich_findings(
+        self,
+        findings: list,
+        enricher: Any,
+        lmdb_env: Any,
+        result: Any,
+        store: Any,
+        counter_attr: str,
+        ctx: str,
+        lmdb_label: str,
+    ) -> None:
+        """
+        Shared enrichment logic for forensics and multimodal enrichers.
+
+        Handles: enrich → LMDB bulk-write → optional DuckDB canonical ingest
+        → optional evidence log attach → result counter update.
+        """
+        if not findings or enricher is None or lmdb_env is None:
             return
         enriched_pairs: list[tuple[bytes, bytes]] = []
         try:
@@ -152,7 +194,8 @@ class EnrichmentServices:
                                     payload = _msgspec_json.encode(res_for_lmdb)
                                 enriched_pairs.append((fid.encode(), payload))
                                 if result is not None:
-                                    result.forensics_enriched_ct_findings += 1
+                                    setattr(result, counter_attr, getattr(result, counter_attr, 0) + 1)
+                                # DuckDB canonical ingest (forensics only)
                                 if store is not None:
                                     try:
                                         from forensics.enrichment_service import make_canonical_finding_from_enrichment
@@ -173,20 +216,25 @@ class EnrichmentServices:
                                             await store.async_ingest_findings_batch(all_to_ingest)
                                     except Exception:
                                         pass
+                                # Evidence log attach (forensics only)
                                 if self._evidence_log is not None:
                                     res_for_evidence = {k: v for k, v in res.items() if k != '_ioc_canonical_findings'}
-                                    self._evidence_log.attach_forensic_analysis(finding_id=str(fid)[:128], forensic_result=res_for_evidence, source_id=str(fid)[:128], confidence=0.95)
+                                    self._evidence_log.attach_forensic_analysis(
+                                        finding_id=str(fid)[:128],
+                                        forensic_result=res_for_evidence,
+                                        source_id=str(fid)[:128],
+                                        confidence=0.95,
+                                    )
                     except Exception:
                         pass
-            # E2-FIX: bounded_parallel_map replaces safe_gather — concurrency capped at 3
-            # (GRAPH_RAG semaphore already inside enrich_one, but parallel() caps N in-flight tasks)
-            await bounded_parallel_map(findings, enrich_one, concurrency=3, ordered=False, ctx='forensics_enrichment', logger_instance=log)
+
+            await bounded_parallel_map(findings, enrich_one, concurrency=3, ordered=False, ctx=ctx, logger_instance=log)
             if enriched_pairs:
                 try:
                     written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
-                    log.debug('forensics LMDB bulk-write: %d/%d', written, len(enriched_pairs))
+                    log.debug('%s LMDB bulk-write: %d/%d', lmdb_label, written, len(enriched_pairs))
                 except Exception as exc:
-                    log.warning('forensics LMDB bulk-write failed: %s', exc)
+                    log.warning('%s LMDB bulk-write failed: %s', lmdb_label, exc)
         except Exception:
             pass
 

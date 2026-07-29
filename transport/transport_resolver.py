@@ -220,6 +220,9 @@ class TransportResolver:
         """Async version of is_tor_available for use in async routing decisions.
         D-22 fix: avoids blocking the event loop with 2s socket timeout.
         Probes dynamically if not yet checked; uses cached value otherwise.
+
+        Also populates _tor_class (like _check_transports does) so that
+        resolve() can safely use self._tor_class after this returns True.
         """
         if not self._checked:
             self._tor_available = await self._check_tor_available_async()
@@ -229,7 +232,13 @@ class TransportResolver:
                 self._tor_class = TorTransport
                 logger.debug('Tor transport importable')
             except ImportError:
-                pass
+                self._tor_class = None
+            try:
+                from .nym_transport import NymTransport
+                self._nym_class = NymTransport
+                logger.debug('Nym transport available')
+            except ImportError:
+                self._nym_class = None
             self._checked = True
         return self._tor_available
 

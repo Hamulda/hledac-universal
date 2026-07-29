@@ -17,8 +17,9 @@ Example:
     >>> score = engine.score_chain(query, chain)
 """
 import asyncio
-import msgspec
+import functools
 import gc
+import msgspec
 import msgspec.json as _json
 import logging
 import sqlite3
@@ -97,7 +98,8 @@ class DistillationExample(msgspec.Struct, gc=False):
 class _CriticMLPBase:
     """Base mixin for neural network backend — provides fallback scoring."""
 
-    def _heuristic_score(self, reasoning_chain: list[str], _query: str = "") -> float:
+    @functools.lru_cache(maxsize=1)
+    def _heuristic_score(self, reasoning_chain: tuple[str, ...], _query: str = "") -> float:
         """Fallback scoring when MLX unavailable — simple chain length heuristic."""
         del _query  # unused in heuristic fallback, kept for API compatibility
         if not reasoning_chain:
@@ -380,54 +382,11 @@ class DistillationEngine:
             if self._critic is not None:
                 score = self._critic.predict(embedding)
             else:
-                score = self._heuristic_score(query, chain)
+                score = self._heuristic_score(query, tuple(chain))
             return score
         except Exception as e:
             logger.error(f'Failed to score chain: {e}')
             return 0.5
-
-    def _heuristic_score(self, query: str, chain: list[str]) -> float:
-        """
-        Heuristické skóre když není dostupný critic.
-
-        Args:
-            query: Vstupní dotaz
-            chain: Seznam reasoning kroků
-
-        Returns:
-            Heuristické skóre 0-1
-        """
-        if not chain:
-            return 0.0
-        scores = []
-        chain_len = len(chain)
-        if 3 <= chain_len <= 10:
-            scores.append(1.0)
-        elif chain_len < 3:
-            scores.append(0.5)
-        else:
-            scores.append(0.7)
-        step_scores = []
-        for step in chain:
-            step_score = 0.5
-            reasoning_words = ['because', 'therefore', 'thus', 'hence', 'since', 'as', 'so']
-            if any((word in step.lower() for word in reasoning_words)):
-                step_score += 0.2
-            if len(step) > 20:
-                step_score += 0.1
-            query_words = set(query.lower().split())
-            step_words = set(step.lower().split())
-            if query_words & step_words:
-                step_score += 0.2
-            step_scores.append(min(step_score, 1.0))
-        avg_step_score = sum(step_scores) / len(step_scores) if step_scores else 0.5
-        scores.append(avg_step_score)
-        unique_steps = len(set(chain))
-        diversity_score = unique_steps / len(chain) if chain else 0.0
-        scores.append(diversity_score)
-        weights = [0.3, 0.5, 0.2]
-        final_score = sum((s * w for s, w in zip(scores, weights, strict=False)))
-        return min(max(final_score, 0.0), 1.0)
 
     def _get_chain_embedding(self, chain: list[str]) -> np.ndarray:
         """
@@ -481,7 +440,8 @@ class DistillationEngine:
             embedding = embedding / norm
         return embedding
 
-    def _heuristic_score(self, query: str, chain: list[str]) -> float:
+    @functools.lru_cache(maxsize=1)
+    def _heuristic_score(self, query: str, chain: tuple[str, ...]) -> float:
         """
         Heuristické skóre když není dostupný critic.
 
@@ -615,7 +575,7 @@ async def distil(findings: list[dict], _max_tokens: int = 2000) -> str:
                     chains.append([text[:500]])
             if chains:
                 query = findings[0].get('query', 'summarize') if findings else ''
-                best_chain = max(chains, key=lambda c: engine._heuristic_score(query, c))
+                best_chain = max(chains, key=lambda c: engine._heuristic_score(query, tuple(c)))
                 return best_chain[0] if best_chain else _findings_to_text(findings)
             await engine.cleanup()
     except Exception:

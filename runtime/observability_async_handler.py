@@ -12,20 +12,23 @@ M1 8GB safe: ~10_000 JSON log lines ≈ 2-5 MB RAM.
 Env vars:
   HLEDAC_ASYNC_LOG=1 — enable async handler (default 0 = sync pro stabilitu)
   HLEDAC_ASYNC_LOG_DROP_OLDEST=1 — drop oldest on overflow (default 1)
+
+Decoupling (F350M-R):
+  AsyncLogHandler závisí na abstrakcích (protocols), ne na konkrétních třídách.
+  Adaptéry: AsyncioQueueAdapter, AsyncioLockAdapter, ThreadingEventAdapter.
+  Lze snadno vyměnit za jiné implementace (mock, fake, jiné frameworky).
 """
+from __future__ import annotations
+
 import asyncio
-import logging
 import os
 import sys
 import threading
 import queue
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from hledac.universal.utils.async_helpers import safe_create_task
-
-if TYPE_CHECKING:
-    import structlog as _structlog
 
 _structlog: Any | None = None
 
@@ -40,9 +43,154 @@ def _get_structlog() -> Any | None:
     return _structlog
 
 
+# === Protocol interfaces (Dependency Inversion) ===
+
+@runtime_checkable
+class AsyncQueue(Protocol):
+    """Abstract async queue interface."""
+
+    def put_nowait(self, item: Any) -> None:
+        """Non-blocking put."""
+        ...
+
+    def get_nowait(self) -> Any:
+        """Non-blocking get, raises QueueEmpty if empty."""
+        ...
+
+    async def join(self) -> None:
+        """Block until all items are processed."""
+        ...
+
+    def task_done(self) -> None:
+        """Mark item as processed."""
+        ...
+
+
+@runtime_checkable
+class AsyncLock(Protocol):
+    """Abstract async lock interface."""
+
+    async def __aenter__(self) -> Any:
+        ...
+
+    async def __aexit__(self, *args: Any) -> None:
+        ...
+
+
+@runtime_checkable
+class ThreadEvent(Protocol):
+    """Abstract thread event interface."""
+
+    def is_set(self) -> bool:
+        """Check if event is set."""
+        ...
+
+    def set(self) -> None:
+        """Set the event."""
+        ...
+
+    def clear(self) -> None:
+        """Clear the event."""
+        ...
+
+
+# === Concrete adapters (default implementations) ===
+
+class AsyncioQueueAdapter:
+    """asyncio.Queue adapter implementing AsyncQueue protocol."""
+
+    __slots__ = ("_queue",)
+
+    def __init__(self, maxsize: int = 0) -> None:
+        self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=maxsize)
+
+    def put_nowait(self, item: Any) -> None:
+        self._queue.put_nowait(item)
+
+    def get_nowait(self) -> Any:
+        return self._queue.get_nowait()
+
+    async def join(self) -> None:
+        await self._queue.join()
+
+    def task_done(self) -> None:
+        self._queue.task_done()
+
+    @property
+    def _internal_queue(self) -> asyncio.Queue[str]:
+        return self._queue
+
+
+class AsyncioLockAdapter:
+    """asyncio.Lock adapter implementing AsyncLock protocol."""
+
+    __slots__ = ("_lock",)
+
+    def __init__(self) -> None:
+        self._lock: asyncio.Lock = asyncio.Lock()
+
+    async def __aenter__(self) -> Any:
+        await self._lock.acquire()
+        return self._lock
+
+    async def __aexit__(self, *_: Any) -> None:
+        self._lock.release()
+
+    @property
+    def _internal_lock(self) -> asyncio.Lock:
+        return self._lock
+
+
+class ThreadingEventAdapter:
+    """threading.Event adapter implementing ThreadEvent protocol."""
+
+    __slots__ = ("_event",)
+
+    def __init__(self) -> None:
+        self._event: threading.Event = threading.Event()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def set(self) -> None:
+        self._event.set()
+
+    def clear(self) -> None:
+        self._event.clear()
+
+    @property
+    def _internal_event(self) -> threading.Event:
+        return self._event
+
+
+class StdQueueAdapter:
+    """Standard library queue adapter (fallback for non-async contexts)."""
+
+    __slots__ = ("_queue",)
+
+    def __init__(self, maxsize: int = 0) -> None:
+        self._queue: queue.Queue[str] = queue.Queue(maxsize=maxsize)
+
+    def put_nowait(self, item: Any) -> None:
+        self._queue.put_nowait(item)
+
+    def get_nowait(self) -> Any:
+        return self._queue.get_nowait()
+
+    async def join(self) -> None:
+        self._queue.join()
+
+    def task_done(self) -> None:
+        self._queue.task_done()
+
+
+# === Configuration constants ===
+
 MAX_QUEUE_SIZE = 10_000
 _ASYNC_LOG_ENABLED = os.environ.get("HLEDAC_ASYNC_LOG", "0").strip() == "1"
 
+
+# === AsyncLogHandler with Dependency Injection ===
 
 class AsyncLogHandler:
     """
@@ -53,27 +201,37 @@ class AsyncLogHandler:
 
     Bounded: MAX_QUEUE_SIZE, drop oldest on overflow (configurable).
     Fail-safe: any error silently drops the message.
+
+    Decoupled dependencies via protocols:
+      - _queue: AsyncQueue (default: AsyncioQueueAdapter)
+      - _lock: AsyncLock (default: AsyncioLockAdapter)
+      - _stop_event: ThreadEvent (default: ThreadingEventAdapter)
     """
     _instance: "AsyncLogHandler | None" = None
-    _lock: asyncio.Lock | None = None
+    _lock: AsyncLock | None = None
+
     __slots__ = tuple(
         ("_drop_oldest", "_queue", "_started", "_stop_event", "_thread")
     )
 
     def __init__(
-        self, drop_oldest: bool = True, queue_size: int = MAX_QUEUE_SIZE
+        self,
+        queue: AsyncQueue | None = None,
+        stop_event: ThreadEvent | None = None,
+        drop_oldest: bool = True,
+        queue_size: int = MAX_QUEUE_SIZE,
     ) -> None:
         self._drop_oldest = drop_oldest
-        self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=queue_size)
+        self._queue: AsyncQueue = queue or AsyncioQueueAdapter(maxsize=queue_size)
         self._thread: threading.Thread | None = None
-        self._stop_event = threading.Event()
+        self._stop_event: ThreadEvent = stop_event or ThreadingEventAdapter()
         self._started = False
 
     @classmethod
     async def get_instance(cls) -> "AsyncLogHandler":
         """Get or create singleton instance (async-safe)."""
         if cls._lock is None:
-            cls._lock = asyncio.Lock()
+            cls._lock = AsyncioLockAdapter()
         async with cls._lock:
             if cls._instance is None:
                 drop_oldest_env = (
@@ -97,7 +255,7 @@ class AsyncLogHandler:
         """Background thread: flush queue to stdout/stderr."""
         while not self._stop_event.is_set():
             try:
-                msg = self._queue.get(timeout=0.1)
+                msg = self._queue.get_nowait()
                 if msg is None:
                     continue
                 # Detect JSON by first char - JSON lines always start with { or [
@@ -121,7 +279,7 @@ class AsyncLogHandler:
             if self._drop_oldest:
                 try:
                     self._queue.get_nowait()
-                except asyncio.QueueEmpty:
+                except queue.Empty:
                     pass
             self._queue.put_nowait(message)
         except asyncio.QueueFull:
@@ -169,7 +327,7 @@ async def configure_async_logging() -> None:
 
 
 def _inject_trace_context_async(
-    logger: Any, method_name: str, event: dict[str, Any]
+    _logger: Any, _method_name: str, event: dict[str, Any]
 ) -> dict[str, Any]:
     """Async-aware structlog processor: inject trace context into event_dict.
 
@@ -194,7 +352,7 @@ def _inject_trace_context_async(
 
 
 def _json_renderer_async(
-    logger: Any, method: str, event: dict[str, Any]
+    _logger: Any, _method: str, event: dict[str, Any]
 ) -> str:
     """Async-safe structlog JSON renderer that uses async queue.
 
@@ -211,7 +369,7 @@ def _json_renderer_async(
 
         rendered = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "level": method.upper(),
+            "level": _method.upper(),
             "event": event.pop("event", ""),
             **event,
         }
@@ -231,14 +389,14 @@ def _json_renderer_async(
         # Sync fallback
         out = (
             sys.stderr
-            if method.upper() in ("ERROR", "CRITICAL", "WARNING")
+            if _method.upper() in ("ERROR", "CRITICAL", "WARNING")
             else sys.stdout
         )
         out.write(line + "\n")
         return ""  # structlog requires non-None return
     except Exception:
         try:
-            fallback = f"[{method.upper()}] {event}"
+            fallback = f"[{_method.upper()}] {event}"
             sys.stderr.write(fallback + "\n")
         except Exception:
             pass

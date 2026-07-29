@@ -551,17 +551,6 @@ async def expand_concept_domains(
 
 
 # ── Convenience: extract domain strings from candidates ────────────────────────
+# Shared via brain._dspy_shared — eliminates clone with brain/insight_engine.py
 
-def extract_domain_strings(
-    candidates: list[SyntheticDomainCandidate],
-    min_confidence: float = 0.25,
-) -> list[str]:
-    """
-    Extract plain domain strings from SyntheticDomainCandidate list.
-
-    Args:
-        candidates: List of SyntheticDomainCandidate.
-        min_confidence: Minimum confidence threshold (default 0.25, lowered from 0.3
-            for broader coverage of heuristic candidates).
-    """
-    return [c.domain for c in candidates if c.confidence >= min_confidence]
+from hledac.universal.brain._dspy_shared import extract_domain_strings

@@ -381,37 +381,6 @@ class LanceDBIdentityStore:
         self._mlx_id_to_idx = {}
         self._mlx_embeddings_total_count = 0
         self._mlx_load_chunk_size = self._get_mlx_chunk_size()
-
-    def _get_mlx_chunk_size(self) -> int:
-        """
-        Sprint #15: Adaptive chunk sizing based on current memory pressure.
-
-        Returns the computed chunk size based on UMA state. The result is
-        cached in self._mlx_load_chunk_size by the caller (__init__).
-
-        Returns:
-            1_000 if state == "emergency" (minimal, fail-safe)
-            3_000 if state == "critical" (reduced)
-            5_000 if state == "warn" (moderate)
-            1_000 if swap_detected (abort mid-load signal — use minimal)
-            10_000 if state == "ok" / "soft_warn" / error (default, safe)
-        """
-        try:
-            from hledac.universal.core.resource_governor import sample_uma_status
-            uma = sample_uma_status()
-            if uma.swap_detected:
-                return 1000
-            state = uma.state
-            if state == 'emergency':
-                return 1000
-            if state == 'critical':
-                return 3000
-            if state == 'warn':
-                return 5000
-            return self._mlx_load_chunk_size
-        except Exception:
-            return self._mlx_load_chunk_size
-
         self._colbert_reranker = None
         self._flashrank_ranker = None
         self._colbert_loaded = False
@@ -457,6 +426,38 @@ class LanceDBIdentityStore:
         except Exception:
             self._autotune = None
         self._initialize()
+
+    def _get_mlx_chunk_size(self) -> int:
+        """
+        Sprint #15: Adaptive chunk sizing based on current memory pressure.
+
+        Returns the computed chunk size based on UMA state. The result is
+        cached in self._mlx_load_chunk_size by the caller (__init__).
+
+        Returns:
+            1_000 if state == "emergency" (minimal, fail-safe)
+            3_000 if state == "critical" (reduced)
+            5_000 if state == "warn" (moderate)
+            1_000 if swap_detected (abort mid-load signal — use minimal)
+            10_000 if state == "ok" / "soft_warn" / error (default, safe)
+        """
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+            uma = sample_uma_status()
+            if uma.swap_detected:
+                return 1000
+            state = uma.state
+            if state == 'emergency':
+                return 1000
+            if state == 'critical':
+                return 3000
+            if state == 'warn':
+                return 5000
+            # 'ok' / 'soft_warn' / fallback — use cached default
+            return self._mlx_load_chunk_size
+        except Exception:
+            # Fail-safe: use cached value from previous call or default
+            return self._mlx_load_chunk_size
 
     def _lmdb_put(self, key: str, data: dict) -> None:
         """Synchronous LMDB put operation - zero-copy via orjson."""

@@ -574,9 +574,9 @@ class RemoteParquetSource:
         """Attach S3 Parquet via CREATE SECRET + ATTACH."""
         duckdb = self._get_duckdb()
         secret_name = f"_s3_secret_{id(self)}"
-        key_id = duckdb.escape_string(self.credentials.get("key_id", ""))
-        secret = duckdb.escape_string(self.credentials.get("secret", ""))
-        region = duckdb.escape_string(self.credentials.get("region", "us-east-1"))
+        key_id = self.credentials.get("key_id", "").replace("'", "''")
+        secret = self.credentials.get("secret", "").replace("'", "''")
+        region = self.credentials.get("region", "us-east-1").replace("'", "''")
         if key_id and secret:
             conn.execute(f"""
                 CREATE SECRET {secret_name} (
@@ -586,7 +586,7 @@ class RemoteParquetSource:
                     REGION {region}
                 )
             """)
-        safe_uri = duckdb.escape_string(self.uri)
+        safe_uri = self.uri.replace("'", "''")
         conn.execute(f"ATTACH {safe_uri} AS {self.alias} (TYPE PARQUET)")
 
     def _attach_https(self, conn: Any) -> None:
@@ -596,15 +596,15 @@ class RemoteParquetSource:
         except Exception:  # noqa: BLE001 — best-effort; httpfs load; non-critical
             pass
         duckdb = self._get_duckdb()
-        safe_uri = duckdb.escape_string(self.uri)
+        safe_uri = self.uri.replace("'", "''")
         conn.execute(f"ATTACH {safe_uri} AS {self.alias} (TYPE PARQUET)")
 
     def _attach_azure(self, conn: Any) -> None:
         """Attach Azure Blob Parquet via CREATE SECRET + ATTACH."""
         duckdb = self._get_duckdb()
         secret_name = f"_azure_secret_{id(self)}"
-        account = duckdb.escape_string(self.credentials.get("account", ""))
-        access_key = duckdb.escape_string(self.credentials.get("access_key", ""))
+        account = self.credentials.get("account", "").replace("'", "''")
+        access_key = self.credentials.get("access_key", "").replace("'", "''")
         if account and access_key:
             conn.execute(f"""
                 CREATE SECRET {secret_name} (
@@ -613,14 +613,13 @@ class RemoteParquetSource:
                     ACCOUNT_KEY {access_key}
                 )
             """)
-        safe_uri = duckdb.escape_string(self.uri)
+        safe_uri = self.uri.replace("'", "''")
         conn.execute(f"ATTACH {safe_uri} AS {self.alias} (TYPE PARQUET)")
 
     def _attach_gcs(self, conn: Any) -> None:
         """Attach GCS Parquet via CREATE SECRET + ATTACH."""
-        duckdb = self._get_duckdb()
         secret_name = f"_gcs_secret_{id(self)}"
-        credentials_json = duckdb.escape_string(self.credentials.get("credentials_json", ""))
+        credentials_json = self.credentials.get("credentials_json", "").replace("'", "''")
         if credentials_json:
             conn.execute(f"""
                 CREATE SECRET {secret_name} (
@@ -628,7 +627,7 @@ class RemoteParquetSource:
                     CREDENTIALS_JSON {credentials_json}
                 )
             """)
-        safe_uri = duckdb.escape_string(self.uri)
+        safe_uri = self.uri.replace("'", "''")
         conn.execute(f"ATTACH {safe_uri} AS {self.alias} (TYPE PARQUET)")
 
     def _attach_postgres(self, conn: Any) -> None:
@@ -1021,8 +1020,9 @@ class ParquetHistoryReader:
         if self._ts_max is not None:
             parts.append(f"ts <= {self._ts_max}")
         if self._source_types:
+            # E-33: Escape single quotes for DuckDB string literals
             escaped = [t.replace("'", "''") for t in self._source_types]
-            types_list = ", ".join(f"'{t}'" for t in escaped)
+            types_list = ", ".join(f"'{e}'" for e in escaped)
             parts.append(f"source_type IN ({types_list})")
         return " AND ".join(parts) if parts else None
 
@@ -9665,12 +9665,24 @@ class DuckDBShadowStore:
                     truth_graph = self._ensure_graph_attachment().get_truth_write_graph()
                     if truth_graph is None:
                         return
+                    # CanonicalFinding has no ioc_value/ioc_type fields.
+                    # IOCs are already extracted via Rust batch extraction above (lines 7848-7886)
+                    # and buffered via parallel buffer_ioc() calls. That is the authoritative path.
+                    # This fallback path uses payload_text for any findings that arrived here
+                    # without going through the batch path (e.g. direct accepted_findings injection).
                     rows = []
                     for f in accepted_findings:
-                        ioc_value = getattr(f, "ioc_value", "")
-                        ioc_type = getattr(f, "ioc_type", "")
-                        if ioc_value:
-                            rows.append((ioc_value, ioc_type, float(f.confidence), f.source_type or ""))
+                        text = f.payload_text or f.query or ""
+                        if text:
+                            # Synchronous single-text extraction as fallback for non-Rust path
+                            try:
+                                import hledac.universal.rust_extensions as _re
+                                if hasattr(_re, "extract_iocs_flat"):
+                                    extracted = _re.extract_iocs_flat(text)
+                                    for ioc_val, ioc_type in extracted:
+                                        rows.append((ioc_val, ioc_type, float(f.confidence), f.source_type or ""))
+                            except Exception:
+                                pass
                     if rows:
                         truth_graph.upsert_ioc_batch(rows)
                 except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical

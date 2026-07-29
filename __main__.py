@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 
-from hledac.universal.cli.parser import async_main
+from hledac.universal.cli.parser import main
 
 if __name__ == "__main__":
-    sys.exit(async_main())
+    sys.exit(main())

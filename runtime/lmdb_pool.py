@@ -6,6 +6,7 @@ LMDB is single-writer but supports concurrent readers. This pool provides:
 - asyncio.Semaphore(2) for bounded concurrency
 - asyncio.Lock for submit serialization
 - Timeout support via safe_wait_for
+- atexit registration for clean shutdown on process exit
 
 This is a focused, single-role module extracted from the monolithic
 role_based_pools.py (959 LOC) which had many pools with zero callers.
@@ -14,6 +15,7 @@ INVARIANTS (Python 3.14+):
   1. Always-on: no feature flags, lazy-initialized
   2. Bounded: 2 workers max, semaphore-controlled
   3. Fail-safe: returns None on error, never raises
+  4. Clean shutdown: atexit.register ensures cleanup on process exit
 
 USAGE:
   from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
@@ -24,12 +26,15 @@ USAGE:
 
 from __future__ import annotations
 
-import asyncio
+import atexit
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import asyncio
+
 from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,15 +43,10 @@ __all__ = [
     "get_lmdb_pool",
     "run_lmdb",
     "run_lmdb_sync",
+    "_LMDB_WORKERS",
 ]
 
 T = TypeVar("T")
-
-# ------------------------------------------------------------------|
-# Constants                                                        |
-# ------------------------------------------------------------------|
-
-_LMDB_WORKERS: int = 2  # 1 writer + 1 reader (LMDB write lock serializes anyway)
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,8 @@ class LmdbPool:
       - Separated from worker_pool.py because LMDB has specific semantics
         (single-writer, reader parallelism) different from generic I/O
       - Direct dependency on role_based_pools would drag in MLX/DuckDB executors
-      - Minimal footprint: ~150 LOC vs 959 LOC monolithic role_based_pools
+      - Minimal footprint: ~180 LOC vs 959 LOC monolithic role_based_pools
+      - atexit.register ensures cleanup on process exit (like other pools)
     """
 
     __slots__ = (
@@ -133,6 +134,7 @@ class LmdbPool:
         "_lock",
         "_initialized",
         "_init_lock",
+        "_atexit_cb",
     )
 
     def __init__(self) -> None:
@@ -141,6 +143,7 @@ class LmdbPool:
         self._executor: ThreadPoolExecutor | None = None
         self._semaphore: asyncio.Semaphore | None = None
         self._lock: asyncio.Lock | None = None
+        self._atexit_cb: Callable[[], None] | None = None
 
     def _ensure_initialized(self) -> None:
         """Lazy initialization (double-checked locking)."""
@@ -155,8 +158,12 @@ class LmdbPool:
                 thread_name_prefix="hledac-lmdb",
             )
             self._semaphore = asyncio.Semaphore(_LMDB_WORKERS)
-            # Lock created in async context; use ensure_future pattern for safety
             self._lock = asyncio.Lock()
+            # Register atexit cleanup — must be done in async context would be
+            # too late, so register at init time; cleanup function is idempotent.
+            if self._atexit_cb is None:
+                self._atexit_cb = self._shutdown
+                atexit.register(self._atexit_cb)
 
     async def _get_lock(self) -> asyncio.Lock:
         self._ensure_initialized()
@@ -223,9 +230,19 @@ class LmdbPool:
         except Exception:
             return None
 
-    def shutdown(self, wait: bool = True) -> None:
-        """Shutdown the pool and optionally wait for pending work."""
+    def _shutdown(self, *, wait: bool = True) -> None:
+        """Internal shutdown — idempotent, safe to call multiple times."""
         if self._executor is not None:
             self._executor.shutdown(wait=wait)
             self._executor = None
+        self._semaphore = None
+        self._lock = None
         self._initialized = False
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Shutdown the pool and optionally wait for pending work."""
+        # Unregister atexit so it doesn't fire twice
+        if self._atexit_cb is not None:
+            atexit.unregister(self._atexit_cb)
+            self._atexit_cb = None
+        self._shutdown(wait=wait)

@@ -56,63 +56,51 @@ except ImportError:
     SourceType = None
 from hledac.universal.runtime.acquisition_telemetry_reconcile import complete_source_family_outcomes_from_lane_details, reconcile_lane_detail_fields
 from hledac.universal.runtime.nonfeed_candidate_ledger import extract_domain_candidates_from_text
-from hledac.universal.runtime.acquisition_strategy import FeedDominanceBudget, _feed_budget_to_dict, _load_feed_budget_from_env, _expand_keyword_query, _has_threat_indicator, _has_crypto_indicator, build_acquisition_report
+from hledac.universal.runtime.acquisition.lane_constants import AcquisitionLane
+
+# Module-level constants — canonical source, used by all lane-runner functions above.
+_LANE_TO_FAMILY: dict[str, str] = {
+    AcquisitionLane.FEED: 'feed',
+    AcquisitionLane.PUBLIC: 'public',
+    AcquisitionLane.CT: 'ct',
+    AcquisitionLane.WAYBACK: 'archive',
+    AcquisitionLane.PASSIVE_DNS: 'passive_dns',
+    AcquisitionLane.BLOCKCHAIN: 'blockchain',
+    AcquisitionLane.STEALTH: 'stealth',
+    AcquisitionLane.PIVOT_EXECUTOR: 'pivot',
+    AcquisitionLane.ACADEMIC: 'academic',
+    AcquisitionLane.OPEN_SOURCE: 'public',
+    AcquisitionLane.DOH: 'doh',
+}
+
+# F360M: Import directly from acquisition_strategy_planner (canonical source for these).
+# acquisition_strategy.py shim re-exports from planner so this import path is stable.
+from hledac.universal.runtime.acquisition_strategy_planner import (
+    AcquisitionContext,
+    FeedDominanceBudget,
+    _feed_budget_to_dict,
+    _load_feed_budget_from_env,
+    _expand_keyword_query,
+    _has_threat_indicator,
+    _has_crypto_indicator,
+    build_acquisition_report,
+    _disabled_reason,
+    LANE_RULES,
+)
 from hledac.universal.runtime.acquisition.profile import AcquisitionProfile, normalize_acquisition_profile, is_academic_profile, is_deep_osint_m1_profile
 from hledac.universal.runtime.source_finding_bridge import MAX_SAMPLE_REJECTIONS, ct_results_to_findings, passive_dns_results_to_findings, wayback_results_to_findings
 from hledac.universal.utils.async_helpers import parallel_ok, first_completed
+from hledac.universal.utils.async_task import safe_create_task
 __all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details']
 ACQUISITION_REPORT_SCHEMA_VERSION = 'f208.v1'
 
-class AcquisitionLane:
-    FEED = 'FEED'
-    PUBLIC = 'PUBLIC'
-    CT = 'CT'
-    WAYBACK = 'WAYBACK'
-    PASSIVE_DNS = 'PASSIVE_DNS'
-    BLOCKCHAIN = 'BLOCKCHAIN'
-    STEALTH = 'STEALTH'
-    PIVOT_EXECUTOR = 'PIVOT_EXECUTOR'
-    ACADEMIC = 'ACADEMIC'
-    IPFS = 'IPFS'
-    DOH = 'DOH'
-    OPEN_SOURCE = 'OPEN_SOURCE'
-    SHODAN = 'SHODAN'
-    CENSYS = 'CENSYS'
-    GREYNOISE = 'GREYNOISE'
-_CIDV0_RE = re.compile('^Qm[A-Za-z2-7]{44}$')
-_CIDV1_BASE32_RE = re.compile('^bafy[a-z2-7]{50,59}$')
+# IPFS CID functions imported from canonical cid_detection module
+from hledac.universal.runtime.acquisition.cid_detection import (
+    _has_explicit_cid,
+    _extract_cids_from_text,
+)
 
-def _has_explicit_cid(value: str) -> bool:
-    """Return True if value is an explicit IPFS CID (CIDv0 or CIDv1 base32)."""
-    if not value or len(value) < 46 or len(value) > 70:
-        return False
-    if value.startswith('Qm') and len(value) == 46:
-        return bool(_CIDV0_RE.match(value))
-    if value.startswith('bafy'):
-        return bool(_CIDV1_BASE32_RE.match(value))
-    return False
-
-def _extract_cids_from_text(text: str) -> list[str]:
-    """Extract unique explicit CIDs from arbitrary text. Bounded dedup."""
-    if not text:
-        return []
-    cids_seen: set[str] = set()
-    cids: list[str] = []
-    for word in text.split():
-        word = word.strip().rstrip('/').rstrip(')')
-        if _has_explicit_cid(word) and word not in cids_seen:
-            cids_seen.add(word)
-            cids.append(word)
-        if '/' in word or ':' in word:
-            for part in word.replace(':', '/').split('/'):
-                part = part.strip()
-                if _has_explicit_cid(part) and part not in cids_seen:
-                    cids_seen.add(part)
-                    cids.append(part)
-    return cids
 _MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
-_NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
-_MISSION_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 0, 'wallet_recon': 15, 'domain_recon': 10, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
 _NONFEED_PROFILE_FEED_CAP_THRESHOLDS: dict[str, int] = {'cve_recon': 100, 'wallet_recon': 15, 'domain_recon': 20, 'infra_recon': 20, 'person_recon': 20, 'unknown': 0, 'org_recon': 0}
 
 class RiskLevel(StrEnum):
@@ -138,28 +126,8 @@ class AcquisitionLanePlan(msgspec.Struct, frozen=True, gc=False):
     concurrency: int = 2
     risk_level: str = RiskLevel.MEDIUM
 
-class AcquisitionContext(msgspec.Struct, frozen=True, gc=False):
-    """Derived flags bundle for lane planning — constructed once per _build_plan_impl call."""
-    query: str
-    duration_s: float
-    aggressive_mode: bool
-    uma_state: str
-    swap_detected: bool
-    hardware_critical: bool
-    has_domain: bool
-    has_url: bool
-    has_crypto: bool
-    has_long_duration: bool
-    is_nonfeed_diagnostic: bool
-    transport_degraded: bool
-    stealth_ready: bool
-    base_concurrency: int
-    is_academic: bool
-    is_deep_osint_m1: bool = False
-    has_ip: bool = False
-    cid_present: bool = False
-    _feed_max_items: int = field(default=50)
-    _feed_cap_reason: str | None = field(default=None)
+# AcquisitionContext imported from acquisition_strategy_planner (canonical source)
+# RiskLevel imported from lane_constants (canonical source)
 
 class LaneSpec(msgspec.Struct, frozen=True, gc=False):
     """Static per-lane execution constants."""
@@ -195,66 +163,6 @@ LaneSpecOpenSrc = LaneSpec(max_items=20, timeout_s=60, risk_level=RiskLevel.MEDI
 LaneSpecShodan = LaneSpec(max_items=20, timeout_s=30, risk_level=RiskLevel.MEDIUM)
 LaneSpecCensys = LaneSpec(max_items=20, timeout_s=45, risk_level=RiskLevel.MEDIUM)
 LaneSpecGreyNoise = LaneSpec(max_items=30, timeout_s=20, risk_level=RiskLevel.LOW)
-
-def _lc(lane: str, base: int, uma_state: str) -> int:
-    """Apply lane-specific concurrency adjustments on top of base."""
-    if uma_state in ('critical', 'emergency'):
-        if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN, AcquisitionLane.STEALTH):
-            return max(1, base // 2)
-    if uma_state == 'warn':
-        if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN):
-            return max(1, base - 1)
-    return base
-
-def _lane_rule(lane: str, spec: LaneSpec, enabled_fn: callable, reason_fn: callable, conc_fn: callable) -> LaneRule:
-    return LaneRule(lane=lane, spec=spec, enabled=enabled_fn, reason=reason_fn, concurrency=conc_fn)
-
-def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
-    """Return the disabled-reason string for a lane, matching original inline logic."""
-    if lane == AcquisitionLane.FEED:
-        if ctx.uma_state in ('critical', 'emergency'):
-            return 'hardware_critical'
-        if ctx.swap_detected:
-            return 'swap_detected'
-        return 'uma_warn_state'
-    if lane == AcquisitionLane.PUBLIC:
-        if ctx.transport_degraded:
-            return 'transport_degraded'
-        if ctx.hardware_critical:
-            return 'hardware_critical'
-        return 'query_not_domain'
-    if lane == AcquisitionLane.CT:
-        return 'query_not_domain_like'
-    if lane == AcquisitionLane.DOH:
-        return 'query_without_domain_or_ip'
-    if lane == AcquisitionLane.WAYBACK:
-        return 'query_without_url'
-    if lane == AcquisitionLane.PASSIVE_DNS:
-        return 'query_without_indicator'
-    if lane == AcquisitionLane.BLOCKCHAIN:
-        return 'query_without_crypto'
-    if lane == AcquisitionLane.STEALTH:
-        if ctx.is_nonfeed_diagnostic:
-            return 'nonfeed_diagnostic_disabled'
-        if ctx.hardware_critical:
-            return 'hardware_critical'
-        return 'disabled_by_default'
-    if lane == AcquisitionLane.PIVOT_EXECUTOR:
-        return 'always_allowed_lightweight'
-    if lane == AcquisitionLane.ACADEMIC:
-        if ctx.hardware_critical:
-            return 'hardware_critical'
-        return 'non_academic_profile'
-    if lane == AcquisitionLane.IPFS:
-        if not ctx.cid_present:
-            return 'no_cid_in_query'
-        return 'hardware_critical'
-    if lane == AcquisitionLane.OPEN_SOURCE:
-        if ctx.hardware_critical:
-            return 'hardware_critical'
-        return 'non_academic_profile'
-    return 'lane_disabled'
-LANE_RULES: tuple[LaneRule, ...] = (_lane_rule(AcquisitionLane.FEED, LaneSpecFeed, lambda ctx: ctx.uma_state not in ('critical', 'emergency'), lambda ctx: 'always_allowed', lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PUBLIC, LaneSpecPublic, lambda ctx: not ctx.hardware_critical and (not ctx.transport_degraded) if ctx.is_deep_osint_m1 else ctx.is_nonfeed_diagnostic and ctx.has_domain and (not ctx.transport_degraded) if ctx.is_nonfeed_diagnostic else ctx.uma_state not in ('critical', 'emergency') and (not ctx.transport_degraded), lambda ctx: 'deep_osint_m1_stage1' if ctx.is_deep_osint_m1 else 'nonfeed_diagnostic_domain' if ctx.is_nonfeed_diagnostic and ctx.has_domain else 'transport_degraded' if ctx.transport_degraded else 'hardware_critical' if ctx.uma_state in ('critical', 'emergency') else 'query_eligible', lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CT, LaneSpecCT, lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic) and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'domain_or_aggressive_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.DOH, LaneSpecDOH, lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'domain_or_ip_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.WAYBACK, LaneSpecWayback, lambda ctx: (ctx.has_url or ctx.has_long_duration or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'has_url_or_long_duration_or_nonfeed_domain', lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda ctx: 'has_domain_or_ip', lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain, lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'has_crypto_indicator', lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.STEALTH, LaneSpecStealth, lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_nonfeed_diagnostic), lambda ctx: 'stealth_ready', lambda ctx: 1), _lane_rule(AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot, lambda ctx: True, lambda ctx: 'always_allowed_lightweight', lambda ctx: ctx.base_concurrency + 1), _lane_rule(AcquisitionLane.ACADEMIC, LaneSpecAcademic, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'academic_profile', lambda ctx: 1), _lane_rule(AcquisitionLane.IPFS, LaneSpecIPFS, lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'explicit_cid_in_query', lambda ctx: 1), _lane_rule(AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'academic_profile', lambda ctx: 1), _lane_rule(AcquisitionLane.SHODAN, LaneSpecShodan, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CENSYS, LaneSpecCensys, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'domain_or_cert_indicator', lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.GREYNOISE, LaneSpecGreyNoise, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda ctx: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state)))
 
 class NonfeedPlanDebug(msgspec.Struct, gc=False):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
@@ -1747,7 +1655,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.blockchain_analyzer import BlockchainForensics
+                from hledac.universal.recon.blockchain_analyzer import BlockchainForensics
                 wallets = _extract_crypto_from_query(query)
                 accepted = 0
                 total_tx = 0
@@ -1782,16 +1690,12 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
     if snapshot is None:
         return ()
 
-    async def _stealth_never_run(plan) -> AcquisitionLaneOutcome:
-        """STEALTH is never auto-run — always record the skip."""
-        return AcquisitionLaneOutcome(lane=AcquisitionLane.STEALTH, enabled=False, attempted=False, error='stealth_not_auto_run', source_family='stealth')
-
     async def _run_shodan_lane(plan) -> AcquisitionLaneOutcome:
         """Run Shodan intelligence lane — device/IP fingerprints."""
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.shodan_lane import ShodanLane
+                from hledac.universal.recon.shodan_lane import ShodanLane
                 lane_obj = ShodanLane()
                 findings = await lane_obj.query(query)
                 accepted = 0
@@ -1820,7 +1724,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.censys_lane import CensysLane
+                from hledac.universal.recon.censys_lane import CensysLane
                 lane_obj = CensysLane()
                 findings = await lane_obj.query(query)
                 accepted = 0
@@ -1847,7 +1751,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         start = time.monotonic()
         try:
             async with asyncio.timeout(plan.timeout_s):
-                from hledac.universal.intel.greynoise_lane import GreyNoiseLane
+                from hledac.universal.recon.greynoise_lane import GreyNoiseLane
                 lane_obj = GreyNoiseLane()
                 findings = await lane_obj.query(query)
                 accepted = 0
@@ -1868,7 +1772,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
             return AcquisitionLaneOutcome(lane=AcquisitionLane.GREYNOISE, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='greynoise_intel')
         except Exception as exc:
             return AcquisitionLaneOutcome(lane=AcquisitionLane.GREYNOISE, enabled=plan.enabled, attempted=True, duration_s=time.monotonic() - start, error=f'{type(exc).__name__}:{exc}', source_family='greynoise_intel')
-    lane_runners = {AcquisitionLane.CT: _run_ct_lane, AcquisitionLane.WAYBACK: _run_wayback_lane, AcquisitionLane.PASSIVE_DNS: _run_pdns_lane, AcquisitionLane.BLOCKCHAIN: _run_blockchain_lane, AcquisitionLane.STEALTH: _stealth_never_run, AcquisitionLane.ACADEMIC: _run_academic_lane, AcquisitionLane.IPFS: _run_ipfs_lane, AcquisitionLane.OPEN_SOURCE: _run_open_source_lane, AcquisitionLane.DOH: _run_doh_lane, AcquisitionLane.SHODAN: _run_shodan_lane, AcquisitionLane.CENSYS: _run_censys_lane, AcquisitionLane.GREYNOISE: _run_greynoise_lane}
+    lane_runners = {AcquisitionLane.CT: _run_ct_lane, AcquisitionLane.WAYBACK: _run_wayback_lane, AcquisitionLane.PASSIVE_DNS: _run_pdns_lane, AcquisitionLane.BLOCKCHAIN: _run_blockchain_lane, AcquisitionLane.ACADEMIC: _run_academic_lane, AcquisitionLane.IPFS: _run_ipfs_lane, AcquisitionLane.OPEN_SOURCE: _run_open_source_lane, AcquisitionLane.DOH: _run_doh_lane, AcquisitionLane.SHODAN: _run_shodan_lane, AcquisitionLane.CENSYS: _run_censys_lane, AcquisitionLane.GREYNOISE: _run_greynoise_lane}
     for plan in snapshot.plans:
         lane = plan.lane
         if lane not in lane_runners:
@@ -1882,7 +1786,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         tasks.append(safe_create_task(lane_runners[lane](plan), name='acquisition:lane_runner'))
     if not tasks:
         return tuple(outcomes)
-    results = await parallel_ok(*tasks, label='acquisition_strategy:4211')
+    results = await parallel_ok(*tasks, label='acquisition_strategy:runner')
     for result in results:
         if isinstance(result, AcquisitionLaneOutcome):
             outcomes.append(result)
@@ -2077,7 +1981,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
             elif isinstance(result, Exception):
                 outcomes.append(AcquisitionLaneOutcome(lane='UNKNOWN', enabled=True, attempted=True, error=f'gather_error:{result}', source_family='unknown'))
     yield tuple(outcomes)
-_LANE_TO_FAMILY: dict[str, str] = {AcquisitionLane.FEED: 'feed', AcquisitionLane.PUBLIC: 'public', AcquisitionLane.CT: 'ct', AcquisitionLane.WAYBACK: 'archive', AcquisitionLane.PASSIVE_DNS: 'passive_dns', AcquisitionLane.BLOCKCHAIN: 'blockchain', AcquisitionLane.STEALTH: 'stealth', AcquisitionLane.PIVOT_EXECUTOR: 'pivot', AcquisitionLane.ACADEMIC: 'academic', AcquisitionLane.OPEN_SOURCE: 'public', AcquisitionLane.DOH: 'doh'}
+
 
 def _hits_to_ct_findings(hits: tuple, query: str) -> list:
     """Convert crt.sh DiscoveryHit tuple to CanonicalFinding list."""

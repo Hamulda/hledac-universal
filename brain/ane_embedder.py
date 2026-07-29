@@ -516,9 +516,6 @@ class ANEEmbedder:
         R-4: If LLM is active on Metal GPU, skip Metal-backed embedding
         and use hash fallback to avoid GPU bandwidth contention.
         """
-        # E-34: next() on itertools.count is atomic in CPython (GIL)
-        next(_ANE_COUNTER_ATTEMPTED)
-
         # R-4: Avoid Metal GPU contention with active LLM inference.
         # If Hermes LLM is running (holds 'llm' slot), use hash fallback.
         # This check is safe even when called from mlx_unified_scheduler
@@ -534,12 +531,14 @@ class ANEEmbedder:
         if isinstance(texts, str):
             texts = [texts]
         if self._loaded and self.model is not None:
+            # E-34: Count once per actual embed call (CoreML path)
+            next(_ANE_COUNTER_ATTEMPTED)
 
             def _run():
                 return np.array([_coreml_embed(self.model, t) for t in texts], dtype=np.float32)
             return await asyncio.to_thread(_run)
         if self._mlx_model is not None:
-            next(_ANE_COUNTER_ATTEMPTED)
+            # E-34: Count once per actual embed call (MLX path)
 
             def _run():
                 import mlx.core as mx

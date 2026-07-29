@@ -11,8 +11,11 @@ Env gates and RAM budgets configured per sidecar.
 
 
 
+import collections.abc
 import logging
-from typing import Any
+import re
+from typing import Any, Protocol, runtime_checkable
+from urllib.parse import urlparse
 
 from hledac.universal.runtime.sidecar_protocol import (
     BaseSidecarAdapter,
@@ -22,8 +25,30 @@ from hledac.universal.runtime.sidecar_protocol import (
 
 logger = logging.getLogger(__name__)
 
+# ── Shared re pattern for URL extraction (compiled once, reused) ─────────────────
+_URL_RE = re.compile(
+    r"https?://(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
+    r"(?:\.[a-zA-Z]{2,})+/?)"
+)
+
 
 # ── Fediverse Sidecar ──────────────────────────────────────────────────────────
+
+# Protocol-based interface for FediverseAdapter (decouples sidecar from concrete implementation)
+@runtime_checkable
+class FediverseSearchEngine(Protocol):
+    """Protocol for Fediverse search engines — enables testing and alternative implementations."""
+
+    async def search_multiple_instances(
+        self, terms: list[str], max_results: int = 50, instances: list[str] | None = None
+    ) -> list[Any]: ...
+
+
+def _default_fediverse_adapter_factory() -> Any:
+    """Lazy factory: imports and instantiates FediverseAdapter only when called."""
+    from hledac.universal.discovery.fediverse_adapter import FediverseAdapter
+    return FediverseAdapter()
+
 
 @SidecarRegistry.register("fediverse")
 class FediverseSidecarAdapter(BaseSidecarAdapter):
@@ -36,6 +61,11 @@ class FediverseSidecarAdapter(BaseSidecarAdapter):
     Env: HLEDAC_ENABLE_FEDIVERSE=1
     RAM: 50MB budget
     Priority: 6 (higher than core sidecars)
+
+    Coupling FIX (F350M-R): FediverseAdapter is injected via factory callable
+    rather than hard-coded import. This enables unit testing without mocking
+    the discovery module and allows alternative implementations (e.g. mock,
+    stub, or different Fediverse protocol variant).
     """
 
     sidecar_id: str = "fediverse"
@@ -43,20 +73,21 @@ class FediverseSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 50
     priority: int = 6
 
+    # Injectable factory for FediverseAdapter — defaults to lazy import
+    _adapter_factory: collections.abc.Callable[[], Any] = _default_fediverse_adapter_factory
+
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         """Search Fediverse for OSINT signals based on query and findings."""
         if not ctx.findings and not ctx.query:
             return []
 
         try:
-            from hledac.universal.discovery.fediverse_adapter import FediverseAdapter, FediverseResult
+            adapter = self._adapter_factory()
         except Exception:
-            logger.debug("FediverseSidecarAdapter: import failed")
+            logger.debug("FediverseSidecarAdapter: adapter factory failed")
             return []
 
         try:
-            adapter = FediverseAdapter()
-
             # Extract search terms from findings
             search_terms = self._extract_search_terms(ctx)
             if not search_terms:
@@ -65,12 +96,12 @@ class FediverseSidecarAdapter(BaseSidecarAdapter):
             # Limit search terms for M1 safety
             search_terms = search_terms[:5]
 
-            results: list[FediverseResult] = await adapter.search_multiple_instances(search_terms)
+            results = await adapter.search_multiple_instances(search_terms)
 
             # Convert to findings
             findings = []
             for result in results:
-                for post in result.posts:
+                for post in getattr(result, "posts", []):
                     finding = self._make_finding(post, ctx)
                     if finding:
                         findings.append(finding)
@@ -978,16 +1009,14 @@ class JA4CollectorSidecarAdapter(BaseSidecarAdapter):
             if ioc_type in ('domain', 'hostname', 'url', 'fqdn'):
                 if ioc_value and len(ioc_value) < 253:
                     domains.append(ioc_value)
-            # Accept URL-like values
-            elif ioc_value and ('://' in ioc_value or '@' not in ioc_value):
-                # Simple domain extraction from URL
-                from urllib.parse import urlparse
+            # Accept URL-like values ( URLs with :// )
+            elif ioc_value and '://' in ioc_value:
+                # Extract domain from URL
                 try:
-                    if '://' in ioc_value:
-                        parsed = urlparse(ioc_value)
-                        if parsed.netloc:
-                            domains.append(parsed.netloc.split(':')[0].split('@')[-1])
-                except Exception:
+                    parsed = urlparse(ioc_value)
+                    if parsed.netloc:
+                        domains.append(parsed.netloc.split(':')[0].split('@')[-1])
+                except Exception:  # noqa: BLE001
                     pass
 
         return list(dict.fromkeys(domains))  # Dedupe preserve order
@@ -1024,8 +1053,6 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         """Perform WHOIS lookups for domain findings."""
-        import os as _os
-
         if not ctx.findings and not ctx.query:
             return []
 
@@ -1118,10 +1145,8 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
             if ioc_type == "domain" and ioc_value:
                 domains.append(ioc_value)
             elif ioc_type == "url":
-                # Extract domain from URL
+                # Extract domain from URL — urlparse is module-level import
                 try:
-                    from urllib.parse import urlparse
-
                     parsed = urlparse(ioc_value)
                     if parsed.netloc:
                         domain = parsed.netloc.split(":")[0]
@@ -1284,7 +1309,14 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
     def is_available(self) -> bool:
         """Available only when feature flag is enabled."""
         import os
-        return os.getenv(self.env_gate, "0").lower() in ("1", "true", "yes", "on")
+        return os.getenv("HLEDAC_ENABLE_SHADOW_WALKER", "0").lower() in ("1", "true", "yes", "on")
+
+    def _extract_base_url(self, query: str) -> str | None:
+        """Extract base URL from query string."""
+        match = _URL_RE.search(query)
+        if match:
+            return match.group(0).rstrip("/")
+        return None
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
         """
@@ -1295,7 +1327,6 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
         3. Convert predictions to findings
         """
         import hashlib
-        import re
         import time
 
         from deep_research.path_discovery import ShadowWalkerAlgorithm
@@ -1335,15 +1366,3 @@ class ShadowWalkerSidecarAdapter(BaseSidecarAdapter):
                 continue
 
         return findings
-
-    def _extract_base_url(self, query: str) -> str | None:
-        """Extract base URL from query string."""
-        import re
-        url_pattern = re.compile(
-            r"https?://(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
-            r"(?:\.[a-zA-Z]{2,})+/?)"
-        )
-        match = url_pattern.search(query)
-        if match:
-            return match.group(0).rstrip("/")
-        return None

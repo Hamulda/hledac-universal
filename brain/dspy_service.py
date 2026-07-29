@@ -62,6 +62,27 @@ def _load_programs() -> dict:
         logger.warning('dspy_service: failed to load cache: %s', e)
         _programs = {}
     return _programs
+
+
+def _get_dspy_signature(task_key: str) -> tuple[str, Any] | None:
+    """
+    Shared helper: resolve prompt_template + LM for a DSPy task key.
+
+    Returns (prompt_template, lm) tuple or None if DSPy unavailable/not configured.
+    Eliminates 4-line boilerplate repeated in expand_query / score_findings /
+    suggest_pivots (Sprint 3 dedup).
+    """
+    programs = _load_programs()
+    prompt_template = programs.get(task_key)
+    if not prompt_template:
+        logger.warning('dspy_service: no compiled prompt for %s', task_key)
+        return None
+    lm = _get_dspy_lm()
+    if lm is None:
+        return None
+    return (prompt_template, lm)
+
+
 Hermes3LM_ENABLED = os.getenv('HLEDAC_ENABLE_LLM', '1') == '1'
 _HERMES_LM_INSTANCE: "Hermes3DSPyLM | None" = None
 
@@ -150,14 +171,14 @@ if dspy is not None:
             assert self._engine is not None, 'Hermes3Engine not loaded'
             return await self._engine.generate(prompt, **kwargs)
 
-        def forward(self, prompt: str | None=None, messages: list[dict[str, str]] | None=None, **kwargs: Any) -> dict:
+        @staticmethod
+        def _format_chat_to_prompt(messages: list[dict[str, str]] | None, prompt: str | None) -> tuple[str | None, str]:
             """
-            Synchronous forward pass — wraps asyncio call for DSPy compatibility.
+            Reconstruct a single prompt from ChatAdapter message list.
 
-            Called by BaseLM.__call__ which expects a dict response matching the
-            OpenAI chat completion format (response.choices[0].message.content).
+            Returns:
+                tuple of (system_msg, full_prompt)
             """
-            self._ensure_engine()
             system_msg: str | None = None
             prompt_parts: list[str] = []
             if messages:
@@ -175,6 +196,17 @@ if dspy is not None:
                 full_prompt = '\n\n'.join(prompt_parts)
             else:
                 full_prompt = prompt or ''
+            return system_msg, full_prompt
+
+        def forward(self, prompt: str | None=None, messages: list[dict[str, str]] | None=None, **kwargs: Any) -> dict:
+            """
+            Synchronous forward pass — wraps asyncio call for DSPy compatibility.
+
+            Called by BaseLM.__call__ which expects a dict response matching the
+            OpenAI chat completion format (response.choices[0].message.content).
+            """
+            self._ensure_engine()
+            system_msg, full_prompt = self._format_chat_to_prompt(messages, prompt)
             worker = self._get_worker()
             assert worker._loop is not None, 'mlx_worker loop not ready'
             text: str = asyncio.run_coroutine_threadsafe(self._async_generate(full_prompt, system_msg=system_msg, **kwargs), worker._loop).result(timeout=60.0)
@@ -190,23 +222,7 @@ if dspy is not None:
             We reconstruct a single prompt by concatenating role-prefixed content.
             """
             self._ensure_engine()
-            system_msg: str | None = None
-            prompt_parts: list[str] = []
-            if messages:
-                for msg in messages:
-                    role = msg.get('role', 'user')
-                    content = msg.get('content', '')
-                    if role == 'system':
-                        system_msg = content
-                    elif role == 'user':
-                        prompt_parts.append(f'User: {content}')
-                    elif role == 'assistant':
-                        prompt_parts.append(f'Assistant: {content}')
-                if prompt:
-                    prompt_parts.append(f'User: {prompt}')
-                full_prompt = '\n\n'.join(prompt_parts)
-            else:
-                full_prompt = prompt or ''
+            system_msg, full_prompt = self._format_chat_to_prompt(messages, prompt)
             worker = self._get_worker()
             assert worker._loop is not None, 'mlx_worker loop not ready'
             text: str = await worker.submit(self._async_generate(full_prompt, system_msg=system_msg, **kwargs), timeout=60.0)
@@ -311,16 +327,11 @@ async def expand_query(query: str) -> list | None:
         return None
     if not query or len(query.strip()) < 2:
         return None
+    sig = _get_dspy_signature('analysis:medium')
+    if sig is None:
+        return None
+    prompt_template, lm = sig
     t0 = time.monotonic()
-    programs = _load_programs()
-    task_key = 'analysis:medium'
-    prompt_template = programs.get(task_key)
-    if not prompt_template:
-        logger.warning('dspy_service: no compiled prompt for %s', task_key)
-        return None
-    lm = _get_dspy_lm()
-    if lm is None:
-        return None
     try:
         import dspy
 
@@ -382,16 +393,11 @@ async def score_findings(findings: list, min_score: float=4.0) -> list | None:
         return None
     if not findings:
         return None
+    sig = _get_dspy_signature('extraction:medium')
+    if sig is None:
+        return None
+    prompt_template, lm = sig
     t0 = time.monotonic()
-    programs = _load_programs()
-    task_key = 'extraction:medium'
-    prompt_template = programs.get(task_key)
-    if not prompt_template:
-        logger.warning('dspy_service: no compiled prompt for %s', task_key)
-        return None
-    lm = _get_dspy_lm()
-    if lm is None:
-        return None
 
     # Split findings into batches
     batches: list[list[tuple[int, dict]]] = []
@@ -510,16 +516,11 @@ async def suggest_pivots(findings: list, context: dict | None=None) -> list | No
         return None
     if not findings:
         return None
+    sig = _get_dspy_signature('summarization:medium')
+    if sig is None:
+        return None
+    prompt_template, lm = sig
     t0 = time.monotonic()
-    programs = _load_programs()
-    task_key = 'summarization:medium'
-    prompt_template = programs.get(task_key)
-    if not prompt_template:
-        logger.warning('dspy_service: no compiled prompt for %s', task_key)
-        return None
-    lm = _get_dspy_lm()
-    if lm is None:
-        return None
     try:
         import dspy
         finding_texts = [(f.get('content') or f.get('title') or str(f))[:80] for f in findings[:10]]

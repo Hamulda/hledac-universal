@@ -47,6 +47,15 @@ from hledac.universal.utils.async_helpers import safe_create_task, safe_gather_f
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
+def _is_cancelled_tree(e: BaseException) -> bool:
+    """Check if an exception tree contains a CancelledError leaf."""
+    if isinstance(e, asyncio.CancelledError):
+        return True
+    if isinstance(e, ExceptionGroup):
+        return any((_is_cancelled_tree(s) for s in e.exceptions))
+    return False
+
+
 def _safe_payload_json(obj: Any) -> str:
     """Serialize obj to canonical JSON string, fail-soft."""
     from hledac.universal.core.result import try_or
@@ -373,108 +382,107 @@ async def _embedding_runner(findings: list, store: DuckDBShadowStore, query: str
         _sidecarlogger.debug('embedding_runner: exception during embed: %s: %s', type(exc).__name__, exc)
     return None
 
-async def _banner_grab_runner(findings: list, store: DuckDBShadowStore, query: str) -> int | None:
-    """F214 banner grabber — TCP banner extraction, RAM-isolated."""
+
+# ── Shared runner helpers (parametrized to eliminate 4×33-line duplication) ──
+
+async def _query_runner(
+    findings: list,
+    store: DuckDBShadowStore,
+    *,
+    import_path: str | None = None,
+    adapter_cls: type | str | None = None,
+    result_bridge: Callable[[str, Any], list | tuple] | None = None,
+    ioc_types: tuple[str, ...],
+    max_targets: int,
+    ctx: str,
+) -> int | None:
+    """
+    F214/F247B unified parametrized IOC/network-recon runner — replaces:
+    _ioc_query_runner, _net_recon_runner, _network_intel_runner.
+
+    Supports two query modes:
+    - ``query_method="query"``: adapter.query() — used by banner_grab, ipv6_recon
+    - ``query_method="recon"``: adapter.recon_target() + optional result_bridge — used by network_intel
+
+    Supports two adapter resolution modes:
+    - String import_path + adapter_cls (str): dynamic import for optional adapters
+    - Direct adapter_cls (type): direct class reference for wired adapters
+
+    Args:
+        findings: CanonicalFinding list from the sprint
+        store: DuckDBShadowStore for ingest
+        import_path: dotted module path (required when adapter_cls is str)
+        adapter_cls: class name (str) or direct type (type)
+        result_bridge: optional transform(result) for recon mode
+        ioc_types: tuple of accepted ioc_type values
+        max_targets: cap on number of targets to query
+        ctx: log-context string for concurrency tracing
+    """
     if not findings or store is None:
         return None
-    try:
-        from hledac.universal.network import BANNER_GRABBER_AVAILABLE
-        if not BANNER_GRABBER_AVAILABLE:
-            return None
-        from hledac.universal.network.banner_grabber import BannerGrabberAdapter
-    except Exception:
-        return None
-    try:
-        adapter = BannerGrabberAdapter()
+
+    # Resolve adapter class (string import or direct type)
+    resolved_cls: type | None = None
+    if isinstance(adapter_cls, str) and import_path:
         try:
-            targets: list[str] = []
-            for f in findings:
-                ioc_value = safe_get_finding_field(f, 'ioc_value', '') or ''
-                ioc_type = safe_get_finding_field(f, 'ioc_type', '') or ''
-                if ioc_type in ('ipv4', 'ip') and ioc_value:
-                    targets.append(ioc_value)
-            if not targets:
-                return None
-            derived_findings: list = []
-
-            async def _query_one(target: str) -> list:
-                return await adapter.query(target)
-            from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
-            result = await parallel([_query_one(t) for t in targets[:20]], policy="log", concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='banner_grab')
-            for batch in result:
-                derived_findings.extend(batch or [])
-            return await _store_ingest_and_count(store, derived_findings)
-        finally:
-            await adapter.close()
-    except Exception:
-        return None
-
-async def _ipv6_recon_runner(findings: list, store: DuckDBShadowStore, query: str) -> int | None:
-    """F214 IPv6 reconnaissance — RDAP, WHOIS, DoH AAAA, BGP peer."""
-    if not findings or store is None:
-        return None
-    try:
-        from hledac.universal.network import IPV6_RECON_AVAILABLE
-        if not IPV6_RECON_AVAILABLE:
+            mod = __import__(import_path, fromlist=[adapter_cls])
+            resolved_cls = getattr(mod, adapter_cls)
+        except Exception:
             return None
-        from hledac.universal.network.ipv6_recon import IPv6ReconAdapter
-    except Exception:
-        return None
-    try:
-        adapter = IPv6ReconAdapter()
-        try:
-            targets: list[str] = []
-            for f in findings:
-                ioc_value = safe_get_finding_field(f, 'ioc_value', '') or ''
-                ioc_type = safe_get_finding_field(f, 'ioc_type', '') or ''
-                if ioc_type in ('domain', 'ipv4', 'ip') and ioc_value:
-                    targets.append(ioc_value)
-            if not targets:
-                return None
-            derived_findings: list = []
+    elif isinstance(adapter_cls, type):
+        resolved_cls = adapter_cls
 
-            async def _query_one(target: str) -> list:
-                return await adapter.query(target)
-            result = await parallel([_query_one(t) for t in targets[:20]], policy="log", concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='ipv6_recon')
-            for batch in result:
-                derived_findings.extend(batch or [])
-            return await _store_ingest_and_count(store, derived_findings)
-        finally:
-            await adapter.close()
-    except Exception:
+    if resolved_cls is None:
         return None
 
-async def _network_intel_runner(findings: list, store: DuckDBShadowStore, query: str) -> int | None:
-    """F247B: Active network reconnaissance via NetworkReconnaissance + bridge."""
-    MAX_RECON_TARGETS = 5
-    if not findings or store is None:
-        return None
+    # Extract targets from findings
     targets: list[str] = []
+    seen: set[str] = set()
     for f in findings:
         ioc_value = safe_get_finding_field(f, 'ioc_value', '') or ''
         ioc_type = safe_get_finding_field(f, 'ioc_type', '') or ''
-        if ioc_type in ('domain', 'ipv4', 'ipv6', 'ip') and ioc_value:
-            if ioc_value not in targets:
+        if ioc_type in ioc_types and ioc_value:
+            if result_bridge is not None:
+                # Recon mode: deduplicate targets
+                if ioc_value not in seen:
+                    seen.add(ioc_value)
+                    targets.append(ioc_value)
+            else:
+                # Query mode: allow duplicates (adapter handles dedup)
                 targets.append(ioc_value)
     if not targets:
         return None
-    targets = targets[:MAX_RECON_TARGETS]
+    targets = targets[:max_targets]
+
     try:
-        from hledac.universal.intel.network_reconnaissance import NetworkReconnaissance
-        from hledac.universal.runtime.source_finding_bridge import network_recon_result_to_findings
-    except Exception:
-        return None
-    try:
-        adapter = NetworkReconnaissance()
+        adapter = resolved_cls()
         try:
             derived_findings: list = []
 
-            async def _recon_one(target: str) -> list:
-                results = await adapter.recon_target(target)
-                if results:
-                    return network_recon_result_to_findings(target, results)
-                return []
-            result = await parallel([_recon_one(t) for t in targets], policy="log", concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL), ctx='network_intel')
+            if result_bridge is not None:
+                # Recon mode: recon_target() + bridge transform
+                # Bridge may return tuple(finds, rejects, telemetry) or list; normalize to list
+                async def _run_one(target: str) -> list:
+                    results = await adapter.recon_target(target)
+                    if results:
+                        bridged = result_bridge(target, results)
+                        # tuple → first element (findings); list → use directly
+                        if isinstance(bridged, tuple):
+                            return list(bridged[0]) if bridged[0] else []
+                        return bridged if isinstance(bridged, list) else []
+                    return []
+            else:
+                # Query mode: query() returns findings directly
+                async def _run_one(target: str) -> list:
+                    return await adapter.query(target)
+
+            from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+            result = await parallel(
+                [_run_one(t) for t in targets],
+                policy="log",
+                concurrency=lambda: concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL),
+                ctx=ctx,
+            )
             for batch in result:
                 derived_findings.extend(batch or [])
             return await _store_ingest_and_count(store, derived_findings)
@@ -482,6 +490,90 @@ async def _network_intel_runner(findings: list, store: DuckDBShadowStore, query:
             await adapter.close()
     except Exception:
         return None
+
+
+async def _net_recon_runner(
+    findings: list,
+    store: DuckDBShadowStore,
+    *,
+    adapter_cls: type,
+    result_bridge: Callable[[str, Any], list | tuple],
+    ioc_types: tuple[str, ...],
+    max_targets: int,
+    ctx: str,
+) -> int | None:
+    """F247B: Delegates to _query_runner in recon mode."""
+    return await _query_runner(
+        findings, store,
+        adapter_cls=adapter_cls,
+        result_bridge=result_bridge,
+        ioc_types=ioc_types,
+        max_targets=max_targets,
+        ctx=ctx,
+    )
+
+
+async def _ioc_query_runner(
+    findings: list,
+    store: DuckDBShadowStore,
+    *,
+    import_path: str,
+    adapter_cls: str,
+    ioc_types: tuple[str, ...],
+    max_targets: int,
+    ctx: str,
+) -> int | None:
+    """F214: Delegates to _query_runner in query mode."""
+    return await _query_runner(
+        findings, store,
+        import_path=import_path,
+        adapter_cls=adapter_cls,
+        ioc_types=ioc_types,
+        max_targets=max_targets,
+        ctx=ctx,
+    )
+
+
+async def _banner_grab_runner(findings: list, store: DuckDBShadowStore, query: str) -> int | None:
+    """F214 banner grabber — TCP banner extraction, RAM-isolated."""
+    from hledac.universal.network import BANNER_GRABBER_AVAILABLE
+    if not BANNER_GRABBER_AVAILABLE:
+        return None
+    return await _ioc_query_runner(
+        findings, store,
+        import_path='hledac.universal.network.banner_grabber',
+        adapter_cls='BannerGrabberAdapter',
+        ioc_types=('ipv4', 'ip'),
+        max_targets=20,
+        ctx='banner_grab',
+    )
+
+async def _ipv6_recon_runner(findings: list, store: DuckDBShadowStore, query: str) -> int | None:
+    """F214 IPv6 reconnaissance — RDAP, WHOIS, DoH AAAA, BGP peer."""
+    from hledac.universal.network import IPV6_RECON_AVAILABLE
+    if not IPV6_RECON_AVAILABLE:
+        return None
+    return await _ioc_query_runner(
+        findings, store,
+        import_path='hledac.universal.network.ipv6_recon',
+        adapter_cls='IPv6ReconAdapter',
+        ioc_types=('domain', 'ipv4', 'ip'),
+        max_targets=20,
+        ctx='ipv6_recon',
+    )
+
+async def _network_intel_runner(findings: list, store: DuckDBShadowStore, query: str) -> int | None:
+    """F247B: Active network reconnaissance via NetworkReconnaissance + bridge."""
+    from hledac.universal.intel.network_reconnaissance import NetworkReconnaissance
+    from hledac.universal.runtime.source_finding_bridge import network_recon_result_to_findings
+    return await _net_recon_runner(
+        findings, store,
+        adapter_cls=NetworkReconnaissance,
+        result_bridge=network_recon_result_to_findings,
+        ioc_types=('domain', 'ipv4', 'ipv6', 'ip'),
+        max_targets=5,
+        ctx='network_intel',
+    )
 
 async def _gopher_crawl_runner(findings: list, store: DuckDBShadowStore, query: str) -> int | None:
     """F216: Gopher archive crawler — crawls seed servers, extracts text, stores findings."""
@@ -622,13 +714,6 @@ class FindingSidecarBus:
             except asyncio.CancelledError:
                 raise
             except BaseException as exc:
-
-                def _is_cancelled_tree(e: BaseException) -> bool:
-                    if isinstance(e, asyncio.CancelledError):
-                        return True
-                    if isinstance(e, ExceptionGroup):
-                        return any((_is_cancelled_tree(s) for s in e.exceptions))
-                    return False
                 if _is_cancelled_tree(exc):
                     raise asyncio.CancelledError() from exc
                 return SidecarRunResult(sidecar_name=name, attempted=True, produced_count=0, stored_count=0, skipped_reason=f'{type(exc).__name__}:{exc}', elapsed_ms=(_time.monotonic() - t0) * 1000)
@@ -649,13 +734,6 @@ class FindingSidecarBus:
                     if isinstance(item, SidecarRunResult):
                         all_results.append(item)
                     elif isinstance(item, BaseException):
-
-                        def _is_cancelled_tree(e: BaseException) -> bool:
-                            if isinstance(e, asyncio.CancelledError):
-                                return True
-                            if isinstance(e, ExceptionGroup):
-                                return any((_is_cancelled_tree(s) for s in e.exceptions))
-                            return False
                         if _is_cancelled_tree(item):
                             raise item
             except asyncio.CancelledError:

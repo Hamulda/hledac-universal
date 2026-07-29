@@ -2,10 +2,8 @@
 
 F350M-R / A2.
 
-Merges three formerly separate systems into one:
-  1. SprintBootstrap (bootstrap.py) — service init + lifecycle
-  2. Injector (scheduler_v2/injector.py) — legacy v1 inject_ compat shims
-  3. sprint_entrypoint_injections — declarative INJECTION_TABLE + apply_injections
+Single home for all bootstrap + declarative injection logic previously
+duplicated across SprintBootstrap, Injector, and entrypoint_injections.
 
 Single responsibility: initialize all services and apply all injections
 for SprintSchedulerV2 before run() begins.
@@ -49,46 +47,10 @@ class _Injection(msgspec.Struct, frozen=True, gc=False):
     order: int = 10
 
 
-def _evidence_log_factory(*, sprint_id: str) -> Any:
-    from hledac.universal.evidence_log import EvidenceLog
-    return EvidenceLog(run_id=sprint_id, enable_persist=True)
-
-
-def _evidence_log_init(
-    elog: Any, sprint_id: str, query: str, duration_s: float, windup_lead_s: float
-) -> None:
-    """Call async initialize() on EvidenceLog and record WARMUP event."""
-    try:
-        # Python 3.12+: get_running_loop() in async context, fallback to new_event_loop() for sync context.
-        # This pattern avoids the deprecated get_event_loop() in Python 3.14+.
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        if loop.is_running():
-            _task = asyncio.create_task(elog.initialize())
-            # Keep strong reference so task isn't GC'd before completion
-            object.__setattr__(elog, "_init_task", _task)
-        else:
-            loop.run_until_complete(elog.initialize())
-    except Exception:
-        pass  # fail-soft
-
-    try:
-        elog.create_event(
-            event_type="observation",
-            payload={
-                "phase": "WARMUP",
-                "sprint_id": sprint_id,
-                "query": query,
-                "duration_s": duration_s,
-                "windup_lead_s": windup_lead_s,
-            },
-            confidence=1.0,
-        )
-    except Exception:
-        pass  # fail-soft
+# EvidenceLog init from shared module (F350M-R)
+from hledac.universal.runtime._shared.evidence_log_shared import (
+    evidence_log_init as _evidence_log_init,
+)
 
 
 def _policy_manager_factory(*, rl_train_mode: bool) -> Any:
@@ -122,13 +84,6 @@ def _security_coordinator_factory() -> Any:
     return UniversalSecurityCoordinator(max_concurrent=3)
 
 
-def _prefetch_oracle_factory() -> Any:
-    from hledac.universal.prefetch.prefetch_oracle_integration import (
-        PrefetchOracleIntegration,
-    )
-    return PrefetchOracleIntegration()
-
-
 def _prefetch_pipeline_factory(*, duckdb_store: Any) -> Any:
     from hledac.universal.layers import get_temporal_signal_layer
     from hledac.universal.prefetch.prefetch_pipeline import (
@@ -152,7 +107,6 @@ def _prefetch_pipeline_factory(*, duckdb_store: Any) -> Any:
 
 
 INJECTIONS: tuple[_Injection, ...] = (
-    _Injection(name="evidence_log", factory=_evidence_log_factory, fail_soft=True, order=0),
     _Injection(name="policy_manager", factory=_policy_manager_factory, fail_soft=False, order=1),
     _Injection(
         name="duckdb_store", factory=_duckdb_store_factory, fail_soft=False, order=1
@@ -186,16 +140,10 @@ INJECTIONS: tuple[_Injection, ...] = (
         order=5,
     ),
     _Injection(
-        name="prefetch_oracle",
-        factory=_prefetch_oracle_factory,
-        fail_soft=True,
-        order=6,
-    ),
-    _Injection(
         name="prefetch_pipeline",
         factory=_prefetch_pipeline_factory,
         fail_soft=True,
-        order=7,
+        order=6,
     ),
 )
 
@@ -373,18 +321,13 @@ class V2Init:
                 continue
 
             factory_kwargs: dict[str, Any] = {}
-            if inj.name == "evidence_log":
-                factory_kwargs["sprint_id"] = sprint_id
-            elif inj.name == "policy_manager":
+            if inj.name == "policy_manager":
                 factory_kwargs["rl_train_mode"] = rl_train_mode
             elif inj.name in ("duckdb_store", "prefetch_pipeline"):
                 factory_kwargs["duckdb_store"] = duckdb_store
 
             try:
                 obj = inj.factory(**factory_kwargs)
-
-                if inj.name == "evidence_log" and obj is not None:
-                    _evidence_log_init(obj, sprint_id, query, sprint_duration_s, windup_lead_s)
 
                 if inj.name == "prefetch_pipeline" and obj is not None:
                     prefetch_pipeline, temporal_predictor = obj
@@ -405,21 +348,15 @@ class V2Init:
                 else:
                     raise
 
-        # Phase 2: oracle wiring
-        _oracle = getattr(self._scheduler, "_prefetch_oracle", None)
-        if _oracle is not None and duckdb_store is not None:
-            try:
-                _oracle.inject_duckdb_store(duckdb_store)
-            except Exception as e:
-                logger.debug("V2Init: oracle duckdb_store wiring failed (fail-soft): %s", e)
-
-            try:
-                from hledac.universal.knowledge.graph_service import _get_graph
-                _ioc_graph = _get_graph()
-                if _ioc_graph is not None:
-                    _oracle.inject_ioc_graph(_ioc_graph)
-            except Exception as e:
-                logger.debug("V2Init: IOC graph injection failed (fail-soft): %s", e)
+        # WARMUP event on EvidenceLog created in _bootstrap
+        _elog_raw = getattr(self._scheduler, "_evidence_log", None)
+        if _elog_raw is not None:
+            _elog = _elog_raw.value if hasattr(_elog_raw, "value") else _elog_raw
+            if _elog is not None:
+                try:
+                    _evidence_log_init(_elog, sprint_id, query, sprint_duration_s, windup_lead_s)
+                except Exception:
+                    pass
 
     # ── Acquisition plan ───────────────────────────────────────────────────────
 

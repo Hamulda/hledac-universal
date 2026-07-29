@@ -549,81 +549,123 @@ class InsightEngine:
 
         return opportunities
 
+    # ------------------------------------------------------------------
+    # S6-REFACTOR: Generic converter — eliminates 6× duplicate boilerplate.
+    # Each converter returns (content, novelty, importance, tags, extra_kwargs)
+    # where extra_kwargs may include 'evidence'.
+    # Filter semantics: return True to include item.
+    # confidence_fn: if provided, overrides item.confidence (callable or constant float).
+    # ------------------------------------------------------------------
+    def _items_to_insights(
+        self,
+        items: list[Any],
+        type_name: str,
+        content_fn: Any,  # callable[item] -> str
+        novelty_fn: Any,  # callable[item] -> float
+        importance_fn: Any,  # callable[item] -> float
+        tags_fn: Any,  # callable[item] -> list[str]
+        filter_fn: Any = None,  # callable[item] -> bool (None = include all)
+        confidence_fn: Any = None,  # callable[item] -> float OR constant float (None = item.confidence)
+        extra_kwargs_fn: Any = None,  # callable[item] -> dict (merged into Insight kwargs)
+    ) -> list[Insight]:
+        """
+        Generic list-to-insights converter.
+
+        Eliminates the boilerplate pattern across _patterns_to_insights,
+        _anomalies_to_insights, _contradictions_to_insights, _gaps_to_insights,
+        _hypotheses_to_insights, and _causal_to_insights.
+        """
+        if filter_fn is None:
+            filter_fn = lambda _: True
+        if extra_kwargs_fn is None:
+            extra_kwargs_fn = lambda _: {}
+
+        results: list[Insight] = []
+        for item in items:
+            if not filter_fn(item):
+                continue
+            # confidence_fn: constant float OR callable(item) -> float, else item.confidence
+            if confidence_fn is not None:
+                confidence = confidence_fn(item) if callable(confidence_fn) else confidence_fn
+            else:
+                confidence = getattr(item, "confidence", 1.0)
+            results.append(
+                Insight(
+                    insight_id=self._next_insight_id(),
+                    type=type_name,
+                    content=content_fn(item),
+                    confidence=confidence,
+                    novelty_score=novelty_fn(item),
+                    importance_score=importance_fn(item),
+                    tags=tags_fn(item),
+                    **extra_kwargs_fn(item),
+                )
+            )
+        return results
+
     def _patterns_to_insights(self, patterns: list[Pattern]) -> list[Insight]:
         """Convert patterns to insights."""
-        return [
-            Insight(
-                insight_id=self._next_insight_id(),
-                type="pattern",
-                content=f"Pattern detected: {p.description}",
-                confidence=p.confidence,
-                novelty_score=0.5,
-                importance_score=0.6,
-                tags=["pattern", p.pattern_type]
-            )
-            for p in patterns if p.confidence >= self.min_confidence
-        ]
+        return self._items_to_insights(
+            patterns,
+            type_name="pattern",
+            content_fn=lambda p: f"Pattern detected: {p.description}",
+            novelty_fn=lambda _: 0.5,
+            importance_fn=lambda _: 0.6,
+            tags_fn=lambda p: ["pattern", p.pattern_type],
+            filter_fn=lambda p: p.confidence >= self.min_confidence,
+        )
 
     def _anomalies_to_insights(self, anomalies: list[Anomaly]) -> list[Insight]:
         """Convert anomalies to insights."""
-        return [
-            Insight(
-                insight_id=self._next_insight_id(),
-                type="anomaly",
-                content=f"Anomaly: {a.description}. Implications: {a.implications}",
-                confidence=0.7,
-                novelty_score=min(1.0, a.severity + 0.3),
-                importance_score=a.severity,
-                tags=["anomaly", a.anomaly_type]
-            )
-            for a in anomalies if a.severity > 0.5
-        ]
+        return self._items_to_insights(
+            anomalies,
+            type_name="anomaly",
+            content_fn=lambda a: f"Anomaly: {a.description}. Implications: {a.implications}",
+            novelty_fn=lambda a: min(1.0, a.severity + 0.3),
+            importance_fn=lambda a: a.severity,
+            tags_fn=lambda a: ["anomaly", a.anomaly_type],
+            filter_fn=lambda a: a.severity > 0.5,
+            confidence_fn=0.7,
+        )
 
     def _contradictions_to_insights(self, contradictions: list[Contradiction]) -> list[Insight]:
         """Convert contradictions to insights."""
-        return [
-            Insight(
-                insight_id=self._next_insight_id(),
-                type="contradiction",
-                content=f"Contradiction found: '{c.statement_a}' vs '{c.statement_b}'",
-                confidence=c.severity,
-                novelty_score=0.8,
-                importance_score=c.severity,
-                tags=["contradiction"]
-            )
-            for c in contradictions
-        ]
+        return self._items_to_insights(
+            contradictions,
+            type_name="contradiction",
+            content_fn=lambda c: f"Contradiction found: '{c.statement_a}' vs '{c.statement_b}'",
+            novelty_fn=lambda _: 0.8,
+            importance_fn=lambda c: c.severity,
+            tags_fn=lambda _: ["contradiction"],
+            filter_fn=None,
+            confidence_fn=lambda c: c.severity,
+        )
 
     def _gaps_to_insights(self, gaps: list[Gap]) -> list[Insight]:
         """Convert gaps to insights."""
-        return [
-            Insight(
-                insight_id=self._next_insight_id(),
-                type="gap",
-                content=f"Knowledge gap in {g.area}: {g.description}",
-                confidence=0.75,
-                novelty_score=0.6,
-                importance_score=g.importance,
-                tags=["gap", g.area]
-            )
-            for g in gaps
-        ]
+        return self._items_to_insights(
+            gaps,
+            type_name="gap",
+            content_fn=lambda g: f"Knowledge gap in {g.area}: {g.description}",
+            novelty_fn=lambda _: 0.6,
+            importance_fn=lambda g: g.importance,
+            tags_fn=lambda g: ["gap", g.area],
+            filter_fn=None,
+            confidence_fn=0.75,
+        )
 
     def _hypotheses_to_insights(self, hypotheses: list[Hypothesis]) -> list[Insight]:
         """Convert hypotheses to insights."""
-        return [
-            Insight(
-                insight_id=self._next_insight_id(),
-                type="hypothesis",
-                content=f"Hypothesis: {h.hypothesis}",
-                confidence=h.confidence,
-                novelty_score=0.7,
-                importance_score=0.75,
-                evidence=h.supporting_evidence,
-                tags=["hypothesis"]
-            )
-            for h in hypotheses
-        ]
+        return self._items_to_insights(
+            hypotheses,
+            type_name="hypothesis",
+            content_fn=lambda h: f"Hypothesis: {h.hypothesis}",
+            novelty_fn=lambda _: 0.7,
+            importance_fn=lambda _: 0.75,
+            tags_fn=lambda _: ["hypothesis"],
+            filter_fn=None,
+            extra_kwargs_fn=lambda h: {"evidence": h.supporting_evidence},
+        )
 
     def _rank_insights(self, insights: list[Insight]) -> list[Insight]:
         """Rank insights by composite score."""
@@ -775,19 +817,16 @@ class InsightEngine:
         causal_relationships: list[CausalRelationship]
     ) -> list[Insight]:
         """Convert causal relationships to insights."""
-        return [
-            Insight(
-                insight_id=self._next_insight_id(),
-                type="causal_relationship",
-                content=f"Causal relationship: {c.cause} → {c.effect} (strength: {c.strength:.2f})",
-                confidence=c.confidence,
-                novelty_score=0.7,
-                importance_score=c.strength,
-                evidence=c.evidence,
-                tags=["causal", "relationship"]
-            )
-            for c in causal_relationships if c.confidence >= self.min_confidence
-        ]
+        return self._items_to_insights(
+            causal_relationships,
+            type_name="causal_relationship",
+            content_fn=lambda c: f"Causal relationship: {c.cause} → {c.effect} (strength: {c.strength:.2f})",
+            novelty_fn=lambda _: 0.7,
+            importance_fn=lambda c: c.strength,
+            tags_fn=lambda _: ["causal", "relationship"],
+            filter_fn=lambda c: c.confidence >= self.min_confidence,
+            extra_kwargs_fn=lambda c: {"evidence": c.evidence},
+        )
 
     # =============================================================================
     # MULTI-LEVEL SYNTHESIS (from multi_level_synthesis.py comments)

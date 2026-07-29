@@ -669,6 +669,10 @@ class ModelManager:
             del self._loaded_models[model_type]
         if self._current_model == model_type:
             self._current_model = None
+        await self._unload_model_with_verification(model, model_type, model_name, rss_before_unload)
+
+    async def _unload_model_with_verification(self, model: Any, model_type: ModelType, model_name: str, rss_before_unload: float) -> None:
+        """Shared helper: unload model + verify RSS delta."""
         if model is not None and hasattr(model, 'unload'):
             logger.info(f'[MODEL RELEASE] {model_name} start')
             try:
@@ -707,25 +711,8 @@ class ModelManager:
             del self._loaded_models[model_type]
         if self._current_model == model_type:
             self._current_model = None
-        if model is not None and hasattr(model, 'unload'):
-            logger.info(f'[MODEL RELEASE] {model_name} start')
-            try:
-                unload_coro = model.unload() if inspect.iscoroutinefunction(model.unload) else asyncio.to_thread(model.unload)
-                timeout_s = _load_unload_timeout()
-                try:
-                    async with asyncio.timeout(timeout_s):
-                        await unload_coro
-                except asyncio.CancelledError:
-                    raise
-                except TimeoutError:
-                    logger.warning('[P1E-B] Model unload timed out after %.1fs for %s — continuing shutdown', timeout_s, model_name)
-                except Exception as e:
-                    logger.error(f'Failed to release model {model_name}: {e}')
-                else:
-                    logger.info(f'[MODEL RELEASE] {model_name} done')
-            finally:
-                await self._cleanup_memory_async(model_type, engine=model)
-        _verify_rss_after_unload(model_name.lower(), rss_before_unload)
+        await self._unload_model_with_verification(model, model_type, model_name, rss_before_unload)
+        await adjust_fetch_workers(25)
 
     async def _cleanup_memory_async(self, model_type: ModelType | None=None, engine: Any | None=None) -> None:
         """Agresivní async čištění paměti po uvolnění modelu.

@@ -40,30 +40,70 @@ ACQUISITION_REPORT_SCHEMA_VERSION = "f208.v1"
 
 # ── Query helpers ─────────────────────────────────────────────────────────────────
 
+# Pre-compiled regex patterns for performance (avoid re-compilation on every call)
+_IP_EXACT_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+_IP_FINDALL_RE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
+_DOMAIN_RE = re.compile(
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$",
+    re.IGNORECASE,
+)
+# Crypto extraction: wallet + generic hash patterns
+_CRYPTO_WALLET_RE = re.compile(
+    r"\b(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b"
+)
+_CRYPTO_HASH_RE = re.compile(r"\b[a-fA-F0-9]{64}\b")
+# Source family name aliases (module-level constant — avoids dict allocation per call)
+_SOURCE_FAMILY_ALIASES: dict[str, str] = {
+    "FEED": "FEED",
+    "PUBLIC": "PUBLIC",
+    "CT": "CT",
+    "WAYBACK": "WAYBACK",
+    "PASSIVE_DNS": "PASSIVE_DNS",
+    "DNS": "PASSIVE_DNS",
+    "BLOCKCHAIN": "BLOCKCHAIN",
+    "STEALTH": "STEALTH",
+    "PIVOT_EXECUTOR": "PIVOT_EXECUTOR",
+    "PIVOT": "PIVOT_EXECUTOR",
+    "ACADEMIC": "ACADEMIC",
+    "IPFS": "IPFS",
+    "DOH": "DOH",
+    "OPEN_SOURCE": "OPEN_SOURCE",
+    "SHODAN": "SHODAN",
+    "CENSYS": "CENSYS",
+    "GREYNOISE": "GREYNOISE",
+}
+# Terminal state priority (module-level constant — avoids dict allocation per call)
+_TERMINAL_STATE_PRIORITY: dict[str, int] = {
+    "COMPLETE": 0,
+    "COMPLETE_ZERO": 1,
+    "FETCH_ZERO_SUCCESS": 2,
+    "QUALITY_REJECTED": 3,
+    "PROVIDER_ERROR": 4,
+    "DISCOVERY_ERROR": 5,
+    "TIMEOUT": 6,
+    "SKIPPED": 7,
+}
+
 
 def _looks_like_ip(s: str) -> bool:
     """Return True if s looks like an IP address."""
     if not s:
         return False
-    return bool(re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", s))
+    return bool(_IP_EXACT_RE.match(s))
 
 
 def _looks_like_domain(value: str) -> bool:
     """Return True if value looks like a domain name."""
     if not value or len(value) > 253:
         return False
-    _domain_re = re.compile(
-        r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$",
-        re.IGNORECASE,
-    )
-    return bool(_domain_re.match(value.strip()))
+    return bool(_DOMAIN_RE.match(value.strip()))
 
 
 def _extract_ips_from_query(query: str) -> list[str]:
     """Extract IP addresses from query string."""
     if not query:
         return []
-    return re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", query)
+    return _IP_FINDALL_RE.findall(query)
 
 
 def _extract_crypto_from_query(query: str) -> list[str]:
@@ -71,15 +111,8 @@ def _extract_crypto_from_query(query: str) -> list[str]:
     if not query:
         return []
     results: list[str] = []
-    # Wallet patterns
-    wallets = re.findall(
-        r"\b(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b|0x[a-fA-F0-9]{40}\b",
-        query,
-    )
-    results.extend(wallets)
-    # Generic crypto hash
-    hashes = re.findall(r"\b[a-fA-F0-9]{64}\b", query)
-    results.extend(hashes)
+    results.extend(_CRYPTO_WALLET_RE.findall(query))
+    results.extend(_CRYPTO_HASH_RE.findall(query))
     return results
 
 
@@ -202,7 +235,7 @@ def _build_plan_impl(
     """
     # Query indicators
     has_domain = _has_domain_or_ip(query)
-    has_ip = bool(re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", query))
+    has_ip = bool(_IP_FINDALL_RE.search(query))
     has_url = _has_url(query)
     has_crypto = _has_crypto_indicator(query)
     has_threat = _has_threat_indicator(query)
@@ -466,48 +499,17 @@ def normalize_source_family_name(value: str) -> str:
     """
     if not value:
         return "UNKNOWN"
-    # Uppercase and strip
     normalized = value.upper().strip()
-    # Known aliases
-    aliases = {
-        "FEED": "FEED",
-        "PUBLIC": "PUBLIC",
-        "CT": "CT",
-        "WAYBACK": "WAYBACK",
-        "PASSIVE_DNS": "PASSIVE_DNS",
-        "DNS": "PASSIVE_DNS",
-        "BLOCKCHAIN": "BLOCKCHAIN",
-        "STEALTH": "STEALTH",
-        "PIVOT_EXECUTOR": "PIVOT_EXECUTOR",
-        "PIVOT": "PIVOT_EXECUTOR",
-        "ACADEMIC": "ACADEMIC",
-        "IPFS": "IPFS",
-        "DOH": "DOH",
-        "OPEN_SOURCE": "OPEN_SOURCE",
-        "SHODAN": "SHODAN",
-        "CENSYS": "CENSYS",
-        "GREYNOISE": "GREYNOISE",
-    }
-    return aliases.get(normalized, "UNKNOWN")
+    return _SOURCE_FAMILY_ALIASES.get(normalized, "UNKNOWN")
 
 
 def _pick_best_terminal(outcomes: list[dict]) -> str:
     """Pick the best terminal state from a list of outcomes."""
-    priority = {
-        "COMPLETE": 0,
-        "COMPLETE_ZERO": 1,
-        "FETCH_ZERO_SUCCESS": 2,
-        "QUALITY_REJECTED": 3,
-        "PROVIDER_ERROR": 4,
-        "DISCOVERY_ERROR": 5,
-        "TIMEOUT": 6,
-        "SKIPPED": 7,
-    }
     best = "UNKNOWN"
     best_prio = 99
     for outcome in outcomes:
         ts = outcome.get("terminal_state", "UNKNOWN")
-        prio = priority.get(ts, 99)
+        prio = _TERMINAL_STATE_PRIORITY.get(ts, 99)
         if prio < best_prio:
             best_prio = prio
             best = ts
