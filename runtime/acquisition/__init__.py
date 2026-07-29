@@ -5,7 +5,7 @@ SPLIT STRUCTURE (Issue #18):
   threat_dictionary.py  — _THREAT_DICTIONARY + lookup_threat_entity()
   domain_expansion.py  — DOMAIN_EXPANSIONS + _expand_keyword_query + _get_keyword_domain_expansion()
   profile.py           — AcquisitionProfile, normalize_acquisition_profile(), is_academic_profile(), is_mission_profile()
-  cid_detection.py     — _CIDV0_RE, _CIDV1_BASE32_RE, _has_explicit_cid(), _extract_cids_from_text()
+  cid_detection.py     — _CIDV0_RE, _CIDV1_BASE32_RE, _has_explicit_ipfs_cid(), _extract_cids_from_text()
   budget.py            — FeedDominanceBudget, cap_feeding(), feed_budget_to_dict()
   mission.py           — NonfeedMissionController, MissionIntent, MissionTargetKind, infer_mission_intent()
   lane_constants.py    — AcquisitionLane, RiskLevel, TERMINAL_STATES, NON_TERMINAL_STATES
@@ -47,7 +47,7 @@ from hledac.universal.runtime.acquisition.profile import (
 
 # ── CID detection ──────────────────────────────────────────────────────────
 from hledac.universal.runtime.acquisition.cid_detection import (
-    _has_explicit_cid,
+    _has_explicit_ipfs_cid,
     _extract_cids_from_text,
     _CIDV0_RE,
     _CIDV1_BASE32_RE,
@@ -145,7 +145,7 @@ __all__ = [
     "is_deep_osint_m1_profile",
     "is_mission_profile",
     # cid_detection
-    "_has_explicit_cid",
+    "_has_explicit_ipfs_cid",
     "_extract_cids_from_text",
     "_CIDV0_RE",
     "_CIDV1_BASE32_RE",

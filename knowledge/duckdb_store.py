@@ -1397,32 +1397,11 @@ from .duckdb_wal_manager import DuckDBWALManager
 
 logger = logging.getLogger(__name__)
 
+# Sprint F360: DTO types deduplicated — single source of truth is
+# knowledge/sprint_facts/canonical_finding.py. Backward-compat aliases here.
+from .sprint_facts.canonical_finding import ActivationResult, CanonicalFinding
 
-class ActivationResult(msgspec.Struct, gc=False):
-    """
-    Sprint F300: msgspec.Struct for activation record operations.
-    F350M-R: gc=False for M1 8GB.
-
-    Fields:
-        finding_id:     Unique identifier of the finding
-        lmdb_success:   True if LMDB WAL write succeeded
-        duckdb_success: True if DuckDB write succeeded, False if it failed,
-                        None if not yet attempted
-        lmdb_key:       "finding:{id}" - LMDB key used
-        desync:         True if LMDB OK but DuckDB FAIL (WAL-DuckDB desync)
-        error:          Error message if there was an exception, None otherwise
-        accepted:       True when finding passed quality gate and was stored
-    """
-
-    finding_id: str
-    lmdb_success: bool | list[bool]
-    duckdb_success: bool | None
-    lmdb_key: str
-    desync: bool
-    error: str | None
-    accepted: bool = False
-
-
+# ReplayResult is NOT in canonical_finding.py — keep it here only.
 class ReplayResult(msgspec.Struct, gc=False):
     """
     Sprint F300: msgspec.Struct for pending-sync replay operations.
@@ -1450,57 +1429,8 @@ class ReplayResult(msgspec.Struct, gc=False):
     retry_count: int
     error: str | None
 
-
-class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
-    """
-    Sprint 8P: Canonical internal finding DTO.
-
-    Minimální povinná pole:
-      - finding_id: str       - unique identifier
-      - query: str             - research query text
-      - source_type: str       - source type (e.g., "web", "document", "synthetic")
-      - confidence: float       - confidence score [0.0, 1.0]
-      - ts: float              - Unix timestamp
-      - provenance: tuple[str, ...] - tvrdý invariant, nesmí být None, default = ()
-
-    Volitelná pole:
-      - payload_text: str | None - supplementary text payload
-
-    DTO invariants:
-      - frozen=True  - immutabilní instance
-      - gc=False  - F350M-R: zakázán garbage collector tracking, kritické pro 8GB M1
-      - msgspec.Struct - zero-copy decode/encode
-
-    NOTE 8Q/8R: CanonicalFinding je používán napříč celým projektem jako univerzální
-        typ pro všechny findingy. Přesun do sdíleného DTO modulu by vyžadoval
-        extra import cyklus break (storage → DTO → callers). Aktuálně jeadržován
-        in-process přes async_ingest_findings_batch(), což je dostatečné.
-    """
-
-    finding_id: str
-    query: str
-    source_type: str
-    confidence: float
-    ts: float
-    provenance: tuple[str, ...] = ()
-    payload_text: str | None = None
-
-    @classmethod
-    def dynamic_schema(cls) -> dict:
-        """
-        Issue 4.3: Dynamic schema via msgspec.json.schema().
-
-        Replaces SCHEMA_VERSION constants. At startup, validates that in-memory
-        CanonicalFinding shape matches the persisted DuckDB table schema.
-
-        Returns JSON schema dict for runtime validation.
-        """
-        return msgspec.json.schema(cls)
-
-
+# CanonicalFinding imported above from .sprint_facts.canonical_finding
 from ._quality_types import FindingQualityDecision
-
-
 from ._query_cache import _DuckDBQueryCache
 
 _query_cache: _DuckDBQueryCache | None = None
@@ -2422,134 +2352,183 @@ class DuckDBShadowStore:
         self._duckdb_settings = runtime
         resolved_memory = runtime["memory_limit"]
         resolved_threads = runtime["threads"]
-        runtime["preserve_insertion_order"]
-        runtime["safe_mode"]
-        if self._db_path and str(self._db_path) != ":memory:":
-            _lock_mode, _lock_msg = self._acquire_process_lock()
-            if _lock_mode == "excl":
-                logger.debug(f"[duckdb_init] Exclusive lock acquired: {_lock_msg}")
-                _read_only_flag = False
-            elif _lock_mode == "ro":
-                logger.warning(f"[duckdb_init] {_lock_msg} — operating in READ-ONLY mode")
-                _read_only_flag = True
-            else:
-                logger.warning(f"[duckdb_init] {_lock_msg} — falling back to :memory: mode")
-                self._db_path = None
-                _read_only_flag = False
-        else:
-            _read_only_flag = False
-        if self._db_path:
-            _is_memory_mode = str(self._db_path) == ":memory:"
-            if not _is_memory_mode:
-                if self._temp_dir is None:
-                    self._temp_dir = self._db_path.expanduser().parent / "duckdb_tmp"
-                self._temp_dir.mkdir(parents=True, exist_ok=True)
-            setup_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
-            try:
-                self._configure_connection(setup_conn, runtime, is_read_only=_read_only_flag)
-                if not _read_only_flag:
-                    _apply_schema(setup_conn, _SCHEMA_SQL)
-                    # P0-8: Run versioned migrations after init schema.
-                    # Bootstrap: if schema_version table is missing but other tables
-                    # exist (legacy DB from inline _SCHEMA_SQL era), version 1 is
-                    # treated as already applied so init schema is not re-run.
-                    # Invalidate query cache after migration: if _query_cache was
-                    # already initialized by a prior _init_connection call (reused store),
-                    # cached results from the old schema must be discarded.
-                    SchemaMigrator(setup_conn).migrate()
-                    # 7B fix: invalidate prepared statement cache after DDL migration.
-                    # The cached _stmt_insert_finding holds a parsed SQL AST from the old
-                    # schema — after ALTER/CREATE it is stale and must be re-prepared.
-                    qe = self._qe()
-                    if qe is not None:
-                        qe._invalidate_insert_stmt()
-                    if self._query_cache is not None:
-                        self._query_cache.invalidate()
-            finally:
-                if setup_conn is not None:
-                    try:
-                        setup_conn.close()
-                    except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                        pass
-            self._file_conn = duckdb.connect(str(self._db_path), read_only=_read_only_flag)
-            if instrument_duckdb_connection:
-                self._file_conn = instrument_duckdb_connection(self._file_conn)
-            try:
-                self._configure_connection(self._file_conn, runtime, is_read_only=_read_only_flag)
-                try:
-                    self._file_conn.execute("SET preserve_insertion_order = false")
-                except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                    logger.debug(f"[DUCKDB] preserve_insertion_order config failed: {e}")
-                self._file_conn.execute("PRAGMA force_checkpoint")
-            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                self._file_conn.close()
-                raise
-            self._read_pool = []
-            self._read_pool_idx = 0
-            for i in range(3):
-                try:
-                    read_conn = duckdb.connect(str(self._db_path), read_only=True)
-                    if instrument_duckdb_connection:
-                        read_conn = instrument_duckdb_connection(read_conn)
-                    self._configure_connection(read_conn, runtime, is_read_only=True)
-                    read_conn.execute("SET preserve_insertion_order = false")
-                    self._read_pool.append(read_conn)
-                except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                    logger.debug(f"[DUCKDB] read pool connection {i} failed: {e}")
-                    break
-        else:
-            _conn = duckdb.connect(":memory:")
-            try:
-                memory_limit_val = _validate_duckdb_setting(str(resolved_memory), "memory_limit")
-                _conn.execute("SET memory_limit = ?", [memory_limit_val])
-                # ISSUE-35: hard_memory_limit ceiling — DuckDB cannot exceed 1GB on M1 8GB.
-                # DuckDB >= 1.2 replaced hard_memory_limit PRAGMA with SET memory_limit;
-                # fail-soft so newer versions still initialize correctly.
-                try:
-                    _conn.execute("PRAGMA hard_memory_limit = ?", [_DUCKDB_HARD_MEMORY_LIMIT])
-                except Exception:  # noqa: BLE001 — fail-soft; DuckDB version compatibility; non-critical
-                    logger.debug(f"[DUCKDB] hard_memory_limit PRAGMA not available, skipping")
-                if _DUCKDB_RAMDISK_TEMP:
-                    temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), "temp_directory")
-                    _conn.execute("SET temp_directory = ?", [temp_dir_val])
-                    _conn.execute("SET max_temp_directory_size = '4GB'")
-                else:
-                    _conn.execute("SET max_temp_directory_size = '0GB'")
-                _conn.execute("PRAGMA threads = ?", [_validate_duckdb_threads(resolved_threads)])
-                _conn.execute("PRAGMA enable_progress_bar=false")
-                _conn.execute("PRAGMA enable_object_cache=false")
-                try:
-                    _conn.execute(
-                        "SET allocator_flush_threshold = ?", [str(runtime.get("allocator_flush_threshold", "64MiB"))]
-                    )
-                    _conn.execute(
-                        "SET allocator_bulk_deallocation_flush_threshold = ?",
-                        [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))],
-                    )
-                    _conn.execute(
-                        "SET enable_fsst_vectors = ?", [str(runtime.get("enable_fsst_vectors", "true")).lower()]
-                    )
-                except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                    logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
-                try:
-                    _conn.execute("SET preserve_insertion_order = false")
-                except (OSError, RuntimeError) as e:
-                    logger.debug(f"[DUCKDB] preserve_insertion_order tuning failed: {e}")
-                _apply_schema(_conn, _SCHEMA_SQL)
-                self._persistent_conn = _conn
-            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                _conn.close()
-                raise
-            if self._query_cache is None and self._db_path is not None:
-                from hledac.universal.paths import LMDB_ROOT
 
-                _cache_lmdb_path = LMDB_ROOT / "duckdb_query_cache.lmdb"
-                self._query_cache = _DuckDBQueryCache(
-                    _cache_lmdb_path,
-                    max_l1=_DUCKDB_QUERY_CACHE_L1_MAX,
-                    max_l2=_DUCKDB_QUERY_CACHE_L2_MAX,
-                    ttl_s=_DUCKDB_QUERY_CACHE_TTL_S,
-                )
+        # Determine lock mode for file-based DB
+        _read_only_flag = self._resolve_lock_mode()
+
+        # Early return: no database path means :memory: mode
+        if not self._db_path:
+            self._init_memory_mode(duckdb, runtime, resolved_memory, resolved_threads)
+            return
+
+        # File mode initialization
+        self._init_file_mode(duckdb, runtime, resolved_threads, _read_only_flag)
+
+    def _resolve_lock_mode(self) -> bool:
+        """Resolve process lock and return read_only flag. Early return if falling back to memory."""
+        if not self._db_path or str(self._db_path) == ":memory:":
+            return False
+        _lock_mode, _lock_msg = self._acquire_process_lock()
+        if _lock_mode == "excl":
+            logger.debug(f"[duckdb_init] Exclusive lock acquired: {_lock_msg}")
+            return False
+        if _lock_mode == "ro":
+            logger.warning(f"[duckdb_init] {_lock_msg} — operating in READ-ONLY mode")
+            return True
+        logger.warning(f"[duckdb_init] {_lock_msg} — falling back to :memory: mode")
+        self._db_path = None
+        return False
+
+    def _init_file_mode(self, duckdb, runtime, resolved_threads: int, read_only: bool) -> None:
+        """Initialize file-based DuckDB connection with schema and read pool."""
+        is_memory_mode = str(self._db_path) == ":memory:"
+        if not is_memory_mode:
+            self._setup_temp_dir()
+        self._create_schema_and_migrate(duckdb, runtime, read_only)
+        self._create_file_connection(duckdb, runtime, read_only)
+        self._create_read_pool(duckdb, runtime)
+
+    def _setup_temp_dir(self) -> None:
+        """Ensure temp directory exists for file-based DuckDB."""
+        if self._temp_dir is None:
+            self._temp_dir = self._db_path.expanduser().parent / "duckdb_tmp"
+        self._temp_dir.mkdir(parents=True, exist_ok=True)
+
+    def _create_schema_and_migrate(self, duckdb, runtime, read_only: bool) -> None:
+        """Create schema and run migrations on setup connection, then close it."""
+        setup_conn = duckdb.connect(str(self._db_path), read_only=read_only)
+        try:
+            self._configure_connection(setup_conn, runtime, is_read_only=read_only)
+            if not read_only:
+                _apply_schema(setup_conn, _SCHEMA_SQL)
+                self._run_post_schema_migrations()
+        finally:
+            self._safe_close(setup_conn)
+
+    def _run_post_schema_migrations(self) -> None:
+        """Run versioned migrations after schema init and invalidate caches."""
+        SchemaMigrator(_get_connection()).migrate()
+        qe = self._qe()
+        if qe is not None:
+            qe._invalidate_insert_stmt()
+        if self._query_cache is not None:
+            self._query_cache.invalidate()
+
+    def _create_file_connection(self, duckdb, runtime, read_only: bool) -> None:
+        """Create and configure the main file connection."""
+        self._file_conn = duckdb.connect(str(self._db_path), read_only=read_only)
+        if instrument_duckdb_connection:
+            self._file_conn = instrument_duckdb_connection(self._file_conn)
+        self._configure_file_connections(runtime)
+
+    def _configure_file_connections(self, runtime) -> None:
+        """Configure file connection with PRAGMAs and checkpoint."""
+        try:
+            self._configure_connection(self._file_conn, runtime, is_read_only=False)
+            self._set_preserve_insertion_order(self._file_conn)
+            self._file_conn.execute("PRAGMA force_checkpoint")
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+            self._file_conn.close()
+            raise
+
+    def _set_preserve_insertion_order(self, conn) -> None:
+        """Set preserve_insertion_order=false with best-effort error handling."""
+        try:
+            conn.execute("SET preserve_insertion_order = false")
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+            logger.debug(f"[DUCKDB] preserve_insertion_order config failed: {e}")
+
+    def _create_read_pool(self, duckdb, runtime) -> None:
+        """Create read connection pool (3 read-only connections)."""
+        self._read_pool = []
+        self._read_pool_idx = 0
+        for i in range(3):
+            if not self._add_read_pool_connection(duckdb, runtime, i):
+                break
+
+    def _add_read_pool_connection(self, duckdb, runtime, index: int) -> bool:
+        """Add a single read-only connection to the read pool. Returns True on success."""
+        try:
+            read_conn = duckdb.connect(str(self._db_path), read_only=True)
+            if instrument_duckdb_connection:
+                read_conn = instrument_duckdb_connection(read_conn)
+            self._configure_connection(read_conn, runtime, is_read_only=True)
+            read_conn.execute("SET preserve_insertion_order = false")
+            self._read_pool.append(read_conn)
+            return True
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+            logger.debug(f"[DUCKDB] read pool connection {index} failed: {e}")
+            return False
+
+    def _init_memory_mode(self, duckdb, runtime, resolved_memory: str, resolved_threads: int) -> None:
+        """Initialize :memory: DuckDB connection with full configuration."""
+        _conn = duckdb.connect(":memory:")
+        try:
+            self._configure_memory_connection(_conn, runtime, resolved_memory, resolved_threads)
+            _apply_schema(_conn, _SCHEMA_SQL)
+            self._persistent_conn = _conn
+            self._init_query_cache_if_needed()
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+            _conn.close()
+            raise
+
+    def _configure_memory_connection(self, conn, runtime, resolved_memory: str, resolved_threads: int) -> None:
+        """Apply all configuration settings to an in-memory connection."""
+        memory_limit_val = _validate_duckdb_setting(str(resolved_memory), "memory_limit")
+        conn.execute("SET memory_limit = ?", [memory_limit_val])
+        self._apply_hard_memory_limit(conn)
+        self._apply_temp_directory_settings(conn)
+        conn.execute("PRAGMA threads = ?", [_validate_duckdb_threads(resolved_threads)])
+        conn.execute("PRAGMA enable_progress_bar=false")
+        conn.execute("PRAGMA enable_object_cache=false")
+        self._apply_allocator_tuning(conn, runtime)
+        self._set_preserve_insertion_order(conn)
+
+    def _apply_hard_memory_limit(self, conn) -> None:
+        """Apply hard_memory_limit ceiling (M1 8GB: 1GB max). Fail-soft on version compatibility."""
+        try:
+            conn.execute("PRAGMA hard_memory_limit = ?", [_DUCKDB_HARD_MEMORY_LIMIT])
+        except Exception:  # noqa: BLE001 — fail-soft; DuckDB version compatibility; non-critical
+            logger.debug(f"[DUCKDB] hard_memory_limit PRAGMA not available, skipping")
+
+    def _apply_temp_directory_settings(self, conn) -> None:
+        """Configure temp directory for in-memory mode (ramdisk or disabled)."""
+        if _DUCKDB_RAMDISK_TEMP:
+            temp_dir_val = _validate_path_setting(Path(_DUCKDB_RAMDISK_TEMP), "temp_directory")
+            conn.execute("SET temp_directory = ?", [temp_dir_val])
+            conn.execute("SET max_temp_directory_size = '4GB'")
+        else:
+            conn.execute("SET max_temp_directory_size = '0GB'")
+
+    def _apply_allocator_tuning(self, conn, runtime) -> None:
+        """Apply allocator and columnar store tuning settings."""
+        try:
+            conn.execute("SET allocator_flush_threshold = ?", [str(runtime.get("allocator_flush_threshold", "64MiB"))])
+            conn.execute("SET allocator_bulk_deallocation_flush_threshold = ?",
+                         [str(runtime.get("allocator_bulk_dealloc_threshold", "256MiB"))])
+            conn.execute("SET enable_fsst_vectors = ?", [str(runtime.get("enable_fsst_vectors", "true")).lower()])
+        except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+            logger.debug(f"[DUCKDB] columnar/allocator tuning failed: {e}")
+
+    def _init_query_cache_if_needed(self) -> None:
+        """Initialize LMDB-backed query cache if path is available."""
+        if self._query_cache is None and self._db_path is not None:
+            from hledac.universal.paths import LMDB_ROOT
+            _cache_lmdb_path = LMDB_ROOT / "duckdb_query_cache.lmdb"
+            self._query_cache = _DuckDBQueryCache(
+                _cache_lmdb_path,
+                max_l1=_DUCKDB_QUERY_CACHE_L1_MAX,
+                max_l2=_DUCKDB_QUERY_CACHE_L2_MAX,
+                ttl_s=_DUCKDB_QUERY_CACHE_TTL_S,
+            )
+
+    def _safe_close(self, conn) -> None:
+        """Safely close a connection with best-effort error handling."""
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+                pass
 
     def _apply_schema_migrations(self) -> None:
         """
@@ -3907,6 +3886,113 @@ class DuckDBShadowStore:
                 pass
             self._wal_manager = None
 
+    # ------------------------------------------------------------------ //
+    # Cleanup helpers — isolate try/except per cleanup concern
+    # ------------------------------------------------------------------ //
+
+    def _safe_cleanup(self, operation: str, fn: callable, *args, **kwargs) -> None:
+        """Fail-safe cleanup wrapper — swallows all exceptions non-critically.
+
+        Centralizes the 15+ duplicate BLE001 except blocks that existed in
+        _do_sync_close. Each cleanup operation gets its own helper below.
+        """
+        try:
+            fn(*args, **kwargs)
+        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
+            pass
+
+    def _cleanup_finalizer(self) -> None:
+        if self._finalizer is not None:
+            self._safe_cleanup("finalizer.detach", self._finalizer.detach)
+            self._finalizer = None
+
+    def _cleanup_startup_flags(self) -> None:
+        self._safe_cleanup("startup_flags.clear", self._startup_ready.clear)
+        self._startup_replay_done = False
+
+    def _cleanup_executor_submit(self) -> None:
+        self._safe_cleanup(
+            "executor.submit(sync_close_on_worker)",
+            lambda: self._executor.submit(self._sync_close_on_worker).result(timeout=5),
+        )
+
+    def _cleanup_truth_graph(self) -> None:
+        gs = getattr(self, "_graph_attachment", None)
+        if gs is None:
+            return
+        truth_graph = getattr(gs, "_truth_write_graph", None)
+        if truth_graph is not None:
+            self._safe_cleanup(
+                "truth_graph.flush_buffers",
+                lambda: callable(getattr(truth_graph, "flush_buffers", None)) and truth_graph.flush_buffers(),
+            )
+
+    def _cleanup_semantic_store(self) -> None:
+        if self._semantic_store is not None:
+            self._safe_cleanup("semantic_store.close", self._semantic_store.close)
+            self._semantic_store = None
+
+    def _cleanup_wal_lmdb(self) -> None:
+        _wal = getattr(self, "_wal_lmdb", None)
+        if _wal is not None:
+            self._safe_cleanup("wal_lmdb.close", _wal.close)
+            self._wal_lmdb = None
+
+    def _cleanup_read_pool(self) -> None:
+        if self._read_pool:
+            for conn in self._read_pool:
+                self._safe_cleanup("read_pool.conn.close", conn.close)
+            self._read_pool = []
+            self._read_pool_idx = 0
+
+    def _cleanup_dedup_manager(self) -> None:
+        if self._dedup_manager is not None:
+            self._safe_cleanup("dedup_manager.close", self._dedup_manager.close)
+            self._dedup_manager = None
+
+    def _cleanup_dedup_lmdb(self) -> None:
+        _dedup = getattr(self, "_dedup_lmdb", None)
+        if _dedup is not None:
+            self._safe_cleanup("dedup_lmdb.close", _dedup.close)
+            self._dedup_lmdb = None
+
+    def _cleanup_stale_lock(self) -> None:
+        def _try_remove_stale_lock() -> None:
+            from hledac.universal.graph.lock_manager import _is_lock_stale
+
+            _lock_db_path = str(self._db_path) if self._db_path else "memory"
+            duckdb_lock_path = pathlib.Path(_lock_db_path + ".lock")
+            if duckdb_lock_path.exists():
+                is_stale, reason = _is_lock_stale(duckdb_lock_path, _lock_db_path)
+                if is_stale:
+                    duckdb_lock_path.unlink(missing_ok=True)
+                    _logger.debug(f"[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}")
+
+        self._safe_cleanup("stale_lock.remove", _try_remove_stale_lock)
+
+    def _cleanup_pending_findings(self) -> None:
+        # ISSUE-021: flush pending accepted findings before close.
+        # Both lists are an invariant pair — clearing only findings and not indices
+        # would leave stale indices that grow unbounded across sprints.
+        _pending_findings = getattr(self, "_pending_accepted_findings", None)
+        _pending_indices = getattr(self, "_pending_accepted_indices", None)
+        if _pending_findings:
+            self._safe_cleanup(
+                "pending_findings.flush",
+                lambda: (
+                    _copy_findings := list(_pending_findings),
+                    _pending_findings.clear(),
+                    _copy_findings and self._executor.submit(self._flush_pending_findings_sync, _copy_findings),
+                ),
+            )
+        if _pending_indices:
+            self._safe_cleanup("pending_indices.clear", _pending_indices.clear)
+
+    def _cleanup_arrow_metrics(self) -> None:
+        _metrics = getattr(self, "_arrow_metrics", None)
+        if _metrics is not None:
+            self._safe_cleanup("arrow_metrics.clear", _metrics.clear)
+
     def _do_sync_close(self, emergency: bool = False) -> None:
         """
         Synchronous full cleanup — called by both close() and aclose().
@@ -3918,101 +4004,21 @@ class DuckDBShadowStore:
         """
         if self._closed:
             return
-        if self._finalizer is not None:
-            try:
-                self._finalizer.detach()
-            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
-                pass
+
+        self._cleanup_finalizer()
         self._closed = True
         self._initialized = False
-        try:
-            self._startup_ready.clear()
-            self._startup_replay_done = False
-        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
-            pass
-        try:
-            f = self._executor.submit(self._sync_close_on_worker)
-            f.result(timeout=5)
-        except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
-            pass
-        gs = self._graph_attachment if self._graph_attachment is not None else None
-        if gs is not None:
-            truth_graph = getattr(gs, "_truth_write_graph", None)
-            if truth_graph is not None:
-                try:
-                    if callable(getattr(truth_graph, "flush_buffers", None)):
-                        truth_graph.flush_buffers()
-                except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
-                    pass
-        if self._semantic_store is not None:
-            try:
-                result = self._semantic_store.close()
-                if not asyncio.iscoroutine(result):
-                    pass
-            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
-                pass
-            self._semantic_store = None
-        _wal = getattr(self, "_wal_lmdb", None)
-        if _wal is not None:
-            try:
-                _wal.close()
-            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
-                pass
-            self._wal_lmdb = None
-        if self._read_pool:
-            for conn in self._read_pool:
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                    pass
-            self._read_pool = []
-            self._read_pool_idx = 0
-        if self._dedup_manager is not None:
-            try:
-                self._dedup_manager.close()
-            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
-                pass
-            self._dedup_manager = None
-        _dedup = getattr(self, "_dedup_lmdb", None)
-        if _dedup is not None:
-            try:
-                _dedup.close()
-            except Exception:  # noqa: BLE001 — best-effort; cleanup failure; non-critical
-                pass
-            self._dedup_lmdb = None
-        try:
-            from hledac.universal.graph.lock_manager import _is_lock_stale
-
-            _lock_db_path = str(self._db_path) if self._db_path else "memory"
-            duckdb_lock_path = pathlib.Path(_lock_db_path + ".lock")
-            if duckdb_lock_path.exists():
-                is_stale, reason = _is_lock_stale(duckdb_lock_path, _lock_db_path)
-                if is_stale:
-                    duckdb_lock_path.unlink(missing_ok=True)
-                    _logger.debug(f"[DUCKDB] Removed stale lock {duckdb_lock_path}: {reason}")
-        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-            pass
-        # ISSUE-021: flush pending accepted findings before close.
-        # Both lists are an invariant pair — clearing only findings and not indices
-        # would leave stale indices that grow unbounded across sprints.
-        # Safe in sync context: runs flush in thread pool.
-        _pending_findings = getattr(self, "_pending_accepted_findings", None)
-        _pending_indices = getattr(self, "_pending_accepted_indices", None)
-        if _pending_findings:
-            try:
-                _copy_findings = list(_pending_findings)
-                _pending_findings.clear()
-                if _copy_findings:
-                    self._executor.submit(self._flush_pending_findings_sync, _copy_findings)
-            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                pass
-        if _pending_indices:
-            try:
-                _pending_indices.clear()
-            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                pass
-        if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
-            self._arrow_metrics.clear()
+        self._cleanup_startup_flags()
+        self._cleanup_executor_submit()
+        self._cleanup_truth_graph()
+        self._cleanup_semantic_store()
+        self._cleanup_wal_lmdb()
+        self._cleanup_read_pool()
+        self._cleanup_dedup_manager()
+        self._cleanup_dedup_lmdb()
+        self._cleanup_stale_lock()
+        self._cleanup_pending_findings()
+        self._cleanup_arrow_metrics()
         self._adjust_executor_pool()
 
     def _flush_pending_findings_sync(self, findings: list) -> None:
@@ -6178,14 +6184,14 @@ class DuckDBShadowStore:
 
     async def _record_fail_open_batch(
         self, findings: list[CanonicalFinding], results: list, indices: list[int]
-    ) -> list[dict]:
+    ) -> list[ActivationResult]:
         """
         Sprint D7: Batch fail-open path - process N findings whose quality gate threw.
 
         Replaces N * async_record_canonical_finding() calls with one batch call.
         Order: LMDB WAL first (per finding via wal_put_many) -> DuckDB second (single executemany).
 
-        Returns list[dict] - one per finding in input order, indexed into results by indices.
+        Returns list[ActivationResult] — one per finding in input order, indexed into results by indices.
 
         ISSUE-032: WAL sequential (via executor) then DuckDB sequential.
         No _write_semaphore needed — DuckDB serializes writes internally via shared executor.
@@ -6196,7 +6202,7 @@ class DuckDBShadowStore:
         _logger = _logging.getLogger(__name__)
         if not findings:
             return []
-        ret: list[dict] = []
+        ret: list[ActivationResult] = []
         # ISSUE-032: WAL first via executor (WAL is fast I/O, no serialization bottleneck).
         # DuckDB second sequentially. No _write_semaphore needed — DuckDB serializes internally.
         lmdb_ok = False
@@ -6205,7 +6211,15 @@ class DuckDBShadowStore:
                 _wal_root = self._db_path.parent if self._db_path else None
                 if _wal_root is None:
                     for f in findings:
-                        ret.append({"lmdb_success": False, "duckdb_success": None, "error": "no wal root"})
+                        ret.append(ActivationResult(
+                            finding_id=str(f.finding_id),
+                            lmdb_success=False,
+                            duckdb_success=None,
+                            lmdb_key=f"finding:{f.finding_id}",
+                            desync=False,
+                            error="no wal root",
+                            accepted=False,
+                        ))
                     return ret
                 self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
                 self._wal_manager.initialize()
@@ -6231,12 +6245,28 @@ class DuckDBShadowStore:
                 if not lmdb_ok:
                     _logger.warning(f"[D7] Batch WAL failed for {len(items)} items")
                     for f in findings:
-                        ret.append({"lmdb_success": False, "duckdb_success": None, "error": "lmdb batch failed"})
+                        ret.append(ActivationResult(
+                            finding_id=str(f.finding_id),
+                            lmdb_success=False,
+                            duckdb_success=None,
+                            lmdb_key=f"finding:{f.finding_id}",
+                            desync=False,
+                            error="lmdb batch failed",
+                            accepted=False,
+                        ))
                     return ret
         except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             _logger.error(f"[D7] Batch WAL exception: {e}")
             for f in findings:
-                ret.append({"lmdb_success": False, "duckdb_success": None, "error": str(e)})
+                ret.append(ActivationResult(
+                    finding_id=str(f.finding_id),
+                    lmdb_success=False,
+                    duckdb_success=None,
+                    lmdb_key=f"finding:{f.finding_id}",
+                    desync=False,
+                    error=str(e),
+                    accepted=False,
+                ))
             return ret
 
         # DuckDB sequential via executor (no semaphore)
@@ -6263,7 +6293,15 @@ class DuckDBShadowStore:
             lmdb_success = lmdb_ok
             if lmdb_success:
                 accepted_total += 1
-            ret.append({"lmdb_success": lmdb_success, "duckdb_success": duckdb_all_ok, "error": None})
+            ret.append(ActivationResult(
+                finding_id=str(f.finding_id),
+                lmdb_success=lmdb_success,
+                duckdb_success=duckdb_all_ok,
+                lmdb_key=f"finding:{f.finding_id}",
+                desync=False,
+                error=None,
+                accepted=bool(lmdb_success),
+            ))
         if accepted_total:
             self._quality_state._accepted_count += accepted_total
         return ret
@@ -6994,6 +7032,294 @@ class DuckDBShadowStore:
             pass
         return (False, None)
 
+    def _check_guard4_short_fingerprint(
+        self,
+        fp: str,
+        url_fp: str,
+        finding: CanonicalFinding,
+        idx: int | None,
+        dedup_batch: list[tuple[str, str]] | None,
+        is_feed_source: bool,
+    ) -> FindingQualityDecision | None:
+        """
+        F360M-R: Guard 4 — short fingerprint path in _run_stateful_quality_guards.
+
+        Returns FindingQualityDecision if guard reached terminal state (caller sets
+        results[idx] and returns True).  Returns None if guard should fall through
+        to the accept path in the caller.
+
+        ISSUE-FXXX: Extracted from _run_stateful_quality_guards to eliminate
+        4-level nested if/for/if/for block at the Guard 4 site
+        (nesting depth 5 → 2; cyclomatic complexity -4).
+        """
+        dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+        if dedup_cache is not None:
+            text_for_embed = url_fp or (finding.payload_text or finding.query)
+            if text_for_embed and len(text_for_embed) >= 16:
+                _semantic_thresh = 0.8 if is_feed_source else 0.85
+                is_dup, dup_reason = self._check_semantic_duplicate(
+                    dedup_cache, text_for_embed, _semantic_thresh,
+                )
+                if is_dup:
+                    return FindingQualityDecision(
+                        accepted=False, reason=dup_reason,
+                        entropy=0.0, normalized_hash=fp, duplicate=True,
+                    )
+        if dedup_batch is not None:
+            dedup_batch.append((fp, finding.finding_id))
+        if not is_feed_source:
+            self._add_to_hot_cache(fp, finding.finding_id)
+        return FindingQualityDecision(
+            accepted=True, reason="short_string_skip", entropy=0.0, normalized_hash=fp, duplicate=False,
+        )
+
+    def _check_guard7_ioc_duplicate(
+        self,
+        idx: int | None,
+        has_any_ioc: list[bool] | None,
+        ioc_offsets: list[int] | None,
+        ioc_items: list[list[tuple[str, str]]] | None,
+        ioc_dup_flags: list[bool],
+        entropy: float,
+        fp: str,
+        finding: CanonicalFinding,
+        results: list,
+        new_iocs_for_batch: list[tuple[str, str, float]],
+    ) -> bool:
+        """
+        F360M-R: Guard 7 — IOC duplicate check (batch mode only).
+
+        Returns True if guard reached terminal state (caller should return True).
+        Returns False if guard passed — caller continues to accept path.
+
+        ISSUE-FXXX: Extracted from _run_stateful_quality_guards to eliminate
+        4-level nested if block (idx/has_any_ioc/has_any_ioc[idx]/any(...)).
+        """
+        if idx is None or has_any_ioc is None or ioc_offsets is None:
+            return False
+
+        if not has_any_ioc[idx]:
+            return False
+
+        ioc_start = ioc_offsets[idx]
+        ioc_end = ioc_offsets[idx + 1]
+        finding_ioc_dup_flags = ioc_dup_flags[ioc_start:ioc_end]
+        finding_iocs = ioc_items[idx] if ioc_items else []
+
+        if any(finding_ioc_dup_flags):
+            self._quality_state._quality_duplicate_count += 1
+            results[idx] = FindingQualityDecision(
+                accepted=False, reason="ioc_duplicate", entropy=entropy, normalized_hash=fp, duplicate=True,
+            )
+            return True
+
+        new_iocs_for_batch.clear()
+        new_iocs_for_batch.extend(
+            (val, ioc_type, float(finding.confidence))
+            for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
+            if not is_dup
+        )
+        return False
+
+    def _extract_ioc_batch(
+        self, findings: list[CanonicalFinding]
+    ) -> tuple[list[list[tuple[str, str]]], list[bool]]:
+        """
+        F360M-R: Extract and dedupe IOCs from findings batch via Rust.
+
+        ISSUE-FXXX: Extracted from _apply_stateful_quality_checks to eliminate
+        3-level nested loop (if/for/for) at the top of the batch processing.
+
+        Returns (ioc_items, has_any_ioc) where:
+          - ioc_items: per-finding deduplicated IOC list
+          - has_any_ioc: per-finding bool flag
+        """
+        n = len(findings)
+        ioc_items: list[list[tuple[str, str]]] = []
+        has_any_ioc: list[bool] = []
+
+        if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
+            texts_for_ioc = []
+            for f in findings:
+                pt = f.payload_text if f.payload_text else f.query or ""
+                texts_for_ioc.append(pt[:5000] if pt else "")
+            try:
+                raw_iocs = _get_rust_batch_ioc_extract()(texts_for_ioc)
+                for ioc_list in raw_iocs:
+                    seen_types: set[str] = set()
+                    deduped: list[tuple[str, str]] = []
+                    for val, ioc_type in ioc_list:
+                        key = (val, ioc_type)
+                        if key not in seen_types:
+                            seen_types.add(key)
+                            deduped.append(key)
+                    ioc_items.append(deduped)
+                    has_any_ioc.append(bool(deduped))
+            except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
+                ioc_items = [[] for _ in findings]
+                has_any_ioc = [False] * n
+        else:
+            ioc_items = [[] for _ in findings]
+            has_any_ioc = [False] * n
+
+        return ioc_items, has_any_ioc
+
+    def _run_stateful_quality_guards(
+        self,
+        fp: str,
+        entropy: float,
+        url_fp: str,
+        is_feed_source: bool,
+        finding: CanonicalFinding,
+        results: list,
+        idx: int | None,
+        dedup_batch: list[tuple[str, str]] | None,
+        new_iocs_for_batch: list[tuple[str, str, float]] | None,
+        ioc_offsets: list[int] | None,
+        has_any_ioc: list[bool] | None,
+        ioc_items: list[list[tuple[str, str]]] | None,
+        ioc_dup_flags: list[bool] | None,
+    ) -> bool:
+        """
+        F360M-R: Shared stateful quality guard runner — eliminates 8 Type-1 exact duplicates
+        across _apply_stateful_quality_checks, _assess_finding_quality_batch, and
+        _assess_finding_quality.
+
+        Runs guards 1-7 in order:
+          1. Hot cache duplicate
+          2. Persistent dedup store hit
+          3. URL-based finding → accept immediately
+          4. Short fingerprint → semantic dedup then accept
+          5. Low entropy → reject
+          6. Semantic duplicate
+          7. IOC duplicate → reject
+
+        For batch callers (idx is not None):
+          - On reject: sets results[idx] and returns True (skip further processing)
+          - On accept (guards 3, 4, 7 terminal): sets results[idx] and returns True
+          - On guard-7 non-terminal: appends to dedup_batch, sets results[idx], returns True
+        For single caller (idx is None):
+          - Same logic but returns FindingQualityDecision via early returns
+
+        Returns True if guard reached terminal state (caller should continue/skip).
+        The new_iocs_for_batch/ioc_offsets/has_any_ioc/ioc_items/ioc_dup_flags params
+        are used only for guard 7 (IOC dedup) in batch mode.
+
+        ISSUE-FXXX: Guards 1-2 + 3 + 4 short-circuit; guard 7 is terminal on IOC dup,
+        otherwise falls through to the accept path in the caller.
+        """
+        # Guard 1: hot cache duplicate
+        if self._hot_cache_lookup(fp) is not None:
+            self._quality_state._quality_duplicate_count += 1
+            reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+            decision = FindingQualityDecision(
+                accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True,
+            )
+            if idx is not None:
+                results[idx] = decision
+                return True
+            self._record_quality_rejection(finding, decision)
+            return False  # Signal: caller should return decision (already set externally for single)
+
+        # Guard 2: persistent dedup store hit
+        stored_id = self._lookup_persistent_dedup(fp)
+        if stored_id is not None:
+            self._add_to_hot_cache(fp, stored_id)
+            self._quality_state._persistent_duplicate_count += 1
+            reason = "persistent_duplicate" if url_fp else "duplicate_detected"
+            decision = FindingQualityDecision(
+                accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True,
+            )
+            if idx is not None:
+                results[idx] = decision
+                return True
+            self._record_quality_rejection(finding, decision)
+            return False
+
+        # Guard 3: URL-based finding — accept immediately
+        if url_fp:
+            if dedup_batch is not None:
+                dedup_batch.append((fp, finding.finding_id))
+            if not is_feed_source:
+                self._add_to_hot_cache(fp, finding.finding_id)
+            if idx is not None:
+                results[idx] = FindingQualityDecision(
+                    accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
+                )
+                return True
+            return False
+
+        # Guard 4: short fingerprint — semantic dedup only, then accept
+        if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
+            result = self._check_guard4_short_fingerprint(
+                fp=fp, url_fp=url_fp, finding=finding,
+                idx=idx, dedup_batch=dedup_batch, is_feed_source=is_feed_source,
+            )
+            if result is not None:
+                results[idx] = result
+                return True
+            return False
+
+        # Guard 5: low entropy — reject
+        _threshold = 0.3 if is_feed_source else _QUALITY_ENTROPY_THRESHOLD
+        if entropy < _threshold:
+            self._quality_state._quality_rejected_count += 1
+            decision = FindingQualityDecision(
+                accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False,
+            )
+            if idx is not None:
+                results[idx] = decision
+                return True
+            self._record_quality_rejection(finding, decision)
+            return False
+
+        # Guard 6: semantic duplicate
+        dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
+        if dedup_cache is not None:
+            text_for_embed = url_fp or (finding.payload_text or finding.query)
+            if text_for_embed and len(text_for_embed) >= 16:
+                _semantic_thresh = 0.8 if is_feed_source else 0.85
+                is_dup, dup_reason = self._check_semantic_duplicate(
+                    dedup_cache, text_for_embed, _semantic_thresh,
+                )
+                if is_dup:
+                    decision = FindingQualityDecision(
+                        accepted=False, reason=dup_reason,
+                        entropy=entropy, normalized_hash=fp, duplicate=True,
+                    )
+                    if idx is not None:
+                        results[idx] = decision
+                        return True
+                    self._record_quality_rejection(finding, decision)
+                    return False
+
+        # Guard 7: IOC duplicate (batch only — for single, IOC check is done by caller)
+        if self._check_guard7_ioc_duplicate(
+            idx=idx,
+            has_any_ioc=has_any_ioc,
+            ioc_offsets=ioc_offsets,
+            ioc_items=ioc_items,
+            ioc_dup_flags=ioc_dup_flags,
+            entropy=entropy,
+            fp=fp,
+            finding=finding,
+            results=results,
+            new_iocs_for_batch=new_iocs_for_batch,
+        ):
+            return True
+
+        # Accept: write dedup, hot_cache, IOC batch
+        if dedup_batch is not None:
+            dedup_batch.append((fp, finding.finding_id))
+        if not is_feed_source:
+            self._add_to_hot_cache(fp, finding.finding_id)
+        if idx is not None:
+            results[idx] = FindingQualityDecision(
+                accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
+            )
+            return True
+        return False
+
     def get_quality_rejection_ledger(self) -> tuple[QualityRejectionRecord, ...]:
         """
         Sprint F216G: Expose the quality rejection ledger to callers (e.g. scheduler).
@@ -7028,31 +7354,7 @@ class DuckDBShadowStore:
         )] * n
 
         # Pre-compute IOC dedup flags (same as legacy, before the per-finding loop)
-        ioc_items: list[list[tuple[str, str]]] = []
-        has_any_ioc: list[bool] = []
-        if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
-            texts_for_ioc = []
-            for f in findings:
-                pt = f.payload_text if f.payload_text else f.query or ""
-                texts_for_ioc.append(pt[:5000] if pt else "")
-            try:
-                raw_iocs = _get_rust_batch_ioc_extract()(texts_for_ioc)
-                for ioc_list in raw_iocs:
-                    seen_types: set[str] = set()
-                    deduped: list[tuple[str, str]] = []
-                    for val, ioc_type in ioc_list:
-                        key = (val, ioc_type)
-                        if key not in seen_types:
-                            seen_types.add(key)
-                            deduped.append(key)
-                    ioc_items.append(deduped)
-                    has_any_ioc.append(bool(deduped))
-            except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
-                ioc_items = [[] for _ in findings]
-                has_any_ioc = [False] * n
-        else:
-            ioc_items = [[] for _ in findings]
-            has_any_ioc = [False] * n
+        ioc_items, has_any_ioc = self._extract_ioc_batch(findings)
 
         all_iocs_flat: list[tuple[str, str]] = []
         ioc_offsets: list[int] = [0]
@@ -7090,99 +7392,29 @@ class DuckDBShadowStore:
                 results[idx] = _decision
                 continue
 
-            # --- Stateful checks start here ---
             is_feed_source = f.source_type == "rss_atom_pipeline"
-            text_for_embed = url_fp or (f.payload_text or f.query)
-            is_high_conf_ioc = bool(text_for_embed and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()))
-
-            if self._hot_cache_lookup(fp) is not None:
-                self._quality_state._quality_duplicate_count += 1
-                reason = "persistent_duplicate" if url_fp else "duplicate_detected"
-                results[idx] = FindingQualityDecision(
-                    accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True
-                )
-                continue
-            stored_id = self._lookup_persistent_dedup(fp)
-            if stored_id is not None:
-                self._add_to_hot_cache(fp, stored_id)
-                self._quality_state._persistent_duplicate_count += 1
-                reason = "persistent_duplicate" if url_fp else "duplicate_detected"
-                results[idx] = FindingQualityDecision(
-                    accepted=False, reason=reason, entropy=entropy, normalized_hash=fp, duplicate=True
-                )
-                continue
-            if url_fp:
-                _dedup_batch.append((fp, f.finding_id))
-                if not is_feed_source:
-                    self._add_to_hot_cache(fp, f.finding_id)
-                results[idx] = FindingQualityDecision(
-                    accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
-                )
-                continue
-            if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
-                dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
-                if dedup_cache is not None and (not is_high_conf_ioc):
-                    _semantic_thresh = 0.8 if is_feed_source else 0.85
-                    is_dup, dup_reason = self._check_semantic_duplicate(dedup_cache, text_for_embed, _semantic_thresh)
-                    if is_dup:
-                        results[idx] = FindingQualityDecision(
-                            accepted=False, reason=dup_reason,
-                            entropy=entropy, normalized_hash=fp, duplicate=True,
-                        )
-                        continue
-                _dedup_batch.append((fp, f.finding_id))
-                if not is_feed_source:
-                    self._add_to_hot_cache(fp, f.finding_id)
-                results[idx] = FindingQualityDecision(
-                    accepted=True, reason="short_string_skip", entropy=entropy, normalized_hash=fp, duplicate=False
-                )
-                continue
-            _threshold = 0.3 if is_feed_source else _QUALITY_ENTROPY_THRESHOLD
-            if entropy < _threshold:
-                self._quality_state._quality_rejected_count += 1
-                results[idx] = FindingQualityDecision(
-                    accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False
-                )
-                continue
-            dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
-            if dedup_cache is not None and (not is_high_conf_ioc):
-                _semantic_thresh = 0.8 if is_feed_source else 0.85
-                is_dup, dup_reason = self._check_semantic_duplicate(dedup_cache, text_for_embed, _semantic_thresh)
-                if is_dup:
-                    results[idx] = FindingQualityDecision(
-                        accepted=False, reason=dup_reason,
-                        entropy=entropy, normalized_hash=fp, duplicate=True,
-                    )
-                    continue
             new_iocs_for_batch: list[tuple[str, str, float]] = []
-            if has_any_ioc[idx]:
-                ioc_start = ioc_offsets[idx]
-                ioc_end = ioc_offsets[idx + 1]
-                finding_ioc_dup_flags = ioc_dup_flags[ioc_start:ioc_end]
-                finding_iocs = ioc_items[idx]
-                any_ioc_dup = any(finding_ioc_dup_flags)
-                if any_ioc_dup:
-                    self._quality_state._quality_duplicate_count += 1
-                    results[idx] = FindingQualityDecision(
-                        accepted=False, reason="ioc_duplicate", entropy=entropy, normalized_hash=fp, duplicate=True
-                    )
-                    continue
-                new_iocs_for_batch = [
-                    (val, ioc_type, float(f.confidence))
-                    for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
-                    if not is_dup
-                ]
-            _dedup_batch.append((fp, f.finding_id))
-            if not is_feed_source:
-                self._add_to_hot_cache(fp, f.finding_id)
-            if new_iocs_for_batch and self._dedup_manager is not None:
-                try:
-                    self._dedup_manager.add_ioc_batch(new_iocs_for_batch)
-                except (OSError, RuntimeError) as e:
-                    logger.debug(f"[DUCKDB] add_ioc_batch failed: {e}")
-            results[idx] = FindingQualityDecision(
-                accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False
+            skipped = self._run_stateful_quality_guards(
+                fp=fp,
+                entropy=entropy,
+                url_fp=url_fp,
+                is_feed_source=is_feed_source,
+                finding=f,
+                results=results,
+                idx=idx,
+                dedup_batch=_dedup_batch,
+                new_iocs_for_batch=new_iocs_for_batch,
+                ioc_offsets=ioc_offsets,
+                has_any_ioc=has_any_ioc,
+                ioc_items=ioc_items,
+                ioc_dup_flags=ioc_dup_flags,
             )
+            if not skipped:
+                if new_iocs_for_batch and self._dedup_manager is not None:
+                    try:
+                        self._dedup_manager.add_ioc_batch(new_iocs_for_batch)
+                    except (OSError, RuntimeError) as e:
+                        logger.debug(f"[DUCKDB] add_ioc_batch failed: {e}")
 
         # ISSUE-FXXX: Flush all dedup writes in one batch = one LMDB transaction.
         if _dedup_batch and self._dedup_manager is not None:
@@ -7350,6 +7582,100 @@ class DuckDBShadowStore:
             accepted=True, reason=None, entropy=entropy, normalized_hash=fingerprint, duplicate=False
         )
 
+    # ---------------------------------------------------------------------------
+    # F360M-R: Flat guard helpers — eliminate triple-nested blocks that would
+    # otherwise push cognitive complexity past thresholds (was 179, target ≤25).
+    # ---------------------------------------------------------------------------
+
+    @staticmethod
+    def _dedup_ioc_lists(
+        raw_iocs: list[list[tuple[str, str]]],
+    ) -> tuple[list[list[tuple[str, str]]], list[bool]]:
+        """
+        Flatten IOC dedup loop — replaces triple-nested for/if block.
+
+        Input:  [[(val, type), ...], ...]  (one inner list per finding)
+        Output: (ioc_items, has_any_ioc)   same structure as legacy
+        """
+        ioc_items: list[list[tuple[str, str]]] = []
+        has_any_ioc: list[bool] = []
+        for ioc_list in raw_iocs:
+            deduped: list[tuple[str, str]] = []
+            seen: set[tuple[str, str]] = set()
+            for val, ioc_type in ioc_list:
+                key = (val, ioc_type)
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(key)
+            ioc_items.append(deduped)
+            has_any_ioc.append(bool(deduped))
+        return ioc_items, has_any_ioc
+
+    def _dedup_fp_fallback_python(self, normalized_batch: list[str]) -> list[str]:
+        """
+        Fallback chain for dedup fingerprint — replaces triple-nested try/except.
+
+        Tries: rust_dedup_fingerprint → _compute_dedup_fingerprint
+        """
+        try:
+            return [_rust_dedup_fingerprint(t) for t in normalized_batch]
+        except Exception:  # noqa: BLE001 — best-effort; rust unavailable; non-critical
+            return [_compute_dedup_fingerprint(t) for t in normalized_batch]
+
+    def _compute_url_fingerprints_batch(
+        self,
+        url_texts: list[str],
+        url_indices: list[int],
+        url_fingerprints: list[str],
+    ) -> None:
+        """
+        Batch URL fingerprint computation — replaces depth-5 if/for nested block.
+
+        Reads from url_texts (aligned with url_indices) and writes directly to
+        url_fingerprints at the corresponding indices.
+        """
+        if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_url_fingerprints is not None:
+            try:
+                batch_urls: list[str] = _rust_batch_url_fingerprints(url_texts)
+                for j, idx in enumerate(url_indices):
+                    url_fingerprints[idx] = batch_urls[j]
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                for j, idx in enumerate(url_indices):
+                    url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
+        else:
+            for j, idx in enumerate(url_indices):
+                url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
+        """
+        Flatten IOC dedup loop — replaces triple-nested for/if block.
+
+        Input:  [[(val, type), ...], ...]  (one inner list per finding)
+        Output: (ioc_items, has_any_ioc)   same structure as legacy
+        """
+        ioc_items: list[list[tuple[str, str]]] = []
+        has_any_ioc: list[bool] = []
+        for ioc_list in raw_iocs:
+            deduped: list[tuple[str, str]] = []
+            seen: set[tuple[str, str]] = set()
+            for val, ioc_type in ioc_list:
+                key = (val, ioc_type)
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(key)
+            ioc_items.append(deduped)
+            has_any_ioc.append(bool(deduped))
+        return ioc_items, has_any_ioc
+
+    def _dedup_fp_fallback_python(self, normalized_batch: list[str]) -> list[str]:
+        """
+        Fallback chain for dedup fingerprint — replaces triple-nested try/except.
+
+        Tries: rust_dedup_fingerprint → _compute_dedup_fingerprint
+        """
+        try:
+            return [_rust_dedup_fingerprint(t) for t in normalized_batch]
+        except Exception:  # noqa: BLE001 — best-effort; rust unavailable; non-critical
+            return [_compute_dedup_fingerprint(t) for t in normalized_batch]
+
     def _assess_finding_quality_batch(self, findings: list[CanonicalFinding]) -> list[FindingQualityDecision]:
         """
         Sprint P1-2: Batch quality gate — rayon-parallel via Rust batch_* APIs.
@@ -7408,16 +7734,7 @@ class DuckDBShadowStore:
                 texts_for_ioc.append(pt[:5000] if pt else "")
             try:
                 raw_iocs = _get_rust_batch_ioc_extract()(texts_for_ioc)
-                for ioc_list in raw_iocs:
-                    seen_types: set[str] = set()
-                    deduped: list[tuple[str, str]] = []
-                    for val, ioc_type in ioc_list:
-                        key = (val, ioc_type)
-                        if key not in seen_types:
-                            seen_types.add(key)
-                            deduped.append(key)
-                    ioc_items.append(deduped)
-                    has_any_ioc.append(bool(deduped))
+                ioc_items, has_any_ioc = self._dedup_ioc_lists(raw_iocs)
             except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
                 ioc_items = [[] for _ in findings]
                 has_any_ioc = [False] * len(findings)
@@ -7455,17 +7772,7 @@ class DuckDBShadowStore:
                 payload_indices.append(idx)
         if url_indices:
             url_texts = [url_fingerprints[i] for i in url_indices]
-            if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_url_fingerprints is not None:
-                try:
-                    batch_urls: list[str] = _rust_batch_url_fingerprints(url_texts)
-                    for j, idx in enumerate(url_indices):
-                        url_fingerprints[idx] = batch_urls[j]
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    for j, idx in enumerate(url_indices):
-                        url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
-            else:
-                for j, idx in enumerate(url_indices):
-                    url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
+            self._compute_url_fingerprints_batch(url_texts, url_indices, url_fingerprints)
         if payload_indices:
             payload_texts = [texts[i] for i in payload_indices]
             if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_normalize_quality_text is not None:
@@ -7484,12 +7791,9 @@ class DuckDBShadowStore:
                 entropies_batch = [_compute_entropy(t) for t in normalized_batch]
             if _QUALITY_GATE_BATCH_AVAILABLE and _rust_batch_dedup_fingerprints is not None:
                 try:
-                    fps_batch: list[str] = _rust_batch_dedup_fingerprints(normalized_batch)
+                    fps_batch = _rust_batch_dedup_fingerprints(normalized_batch)
                 except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    try:
-                        fps_batch = [_rust_dedup_fingerprint(t) for t in normalized_batch]
-                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                        fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
+                    fps_batch = self._dedup_fp_fallback_python(normalized_batch)
             else:
                 fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
             for j, idx in enumerate(payload_indices):
@@ -7500,6 +7804,12 @@ class DuckDBShadowStore:
         # (putmulti of 1 pair = txn.begin + cursor.putmulti + txn.commit).
         # Batch: one txn.begin + N×cursor.putmulti + txn.commit per chunk.
         _dedup_batch: list[tuple[str, str]] = []
+        # ISSUE-FXXX: new_iocs_for_batch is populated by _run_stateful_quality_guards
+        # (guard 7, only when Rust batch path is used) and consumed after the loop
+        # to update the dedup manager's IOC store. This avoids redundant IOC
+        # buffering — the parallel IOC path in async_ingest_findings_batch uses
+        # separate Rust batch extraction and is a different code path.
+        new_iocs_for_batch: list[tuple[str, str, float]] = []
 
         # F350M-R: Extracted per-finding logic to flatten complexity (was ~90 nested).
         # Each guard applies one rejection/accept path and returns True to skip.
@@ -7508,113 +7818,27 @@ class DuckDBShadowStore:
             fp = fingerprints[idx]
             entropy = entropies[idx]
             is_feed_source = f.source_type == "rss_atom_pipeline"
-            text_for_embed = url_fp or (f.payload_text or f.query)
-            is_high_conf_ioc = bool(text_for_embed and _HIGH_CONF_IOC_RE.match(text_for_embed.strip()))
-
-            # Guard 1: hot cache duplicate
-            if self._hot_cache_lookup(fp) is not None:
-                self._quality_state._quality_duplicate_count += 1
-                results[idx] = FindingQualityDecision(
-                    accepted=False,
-                    reason="persistent_duplicate" if url_fp else "duplicate_detected",
-                    entropy=entropy, normalized_hash=fp, duplicate=True,
-                )
-                continue
-
-            # Guard 2: persistent dedup store hit
-            stored_id = self._lookup_persistent_dedup(fp)
-            if stored_id is not None:
-                self._add_to_hot_cache(fp, stored_id)
-                self._quality_state._persistent_duplicate_count += 1
-                results[idx] = FindingQualityDecision(
-                    accepted=False,
-                    reason="persistent_duplicate" if url_fp else "duplicate_detected",
-                    entropy=entropy, normalized_hash=fp, duplicate=True,
-                )
-                continue
-
-            # Guard 3: URL-based finding — accept immediately
-            if url_fp:
-                _dedup_batch.append((fp, f.finding_id))
-                if not is_feed_source:
-                    self._add_to_hot_cache(fp, f.finding_id)
-                results[idx] = FindingQualityDecision(
-                    accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
-                )
-                continue
-
-            # Guard 4: short fingerprint — semantic dedup only, then accept
-            if len(fp) < _QUALITY_MIN_ENTROPY_LEN:
-                dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
-                if dedup_cache is not None and (not is_high_conf_ioc):
-                    _semantic_thresh = 0.8 if is_feed_source else 0.85
-                    is_dup, dup_reason = self._check_semantic_duplicate(dedup_cache, text_for_embed, _semantic_thresh)
-                    if is_dup:
-                        results[idx] = FindingQualityDecision(
-                            accepted=False, reason=dup_reason,
-                            entropy=entropy, normalized_hash=fp, duplicate=True,
-                        )
-                        continue
-                _dedup_batch.append((fp, f.finding_id))
-                if not is_feed_source:
-                    self._add_to_hot_cache(fp, f.finding_id)
-                results[idx] = FindingQualityDecision(
-                    accepted=True, reason="short_string_skip", entropy=entropy, normalized_hash=fp, duplicate=False,
-                )
-                continue
-
-            # Guard 5: low entropy — reject
-            _threshold = 0.3 if is_feed_source else _QUALITY_ENTROPY_THRESHOLD
-            if entropy < _threshold:
-                self._quality_state._quality_rejected_count += 1
-                results[idx] = FindingQualityDecision(
-                    accepted=False, reason="low_entropy_rejected", entropy=entropy, normalized_hash=fp, duplicate=False,
-                )
-                continue
-
-            # Guard 6: semantic duplicate
-            dedup_cache = self._dedup_manager.semantic_dedup_cache if self._dedup_manager else None
-            if dedup_cache is not None and (not is_high_conf_ioc):
-                _semantic_thresh = 0.8 if is_feed_source else 0.85
-                is_dup, dup_reason = self._check_semantic_duplicate(dedup_cache, text_for_embed, _semantic_thresh)
-                if is_dup:
-                    results[idx] = FindingQualityDecision(
-                        accepted=False, reason=dup_reason,
-                        entropy=entropy, normalized_hash=fp, duplicate=True,
-                    )
-                    continue
-
-            # Guard 7: IOC duplicate
             new_iocs_for_batch: list[tuple[str, str, float]] = []
-            if has_any_ioc[idx]:
-                ioc_start = ioc_offsets[idx]
-                ioc_end = ioc_offsets[idx + 1]
-                finding_ioc_dup_flags = ioc_dup_flags[ioc_start:ioc_end]
-                finding_iocs = ioc_items[idx]
-                if any(finding_ioc_dup_flags):
-                    self._quality_state._quality_duplicate_count += 1
-                    results[idx] = FindingQualityDecision(
-                        accepted=False, reason="ioc_duplicate", entropy=entropy, normalized_hash=fp, duplicate=True,
-                    )
-                    continue
-                new_iocs_for_batch = [
-                    (val, ioc_type, float(f.confidence))
-                    for (val, ioc_type), is_dup in zip(finding_iocs, finding_ioc_dup_flags)
-                    if not is_dup
-                ]
-
-            # Accept: write dedup, hot_cache, IOC batch
-            _dedup_batch.append((fp, f.finding_id))
-            if not is_feed_source:
-                self._add_to_hot_cache(fp, f.finding_id)
+            self._run_stateful_quality_guards(
+                fp=fp,
+                entropy=entropy,
+                url_fp=url_fp,
+                is_feed_source=is_feed_source,
+                finding=f,
+                results=results,
+                idx=idx,
+                dedup_batch=_dedup_batch,
+                new_iocs_for_batch=new_iocs_for_batch,
+                ioc_offsets=ioc_offsets,
+                has_any_ioc=has_any_ioc,
+                ioc_items=ioc_items,
+                ioc_dup_flags=ioc_dup_flags,
+            )
             if new_iocs_for_batch and self._dedup_manager is not None:
                 try:
                     self._dedup_manager.add_ioc_batch(new_iocs_for_batch)
                 except (OSError, RuntimeError) as e:
                     logger.debug(f"[DUCKDB] add_ioc_batch failed: {e}")
-            results[idx] = FindingQualityDecision(
-                accepted=True, reason=None, entropy=entropy, normalized_hash=fp, duplicate=False,
-            )
 
         # ISSUE-FXXX: Flush all dedup writes in one batch = one LMDB transaction.
         if _dedup_batch and self._dedup_manager is not None:
@@ -7625,6 +7849,99 @@ class DuckDBShadowStore:
 
         assert None not in results, "_assess_finding_quality_batch: 1:1 invariant violated"
         return results
+
+    # F360M-R: Helper methods extracted from async_ingest_findings_batch to reduce nesting depth.
+    # Each method follows early-exit pattern to minimize cyclomatic complexity.
+
+    def _get_finding_decision(
+        self,
+        finding: CanonicalFinding,
+        i_offset: int,
+        decisions: list[FindingQualityDecision],
+        batch_rust_ok: bool,
+    ) -> FindingQualityDecision | None:
+        """
+        Extract quality decision for a single finding with early-exit on error.
+
+        Returns None when assessment throws (fail-open signal), otherwise decision.
+        Reduces nesting from 4 levels to 2 in the per-finding loop.
+        """
+        try:
+            if not batch_rust_ok:
+                return self._quality_gate._assess_finding_quality(finding)
+            if i_offset >= len(decisions):
+                return FindingQualityDecision(
+                    accepted=False,
+                    reason="batch_incomplete",
+                    entropy=0.0,
+                    normalized_hash=None,
+                    duplicate=False,
+                )
+            return decisions[i_offset]
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            return None
+
+    def _apply_zero_attribution(
+        self, finding: CanonicalFinding, temporal_anonymizer: Any
+    ) -> CanonicalFinding:
+        """Apply zero attribution timestamp anonymization if available."""
+        try:
+            finding.timestamp = temporal_anonymizer.anonymize_timestamp(finding.timestamp)
+        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            pass
+        return finding
+
+    async def _buffer_iocs_from_findings(
+        self, findings: list[CanonicalFinding], truth_graph: Any
+    ) -> None:
+        """
+        F360M-R: Parallel IOC buffering from accepted findings.
+
+        Extracts IOCs via Rust batch, deduplicates, and buffers to truth graph
+        in parallel chunks. Reduces nesting from 6 to 2 levels.
+        """
+        if not (_IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract()):
+            return
+        try:
+            ioc_texts = [f.payload_text or f.query or "" for f in findings]
+            ioc_results: list[list[tuple[str, str]]] = await asyncio.to_thread(
+                _get_rust_batch_ioc_extract(), ioc_texts
+            )
+            if not ioc_results:
+                return
+            buffer_ioc = getattr(truth_graph, "buffer_ioc", None)
+            flush_buffers = getattr(truth_graph, "flush_buffers", None)
+            if not (callable(buffer_ioc) and callable(flush_buffers)):
+                return
+            # Collect and dedupe IOCs
+            all_iocs: list[tuple[str, str, float]] = []
+            seen_iocs: set[tuple[str, str]] = set()
+            for finding_idx, _ in enumerate(findings):
+                for ioc_value, ioc_type in ioc_results[finding_idx]:
+                    ioc_key = (ioc_type, ioc_value)
+                    if ioc_key not in seen_iocs:
+                        seen_iocs.add(ioc_key)
+                        all_iocs.append((ioc_type, ioc_value, 1.0))
+            # Chunk and buffer in parallel
+            ioc_chunks: list[list[tuple[str, str, float]]] = [
+                all_iocs[i : i + _IOC_CHUNK] for i in range(0, len(all_iocs), _IOC_CHUNK)
+            ]
+
+            async def _buffer_chunk(chunk: list[tuple[str, str, float]]) -> None:
+                for ioc_type, ioc_value, score in chunk:
+                    await buffer_ioc(ioc_type, ioc_value, score)
+
+            if ioc_chunks:
+                await parallel(
+                    [_buffer_chunk(chunk) for chunk in ioc_chunks],
+                    taskgroup=True,
+                    policy="collect",
+                    ctx="duckdb_store:ioc_buffer",
+                    logger_instance=None,
+                )
+            flush_buffers()
+        except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
+            pass
 
     async def async_ingest_finding(self, finding: CanonicalFinding) -> FindingQualityDecision | ActivationResult:
         """
@@ -7757,35 +8074,24 @@ class DuckDBShadowStore:
 
             for i_offset, f in enumerate(chunk_findings):
                 i = chunk_start + i_offset
-                try:
-                    if _batch_rust_ok:
-                        if i_offset >= len(decisions):
-                            decision = FindingQualityDecision(
-                                accepted=False,
-                                reason="batch_incomplete",
-                                entropy=0.0,
-                                normalized_hash=None,
-                                duplicate=False,
-                            )
-                        else:
-                            decision = decisions[i_offset]
-                    else:
-                        decision = self._quality_gate._assess_finding_quality(f)
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                # F360M-R: early-exit decision extraction — reduces nesting from 4 to 2
+                decision = self._get_finding_decision(
+                    f, i_offset, decisions, _batch_rust_ok
+                )
+                if decision is None:
+                    # Fail-open: assessment threw, record and skip
                     fail_open_chunk_findings.append(f)
                     fail_open_chunk_indices.append(i)
                     continue
                 if not decision.accepted:
                     self._record_quality_rejection(f, decision)
                     results[i] = decision
-                else:
-                    if _do_zero_attribution:
-                        try:
-                            f.timestamp = _temporal_anonymizer.anonymize_timestamp(f.timestamp)
-                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                            pass
-                    chunk_accepted_findings.append(f)
-                    chunk_accepted_indices.append(i)
+                    continue
+                # Accepted path — zero attribution if enabled
+                if _do_zero_attribution:
+                    f = self._apply_zero_attribution(f, _temporal_anonymizer)
+                chunk_accepted_findings.append(f)
+                chunk_accepted_indices.append(i)
 
             if fail_open_chunk_findings:
                 batch_results = await self._record_fail_open_batch(
@@ -7863,47 +8169,7 @@ class DuckDBShadowStore:
                         all_accepted_findings.append(findings[idx])
         truth_graph = self._ensure_graph_attachment().get_truth_write_graph() if all_accepted_findings else None
         if truth_graph is not None:
-            if _IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract() is not None:
-                try:
-                    ioc_texts = [f.payload_text or f.query or "" for f in all_accepted_findings]
-                    ioc_results: list[list[tuple[str, str]]] = await asyncio.to_thread(
-                        _get_rust_batch_ioc_extract(), ioc_texts
-                    )
-                    if ioc_results and truth_graph is not None:
-                        buffer_ioc = getattr(truth_graph, "buffer_ioc", None)
-                        flush_buffers = getattr(truth_graph, "flush_buffers", None)
-                        if callable(buffer_ioc) and callable(flush_buffers):
-                            # P4-2: Parallel IOC buffering — collect all IOCs first, then
-                            # buffer in chunks via asyncio.gather. ~5-20× speedup vs sequential
-                            # per-IOC buffer_ioc() calls for large batches (1000+ IOCs).
-                            all_iocs: list[tuple[str, str, float]] = []
-                            seen_iocs: set[tuple[str, str]] = set()
-                            for finding_idx, _ in enumerate(all_accepted_findings):
-                                for ioc_value, ioc_type in ioc_results[finding_idx]:
-                                    ioc_key = (ioc_type, ioc_value)
-                                    if ioc_key not in seen_iocs:
-                                        seen_iocs.add(ioc_key)
-                                        all_iocs.append((ioc_type, ioc_value, 1.0))
-                            # Chunk IOCs for parallel buffering (_IOC_CHUNK per chunk)
-                            ioc_chunks: list[list[tuple[str, str, float]]] = [
-                                all_iocs[i:i + _IOC_CHUNK] for i in range(0, len(all_iocs), _IOC_CHUNK)
-                            ]
-
-                            async def _buffer_chunk(chunk: list[tuple[str, str, float]]) -> None:
-                                for ioc_type, ioc_value, score in chunk:
-                                    await buffer_ioc(ioc_type, ioc_value, score)  # P4-2-FIX: await required — buffer_ioc is async def
-
-                            if ioc_chunks:
-                                await parallel(
-                                    [_buffer_chunk(chunk) for chunk in ioc_chunks],
-                                    taskgroup=True,
-                                    policy="collect",
-                                    ctx="duckdb_store:ioc_buffer",
-                                    logger_instance=None,
-                                )
-                            flush_buffers()
-                except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
-                    pass
+            await self._buffer_iocs_from_findings(all_accepted_findings, truth_graph)
             self._schedule_graph_update(all_accepted_findings)
         assert None not in results, "Internal error: 1:1 invariant violated"
         accepted_total = sum(
@@ -8109,103 +8375,143 @@ class DuckDBShadowStore:
             return (0, None)
         if not _check_pyarrow_available():
             return (0, "pyarrow_not_installed")
-        import io as _io
-
-        import pyarrow as _pa
 
         # F350M-R: Enrich findings with claims before Arrow build.
         # Claims extraction is best-effort; if enrichment fails we continue with null claims_json.
-        # After enrichment, findings_dicts is list[dict] with claims_json field.
-        findings_dicts = None
-        if self._claims_enabled:
-            findings_dicts = self._enrich_canonical_findings_for_arrow(findings)
-            if findings_dicts and any(d.get("claims_json") for d in findings_dicts):
-                _logger.debug(f"[F350M-R Arrow] Claims enriched for {sum(1 for d in findings_dicts if d.get('claims_json'))}/{len(findings_dicts)} findings")
+        findings_dicts = self._enrich_canonical_findings_for_arrow(findings) if self._claims_enabled else None
+        if findings_dicts and any(d.get("claims_json") for d in findings_dicts):
+            _logger.debug(
+                f"[F350M-R Arrow] Claims enriched for "
+                f"{sum(1 for d in findings_dicts if d.get('claims_json'))}/{len(findings_dicts)} findings"
+            )
 
-        # P4-7: Try zero-copy column-path first (build_record_batch_from_structs).
-        # This avoids the dict roundtrip of build_arrow_batch_from_findings by
-        # accepting 6 pre-separated PyList columns and building IPC bytes in Rust.
-        # Skip Rust path if enrichment produced claims_json (Rust path doesn't support it).
-        if (findings_dicts is None or not any(d.get("claims_json") for d in findings_dicts)) and _RUST_RECORD_BATCH_COLS_AVAILABLE and _rust_record_batch_cols_func is not None:
-            try:
-                # Extract columns as Python lists — passed by reference to Rust,
-                # which iterates them via PyO3 Bound API (zero GIL overhead per item).
-                ids_list = [f.finding_id for f in findings]
-                queries_list = [f.query for f in findings]
-                src_types_list = [f.source_type for f in findings]
-                conf_list = [f.confidence for f in findings]
-                ts_list = [f.ts for f in findings]
-                prov_list = [_provenance_to_arrow_native(f.provenance) for f in findings]
-                ipc_bytes = _rust_record_batch_cols_func(
-                    ids_list,
-                    queries_list,
-                    src_types_list,
-                    conf_list,
-                    ts_list,
-                    prov_list,
-                )
-                if ipc_bytes and len(ipc_bytes) > 8:
-                    reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-                    try:
-                        record_batch = reader.read_next_batch()
-                    except StopIteration:
-                        # Empty batch (n=0, schema only) — success, zero records
-                        return (0, None)
-                    duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
-                    if duckdb_err is not None:
-                        return (0, "duckdb_insert_failed")
-                    return (duckdb_count, None)
-            except Exception as _rust_cols_e:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
-                _logger.debug("[Arrow-Rust] record_batch_cols failed, trying dict path: %s", _rust_cols_e)
-                # fall through to dict-path
+        # --- Sequential dispatch: best-available Arrow path ---
+        # Path 1: Rust zero-copy columns (fastest; skips dict roundtrip).
+        # Skip if enrichment produced claims_json (Rust path doesn't support it).
+        _has_claims = findings_dicts is not None and any(d.get("claims_json") for d in findings_dicts)
+        if not _has_claims and _RUST_RECORD_BATCH_COLS_AVAILABLE and _rust_record_batch_cols_func is not None:
+            _result = self._arrow_insert_rust_cols(findings)
+            if _result[0] > 0 or _result[1] is None:
+                return _result
 
-        # P4-7: Fallback A — dict-path (original build_arrow_batch_from_findings).
-        # Retained for back-compat and as a safe fallback if column lengths mismatch.
-        # F350M-R: If enrichment already produced findings_dicts with claims_json, reuse it.
-        # Otherwise build fresh dicts with null claims_json (for non-enriched path).
+        # Path 2: Rust dict → IPC (build_arrow_batch_from_findings).
         if _RUST_ARROW_AVAILABLE and _rust_arrow_func is not None:
-            try:
-                if findings_dicts is None:
-                    # No enrichment was done — build plain dicts with null claims_json
-                    findings_dicts = [
-                        {
-                            "id": f.finding_id,
-                            "query": f.query,
-                            "source_type": f.source_type,
-                            "confidence": f.confidence,
-                            "ts": f.ts,
-                            "provenance_json": _provenance_to_arrow_native(f.provenance),
-                            "claims_json": None,
-                        }
-                        for f in findings
-                    ]
-                ipc_bytes = _rust_arrow_func(findings_dicts)
-                if ipc_bytes and len(ipc_bytes) > 8:
-                    reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
-                    try:
-                        record_batch = reader.read_next_batch()
-                    except StopIteration:
-                        # Empty batch (n=0, schema only) — success, zero records
-                        return (0, None)
-                    duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
-                    if duckdb_err is not None:
-                        return (0, "duckdb_insert_failed")
-                    return (duckdb_count, None)
-            except Exception as _rust_e:  # noqa: BLE001 — best-effort; Arrow/Parquet operation; non-critical
-                _logger.debug("[Arrow-Rust] build_arrow_batch_from_findings failed, falling back to Python: %s", _rust_e)
-                pass  # fall through to Python fallback
+            _result = self._arrow_insert_rust_dict(findings, findings_dicts)
+            if _result[0] > 0 or _result[1] is None:
+                return _result
 
-        # P4-7: Fallback B — pure Python pa.RecordBatch.from_arrays.
-        # pa.RecordBatch.from_arrays() is lighter than pa.Table.from_arrays()
-        # because RecordBatch is a non-chunked, flat column container.
-        # We still use list comprehensions here (N× allocations) but DuckDB
-        # receives a RecordBatch which is the preferred Arrow载体.
-        # F350M-R: claims_json column added (nullable) to match 7-column MERGE schema.
-        # F350M-R: If enrichment produced findings_dicts, use it to extract claims_json.
-        # Otherwise build from CanonicalFinding objects (null claims for all).
+        # Path 3: Pure Python pa.RecordBatch.from_arrays (universal fallback).
+        return self._arrow_insert_python(findings, findings_dicts)
+
+    # ------------------------------------------------------------------
+    # F360M-R: Extracted Arrow insert paths — one per concern, no nesting.
+    # Each helper returns (count, error_type) matching the parent contract.
+    # ------------------------------------------------------------------
+
+    def _arrow_insert_rust_cols(self, findings: list[CanonicalFinding]) -> tuple[int, str | None]:
+        """
+        Path 1: Rust zero-copy column-path via build_record_batch_from_structs.
+
+        Builds IPC bytes by passing 6 pre-separated Python list columns to Rust,
+        which iterates them via PyO3 Bound API (zero GIL overhead per item).
+        Returns (count, None) on success, (0, None) on empty batch,
+        (0, error_type) on failure.
+        """
+        import io as _io
+        import pyarrow as _pa
+
+        ids_list = [f.finding_id for f in findings]
+        queries_list = [f.query for f in findings]
+        src_types_list = [f.source_type for f in findings]
+        conf_list = [f.confidence for f in findings]
+        ts_list = [f.ts for f in findings]
+        prov_list = [_provenance_to_arrow_native(f.provenance) for f in findings]
+
+        try:
+            ipc_bytes = _rust_record_batch_cols_func(
+                ids_list, queries_list, src_types_list, conf_list, ts_list, prov_list
+            )
+        except Exception as _e:  # noqa: BLE001 — best-effort; non-critical fallback path
+            _logger.debug("[Arrow-Rust] record_batch_cols failed: %s", _e)
+            return (0, None)  # fall through to next path
+
+        if not ipc_bytes or len(ipc_bytes) <= 8:
+            return (0, None)  # empty batch — success, zero records
+
+        reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+        try:
+            record_batch = reader.read_next_batch()
+        except StopIteration:
+            return (0, None)  # empty schema-only batch — treat as success
+
+        duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
+        if duckdb_err is not None:
+            return (0, "duckdb_insert_failed")
+        return (duckdb_count, None)
+
+    def _arrow_insert_rust_dict(
+        self, findings: list[CanonicalFinding], findings_dicts: list[dict] | None
+    ) -> tuple[int, str | None]:
+        """
+        Path 2: Rust dict → IPC via build_arrow_batch_from_findings.
+
+        Reuses pre-enriched findings_dicts if available; otherwise builds
+        plain dicts with null claims_json. Returns (count, None) on success,
+        (0, None) on empty batch, (0, error_type) on failure.
+        """
+        import io as _io
+        import pyarrow as _pa
+
+        if findings_dicts is None:
+            findings_dicts = [
+                {
+                    "id": f.finding_id,
+                    "query": f.query,
+                    "source_type": f.source_type,
+                    "confidence": f.confidence,
+                    "ts": f.ts,
+                    "provenance_json": _provenance_to_arrow_native(f.provenance),
+                    "claims_json": None,
+                }
+                for f in findings
+            ]
+
+        try:
+            ipc_bytes = _rust_arrow_func(findings_dicts)
+        except Exception as _e:  # noqa: BLE001 — best-effort; non-critical fallback path
+            _logger.debug("[Arrow-Rust] build_arrow_batch_from_findings failed: %s", _e)
+            return (0, None)  # fall through to next path
+
+        if not ipc_bytes or len(ipc_bytes) <= 8:
+            return (0, None)  # empty batch — success, zero records
+
+        reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+        try:
+            record_batch = reader.read_next_batch()
+        except StopIteration:
+            return (0, None)  # empty schema-only batch — treat as success
+
+        duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
+        if duckdb_err is not None:
+            return (0, "duckdb_insert_failed")
+        return (duckdb_count, None)
+
+    def _arrow_insert_python(
+        self, findings: list[CanonicalFinding], findings_dicts: list[dict] | None
+    ) -> tuple[int, str | None]:
+        """
+        Path 3: Pure Python pa.RecordBatch.from_arrays — universal fallback.
+
+        Builds a 7-column RecordBatch (id, query, source_type, confidence,
+        ts, provenance_json, claims_json) entirely in Python.
+        Returns (count, None) on success, (0, error_type) on failure.
+        """
+        import logging as _logging
+        import pyarrow as _pa
+
         try:
             if findings_dicts is not None:
-                # Use enriched dicts — claims_json already populated where applicable
+                # Enriched path: claims_json already populated where applicable
                 provenance_arr = _pa.array([d["provenance_json"] for d in findings_dicts], type=_pa.string())
                 id_arr = _pa.array([d["id"] for d in findings_dicts], type=_pa.string())
                 query_arr = _pa.array([d["query"] for d in findings_dicts], type=_pa.string())
@@ -8214,25 +8520,27 @@ class DuckDBShadowStore:
                 ts_arr = _pa.array([d["ts"] for d in findings_dicts], type=_pa.float64())
                 claims_arr = _pa.array([d.get("claims_json") for d in findings_dicts], type=_pa.string())
             else:
-                # No enrichment — build from CanonicalFinding objects (null claims for all)
-                provenance_arr = _pa.array([_provenance_to_arrow_native(f.provenance) for f in findings], type=_pa.string())
+                # Non-enriched path: null claims for all
+                provenance_arr = _pa.array(
+                    [_provenance_to_arrow_native(f.provenance) for f in findings], type=_pa.string()
+                )
                 id_arr = _pa.array([f.finding_id for f in findings], type=_pa.string())
                 query_arr = _pa.array([f.query for f in findings], type=_pa.string())
                 src_arr = _pa.array([f.source_type for f in findings], type=_pa.string())
                 conf_arr = _pa.array([f.confidence for f in findings], type=_pa.float64())
                 ts_arr = _pa.array([f.ts for f in findings], type=_pa.float64())
                 claims_arr = _pa.array([None] * len(findings), type=_pa.string())
-            # P4-7: RecordBatch instead of Table — DuckDB bulk insert prefers
-            # non-chunked RecordBatch (single IPC record batch = oneArrow payload)
+
             record_batch = _pa.RecordBatch.from_arrays(
                 [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr, claims_arr],
                 names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "claims_json"],
             )
-        except Exception as e:  # noqa: BLE001 — best-effort; DB query failure; non-critical
-            import logging as _logging
-
-            _logging.getLogger(__name__).error(f"[P0-4 Arrow] RecordBatch build failed: {type(e).__name__}: {e}")
+        except Exception as _e:  # noqa: BLE001 — best-effort; DB build failure
+            _logging.getLogger(__name__).error(
+                "[P0-4 Arrow] RecordBatch build failed: %s: %s", type(_e).__name__, _e
+            )
             return (0, "table_build_failed")
+
         duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
         if duckdb_err is not None:
             return (0, "duckdb_insert_failed")

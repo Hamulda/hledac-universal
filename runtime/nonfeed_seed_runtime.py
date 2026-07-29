@@ -24,7 +24,8 @@ Safety invariants:
 
 
 
-from typing import TYPE_CHECKING
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 from .nonfeed_seed_extractor import (
     classify_seed_quality,
@@ -128,6 +129,39 @@ def _classify_and_filter_seeds(
     )
 
 
+def _accumulate_seed_kinds_to_sets(
+    seeds: Iterable[Any],
+    *,
+    domains: set[str],
+    ips: set[str],
+    urls: set[str],
+    hashes: set[str],
+    cves: set[str],
+) -> None:
+    """
+    Extract IOC kinds from a seed iterable and accumulate into typed sets.
+
+    Type-2 duplicate elimination: replaces 4 identical for-loop fragments
+    in run_runtime_pivot_prelude that differed only in the variable names
+    of the source iterable and target sets.
+
+    Args:
+        seeds: Iterable of NonfeedSeed objects.
+        domains/ips/urls/hashes/cves: Target sets (mutated in-place).
+    """
+    for s in seeds:
+        if s.kind == "domain":
+            domains.add(s.value)
+        elif s.kind in ("ip", "ipv4"):
+            ips.add(s.value)
+        elif s.kind == "url":
+            urls.add(s.value)
+        elif s.kind == "hash":
+            hashes.add(s.value)
+        elif s.kind == "cve":
+            cves.add(s.value)
+
+
 def _is_text_query_without_direct_seeds(query: str) -> bool:
     """
     Returns True if the query is a text/threat query without direct IOC seeds.
@@ -195,6 +229,74 @@ def _extract_keywords_for_search(query: str) -> list[str]:
         return keywords
     except Exception:
         return []
+
+
+def _extend_all_seeds_from_findings(
+    findings: list[dict],
+    *,
+    all_seeds: list,
+    domains: set[str],
+    ips: set[str],
+    urls: set[str],
+    hashes: set[str],
+    cves: set[str],
+) -> None:
+    """Extract and accumulate seeds from existing findings."""
+    findings_seeds = extract_nonfeed_seeds_from_findings(
+        findings, max_seeds=_MAX_SEEDS_FROM_FINDINGS
+    )
+    all_seeds.extend(findings_seeds)
+    _accumulate_seed_kinds_to_sets(
+        findings_seeds,
+        domains=domains,
+        ips=ips,
+        urls=urls,
+        hashes=hashes,
+        cves=cves,
+    )
+
+
+async def _extract_seeds_from_duckdb(
+    duckdb_store: "DuckDBShadowStore",
+    query: str,
+    all_seeds: list,
+    domains: set[str],
+    ips: set[str],
+    urls: set[str],
+    hashes: set[str],
+    cves: set[str],
+) -> str:
+    """
+    Extract seeds from DuckDB offline memory.
+
+    Returns "" on success, or a skip reason string on failure/empty.
+    """
+    try:
+        keywords = _extract_keywords_for_search(query)
+        if keywords:
+            rows = await duckdb_store.async_query_findings_by_keywords(
+                keywords=keywords,
+                limit=_MAX_ROWS_FROM_DUCKDB,
+            )
+        else:
+            rows = await duckdb_store.async_query_findings_by_text(
+                like_pattern=query,
+                limit=_MAX_ROWS_FROM_DUCKDB,
+            )
+        if not rows:
+            return "offline_memory_no_seeds"
+        _extend_all_seeds_from_findings(
+            rows,
+            all_seeds=all_seeds,
+            domains=domains,
+            ips=ips,
+            urls=urls,
+            hashes=hashes,
+            cves=cves,
+        )
+        return ""
+    except Exception:
+        return "duckdb_read_error"
 
 
 def _compute_lanes_unlocked(
@@ -443,86 +545,41 @@ async def run_runtime_pivot_prelude(
 
     query_seeds = extract_nonfeed_seeds_from_text(query, max_seeds=_MAX_SEEDS_FROM_QUERY)
     _all_seeds.extend(query_seeds)
-    for s in query_seeds:
-        if s.kind == "domain":
-            _domains_q.add(s.value)
-        elif s.kind in ("ip", "ipv4"):
-            _ips_q.add(s.value)
-        elif s.kind == "url":
-            _urls_q.add(s.value)
-        elif s.kind == "hash":
-            _hashes_q.add(s.value)
-        elif s.kind == "cve":
-            _cves_q.add(s.value)
+    _query_seeds_extracted = bool(query_seeds)  # F227A: track source without re-extracting
+    _accumulate_seed_kinds_to_sets(
+        query_seeds,
+        domains=_domains_q,
+        ips=_ips_q,
+        urls=_urls_q,
+        hashes=_hashes_q,
+        cves=_cves_q,
+    )
 
     # Step 2: for text queries, try existing_findings OR DuckDB
     if _is_text_query_without_direct_seeds(query):
         if existing_findings:
-            findings_seeds = extract_nonfeed_seeds_from_findings(
-                existing_findings, max_seeds=_MAX_SEEDS_FROM_FINDINGS
+            _extend_all_seeds_from_findings(
+                existing_findings,
+                all_seeds=_all_seeds,
+                domains=_domains_q,
+                ips=_ips_q,
+                urls=_urls_q,
+                hashes=_hashes_q,
+                cves=_cves_q,
             )
-            _all_seeds.extend(findings_seeds)
-            for s in findings_seeds:
-                if s.kind == "domain":
-                    _domains_q.add(s.value)
-                elif s.kind in ("ip", "ipv4"):
-                    _ips_q.add(s.value)
-                elif s.kind == "url":
-                    _urls_q.add(s.value)
-                elif s.kind == "hash":
-                    _hashes_q.add(s.value)
-                elif s.kind == "cve":
-                    _cves_q.add(s.value)
         elif duckdb_store is not None:
-            try:
-                # P1-2: Keyword-based cross-sprint search.
-                # Extract individual keywords from the broad query so "ransomware
-                # threat intelligence leak dark web exposure" matches findings
-                # containing ANY of those terms (not the full string).
-                keywords = _extract_keywords_for_search(query)
-                if keywords:
-                    rows = await duckdb_store.async_query_findings_by_keywords(
-                        keywords=keywords,
-                        limit=_MAX_ROWS_FROM_DUCKDB,
-                    )
-                else:
-                    # Fallback: original exact-match search
-                    rows = await duckdb_store.async_query_findings_by_text(
-                        like_pattern=query,
-                        limit=_MAX_ROWS_FROM_DUCKDB,
-                    )
-                # F251A: Explicit row-count check — no rows means offline memory had no seeds.
-                # Set skip reason so planner preserves diagnostic action (extract_more_seeds_from_duckdb).
-                if not rows:
-                    result["seed_context_skip_reason"] = "offline_memory_no_seeds"
-                    return result
-                if rows:
-                    findings_seeds = extract_nonfeed_seeds_from_findings(
-                        rows, max_seeds=_MAX_SEEDS_FROM_FINDINGS
-                    )
-                    _all_seeds.extend(findings_seeds)
-                    for s in findings_seeds:
-                        if s.kind == "domain":
-                            _domains_q.add(s.value)
-                        elif s.kind in ("ip", "ipv4"):
-                            _ips_q.add(s.value)
-                        elif s.kind == "url":
-                            _urls_q.add(s.value)
-                        elif s.kind == "hash":
-                            _hashes_q.add(s.value)
-                        elif s.kind == "cve":
-                            _cves_q.add(s.value)
-            except Exception:
-                result["seed_context_skip_reason"] = "duckdb_read_error"
+            _skip_reason = await _extract_seeds_from_duckdb(
+                duckdb_store, query, _all_seeds,
+                _domains_q, _ips_q, _urls_q, _hashes_q, _cves_q,
+            )
+            if _skip_reason:
+                result["seed_context_skip_reason"] = _skip_reason
                 return result
 
     # F227A: Track which source contributed the seeds
     _seed_source = ""
     if _domains_q or _ips_q or _urls_q or _hashes_q or _cves_q:
-        _step1_contributed = bool(
-            extract_nonfeed_seeds_from_text(query, max_seeds=1)
-        )
-        if _step1_contributed:
+        if _query_seeds_extracted:
             _seed_source = "query"
         elif existing_findings:
             _seed_source = "findings"
@@ -544,17 +601,14 @@ async def run_runtime_pivot_prelude(
     _kept_urls: set[str] = set()
     _kept_hashes: set[str] = set()
     _kept_cves: set[str] = set()
-    for s in _kept_seeds:
-        if s.kind == "domain":
-            _kept_domains.add(s.value)
-        elif s.kind in ("ip", "ipv4"):
-            _kept_ips.add(s.value)
-        elif s.kind == "url":
-            _kept_urls.add(s.value)
-        elif s.kind == "hash":
-            _kept_hashes.add(s.value)
-        elif s.kind == "cve":
-            _kept_cves.add(s.value)
+    _accumulate_seed_kinds_to_sets(
+        _kept_seeds,
+        domains=_kept_domains,
+        ips=_kept_ips,
+        urls=_kept_urls,
+        hashes=_kept_hashes,
+        cves=_kept_cves,
+    )
 
     # F241B: Build quality telemetry
     # _drop_by_quality_count: seeds that FAILED the quality gate (regardless of bypass)

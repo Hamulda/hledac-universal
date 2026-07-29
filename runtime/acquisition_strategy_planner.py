@@ -104,7 +104,7 @@ def lookup_threat_entity(name: str) -> tuple[str, str] | None:
     except Exception:
         return None
 
-__all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details', 'DOMAIN_EXPANSIONS', '_expand_keyword_query']
+__all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_ipfs_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details', 'DOMAIN_EXPANSIONS', '_expand_keyword_query']
 ACQUISITION_REPORT_SCHEMA_VERSION = 'f208.v1'
 
 class AcquisitionLane:
@@ -126,7 +126,7 @@ class AcquisitionLane:
 
 # IPFS CID functions imported from canonical cid_detection module
 from hledac.universal.runtime.acquisition.cid_detection import (
-    _has_explicit_cid,
+    _has_explicit_ipfs_cid,
     _extract_cids_from_text,
 )
 
@@ -333,8 +333,13 @@ LaneSpecShodan = LaneSpec(max_items=20, timeout_s=30, risk_level=RiskLevel.MEDIU
 LaneSpecCensys = LaneSpec(max_items=20, timeout_s=45, risk_level=RiskLevel.MEDIUM)
 LaneSpecGreyNoise = LaneSpec(max_items=30, timeout_s=20, risk_level=RiskLevel.LOW)
 
-def _lc(lane: str, base: int, uma_state: str) -> int:
-    """Apply lane-specific concurrency adjustments on top of base."""
+def _lane_concurrency(lane: str, base: int, uma_state: str) -> int:
+    """Apply lane-specific concurrency adjustments on top of base.
+
+    GHOST_INVARIANTS:
+      - No network I/O, no model/MLX load
+      - Bounded: returns 1-32
+    """
     if uma_state in ('critical', 'emergency'):
         if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN, AcquisitionLane.STEALTH):
             return max(1, base // 2)
@@ -391,7 +396,7 @@ def _disabled_reason(lane: str, ctx: AcquisitionContext) -> str:
             return 'hardware_critical'
         return 'non_academic_profile'
     return 'lane_disabled'
-LANE_RULES: tuple[LaneRule, ...] = (_lane_rule(AcquisitionLane.FEED, LaneSpecFeed, lambda ctx: ctx.uma_state not in ('critical', 'emergency'), lambda _: 'always_allowed', lambda ctx: _lc(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PUBLIC, LaneSpecPublic, lambda ctx: not ctx.transport_degraded if ctx.is_deep_osint_m1 else ctx.is_nonfeed_diagnostic and ctx.has_domain and (not ctx.transport_degraded) if ctx.is_nonfeed_diagnostic else ctx.uma_state not in ('critical', 'emergency') and (not ctx.transport_degraded), lambda ctx: 'deep_osint_m1_stage1' if ctx.is_deep_osint_m1 else 'nonfeed_diagnostic_domain' if ctx.is_nonfeed_diagnostic and ctx.has_domain else 'transport_degraded' if ctx.transport_degraded else 'hardware_critical' if ctx.uma_state in ('critical', 'emergency') else 'query_eligible', lambda ctx: _lc(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CT, LaneSpecCT, lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic) and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1 or ctx.aggressive_mode), lambda _: 'domain_or_aggressive_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.DOH, LaneSpecDOH, lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'domain_or_ip_or_nonfeed_diagnostic', lambda ctx: _lc(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.WAYBACK, LaneSpecWayback, lambda ctx: (ctx.has_url or ctx.has_long_duration or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'has_url_or_long_duration_or_nonfeed_domain', lambda ctx: _lc(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'has_domain_or_ip', lambda ctx: _lc(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain, lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'has_crypto_indicator', lambda ctx: _lc(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.STEALTH, LaneSpecStealth, lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_nonfeed_diagnostic), lambda _: 'stealth_ready', lambda _: 1), _lane_rule(AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot, lambda ctx: True, lambda _: 'always_allowed_lightweight', lambda ctx: ctx.base_concurrency + 1), _lane_rule(AcquisitionLane.ACADEMIC, LaneSpecAcademic, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'academic_profile', lambda _: 1), _lane_rule(AcquisitionLane.IPFS, LaneSpecIPFS, lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'explicit_cid_in_query', lambda _: 1), _lane_rule(AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'academic_profile', lambda _: 1), _lane_rule(AcquisitionLane.SHODAN, LaneSpecShodan, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CENSYS, LaneSpecCensys, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'domain_or_cert_indicator', lambda ctx: _lc(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.GREYNOISE, LaneSpecGreyNoise, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'ip_or_cidr_indicator', lambda ctx: _lc(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state)))
+LANE_RULES: tuple[LaneRule, ...] = (_lane_rule(AcquisitionLane.FEED, LaneSpecFeed, lambda ctx: ctx.uma_state not in ('critical', 'emergency'), lambda _: 'always_allowed', lambda ctx: _lane_concurrency(AcquisitionLane.FEED, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PUBLIC, LaneSpecPublic, lambda ctx: not ctx.transport_degraded if ctx.is_deep_osint_m1 else ctx.is_nonfeed_diagnostic and ctx.has_domain and (not ctx.transport_degraded) if ctx.is_nonfeed_diagnostic else ctx.uma_state not in ('critical', 'emergency') and (not ctx.transport_degraded), lambda ctx: 'deep_osint_m1_stage1' if ctx.is_deep_osint_m1 else 'nonfeed_diagnostic_domain' if ctx.is_nonfeed_diagnostic and ctx.has_domain else 'transport_degraded' if ctx.transport_degraded else 'hardware_critical' if ctx.uma_state in ('critical', 'emergency') else 'query_eligible', lambda ctx: _lane_concurrency(AcquisitionLane.PUBLIC, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CT, LaneSpecCT, lambda ctx: (ctx.has_domain or ctx.aggressive_mode or ctx.is_nonfeed_diagnostic) and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1 or ctx.aggressive_mode), lambda _: 'domain_or_aggressive_or_nonfeed_diagnostic', lambda ctx: _lane_concurrency(AcquisitionLane.CT, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.DOH, LaneSpecDOH, lambda ctx: (ctx.has_domain or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'domain_or_ip_or_nonfeed_diagnostic', lambda ctx: _lane_concurrency(AcquisitionLane.DOH, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.WAYBACK, LaneSpecWayback, lambda ctx: (ctx.has_url or ctx.has_long_duration or (ctx.is_nonfeed_diagnostic and ctx.has_domain)) and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'has_url_or_long_duration_or_nonfeed_domain', lambda ctx: _lane_concurrency(AcquisitionLane.WAYBACK, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.PASSIVE_DNS, LaneSpecPDNS, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.is_nonfeed_diagnostic or ctx.aggressive_mode) and (not ctx.is_deep_osint_m1), lambda _: 'has_domain_or_ip', lambda ctx: _lane_concurrency(AcquisitionLane.PASSIVE_DNS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.BLOCKCHAIN, LaneSpecBlockchain, lambda ctx: ctx.has_crypto and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'has_crypto_indicator', lambda ctx: _lane_concurrency(AcquisitionLane.BLOCKCHAIN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.STEALTH, LaneSpecStealth, lambda ctx: ctx.stealth_ready and (not ctx.hardware_critical or ctx.aggressive_mode) and (not ctx.is_nonfeed_diagnostic), lambda _: 'stealth_ready', lambda _: 1), _lane_rule(AcquisitionLane.PIVOT_EXECUTOR, LaneSpecPivot, lambda ctx: True, lambda _: 'always_allowed_lightweight', lambda ctx: ctx.base_concurrency + 1), _lane_rule(AcquisitionLane.ACADEMIC, LaneSpecAcademic, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'academic_profile', lambda _: 1), _lane_rule(AcquisitionLane.IPFS, LaneSpecIPFS, lambda ctx: ctx.cid_present and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'explicit_cid_in_query', lambda _: 1), _lane_rule(AcquisitionLane.OPEN_SOURCE, LaneSpecOpenSrc, lambda ctx: ctx.is_academic and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'academic_profile', lambda _: 1), _lane_rule(AcquisitionLane.SHODAN, LaneSpecShodan, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'ip_or_cidr_indicator', lambda ctx: _lane_concurrency(AcquisitionLane.SHODAN, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.CENSYS, LaneSpecCensys, lambda ctx: ctx.has_domain and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'domain_or_cert_indicator', lambda ctx: _lane_concurrency(AcquisitionLane.CENSYS, ctx.base_concurrency, ctx.uma_state)), _lane_rule(AcquisitionLane.GREYNOISE, LaneSpecGreyNoise, lambda ctx: ctx.has_ip and (not ctx.hardware_critical or ctx.aggressive_mode), lambda _: 'ip_or_cidr_indicator', lambda ctx: _lane_concurrency(AcquisitionLane.GREYNOISE, ctx.base_concurrency, ctx.uma_state)))
 
 class NonfeedPlanDebug(msgspec.Struct, gc=False):
     """[F207L] Diagnostic snapshot of nonfeed lane planning for live KPI debugging.
@@ -1002,17 +1007,30 @@ def normalize_source_family_name(value: str) -> str:
     return _alias_map.get(_v, _v)
 _TERMINAL_PRIORITY = {'ATTEMPTED_ACCEPTED': 0, 'ATTEMPTED_TIMEOUT': 1, 'ATTEMPTED_ERROR': 2, 'ATTEMPTED_NO_RESULTS': 3, 'SKIPPED_BY_MEMORY': 4, 'SKIPPED_BY_POLICY': 5, 'SKIPPED': 6, 'NEVER_SCHEDULED': 7, 'UNKNOWN': 8}
 
-def _pick_best_terminal(outcomes: list[dict]) -> str:
-    """Pick the highest-priority terminal_state from a list of same-family outcomes (dict-based)."""
+
+def _pick_best_terminal(get_state: Callable[[Any], Any], outcomes: list) -> str:
+    """Pick the highest-priority terminal_state from a list of same-family outcomes.
+
+    Args:
+        get_state: callable that extracts terminal_state from each outcome item
+                   (e.g., lambda o: o.get('terminal_state', 'UNKNOWN') or lambda o: o.terminal_state or 'UNKNOWN')
+        outcomes: list of outcome items (dict or dataclass)
+    """
     _best_ts = 'UNKNOWN'
     _best_prio = 99
     for o in outcomes:
-        ts = o.get('terminal_state', 'UNKNOWN')
+        ts = get_state(o) or 'UNKNOWN'
         prio = _TERMINAL_PRIORITY.get(ts, 99)
         if prio < _best_prio:
             _best_prio = prio
             _best_ts = ts
     return _best_ts
+
+
+# --- Type-specific wrappers ---
+def _pick_best_terminal_dict(outcomes: list[dict]) -> str:
+    """Pick the highest-priority terminal_state from a list of same-family outcomes (dict-based)."""
+    return _pick_best_terminal(lambda o: o.get('terminal_state', 'UNKNOWN'), outcomes)
 
 
 def _pick_best_terminal_sfo(outcomes: list[SourceFamilyOutcome]) -> str:
@@ -1020,15 +1038,7 @@ def _pick_best_terminal_sfo(outcomes: list[SourceFamilyOutcome]) -> str:
 
     ISSUE 23: Attribute access instead of dict.get() — 3× faster.
     """
-    _best_ts = 'UNKNOWN'
-    _best_prio = 99
-    for o in outcomes:
-        ts = o.terminal_state or 'UNKNOWN'
-        prio = _TERMINAL_PRIORITY.get(ts, 99)
-        if prio < _best_prio:
-            _best_prio = prio
-            _best_ts = ts
-    return _best_ts
+    return _pick_best_terminal(lambda o: o.terminal_state, outcomes)
 
 def canonicalize_source_family_outcomes(outcomes: list[SourceFamilyOutcome]) -> list[SourceFamilyOutcome]:
     """Deduplicate and merge source family outcomes that normalize to the same family.
@@ -1476,21 +1486,20 @@ def _mission_target_kind(intent: str) -> str:
     """F225A: Derive target kind from mission intent."""
     return _MISSION_TARGET_KIND.get(intent, MissionTargetKind.UNKNOWN)
 
+_MISSION_LANES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    MissionIntent.WALLET_RECON: ((AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.BLOCKCHAIN, AcquisitionLane.CT)),
+    MissionIntent.CVE_RECON: ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS)),
+    MissionIntent.DOMAIN_RECON: ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS)),
+    MissionIntent.INFRA_RECON: ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.PASSIVE_DNS, AcquisitionLane.WAYBACK)),
+}
+
 def _mission_lanes(intent: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """F225A: Derive required and optional lanes from mission intent.
 
     Returns (required_lanes, optional_lanes).
     Lane priority/reason adjustments only — all safety gates preserved.
     """
-    if intent == MissionIntent.WALLET_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.BLOCKCHAIN, AcquisitionLane.CT))
-    if intent == MissionIntent.CVE_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS))
-    if intent == MissionIntent.DOMAIN_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.WAYBACK, AcquisitionLane.PASSIVE_DNS))
-    if intent == MissionIntent.INFRA_RECON:
-        return ((AcquisitionLane.PUBLIC, AcquisitionLane.CT, AcquisitionLane.PIVOT_EXECUTOR), (AcquisitionLane.PASSIVE_DNS, AcquisitionLane.WAYBACK))
-    return ((), ())
+    return _MISSION_LANES.get(intent, ((), ()))
 
 def _should_enable_bootstrap(query: str, acquisition_profile: str, has_domain: bool) -> bool:
     """P0-3: Enable bootstrap for threat queries even without domain.
@@ -1548,16 +1557,6 @@ def _base_concurrency(uma_state: str, swap_detected: bool) -> int:
     if uma_state == 'warn':
         return 3
     return 5
-
-def _lane_concurrency(lane: str, base: int, uma_state: str) -> int:
-    """Apply lane-specific adjustments on top of base concurrency."""
-    if uma_state in ('critical', 'emergency'):
-        if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN, AcquisitionLane.STEALTH):
-            return max(1, base // 2)
-    if uma_state == 'warn':
-        if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN):
-            return max(1, base - 1)
-    return base
 
 def build_acquisition_plan(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int=0, branch_timeout_count: int=0, transport_authority_status: dict | None=None, stealth_phase: dict | None=None, acquisition_profile: str='default', source_quality_weights: dict | None=None, rl_lane_combo: frozenset[str] | None=None, feed_domain_seeds: tuple[str, ...]=(), synthetic_domains: tuple[str, ...]=()) -> AcquisitionStrategySnapshot:
     """
@@ -1669,7 +1668,7 @@ def _build_plan_impl(query: str, duration_s: float, aggressive_mode: bool, uma_s
     else:
         _feed_max = 50
         _feed_cap_r = None
-    ctx = AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
+    ctx = AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_ipfs_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
     plans: list[AcquisitionLanePlan] = []
     for rule in LANE_RULES:
         enabled = rule.enabled(ctx)

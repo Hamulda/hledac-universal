@@ -130,6 +130,91 @@ def _is_publisher_domain(domain: str) -> bool:
     """Return True if domain is a known publisher/aggregator."""
     return domain.lower() in PUBLISHER_DOMAINS
 
+# ─── Per-IOC-type extractors (flattened from 6× nested blocks, depth=1) ────────
+
+def _extract_urls(cleaned: str, seen: dict, max_seeds: int) -> None:
+    """Extract URLs. Early-return when max_seeds reached."""
+    if len(seen) >= max_seeds:
+        return
+    for m in _URL_RE.finditer(cleaned):
+        key = ('url', m.group(0))
+        if key not in seen:
+            seen[key] = NonfeedSeed(value=m.group(0), kind='url', source='body', confidence=0.9, reason='url_in_body')
+        if len(seen) >= max_seeds:
+            return
+
+def _extract_emails(cleaned: str, seen: dict, max_seeds: int) -> None:
+    """Extract email addresses. Early-return when max_seeds reached."""
+    if len(seen) >= max_seeds:
+        return
+    for m in _EMAIL_RE.finditer(cleaned):
+        raw = m.group(1).lower()
+        key = ('email', raw)
+        if key not in seen:
+            seen[key] = NonfeedSeed(value=raw, kind='email', source='body', confidence=0.85, reason='email_in_body')
+        if len(seen) >= max_seeds:
+            return
+
+def _extract_ips(cleaned: str, seen: dict, max_seeds: int) -> None:
+    """Extract IP addresses (dotted quad). Early-return when max_seeds reached."""
+    if len(seen) >= max_seeds:
+        return
+    for m in _IP_RE.finditer(cleaned):
+        val = m.group(0)
+        key = ('ip', val)
+        if key not in seen:
+            seen[key] = NonfeedSeed(value=val, kind='ip', source='body', confidence=0.95, reason='ip_in_body')
+        if len(seen) >= max_seeds:
+            return
+
+def _extract_hashes(cleaned: str, seen: dict, max_seeds: int) -> None:
+    """Extract hashes (MD5/SHA1/SHA256). Early-return when max_seeds reached."""
+    if len(seen) >= max_seeds:
+        return
+    for m in _HASH_RE.finditer(cleaned):
+        raw = m.group(1).lower()
+        if len(raw) == 32:
+            kind_str = 'md5'
+        elif len(raw) == 40:
+            kind_str = 'sha1'
+        elif len(raw) == 64:
+            kind_str = 'sha256'
+        else:
+            kind_str = 'unknown'
+        key = ('hash', raw)
+        if key not in seen:
+            seen[key] = NonfeedSeed(value=raw, kind='hash', source='body', confidence=0.8, reason=f'hash_in_body_{kind_str}')
+        if len(seen) >= max_seeds:
+            return
+
+def _extract_cves(cleaned: str, seen: dict, max_seeds: int) -> None:
+    """Extract CVE identifiers. Early-return when max_seeds reached."""
+    if len(seen) >= max_seeds:
+        return
+    for m in _CVE_RE.finditer(cleaned):
+        raw = m.group(1).upper()
+        key = ('cve', raw)
+        if key not in seen:
+            seen[key] = NonfeedSeed(value=raw, kind='cve', source='body', confidence=0.9, reason='cve_in_body')
+        if len(seen) >= max_seeds:
+            return
+
+def _extract_domains(cleaned: str, seen: dict, max_seeds: int) -> None:
+    """Extract domains (generic fallback). Early-return when max_seeds reached."""
+    if len(seen) >= max_seeds:
+        return
+    for m in _DOMAIN_RE.finditer(cleaned):
+        raw = m.group(0).lower()
+        if raw.endswith(('.gov.', '.edu.', '.mil.', '.onion')):
+            continue
+        if _is_publisher_domain(raw):
+            continue
+        key = ('domain', raw)
+        if key not in seen:
+            seen[key] = NonfeedSeed(value=raw, kind='domain', source='body', confidence=0.7, reason='domain_in_body')
+        if len(seen) >= max_seeds:
+            return
+
 def extract_nonfeed_seeds_from_text(text: str, *, max_seeds: int=50) -> list[NonfeedSeed]:
     """
     Sprint F222D: Extract IOC seeds from arbitrary text.
@@ -155,66 +240,12 @@ def extract_nonfeed_seeds_from_text(text: str, *, max_seeds: int=50) -> list[Non
         return []
     cleaned = _OBFUSCATED_RE.sub('.', text)
     seen: dict[tuple[str, str], NonfeedSeed] = {}
-    if len(seen) < max_seeds:
-        for m in _URL_RE.finditer(cleaned):
-            val = m.group(0)
-            key = ('url', val)
-            if key not in seen:
-                seen[key] = NonfeedSeed(value=val, kind='url', source='body', confidence=0.9, reason='url_in_body')
-            if len(seen) >= max_seeds:
-                break
-    if len(seen) < max_seeds:
-        for m in _EMAIL_RE.finditer(cleaned):
-            raw = m.group(1).lower()
-            key = ('email', raw)
-            if key not in seen:
-                seen[key] = NonfeedSeed(value=raw, kind='email', source='body', confidence=0.85, reason='email_in_body')
-            if len(seen) >= max_seeds:
-                break
-    if len(seen) < max_seeds:
-        for m in _IP_RE.finditer(cleaned):
-            val = m.group(0)
-            key = ('ip', val)
-            if key not in seen:
-                seen[key] = NonfeedSeed(value=val, kind='ip', source='body', confidence=0.95, reason='ip_in_body')
-            if len(seen) >= max_seeds:
-                break
-    if len(seen) < max_seeds:
-        for m in _HASH_RE.finditer(cleaned):
-            raw = m.group(1).lower()
-            if len(raw) == 32:
-                kind_str = 'md5'
-            elif len(raw) == 40:
-                kind_str = 'sha1'
-            elif len(raw) == 64:
-                kind_str = 'sha256'
-            else:
-                kind_str = 'unknown'
-            key = ('hash', raw)
-            if key not in seen:
-                seen[key] = NonfeedSeed(value=raw, kind='hash', source='body', confidence=0.8, reason=f'hash_in_body_{kind_str}')
-            if len(seen) >= max_seeds:
-                break
-    if len(seen) < max_seeds:
-        for m in _CVE_RE.finditer(cleaned):
-            raw = m.group(1).upper()
-            key = ('cve', raw)
-            if key not in seen:
-                seen[key] = NonfeedSeed(value=raw, kind='cve', source='body', confidence=0.9, reason='cve_in_body')
-            if len(seen) >= max_seeds:
-                break
-    if len(seen) < max_seeds:
-        for m in _DOMAIN_RE.finditer(cleaned):
-            raw = m.group(0).lower()
-            if raw.endswith(('.gov.', '.edu.', '.mil.', '.onion')):
-                continue
-            if _is_publisher_domain(raw):
-                continue
-            key = ('domain', raw)
-            if key not in seen:
-                seen[key] = NonfeedSeed(value=raw, kind='domain', source='body', confidence=0.7, reason='domain_in_body')
-            if len(seen) >= max_seeds:
-                break
+    _extract_urls(cleaned, seen, max_seeds)
+    _extract_emails(cleaned, seen, max_seeds)
+    _extract_ips(cleaned, seen, max_seeds)
+    _extract_hashes(cleaned, seen, max_seeds)
+    _extract_cves(cleaned, seen, max_seeds)
+    _extract_domains(cleaned, seen, max_seeds)
     return list(seen.values())
 
 def extract_nonfeed_seeds_from_findings(findings: list[dict], *, max_seeds: int=100) -> list[NonfeedSeed]:

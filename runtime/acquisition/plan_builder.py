@@ -322,18 +322,26 @@ def _make_lane_plan(
     )
 
 
+# Shared lane keys for _lane_* helpers (Type-1 exact duplicate extraction)
+_LANE_KEYS: tuple[str, ...] = (
+    "FEED", "PUBLIC", "CT", "WAYBACK", "PASSIVE_DNS", "BLOCKCHAIN", "PIVOT_EXECUTOR",
+)
+
+# Default values shared across lane parameter lookups
+_LANE_MAX_ITEMS: dict[str, int] = {
+    k: v for k, v in zip(_LANE_KEYS, (500, 200, 100, 50, 100, 50, 100))
+}
+_LANE_TIMEOUTS: dict[str, float] = {
+    k: v for k, v in zip(_LANE_KEYS, (60.0, 120.0, 180.0, 120.0, 60.0, 120.0, 90.0))
+}
+_LANE_RISK: dict[str, str] = {
+    k: v for k, v in zip(_LANE_KEYS, ("low", "medium", "medium", "medium", "low", "high", "low"))
+}
+
+
 def _lane_max_items(lane: str, uma_state: str) -> int:
     """Return max items for lane based on UMA state."""
-    base = {
-        "FEED": 500,
-        "PUBLIC": 200,
-        "CT": 100,
-        "WAYBACK": 50,
-        "PASSIVE_DNS": 100,
-        "BLOCKCHAIN": 50,
-        "PIVOT_EXECUTOR": 100,
-    }.get(lane, 50)
-
+    base = _LANE_MAX_ITEMS.get(lane, 50)
     if uma_state == "critical":
         return max(10, base // 4)
     elif uma_state == "warn":
@@ -343,16 +351,7 @@ def _lane_max_items(lane: str, uma_state: str) -> int:
 
 def _lane_timeout(lane: str, uma_state: str) -> float:
     """Return timeout in seconds for lane."""
-    base = {
-        "FEED": 60.0,
-        "PUBLIC": 120.0,
-        "CT": 180.0,
-        "WAYBACK": 120.0,
-        "PASSIVE_DNS": 60.0,
-        "BLOCKCHAIN": 120.0,
-        "PIVOT_EXECUTOR": 90.0,
-    }.get(lane, 60.0)
-
+    base = _LANE_TIMEOUTS.get(lane, 60.0)
     if uma_state == "critical":
         return base * 0.5
     return base
@@ -360,15 +359,7 @@ def _lane_timeout(lane: str, uma_state: str) -> float:
 
 def _lane_risk(lane: str) -> str:
     """Return risk level for lane."""
-    return {
-        "FEED": "low",
-        "PUBLIC": "medium",
-        "CT": "medium",
-        "WAYBACK": "medium",
-        "PASSIVE_DNS": "low",
-        "BLOCKCHAIN": "high",
-        "PIVOT_EXECUTOR": "low",
-    }.get(lane, "medium")
+    return _LANE_RISK.get(lane, "medium")
 
 
 # ── Lane query builder ─────────────────────────────────────────────────────────────

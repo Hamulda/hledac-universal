@@ -323,6 +323,83 @@ class GNNPredictor:
         # Use 'parallel' preset (3 workers) - GNN batch scoring is CPU-bound
         return await loop.run_in_executor(get_or_create("parallel"), _sync)
 
+    # ── helpers ──────────────────────────────────────────────────────────────────
+
+    def _build_node_index(self, graph_nodes: list[dict]) -> dict[str, int]:
+        """Build node_id → row-index mapping."""
+        return {node['id']: i for i, node in enumerate(graph_nodes)}
+
+    def _build_adjacency_matrix(self, n: int, graph_edges: list[dict], node_index: dict[str, int]) -> list[list[float]]:
+        """Construct symmetric adjacency matrix from edges."""
+        adj = [[0.0] * n for _ in range(n)]
+        for edge in graph_edges:
+            src_i = node_index.get(edge.get('source', ''))
+            dst_i = node_index.get(edge.get('target', ''))
+            if src_i is not None and dst_i is not None:
+                adj[src_i][dst_i] = 1.0
+                adj[dst_i][src_i] = 1.0
+        return adj
+
+    def _build_feature_matrix(self, graph_nodes: list[dict]) -> tuple[list[list[float]], int]:
+        """Build one-hot feature matrix from node types. Returns (features, feat_dim)."""
+        node_types = list({n.get('type', 'unknown') for n in graph_nodes})
+        type_to_idx = {t: i for i, t in enumerate(node_types)}
+        feat_dim = max(len(node_types), 4)
+        features = [
+            [1.0 if type_to_idx.get(n.get('type', 'unknown'), 0) == j else 0.0
+             for j in range(feat_dim)]
+            for n in graph_nodes
+        ]
+        return features, feat_dim
+
+    def _compute_gnn_hidden(self, adj_data: list[list[float]], features_data: list[list[float]], feat_dim: int) -> mx.array:
+        """MLX-native GCN hidden layer: symmetric normalize → ReLU(A_norm @ X @ W)."""
+        A = mx.array(adj_data, dtype=mx.float32)
+        X = mx.array(features_data, dtype=mx.float32)
+        degree = mx.sum(A, axis=1, keepdims=True)
+        degree_inv_sqrt = mx.where(degree > 0, 1.0 / mx.sqrt(degree + 1e-08), mx.zeros_like(degree))
+        A_norm = degree_inv_sqrt * A * mx.transpose(degree_inv_sqrt)
+        hidden_dim = 16
+        mx.random.seed(42)
+        W1 = mx.random.normal((feat_dim, hidden_dim)) * 0.1
+        return mx.maximum(A_norm @ X @ W1, 0)
+
+    def _collect_existing_neighbors(self, graph_edges: list[dict], query_node_id: str) -> set[str]:
+        """Gather already-connected node IDs to exclude from predictions."""
+        neighbors = set()
+        for edge in graph_edges:
+            if edge.get('source') == query_node_id:
+                neighbors.add(edge.get('target'))
+            elif edge.get('target') == query_node_id:
+                neighbors.add(edge.get('source'))
+        return neighbors
+
+    def _score_and_sort(self, graph_nodes: list[dict], query_scores: list[float], query_node_id: str, existing_neighbors: set[str], top_k: int) -> list[dict]:
+        """Build prediction dicts, filter self+known edges, return top-k by score."""
+        predictions = [
+            {'node_id': node['id'],
+             'predicted_link_probability': float(score),
+             'node_type': node.get('type', 'unknown'),
+             'node_value': node.get('value', node['id'])}
+            for node, score in zip(graph_nodes, query_scores, strict=False)
+            if node['id'] != query_node_id and node['id'] not in existing_neighbors
+        ]
+        predictions.sort(key=lambda x: x['predicted_link_probability'], reverse=True)
+        return predictions[:top_k]
+
+    def _cleanup_mlx_memory(self) -> None:
+        """Release MLX Metal cache after inference."""
+        try:
+            mx.eval([])
+            import gc
+            gc.collect()
+            if hasattr(mx, 'clear_cache'):
+                mx.clear_cache()
+        except Exception:
+            pass
+
+    # ── main ─────────────────────────────────────────────────────────────────────
+
     async def predict_ioc_links(self, graph_nodes: list[dict], graph_edges: list[dict], query_node_id: str, top_k: int=10) -> list[dict]:
         """
         Predict pravděpodobné linky z query_node na neznámé uzly.
@@ -332,74 +409,40 @@ class GNNPredictor:
         Implementace: MLX-native 2-vrstvý GCN (Graph Convolutional Network).
         ŽÁDNÝ PyTorch — čistý mlx.core.
         """
-        if not MLX_GNN_AVAILABLE:
+        if not MLX_GNN_AVAILABLE or not graph_nodes:
             return []
-        if not graph_nodes:
-            return []
+
+        # Memory guard
         try:
             from hledac.universal.resource_allocator import get_memory_pressure_level
-            pressure = get_memory_pressure_level()
-            if pressure == 'critical':
+            if get_memory_pressure_level() == 'critical':
                 return []
         except Exception:
             pass
+
         try:
             n = len(graph_nodes)
-            node_index = {node['id']: i for i, node in enumerate(graph_nodes)}
-            adj_data = [[0.0] * n for _ in range(n)]
-            for edge in graph_edges:
-                src_i = node_index.get(edge.get('source', ''))
-                dst_i = node_index.get(edge.get('target', ''))
-                if src_i is not None and dst_i is not None:
-                    adj_data[src_i][dst_i] = 1.0
-                    adj_data[dst_i][src_i] = 1.0
-            node_types = list({n.get('type', 'unknown') for n in graph_nodes})
-            type_to_idx = {t: i for i, t in enumerate(node_types)}
-            feat_dim = max(len(node_types), 4)
-            features_data = []
-            for node in graph_nodes:
-                feat = [0.0] * feat_dim
-                type_idx = type_to_idx.get(node.get('type', 'unknown'), 0)
-                feat[type_idx] = 1.0
-                features_data.append(feat)
-            A = mx.array(adj_data, dtype=mx.float32)
-            X = mx.array(features_data, dtype=mx.float32)
-            degree = mx.sum(A, axis=1, keepdims=True)
-            degree_inv_sqrt = mx.where(degree > 0, 1.0 / mx.sqrt(degree + 1e-08), mx.zeros_like(degree))
-            A_norm = degree_inv_sqrt * A * mx.transpose(degree_inv_sqrt)
-            hidden_dim = 16
-            mx.random.seed(42)
-            W1 = mx.random.normal((feat_dim, hidden_dim)) * 0.1
-            H1 = mx.maximum(A_norm @ X @ W1, 0)
+            node_index = self._build_node_index(graph_nodes)
+            adj_data = self._build_adjacency_matrix(n, graph_edges, node_index)
+            features_data, feat_dim = self._build_feature_matrix(graph_nodes)
+
+            # GCN inference
+            H1 = self._compute_gnn_hidden(adj_data, features_data, feat_dim)
             scores_matrix = H1 @ mx.transpose(H1)
             mx.eval(scores_matrix)
+
+            # Resolve query
             query_idx = node_index.get(query_node_id)
             if query_idx is None:
                 return []
+
             query_scores = scores_matrix[query_idx].tolist()
-            existing_neighbors = set()
-            for edge in graph_edges:
-                if edge.get('source') == query_node_id:
-                    existing_neighbors.add(edge.get('target'))
-                elif edge.get('target') == query_node_id:
-                    existing_neighbors.add(edge.get('source'))
-            predictions = []
-            for _i, (node, score) in enumerate(zip(graph_nodes, query_scores, strict=False)):
-                if node['id'] == query_node_id:
-                    continue
-                if node['id'] in existing_neighbors:
-                    continue
-                predictions.append({'node_id': node['id'], 'predicted_link_probability': float(score), 'node_type': node.get('type', 'unknown'), 'node_value': node.get('value', node['id'])})
-            predictions.sort(key=lambda x: x['predicted_link_probability'], reverse=True)
-            try:
-                mx.eval([])
-                import gc
-                gc.collect()
-                if hasattr(mx, 'clear_cache'):
-                    mx.clear_cache()
-            except Exception:
-                pass
-            return predictions[:top_k]
+            existing_neighbors = self._collect_existing_neighbors(graph_edges, query_node_id)
+            predictions = self._score_and_sort(graph_nodes, query_scores, query_node_id, existing_neighbors, top_k)
+
+            self._cleanup_mlx_memory()
+            return predictions
+
         except Exception as e:
             logger.warning(f'GNN prediction failed: {e}')
             return []

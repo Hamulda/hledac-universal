@@ -712,7 +712,7 @@ class QualityAssessor:
         findings: list[CanonicalFinding],
     ) -> list[FindingQualityDecision]:
         """
-        Sprint P1-2: Batch quality gate — rayon-parallel via Rust batch_* APIs.
+        Sprint P1-2: Batch quality gate — rayon-parallel via Rust batch APIs.
 
         Applies identical decision logic as per-finding assess(), but in a single
         batch call per chunk. Phase 1 pre-computes all fingerprints + entropies via
@@ -751,52 +751,42 @@ class QualityAssessor:
         # Batch URL fingerprints (URL-first items skip entropy)
         if url_indices:
             url_texts = [url_fingerprints[i] for i in url_indices]
-            if _quality_gate_batch_available() and _rust_backend.quality is not None:
-                try:
-                    batch_urls: list[str] = _rust_backend.quality.batch_url_fingerprints(url_texts)
-                    for j, idx in enumerate(url_indices):
-                        url_fingerprints[idx] = batch_urls[j]
-                except Exception:
-                    try:
-                        for j, idx in enumerate(url_indices):
-                            url_fingerprints[idx] = _rust_backend.quality.url_fingerprint(url_texts[j])
-                    except Exception:
-                        for j, idx in enumerate(url_indices):
-                            url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
-            else:
-                for j, idx in enumerate(url_indices):
-                    url_fingerprints[idx] = _compute_url_fingerprint(url_texts[j])
+            batch_urls = self._rust_batch_str(
+                url_texts,
+                batch_fn=lambda lst: _rust_backend.quality.batch_url_fingerprints(lst),
+                single_fn=lambda s: _rust_backend.quality.url_fingerprint(s),
+                py_fn=_compute_url_fingerprint,
+            )
+            for j, idx in enumerate(url_indices):
+                url_fingerprints[idx] = batch_urls[j]
 
         # Batch payload fingerprints + entropies
         if payload_indices:
             payload_texts = [texts[i] for i in payload_indices]
 
             # Normalize via Rust batch (F265C refactor — centralized rust.* namespace)
-            if _quality_gate_rust_available() and _rust_backend.quality is not None:
-                try:
-                    normalized_batch: list[str] = _rust_backend.quality.batch_normalize_quality_text(payload_texts)
-                except Exception:
-                    normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
-            else:
-                normalized_batch = [_normalize_for_quality(t) for t in payload_texts]
+            normalized_batch = self._rust_batch_str(
+                payload_texts,
+                batch_fn=lambda lst: _rust_backend.quality.batch_normalize_quality_text(lst),
+                single_fn=_normalize_for_quality,
+                py_fn=_normalize_for_quality,
+            )
 
             # Batch entropy via Rust rayon pool (F265C refactor) + zero-copy (F266-ZC)
-            if _quality_gate_batch_available() and _rust_backend.quality is not None:
-                try:
-                    entropies_batch: list[float] = _rust_backend.quality.batch_entropy(normalized_batch)
-                except Exception:
-                    entropies_batch = [_compute_entropy(t) for t in normalized_batch]
-            else:
-                entropies_batch = [_compute_entropy(t) for t in normalized_batch]
+            entropies_batch = self._rust_batch_float(
+                normalized_batch,
+                batch_fn=lambda lst: _rust_backend.quality.batch_entropy(lst),
+                single_fn=_compute_entropy,
+                py_fn=_compute_entropy,
+            )
 
             # Batch dedup fingerprints via Rust rayon pool (F265C refactor) + zero-copy (F266-ZC)
-            if _quality_gate_batch_available() and _rust_backend.quality is not None:
-                try:
-                    fps_batch: list[str] = _rust_backend.quality.batch_dedup_fingerprints(normalized_batch)
-                except Exception:
-                    fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
-            else:
-                fps_batch = [_compute_dedup_fingerprint(t) for t in normalized_batch]
+            fps_batch = self._rust_batch_str(
+                normalized_batch,
+                batch_fn=lambda lst: _rust_backend.quality.batch_dedup_fingerprints(lst),
+                single_fn=_compute_dedup_fingerprint,
+                py_fn=_compute_dedup_fingerprint,
+            )
 
             for j, idx in enumerate(payload_indices):
                 entropies[idx] = entropies_batch[j]
@@ -829,6 +819,52 @@ class QualityAssessor:
 
         assert None not in results, "assess_batch: 1:1 invariant violated"
         return results  # type: ignore[return-value]
+
+    # ---------------------------------------------------------------------------
+    # Rust batch fallback helper — CC = 3
+    # ---------------------------------------------------------------------------
+
+    # ---------------------------------------------------------------------------
+    # Rust batch fallback helpers — CC = 3 each
+    # ---------------------------------------------------------------------------
+
+    def _rust_batch_str(
+        self,
+        items: list[str],
+        batch_fn: collections.abc.Callable[[list[str]], list[str]],
+        single_fn: collections.abc.Callable[[str], str],
+        py_fn: collections.abc.Callable[[str], str],
+    ) -> list[str]:
+        """Rust batch → single-item fallback → Python fallback for str results."""
+        if not items:
+            return []
+        try:
+            return batch_fn(items)
+        except Exception:
+            pass
+        try:
+            return [single_fn(item) for item in items]
+        except Exception:
+            return [py_fn(item) for item in items]
+
+    def _rust_batch_float(
+        self,
+        items: list[str],
+        batch_fn: collections.abc.Callable[[list[str]], list[float]],
+        single_fn: collections.abc.Callable[[str], float],
+        py_fn: collections.abc.Callable[[str], float],
+    ) -> list[float]:
+        """Rust batch → single-item fallback → Python fallback for float results."""
+        if not items:
+            return []
+        try:
+            return batch_fn(items)
+        except Exception:
+            pass
+        try:
+            return [single_fn(item) for item in items]
+        except Exception:
+            return [py_fn(item) for item in items]
 
     # ---------------------------------------------------------------------------
     # Phase 2 per-finding decision guard — CC = 5
@@ -874,10 +910,9 @@ class QualityAssessor:
         # URL-first: store and accept (no entropy)
         if url_fp:
             if self._lmdb_store_fn is not None:
-                self._lmdb_store_fn(fp, f.finding_id)
-            if not is_feed_source:
-                self._state.add_to_hot_cache(fp, f.finding_id)
-            return self._make_decision(True, None, entropy, fp, False)
+                self._lmdb_store_fn(url_fp, f.finding_id)  # BUGFIX: was fp (empty for URL-first)
+            self._state.add_to_hot_cache(url_fp, f.finding_id)  # always add (consistent with assess())
+            return self._make_decision(True, None, entropy, url_fp, False)
 
         # Short strings: semantic dedup guard
         if len(fp) < _QUALITY_MIN_ENTROPY_LEN:

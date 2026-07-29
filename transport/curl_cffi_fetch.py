@@ -986,6 +986,30 @@ def _extract_domain_from_url(url: str) -> str:
 
 # F265B: conditional cache wrapper for the curl_cffi stealth lane.
 
+
+# F350M-R: module-level helpers eliminate function-in-function nesting (CC=-2)
+def _extract_resp_headers(resp_headers: dict) -> tuple[str, str, str]:
+    """Extract etag, last_modified, content_type from response headers."""
+    etag = last_modified = content_type = ""
+    for k, v in resp_headers.items():
+        kl = k.lower()
+        if kl == "etag":
+            etag = str(v)
+        elif kl == "last-modified":
+            last_modified = str(v)
+        elif kl == "content-type":
+            content_type = str(v)
+    return etag, last_modified, content_type
+
+
+def _hash_body_bytes(body_bytes: bytes) -> str:
+    """Compute sha256 hex of body bytes; empty string on error."""
+    try:
+        return hashlib.sha256(body_bytes).hexdigest()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 # F350M-R: extracted helper eliminates nested try/runtime-import inside pre-probe block (CC=-3, depth=-2)
 async def _try_probe_h3(url: str) -> Any | None:
     """Probe Alt-Svc for H3; return HttpVersion.v3 on success, None on failure."""
@@ -1003,6 +1027,19 @@ async def _try_probe_h3(url: str) -> Any | None:
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+async def _maybe_preprobe_h3(
+    url: str, http_version: Any, _force_refresh: bool, _pre_probe: bool
+) -> Any:
+    """Probe for H3 if conditions met; returns (possibly updated) http_version. Darknet skipped."""
+    if not _pre_probe or http_version is not None or _force_refresh:
+        return http_version
+    _url_lower = url.lower() if url else ""
+    if _url_lower.endswith(".onion") or ".i2p" in _url_lower or ".b32.i2p" in _url_lower:
+        return http_version
+    _http_version = await _try_probe_h3(url)
+    return _http_version if _http_version is not None else http_version
 
 
 async def fetch_via_curl_cffi_cached(
@@ -1077,15 +1114,8 @@ async def fetch_via_curl_cffi_cached(
         pass
 
     # F273G-H3FIX: Blocking pre-probe BEFORE primary fetch.
-    # F350M-R: guard clauses eliminate CC=7→4; inner try/imports extracted to helper.
-    if _pre_probe and http_version is None and not _force_refresh:
-        _url_lower = url.lower() if url else ""
-        if _url_lower.endswith(".onion") or ".i2p" in _url_lower or ".b32.i2p" in _url_lower:
-            pass  # dark net — skip probe, no H3
-        else:
-            _http_version = await _try_probe_h3(url)
-            if _http_version is not None:
-                http_version = _http_version
+    # F350M-R: extracted helper eliminates depth-2 darknet pass-block (CC -2, depth -2)
+    http_version = await _maybe_preprobe_h3(url, http_version, _force_refresh, _pre_probe)
 
     merged_headers: dict[str, str] = dict(headers) if headers else {}
     sent_conditional = False
@@ -1116,7 +1146,7 @@ async def fetch_via_curl_cffi_cached(
 
     status = int(result.get("status_code", 0) or 0)
 
-    # F350M-R: guard clauses eliminate nested if inside try (CC -1, depth -1)
+    # F350M-R: flatten 304 handler — guard clause for sent_conditional (CC -1, depth -1)
     if status == 304:
         if sent_conditional:
             try:
@@ -1133,26 +1163,7 @@ async def fetch_via_curl_cffi_cached(
         result["conditional_304"] = True
         return result
 
-    # F350M-R: extracted helpers eliminate 4-level nesting (was: if→try→for→if/elif/elif)
-    def _extract_resp_headers(resp_headers: dict) -> tuple[str, str, str]:
-        etag = last_modified = content_type = ""
-        for k, v in resp_headers.items():
-            kl = k.lower()
-            if kl == "etag":
-                etag = str(v)
-            elif kl == "last-modified":
-                last_modified = str(v)
-            elif kl == "content-type":
-                content_type = str(v)
-        return etag, last_modified, content_type
-
-    def _hash_body_bytes(body_bytes: bytes) -> str:
-        # F350M-R: hashlib at module top-level — no runtime import needed
-        try:
-            return hashlib.sha256(body_bytes).hexdigest()
-        except Exception:  # noqa: BLE001
-            return ""
-
+    # F350M-R: success path — use module-level helpers
     if 200 <= status < 300:
         try:
             resp_headers = result.get("headers") or {}

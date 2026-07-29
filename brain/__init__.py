@@ -144,279 +144,165 @@ load_embedding_model = None  # type: ignore[assignment,misc]
 unload_embedding_model = None  # type: ignore[assignment,misc]
 
 
+# ─── Engine Registry — declarative lazy-loading specification ──────────────────
+# Replaces 14 repetitive if-blocks (complexity 44→6).
+# Each entry: (module, import_names dict, available_flag_global_name, brain_engines_key).
+# _load_engine() consumes this to perform the import + populate globals in one pass.
+_ENGINE_REGISTRY: tuple[tuple[str, str, tuple[str, ...], str | None], ...] = (
+    # (module_name, attribute_name_for_return, (exported_symbols...), brain_engines_key_or_None)
+    ("_metal", "METAL_AVAILABLE", ("METAL_AVAILABLE",), "metal"),
+    ("_cache", "CACHE_AVAILABLE", ("CACHE_AVAILABLE",), "cache"),
+    ("_batch", "BATCH_AVAILABLE", ("BATCH_AVAILABLE",), "batch"),
+    # mlx_lm.lora — special: no module import, just attribute check
+    ("__lora_special__", "LORA_AVAILABLE", ("LORA_AVAILABLE",), None),
+    # Single-symbol exports via module import
+    ("mlx_batched_executor", "MLXBatchedExecutor", ("MLXBatchedExecutor", "MLX_BATCHED_EXECUTOR_AVAILABLE"), None),
+    ("mlx_worker_thread", "MLXWorkerThread", ("MLXWorkerThread", "MLX_WORKER_THREAD_AVAILABLE"), None),
+    ("inference_pipeliner", "InferencePipeliner", ("InferencePipeliner", "INFERENCE_PIPELINER_AVAILABLE"), None),
+    # Multi-symbol exports (insight_engine, inference_engine)
+    ("insight_engine", "INSIGHT_AVAILABLE", (
+        "Anomaly", "CausalRelationship", "Contradiction", "Gap", "Insight",
+        "InsightAnalysisResult", "InsightEngine", "Pattern", "SynthesisLevel",
+        "create_insight_engine", "INSIGHT_AVAILABLE",
+    ), "insight"),
+    ("inference_engine", "INFERENCE_AVAILABLE", (
+        "Evidence", "HopStep", "InferenceEngine", "InferenceRule", "InferenceStep",
+        "InferenceType", "MultiHopPath", "MultiHopReasoner", "ResolvedEntity",
+        "create_inference_engine", "InferenceHypothesis", "INFERENCE_AVAILABLE",
+    ), "inference"),
+    # HypothesisEngine — special: imports HypothesisEvidence separately + _HE_Contradiction alias
+    ("research_hypothesis_engine", "HYPOTHESIS_AVAILABLE", (
+        "AdversarialReport", "AdversarialVerifier", "FalsificationResult",
+        "Hypothesis", "HypothesisEngine", "HypothesisStatus", "HypothesisType",
+        "SourceCredibility", "TestDesign", "TestResult", "TestType",
+        "create_hypothesis_engine", "HypothesisEvidence", "_HE_Contradiction",
+        "HYPOTHESIS_AVAILABLE",
+    ), "hypothesis"),
+    ("moe_router", "MOE_AVAILABLE", ("MoERouter", "MoERouterConfig", "create_moe_router", "MOE_AVAILABLE"), "moe"),
+    ("distillation_engine", "DISTILLATION_AVAILABLE", (
+        "CriticMLP", "DistillationEngine", "DistillationExample",
+        "create_distillation_engine", "DISTILLATION_AVAILABLE",
+    ), "distillation"),
+    ("modernbert_engine", "MODERNBERT_AVAILABLE", ("ModernBertEngine", "MODERNBERT_AVAILABLE"), "modernbert"),
+    # ModelEngine + ModernBertModelAdapter (two modules)
+    ("model_engine", "MODEL_ENGINE_AVAILABLE", ("ModelEngine", "MODEL_ENGINE_AVAILABLE"), "model_manager"),
+    ("modernbert_adapter", "ModernBertModelAdapter", ("ModernBertModelAdapter",), None),
+    ("model_manager", "MODEL_MANAGER_AVAILABLE", (
+        "ModelManager", "ModelType", "get_model_manager", "reset_model_manager",
+        "MODEL_MANAGER_AVAILABLE",
+    ), "model_manager"),
+    ("ner_engine", "NER_ENGINE_AVAILABLE", (
+        "Entity", "IOCScorer", "NEREngine", "extract_iocs_from_text",
+        "get_ner_engine", "reset_ner_engine", "NER_ENGINE_AVAILABLE",
+    ), "ner_engine"),
+    ("embedding_pipeline", "EMBEDDING_AVAILABLE", ("load_embedding_model", "unload_embedding_model", "EMBEDDING_AVAILABLE"), "embedding"),
+)
+
+
+def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_key: str | None) -> object:
+    """
+    Load a brain engine module and populate globals().
+    Returns the value of the requested attribute ``name``.
+    Fails gracefully: sets _AVAILABLE=False and returns None on any error.
+    """
+    global AVAILABLE_BRAIN_ENGINES
+    g = globals()
+
+    # Special path: mlx_lm.lora has no dedicated module, just an attribute-existence check
+    if module_spec == "__lora_special__":
+        try:
+            import mlx_lm  # noqa: F401
+            # Probe mlx_lm.lora without triggering type-checker "submodule not imported" warning
+            _loader = getattr(mlx_lm, "lora", None)
+            if _loader is not None:
+                _ = getattr(_loader, "load_lora_model", None)
+            g["LORA_AVAILABLE"] = _loader is not None and _ is not None
+        except Exception:
+            g["LORA_AVAILABLE"] = False
+        return g.get("LORA_AVAILABLE") if name == "LORA_AVAILABLE" else g.get(name)
+
+    # Normal path: import the module and bind exported symbols to globals
+    try:
+        if brain_key is not None:
+            # Dual-module engine (model_engine + modernbert_adapter)
+            if module_spec == "model_engine":
+                from . import model_engine as _me
+                from . import modernbert_adapter as _ma
+                g["MODEL_ENGINE_AVAILABLE"] = True
+                AVAILABLE_BRAIN_ENGINES[brain_key] = True
+                g["ModelEngine"] = _me.ModelEngine
+                g["ModernBertModelAdapter"] = _ma.ModernBertModelAdapter
+                return g.get(name)
+            if brain_key == "model_manager":
+                from . import model_manager as _mm
+                g["MODEL_MANAGER_AVAILABLE"] = getattr(_mm, "MODEL_MANAGER_AVAILABLE", True)
+                g["ModelManager"] = _mm.ModelManager
+                g["ModelType"] = _mm.ModelType
+                g["get_model_manager"] = _mm.get_model_manager
+                g["reset_model_manager"] = _mm.reset_model_manager
+                AVAILABLE_BRAIN_ENGINES[brain_key] = True
+                return g.get(name)
+            if module_spec == "research_hypothesis_engine":
+                from .research_hypothesis_engine import (
+                    AdversarialReport, AdversarialVerifier, Contradiction,
+                    FalsificationResult, Hypothesis, HypothesisEngine,
+                    HypothesisStatus, HypothesisType, SourceCredibility,
+                    TestDesign, TestResult, TestType, create_hypothesis_engine,
+                )
+                from .research_hypothesis_engine import Evidence as HypothesisEvidence
+                g["AdversarialReport"] = AdversarialReport
+                g["AdversarialVerifier"] = AdversarialVerifier
+                g["FalsificationResult"] = FalsificationResult
+                g["Hypothesis"] = Hypothesis
+                g["HypothesisEngine"] = HypothesisEngine
+                g["HypothesisStatus"] = HypothesisStatus
+                g["HypothesisType"] = HypothesisType
+                g["SourceCredibility"] = SourceCredibility
+                g["TestDesign"] = TestDesign
+                g["TestResult"] = TestResult
+                g["TestType"] = TestType
+                g["create_hypothesis_engine"] = create_hypothesis_engine
+                g["HypothesisEvidence"] = HypothesisEvidence
+                g["_HE_Contradiction"] = Contradiction
+                g["HYPOTHESIS_AVAILABLE"] = True
+                AVAILABLE_BRAIN_ENGINES[brain_key] = True
+                return g.get(name)
+            # Generic single-module import
+            import importlib
+            mod = importlib.import_module(f".{module_spec}", __package__)
+            flag = f"{module_spec.upper()}_AVAILABLE"
+            g[flag] = True
+            for sym in exported:
+                if sym.endswith("_AVAILABLE"):
+                    continue
+                if hasattr(mod, sym):
+                    g[sym] = getattr(mod, sym)
+            AVAILABLE_BRAIN_ENGINES[brain_key] = True
+            return g.get(name)
+        else:
+            # No brain_key (MLXBatchedExecutor etc.)
+            import importlib
+            mod = importlib.import_module(f".{module_spec}", __package__)
+            for sym in exported:
+                if hasattr(mod, sym):
+                    g[sym] = getattr(mod, sym)
+            return g.get(name)
+    except Exception:
+        flag = f"{module_spec.upper()}_AVAILABLE"
+        g[flag] = False
+        if brain_key is not None:
+            AVAILABLE_BRAIN_ENGINES[brain_key] = False
+        return g.get(name)
+
+
 # ─── PEP 562 Lazy Imports via __getattr__ ─────────────────────────────────────
 # A2-FIX: All 12 non-circular engines defer import until first attribute access.
 # Cold import cost drops from ~9.7s to ~150ms (enum + flag defs only).
-# HypothesisEngine stays eager (circular dep with hypothesis_engine/adversarial.py).
-def __getattr__(name: str):
-    # Phase 2: Modular Brain Components (extracted from DeepHermes3Engine)
-    if name in ("METAL_AVAILABLE",):
-        global METAL_AVAILABLE
-        try:
-            from . import _metal
-            METAL_AVAILABLE = True
-            AVAILABLE_BRAIN_ENGINES["metal"] = True
-        except Exception:
-            METAL_AVAILABLE = False
-            AVAILABLE_BRAIN_ENGINES["metal"] = False
-        return METAL_AVAILABLE
-    if name in ("CACHE_AVAILABLE",):
-        global CACHE_AVAILABLE
-        try:
-            from . import _cache
-            CACHE_AVAILABLE = True
-            AVAILABLE_BRAIN_ENGINES["cache"] = True
-        except Exception:
-            CACHE_AVAILABLE = False
-            AVAILABLE_BRAIN_ENGINES["cache"] = False
-        return CACHE_AVAILABLE
-    if name in ("BATCH_AVAILABLE",):
-        global BATCH_AVAILABLE
-        try:
-            from . import _batch
-            BATCH_AVAILABLE = True
-            AVAILABLE_BRAIN_ENGINES["batch"] = True
-        except Exception:
-            BATCH_AVAILABLE = False
-            AVAILABLE_BRAIN_ENGINES["batch"] = False
-        return BATCH_AVAILABLE
-    # Sprint LoRA-1: mlx_lm.lora deferred import
-    if name in ("LORA_AVAILABLE",):
-        global LORA_AVAILABLE
-        try:
-            import mlx_lm
-            _ = mlx_lm.lora.load_lora_model
-            LORA_AVAILABLE = True
-        except Exception:
-            LORA_AVAILABLE = False
-        return LORA_AVAILABLE
-    # MLXBatchedExecutor — Sprint P0-2
-    if name in ("MLXBatchedExecutor", "MLX_BATCHED_EXECUTOR_AVAILABLE"):
-        global MLXBatchedExecutor, MLX_BATCHED_EXECUTOR_AVAILABLE
-        try:
-            from .mlx_batched_executor import MLXBatchedExecutor
-            MLX_BATCHED_EXECUTOR_AVAILABLE = True
-        except ImportError:
-            MLXBatchedExecutor = None  # type: ignore[assignment,misc]
-            MLX_BATCHED_EXECUTOR_AVAILABLE = False
-        return MLXBatchedExecutor if name == "MLXBatchedExecutor" else MLX_BATCHED_EXECUTOR_AVAILABLE
-    # MLXWorkerThread — Sprint P0-3
-    if name in ("MLXWorkerThread", "MLX_WORKER_THREAD_AVAILABLE"):
-        global MLXWorkerThread, MLX_WORKER_THREAD_AVAILABLE
-        try:
-            from .mlx_worker_thread import MLXWorkerThread
-            MLX_WORKER_THREAD_AVAILABLE = True
-        except ImportError:
-            MLXWorkerThread = None  # type: ignore[assignment,misc]
-            MLX_WORKER_THREAD_AVAILABLE = False
-        return MLXWorkerThread if name == "MLXWorkerThread" else MLX_WORKER_THREAD_AVAILABLE
-    # InferencePipeliner — Sprint P2-1b
-    if name in ("InferencePipeliner", "INFERENCE_PIPELINER_AVAILABLE"):
-        global InferencePipeliner, INFERENCE_PIPELINER_AVAILABLE
-        try:
-            from .inference_pipeliner import InferencePipeliner
-            INFERENCE_PIPELINER_AVAILABLE = True
-        except ImportError:
-            InferencePipeliner = None  # type: ignore[assignment,misc]
-            INFERENCE_PIPELINER_AVAILABLE = False
-        return InferencePipeliner if name == "InferencePipeliner" else INFERENCE_PIPELINER_AVAILABLE
-    # InsightEngine — 1.9s cold import deferred
-    if name in (
-        "Anomaly", "CausalRelationship", "Contradiction", "Gap",
-        "Insight", "InsightAnalysisResult", "InsightEngine",
-        "Pattern", "SynthesisLevel", "create_insight_engine",
-        "INSIGHT_AVAILABLE",
-    ):
-        global INSIGHT_AVAILABLE, Anomaly, CausalRelationship, Contradiction, Gap, Insight, InsightAnalysisResult, InsightEngine, Pattern, SynthesisLevel, create_insight_engine
-        from . import insight_engine as _ie
-        INSIGHT_AVAILABLE = True
-        Anomaly = _ie.Anomaly
-        CausalRelationship = _ie.CausalRelationship
-        Contradiction = _ie.Contradiction
-        Gap = _ie.Gap
-        Insight = _ie.Insight
-        InsightAnalysisResult = _ie.InsightAnalysisResult
-        InsightEngine = _ie.InsightEngine
-        Pattern = _ie.Pattern
-        SynthesisLevel = _ie.SynthesisLevel
-        create_insight_engine = _ie.create_insight_engine
-        if name == "INSIGHT_AVAILABLE":
-            return True
-        return globals()[name]
-    # InferenceEngine
-    if name in (
-        "Evidence", "HopStep", "InferenceEngine", "InferenceRule",
-        "InferenceStep", "InferenceType", "MultiHopPath",
-        "MultiHopReasoner", "ResolvedEntity", "create_inference_engine",
-        "InferenceHypothesis", "INFERENCE_AVAILABLE",
-    ):
-        global INFERENCE_AVAILABLE, Evidence, HopStep, InferenceEngine, InferenceRule, InferenceStep, InferenceType, MultiHopPath, MultiHopReasoner, ResolvedEntity, create_inference_engine, InferenceHypothesis
-        from . import inference_engine as _ie
-        INFERENCE_AVAILABLE = True
-        Evidence = _ie.Evidence
-        HopStep = _ie.HopStep
-        InferenceEngine = _ie.InferenceEngine
-        InferenceRule = _ie.InferenceRule
-        InferenceStep = _ie.InferenceStep
-        InferenceType = _ie.InferenceType
-        MultiHopPath = _ie.MultiHopPath
-        MultiHopReasoner = _ie.MultiHopReasoner
-        ResolvedEntity = _ie.ResolvedEntity
-        create_inference_engine = _ie.create_inference_engine
-        InferenceHypothesis = _ie.Hypothesis
-        if name == "INFERENCE_AVAILABLE":
-            return True
-        return globals()[name]
-    # HypothesisEngine — lazy (A2-FIX): deferred from top-level to break circular dep
-    if name in (
-        "AdversarialReport", "AdversarialVerifier", "_HE_Contradiction",
-        "FalsificationResult", "Hypothesis", "HypothesisEngine",
-        "HypothesisStatus", "HypothesisType", "SourceCredibility",
-        "TestDesign", "TestResult", "TestType",
-        "create_hypothesis_engine", "HypothesisEvidence",
-        "HYPOTHESIS_AVAILABLE",
-    ):
-        global HYPOTHESIS_AVAILABLE, Hypothesis, HypothesisEngine
-        global AdversarialReport, AdversarialVerifier, FalsificationResult
-        global HypothesisStatus, HypothesisType, SourceCredibility
-        global TestDesign, TestResult, TestType, create_hypothesis_engine
-        global HypothesisEvidence, _HE_Contradiction
-        try:
-            from .research_hypothesis_engine import (
-                AdversarialReport,
-                AdversarialVerifier,
-                Contradiction,
-                FalsificationResult,
-                Hypothesis,
-                HypothesisEngine,
-                HypothesisStatus,
-                HypothesisType,
-                SourceCredibility,
-                TestDesign,
-                TestResult,
-                TestType,
-                create_hypothesis_engine,
-            )
-            from .research_hypothesis_engine import (
-                Evidence as HypothesisEvidence,
-            )
-            # Alias for compatibility
-            _HE_Contradiction = Contradiction
-            HYPOTHESIS_AVAILABLE = True
-        except ImportError:
-            Hypothesis = None  # type: ignore[assignment,misc]
-            HYPOTHESIS_AVAILABLE = False
-        if name == "HYPOTHESIS_AVAILABLE":
-            return HYPOTHESIS_AVAILABLE
-        if name == "_HE_Contradiction":
-            return _HE_Contradiction
-        return globals().get(name)
-    # MoE Router
-    if name in ("MoERouter", "MoERouterConfig", "create_moe_router", "MOE_AVAILABLE"):
-        global MOE_AVAILABLE, MoERouter, MoERouterConfig, create_moe_router
-        try:
-            from . import moe_router as _mr
-            MOE_AVAILABLE = True
-            MoERouter = _mr.MoERouter
-            MoERouterConfig = _mr.MoERouterConfig
-            create_moe_router = _mr.create_moe_router
-        except ImportError:
-            MOE_AVAILABLE = False
-        if name == "MOE_AVAILABLE":
-            return MOE_AVAILABLE
-        return globals().get(name)
-    # Distillation Engine
-    if name in ("CriticMLP", "DistillationEngine", "DistillationExample",
-                "create_distillation_engine", "DISTILLATION_AVAILABLE"):
-        global DISTILLATION_AVAILABLE, CriticMLP, DistillationEngine, DistillationExample, create_distillation_engine
-        try:
-            from . import distillation_engine as _de
-            DISTILLATION_AVAILABLE = True
-            CriticMLP = _de.CriticMLP
-            DistillationEngine = _de.DistillationEngine
-            DistillationExample = _de.DistillationExample
-            create_distillation_engine = _de.create_distillation_engine
-        except ImportError:
-            DISTILLATION_AVAILABLE = False
-        if name == "DISTILLATION_AVAILABLE":
-            return DISTILLATION_AVAILABLE
-        return globals().get(name)
-    # ModernBertEngine
-    if name in ("ModernBertEngine", "MODERNBERT_AVAILABLE"):
-        global MODERNBERT_AVAILABLE, ModernBertEngine
-        try:
-            from . import modernbert_engine as _mb
-            MODERNBERT_AVAILABLE = True
-            ModernBertEngine = _mb.ModernBertEngine
-        except ImportError:
-            MODERNBERT_AVAILABLE = False
-        if name == "MODERNBERT_AVAILABLE":
-            return MODERNBERT_AVAILABLE
-        return globals().get(name)
-    # ModelEngine + ModernBertModelAdapter — Sprint F222
-    if name in ("ModelEngine", "ModernBertModelAdapter", "MODEL_ENGINE_AVAILABLE"):
-        global MODEL_ENGINE_AVAILABLE, ModelEngine, ModernBertModelAdapter
-        try:
-            from . import model_engine as _me
-            from . import modernbert_adapter as _ma
-            MODEL_ENGINE_AVAILABLE = True
-            ModelEngine = _me.ModelEngine
-            ModernBertModelAdapter = _ma.ModernBertModelAdapter
-        except ImportError:
-            MODEL_ENGINE_AVAILABLE = False
-        if name == "MODEL_ENGINE_AVAILABLE":
-            return MODEL_ENGINE_AVAILABLE
-        return globals().get(name)
-    # ModelManager
-    if name in ("ModelManager", "ModelType", "get_model_manager",
-                "reset_model_manager", "MODEL_MANAGER_AVAILABLE"):
-        global MODEL_MANAGER_AVAILABLE, ModelManager, ModelType, get_model_manager, reset_model_manager
-        try:
-            from . import model_manager as _mm
-            MODEL_ENGINE_AVAILABLE = getattr(_mm, 'MODEL_MANAGER_AVAILABLE', True)
-            ModelManager = _mm.ModelManager
-            ModelType = _mm.ModelType
-            get_model_manager = _mm.get_model_manager
-            reset_model_manager = _mm.reset_model_manager
-        except ImportError:
-            MODEL_MANAGER_AVAILABLE = False
-        if name == "MODEL_MANAGER_AVAILABLE":
-            return MODEL_MANAGER_AVAILABLE
-        return globals().get(name)
-    # NER Engine
-    if name in (
-        "Entity", "IOCScorer", "NEREngine",
-        "extract_iocs_from_text", "get_ner_engine", "reset_ner_engine",
-        "NER_ENGINE_AVAILABLE",
-    ):
-        global NER_ENGINE_AVAILABLE, Entity, IOCScorer, NEREngine, extract_iocs_from_text, get_ner_engine, reset_ner_engine
-        try:
-            from . import ner_engine as _ne
-            NER_ENGINE_AVAILABLE = True
-            Entity = _ne.Entity
-            IOCScorer = _ne.IOCScorer
-            NEREngine = _ne.NEREngine
-            extract_iocs_from_text = _ne.extract_iocs_from_text
-            get_ner_engine = _ne.get_ner_engine
-            reset_ner_engine = _ne.reset_ner_engine
-        except ImportError:
-            NER_ENGINE_AVAILABLE = False
-        if name == "NER_ENGINE_AVAILABLE":
-            return NER_ENGINE_AVAILABLE
-        return globals().get(name)
-    # Embedding pipeline
-    if name in ("load_embedding_model", "unload_embedding_model", "EMBEDDING_AVAILABLE"):
-        global EMBEDDING_AVAILABLE, load_embedding_model, unload_embedding_model
-        try:
-            from .. import embedding_pipeline as _ep
-            EMBEDDING_AVAILABLE = True
-            load_embedding_model = _ep.load_embedding_model
-            unload_embedding_model = _ep.unload_embedding_model
-        except ImportError:
-            EMBEDDING_AVAILABLE = False
-        if name == "EMBEDDING_AVAILABLE":
-            return EMBEDDING_AVAILABLE
-        return globals().get(name)
+# Refactored: 14 if-blocks (complexity 44) → single loop over _ENGINE_REGISTRY (complexity 6).
+def __getattr__(name: str) -> object:
+    for module_spec, _ret_attr, exported, brain_key in _ENGINE_REGISTRY:
+        if name in exported:
+            return _load_engine(name, module_spec, exported, brain_key)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # ─── Capability Catalog ──────────────────────────────────────────────────────
@@ -541,10 +427,9 @@ __all__ = [
     "HypothesisEvidence",
     "create_hypothesis_engine",
     "HYPOTHESIS_AVAILABLE",
-    # Adversarial Verification
+    # Adversarial Verification (Contradiction re-exported from insight_engine via _HE_Contradiction alias)
     "AdversarialVerifier",
     "SourceCredibility",
-    "Contradiction",
     "AdversarialReport",
     # MoE Router
     "MoERouter",

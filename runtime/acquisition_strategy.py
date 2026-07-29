@@ -52,7 +52,7 @@ from hledac.universal.runtime.acquisition_strategy_planner import (
     # Utilities
     logger,
     _load_feed_budget_from_env,
-    _has_explicit_cid,
+    _has_explicit_ipfs_cid,
     _extract_cids_from_text,
     lookup_threat_entity,
     DOMAIN_EXPANSIONS,
@@ -130,7 +130,7 @@ __all__ = [
     'lane_is_terminal',
     'terminality_report',
     '_load_feed_budget_from_env',
-    '_has_explicit_cid',
+    '_has_explicit_ipfs_cid',
     '_extract_cids_from_text',
     'lookup_threat_entity',
     'DOMAIN_EXPANSIONS',

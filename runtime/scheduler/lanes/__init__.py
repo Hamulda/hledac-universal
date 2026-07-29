@@ -92,12 +92,12 @@ from hledac.universal.runtime.acquisition.profile import AcquisitionProfile, nor
 from hledac.universal.runtime.source_finding_bridge import MAX_SAMPLE_REJECTIONS, ct_results_to_findings, passive_dns_results_to_findings, wayback_results_to_findings
 from hledac.universal.utils.async_helpers import parallel_ok, first_completed
 from hledac.universal.utils.async_task import safe_create_task
-__all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details']
+__all__ = ['AcquisitionLane', 'AcquisitionProfile', 'AcquisitionLanePlan', 'AcquisitionStrategySnapshot', 'AcquisitionLaneOutcome', 'SourceFamilyOutcome', 'NonfeedPlanDebug', 'MandatoryLaneTerminality', 'FeedDominanceBudget', '_load_feed_budget_from_env', 'required_terminal_lanes', 'lane_is_terminal', 'terminality_report', 'ACQUISITION_REPORT_SCHEMA_VERSION', 'build_acquisition_plan', 'build_acquisition_report', 'build_lane_query', 'is_lane_enabled', 'get_lane_plan', 'lane_skip_reason', 'normalize_source_family_outcome', 'normalize_source_family_name', 'canonicalize_source_family_outcomes', 'normalize_terminal_state', 'TERMINAL_STATES', 'NON_TERMINAL_STATES', 'NonfeedMissionController', 'NonfeedMissionSnapshot', 'MissionIntent', 'MissionTargetKind', 'infer_mission_intent', 'normalize_acquisition_profile', 'is_academic_profile', 'is_deep_osint_m1_profile', '_has_explicit_ipfs_cid', '_extract_cids_from_text', '_CIDV0_RE', '_CIDV1_BASE32_RE', 'reconcile_lane_detail_fields', 'complete_source_family_outcomes_from_lane_details']
 ACQUISITION_REPORT_SCHEMA_VERSION = 'f208.v1'
 
 # IPFS CID functions imported from canonical cid_detection module
 from hledac.universal.runtime.acquisition.cid_detection import (
-    _has_explicit_cid,
+    _has_explicit_ipfs_cid,
     _extract_cids_from_text,
 )
 
@@ -1111,16 +1111,6 @@ def _base_concurrency(uma_state: str, swap_detected: bool) -> int:
         return 3
     return 5
 
-def _lane_concurrency(lane: str, base: int, uma_state: str) -> int:
-    """Apply lane-specific adjustments on top of base concurrency."""
-    if uma_state in ('critical', 'emergency'):
-        if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN, AcquisitionLane.STEALTH):
-            return max(1, base // 2)
-    if uma_state == 'warn':
-        if lane in (AcquisitionLane.WAYBACK, AcquisitionLane.BLOCKCHAIN):
-            return max(1, base - 1)
-    return base
-
 def build_acquisition_plan(query: str, duration_s: float, aggressive_mode: bool, uma_state: str, swap_detected: bool, accepted_findings_so_far: int=0, branch_timeout_count: int=0, transport_authority_status: dict | None=None, stealth_phase: dict | None=None, acquisition_profile: str='default', source_quality_weights: dict | None=None, rl_lane_combo: frozenset[str] | None=None, feed_domain_seeds: tuple[str, ...]=(), synthetic_domains: tuple[str, ...]=()) -> AcquisitionStrategySnapshot:
     """
     Build an acquisition strategy snapshot for the given sprint context.
@@ -1229,7 +1219,7 @@ def _build_plan_impl(query: str, duration_s: float, aggressive_mode: bool, uma_s
     else:
         _feed_max = 50
         _feed_cap_r = None
-    ctx = AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
+    ctx = AcquisitionContext(query=query, duration_s=duration_s, aggressive_mode=aggressive_mode, uma_state=uma_state, swap_detected=swap_detected, hardware_critical=hardware_critical, has_domain=has_domain, has_url=has_url, has_crypto=has_crypto, has_long_duration=has_long_duration, is_nonfeed_diagnostic=is_nonfeed_diagnostic, transport_degraded=transport_degraded, stealth_ready=stealth_ready, base_concurrency=base_conc, is_academic=is_academic_profile(acquisition_profile), is_deep_osint_m1=is_deep_osint_m1, has_ip=has_ip, cid_present=_has_explicit_ipfs_cid(query.strip()), _feed_max_items=_feed_max, _feed_cap_reason=_feed_cap_r)
     plans: list[AcquisitionLanePlan] = []
     for rule in LANE_RULES:
         enabled = rule.enabled(ctx)
@@ -1509,7 +1499,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
         """
         start = time.monotonic()
         query_cid = query.strip()
-        all_cids: list[str] = [query_cid] if _has_explicit_cid(query_cid) else []
+        all_cids: list[str] = [query_cid] if _has_explicit_ipfs_cid(query_cid) else []
         MAX_IPFS_CIDS = 5
         cids_to_fetch = all_cids[:MAX_IPFS_CIDS]
         accepted = 0

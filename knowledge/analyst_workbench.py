@@ -704,94 +704,148 @@ class AnalystWorkbench:
             except Exception:
                 target_memory = None
         try:
-            key_findings_list = self._extract_key_findings(findings)
-            if target_memory:
-                mem_sprints = target_memory.get('sprint_count', 0)
-                mem_findings = target_memory.get('cumulative_finding_count', 0)
-                entity_count = len(target_memory.get('entity_facets', {}))
-                exposure_count = len(target_memory.get('exposure_facets', {}))
-                pivot_count = len(target_memory.get('pivot_facets', {}))
-                drift = target_memory.get('confidence_drift', {})
-                drift_ratio = drift.get('drift_ratio', 1.0) if drift else 1.0
-                mem_finding = f'Target memory: {mem_sprints} sprints, {mem_findings} cumulative findings, {entity_count} entities, {exposure_count} exposures, {pivot_count} pivots (drift={drift_ratio:.2f})'
-                key_findings_list.append(mem_finding)
-                drift_reasons = drift.get('drift_reasons', []) if drift else []
-                if drift_reasons:
-                    concise = drift_reasons[:3]
-                    drift_exp = f"Drift signals: {', '.join(concise)}"
-                    key_findings_list.append(drift_exp)
-                if drift_ratio > 1.5:
-                    open_drift_q = f'Finding rate drift detected (ratio={drift_ratio:.2f}): this sprint yield is {int((drift_ratio - 1) * 100)}% above average'
-                elif mem_sprints >= 3 and drift_ratio >= 0.7:
-                    open_drift_q = f'Target has {mem_sprints} prior sprints — consider graph expansion'
-                else:
-                    open_drift_q = None
-            else:
-                open_drift_q = None
-            if graph_analytics.get('analytics_available') and graph_analytics.get('top_central_entities'):
-                top_entities = graph_analytics['top_central_entities']
-                community_count = graph_analytics.get('community_count', 0)
-                if top_entities:
-                    top = top_entities[0]
-                    key_findings_list.append(f"Graph central entity: {top.get('value', '?')} ({top.get('ioc_type', '?')}, degree={top.get('degree', 0)})")
-                if len(top_entities) > 1:
-                    second = top_entities[1]
-                    key_findings_list.append(f"Graph entity 2: {second.get('value', '?')} ({second.get('ioc_type', '?')}, degree={second.get('degree', 0)})")
-                elif community_count > 1:
-                    key_findings_list.append(f'Graph communities: ~{community_count} detected communities')
-            runtime_finding_count = len(findings)
-            graph_nodes = graph_signal.get('graph_nodes', 0) if graph_signal else 0
-            graph_edges = graph_signal.get('graph_edges', 0) if graph_signal else 0
-            if target_memory:
-                mem_sprints = target_memory.get('sprint_count', 0)
-                headline = f'Sprint {sprint_id} (target {target_id}, {mem_sprints} prior sprints): {runtime_finding_count} findings, {graph_nodes} nodes, {graph_edges} edges'
-            else:
-                headline = f'Sprint {sprint_id}: {runtime_finding_count} findings, {graph_nodes} graph nodes, {graph_edges} edges'
-            if store_findings_count is not None and store_findings_count != runtime_finding_count:
-                if runtime_finding_count == 0:
-                    key_findings_list.append(f'Canonical store: {store_findings_count} prior accepted findings (0 this sprint -- possible quality gate change or target exhaustion)')
-                else:
-                    key_findings_list.append(f'Canonical store: {store_findings_count} total accepted findings (runtime: {runtime_finding_count} this sprint)')
-            key_findings = tuple(key_findings_list[:MAX_BRIEF_FINDINGS])
-            chain_ids: list[str] = []
-            for f in findings[:50]:
-                fid = safe_get_finding_field(f, 'finding_id', None) or f.get('finding_id', '')
-                if fid and 'chain' in str(f.get('provenance', '')):
-                    chain_ids.append(str(fid))
-            evidence_chain_ids = tuple(chain_ids[:MAX_BRIEF_CHAINS])
-            next_actions = self._derive_next_actions(findings)
-            next_actions_tuple = tuple(next_actions[:MAX_BRIEF_NEXT_ACTIONS])
-            open_questions = list(self._derive_open_questions(findings, graph_signal))
-            if open_drift_q and len(open_questions) < 5:
-                open_questions.append(open_drift_q)
-            if not target_memory and runtime_finding_count > 0:
-                open_questions.append('No prior target memory — consider establishing baseline')
-            confidence = 0.7 if runtime_finding_count > 10 else 0.5 if runtime_finding_count > 0 else 0.3
-            if target_memory:
-                confidence = min(0.9, confidence + 0.1)
-            corroboration_summary = self._build_corroboration_summary(findings)
-            source_family_summary = self._build_source_family_summary(findings)
-            evidence_gaps = self._build_evidence_gaps(findings, source_family_summary)
-            risk_hypotheses = self._build_risk_hypotheses(findings, source_family_summary)
-            feed_cluster_summary: tuple[str, ...] = ()
-            feed_ratio = sum((1 for f in findings if 'feed' in (safe_get_finding_field(f, 'source_type', None) or '').lower())) / max(len(findings), 1)
-            if feed_ratio >= 0.3 and len(findings) > 5:
-                feed_cluster_summary = self.summarize_feed_clusters(findings)
-            pivot_recommendations = self._build_pivot_recommendations(findings, graph_signal)
-            tmf: dict[str, Any] = {}
-            if target_memory:
-                tmf = self._derive_target_memory_feedback(target_memory, findings)
-                if tmf.get('repeated_feed_dominance'):
-                    gaps = list(evidence_gaps)
-                    gaps.append(f"F226E: Repeated feed-dominant sprint — consider non-feed diagnostic: {tmf.get('suggested_nonfeed_lanes', 'CT/PUBLIC')}")
-                    evidence_gaps = tuple(gaps[:5])
-                if tmf.get('prior_nonfeed_weakness'):
-                    pivots = list(pivot_recommendations)
-                    pivots.append(f"F226E: Prior {tmf.get('suggested_next_profile', 'nonfeed')} weakness — bootstrap {tmf.get('suggested_feed_cap_reason', 'PUBLIC')} lane")
-                    pivot_recommendations = tuple(pivots[:5])
-            return AnalystBrief(sprint_id=sprint_id, target_id=target_id, headline=headline, key_findings=key_findings, evidence_chain_ids=evidence_chain_ids, next_actions=next_actions_tuple, open_questions=tuple(open_questions[:5]), confidence=confidence, generated_ts=ts, corroboration_summary=corroboration_summary, source_family_summary=source_family_summary, evidence_gaps=evidence_gaps, risk_hypotheses=risk_hypotheses, feed_cluster_summary=feed_cluster_summary, pivot_recommendations=pivot_recommendations, target_memory_feedback=tmf)
+            return self._assemble_sprint_brief_result(
+                sprint_id, target_id, findings, graph_signal,
+                target_memory, graph_analytics, store_findings_count, ts
+            )
         except Exception:
             return AnalystBrief(sprint_id=sprint_id, target_id=target_id, headline=f'Sprint {sprint_id}: brief generation failed', key_findings=(f'Findings processed: {len(findings)}',), evidence_chain_ids=(), next_actions=('Review findings manually',), open_questions=('Why did brief generation fail?',), confidence=0.1, generated_ts=ts, corroboration_summary=('Corroboration unavailable due to brief generation failure',), source_family_summary=(), evidence_gaps=('Brief generation failed — evidence gaps unavailable',), risk_hypotheses=(), feed_cluster_summary=(), pivot_recommendations=())
+
+    def _assemble_sprint_brief_result(self, sprint_id: str, target_id: str, findings: list[Any], graph_signal: dict[str, Any], target_memory: dict[str, Any] | None, graph_analytics: dict[str, Any], store_findings_count: int | None, ts: float) -> AnalystBrief:
+        """
+        Internal assembler for build_sprint_brief — extracted to reduce complexity.
+
+        Computes all AnalystBrief fields from pre-fetched data:
+        - key_findings (from findings + target_memory enrichment)
+        - headline
+        - evidence_chain_ids
+        - next_actions, open_questions
+        - confidence
+        - corroboration_summary, source_family_summary
+        - evidence_gaps, risk_hypotheses
+        - feed_cluster_summary
+        - pivot_recommendations
+        - target_memory_feedback
+        """
+        key_findings_list = self._extract_key_findings(findings)
+        open_drift_q: str | None = None
+        if target_memory:
+            open_drift_q = self._enrich_key_findings_with_target_memory(
+                key_findings_list, target_memory
+            )
+        self._enrich_key_findings_with_graph_analytics(key_findings_list, graph_analytics)
+        runtime_finding_count = len(findings)
+        graph_nodes = graph_signal.get('graph_nodes', 0) if graph_signal else 0
+        graph_edges = graph_signal.get('graph_edges', 0) if graph_signal else 0
+        if target_memory:
+            mem_sprints = target_memory.get('sprint_count', 0)
+            headline = f'Sprint {sprint_id} (target {target_id}, {mem_sprints} prior sprints): {runtime_finding_count} findings, {graph_nodes} nodes, {graph_edges} edges'
+        else:
+            headline = f'Sprint {sprint_id}: {runtime_finding_count} findings, {graph_nodes} graph nodes, {graph_edges} edges'
+        if store_findings_count is not None and store_findings_count != runtime_finding_count:
+            if runtime_finding_count == 0:
+                key_findings_list.append(f'Canonical store: {store_findings_count} prior accepted findings (0 this sprint -- possible quality gate change or target exhaustion)')
+            else:
+                key_findings_list.append(f'Canonical store: {store_findings_count} total accepted findings (runtime: {runtime_finding_count} this sprint)')
+        key_findings = tuple(key_findings_list[:MAX_BRIEF_FINDINGS])
+        evidence_chain_ids = self._extract_evidence_chain_ids(findings)
+        next_actions = self._derive_next_actions(findings)
+        next_actions_tuple = tuple(next_actions[:MAX_BRIEF_NEXT_ACTIONS])
+        open_questions = list(self._derive_open_questions(findings, graph_signal))
+        if open_drift_q and len(open_questions) < 5:
+            open_questions.append(open_drift_q)
+        if not target_memory and runtime_finding_count > 0:
+            open_questions.append('No prior target memory — consider establishing baseline')
+        confidence = 0.7 if runtime_finding_count > 10 else 0.5 if runtime_finding_count > 0 else 0.3
+        if target_memory:
+            confidence = min(0.9, confidence + 0.1)
+        corroboration_summary = self._build_corroboration_summary(findings)
+        source_family_summary = self._build_source_family_summary(findings)
+        evidence_gaps = self._build_evidence_gaps(findings, source_family_summary)
+        risk_hypotheses = self._build_risk_hypotheses(findings, source_family_summary)
+        feed_cluster_summary: tuple[str, ...] = ()
+        feed_ratio = sum((1 for f in findings if 'feed' in (safe_get_finding_field(f, 'source_type', None) or '').lower())) / max(len(findings), 1)
+        if feed_ratio >= 0.3 and len(findings) > 5:
+            feed_cluster_summary = self.summarize_feed_clusters(findings)
+        pivot_recommendations = self._build_pivot_recommendations(findings, graph_signal)
+        tmf: dict[str, Any] = {}
+        if target_memory:
+            tmf = self._derive_target_memory_feedback(target_memory, findings)
+            evidence_gaps, pivot_recommendations = self._apply_target_memory_feedback(
+                tmf, evidence_gaps, pivot_recommendations
+            )
+        return AnalystBrief(sprint_id=sprint_id, target_id=target_id, headline=headline, key_findings=key_findings, evidence_chain_ids=evidence_chain_ids, next_actions=next_actions_tuple, open_questions=tuple(open_questions[:5]), confidence=confidence, generated_ts=ts, corroboration_summary=corroboration_summary, source_family_summary=source_family_summary, evidence_gaps=evidence_gaps, risk_hypotheses=risk_hypotheses, feed_cluster_summary=feed_cluster_summary, pivot_recommendations=pivot_recommendations, target_memory_feedback=tmf)
+
+    def _enrich_key_findings_with_target_memory(self, key_findings_list: list[str], target_memory: dict[str, Any]) -> str | None:
+        """
+        Enrich key_findings_list with target memory stats and compute open_drift_q.
+
+        Returns the open_drift_q string to be appended to open_questions later,
+        or None if no drift question is warranted.
+        """
+        mem_sprints = target_memory.get('sprint_count', 0)
+        mem_findings = target_memory.get('cumulative_finding_count', 0)
+        entity_count = len(target_memory.get('entity_facets', {}))
+        exposure_count = len(target_memory.get('exposure_facets', {}))
+        pivot_count = len(target_memory.get('pivot_facets', {}))
+        drift = target_memory.get('confidence_drift', {})
+        drift_ratio = drift.get('drift_ratio', 1.0) if drift else 1.0
+        mem_finding = f'Target memory: {mem_sprints} sprints, {mem_findings} cumulative findings, {entity_count} entities, {exposure_count} exposures, {pivot_count} pivots (drift={drift_ratio:.2f})'
+        key_findings_list.append(mem_finding)
+        drift_reasons = drift.get('drift_reasons', []) if drift else []
+        if drift_reasons:
+            concise = drift_reasons[:3]
+            drift_exp = f"Drift signals: {', '.join(concise)}"
+            key_findings_list.append(drift_exp)
+        if drift_ratio > 1.5:
+            return f'Finding rate drift detected (ratio={drift_ratio:.2f}): this sprint yield is {int((drift_ratio - 1) * 100)}% above average'
+        elif mem_sprints >= 3 and drift_ratio >= 0.7:
+            return f'Target has {mem_sprints} prior sprints — consider graph expansion'
+        return None
+
+    def _enrich_key_findings_with_graph_analytics(self, key_findings_list: list[str], graph_analytics: dict[str, Any]) -> None:
+        """
+        Append graph analytics findings to key_findings_list.
+        """
+        if not graph_analytics.get('analytics_available') or not graph_analytics.get('top_central_entities'):
+            return
+        top_entities = graph_analytics['top_central_entities']
+        community_count = graph_analytics.get('community_count', 0)
+        if top_entities:
+            top = top_entities[0]
+            key_findings_list.append(f"Graph central entity: {top.get('value', '?')} ({top.get('ioc_type', '?')}, degree={top.get('degree', 0)})")
+        if len(top_entities) > 1:
+            second = top_entities[1]
+            key_findings_list.append(f"Graph entity 2: {second.get('value', '?')} ({second.get('ioc_type', '?')}, degree={second.get('degree', 0)})")
+        elif community_count > 1:
+            key_findings_list.append(f'Graph communities: ~{community_count} detected communities')
+
+    def _extract_evidence_chain_ids(self, findings: list[Any]) -> tuple[str, ...]:
+        """
+        Extract evidence chain IDs from findings (provenance containing 'chain').
+        """
+        chain_ids: list[str] = []
+        for f in findings[:50]:
+            fid = safe_get_finding_field(f, 'finding_id', None) or f.get('finding_id', '')
+            if fid and 'chain' in str(f.get('provenance', '')):
+                chain_ids.append(str(fid))
+        return tuple(chain_ids[:MAX_BRIEF_CHAINS])
+
+    def _apply_target_memory_feedback(self, tmf: dict[str, Any], evidence_gaps: tuple[str, ...], pivot_recommendations: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """
+        Apply target memory feedback to evidence_gaps and pivot_recommendations.
+
+        Returns modified (evidence_gaps, pivot_recommendations) tuples.
+        """
+        gaps = list(evidence_gaps)
+        pivots = list(pivot_recommendations)
+        if tmf.get('repeated_feed_dominance'):
+            gaps.append(f"F226E: Repeated feed-dominant sprint — consider non-feed diagnostic: {tmf.get('suggested_nonfeed_lanes', 'CT/PUBLIC')}")
+            evidence_gaps = tuple(gaps[:5])
+        if tmf.get('prior_nonfeed_weakness'):
+            pivots.append(f"F226E: Prior {tmf.get('suggested_next_profile', 'nonfeed')} weakness — bootstrap {tmf.get('suggested_feed_cap_reason', 'PUBLIC')} lane")
+            pivot_recommendations = tuple(pivots[:5])
+        return evidence_gaps, pivot_recommendations
 
     def _extract_key_findings(self, findings: list[Any]) -> list[str]:
         """

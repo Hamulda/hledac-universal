@@ -36,6 +36,7 @@ import re
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
+import types
 from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
@@ -561,83 +562,134 @@ class HypothesisEngine:
         Returns:
             List of hypothesis strings (max 10, bounded)
         """
-        MAX_HYPOTHESES = 10
-        MAX_CONTEXT_CHARS = 4000
         if hermes_engine is None:
             return []
-        query = context.get('query', '')
-        rag_context = context.get('rag_context', [])
-        graph_summary = context.get('graph_summary', '')
+
+        # Extract and extend RAG context with multihop chain
+        rag_context = self._extend_rag_with_multihop(context)
         existing = set(context.get('existing_hypotheses', []))
-        if HLEDAC_ENABLE_LLM and MULTIHOP_AVAILABLE and (get_multi_hop_chain is not None) and rag_context:
-            try:
-                if get_uma_snapshot is not None:
-                    snapshot = get_uma_snapshot()
-                    if snapshot.is_emergency or snapshot.is_critical:
-                        logger.debug('[MULTIHOP] Skipping deep research chain — RAM critical')
-                    else:
-                        graph_rag = context.get('graph_rag')
-                        if graph_rag is not None:
-                            chain = get_multi_hop_chain(graph_rag=graph_rag)
-                            if chain is not None:
-                                extended_evidence = chain.forward(query=query, initial_findings=rag_context[:20])
-                                existing_evidence = {str(e)[:100] for e in rag_context}
-                                for ev in extended_evidence:
-                                    ev_key = str(ev)[:100]
-                                    if ev_key not in existing_evidence:
-                                        rag_context.append(ev)
-                                        existing_evidence.add(ev_key)
-                                logger.debug(f'[MULTIHOP] Extended evidence from {len(rag_context) - len(existing_evidence)} new findings')
-            except Exception as _e:
-                logger.debug(f'[MULTIHOP] Deep research chain failed: {_e}')
+
+        # Build truncated context string
+        context_str = self._build_context_string(rag_context)
+        reward_context = f'\nReward from previous action: {prev_reward:.2f}' if prev_reward > 0 else ''
+        query = context.get('query', '')
+        graph_summary = context.get('graph_summary', '')
+
+        # Build prompt
+        prompt = self._build_hypothesis_prompt(query, context_str, graph_summary, reward_context)
+
+        # Generate response via LLM
+        response = await self._generate_llm_response(prompt)
+
+        # Apply DSPy optimization if available
+        response = self._apply_dspy_optimization(context, rag_context, query, graph_summary, reward_context, existing, response)
+
+        # Parse and return hypotheses
+        return self._parse_hypotheses(response, existing)
+
+    # --- Helper methods (extracted to reduce complexity) ---
+
+    def _extend_rag_with_multihop(self, context: dict[str, Any]) -> list:
+        """Extend RAG context with multihop chain evidence. Returns modified rag_context."""
+        if not (HLEDAC_ENABLE_LLM and MULTIHOP_AVAILABLE and get_multi_hop_chain is not None):
+            return context.get('rag_context', [])
+
+        rag_context = context.get('rag_context', [])
+        if not rag_context:
+            return rag_context
+
+        try:
+            if get_uma_snapshot is None:
+                return rag_context
+            snapshot = get_uma_snapshot()
+            if snapshot.is_emergency or snapshot.is_critical:
+                logger.debug('[MULTIHOP] Skipping deep research chain — RAM critical')
+                return rag_context
+
+            graph_rag = context.get('graph_rag')
+            if graph_rag is None:
+                return rag_context
+
+            chain = get_multi_hop_chain(graph_rag=graph_rag)
+            if chain is None:
+                return rag_context
+
+            extended_evidence = chain.forward(query=context.get('query', ''), initial_findings=rag_context[:20])
+            existing_evidence = {str(e)[:100] for e in rag_context}
+            for ev in extended_evidence:
+                ev_key = str(ev)[:100]
+                if ev_key not in existing_evidence:
+                    rag_context.append(ev)
+                    existing_evidence.add(ev_key)
+            logger.debug(f'[MULTIHOP] Extended evidence from {len(rag_context) - len(existing_evidence)} new findings')
+        except Exception as _e:
+            logger.debug(f'[MULTIHOP] Deep research chain failed: {_e}')
+        return rag_context
+
+    def _build_context_string(self, rag_context: list, max_context_chars: int = 4000) -> str:
+        """Build truncated context string from RAG context items."""
         ctx_parts = []
         total_len = 0
         for item in rag_context[:20]:
             item_str = str(item)[:500]
-            if total_len + len(item_str) > MAX_CONTEXT_CHARS:
-                remaining = MAX_CONTEXT_CHARS - total_len
+            if total_len + len(item_str) > max_context_chars:
+                remaining = max_context_chars - total_len
                 if remaining > 100:
                     ctx_parts.append(item_str[:remaining])
                 break
             ctx_parts.append(item_str)
             total_len += len(item_str)
-        context_str = '\n---\n'.join(ctx_parts)
-        reward_context = f'\nReward from previous action: {prev_reward:.2f}' if prev_reward > 0 else ''
-        prompt = f'''Research query: {query}\n\nRAG context:\n{context_str}\n\n{(f'Graph summary: {graph_summary}' if graph_summary else '')}\n{reward_context}\n\nNavrhni možné cesty, jak získat více informací o "{query}".\n生成 5-10 konkrétních hypotéz v češtině, kde každá začíná číslem.\n\nFormát (pouze seznam, žádný další text):\n1. [hypotéza 1]\n2. [hypotéza 2]\n...\n'''
+        return '\n---\n'.join(ctx_parts)
+
+    def _build_hypothesis_prompt(self, query: str, context_str: str, graph_summary: str, reward_context: str) -> str:
+        """Build the hypothesis generation prompt."""
+        return f'''Research query: {query}\n\nRAG context:\n{context_str}\n\n{(f'Graph summary: {graph_summary}' if graph_summary else '')}\n{reward_context}\n\nNavrhni možné cesty, jak získat více informací o "{query}".\n生成 5-10 konkrétních hypotéz v češtině, kde každá začíná číslem.\n\nFormát (pouze seznam, žádný další text):\n1. [hypotéza 1]\n2. [hypotéza 2]\n...\n'''
+
+    async def _generate_llm_response(self, prompt: str) -> str:
+        """Generate LLM response from prompt."""
+        system_msg = 'Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy.'
+        if self._inference_pipeliner is not None:
+            return await self._inference_pipeliner.generate(prompt=prompt, temperature=0.4, max_tokens=1024, system_msg=system_msg)
+        raise RuntimeError('No inference pipeliner available')
+
+    def _apply_dspy_optimization(self, context: dict[str, Any], rag_context: list, query: str, graph_summary: str, reward_context: str, existing: set, response: str) -> str:
+        """Apply DSPy optimization if available. Returns (potentially modified) response."""
+        if not (DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1'):
+            return response
+
         try:
-            if self._inference_pipeliner is not None:
-                response = await self._inference_pipeliner.generate(prompt=prompt, temperature=0.4, max_tokens=1024, system_msg='Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy.')
-            else:
-                response = await hermes_engine.generate(prompt=prompt, temperature=0.4, max_tokens=1024, system_msg='Jsi OSINT research assistant. Navrhuj konkrétní a proveditelné hypotézy.')
-            if DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1':
-                from hledac.universal.brain.dspy_optimizer import load_compiled_program
-                program = load_compiled_program('hypothesis_generator')
-                if program is None:
-                    try:
-                        from hledac.universal.brain.dspy_programs import get_program
-                        program = get_program('hypothesis_generator')
-                    except Exception:
-                        program = None
-                if program is not None:
-                    rag_context_str = context.get('rag_context_str', rag_context[:2000])
-                    pred = program.forward(research_query=query, rag_context=rag_context_str, graph_summary=graph_summary, reward_context=reward_context, existing_hypotheses=list(existing))
-                    if hasattr(pred, 'answer') and pred.answer:
-                        response = pred.answer
-            hypotheses = []
-            for line in response.strip().split('\n'):
-                line = line.strip()
-                if not line:
-                    continue
-                match = re.match('^\\d+[.)]\\s*(.+)', line)
-                if match:
-                    hypo = match.group(1).strip()
-                    if hypo and hypo not in existing:
-                        hypotheses.append(hypo)
-                        existing.add(hypo)
-            return hypotheses[:MAX_HYPOTHESES]
-        except Exception as e:
-            logger.warning(f'[GENERATE_HYPOTHESES] Failed: {e}')
-            return []
+            from hledac.universal.brain.dspy_optimizer import load_compiled_program
+            program = load_compiled_program('hypothesis_generator')
+            if program is None:
+                try:
+                    from hledac.universal.brain.dspy_programs import get_program
+                    program = get_program('hypothesis_generator')
+                except Exception:
+                    return response
+            if program is not None:
+                rag_context_str = context.get('rag_context_str', rag_context[:2000])
+                pred = program.forward(research_query=query, rag_context=rag_context_str, graph_summary=graph_summary, reward_context=reward_context, existing_hypotheses=list(existing))
+                if hasattr(pred, 'answer') and pred.answer:
+                    return pred.answer
+        except Exception:
+            pass
+        return response
+
+    def _parse_hypotheses(self, response: str, existing: set, max_hypotheses: int = 10) -> list[str]:
+        """Parse hypothesis strings from LLM response."""
+        hypotheses = []
+        for line in response.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            match = re.match(r'^\d+[.)]\s*(.+)', line)
+            if match:
+                hypo = match.group(1).strip()
+                if hypo and hypo not in existing:
+                    hypotheses.append(hypo)
+                    existing.add(hypo)
+        return hypotheses[:max_hypotheses]
+
 
     def generate_hypotheses(self, observations: list[Evidence], context: dict[str, Any] | None=None) -> list[Hypothesis]:
         """
@@ -1687,90 +1739,163 @@ class HypothesisEngine:
         Invariant: Dark queries MUST transit via Tor/I2P transport.
         NEVER route through aiohttp clearnet.
         """
+        # Guard: empty findings
         if not findings:
             return []
+        # Guard: no dark transport available
         if not (tor_available or i2p_available):
             logger.debug('[DARK_SURFACE] No dark transport available, skipping')
             return []
+        # Guard: no IOCs extracted
+        iocs = self._extract_iocs_from_findings(findings)
+        if not iocs:
+            return []
+
+        transport_str = self._build_transport_str(tor_available, i2p_available)
+        context_hints = await self._build_research_context_hints(findings, hermes_engine)
+
+        # LLM path: hermes_engine available
+        if hermes_engine is not None:
+            return await self._generate_dark_surface_via_hermes(
+                hermes_engine, iocs, transport_str, context_hints
+            )
+        # Fallback path: no LLM
+        return self._generate_dark_surface_queries_fallback(iocs, transport_str)
+
+    # ─── Helper methods (extracted to reduce complexity) ───────────────────────
+
+    def _extract_iocs_from_findings(self, findings: list[Any]) -> list[str]:
+        """Extract IOC values from findings list (max 50 findings, max 15 brief)."""
         iocs: list[str] = []
         for f in findings[:50]:
             if hasattr(f, 'ioc_value') and f.ioc_value:
                 iocs.append(str(f.ioc_value))
             elif hasattr(f, 'raw_ioc') and f.raw_ioc:
                 iocs.append(str(f.raw_ioc))
-        if not iocs:
-            return []
-        ioc_brief = ', '.join(iocs[:15])
+        return iocs
+
+    def _build_transport_str(self, tor_available: bool, i2p_available: bool) -> str:
+        """Build transport string for logging/debugging."""
         available_transports = []
         if tor_available:
             available_transports.append('Tor')
         if i2p_available:
             available_transports.append('I2P')
-        transport_str = '+'.join(available_transports)
-        context_hints: list[str] = []
-        if os.environ.get('HLEDAC_ENABLE_RESEARCH_LAYER') == '1' and hermes_engine is not None:
-            try:
-                from hledac.universal.layers.layer_manager import LayerManager
-                _lm = LayerManager(config=None)
-                _research = _lm.research()
-                if _research and hasattr(_research, 'hunt') and findings:
-                    _seed_text = ''
-                    for f in findings:
-                        _c = getattr(f, 'content', None) or ''
-                        if _c:
-                            _seed_text = _c[:200]
-                            break
-                    if _seed_text:
-                        _raw_results: list[dict[str, Any]] = await asyncio.to_thread(_research.hunt, _seed_text, 2)
-                        if _raw_results:
-                            _safe_hints: list[str] = []
-                            if _research and hasattr(_research, 'has_pii'):
-                                for r in _raw_results[:5]:
-                                    _txt = str(r.get('url', r.get('title', '')))[:100]
-                                    if not _research.has_pii(_txt):
-                                        _safe_hints.append(_txt)
-                            else:
-                                _safe_hints = [str(r.get('url', r.get('title', '')))[:100] for r in _raw_results[:5]]
-                            context_hints = _safe_hints
-            except Exception as _e:
-                logger.debug('[DARK_SURFACE] research_layer hunt failed: %s', _e)
-        if hermes_engine is not None:
-            _research_hint_section = ''
-            if context_hints:
-                _research_hint_section = '\n\nDOPLNUJICI KONTEXT (research layer):\n' + '\n'.join((f'- {h}' for h in context_hints))
-            prompt = f'Z techto IOC z aktualniho sprintu: {ioc_brief}{_research_hint_section}\n\nNavrhuj {self.MAX_DARK_QUERIES_PER_SPRINT} specificke dotazy pro dark surface (neindexovane zdroje).\nPro kazdy dotaz uved:\n1. typ: onion | ipfs | paste | i2p\n2. samotny dotaz (co hledat)\n3. priorita: 0-1 (vyssi = dulezitejsi)\n4. odovodneni (proc by to mohlo mit relevantni data)\n\nVystup formatuj jako JSON list s objekty: type, query, priority, reasoning\n\nZajimave patterny k hledani:\n- .onion domeny korelovane s IP/domain z IOC\n- IPFS CID z intelligence findings\n- Paste site leak korelace\n- Darknet forum IOC patterns'
-            try:
-                response_model = _DarkQueryListResponse
-                result = await hermes_engine.generate_structured(prompt=prompt, response_model=response_model, max_tokens=1024, system_msg='Jsi OSINT dark surface research assistant.')
-                if DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1':
-                    from hledac.universal.brain.dspy_optimizer import load_compiled_program
-                    program = load_compiled_program('dark_query')
-                    if program is None:
-                        try:
-                            from hledac.universal.brain.dspy_programs import get_program
-                            program = get_program('dark_query')
-                        except Exception:
-                            program = None
-                    if program is not None:
-                        pred = program.forward(ioc_brief=ioc_brief, available_transports=transport_str, max_queries=self.MAX_DARK_QUERIES_PER_SPRINT)
-                        if hasattr(pred, 'answer') and pred.answer:
-                            try:
-                                import json as _json
-                                queries_data = _json.loads(pred.answer)
-                                if isinstance(queries_data, list):
-                                    result = type('Result', (), {'queries': queries_data})()
-                            except Exception:
-                                pass
-                dark_queries: list[DarkQuery] = []
-                for item in result.queries if hasattr(result, 'queries') else []:
-                    dt = DarkQueryType(item.get('type', 'onion'))
-                    dark_queries.append(DarkQuery(query_type=dt, query=item.get('query', ''), priority=float(item.get('priority', 0.5)), source_iocs=tuple(iocs[:5]), reasoning=item.get('reasoning', '')))
-                return dark_queries[:self.MAX_DARK_QUERIES_PER_SPRINT]
-            except Exception as e:
-                logger.warning(f'[DARK_SURFACE] Hermes LLM expansion failed: {e}, using heuristic fallback')
-                return self._generate_dark_surface_queries_fallback(iocs, transport_str)
+        return '+'.join(available_transports)
+
+    async def _build_research_context_hints(self, findings: list[Any], hermes_engine: Any) -> list[str]:
+        """Query research layer for supplementary context hints (PII-safe)."""
+        if os.environ.get('HLEDAC_ENABLE_RESEARCH_LAYER') != '1' or hermes_engine is None:
+            return []
+        try:
+            from hledac.universal.layers.layer_manager import LayerManager
+            _lm = LayerManager(config=None)
+            _research = _lm.research()
+            if not (_research and hasattr(_research, 'hunt') and findings):
+                return []
+            _seed_text = ''
+            for f in findings:
+                _c = getattr(f, 'content', None) or ''
+                if _c:
+                    _seed_text = _c[:200]
+                    break
+            if not _seed_text:
+                return []
+            _raw_results: list[dict[str, Any]] = await asyncio.to_thread(_research.hunt, _seed_text, 2)
+            if not _raw_results:
+                return []
+            return self._filter_pii_safe_hints(_research, _raw_results)
+        except Exception as _e:
+            logger.debug('[DARK_SURFACE] research_layer hunt failed: %s', _e)
+            return []
+
+    def _filter_pii_safe_hints(self, _research: Any, _raw_results: list[dict[str, Any]]) -> list[str]:
+        """Filter PII from research layer results."""
+        _safe_hints: list[str] = []
+        if hasattr(_research, 'has_pii'):
+            for r in _raw_results[:5]:
+                _txt = str(r.get('url', r.get('title', '')))[:100]
+                if not _research.has_pii(_txt):
+                    _safe_hints.append(_txt)
         else:
+            _safe_hints = [str(r.get('url', r.get('title', '')))[:100] for r in _raw_results[:5]]
+        return _safe_hints
+
+    async def _generate_dark_surface_via_hermes(
+        self, hermes_engine: Any, iocs: list[str], transport_str: str, context_hints: list[str]
+    ) -> list[DarkQuery]:
+        """LLM-assisted dark surface query generation via Hermes3."""
+        ioc_brief = ', '.join(iocs[:15])
+        _research_hint_section = ''
+        if context_hints:
+            _research_hint_section = '\n\nDOPLNUJICI KONTEXT (research layer):\n' + '\n'.join((f'- {h}' for h in context_hints))
+        prompt = (
+            f'Z techto IOC z aktualniho sprintu: {ioc_brief}{_research_hint_section}\n\n'
+            f'Navrhuj {self.MAX_DARK_QUERIES_PER_SPRINT} specificke dotazy pro dark surface (neindexovane zdroje).\n'
+            f'Pro kazdy dotaz uved:\n'
+            f'1. typ: onion | ipfs | paste | i2p\n'
+            f'2. samotny dotaz (co hledat)\n'
+            f'3. priorita: 0-1 (vyssi = dulezitejsi)\n'
+            f'4. odovodneni (proc by to mohlo mit relevantni data)\n\n'
+            f'Vystup formatuj jako JSON list s objekty: type, query, priority, reasoning\n\n'
+            f'Zajimave patterny k hledani:\n'
+            f'- .onion domeny korelovane s IP/domain z IOC\n'
+            f'- IPFS CID z intelligence findings\n'
+            f'- Paste site leak korelace\n'
+            f'- Darknet forum IOC patterns'
+        )
+        try:
+            result = await hermes_engine.generate_structured(
+                prompt=prompt,
+                response_model=_DarkQueryListResponse,
+                max_tokens=1024,
+                system_msg='Jsi OSINT dark surface research assistant.'
+            )
+            # Try DSPy overlay if available
+            if DSPY_AVAILABLE and os.environ.get('HLEDAC_ENABLE_DSPY') == '1':
+                result = self._apply_dspy_overlay(result, ioc_brief, transport_str)
+            return self._parse_dark_queries(result, iocs)
+        except Exception as e:
+            logger.warning(f'[DARK_SURFACE] Hermes LLM expansion failed: {e}, using heuristic fallback')
             return self._generate_dark_surface_queries_fallback(iocs, transport_str)
+
+    def _apply_dspy_overlay(self, result: Any, ioc_brief: str, transport_str: str) -> Any:
+        """Apply DSPy compiled program overlay if available."""
+        try:
+            from hledac.universal.brain.dspy_optimizer import load_compiled_program
+            from hledac.universal.brain.dspy_programs import get_program
+            program = load_compiled_program('dark_query')
+            if program is None:
+                program = get_program('dark_query')
+            if program is None:
+                return result
+            pred = program.forward(
+                ioc_brief=ioc_brief,
+                available_transports=transport_str,
+                max_queries=self.MAX_DARK_QUERIES_PER_SPRINT
+            )
+            if not (hasattr(pred, 'answer') and pred.answer):
+                return result
+            queries_data = msgspec.json.decode(pred.answer)
+            if isinstance(queries_data, list):
+                return types.SimpleNamespace(queries=queries_data)
+            return result
+        except Exception:
+            return result
+
+    def _parse_dark_queries(self, result: Any, iocs: list[str]) -> list[DarkQuery]:
+        """Parse Hermes result into DarkQuery list."""
+        dark_queries: list[DarkQuery] = []
+        for item in getattr(result, 'queries', []):
+            dt = DarkQueryType(item.get('type', 'onion'))
+            dark_queries.append(DarkQuery(
+                query_type=dt,
+                query=item.get('query', ''),
+                priority=float(item.get('priority', 0.5)),
+                source_iocs=tuple(iocs[:5]),
+                reasoning=item.get('reasoning', '')
+            ))
+        return dark_queries[:self.MAX_DARK_QUERIES_PER_SPRINT]
 
     def _generate_dark_surface_queries_fallback(self, iocs: list[str], transport_str: str) -> list[DarkQuery]:
         """Heuristic fallback for dark surface query generation (no LLM)."""

@@ -212,6 +212,23 @@ class HermesModelCache:
         # ISSUE-16: store sys.modules reference for platform checks (avoid repeated import)
         self._sys = sys
 
+    # ─── Shared telemetry + hook helpers (Type-2 clone deduplication) ───────
+
+    def _emit_eviction_telemetry(self, count: int, attr: str) -> None:
+        """Emit OTel eviction count attribute. Fail-open on any error."""
+        try:
+            from otel._instrumentation import set_attribute
+            set_attribute(attr, count)
+        except Exception:
+            pass
+
+    def _safe_call_hook(self, hook: Callable[[str], None], key: str) -> None:
+        """Call an eviction hook. Fail-open on any error."""
+        try:
+            hook(key)
+        except Exception:
+            pass
+
     # ─── Lock helper for async contexts ──────────────────────────────────────
 
     def _acquire_lock(self) -> threading.RLock:
@@ -282,17 +299,9 @@ class HermesModelCache:
         self._access_times.pop(key, None)
         self._model_eviction_count += 1
         _mlx_cache_clear(f"model_evict:{key}")
-        try:
-            from otel._instrumentation import set_attribute
-
-            set_attribute("hermes.cache.model_evictions", self._model_eviction_count)
-        except Exception:
-            pass
+        self._emit_eviction_telemetry(self._model_eviction_count, "hermes.cache.model_evictions")
         if self._on_evict_model:
-            try:
-                self._on_evict_model(key)
-            except Exception:
-                pass
+            self._safe_call_hook(self._on_evict_model, key)
         return key
 
     def evict_model(self, key: str) -> bool:
@@ -304,17 +313,9 @@ class HermesModelCache:
             self._access_times.pop(key, None)
             self._model_eviction_count += 1
             _mlx_cache_clear(f"model_evict:{key}")
-            try:
-                from otel._instrumentation import set_attribute
-
-                set_attribute("hermes.cache.model_evictions", self._model_eviction_count)
-            except Exception:
-                pass
+            self._emit_eviction_telemetry(self._model_eviction_count, "hermes.cache.model_evictions")
             if self._on_evict_model:
-                try:
-                    self._on_evict_model(key)
-                except Exception:
-                    pass
+                self._safe_call_hook(self._on_evict_model, key)
             return True
 
     def clear_models(self) -> int:
@@ -338,6 +339,8 @@ class HermesModelCache:
             if key not in self._lora_cache:
                 return None
             self._lora_cache.move_to_end(key)
+            # NOTE: LoRA _access_times not tracked (no TTL sweep for LoRA),
+            # so no update here.
             return self._lora_cache[key]
 
     def put_lora(self, key: str, lora_model: Any, lora_tokenizer: Any) -> bool:
@@ -360,27 +363,19 @@ class HermesModelCache:
         """
         Internal LRU eviction — caller must hold _lock.
         Canonical MLX cleanup chain.
+
+        Note: LoRA adapters are NOT tracked in _access_times (no TTL sweep for LoRA),
+        so no cleanup of _access_times is needed here.
         """
         if not self._lora_cache:
             return None
         key = next(iter(self._lora_cache))
         del self._lora_cache[key]
-        # NOTE: LoRA keys are separate namespace from model keys in _access_times,
-        # but we still pop to avoid orphaned entries if TTL sweep races.
-        self._access_times.pop(key, None)
         self._lora_eviction_count += 1
         _mlx_cache_clear(f"lora_evict:{key}")
-        try:
-            from otel._instrumentation import set_attribute
-
-            set_attribute("hermes.cache.lora_evictions", self._lora_eviction_count)
-        except Exception:
-            pass
+        self._emit_eviction_telemetry(self._lora_eviction_count, "hermes.cache.lora_evictions")
         if self._on_evict_lora:
-            try:
-                self._on_evict_lora(key)
-            except Exception:
-                pass
+            self._safe_call_hook(self._on_evict_lora, key)
         return key
 
     def clear_loras(self) -> int:
@@ -429,18 +424,10 @@ class HermesModelCache:
                         self._access_times.pop(key, None)
                         self._model_eviction_count += 1
                         _mlx_cache_clear(f"ttl_evict:{key}")
-                        try:
-                            from otel._instrumentation import set_attribute
-
-                            set_attribute("hermes.cache.model_evictions", self._model_eviction_count)
-                        except Exception:
-                            pass
+                        self._emit_eviction_telemetry(self._model_eviction_count, "hermes.cache.model_evictions")
                         logger.debug(f"[HermesModelCache] TTL expired, evicted model: {key}")
                         if self._on_evict_model:
-                            try:
-                                self._on_evict_model(key)
-                            except Exception:
-                                pass
+                            self._safe_call_hook(self._on_evict_model, key)
 
                     # 2. HIGH pressure: evict all LoRA adapters (free GPU memory fast)
                     if pressure == "high" and self._lora_cache:
@@ -454,24 +441,8 @@ class HermesModelCache:
                         # ISSUE-16: madvise BEFORE eviction so kernel reclaims pages first
                         _madvise_heap_critical()
                         if self._model_cache:
-                            # Evict the largest (first) model — LRU order
-                            key = next(iter(self._model_cache))
-                            del self._model_cache[key]
-                            self._access_times.pop(key, None)
-                            self._model_eviction_count += 1
-                            _mlx_cache_clear(f"pressure_critical_evict:{key}")
-                            try:
-                                from otel._instrumentation import set_attribute
-
-                                set_attribute("hermes.cache.model_evictions", self._model_eviction_count)
-                            except Exception:
-                                pass
+                            key = self._evict_model_internal()
                             logger.warning(f"[HermesModelCache] Pressure CRITICAL, evicted model: {key}")
-                            if self._on_evict_model:
-                                try:
-                                    self._on_evict_model(key)
-                                except Exception:
-                                    pass
             except asyncio.CancelledError:
                 logger.debug("[HermesModelCache] Pressure monitor cancelled")
                 return
@@ -539,41 +510,46 @@ class HermesModelCache:
 # ─── Singleton instance (global, shared across DeepHermes3Engine instances) ────
 
 
+# ─── OTel eviction callbacks (LP-2 fix) ─────────────────────────────────────────
+
+
+def _set_eviction_attr(name: str, value: str | int) -> None:
+    """Fail-open OTel attribute emit for eviction callbacks."""
+    try:
+        from otel._instrumentation import set_attribute
+
+        set_attribute(name, value)
+    except Exception:
+        pass
+
+
 def _hermes_cache_evict_model_otel(key: str) -> None:
     """Callback: emit OTel span attrs on model eviction.
 
     LP-2 fix: _model_eviction_count and _lora_eviction_count tracked but never
     surface to operators. Without this, cache thrashing (evict -> reload -> evict)
     is invisible -- operators see normal latency spikes with no root cause signal.
-
-    Canonical telemetry emit: span.set_attribute for trace-linked observability.
     """
-    try:
-        from otel._instrumentation import set_attribute
-
-        set_attribute("hermes.cache.model_eviction", key)
-    except Exception:
-        pass
+    _set_eviction_attr("hermes.cache.model_eviction", key)
 
 
 def _hermes_cache_evict_lora_otel(key: str) -> None:
     """Callback: emit OTel span attrs on LoRA adapter eviction."""
-    try:
-        from otel._instrumentation import set_attribute
-
-        set_attribute("hermes.cache.lora_eviction", key)
-    except Exception:
-        pass
+    _set_eviction_attr("hermes.cache.lora_eviction", key)
 
 
 # Wire OTel eviction callbacks to the global singleton.
 # LP-2 fix: without these, eviction counts never leave the process.
-_HERMES_CACHE: HermesModelCache = HermesModelCache(
-    on_evict_model=_hermes_cache_evict_model_otel,
-    on_evict_lora=_hermes_cache_evict_lora_otel,
-)
+# Lazy singleton: created on first access to avoid eager init overhead.
+_HERMES_CACHE: HermesModelCache | None = None
 
 
 def hermes_cache() -> HermesModelCache:
-    """Return the global HermesModelCache singleton."""
+    """Return the global HermesModelCache singleton (lazy init)."""
+    global _HERMES_CACHE
+    if _HERMES_CACHE is None:
+        _HERMES_CACHE = HermesModelCache(
+            on_evict_model=_hermes_cache_evict_model_otel,
+            on_evict_lora=_hermes_cache_evict_lora_otel,
+        )
     return _HERMES_CACHE

@@ -58,6 +58,14 @@ if TYPE_CHECKING:
     from hledac.universal.brain.batch_scheduler import BatchScheduler
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)
+
+
+class _FreeTextSchema:
+    """Lightweight schema for free-text batch responses (no pydantic dependency)."""
+    __name__ = 'FreeText'
+    __struct_fields__ = ('text',)
+
+
 MAX_BATCH_SIZE_M1: int = 8
 MEMORY_GUARD_PCT: float = 87.0
 MEMORY_GUARD_ABSOLUTE_GB: float = 1.0
@@ -132,7 +140,7 @@ class MLXBatchedExecutor:
         self._init_event: asyncio.Event | None = None
         self._init_lock: asyncio.Lock | None = None
         self._init_guard: threading.Lock = threading.Lock()
-        self._stats: dict[str, Any] = {'submits': 0, 'empty_prompt_bypass': 0, 'long_output_bypass': 0, 'long_system_msg_bypass': 0, 'direct_fallback': 0, 'batch_executed': 0, 'batch_shattered': 0, 'fail_soft': 0, 'memory_guard_disabled': 0, 'urgent_bypass': 0, 'latency_ema_ms': 0.0, 'baseline_ema_ms': 0.0, 'overhead_ema_ms': 0.0}
+        self._stats: dict[str, Any] = {'submits': 0, 'empty_prompt_bypass': 0, 'long_output_bypass': 0, 'long_system_msg_bypass': 0, 'direct_fallback': 0, 'batch_executed': 0, 'batch_shattered': 0, 'fail_soft': 0, 'memory_guard_disabled': 0, 'urgent_bypass': 0, 'speculative_bypass': 0, 'latency_ema_ms': 0.0, 'baseline_ema_ms': 0.0, 'overhead_ema_ms': 0.0}
         self._ema_alpha: float = 0.3
         self._memory_check_failures: int = 0
         self._memory_ema: float = 0.0
@@ -196,17 +204,22 @@ class MLXBatchedExecutor:
                 logger.warning('[MLXBatch] lazy init failed, batching disabled: %s', e)
                 self._stats['fail_soft'] += 1
 
+    # ------------------------------------------------------------------ //
+    # is_batch_safe — public gate + private helpers                       //
+    # ------------------------------------------------------------------ //
+
     def is_batch_safe(self, prompt: str, system_msg: str | None=None, priority: float=1.0, active_iteration_count: int=0, max_tokens: int | None=None, speculative: bool=False) -> bool:
         """
         Decide whether this request is eligible for batching.
 
         Returns False when:
             - executor not initialized (lazy init failed or shutdown)
-            - memory pressure > MEMORY_GUARD_PCT (unless force-enabled below)
             - priority == 0 (urgent, bypass — B.M9)
             - prompt is empty or whitespace-only
             - max_tokens > 2048 (very large outputs serialized anyway, no batching win)
             - prompt > 12000 chars (OSINT context too large for batch accumulation)
+            - system_msg > 8192 chars
+            - memory pressure exceeds guard thresholds (unless force-enabled)
 
         Note: speculative decoding is NOT routed through this executor on M1 8GB.
         A draft model (~500MB extra) would exceed the UMA budget. The draft model
@@ -217,8 +230,11 @@ class MLXBatchedExecutor:
         (multi-cycle sprint) — memory guard is bypassed to maximize
         MLX utilization across consecutive inference calls.
         """
+        # ── Guard: not initialised ──────────────────────────────────────
         if not self._get_init_event().is_set() or self._scheduler is None:
             return False
+
+        # ── Guard: urgency / emptiness ───────────────────────────────────
         if priority == URGENT_PRIORITY:
             self._stats['urgent_bypass'] += 1
             return False
@@ -226,7 +242,7 @@ class MLXBatchedExecutor:
             self._stats['empty_prompt_bypass'] += 1
             return False
         if speculative:
-            self._stats['speculative_bypass'] = self._stats.get('speculative_bypass', 0) + 1
+            self._stats['speculative_bypass'] += 1
             return False
         if len(prompt) > 12000:
             self._stats['long_prompt_bypass'] += 1
@@ -237,6 +253,27 @@ class MLXBatchedExecutor:
         if system_msg is not None and len(system_msg) > 8192:
             self._stats['long_system_msg_bypass'] += 1
             return False
+
+        # ── Guard: memory pressure ────────────────────────────────────────
+        force_batching = active_iteration_count >= 2
+        if not self._memory_guard_ok(force_batching):
+            return False
+
+        return True
+
+    # ------------------------------------------------------------------ //
+    # Private helpers                                                     //
+    # ------------------------------------------------------------------ //
+
+    def _memory_guard_ok(self, force_batching: bool) -> bool:
+        """
+        Update _memory_ema from psutil, compute effective batch size
+        from MLX memory tier, push to scheduler, then apply the
+        memory guard threshold.
+
+        Returns True when batching is memory-safe (or force_batching).
+        """
+        # ── 1. Read psutil (fail-soft → allow batching) ─────────────────
         try:
             from hledac.universal.core.resource_governor import _get_cached_psutil
             from hledac.universal.core.resource_governor import _read_virtual_memory_sync
@@ -248,48 +285,58 @@ class MLXBatchedExecutor:
         except Exception:
             self._memory_check_failures += 1
             return True
+
+        # ── 2. Exponential moving average of RSS percent ──────────────────
         if self._memory_ema == 0.0:
             self._memory_ema = pct
         else:
             self._memory_ema = self._memory_ema_alpha * pct + (1 - self._memory_ema_alpha) * self._memory_ema
-        mlx_mem = self._get_mlx_memory()
-        tier = 'NORMAL'
-        effective_size = self._effective_batch_size
-        if mlx_mem is not None:
-            try:
-                usage_pct, pressure_level = mlx_mem.get_mlx_memory_pressure()
-                tier = pressure_level
-                if pressure_level == 'NORMAL' and usage_pct < 50:
-                    effective_size = self._batch_size_max
-                    tier = 'ABUNDANT'
-                elif pressure_level == 'NORMAL':
-                    effective_size = self._batch_size_high
-                elif pressure_level == 'WARNING':
-                    effective_size = self._effective_batch_size
-                else:
-                    effective_size = self._batch_size_low
-            except Exception:
-                effective_size = self._effective_batch_size
-        if self._scheduler is not None:
-            old_size = self._effective_batch_size
-            if effective_size != old_size:
-                self._effective_batch_size = effective_size
-                try:
-                    self._scheduler.set_max_size(effective_size)
-                    logger.debug('[MLXBatch] batch tier %s: %d→%d (mem_ema=%.1f%%)', tier, old_size, effective_size, self._memory_ema)
-                except Exception:
-                    pass
-        memory_ok = True
-        force_batching = active_iteration_count >= 2
-        if self._memory_ema > MEMORY_GUARD_PCT and (not force_batching):
+
+        # ── 3. Push adaptive batch size to scheduler (internally queries MLX tier) ──
+        self._push_batch_size()
+
+        # ── 4. Memory guard threshold check ──────────────────────────────
+        if self._memory_ema > MEMORY_GUARD_PCT and not force_batching:
             self._stats['memory_guard_disabled'] += 1
-            memory_ok = False
-        if available_gb < MEMORY_GUARD_ABSOLUTE_GB and (not force_batching):
+            return False
+        if available_gb < MEMORY_GUARD_ABSOLUTE_GB and not force_batching:
             self._stats['memory_guard_disabled'] += 1
-            memory_ok = False
-        if not memory_ok:
             return False
         return True
+
+    def _mlx_tier_to_size(self, mlx_mem: Any) -> tuple[int, str]:
+        """
+        Query MLX memory pressure and map it to a (effective_size, tier) pair.
+
+        tier values: 'ABUNDANT' | 'NORMAL' | 'WARNING' | 'CRITICAL'
+        """
+        try:
+            usage_pct, pressure_level = mlx_mem.get_mlx_memory_pressure()
+            if pressure_level == 'NORMAL' and usage_pct < 50:
+                return self._batch_size_max, 'ABUNDANT'
+            if pressure_level == 'NORMAL':
+                return self._batch_size_high, 'NORMAL'
+            if pressure_level == 'WARNING':
+                return self._effective_batch_size, 'WARNING'
+            return self._batch_size_low, 'CRITICAL'
+        except Exception:
+            return self._effective_batch_size, 'NORMAL'
+
+    def _push_batch_size(self) -> None:
+        """Query MLX memory tier and push adaptive batch size to scheduler if changed."""
+        if self._scheduler is None:
+            return
+        mlx_mem = self._get_mlx_memory()
+        effective_size, tier = self._mlx_tier_to_size(mlx_mem)
+        old_size = self._effective_batch_size
+        if effective_size == old_size:
+            return
+        self._effective_batch_size = effective_size
+        try:
+            self._scheduler.set_max_size(effective_size)
+            logger.debug('[MLXBatch] batch tier %s: %d→%d (mem_ema=%.1f%%)', tier, old_size, effective_size, self._memory_ema)
+        except Exception:
+            pass
 
     async def execute(self, prompt: str, temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, priority: float=1.0) -> str:
         """
@@ -305,9 +352,6 @@ class MLXBatchedExecutor:
             return await self._call_engine_direct(prompt, temperature, max_tokens, system_msg)
         try:
 
-            class _FreeTextSchema:
-                __name__ = 'FreeText'
-                __struct_fields__ = ('text',)
             submitted_at = time.monotonic()
             scheduler_future: asyncio.Future = await self._scheduler.submit(prompt=prompt, response_model=_FreeTextSchema, priority=priority, temperature=temperature if temperature is not None else 0.1, max_tokens=max_tokens if max_tokens is not None else 512, system_msg=system_msg)
             self._stats['submits'] += 1
@@ -443,15 +487,7 @@ class MLXBatchedExecutor:
                 else:
                     stats['batch_utilization'] = 0.0
                 stats['queue_depth'] = ema.get('queue_depth', 0)
-                mlx_mem_bytes = 0
-                try:
-                    import mlx.core as _mx
-                    _mx.eval([])
-                    if hasattr(_mx.metal, 'set_cache_limit'):
-                        pass
-                except Exception:
-                    pass
-                stats['mlx_memory_bytes'] = mlx_mem_bytes
+                stats['mlx_memory_bytes'] = 0  # placeholder — mlx.metal cache API varies by version
             except Exception:
                 stats['scheduler_ema'] = {}
                 stats['scheduler_counters'] = {}

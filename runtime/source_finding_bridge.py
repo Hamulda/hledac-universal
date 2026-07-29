@@ -382,6 +382,323 @@ def _build_ct_provenance(
     return tuple(prov)
 
 
+# ---------------------------------------------------------------------------
+# ct_results_to_findings helpers — extracted to reduce cyclomatic complexity
+# ---------------------------------------------------------------------------
+
+
+def _ct_make_empty_telemetry() -> dict[str, Any]:
+    """Return zeroed CT telemetry for early-return paths."""
+    return {
+        "ct_raw_entries": 0,
+        "ct_extracted_domains": 0,
+        "ct_candidate_domains": 0,
+        "ct_accepted_candidates": 0,
+        "ct_candidates_built": 0,
+        "ct_candidates_stored": 0,
+        "ct_storage_rejected": 0,
+        "ct_rejected_wildcard": 0,
+        "ct_rejected_invalid": 0,
+        "ct_rejected_duplicate": 0,
+        "ct_rejected_missing_domain": 0,
+        "ct_rejected_missing_value": 0,
+        "ct_quarantine_count": 0,
+        "ct_quarantine_entries": [],
+    }
+
+
+def _build_ct_telemetry(
+    rejections: list[RejectionReason],
+    ct_raw_entries: int,
+    ct_extracted_domains: int,
+    ct_candidate_domains: int,
+    findings_count: int,
+    quarantine_entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    Build the full CT telemetry dictionary from rejection list and counters.
+
+    Rejection tallies are computed via list comprehensions for clarity.
+    """
+    ct_rejected_wildcard = sum(1 for r in rejections if r == REJECTION_WILDCARD_DOMAIN)
+    ct_rejected_invalid = sum(
+        1 for r in rejections
+        if r in (REJECTION_PRIVATE_OR_RESERVED_DOMAIN, REJECTION_LOW_INFORMATION)
+    )
+    ct_rejected_duplicate = sum(1 for r in rejections if r == REJECTION_DUPLICATE_CANDIDATE)
+    ct_rejected_missing_domain = sum(1 for r in rejections if r == REJECTION_MISSING_DOMAIN)
+    ct_rejected_missing_value = sum(1 for r in rejections if r == REJECTION_MISSING_VALUE)
+
+    # F231B: bounded quarantine examples as expansion clues
+    ct_candidate_examples = quarantine_entries[:MAX_EXPANSION_CLUE_EXAMPLES]
+
+    return {
+        "ct_raw_entries": ct_raw_entries,
+        "ct_extracted_domains": ct_extracted_domains,
+        "ct_candidate_domains": ct_candidate_domains,
+        "ct_accepted_candidates": findings_count,
+        "ct_candidates_built": findings_count,
+        "ct_candidates_stored": 0,
+        "ct_storage_rejected": 0,
+        "ct_rejected_wildcard": ct_rejected_wildcard,
+        "ct_rejected_invalid": ct_rejected_invalid,
+        "ct_rejected_duplicate": ct_rejected_duplicate,
+        "ct_rejected_missing_domain": ct_rejected_missing_domain,
+        "ct_rejected_missing_value": ct_rejected_missing_value,
+        "ct_quarantine_count": len(quarantine_entries),
+        "ct_quarantine_entries": quarantine_entries,
+        # F226C: CT bridge acceptance diagnostics
+        "ct_bridge_candidate_count": ct_candidate_domains,
+        "ct_bridge_valid_domain_count": ct_candidate_domains,
+        "ct_bridge_quarantine_count": len(quarantine_entries),
+        "ct_bridge_build_success_count": findings_count,
+        "ct_bridge_quality_rejected_count": 0,
+        # F231B: CT expansion clue summary
+        "ct_raw_domains_seen": ct_raw_entries,
+        "ct_unique_domains_seen": ct_extracted_domains,
+        "ct_valid_public_domains": ct_candidate_domains,
+        "ct_wildcard_domains": ct_rejected_wildcard,
+        "ct_private_reserved_domains": ct_rejected_invalid,
+        "ct_duplicate_candidates": ct_rejected_duplicate,
+        "ct_candidate_examples": ct_candidate_examples,
+        "ct_expansion_clues_count": len(ct_candidate_examples),
+    }
+
+
+def _ct_quarantine_wildcard(
+    domain: str,
+    reject_reason: RejectionReason,
+    query: str,
+    source_url: str,
+    candidate_shape: str,
+    ts: float,
+    quarantine_entries: list[dict[str, Any]],
+) -> None:
+    """Append a bounded quarantine entry for a rejected wildcard domain."""
+    if len(quarantine_entries) >= MAX_CT_QUARANTINE_SAMPLES:
+        return
+    quarantine_entries.append(
+        _make_ct_quarantine_entry(
+            domain=domain,
+            reject_reason=reject_reason,
+            query=query,
+            source_url=source_url,
+            candidate_shape=candidate_shape,
+            ts=ts,
+        )
+    )
+
+
+def _ct_quarantine_name_value_wildcards(
+    name_value_wildcards: list[str],
+    query: str,
+    url: str,
+    ts: float,
+    quarantine_entries: list[dict[str, Any]],
+) -> set[str]:
+    """
+    Quarantine all wildcards from ct_name_value and return their stripped forms.
+
+    Returns a set of lowercased stripped wildcard forms to enable cross-reference
+    with URL-derived candidates (prevents duplicate rejection).
+    """
+    quarantined: set[str] = set()
+    for wc in name_value_wildcards:
+        _ct_quarantine_wildcard(
+            domain=wc,
+            reject_reason=REJECTION_WILDCARD_DOMAIN,
+            query=query,
+            source_url=url,
+            candidate_shape="wildcard",
+            ts=ts,
+            quarantine_entries=quarantine_entries,
+        )
+        quarantined.add(wc.lower())
+        # F226C: also quarantine the stripped form (*.example.com -> example.com)
+        stripped = _WILDCARD_RE.sub("", wc)
+        if stripped:
+            quarantined.add(stripped.lower())
+    return quarantined
+
+
+def _ct_handle_missing_candidates(
+    url: str,
+    title: str,
+    name_value_wildcards: list[str],
+    query: str,
+    ts: float,
+    quarantine_entries: list[dict[str, Any]],
+    rejections: list[RejectionReason],
+) -> bool:
+    """
+    Handle case where no candidate domains were extracted from a hit.
+
+    Returns True if processing should continue to next hit.
+    """
+    # Wildcard-only name_value: reject all wildcards
+    for wc in name_value_wildcards:
+        _ct_quarantine_wildcard(
+            domain=wc,
+            reject_reason=REJECTION_WILDCARD_DOMAIN,
+            query=query,
+            source_url=url,
+            candidate_shape="wildcard",
+            ts=ts,
+            quarantine_entries=quarantine_entries,
+        )
+
+    if not url and not title:
+        rejections.append(REJECTION_MISSING_VALUE)
+        _ct_quarantine_wildcard(
+            domain="",
+            reject_reason=REJECTION_MISSING_VALUE,
+            query=query,
+            source_url=url or "",
+            candidate_shape="missing",
+            ts=ts,
+            quarantine_entries=quarantine_entries,
+        )
+    else:
+        rejections.append(REJECTION_MISSING_DOMAIN)
+        logger.debug(
+            "CT missing_domain rejection: url=%r title=%r query=%r",
+            url,
+            title,
+            query,
+        )
+        _ct_quarantine_wildcard(
+            domain="",
+            reject_reason=REJECTION_MISSING_DOMAIN,
+            query=query,
+            source_url=url or "",
+            candidate_shape="missing",
+            ts=ts,
+            quarantine_entries=quarantine_entries,
+        )
+    return True
+
+
+def _ct_evaluate_candidate(
+    domain: str,
+    seen_domains: set[str],
+    quarantined_wildcards: set[str],
+    query: str,
+    url: str,
+    ts: float,
+    sprint_id: str,
+    ct_issuer_name: str | None,
+    ct_entry_timestamp: str | None,
+    ct_not_before: str | None,
+    ct_not_after: str | None,
+    ct_serial_number: str | None,
+    ct_name_value: str | None,
+    ct_common_name: str | None,
+    quarantine_entries: list[dict[str, Any]],
+    rejections: list[RejectionReason],
+) -> tuple[dict[str, Any] | None, RejectionReason | None]:
+    """
+    Evaluate a single candidate domain and produce a CanonicalFinding or rejection.
+
+    Returns (finding_dict, rejection_reason):
+        - (finding_dict, None) if accepted
+        - (None, rejection_reason) if rejected
+    """
+    # Skip if already quarantined as sibling wildcard
+    if domain.lower() in quarantined_wildcards:
+        return None, None
+
+    # Private/reserved check FIRST
+    if is_private_host(domain):
+        rejections.append(REJECTION_PRIVATE_OR_RESERVED_DOMAIN)
+        _ct_quarantine_wildcard(
+            domain=domain,
+            reject_reason=REJECTION_PRIVATE_OR_RESERVED_DOMAIN,
+            query=query,
+            source_url=url,
+            candidate_shape="private_reserved",
+            ts=ts,
+            quarantine_entries=quarantine_entries,
+        )
+        return None, REJECTION_PRIVATE_OR_RESERVED_DOMAIN
+
+    # Single-label (no TLD) check
+    if "." not in domain:
+        rejections.append(REJECTION_LOW_INFORMATION)
+        _ct_quarantine_wildcard(
+            domain=domain,
+            reject_reason=REJECTION_LOW_INFORMATION,
+            query=query,
+            source_url=url,
+            candidate_shape="single_label",
+            ts=ts,
+            quarantine_entries=quarantine_entries,
+        )
+        return None, REJECTION_LOW_INFORMATION
+
+    # Wildcard check for URL-derived domains
+    if _is_wildcard_domain(domain):
+        rejections.append(REJECTION_WILDCARD_DOMAIN)
+        _ct_quarantine_wildcard(
+            domain=domain,
+            reject_reason=REJECTION_WILDCARD_DOMAIN,
+            query=query,
+            source_url=url,
+            candidate_shape="wildcard",
+            ts=ts,
+            quarantine_entries=quarantine_entries,
+        )
+        return None, REJECTION_WILDCARD_DOMAIN
+
+    # Duplicate check
+    if domain in seen_domains:
+        rejections.append(REJECTION_DUPLICATE_CANDIDATE)
+        _ct_quarantine_wildcard(
+            domain=domain,
+            reject_reason=REJECTION_DUPLICATE_CANDIDATE,
+            query=query,
+            source_url=url,
+            candidate_shape=_classify_domain_shape(domain, url, ct_name_value),
+            ts=ts,
+            quarantine_entries=quarantine_entries,
+        )
+        return None, REJECTION_DUPLICATE_CANDIDATE
+
+    # All checks passed — build the finding
+    seen_domains.add(domain)
+    blake2_id = _make_blake2b_hex(domain, _CT_SALT)
+    finding_id = f"ct-{blake2_id}-{sprint_id[:8]}"
+
+    provenance = _build_ct_provenance(
+        domain=domain,
+        query=query,
+        sprint_id=sprint_id,
+        issuer_name=ct_issuer_name or None,
+        entry_timestamp=ct_entry_timestamp or None,
+    )
+
+    payload_text = _build_ct_payload(
+        domain=domain,
+        issuer_name=ct_issuer_name or None,
+        not_before=ct_not_before or None,
+        not_after=ct_not_after or None,
+        serial_number=ct_serial_number or None,
+        entry_timestamp=ct_entry_timestamp or None,
+        name_value=ct_name_value or None,
+        common_name=ct_common_name or None,
+    )
+
+    finding = _canonical_finding(
+        finding_id=finding_id,
+        source_type=_CT_SOURCE_TYPE,
+        query=query,
+        confidence=_CT_CONFIDENCE,
+        ts=ts,
+        provenance=provenance,
+        payload_text=payload_text,
+    )
+    return (finding if finding is not None else None), None
+
+
 def _make_ct_conversion_summary(
     raw_hits_count: int,
     ct_raw_entries: int,
@@ -470,42 +787,12 @@ def ct_results_to_findings(
 
     if not hasattr(batch_result, "hits"):
         rejections.append(REJECTION_UNSUPPORTED_SHAPE)
-        return [], rejections, {
-            "ct_raw_entries": 0,
-            "ct_extracted_domains": 0,
-            "ct_candidate_domains": 0,
-            "ct_accepted_candidates": 0,
-            "ct_candidates_built": 0,
-            "ct_candidates_stored": 0,
-            "ct_storage_rejected": 0,
-            "ct_rejected_wildcard": 0,
-            "ct_rejected_invalid": 0,
-            "ct_rejected_duplicate": 0,
-            "ct_rejected_missing_domain": 0,
-            "ct_rejected_missing_value": 0,
-            "ct_quarantine_count": 0,
-            "ct_quarantine_entries": [],
-        }
+        return [], rejections, _ct_make_empty_telemetry()
 
     hits = batch_result.hits
     if not hits:
         rejections.append(REJECTION_MISSING_VALUE)
-        return [], rejections, {
-            "ct_raw_entries": 0,
-            "ct_extracted_domains": 0,
-            "ct_candidate_domains": 0,
-            "ct_accepted_candidates": 0,
-            "ct_candidates_built": 0,
-            "ct_candidates_stored": 0,
-            "ct_storage_rejected": 0,
-            "ct_rejected_wildcard": 0,
-            "ct_rejected_invalid": 0,
-            "ct_rejected_duplicate": 0,
-            "ct_rejected_missing_domain": 0,
-            "ct_rejected_missing_value": 0,
-            "ct_quarantine_count": 0,
-            "ct_quarantine_entries": [],
-        }
+        return [], rejections, _ct_make_empty_telemetry()
 
     capped = hits[:MAX_BRIDGE_OUTPUT]
 
@@ -554,190 +841,53 @@ def ct_results_to_findings(
         # Always initialize ts from retrieved_ts (used in both branches)
         ts = retrieved_ts if retrieved_ts > 0 else time.time()
 
+        # Handle case where no candidate domains were extracted
         if not candidate_domains:
-            # Wildcard-only name_value: reject all wildcards before the domain-level rejection
-            for _wc in name_value_wildcards:
-                rejections.append(REJECTION_WILDCARD_DOMAIN)
-                entry = _make_ct_quarantine_entry(
-                    domain=_wc,
-                    reject_reason=REJECTION_WILDCARD_DOMAIN,
-                    query=query,
-                    source_url=url,
-                    candidate_shape="wildcard",
-                    ts=ts,
-                )
-                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
-                    ct_quarantine_entries.append(entry)
-            if not url and not title:
-                rejections.append(REJECTION_MISSING_VALUE)
-                entry = _make_ct_quarantine_entry(
-                    domain="",
-                    reject_reason=REJECTION_MISSING_VALUE,
-                    query=query,
-                    source_url=url or "",
-                    candidate_shape="missing",
-                    ts=ts,
-                )
-                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
-                    ct_quarantine_entries.append(entry)
-            else:
-                rejections.append(REJECTION_MISSING_DOMAIN)
-                # F265-FIX: Debug logging for missing_domain rejection path
-                # Log raw inputs to diagnose extraction failures
-                logger.debug(
-                    "CT missing_domain rejection: url=%r title=%r ct_name_value=%r "
-                    "ct_common_name=%r query=%r",
-                    url,
-                    title,
-                    ct_name_value,
-                    ct_common_name,
-                    query,
-                )
-                entry = _make_ct_quarantine_entry(
-                    domain="",
-                    reject_reason=REJECTION_MISSING_DOMAIN,
-                    query=query,
-                    source_url=url or "",
-                    candidate_shape="missing",
-                    ts=ts,
-                )
-                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
-                    ct_quarantine_entries.append(entry)
+            _ct_handle_missing_candidates(
+                url=url,
+                title=title,
+                name_value_wildcards=name_value_wildcards,
+                query=query,
+                ts=ts,
+                quarantine_entries=ct_quarantine_entries,
+                rejections=rejections,
+            )
             continue
 
-        # Track wildcards already quarantined via name_value_wildcards loop
-        # to avoid double-quarantining URL-derived wildcards that also appear in name_value_wildcards
-        _quarantined_wildcards: set[str] = set()
-        for _wc in name_value_wildcards:
-            rejections.append(REJECTION_WILDCARD_DOMAIN)
-            entry = _make_ct_quarantine_entry(
-                domain=_wc,
-                reject_reason=REJECTION_WILDCARD_DOMAIN,
-                query=query,
-                source_url=url,
-                candidate_shape="wildcard",
-                ts=ts,
-            )
-            if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
-                ct_quarantine_entries.append(entry)
-            _quarantined_wildcards.add(_wc.lower())
+        # Quarantine all name_value wildcards and get stripped forms for cross-reference
+        quarantined_wildcards = _ct_quarantine_name_value_wildcards(
+            name_value_wildcards=name_value_wildcards,
+            query=query,
+            url=url,
+            ts=ts,
+            quarantine_entries=ct_quarantine_entries,
+        )
 
-        # F226C: For each name_value wildcard (original form: *.example.com),
-        # also add its stripped form (example.com) to _quarantined_wildcards.
-        # This handles the case where URL gives sub.example.com and
-        # name_value has *.sub.example.com — the URL candidate must be skipped.
-        for _wc in name_value_wildcards:
-            _stripped = _WILDCARD_RE.sub("", _wc)
-            if _stripped:
-                _quarantined_wildcards.add(_stripped.lower())
-
+        # Evaluate each candidate domain
         for domain in candidate_domains:
             ct_extracted_domains += 1
 
-            # Skip if already quarantined as sibling wildcard (from name_value_wildcards)
-            if domain.lower() in _quarantined_wildcards:
-                # Already quarantined in name_value_wildcards loop above, skip duplicate
-                continue
-
-            # Private/reserved check FIRST — more specific than single-label
-            if is_private_host(domain):
-                rejections.append(REJECTION_PRIVATE_OR_RESERVED_DOMAIN)
-                entry = _make_ct_quarantine_entry(
-                    domain=domain,
-                    reject_reason=REJECTION_PRIVATE_OR_RESERVED_DOMAIN,
-                    query=query,
-                    source_url=url,
-                    candidate_shape="single_label",
-                    ts=ts,
-                )
-                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
-                    ct_quarantine_entries.append(entry)
-                continue
-
-            # Single-label (no TLD) check — after private check
-            if "." not in domain:
-                rejections.append(REJECTION_LOW_INFORMATION)
-                entry = _make_ct_quarantine_entry(
-                    domain=domain,
-                    reject_reason=REJECTION_LOW_INFORMATION,
-                    query=query,
-                    source_url=url,
-                    candidate_shape="single_label",
-                    ts=ts,
-                )
-                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
-                    ct_quarantine_entries.append(entry)
-                continue
-
-            # Wildcard check — handles URL-derived wildcards (e.g. https://*.example.com/)
-            # Wildcards from ct_name_value are already handled via _quarantined_wildcards above
-            if _is_wildcard_domain(domain):
-                rejections.append(REJECTION_WILDCARD_DOMAIN)
-                entry = _make_ct_quarantine_entry(
-                    domain=domain,
-                    reject_reason=REJECTION_WILDCARD_DOMAIN,
-                    query=query,
-                    source_url=url,
-                    candidate_shape="wildcard",
-                    ts=ts,
-                )
-                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
-                    ct_quarantine_entries.append(entry)
-                continue
-
-            # Duplicate check
-            if domain in seen_domains:
-                rejections.append(REJECTION_DUPLICATE_CANDIDATE)
-                entry = _make_ct_quarantine_entry(
-                    domain=domain,
-                    reject_reason=REJECTION_DUPLICATE_CANDIDATE,
-                    query=query,
-                    source_url=url,
-                    candidate_shape=_classify_domain_shape(domain, url, ct_name_value),
-                    ts=ts,
-                )
-                if len(ct_quarantine_entries) < MAX_CT_QUARANTINE_SAMPLES:
-                    ct_quarantine_entries.append(entry)
-                continue
-            seen_domains.add(domain)
-            ct_candidate_domains += 1
-
-            ts = retrieved_ts if retrieved_ts > 0 else time.time()
-            blake2_id = _make_blake2b_hex(domain, _CT_SALT)
-            finding_id = f"ct-{blake2_id}-{sprint_id[:8]}"
-
-            provenance = _build_ct_provenance(
+            finding, _ = _ct_evaluate_candidate(
                 domain=domain,
+                seen_domains=seen_domains,
+                quarantined_wildcards=quarantined_wildcards,
                 query=query,
-                sprint_id=sprint_id,
-                issuer_name=ct_issuer_name or None,
-                entry_timestamp=ct_entry_timestamp or None,
-            )
-
-            payload_text = _build_ct_payload(
-                domain=domain,
-                issuer_name=ct_issuer_name or None,
-                not_before=ct_not_before or None,
-                not_after=ct_not_after or None,
-                serial_number=ct_serial_number or None,
-                entry_timestamp=ct_entry_timestamp or None,
-                name_value=ct_name_value or None,
-                common_name=ct_common_name or None,
-            )
-
-            finding = _canonical_finding(
-                finding_id=finding_id,
-                source_type=_CT_SOURCE_TYPE,
-                query=query,
-                confidence=_CT_CONFIDENCE,
+                url=url,
                 ts=ts,
-                provenance=provenance,
-                payload_text=payload_text,
+                sprint_id=sprint_id,
+                ct_issuer_name=ct_issuer_name,
+                ct_entry_timestamp=ct_entry_timestamp,
+                ct_not_before=ct_not_before,
+                ct_not_after=ct_not_after,
+                ct_serial_number=ct_serial_number,
+                ct_name_value=ct_name_value,
+                ct_common_name=ct_common_name,
+                quarantine_entries=ct_quarantine_entries,
+                rejections=rejections,
             )
             if finding is not None:
-                # NOTE M2: upstream limit in MAX_BRIDGE_OUTPUT (line 91) caps input at 500.
-                # findings list grows only from capped iteration — no additional guard needed.
                 findings.append(finding)
+                ct_candidate_domains += 1
 
     # Tally per-category rejections from the rejection list
     ct_rejected_wildcard = sum(1 for r in rejections if r == REJECTION_WILDCARD_DOMAIN)
@@ -762,41 +912,14 @@ def ct_results_to_findings(
     ct_candidate_examples: list[dict[str, Any]] = ct_quarantine_entries[:MAX_EXPANSION_CLUE_EXAMPLES]
     ct_expansion_clues_count = len(ct_candidate_examples)
 
-    telemetry = {
-        "ct_raw_entries": ct_raw_entries,
-        "ct_extracted_domains": ct_extracted_domains,
-        "ct_candidate_domains": ct_candidate_domains,
-        "ct_accepted_candidates": len(findings),
-        "ct_candidates_built": len(findings),
-        "ct_candidates_stored": 0,  # filled by caller via record_storage_results()
-        "ct_storage_rejected": 0,  # filled by caller via record_storage_results()
-        # F226C: CT bridge acceptance diagnostics
-        "ct_bridge_candidate_count": ct_candidate_domains,
-        "ct_bridge_valid_domain_count": ct_candidate_domains,
-        "ct_bridge_quarantine_count": len(ct_quarantine_entries),
-        "ct_bridge_build_success_count": len(findings),
-        "ct_bridge_quality_rejected_count": 0,  # filled after storage ingest
-        "ct_rejected_wildcard": ct_rejected_wildcard,
-        "ct_rejected_invalid": ct_rejected_invalid,
-        "ct_rejected_duplicate": ct_rejected_duplicate,
-        "ct_rejected_missing_domain": sum(
-            1 for r in rejections if r == REJECTION_MISSING_DOMAIN
-        ),
-        "ct_rejected_missing_value": sum(
-            1 for r in rejections if r == REJECTION_MISSING_VALUE
-        ),
-        "ct_quarantine_count": len(ct_quarantine_entries),
-        "ct_quarantine_entries": ct_quarantine_entries,
-        # F231B: CT expansion clue summary — analytically visible even when accepted=0
-        "ct_raw_domains_seen": ct_raw_domains_seen,
-        "ct_unique_domains_seen": ct_unique_domains_seen,
-        "ct_valid_public_domains": ct_valid_public_domains,
-        "ct_wildcard_domains": ct_wildcard_domains,
-        "ct_private_reserved_domains": ct_private_reserved_domains,
-        "ct_duplicate_candidates": ct_duplicate_candidates,
-        "ct_candidate_examples": ct_candidate_examples,
-        "ct_expansion_clues_count": ct_expansion_clues_count,
-    }
+    telemetry = _build_ct_telemetry(
+        rejections=rejections,
+        ct_raw_entries=ct_raw_entries,
+        ct_extracted_domains=ct_extracted_domains,
+        ct_candidate_domains=ct_candidate_domains,
+        findings_count=len(findings),
+        quarantine_entries=ct_quarantine_entries,
+    )
 
     return findings, rejections, telemetry
 
@@ -1879,6 +2002,105 @@ def _rdap_extract_entities(
     return findings, count
 
 
+def _rdap_extract_domain_payload(
+    rdap_data: dict[str, Any],
+    domain_name: str,
+    now: float,
+    confidence: float,
+    sprint_id: str,
+) -> tuple[Any, str, int, int, int] | None:
+    """
+    Extract domain payload data for the RDAP domain finding.
+
+    Returns (finding, registrar_name, ns_count, status_count, event_count) or None.
+    Branch-once pattern: type detection done once, then uniform extraction.
+    """
+    if not domain_name:
+        return None
+
+    # Registrar — branch once on type, handle all with getitem/ getattr uniformly
+    registrar_name = ""
+    try:
+        registrar_raw = rdap_data["registrar"]
+        if isinstance(registrar_raw, list) and registrar_raw:
+            reg = registrar_raw[0]
+            registrar_name = _safe_getattr(reg, "name") or _safe_getattr(reg, "fullName") or str(reg)
+        elif isinstance(registrar_raw, dict):
+            registrar_name = registrar_raw.get("name", "") or registrar_raw.get("fullName", "")
+        elif registrar_raw:
+            registrar_name = str(registrar_raw)
+    except Exception:
+        pass  # fail-safe: registrar is optional
+
+    # Nameserver list (used only in domain payload)
+    ns_list: list[str] = []
+    ns_wrapper = rdap_data.get("nameservers", [])
+    if isinstance(ns_wrapper, list):
+        for ns in ns_wrapper:
+            ns_name = _safe_getattr(ns, "ldhName") or _safe_getattr(ns, "name") or ""
+            if ns_name:
+                ns_list.append(ns_name)
+            elif (ns_str := str(ns)) and ns_str != "None":
+                ns_list.append(ns_str)
+
+    # Status list (used only in domain payload)
+    status_list: list[str] = []
+    status_raw = rdap_data.get("status", [])
+    if isinstance(status_raw, list):
+        status_list = [str(s) for s in status_raw if s and str(s) != "None"]
+    elif status_raw:
+        status_list = [str(status_raw)]
+
+    # Event list (used only in domain payload) — branch once on type
+    event_list: list[str] = []
+    events_raw = rdap_data.get("events", [])
+    if isinstance(events_raw, list) and events_raw:
+        first_ev = events_raw[0]
+        if isinstance(first_ev, dict):
+            for ev in events_raw:
+                ev_d = ev.get("date") or ""
+                if ev_d:
+                    ev_a = ev.get("action") or ""
+                    ev_a_r = ev.get("actor") or ""
+                    event_list.append(f"{ev_a}:{ev_d}" + (f":{ev_a_r}" if ev_a_r else ""))
+        else:
+            for ev in events_raw:
+                ev_d = _safe_getattr(ev, "date") or ""
+                if ev_d:
+                    ev_a = _safe_getattr(ev, "action") or ""
+                    ev_a_r = _safe_getattr(ev, "actor") or ""
+                    event_list.append(f"{ev_a}:{ev_d}" + (f":{ev_a_r}" if ev_a_r else ""))
+
+    # Build payload
+    provenance: tuple[str, ...] = (
+        "source_family:rdap_enrichment",
+        f"domain:{domain_name}",
+        f"sprint:{sprint_id[:16]}",
+    )
+    payload_parts = [f"domain: {domain_name}"]
+    if registrar_name:
+        payload_parts.append(f"registrar: {registrar_name}")
+    if status_list:
+        payload_parts.append(f"status: {', '.join(status_list[:16])}")
+    if event_list:
+        payload_parts.append(f"events: {' | '.join(event_list[:12])}")
+    payload_text = "\n".join(payload_parts)
+
+    blake2_id = _make_blake2b_hex(domain_name, "rdapdomain")
+    fid = f"rdap-dom-{blake2_id[:16]}"
+    finding = _canonical_finding(
+        finding_id=fid,
+        source_type=_RDAP_SOURCE_TYPE,
+        query=domain_name,
+        confidence=confidence,
+        ts=now,
+        provenance=provenance,
+        payload_text=payload_text,
+    )
+
+    return finding, registrar_name, len(ns_list), len(status_list), len(event_list)
+
+
 def _rdap_extract_net_autnum(
     rdap_data: dict[str, Any], target: str, now: float, confidence: float, sprint_id: str
 ) -> tuple[list[Any], int]:
@@ -2043,99 +2265,27 @@ def rdap_result_to_findings(
     # Track per-category counts for telemetry
     securedns_found = False
 
-    # --- Domain / registrar (inline — short, needs context) --------------------
+    # --- Domain / registrar / ns / status / event (extracted helper) ----------
     domain_name = rdap_data.get("name", "") or rdap_data.get("ldhName", "") or ""
-    if domain_name:
-        # Registrar
-        registrar_name = ""
-        try:
-            registrar_list = rdap_data.get("registrar", [])
-            if isinstance(registrar_list, list) and registrar_list:
-                reg = registrar_list[0]
-                registrar_name = _safe_getattr(reg, "name") or _safe_getattr(reg, "fullName") or str(reg)
-            elif isinstance(registrar_list, dict):
-                registrar_name = registrar_list.get("name", "") or registrar_list.get("fullName", "")
-            elif registrar_list:
-                registrar_name = str(registrar_list)
-        except Exception as e:
-            logger.debug(f"[RDAP] registrar extraction failed: {e}")
+    domain_result = _rdap_extract_domain_payload(
+        rdap_data, domain_name, now, confidence, sprint_id
+    )
+    ns_count = 0
+    status_count = 0
+    event_count = 0
+    if domain_result is not None:
+        domain_finding, _registrar, ns_count, status_count, event_count = domain_result
+        if domain_finding is not None:
+            findings.append(domain_finding)
 
-        # Nameservers (auxiliary — used only in domain payload)
-        ns_list: list[str] = []
-        ns_wrapper = rdap_data.get("nameservers", [])
-        if isinstance(ns_wrapper, list):
-            for ns in ns_wrapper:
-                ns_name = _safe_getattr(ns, "ldhName") or _safe_getattr(ns, "name") or ""
-                if ns_name:
-                    ns_list.append(ns_name)
-                elif (ns_str := str(ns)) and ns_str != "None":
-                    ns_list.append(ns_str)
-
-        # Statuses (auxiliary — used only in domain payload)
-        status_list: list[str] = []
-        status_raw = rdap_data.get("status", [])
-        if isinstance(status_raw, list):
-            status_list = [str(s) for s in status_raw if s and str(s) != "None"]
-        elif status_raw:
-            status_list = [str(status_raw)]
-
-        # Events (auxiliary — used only in domain payload)
-        event_list: list[str] = []
-        events_raw = rdap_data.get("events", [])
-        if isinstance(events_raw, list) and events_raw:
-            # Branch once on type, then iterate uniformly
-            first_ev = events_raw[0]
-            if isinstance(first_ev, dict):
-                for ev in events_raw:
-                    ev_d = ev.get("date") or ""
-                    if ev_d:
-                        ev_a = ev.get("action") or ""
-                        ev_a_r = ev.get("actor") or ""
-                        event_list.append(f"{ev_a}:{ev_d}" + (f":{ev_a_r}" if ev_a_r else ""))
-            else:
-                for ev in events_raw:
-                    ev_d = _safe_getattr(ev, "date") or ""
-                    if ev_d:
-                        ev_a = _safe_getattr(ev, "action") or ""
-                        ev_a_r = _safe_getattr(ev, "actor") or ""
-                        event_list.append(f"{ev_a}:{ev_d}" + (f":{ev_a_r}" if ev_a_r else ""))
-
-        reg_provenance: tuple[str, ...] = (
-            "source_family:rdap_enrichment",
-            f"domain:{domain_name}",
-            f"sprint:{sprint_id[:16]}",
-        )
-        reg_payload_parts = [f"domain: {domain_name}"]
-        if registrar_name:
-            reg_payload_parts.append(f"registrar: {registrar_name}")
-        if status_list:
-            reg_payload_parts.append(f"status: {', '.join(status_list[:16])}")
-        if event_list:
-            reg_payload_parts.append(f"events: {' | '.join(event_list[:12])}")
-        reg_payload = "\n".join(reg_payload_parts)
-
-        blake2_id = _make_blake2b_hex(domain_name, "rdapdomain")
-        fid = f"rdap-dom-{blake2_id[:16]}"
-        f = _canonical_finding(
-            finding_id=fid,
-            source_type=_RDAP_SOURCE_TYPE,
-            query=target,
-            confidence=confidence,
-            ts=now,
-            provenance=reg_provenance,
-            payload_text=reg_payload,
-        )
-        if f is not None:
-            findings.append(f)
-
-    # --- Handlers for remaining categories ------------------------------------
-    ns_findings, ns_count = _rdap_extract_nameservers(rdap_data, target, now, confidence, sprint_id)
+    # --- Nameservers / statuses / events (individual finding extractors) --------
+    ns_findings, _ns_ex = _rdap_extract_nameservers(rdap_data, target, now, confidence, sprint_id)
     findings.extend(ns_findings)
 
-    st_findings, status_count = _rdap_extract_statuses(rdap_data, target, now, confidence, sprint_id)
+    st_findings, _st_ex = _rdap_extract_statuses(rdap_data, target, now, confidence, sprint_id)
     findings.extend(st_findings)
 
-    ev_findings, event_count = _rdap_extract_events(rdap_data, target, now, confidence, sprint_id)
+    ev_findings, _ev_ex = _rdap_extract_events(rdap_data, target, now, confidence, sprint_id)
     findings.extend(ev_findings)
 
     # --- SecureDNS (inline — only 17 lines, not worth a handler) ---------------
@@ -2478,241 +2628,54 @@ def network_recon_result_to_findings(
             reverse_dns = _safe_list(result_dict.get("reverse_dns", []))
 
             # IP findings
-            for ip in ips[:max_findings]:
-                if ip and isinstance(ip, str) and ip.strip():
-                    finding = _make_network_recon_finding(
-                        source_type=SourceType.NETWORK_RECON,
-                        query=target,
-                        target=target,
-                        field_name="ip_address",
-                        field_value=ip,
-                        confidence=effective_confidence,
-                        extra={
-                            "reverse_dns": reverse_dns[:4] if reverse_dns else [],
-                            "asn_org": asn_info.get("org") or asn_info.get("name") or None,
-                            "asn_number": asn_info.get("asn") or asn_info.get("number") or None,
-                        },
-                        payload_text=f"host:{target} ip:{ip}",
-                    )
-                    findings.append(finding)
-                    built += 1
+            built = _emit_finding_loop(
+                findings=findings,
+                built=built,
+                max_findings=max_findings,
+                source_type=SourceType.NETWORK_RECON,
+                query=target,
+                target=target,
+                field_name="ip_address",
+                items=ips,
+                item_limit=max_findings,
+                confidence=effective_confidence,
+                extra_fn=lambda ip: {
+                    "reverse_dns": reverse_dns[:4] if reverse_dns else [],
+                    "asn_org": asn_info.get("org") or asn_info.get("name") or None,
+                    "asn_number": asn_info.get("asn") or asn_info.get("number") or None,
+                },
+                payload_fn=lambda ip: f"host:{target} ip:{ip}",
+            )
 
-            # ASN/org summary finding
-            if asn_info:
-                org = asn_info.get("org") or asn_info.get("name")
-                asn_num = asn_info.get("asn") or asn_info.get("number")
-                if org or asn_num:
-                    if built < max_findings:
-                        extra: dict[str, Any] = {}
-                        if org:
-                            extra["org"] = org[:128]
-                        if asn_num:
-                            extra["asn"] = str(asn_num)[:32]
-                        finding = _make_network_recon_finding(
-                            source_type=SourceType.NETWORK_RECON,
-                            query=target,
-                            target=target,
-                            field_name="asn_info",
-                            field_value=f"{org or ''} ({asn_num or 'N/A'})".strip(),
-                            confidence=effective_confidence,
-                            extra=extra,
-                            payload_text=f"host:{target} asn:{org or 'N/A'} {asn_num or ''}".strip()[:2000],
-                        )
-                        findings.append(finding)
-                        built += 1
+            # ASN/org summary finding — extracted, depth 3→2
+            built = _emit_hostinfo_asn(findings, built, max_findings, target, effective_confidence, asn_info)
 
-            # Geolocation
-            geo = result_dict.get("geolocation")
-            if geo and built < max_findings:
-                country = geo.get("country") or geo.get("country_code")
-                city = geo.get("city")
-                if country:
-                    extra = {}
-                    if city:
-                        extra["city"] = str(city)[:64]
-                    finding = _make_network_recon_finding(
-                        source_type=SourceType.NETWORK_RECON,
-                        query=target,
-                        target=target,
-                        field_name="geolocation",
-                        field_value=str(country)[:64],
-                        confidence=effective_confidence,
-                        extra=extra,
-                        payload_text=f"host:{target} location:{city or ''} {country}".strip()[:2000],
-                    )
-                    findings.append(finding)
-                    built += 1
+            # Geolocation — extracted, depth 4→2
+            built = _emit_hostinfo_geo(findings, built, max_findings, target, effective_confidence, result_dict.get("geolocation"))
 
         # ── WHOISData ──────────────────────────────────────────────────────
-        whois_dict: dict[str, Any] | None = None
-        # Check top-level kind OR nested whois_data field
-        nested_whois = result_dict.get("whois_data") or result_dict.get("whois")
-        if result_kind in ("WHOISData", "MockWHOISData"):
-            whois_dict = result_dict
-        elif isinstance(nested_whois, dict):
-            # HostInfo with nested WHOISData dict
-            if nested_whois.get("registrar") or nested_whois.get("creation_date"):
-                whois_dict = nested_whois
-        elif result_dict.get("registrar") or result_dict.get("creation_date"):
-            whois_dict = result_dict
-
+        whois_dict = _extract_whois_dict(result_dict, result_kind)
         if whois_dict and built < max_findings:
-            registrar = _safe_str(whois_dict.get("registrar"))
-            registrant_org = _safe_str(whois_dict.get("registrant_org"))
-            _safe_str(whois_dict.get("registrant_name"))
-            _safe_str(whois_dict.get("tech_name"))
-            _safe_str(whois_dict.get("admin_name"))
-            _safe_list(whois_dict.get("status", []))
-            name_servers = _safe_list(whois_dict.get("name_servers", []))[:16]
-            dnssec = whois_dict.get("dnssec")
-
-            # Registrar
-            if registrar and built < max_findings:
-                finding = _make_network_recon_finding(
-                    source_type=SourceType.NETWORK_RECON,
-                    query=target,
-                    target=target,
-                    field_name="whois_registrar",
-                    field_value=registrar[:256],
-                    confidence=effective_confidence,
-                    extra={"registrar": registrar[:256]},
-                    payload_text=f"domain:{target} registrar:{registrar}".strip()[:2000],
-                )
-                findings.append(finding)
-                built += 1
-
-            # Registrant org
-            if registrant_org and built < max_findings:
-                finding = _make_network_recon_finding(
-                    source_type=SourceType.NETWORK_RECON,
-                    query=target,
-                    target=target,
-                    field_name="whois_registrant_org",
-                    field_value=registrant_org[:256],
-                    confidence=effective_confidence,
-                    extra={"registrant_org": registrant_org[:256]},
-                    payload_text=f"domain:{target} registrant:{registrant_org}".strip()[:2000],
-                )
-                findings.append(finding)
-                built += 1
-
-            # Name servers
-            for ns in name_servers[:8]:
-                if built >= max_findings:
-                    break
-                if ns and isinstance(ns, str) and ns.strip():
-                    finding = _make_network_recon_finding(
-                        source_type=SourceType.NETWORK_RECON,
-                        query=target,
-                        target=target,
-                        field_name="whois_nameserver",
-                        field_value=ns[:256],
-                        confidence=effective_confidence,
-                        extra={"nameserver": ns[:256]},
-                        payload_text=f"domain:{target} ns:{ns}".strip()[:2000],
-                    )
-                    findings.append(finding)
-                    built += 1
-
-            # DNSSEC status
-            if dnssec is not None and built < max_findings:
-                finding = _make_network_recon_finding(
-                    source_type=SourceType.NETWORK_RECON,
-                    query=target,
-                    target=target,
-                    field_name="whois_dnssec",
-                    field_value=str(dnssec),
-                    confidence=effective_confidence,
-                    extra={"dnssec": bool(dnssec)},
-                    payload_text=f"domain:{target} dnssec:{dnssec}".strip()[:2000],
-                )
-                findings.append(finding)
-                built += 1
+            built = _emit_whois_findings(
+                findings=findings,
+                built=built,
+                max_findings=max_findings,
+                target=target,
+                confidence=effective_confidence,
+                whois_dict=whois_dict,
+            )
 
         # ── SSLCertificate ──────────────────────────────────────────────────
-        ssl_dict: dict[str, Any] | None = None
-        # Check top-level kind OR nested ssl_cert field
-        nested_ssl = result_dict.get("ssl_cert") or result_dict.get("ssl")
-        if result_kind in ("SSLCertificate", "MockSSLCertificate"):
-            ssl_dict = result_dict
-        elif isinstance(nested_ssl, dict):
-            # HostInfo with nested SSLCertificate dict
-            if nested_ssl.get("issuer") or nested_ssl.get("san_domains"):
-                ssl_dict = nested_ssl
-        elif result_dict.get("issuer") or result_dict.get("san_domains"):
-            ssl_dict = result_dict
-
+        ssl_dict = _extract_ssl_dict(result_dict, result_kind)
         if ssl_dict and built < max_findings:
-            issuer = _safe_dict_str(ssl_dict.get("issuer", {}), "O") or _safe_dict_str(ssl_dict.get("issuer", {}), "CN")
-            subject = _safe_dict_str(ssl_dict.get("subject", {}), "O") or _safe_dict_str(ssl_dict.get("subject", {}), "CN")  # noqa: E501
-            san_domains = _safe_list(ssl_dict.get("san_domains", []))[:16]
-            is_valid = ssl_dict.get("is_valid", True)
-            days_until_expiry = ssl_dict.get("days_until_expiry")
-            ssl_dict.get("not_after")
-
-            # Issuer
-            if issuer and built < max_findings:
-                finding = _make_network_recon_finding(
-                    source_type=SourceType.NETWORK_RECON,
-                    query=target,
-                    target=target,
-                    field_name="ssl_issuer",
-                    field_value=issuer[:256],
-                    confidence=effective_confidence,
-                    extra={"ssl_issuer": issuer[:256]},
-                    payload_text=f"host:{target} ssl_issuer:{issuer}".strip()[:2000],
-                )
-                findings.append(finding)
-                built += 1
-
-            # Subject org
-            if subject and built < max_findings:
-                finding = _make_network_recon_finding(
-                    source_type=SourceType.NETWORK_RECON,
-                    query=target,
-                    target=target,
-                    field_name="ssl_subject",
-                    field_value=subject[:256],
-                    confidence=effective_confidence,
-                    extra={"ssl_subject": subject[:256]},
-                    payload_text=f"host:{target} ssl_subject:{subject}".strip()[:2000],
-                )
-                findings.append(finding)
-                built += 1
-
-            # SAN domains
-            for san in san_domains:
-                if built >= max_findings:
-                    break
-                if san and isinstance(san, str) and san.strip():
-                    finding = _make_network_recon_finding(
-                        source_type=SourceType.NETWORK_RECON,
-                        query=target,
-                        target=target,
-                        field_name="ssl_san",
-                        field_value=san[:256],
-                        confidence=effective_confidence,
-                        extra={"san": san[:256], "ssl_valid": is_valid},
-                        payload_text=f"host:{target} san:{san} valid:{is_valid}".strip()[:2000],
-                    )
-                    findings.append(finding)
-                    built += 1
-
-            # SSL validity/expiry
-            if days_until_expiry is not None and built < max_findings:
-                expiry_str = f"expires_in:{days_until_expiry}d"
-                finding = _make_network_recon_finding(
-                    source_type=SourceType.NETWORK_RECON,
-                    query=target,
-                    target=target,
-                    field_name="ssl_validity",
-                    field_value=expiry_str[:64],
-                    confidence=effective_confidence,
-                    extra={"ssl_days_until_expiry": days_until_expiry, "ssl_valid": is_valid},
-                    payload_text=f"host:{target} ssl:{expiry_str} valid:{is_valid}".strip()[:2000],
-                )
-                findings.append(finding)
-                built += 1
+            built = _emit_ssl_findings(
+                findings=findings,
+                built=built,
+                max_findings=max_findings,
+                target=target,
+                confidence=effective_confidence,
+                ssl_dict=ssl_dict,
+            )
 
         # Cap at max_findings
         findings = findings[:max_findings]
@@ -2830,6 +2793,360 @@ def _safe_dict_str(d: Any, key: str) -> str | None:
     if not isinstance(d, dict):
         return None
     return _safe_str(d.get(key))
+
+
+# ---------------------------------------------------------------------------
+# Network Recon helpers — extracted from network_recon_result_to_findings
+# ---------------------------------------------------------------------------
+
+def _emit_hostinfo_asn(
+    findings: list[Any],
+    built: int,
+    max_findings: int,
+    target: str,
+    confidence: float,
+    asn_info: dict[str, Any],
+) -> int:
+    """Emit ASN/org finding. Depth-3 block extracted, complexity 6→2."""
+    if not asn_info:
+        return built
+    org = asn_info.get("org") or asn_info.get("name")
+    asn_num = asn_info.get("asn") or asn_info.get("number")
+    if not org and not asn_num:
+        return built
+    extra: dict[str, Any] = {}
+    if org:
+        extra["org"] = org[:128]
+    if asn_num:
+        extra["asn"] = str(asn_num)[:32]
+    return _emit_finding(
+        findings=findings,
+        built=built,
+        max_findings=max_findings,
+        source_type=SourceType.NETWORK_RECON,
+        query=target,
+        target=target,
+        field_name="asn_info",
+        field_value=f"{org or ''} ({asn_num or 'N/A'})".strip(),
+        confidence=confidence,
+        extra=extra,
+        payload_text=f"host:{target} asn:{org or 'N/A'} {asn_num or ''}".strip()[:2000],
+    )
+
+
+def _emit_hostinfo_geo(
+    findings: list[Any],
+    built: int,
+    max_findings: int,
+    target: str,
+    confidence: float,
+    geo: dict[str, Any] | None,
+) -> int:
+    """Emit geolocation finding. Depth-4 block extracted, complexity 6→2."""
+    if not geo:
+        return built
+    country = geo.get("country") or geo.get("country_code")
+    if not country:
+        return built
+    city = geo.get("city")
+    extra: dict[str, Any] = {}
+    if city:
+        extra["city"] = str(city)[:64]
+    return _emit_finding(
+        findings=findings,
+        built=built,
+        max_findings=max_findings,
+        source_type=SourceType.NETWORK_RECON,
+        query=target,
+        target=target,
+        field_name="geolocation",
+        field_value=str(country)[:64],
+        confidence=confidence,
+        extra=extra,
+        payload_text=f"host:{target} location:{city or ''} {country}".strip()[:2000],
+    )
+
+
+def _extract_whois_dict(
+    result_dict: dict[str, Any],
+    result_kind: str,
+) -> dict[str, Any] | None:
+    """Extract WHOIS dict from normalized result. Depth-5 chain extracted."""
+    nested = result_dict.get("whois_data") or result_dict.get("whois")
+    if result_kind in ("WHOISData", "MockWHOISData"):
+        return result_dict
+    if isinstance(nested, dict) and (nested.get("registrar") or nested.get("creation_date")):
+        return nested
+    if result_dict.get("registrar") or result_dict.get("creation_date"):
+        return result_dict
+    return None
+
+
+def _emit_whois_findings(
+    findings: list[Any],
+    built: int,
+    max_findings: int,
+    target: str,
+    confidence: float,
+    whois_dict: dict[str, Any],
+) -> int:
+    """Emit all WHOIS findings. Depth-5→depth-2 extraction."""
+    registrar = _safe_str(whois_dict.get("registrar"))
+    registrant_org = _safe_str(whois_dict.get("registrant_org"))
+    _safe_str(whois_dict.get("registrant_name"))
+    _safe_str(whois_dict.get("tech_name"))
+    _safe_str(whois_dict.get("admin_name"))
+    _safe_list(whois_dict.get("status", []))
+    name_servers = _safe_list(whois_dict.get("name_servers", []))[:16]
+    dnssec = whois_dict.get("dnssec")
+
+    # Registrar
+    if registrar:
+        built = _emit_finding(
+            findings=findings,
+            built=built,
+            max_findings=max_findings,
+            source_type=SourceType.NETWORK_RECON,
+            query=target,
+            target=target,
+            field_name="whois_registrar",
+            field_value=registrar[:256],
+            confidence=confidence,
+            extra={"registrar": registrar[:256]},
+            payload_text=f"domain:{target} registrar:{registrar}".strip()[:2000],
+        )
+
+    # Registrant org
+    if registrant_org:
+        built = _emit_finding(
+            findings=findings,
+            built=built,
+            max_findings=max_findings,
+            source_type=SourceType.NETWORK_RECON,
+            query=target,
+            target=target,
+            field_name="whois_registrant_org",
+            field_value=registrant_org[:256],
+            confidence=confidence,
+            extra={"registrant_org": registrant_org[:256]},
+            payload_text=f"domain:{target} registrant:{registrant_org}".strip()[:2000],
+        )
+
+    # Name servers
+    built = _emit_finding_loop(
+        findings=findings,
+        built=built,
+        max_findings=max_findings,
+        source_type=SourceType.NETWORK_RECON,
+        query=target,
+        target=target,
+        field_name="whois_nameserver",
+        items=name_servers,
+        item_limit=8,
+        confidence=confidence,
+        extra_fn=lambda ns: {"nameserver": ns[:256]},
+        payload_fn=lambda ns: f"domain:{target} ns:{ns}".strip()[:2000],
+    )
+
+    # DNSSEC status
+    if dnssec is not None:
+        built = _emit_finding(
+            findings=findings,
+            built=built,
+            max_findings=max_findings,
+            source_type=SourceType.NETWORK_RECON,
+            query=target,
+            target=target,
+            field_name="whois_dnssec",
+            field_value=str(dnssec),
+            confidence=confidence,
+            extra={"dnssec": bool(dnssec)},
+            payload_text=f"domain:{target} dnssec:{dnssec}".strip()[:2000],
+        )
+
+    return built
+
+
+def _extract_ssl_dict(
+    result_dict: dict[str, Any],
+    result_kind: str,
+) -> dict[str, Any] | None:
+    """Extract SSL dict from normalized result. Depth-5 chain extracted."""
+    nested = result_dict.get("ssl_cert") or result_dict.get("ssl")
+    if result_kind in ("SSLCertificate", "MockSSLCertificate"):
+        return result_dict
+    if isinstance(nested, dict) and (nested.get("issuer") or nested.get("san_domains")):
+        return nested
+    if result_dict.get("issuer") or result_dict.get("san_domains"):
+        return result_dict
+    return None
+
+
+def _emit_ssl_findings(
+    findings: list[Any],
+    built: int,
+    max_findings: int,
+    target: str,
+    confidence: float,
+    ssl_dict: dict[str, Any],
+) -> int:
+    """Emit all SSL findings. Depth-5→depth-2 extraction."""
+    issuer = _safe_dict_str(ssl_dict.get("issuer", {}), "O") or _safe_dict_str(ssl_dict.get("issuer", {}), "CN")
+    subject = _safe_dict_str(ssl_dict.get("subject", {}), "O") or _safe_dict_str(ssl_dict.get("subject", {}), "CN")
+    san_domains = _safe_list(ssl_dict.get("san_domains", []))[:16]
+    is_valid = ssl_dict.get("is_valid", True)
+    days_until_expiry = ssl_dict.get("days_until_expiry")
+    ssl_dict.get("not_after")
+
+    # Issuer
+    if issuer:
+        built = _emit_finding(
+            findings=findings,
+            built=built,
+            max_findings=max_findings,
+            source_type=SourceType.NETWORK_RECON,
+            query=target,
+            target=target,
+            field_name="ssl_issuer",
+            field_value=issuer[:256],
+            confidence=confidence,
+            extra={"ssl_issuer": issuer[:256]},
+            payload_text=f"host:{target} ssl_issuer:{issuer}".strip()[:2000],
+        )
+
+    # Subject org
+    if subject:
+        built = _emit_finding(
+            findings=findings,
+            built=built,
+            max_findings=max_findings,
+            source_type=SourceType.NETWORK_RECON,
+            query=target,
+            target=target,
+            field_name="ssl_subject",
+            field_value=subject[:256],
+            confidence=confidence,
+            extra={"ssl_subject": subject[:256]},
+            payload_text=f"host:{target} ssl_subject:{subject}".strip()[:2000],
+        )
+
+    # SAN domains
+    built = _emit_finding_loop(
+        findings=findings,
+        built=built,
+        max_findings=max_findings,
+        source_type=SourceType.NETWORK_RECON,
+        query=target,
+        target=target,
+        field_name="ssl_san",
+        items=san_domains,
+        item_limit=16,
+        confidence=confidence,
+        extra_fn=lambda san: {"san": san[:256], "ssl_valid": is_valid},
+        payload_fn=lambda san: f"host:{target} san:{san} valid:{is_valid}".strip()[:2000],
+    )
+
+    # SSL validity/expiry
+    if days_until_expiry is not None:
+        expiry_str = f"expires_in:{days_until_expiry}d"
+        built = _emit_finding(
+            findings=findings,
+            built=built,
+            max_findings=max_findings,
+            source_type=SourceType.NETWORK_RECON,
+            query=target,
+            target=target,
+            field_name="ssl_validity",
+            field_value=expiry_str[:64],
+            confidence=confidence,
+            extra={"ssl_days_until_expiry": days_until_expiry, "ssl_valid": is_valid},
+            payload_text=f"host:{target} ssl:{expiry_str} valid:{is_valid}".strip()[:2000],
+        )
+
+    return built
+
+
+def _emit_finding(
+    findings: list[Any],
+    built: int,
+    max_findings: int,
+    source_type: str,
+    query: str,
+    target: str,
+    field_name: str,
+    field_value: str,
+    confidence: float,
+    extra: dict[str, Any],
+    payload_text: str,
+) -> int:
+    """
+    Emit a single finding if under the cap. Returns updated ``built`` count.
+
+    Type-2 duplicate pattern eliminated: 8 identical single-finding emission blocks
+    (ASN, geolocation, registrar, registrant_org, DNSSEC, issuer, subject, validity).
+    """
+    if built >= max_findings:
+        return built
+    findings.append(
+        _make_network_recon_finding(
+            source_type=source_type,
+            query=query,
+            target=target,
+            field_name=field_name,
+            field_value=field_value,
+            confidence=confidence,
+            extra=extra,
+            payload_text=payload_text,
+        )
+    )
+    return built + 1
+
+
+def _emit_finding_loop(
+    findings: list[Any],
+    built: int,
+    max_findings: int,
+    source_type: str,
+    query: str,
+    target: str,
+    field_name: str,
+    items: list[Any],
+    item_limit: int,
+    confidence: float,
+    extra_fn: Any,
+    payload_fn: Any,
+) -> int:
+    """
+    Emit findings for each non-empty string item in ``items[:item_limit]``.
+
+    Type-2 duplicate pattern eliminated: 3 identical loop blocks
+    (IP addresses, WHOIS name servers, SSL SAN domains).
+
+    Args:
+        extra_fn: callable(item_str) -> dict[str, Any]
+        payload_fn: callable(item_str) -> str
+    Returns:
+        Updated ``built`` count.
+    """
+    for item in items[:item_limit]:
+        if built >= max_findings:
+            break
+        if not (item and isinstance(item, str) and item.strip()):
+            continue
+        findings.append(
+            _make_network_recon_finding(
+                source_type=source_type,
+                query=query,
+                target=target,
+                field_name=field_name,
+                field_value=item[:256],
+                confidence=confidence,
+                extra=extra_fn(item),
+                payload_text=payload_fn(item),
+            )
+        )
+        built += 1
+    return built
 
 
 def summarize_network_recon_conversion(

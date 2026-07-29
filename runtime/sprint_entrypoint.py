@@ -1824,6 +1824,205 @@ def _cleanup_stale_locks(lock_dir: Path, logger: logging.Logger) -> int:
         pass  # janitor failure is non-fatal
     return removed_count
 
+
+def _compute_verdict_and_hint(
+    aborted: bool,
+    accepted_findings: int,
+    dup_rate: float,
+    public_pct: float,
+    feed_fnd: int,
+    hardware_limited: bool,
+    public_backend_degraded: bool,
+    public_discovered: int,
+    total_pattern_hits: int,
+    public_fetched: int,
+    stop_requested: bool,
+) -> tuple[str, str]:
+    """
+    Sprint F350M-R: Extracted verdict + next_hint heuristics.
+
+    Reduces run_sprint cyclomatic complexity by ~25 points.
+    Pure function — no side effects, no external dependencies.
+
+    Returns (verdict: str, next_hint: str)
+    """
+    # Verdict chain (F176A+F169F+F178B)
+    if aborted:
+        if accepted_findings > 0:
+            _base = (
+                "📦  NOISE-HEAVY: duplicated heavily"
+                if dup_rate > 85
+                else "🌐  PUBLIC-LED: public discovery dominated"
+                if public_pct > 60
+                else "⚖️  MIXED: public contributed meaningfully"
+                if public_pct > 25
+                else "✅  FEED-LED: feed sources strong"
+                if feed_fnd > 0
+                else "✅  SIGNAL: good feed performance"
+            )
+            verdict = f"⚠️  ABORTED (partial) — {_base}"
+        else:
+            verdict = "⚠️  ABORTED: hard stop, no signal collected"
+    elif hardware_limited:
+        verdict = "💾  HARDWARE-LIMITED: swap/memory pressure blocked entry"
+    elif public_backend_degraded:
+        verdict = "🌐  DEGRADED: public backend/network error — check TOR/proxy/config"
+    elif accepted_findings == 0:
+        if public_discovered > 0:
+            verdict = "🔍  NOVELTY: public found hits, feed accepted nothing"
+        elif total_pattern_hits == 0:
+            verdict = "🗿  DEPLETED: no pattern hits anywhere"
+        else:
+            verdict = "🤷  SILENT: pattern hits but no accepted findings"
+    elif dup_rate > 85:
+        verdict = "📦  NOISE-HEAVY: duplicated heavily"
+    elif public_pct > 60:
+        verdict = "🌐  PUBLIC-LED: public discovery dominated"
+    elif public_pct > 25:
+        verdict = "⚖️  MIXED: public contributed meaningfully"
+    elif feed_fnd > 0:
+        verdict = "✅  FEED-LED: feed sources strong"
+    else:
+        verdict = "✅  SIGNAL: good feed performance"
+
+    # Next-step hint chain
+    if hardware_limited:
+        next_hint = "hardware memory pressure — free RAM or restart before next run"
+    elif accepted_findings == 0 and total_pattern_hits == 0:
+        next_hint = "query may be too narrow — broaden terms or switch seed"
+    elif dup_rate > 80:
+        next_hint = "high dup rate — consider narrowing query scope"
+    elif public_pct > 60:
+        next_hint = "public discovery effective — let it run longer next time"
+    elif public_pct < 10 and feed_fnd == 0:
+        next_hint = "feed yield low — check if sources still alive (urlhaus, threatfox)"
+    elif public_pct < 10 and feed_fnd > 0:
+        next_hint = "feed performing — rely on feed-first, use public as supplemental"
+    elif public_discovered > 0 and public_fetched == 0:
+        next_hint = "public discovered but not fetched — check network/TOR"
+    elif stop_requested:
+        next_hint = "early stop triggered — lower threshold or widen query"
+    else:
+        next_hint = "current query and source mix working — continue as-is"
+
+    return verdict, next_hint
+
+
+def _compute_checkpoint_category(
+    accepted_findings: int,
+    total_pattern_hits: int,
+    public_error: str | None,
+    public_discovered: int,
+    public_backend: bool,
+    feed_zero_check: bool,
+    cross_branch_fail_check: bool,
+    is_pre_active_mem_starved: bool,
+    is_hardware_limited: bool,
+    is_meaningful: bool,
+    uma_state_pre: str,
+    evidence_note: str,
+    feed_fnd: int,
+    phase_times: dict,
+) -> tuple[str, str]:
+    """
+    Sprint F350M-R: Extracted checkpoint category + reason taxonomy.
+
+    Reduces run_sprint cyclomatic complexity by ~30 points.
+    Pure function — no side effects, no external dependencies.
+
+    Bucket set:
+      signal_reaches_findings, pre_active_memory_starvation, survival_active_minimal,
+      hardware_limited_smoke, public_backend_degraded, degraded_public_blocker,
+      meaningful_empty_run, feed_ingress_blocker, feed_source_inaccessible,
+      true_depleted_query, short_signal, cross_branch_source_inaccessible,
+      windup_export_fail_soft, depleted
+
+    Returns (_ckpt_category: str, _checkpoint_zero_reason: str)
+    """
+    # F189A+F190A: Priority aligned with runtime_truth_level taxonomy
+    _ckpt_category = (
+        "signal_reaches_findings"
+        if accepted_findings > 0
+        else "pre_active_memory_starvation"
+        if is_pre_active_mem_starved
+        else "survival_active_minimal"
+        if is_meaningful and uma_state_pre in ("warn", "critical", "emergency")
+        else "hardware_limited_smoke"
+        if is_hardware_limited
+        else "public_backend_degraded"
+        if public_backend
+        else "degraded_public_blocker"
+        if public_error
+        else "meaningful_empty_run"
+        if is_meaningful and total_pattern_hits == 0 and accepted_findings == 0
+        else "feed_ingress_blocker"
+        if feed_zero_check and public_discovered > 0
+        else "feed_source_inaccessible"
+        if feed_zero_check and total_pattern_hits == 0 and not public_error
+        else "short_signal"
+        if is_meaningful and total_pattern_hits > 0 and accepted_findings == 0
+        else "true_depleted_query"
+        if accepted_findings == 0 and total_pattern_hits > 0 and not public_backend
+        else "cross_branch_source_inaccessible"
+        if cross_branch_fail_check
+        else "windup_export_fail_soft"
+        if accepted_findings == 0 and phase_times.get("WINDUP", 0) > 0 and is_meaningful
+        else "depleted"
+    )
+
+    # F190A reason chain — mirrors _ckpt_category priority
+    _checkpoint_zero_reason = (
+        evidence_note
+        if is_hardware_limited
+        else "pre_active_memory_starvation"
+        if is_pre_active_mem_starved
+        else evidence_note
+        if not is_meaningful
+        else "signal_reaches_findings"
+        if accepted_findings > 0
+        else f"public_backend_degraded:{public_error}"
+        if public_backend
+        else f"degraded_public_branch_blocked:{public_error}"
+        if public_error
+        else "meaningful_empty_run"
+        if is_meaningful and total_pattern_hits == 0 and accepted_findings == 0
+        else f"feed_ingress_blocker:{public_discovered}"
+        if accepted_findings == 0 and feed_fnd == 0 and public_discovered > 0
+        else "feed_source_inaccessible"
+        if accepted_findings == 0 and total_pattern_hits == 0 and not public_error
+        else "short_signal_no_findings"
+        if is_meaningful and total_pattern_hits > 0
+        else "true_depleted_query:hits_without_acceptance"
+        if accepted_findings == 0 and total_pattern_hits > 0 and not public_backend
+        else "cross_branch_source_inaccessible"
+        if cross_branch_fail_check
+        else "depleted_no_pattern_hits"
+    )
+
+    return _ckpt_category, _checkpoint_zero_reason
+
+
+def _compute_export_finish_status(
+    final_phase: str,
+    accepted_findings: int,
+    aborted: bool,
+) -> str:
+    """
+    Sprint F350M-R: Extracted export finish status computation.
+
+    Reduces run_sprint cyclomatic complexity by ~5 points.
+    Pure function — no side effects, no external dependencies.
+    """
+    if final_phase in ("EXPORT", "TEARDOWN") and accepted_findings > 0 and not aborted:
+        return "finished"
+    elif aborted:
+        return "aborted"
+    elif accepted_findings == 0:
+        return "empty_run"
+    else:
+        return "unknown"
+
+
 # =============================================================================
 # Main sprint runner
 # =============================================================================
@@ -2585,73 +2784,26 @@ async def run_sprint(
         src_mix_str = ", ".join(src_mix) if src_mix else "none"
 
         # Verdict heuristics — F176A+F169F: hardware-limited smoke is distinct from depleted query.
-        # _is_hardware_limited computed once below; verdict uses same condition inline.
+        # _inline_hardware_limited computed here; verdict uses same condition.
         _inline_hardware_limited = (
             result.accepted_findings == 0
             and result.total_pattern_hits == 0
             and result.cycles_started == 0
             and (_swap_detected_pre or _uma_state_pre in ("critical", "emergency"))
         )
-        if result.aborted:
-            # F178B: Aborted without findings = hard abort. Aborted WITH findings = partial signal.
-            # Both share the abort modifier but the base verdict reflects signal state.
-            if result.accepted_findings > 0:
-                _base_verdict = (
-                    "📦  NOISE-HEAVY: duplicated heavily"
-                    if dup_rate > 85
-                    else "🌐  PUBLIC-LED: public discovery dominated"
-                    if public_pct > 60
-                    else "⚖️  MIXED: public contributed meaningfully"
-                    if public_pct > 25
-                    else "✅  FEED-LED: feed sources strong"
-                    if feed_fnd > 0
-                    else "✅  SIGNAL: good feed performance"
-                )
-                verdict = f"⚠️  ABORTED (partial) — {_base_verdict}"
-            else:
-                verdict = "⚠️  ABORTED: hard stop, no signal collected"
-        elif _inline_hardware_limited:
-            verdict = "💾  HARDWARE-LIMITED: swap/memory pressure blocked entry"
-        elif _public_backend_degraded:
-            verdict = "🌐  DEGRADED: public backend/network error — check TOR/proxy/config"
-        elif result.accepted_findings == 0:
-            if result.public_discovered > 0:
-                verdict = "🔍  NOVELTY: public found hits, feed accepted nothing"
-            elif result.total_pattern_hits == 0:
-                verdict = "🗿  DEPLETED: no pattern hits anywhere"
-            else:
-                verdict = "🤷  SILENT: pattern hits but no accepted findings"
-        elif dup_rate > 85:
-            verdict = "📦  NOISE-HEAVY: duplicated heavily"
-        elif public_pct > 60:
-            verdict = "🌐  PUBLIC-LED: public discovery dominated"
-        elif public_pct > 25:
-            verdict = "⚖️  MIXED: public contributed meaningfully"
-        elif feed_fnd > 0:
-            verdict = "✅  FEED-LED: feed sources strong"
-        else:
-            verdict = "✅  SIGNAL: good feed performance"
-
-        # Next-step hint (heuristic, no new planner)
-        next_hint: str
-        if _inline_hardware_limited:
-            next_hint = "hardware memory pressure — free RAM or restart before next run"
-        elif result.accepted_findings == 0 and result.total_pattern_hits == 0:
-            next_hint = "query may be too narrow — broaden terms or switch seed"
-        elif dup_rate > 80:
-            next_hint = "high dup rate — consider narrowing query scope"
-        elif public_pct > 60:
-            next_hint = "public discovery effective — let it run longer next time"
-        elif public_pct < 10 and feed_fnd == 0:
-            next_hint = "feed yield low — check if sources still alive (urlhaus, threatfox)"
-        elif public_pct < 10 and feed_fnd > 0:
-            next_hint = "feed performing — rely on feed-first, use public as supplemental"
-        elif result.public_discovered > 0 and result.public_fetched == 0:
-            next_hint = "public discovered but not fetched — check network/TOR"
-        elif result.stop_requested:
-            next_hint = "early stop triggered — lower threshold or widen query"
-        else:
-            next_hint = "current query and source mix working — continue as-is"
+        verdict, next_hint = _compute_verdict_and_hint(
+            aborted=result.aborted,
+            accepted_findings=result.accepted_findings,
+            dup_rate=dup_rate,
+            public_pct=public_pct,
+            feed_fnd=feed_fnd,
+            hardware_limited=_inline_hardware_limited,
+            public_backend_degraded=_public_backend_degraded,
+            public_discovered=result.public_discovered,
+            total_pattern_hits=result.total_pattern_hits,
+            public_fetched=result.public_fetched,
+            stop_requested=result.stop_requested,
+        )
 
         # --- Runtime truth (smoke vs meaningful) ---------------------------------
         # [F207L] Compute CT findings: legacy ct_log_stored + new acquisition lane CT findings
@@ -2830,96 +2982,28 @@ async def run_sprint(
             and not _public_backend
             and not result.public_error
         )
-        _ckpt_category = (
-            "signal_reaches_findings"
-            if result.accepted_findings > 0
-            # F176A: Pre-active memory starvation — entered ACTIVE but zero cycles started
-            # under memory pressure. MUST come before survival_active_minimal.
-            else "pre_active_memory_starvation"
-            if _is_pre_active_mem_starved
-            # F176A: Survival minimal active — bounded work under memory pressure
-            else "survival_active_minimal"
-            if is_meaningful and _uma_state_pre in ("warn", "critical", "emergency")
-            # F176A: Hardware-limited smoke — zero cycles, hardware pressure
-            else "hardware_limited_smoke"
-            if _is_hardware_limited
-            # F169F: explicit backend degraded first (httpx/network errors)
-            else "public_backend_degraded"
-            if _public_backend
-            # F169F: degraded_public_blocker (non-backend public errors)
-            else "degraded_public_blocker"
-            if result.public_error
-            # F189A: meaningful_empty_run BEFORE _feed_zero_check guards — meaningful query with zero hits
-            # is a distinct bucket from feed_source_inaccessible (feed infrastructure failure).
-            else "meaningful_empty_run"
-            if is_meaningful and result.total_pattern_hits == 0 and result.accepted_findings == 0
-            # F169F: feed_ingress_blocker — feed zero but public found signal
-            else "feed_ingress_blocker"
-            if _feed_zero_check and result.public_discovered > 0
-            # F169F: feed source inaccessible — feed failed AND total hits=0 AND no infra error
-            else "feed_source_inaccessible"
-            if _feed_zero_check and result.total_pattern_hits == 0 and not result.public_error
-            # F189A: short_signal BEFORE true_depleted_query — short_signal requires is_meaningful=True
-            # (query had real runtime/hits evidence) while true_depleted_query is broader.
-            else "short_signal"
-            if is_meaningful and result.total_pattern_hits > 0 and result.accepted_findings == 0
-            # F169F: true depleted query — hits seen but pattern matched nothing accepted
-            else "true_depleted_query"
-            if result.accepted_findings == 0 and result.total_pattern_hits > 0 and not _public_backend
-            # F169F: cross-branch source inaccessible — hits seen but blocked by source-level failure
-            else "cross_branch_source_inaccessible"
-            if _cross_branch_fail_check
-            else "windup_export_fail_soft"
-            if result.accepted_findings == 0 and _phase_times.get("WINDUP", 0) > 0 and is_meaningful
-            else "depleted"
+        # Sprint F350M-R: Extracted checkpoint category taxonomy
+        _ckpt_category, _checkpoint_zero_reason = _compute_checkpoint_category(
+            accepted_findings=result.accepted_findings,
+            total_pattern_hits=result.total_pattern_hits,
+            public_error=result.public_error,
+            public_discovered=result.public_discovered,
+            public_backend=_public_backend,
+            feed_zero_check=_feed_zero_check,
+            cross_branch_fail_check=_cross_branch_fail_check,
+            is_pre_active_mem_starved=_is_pre_active_mem_starved,
+            is_hardware_limited=_is_hardware_limited,
+            is_meaningful=is_meaningful,
+            uma_state_pre=_uma_state_pre,
+            evidence_note=evidence_note,
+            feed_fnd=feed_fnd,
+            phase_times=_phase_times,
         )
-        # F176A+F169F+F190A reason chain — machine-readable, mutually exclusive.
-        # F190A: chain order aligned with _ckpt_category (F189A fixes propagated to reason chain):
-        #   1. meaningful_empty_run BEFORE feed_ingress_blocker/feed_source_inaccessible
-        #   2. short_signal_no_findings BEFORE true_depleted_query:hits_without_acceptance
-        _checkpoint_zero_reason = (
-            # F176A: Hardware-limited smoke — evidence_note already has hardware_limited_smoke text
-            evidence_note
-            if _is_hardware_limited
-            # F176A: Pre-active memory starvation
-            else "pre_active_memory_starvation"
-            if _is_pre_active_mem_starved
-            else evidence_note
-            if not is_meaningful
-            else "signal_reaches_findings"
-            if result.accepted_findings > 0
-            # F169F: backend degraded — httpx/network errors
-            else f"public_backend_degraded:{result.public_error}"
-            if _public_backend
-            else f"degraded_public_branch_blocked:{result.public_error}"
-            if result.public_error
-            # F190A: meaningful_empty_run BEFORE feed guards (aligns with _ckpt_category F189A order)
-            else "meaningful_empty_run"
-            if is_meaningful and result.total_pattern_hits == 0 and result.accepted_findings == 0
-            # F169F: feed_ingress_blocker (meaningful=False, public found signal)
-            else f"feed_ingress_blocker:{result.public_discovered}"
-            if result.accepted_findings == 0 and feed_fnd == 0 and result.public_discovered > 0
-            # F169F: feed source inaccessible
-            else "feed_source_inaccessible"
-            if result.accepted_findings == 0 and result.total_pattern_hits == 0 and not result.public_error
-            # F190A: short_signal_no_findings BEFORE true_depleted_query (aligns with _ckpt_category F189A order)
-            else "short_signal_no_findings"
-            if is_meaningful and result.total_pattern_hits > 0
-            # F169F: true depleted query — hits seen but nothing accepted, no infra error
-            else "true_depleted_query:hits_without_acceptance"
-            if result.accepted_findings == 0 and result.total_pattern_hits > 0 and not _public_backend
-            else "cross_branch_source_inaccessible"
-            if _cross_branch_fail_check
-            else "depleted_no_pattern_hits"
-        )
-        _export_finish_status = (
-            "finished"
-            if result.final_phase in ("EXPORT", "TEARDOWN") and result.accepted_findings > 0 and not result.aborted
-            else "aborted"
-            if result.aborted
-            else "empty_run"
-            if result.accepted_findings == 0
-            else "unknown"
+        # Sprint F350M-R: Extracted export finish status
+        _export_finish_status = _compute_export_finish_status(
+            final_phase=result.final_phase,
+            accepted_findings=result.accepted_findings,
+            aborted=result.aborted,
         )
 
         report_dict = {

@@ -235,9 +235,9 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
     async def _run_ipfs_lane(plan) -> AcquisitionLaneOutcome:
         """R10: CID-only IPFS evidence fetch — bounded gateway fetch, no search/DHT."""
         start = time.monotonic()
-        from hledac.universal.runtime.acquisition_strategy_planner import _has_explicit_cid
+        from hledac.universal.runtime.acquisition_strategy_planner import _has_explicit_ipfs_cid
         query_cid = query.strip()
-        all_cids: list[str] = [query_cid] if _has_explicit_cid(query_cid) else []
+        all_cids: list[str] = [query_cid] if _has_explicit_ipfs_cid(query_cid) else []
         MAX_IPFS_CIDS = 5
         cids_to_fetch = all_cids[:MAX_IPFS_CIDS]
         produced = 0

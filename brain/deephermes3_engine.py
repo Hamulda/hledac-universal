@@ -689,68 +689,14 @@ class DeepHermes3Engine:
         import itertools
         itertools.count()
         while True:
-            if is_emergency_unload_requested is not None and is_emergency_unload_requested():
-                for fut in list(self._pending_futures):
-                    if not fut.done():
-                        fut.set_exception(RuntimeError('emergency_unload_requested'))
-                        self._telemetry_counters['emergency_pending_failed'] += 1
-                self._pending_futures.clear()
+            if self._should_emergency_shutdown():
                 break
             if getattr(self, '_batch_worker_shutting_down', False):
-                for fut in list(self._pending_futures):
-                    if not fut.done():
-                        fut.set_exception(RuntimeError('engine_unloaded'))
-                self._pending_futures.clear()
+                self._cancel_all_pending_futures('engine_unloaded')
                 break
             try:
-                items = []
-                current_schema_key = None
-                current_prompt_hash = None
-                current_length_bin = None
-                flush_interval = self._current_flush_interval()
-                if flush_interval >= 1.9:
-                    self._telemetry_counters['adaptive_flush_default_entries'] += 1
-                elif flush_interval >= 0.9:
-                    self._telemetry_counters['adaptive_flush_medium_entries'] += 1
-                else:
-                    self._telemetry_counters['adaptive_flush_fast_entries'] += 1
-                try:
-                    async with asyncio.timeout(flush_interval):
-                        assert isinstance(self._batch_queue, asyncio.PriorityQueue)
-                        first_item = await self._batch_queue.get()
-                    current_schema_key = first_item[2]
-                    items.append(first_item)
-                    first_payload = first_item[3]
-                    first_prompt = first_payload.get('prompt', '')
-                    first_system_msg = first_payload.get('system_msg')
-                    current_prompt_hash = self._compute_system_prompt_hash(first_system_msg)
-                    current_length_bin = self._compute_length_bin(first_prompt)
-                    while len(items) < self._batch_max_size:
-                        try:
-                            async with asyncio.timeout(0.01):
-                                item = await self._batch_queue.get_nowait()
-                            item_schema = item[2]
-                            item_payload = item[3]
-                            item_prompt = item_payload.get('prompt', '')
-                            item_system_msg = item_payload.get('system_msg')
-                            item_prompt_hash = self._compute_system_prompt_hash(item_system_msg)
-                            item_length_bin = self._compute_length_bin(item_prompt)
-                            if item_schema != current_schema_key:
-                                await self._batch_queue.put(item)
-                                self._telemetry_counters['schema_mismatch_flushes'] += 1
-                                break
-                            if item_prompt_hash != current_prompt_hash:
-                                await self._batch_queue.put(item)
-                                self._telemetry_counters['prompt_mismatch_flushes'] += 1
-                                break
-                            if item_length_bin != current_length_bin:
-                                await self._batch_queue.put(item)
-                                self._telemetry_counters['length_bin_mismatch_flushes'] += 1
-                                break
-                            items.append(item)
-                        except TimeoutError:
-                            break
-                except TimeoutError:
+                items, current_schema_key, current_prompt_hash, current_length_bin = await self._collect_batch()
+                if not items:
                     continue
                 self._flush_cycle_count += 1
                 if self._flush_cycle_count - self._last_age_bump >= self._age_bump_interval:
@@ -766,6 +712,74 @@ class DeepHermes3Engine:
                 break
             except Exception as e:
                 logger.warning(f'Batch worker error: {e}')
+
+    def _should_emergency_shutdown(self) -> bool:
+        """Check if batch worker should emergency shutdown."""
+        if is_emergency_unload_requested is not None and is_emergency_unload_requested():
+            self._cancel_all_pending_futures('emergency_unload_requested')
+            self._telemetry_counters['emergency_pending_failed'] += len(self._pending_futures)
+            self._pending_futures.clear()
+            return True
+        return False
+
+    def _cancel_all_pending_futures(self, reason: str) -> None:
+        """Cancel all pending futures with given reason."""
+        for fut in list(self._pending_futures):
+            if not fut.done():
+                fut.set_exception(RuntimeError(reason))
+
+    async def _collect_batch(self) -> tuple[list, Any, Any, Any]:
+        """Collect batch items from queue with schema/prompt/length segregation. Returns (items, schema_key, prompt_hash, length_bin)."""
+        flush_interval = self._current_flush_interval()
+        self._record_flush_interval_telemetry(flush_interval)
+        try:
+            async with asyncio.timeout(flush_interval):
+                assert isinstance(self._batch_queue, asyncio.PriorityQueue)
+                first_item = await self._batch_queue.get()
+        except TimeoutError:
+            return [], None, None, None
+        current_schema_key = first_item[2]
+        items = [first_item]
+        first_payload = first_item[3]
+        first_prompt = first_payload.get('prompt', '')
+        first_system_msg = first_payload.get('system_msg')
+        current_prompt_hash = self._compute_system_prompt_hash(first_system_msg)
+        current_length_bin = self._compute_length_bin(first_prompt)
+        while len(items) < self._batch_max_size:
+            try:
+                async with asyncio.timeout(0.01):
+                    item = await self._batch_queue.get_nowait()
+                item_schema = item[2]
+                item_payload = item[3]
+                item_prompt = item_payload.get('prompt', '')
+                item_system_msg = item_payload.get('system_msg')
+                item_prompt_hash = self._compute_system_prompt_hash(item_system_msg)
+                item_length_bin = self._compute_length_bin(item_prompt)
+                if item_schema != current_schema_key:
+                    await self._batch_queue.put(item)
+                    self._telemetry_counters['schema_mismatch_flushes'] += 1
+                    break
+                if item_prompt_hash != current_prompt_hash:
+                    await self._batch_queue.put(item)
+                    self._telemetry_counters['prompt_mismatch_flushes'] += 1
+                    break
+                if item_length_bin != current_length_bin:
+                    await self._batch_queue.put(item)
+                    self._telemetry_counters['length_bin_mismatch_flushes'] += 1
+                    break
+                items.append(item)
+            except TimeoutError:
+                break
+        return items, current_schema_key, current_prompt_hash, current_length_bin
+
+    def _record_flush_interval_telemetry(self, flush_interval: float) -> None:
+        """Record telemetry for adaptive flush interval."""
+        if flush_interval >= 1.9:
+            self._telemetry_counters['adaptive_flush_default_entries'] += 1
+        elif flush_interval >= 0.9:
+            self._telemetry_counters['adaptive_flush_medium_entries'] += 1
+        else:
+            self._telemetry_counters['adaptive_flush_fast_entries'] += 1
 
     def _current_flush_interval(self) -> float:
         """Sprint 7I: Adaptive flush interval — 3-tier policy based on queue depth.
@@ -1826,37 +1840,41 @@ class DeepHermes3Engine:
         _max_tok = max_tokens if max_tokens is not None else 512
         _headroom = min(_max_tok, 1024)
         _min_cache = _in_tokens + _headroom
-        if uma_state == 'emergency':
-            base_size = 0
-        elif uma_state == 'critical':
-            if tier == 'normal':
-                base_size = max(512, int(self._max_kv_size * 0.35))
-            elif tier == 'warn':
-                base_size = max(512, int(self._max_kv_size * 0.6))
-            else:
-                base_size = max(256, int(self._max_kv_size * 0.2))
-        elif uma_state == 'warn':
-            if tier == 'normal':
-                base_size = max(1024, int(self._max_kv_size * 0.8))
-            elif tier == 'warn':
-                base_size = max(1024, int(self._max_kv_size * 0.5))
-            else:
-                base_size = max(512, int(self._max_kv_size * 0.25))
-        elif tier == 'normal':
-            base_size = self._max_kv_size
-        elif tier == 'warn':
-            base_size = max(1024, self._max_kv_size // 2)
-        elif tier == 'critical':
-            base_size = max(512, self._max_kv_size // 4)
-        else:
-            base_size = 0
-        if base_size == 0:
-            final_size = 0
-        else:
-            final_size = max(_min_cache, base_size)
+        base_size = self._compute_base_kv_size_from_tier(tier, uma_state)
+        final_size = max(_min_cache, base_size) if base_size > 0 else 0
         kv_kwargs = {'max_kv_size': final_size} if final_size > 0 else {}
         logger.debug('[O1+F265C-METAL+F265H-EXT] KV cache: input_tokens=%d max_tokens=%d min_cache=%d uma_state=%s metal_tier=%s base=%d final=%d', _in_tokens, _max_tok, _min_cache, uma_state, tier, base_size, final_size)
         return kv_kwargs
+
+    def _compute_base_kv_size_from_tier(self, tier: str, uma_state: str) -> int:
+        """Sprint F360M: Extract tier→base_size logic for reduced complexity in _get_kv_cache_kwargs."""
+        if uma_state == 'emergency':
+            return 0
+        if uma_state == 'critical':
+            return self._get_base_size_critical_state(tier)
+        if uma_state == 'warn':
+            return self._get_base_size_warn_state(tier)
+        return self._get_base_size_from_tier_alone(tier)
+
+    def _get_base_size_critical_state(self, tier: str) -> int:
+        """Critical memory state: aggressive KV reduction."""
+        factor = 0.35 if tier == 'normal' else (0.6 if tier == 'warn' else 0.2)
+        return max(256 if tier == 'critical' else 512, int(self._max_kv_size * factor))
+
+    def _get_base_size_warn_state(self, tier: str) -> int:
+        """Warn memory state: moderate KV reduction."""
+        factor = 0.8 if tier == 'normal' else (0.5 if tier == 'warn' else 0.25)
+        return max(512 if tier == 'critical' else 1024, int(self._max_kv_size * factor))
+
+    def _get_base_size_from_tier_alone(self, tier: str) -> int:
+        """Normal/warn tier with no memory pressure."""
+        if tier == 'normal':
+            return self._max_kv_size
+        if tier == 'warn':
+            return max(1024, self._max_kv_size // 2)
+        if tier == 'critical':
+            return max(512, self._max_kv_size // 4)
+        return 0
 
     def _get_adaptive_kv_bits(self) -> int:
         """
@@ -2399,6 +2417,7 @@ class DeepHermes3Engine:
         Returns:
             Generated text from mlx_lm.generate()
         """
+        # Path 1: MLXWorkerThread (non-blocking)
         worker = self._ensure_mlx_worker_thread()
         if worker is not None and worker.is_active():
             try:
@@ -2408,6 +2427,23 @@ class DeepHermes3Engine:
                 logger.debug('[P0-2] worker submit failed (%s) — trying main thread path', _worker_err)
             except Exception as _worker_err:
                 logger.debug('[P0-2] worker submit unexpected error (%s) — trying main thread path', _worker_err)
+
+        # Path 2: Main-thread with retry (exponential backoff)
+        result = await self._try_main_thread_inference_with_retry(timeout, fn, *args, **kwargs)
+        if result is not None:
+            return result
+
+        # Path 3: ThreadPoolExecutor fallback (last resort)
+        async with self._inference_semaphore:
+            loop = asyncio.get_running_loop()
+            return await safe_wait_for(loop.run_in_executor(self._inference_executor, lambda: fn(*args, **kwargs)), timeout=timeout, label='deephermes_executor')
+
+    async def _try_main_thread_inference_with_retry(self, timeout: float, fn, *args, **kwargs) -> str | None:
+        """Retry loop for main-thread inference with exponential backoff.
+
+        Returns:
+            Generated text on success, None when all retries exhausted.
+        """
         _retries = 2
         _base_delay = 2.0
         for _attempt in range(_retries + 1):
@@ -2430,13 +2466,11 @@ class DeepHermes3Engine:
             except Exception as _submit_err:
                 logger.debug('[P0-2] main-thread submit failed (attempt %d): %s — falling back', _attempt + 1, _submit_err)
                 if _attempt >= _retries:
-                    break
+                    return None
                 await asyncio.sleep(_base_delay)
                 _base_delay *= 1.5
                 continue
-        async with self._inference_semaphore:
-            loop = asyncio.get_running_loop()
-            return await safe_wait_for(loop.run_in_executor(self._inference_executor, lambda: fn(*args, **kwargs)), timeout=timeout, label='deephermes_executor')
+        return None
 
     # ------------------------------------------------------------------
     # generate() exit paths (for complexity analysis)
@@ -2812,6 +2846,82 @@ class DeepHermes3Engine:
         except Exception:
             pass
 
+    # --- Stream helpers (CC-15: extracted for early-return / low-nesting) ---
+
+    def _stream_kwargs_for_kv(self, max_tok: int, prompt_tokens: list[int] | None, prefix_cache: Any=None) -> tuple[Any, dict]:
+        """Build KV cache and stream kwargs for _stream_tokens. Returns (kv_cache, stream_kwargs)."""
+        from mlx_lm.sample_utils import make_sampler
+        kv_bits = self._get_adaptive_kv_bits()
+        kv_cache: Any = None
+        if self._kv_cache_enabled:
+            if prefix_cache is not None:
+                kv_cache = prefix_cache
+                logger.debug('[STREAM] Reusing cached KV from session pool')
+            elif self._paged_kv_cache:
+                from mlx_lm.models.cache import RotatingKVCache
+                num_layers = len(self._model.layers)
+                kv_cache = [RotatingKVCache(max_size=max_tok, keep=self._paged_kv_keep) for _ in range(num_layers)]
+                logger.debug('[STREAM] RotatingKVCache: keep=%d, max_size=%d, layers=%d', self._paged_kv_keep, max_tok, num_layers)
+            else:
+                from mlx_lm.models.cache import make_prompt_cache
+                kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
+            if kv_cache is not None:
+                self._quantize_kv_cache(kv_cache)
+        input_count: int | None = len(prompt_tokens) if prompt_tokens is not None else None
+        kwargs: dict = {
+            'max_tokens': max_tok,
+            'sampler': make_sampler(temp=0.0),  # temp overridden by caller
+            'kv_bits': kv_bits,
+            **self._get_kv_cache_kwargs(input_tokens=input_count, max_tokens=max_tok),
+            'verbose': False,
+        }
+        if kv_cache is not None:
+            kwargs['prompt_cache'] = kv_cache
+        if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
+            kwargs['draft_model'] = self._draft_model_obj
+            kwargs['num_draft_tokens'] = self._num_draft_tokens
+        return kv_cache, kwargs
+
+    @staticmethod
+    def _decode_token(chunk: Any) -> str:
+        """Decode mlx_lm token into string. Handles GenerationToken.text / tuple / raw."""
+        if hasattr(chunk, 'text'):
+            return chunk.text
+        if isinstance(chunk, tuple) and len(chunk) >= 1:
+            return chunk[0]
+        return str(chunk)
+
+    def _handle_metal_pressure(self, eval_counter: int) -> bool:
+        """
+        Periodic Metal memory management hook.
+        Returns True if GC+eval was triggered (caller may log).
+        """
+        if eval_counter % EVAL_EVERY_N_TOKENS != 0:
+            return False
+        try:
+            import mlx.core as _m3_mx
+            import gc as _gc
+            _m3_mx.eval([])
+            self._lazy_ops_eval_count += 1
+            # EVAL_EVERY_N_TOKENS == CLEAR_GRANULARITY_TOKENS == 256, so this
+            # branch is always entered when we reach this point (no inner check needed)
+            active = self._metal_device.get_active_memory() if self._metal_device else 0
+            if active > M3_METAL_PRESSURE_BYTES:
+                _gc.collect()
+                _m3_mx.eval([])
+                if hasattr(_m3_mx, 'clear_cache'):
+                    _m3_mx.clear_cache()
+                _gc.collect()
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _flush_token_buffer(self, buf: list[str]) -> Iterator[str]:
+        """Flush buffered tokens as single chunk."""
+        if buf:
+            yield ''.join(buf)
+
     def _stream_tokens(self, formatted_prompt: str, max_tok: int, temp: float, prefix_cache: Any=None, prompt_tokens: list[int] | None=None) -> Iterator[str]:
         """
         Sync token generator — runs in asyncio.to_thread, safe for M1.
@@ -2836,6 +2946,9 @@ class DeepHermes3Engine:
         instead of re-encoding the string prompt. _get_kv_cache_kwargs uses len(prompt_tokens)
         directly, avoiding redundant encode() call.
 
+        CC-15 REFACTOR: complexity 25 → 6 via early returns + extracted helpers.
+        Deepest nesting: 2 (stream loop → buffer flush / cancellation check).
+
         Yielded values:
           - str token (decoded text fragment) for the caller
           - Robust to both MLX API shapes: chunk.text (object) and (token, _)
@@ -2843,95 +2956,50 @@ class DeepHermes3Engine:
             versions yielded raw (token_id_or_str, info) tuples.
         """
         from mlx_lm import stream_generate
-        from mlx_lm.models.cache import make_prompt_cache
         from mlx_lm.sample_utils import make_sampler
         from hledac.universal.utils.mlx_memory import get_metal_stream_context
+
         with get_metal_stream_context():
-            kv_bits = self._get_adaptive_kv_bits()
-            if self._kv_cache_enabled:
-                if prefix_cache is not None:
-                    kv_cache = prefix_cache
-                    logger.debug('[STREAM] Reusing cached KV from session pool')
-                elif self._paged_kv_cache:
-                    # M-07: RotatingKVCache — zero-copy rotation, no mid-stream realloc
-                    from mlx_lm.models.cache import RotatingKVCache
-                    num_layers = len(self._model.layers)
-                    kv_cache = [RotatingKVCache(max_size=max_tok, keep=self._paged_kv_keep) for _ in range(num_layers)]
-                    logger.debug('[STREAM] RotatingKVCache: keep=%d, max_size=%d, layers=%d', self._paged_kv_keep, max_tok, num_layers)
-                else:
-                    kv_cache = make_prompt_cache(self._model, max_kv_size=max_tok)
-                # S6-REFACTOR: unified via _quantize_kv_cache (shared with _build_generate_kwargs)
-                if kv_cache is not None:
-                    self._quantize_kv_cache(kv_cache)
-            else:
-                kv_cache = None
-            # M-03: Use pre-computed prompt_tokens if available (avoids double encode)
-            _input_tokens_count: int | None = len(prompt_tokens) if prompt_tokens is not None else None
-            stream_kwargs = {'max_tokens': max_tok, 'sampler': make_sampler(temp=temp), 'kv_bits': kv_bits, **self._get_kv_cache_kwargs(input_tokens=_input_tokens_count, max_tokens=max_tok), 'verbose': False}
-            if kv_cache is not None:
-                stream_kwargs['prompt_cache'] = kv_cache
-            if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
-                stream_kwargs['draft_model'] = self._draft_model_obj
-                stream_kwargs['num_draft_tokens'] = self._num_draft_tokens
-            _eval_counter = 0
-            _active_gb = 0.0
+            # Early eval barrier
             try:
                 import mlx.core as _m3_mx
                 _m3_mx.eval([])
             except Exception:
                 pass
-            _token_buffer = []
-            _tokens_generated = 0
-            # M-03: Use pre-computed prompt_tokens if available — avoids re-encoding
-            _prompt_arg: str | list[int] = prompt_tokens if prompt_tokens is not None else formatted_prompt
-            for chunk in stream_generate(self._model, self._tokenizer, prompt=_prompt_arg, **stream_kwargs):
-                if hasattr(chunk, 'text'):
-                    tok = chunk.text
-                elif isinstance(chunk, tuple) and len(chunk) >= 1:
-                    tok = chunk[0]
-                else:
-                    tok = str(chunk)
-                if tok:
-                    _eval_counter += 1
-                    _tokens_generated += 1
-                    _token_buffer.append(tok)
-                    if _eval_counter % CLEAR_GRANULARITY_TOKENS == 0:
-                        # F350M-R: Wire MetalDevice — GPU memory via delegation
-                        try:
-                            _active_gb = self._metal_device.get_stats().active_gb if self._metal_device else 0.0
-                        except Exception:
-                            _active_gb = 0.0
-                    _chunk_size = max(EVAL_GRANULARITY_TOKENS_MIN, min(EVAL_GRANULARITY_TOKENS_MAX, int(_active_gb * 40)))
-                    if _eval_counter % EVAL_EVERY_N_TOKENS == 0:
-                        try:
-                            import mlx.core as _m3_mx
-                            _m3_mx.eval([])
-                            self._lazy_ops_eval_count += 1
-                            if _eval_counter % CLEAR_GRANULARITY_TOKENS == 0:
-                                # F350M-R: Wire MetalDevice — GPU memory for cache clearing
-                                _active = self._metal_device.get_active_memory() if self._metal_device else 0
-                                if _active > M3_METAL_PRESSURE_BYTES:
-                                    import gc
-                                    gc.collect()
-                                    _m3_mx.eval([])
-                                    if hasattr(_m3_mx, 'clear_cache'):
-                                        _m3_mx.clear_cache()
-                                    gc.collect()
-                        except Exception:
-                            pass
-                    if len(_token_buffer) >= STREAM_BUFFER_SIZE:
-                        yield ''.join(_token_buffer)
-                        _token_buffer = []
-                    try:
-                        if isinstance(self._stream_cancelled, asyncio.Event) and self._stream_cancelled.is_set():
-                            if _token_buffer:
-                                yield ''.join(_token_buffer)
-                                _token_buffer = []
-                            break
-                    except Exception:
-                        pass
-            if _token_buffer:
-                yield ''.join(_token_buffer)
+
+            _, stream_kwargs = self._stream_kwargs_for_kv(max_tok, prompt_tokens, prefix_cache)
+            stream_kwargs['sampler'] = make_sampler(temp=temp)
+
+            token_buffer: list[str] = []
+            eval_counter = 0
+            prompt_arg: str | list[int] = prompt_tokens if prompt_tokens is not None else formatted_prompt
+
+            for chunk in stream_generate(self._model, self._tokenizer, prompt=prompt_arg, **stream_kwargs):
+                tok = self._decode_token(chunk)
+                if not tok:
+                    continue
+
+                eval_counter += 1
+                token_buffer.append(tok)
+
+                # Periodic Metal pressure management (also updates GPU memory stats)
+                self._handle_metal_pressure(eval_counter)
+
+                # Buffer flush on size threshold
+                if len(token_buffer) >= STREAM_BUFFER_SIZE:
+                    yield from self._flush_token_buffer(token_buffer)
+                    token_buffer = []
+
+                # Cancellation check (single level — no nesting above this)
+                try:
+                    if isinstance(self._stream_cancelled, asyncio.Event) and self._stream_cancelled.is_set():
+                        yield from self._flush_token_buffer(token_buffer)
+                        return
+                except Exception:
+                    pass
+
+            # Final flush
+            yield from self._flush_token_buffer(token_buffer)
 
     async def decide_next_action(self, context: dict[str, Any]) -> dict[str, Any]:
         """
@@ -3731,83 +3799,124 @@ class DeepHermes3Engine:
             return False
         if few_shot_examples is None:
             few_shot_examples = [{'user': 'What is 2+2?', 'assistant': '4'}, {'user': 'Capital of France?', 'assistant': 'Paris'}]
-        try:
-            parts = [f'<|im_start|>system\n{system_prompt}<|im_end|>']
+
+        # Build warmup prompt from chat template
+        parts = [f'<|im_start|>system\n{system_prompt}<|im_end|>']
+        for ex in few_shot_examples[:3]:
+            parts.append(f"<|im_start|>user\n{ex.get('user', '')}<|im_end|>")
+            parts.append(f"<|im_start|>assistant\n{ex.get('assistant', '')}<|im_end|>")
+        warmup_prompt = '\n'.join(parts)
+
+        tokens = self._tokenizer.encode(warmup_prompt)
+        token_count = len(tokens)
+        if token_count > 1000:
+            logger.warning(f'[WARMUP] Warmup prompt too long ({token_count} tokens), truncating')
+            warmup_prompt = self._tokenizer.decode(tokens[:1000])
+
+        # Cache hit - skip warmup
+        if await warmup_or_skip(self, system_prompt, few_shot_examples):
+            return True
+
+        # Compute stable prompt hash for cache key
+        prompt_hash = self._compute_warmup_hash(system_prompt, few_shot_examples)
+
+        # Build and populate KV cache
+        cache_success = await self._build_warmup_cache(warmup_prompt, token_count, prompt_hash)
+        if not cache_success:
+            return False
+
+        # Execute warmup generation (worker thread or inline)
+        await self._execute_warmup_generation(warmup_prompt)
+
+        _safe_mlx_eval_and_clear_cache('warmup_prefill')
+        logger.info('[WARMUP] Prefix cache warmup complete (fresh build)')
+        return True
+
+    def _compute_warmup_hash(self, system_prompt: str, few_shot_examples: list | None) -> str:
+        """Compute stable hash for warmup prompt - deduplicates hash computation."""
+        canonical_parts = [system_prompt]
+        if few_shot_examples:
             for ex in few_shot_examples[:3]:
-                parts.append(f"<|im_start|>user\n{ex.get('user', '')}<|im_end|>")
-                parts.append(f"<|im_start|>assistant\n{ex.get('assistant', '')}<|im_end|>")
-            warmup_prompt = '\n'.join(parts)
-            tokens = self._tokenizer.encode(warmup_prompt)
-            token_count = len(tokens)
-            if token_count > 1000:
-                logger.warning(f'[WARMUP] Warmup prompt too long ({token_count} tokens), truncating')
-                warmup_prompt = self._tokenizer.decode(tokens[:1000])
-                tokens = tokens[:1000]
-            if await warmup_or_skip(self, system_prompt, few_shot_examples):
-                return True
-            if XXHASH_AVAILABLE:
-                canonical_parts = [system_prompt]
-                if few_shot_examples:
-                    for ex in few_shot_examples[:3]:
-                        canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
-                canonical_text = '\n'.join(canonical_parts)
-                prompt_hash = _get_xxh3_hex(canonical_text)
-            else:
-                canonical_parts = [system_prompt]
-                if few_shot_examples:
-                    for ex in few_shot_examples[:3]:
-                        canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
-                canonical_text = '\n'.join(canonical_parts)
-                prompt_hash = hashlib.blake2b(canonical_text.encode(), digest_size=8).hexdigest()
-            logger.info(f'[WARMUP] Building fresh warmup cache (~{token_count} tokens)...')
+                canonical_parts.append(f"{ex.get('user', '')}|{ex.get('assistant', '')}")
+        canonical_text = '\n'.join(canonical_parts)
+
+        if XXHASH_AVAILABLE:
+            return _get_xxh3_hex(canonical_text)
+        return hashlib.blake2b(canonical_text.encode(), digest_size=8).hexdigest()
+
+    def _quantize_kv_cache(self, cache: list, kv_bits: int) -> None:
+        """Quantize KV cache layers if supported - reduces nesting."""
+        if not self._supports_kv_quant:
+            return
+        for layer in cache:
+            if hasattr(layer, 'quantize'):
+                try:
+                    layer.quantize(group_size=64, bits=kv_bits)
+                except Exception:
+                    pass
+
+    async def _build_warmup_cache(self, warmup_prompt: str, token_count: int, prompt_hash: str) -> bool:
+        """Build and configure KV cache with optional quantization."""
+        try:
             from mlx_lm.models.cache import make_prompt_cache
             self._warmup_cache = make_prompt_cache(self._model, max_kv_size=max(token_count + 128, 1024))
             self._warmup_prompt_hash = prompt_hash
-            kv_bits = self._get_adaptive_kv_bits()
-            if self._supports_kv_quant:
-                for layer in self._warmup_cache:
-                    if hasattr(layer, 'quantize'):
-                        try:
-                            layer.quantize(group_size=64, bits=kv_bits)
-                        except Exception:
-                            pass
-            from mlx_lm import generate as mlx_generate
-            from mlx_lm.sample_utils import make_sampler
-            from ..utils.mlx_memory import get_metal_stream_context
-            _worker = getattr(self, '_mlx_worker_thread', None)
-            _worker_live = _worker is not None and _worker.is_active()
-
-            def _do_generate() -> None:
-                with get_metal_stream_context():
-                    import mlx.core as _mx
-                    _mx.eval([])
-                    mlx_generate(model=self._model, tokenizer=self._tokenizer, prompt=warmup_prompt, sampler=make_sampler(temp=0.3), max_tokens=1, kv_bits=kv_bits, prompt_cache=self._warmup_cache, verbose=False)
-            if _worker_live:
-                try:
-                    coro = self._run_inference_async(_do_generate)
-                    await _worker.submit(coro, timeout=60.0)
-                except RuntimeError as _no_loop:
-                    logger.debug(f'[WARMUP] No running loop ({_no_loop}), using inline fallback')
-                    try:
-                        _do_generate()
-                    except Exception as _warmup_exc:
-                        logger.warning(f'[WARMUP] inline warmup failed ({_warmup_exc}), continuing')
-                        return True
-                except Exception as _warmup_exc:
-                    logger.warning(f'[WARMUP] Worker thread warmup failed ({_warmup_exc}), continuing')
-                    return True
-            else:
-                try:
-                    _do_generate()
-                except Exception as _warmup_exc:
-                    logger.warning(f'[WARMUP] inline warmup failed ({_warmup_exc}), continuing')
-                    return True
-            _safe_mlx_eval_and_clear_cache('warmup_prefill')
-            logger.info('[WARMUP] Prefix cache warmup complete (fresh build)')
+            self._quantize_kv_cache(self._warmup_cache, self._get_adaptive_kv_bits())
             return True
         except Exception as e:
-            logger.warning(f'[WARMUP] Warmup failed: {e}')
+            logger.warning(f'[WARMUP] Cache build failed: {e}')
             return False
+
+    def _do_generate(self, warmup_prompt: str) -> None:
+        """Synchronous warmup generation - extracted to reduce nesting."""
+        from mlx_lm import generate as mlx_generate
+        from mlx_lm.sample_utils import make_sampler
+        from ..utils.mlx_memory import get_metal_stream_context
+
+        with get_metal_stream_context():
+            import mlx.core as _mx
+            _mx.eval([])
+            mlx_generate(
+                model=self._model,
+                tokenizer=self._tokenizer,
+                prompt=warmup_prompt,
+                sampler=make_sampler(temp=0.3),
+                max_tokens=1,
+                kv_bits=self._get_adaptive_kv_bits(),
+                prompt_cache=self._warmup_cache,
+                verbose=False,
+            )
+
+    async def _execute_warmup_generation(self, warmup_prompt: str) -> None:
+        """Execute warmup generation via worker thread or inline fallback.
+
+        Extracts 4-level nested try/except logic into flat structure.
+        """
+        _worker = getattr(self, '_mlx_worker_thread', None)
+        _worker_live = _worker is not None and _worker.is_active()
+
+        if _worker_live:
+            await self._run_warmup_via_worker(warmup_prompt)
+        else:
+            self._run_warmup_inline(warmup_prompt)
+
+    async def _run_warmup_via_worker(self, warmup_prompt: str) -> None:
+        """Run warmup via MLX worker thread with fallback to inline."""
+        try:
+            coro = self._run_inference_async(lambda: self._do_generate(warmup_prompt))
+            await self._worker.submit(coro, timeout=60.0)
+        except RuntimeError as _no_loop:
+            logger.debug(f'[WARMUP] No running loop ({_no_loop}), using inline fallback')
+            self._run_warmup_inline(warmup_prompt)
+        except Exception as _warmup_exc:
+            logger.warning(f'[WARMUP] Worker thread warmup failed ({_warmup_exc}), continuing')
+
+    def _run_warmup_inline(self, warmup_prompt: str) -> None:
+        """Run warmup inline when worker unavailable."""
+        try:
+            self._do_generate(warmup_prompt)
+        except Exception as _warmup_exc:
+            logger.warning(f'[WARMUP] inline warmup failed ({_warmup_exc}), continuing')
 
     async def _restore_warmup_cache(self, cache_path: Path, prompt_hash: str) -> bool:
         """Restore warmup cache from disk if prompt hash matches.

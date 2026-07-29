@@ -862,6 +862,27 @@ class GraphRAGOrchestrator:
                         pass
         return g
 
+    @staticmethod
+    def _normalize_max(values: list[float], fallback: list[float]) -> list[float]:
+        """Normalize values to [0,1] by dividing by max, with fallback on error.
+
+        Args:
+            values: Raw metric values.
+            fallback: Fallback list returned on exception or empty values.
+
+        Returns:
+            Normalized values in [0,1], or fallback on error/empty.
+        """
+        if not values:
+            return fallback
+        try:
+            max_val = max(values)
+            if max_val <= 0:
+                return fallback
+            return [v / max_val for v in values]
+        except Exception:
+            return fallback
+
     def _calculate_centrality_igraph(self, adjacency: dict[str, set[str]], all_nodes: list[str]) -> dict[str, dict[str, float]]:
         """Calculate all centrality metrics via Rust rayon (primary) or igraph C-core (fallback).
 
@@ -893,35 +914,34 @@ class GraphRAGOrchestrator:
         scores: dict[str, dict[str, float]] = {}
         try:
             strength_list = list(g.strength(vertices=list(range(n)), weights=None, mode='all', loops=True))
-            max_deg = max(strength_list) if strength_list else 1.0
-            degree_norm = [s / max_deg if max_deg > 0 else 0.0 for s in strength_list]
         except Exception:
-            degree_list = list(g.degree())
-            max_deg = max(degree_list) if degree_list else 1.0
-            degree_norm = [d / max_deg if max_deg > 0 else 0.0 for d in degree_list]
+            strength_list = list(g.degree())
+        degree_norm = self._normalize_max(strength_list, [0.0] * n)
+
         k = min(100, n)
         try:
             between_list = list(g.betweenness(vertices=None, directed=False, weights=None, cutoff=k))
-            max_bet = max(between_list) if between_list else 1.0
-            between_norm = [b / max_bet if max_bet > 0 else 0.0 for b in between_list]
         except Exception:
-            between_norm = [0.0] * n
+            between_list = []
+        between_norm = self._normalize_max(between_list, [0.0] * n)
+
         try:
             closeness_list = list(g.closeness(vertices=None, mode='all', cutoff=None))
         except Exception:
             closeness_list = [0.0] * n
+
         try:
             ev_result = g.eigenvector_centrality(weights=None, directed=False)
-            max_ev = max(ev_result) if ev_result else 1.0
-            ev_norm = [e / max_ev if max_ev > 0 else 0.0 for e in ev_result]
         except Exception:
-            ev_norm = [0.0] * n
+            ev_result = []
+        ev_norm = self._normalize_max(list(ev_result), [0.0] * n)
+
         try:
             pr_list = g.pagerank(weights=None, directed=False, alpha=0.85)
-            max_pr = max(pr_list) if pr_list else 1.0
-            pr_norm = [p / max_pr if max_pr > 0 else 0.0 for p in pr_list]
         except Exception:
-            pr_norm = [0.0] * n
+            pr_list = []
+        pr_norm = self._normalize_max(pr_list, [0.0] * n)
+
         names = g.vs['name']
         for i, name in enumerate(names):
             scores[str(name)] = {'degree': degree_norm[i] if i < len(degree_norm) else 0.0, 'betweenness': between_norm[i] if i < len(between_norm) else 0.0, 'closeness': closeness_list[i] if i < len(closeness_list) else 0.0, 'eigenvector': ev_norm[i] if i < len(ev_norm) else 0.0, 'pagerank': pr_norm[i] if i < len(pr_norm) else 0.0}
@@ -1215,76 +1235,97 @@ class GraphRAGOrchestrator:
         Returns:
             Tuple of (contested: bool, primary_paths: list, counter_paths: list)
         """
+        claims = self._extract_claims(facts)
+        contradictions = self._find_semantic_contradictions(claims)
+        contradictions.extend(self._find_negation_contradictions(facts))
+        if not contradictions:
+            return (False, facts, [])
+        return self._build_contradiction_paths(facts, contradictions)
+
+    def _extract_claims(self, facts: list[dict[str, Any]]) -> list[tuple[str, str, str, dict[str, Any]]]:
+        """Extract (subject, predicate, object, fact) tuples from facts using relation patterns."""
         claims: list[tuple[str, str, str, dict[str, Any]]] = []
+        relation_patterns = [
+            (r'(.+?)\s+is\s+(.+?)(?:\.|$)', 'is'),
+            (r'(.+?)\s+has\s+(.+?)(?:\.|$)', 'has'),
+            (r'(.+?)\s+located\s+in\s+(.+?)(?:\.|$)', 'located_in'),
+            (r'(.+?)\s+was\s+(.+?)(?:\.|$)', 'was'),
+            (r'(.+?)\s+has\s+a\s+(.+?)(?:\.|$)', 'has_a'),
+        ]
         for fact in facts:
             content = fact.get('content', '').lower().strip()
             if not content:
                 continue
-            relation_patterns = ['(.+?)\\s+is\\s+(.+?)(?:\\.|$)', '(.+?)\\s+has\\s+(.+?)(?:\\.|$)', '(.+?)\\s+located\\s+in\\s+(.+?)(?:\\.|$)', '(.+?)\\s+was\\s+(.+?)(?:\\.|$)', '(.+?)\\s+has\\s+a\\s+(.+?)(?:\\.|$)']
-            for pattern in relation_patterns:
+            for pattern, predicate in relation_patterns:
                 match = re.search(pattern, content)
                 if match:
                     subject = match.group(1).strip()
                     obj = match.group(2).strip()
-                    if 'is' in pattern:
-                        predicate = 'is'
-                    elif 'located' in pattern:
-                        predicate = 'located_in'
-                    elif 'has a' in pattern:
-                        predicate = 'has_a'
-                    elif 'has' in pattern:
-                        predicate = 'has'
-                    elif 'was' in pattern:
-                        predicate = 'was'
-                    else:
-                        predicate = 'related_to'
                     claims.append((subject, predicate, obj, fact))
                     break
+        return claims
+
+    def _find_semantic_contradictions(self, claims: list[tuple[str, str, str, dict[str, Any]]]) -> list[tuple[dict[str, Any], dict[str, Any], str]]:
+        """Find contradictions from same (subject, predicate) with different objects."""
         contradictions: list[tuple[dict[str, Any], dict[str, Any], str]] = []
         claim_groups: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = {}
         for subject, predicate, obj, fact in claims:
-            key = (subject, predicate)
-            if key not in claim_groups:
-                claim_groups[key] = []
-            claim_groups[key].append((obj, fact))
+            claim_groups.setdefault((subject, predicate), []).append((obj, fact))
         for (subject, predicate), obj_facts in claim_groups.items():
-            if len(obj_facts) >= 2:
-                objects = [obj for obj, _ in obj_facts]
-                unique_objects = set(objects)
-                if len(unique_objects) >= 2:
-                    sorted_facts = sorted(obj_facts, key=lambda x: x[1].get('similarity', 0.5), reverse=True)
-                    primary_obj, primary_fact = sorted_facts[0]
-                    counter_obj, counter_fact = sorted_facts[1]
-                    contradictions.append((primary_fact, counter_fact, f'{subject} {predicate} {primary_obj} vs {counter_obj}'))
+            if len(obj_facts) < 2:
+                continue
+            unique_objects = {obj for obj, _ in obj_facts}
+            if len(unique_objects) < 2:
+                continue
+            sorted_facts = sorted(obj_facts, key=lambda x: x[1].get('similarity', 0.5), reverse=True)
+            primary_obj, primary_fact = sorted_facts[0]
+            counter_obj, counter_fact = sorted_facts[1]
+            contradictions.append((primary_fact, counter_fact, f'{subject} {predicate} {primary_obj} vs {counter_obj}'))
+        return contradictions
+
+    def _find_negation_contradictions(self, facts: list[dict[str, Any]]) -> list[tuple[dict[str, Any], dict[str, Any], str]]:
+        """Find contradictions from explicit negation patterns between fact pairs."""
+        contradictions: list[tuple[dict[str, Any], dict[str, Any], str]] = []
         negation_patterns = [('is', 'is not'), ('has', 'has no'), ('can', 'cannot'), ('will', 'will not')]
-        for fact_a in facts:
+        for i, fact_a in enumerate(facts):
             content_a = fact_a.get('content', '').lower()
-            for fact_b in facts:
-                if fact_a is fact_b:
-                    continue
-                content_b = fact_b.get('content', '').lower()
-                for pos, neg in negation_patterns:
-                    a_has_pos = f' {pos} ' in f' {content_a} '
-                    b_has_neg = f' {neg} ' in f' {content_b} '
-                    a_has_neg = f' {neg} ' in f' {content_a} '
-                    b_has_pos = f' {pos} ' in f' {content_b} '
-                    if a_has_pos and b_has_neg or (a_has_neg and b_has_pos):
-                        words_a = set(content_a.split()) - {pos, neg}
-                        words_b = set(content_b.split()) - {pos, neg}
-                        overlap = words_a & words_b
-                        if len(overlap) >= 3:
-                            contradictions.append((fact_a, fact_b, f'negation: {pos} vs {neg}'))
-                            break
-        if not contradictions:
-            return (False, facts, [])
-        primary_paths = []
-        counter_paths = []
+            for fact_b in facts[i + 1:]:
+                if contradiction := self._check_negation_pair(content_a, fact_a, fact_b, negation_patterns):
+                    contradictions.append(contradiction)
+        return contradictions
+
+    def _check_negation_pair(
+        self, content_a: str, fact_a: dict[str, Any], fact_b: dict[str, Any], negation_patterns: list[tuple[str, str]]
+    ) -> tuple[dict[str, Any], dict[str, Any], str] | None:
+        """Check if two facts contradict via negation patterns. Returns contradiction tuple or None."""
+        content_b = fact_b.get('content', '').lower()
+        for pos, neg in negation_patterns:
+            a_has_pos = f' {pos} ' in f' {content_a} '
+            b_has_neg = f' {neg} ' in f' {content_b} '
+            a_has_neg = f' {neg} ' in f' {content_a} '
+            b_has_pos = f' {pos} ' in f' {content_b} '
+            if (a_has_pos and b_has_neg) or (a_has_neg and b_has_pos):
+                words_a = set(content_a.split()) - {pos, neg}
+                words_b = set(content_b.split()) - {pos, neg}
+                if len(words_a & words_b) >= 3:
+                    return (fact_a, fact_b, f'negation: {pos} vs {neg}')
+        return None
+
+    def _build_contradiction_paths(
+        self, facts: list[dict[str, Any]], contradictions: list[tuple[dict[str, Any], dict[str, Any], str]]
+    ) -> tuple[bool, list[dict[str, Any]], list[dict[str, Any]]]:
+        """Build primary and counter paths from contradictions."""
+        primary_paths: list[dict[str, Any]] = []
+        counter_paths: list[dict[str, Any]] = []
+        seen_primary_nodes: set[str] = set()
         for primary_fact, counter_fact, reason in contradictions:
-            if primary_fact not in primary_paths:
+            if primary_fact.get('node_id') not in seen_primary_nodes:
                 primary_paths.append(primary_fact)
+                seen_primary_nodes.add(primary_fact.get('node_id', ''))
             counter_paths.append({**counter_fact, 'contradiction_reason': reason, 'contradicts': primary_fact.get('node_id')})
+        seen_counter_nodes = {c.get('node_id') for c in counter_paths}
         for fact in facts:
-            if fact not in primary_paths and (not any((fact.get('node_id') == c.get('node_id') for c in counter_paths))):
+            if fact not in primary_paths and fact.get('node_id') not in seen_counter_nodes:
                 primary_paths.append(fact)
         logger.info(f'[CONTRADICTION] Found {len(contradictions)} contradictions: {[r for _, _, r in contradictions]}')
         return (True, primary_paths, counter_paths)

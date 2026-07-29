@@ -1,0 +1,72 @@
+# Claude Code ignore patterns — universal project
+# Generated for 8GB M1 RAM optimization
+
+# === Build & Distribution (NEVER needed for coding) ===
+dist/
+build/
+*.egg-info/
+rust_extensions/target/
+rust_extensions/*.so
+rust_extensions/*.dylib
+rust_extensions/*.rlib
+rust_extensions/*.rmeta
+
+# === Rust ===
+.cargo/
+.rustc_cache/
+
+# === Python caches ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.proche/
+
+# === Hypothesis (thousands of test examples — toxic for RAM) ===
+.hypothesis/
+
+# === Runtime caches (regenerated on run) ===
+cache_storage/
+cache/
+embeddings/
+embedding_cache/
+graphify-out/
+
+# === Logs ===
+*.log
+pytestdebug.log
+
+# === Archives & Backups ===
+archive/
+.backup/
+*.bak
+*.bak_*
+
+# === Benchmarks (not source) ===
+benchmarks_shadow/
+.benchmarks/
+
+# === ByteRover / Agents (internal tooling) ===
+.brv/
+.agents/
+.code-review-graph/
+
+# === Git internals ===
+.git/
+
+# === Large runtime data ===
+pulse-site/
+:memory:
+*.pcm
+*.pb
+*.onnx
+
+# === OS artifacts ===
+.DS_Store
+*.swp
+*.swo
+*.tmp
+htmlcov/
+.coverage

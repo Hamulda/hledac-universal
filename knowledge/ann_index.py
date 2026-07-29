@@ -407,6 +407,94 @@ class _ANNIndex:
             results.sort(key=lambda x: x[1], reverse=True)
             return results
 
+    # ------------------------------------------------------------------
+    # Helper methods for ann_search (reduce cyclomatic complexity)
+    # ------------------------------------------------------------------
+
+    def _collect_usearch_candidates(
+        self, query_np: np.ndarray, fetch_limit: int
+    ) -> dict[str, tuple[list[float], str, float]]:
+        """Collect ANN candidates from USEARCH index (M1 Metal SIMD).
+
+        Returns empty dict on any error (fail-open).
+        """
+        if self._usearch_index is None:
+            return {}
+        try:
+            matches = self._usearch_index.search(query_np, fetch_limit)
+            candidates: dict[str, tuple[list[float], str, float]] = {}
+            for match in matches:
+                idx = int(match.key)
+                if idx < len(self._usearch_labels):
+                    fk = self._usearch_labels[idx]
+                    score = float(1.0 - match.distance)
+                    candidates[fk] = ([], "", score)
+            return candidates
+        except Exception as e:
+            logger.debug(f"[ANN] USEARCH search failed: {e}")
+            return {}
+
+    def _collect_lancedb_candidates(
+        self, emb_norm: np.ndarray, fetch_limit: int
+    ) -> dict[str, tuple[list[float], str, float]]:
+        """Collect ANN candidates from LanceDB fallback.
+
+        M1 8GB optimization: nprobes=8 probes only 8/256 partitions (~3%% of index)
+        instead of scanning the full table — ~97%% RAM bandwidth reduction.
+        Returns empty dict on any error (fail-open).
+        """
+        with self._lock:
+            try:
+                results = (
+                    self._table.search(emb_norm.tolist(), vector_column_name="vector")
+                    .metric("cosine")
+                    .nprobes(_IVF_PQ_NPROBES_DEFAULT)
+                    .limit(fetch_limit)
+                    .to_list()
+                )
+            except TypeError:
+                # Fallback for LanceDB versions without nprobes on builder
+                results = (
+                    self._table.search(emb_norm.tolist(), vector_column_name="vector")
+                    .metric("cosine")
+                    .limit(fetch_limit)
+                    .to_list()
+                )
+
+        candidates: dict[str, tuple[list[float], str, float]] = {}
+        for r in results:
+            fk = r.get("finding_key", "") or r.get("id", "")
+            if not fk:
+                continue
+            vec = r.get("vector", [])
+            th = r.get("text_hash", "")
+            dist = r.get("_distance", 1.0)
+            if vec:
+                candidates[fk] = (vec, th, dist)
+        return candidates
+
+    def _apply_graph_filter_if_needed(
+        self,
+        candidates: dict[str, tuple[list[float], str, float]],
+        graph_filter: Callable[[list[str]], list[str]] | None,
+    ) -> dict[str, tuple[list[float], str, float]]:
+        """Apply optional graph-aware filtering to ANN candidates.
+
+        Returns unchanged candidates if graph_filter is None or on any error.
+        """
+        if graph_filter is None:
+            return candidates
+        try:
+            filtered_keys = graph_filter(list(candidates.keys()))
+            return {k: v for k, v in candidates.items() if k in filtered_keys}
+        except Exception as e:
+            logger.debug(f"[ANN] graph_filter failed: {e}")
+            return candidates
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def ann_search(
         self,
         embedding: np.ndarray,
@@ -426,6 +514,7 @@ class _ANNIndex:
         Returns [] if not initialized or on any error (fail-open).
         Thread-safe via lock.
         """
+        # Early exits for error states
         if self._boot_error is not None:
             return []
         if self._table is None:
@@ -445,82 +534,37 @@ class _ANNIndex:
 
             fetch_limit = top_k * 3 if graph_filter is not None else top_k * 2
 
-            # OPTIMIZATION: Try USEARCH first (Metal SIMD), fall back to LanceDB
+            # Collect candidates: USEARCH primary → LanceDB fallback
             candidates: dict[str, tuple[list[float], str, float]] = {}
 
-            if self._usearch_index is not None:
-                # USEARCH primary path (M1 Metal SIMD accelerated)
-                try:
+            # Step 1: Try USEARCH (M1 Metal SIMD accelerated)
+            query_np = np.array(emb_norm, dtype=np.float32)
+            candidates = self._collect_usearch_candidates(query_np, fetch_limit)
 
-                    query_np = np.array(emb_norm, dtype=np.float32)
-                    matches = self._usearch_index.search(query_np, fetch_limit)
-
-                    for match in matches:
-                        idx = int(match.key)
-                        if idx < len(self._usearch_labels):
-                            fk = self._usearch_labels[idx]
-                            # Use USEARCH distance directly — LanceDB lookup not needed here
-                            # (LanceDB is only used in the fallback path below)
-                            score = float(1.0 - match.distance)
-                            candidates[fk] = ([], "", score)
-                except Exception as e:
-                    logger.debug(f"[ANN] USEARCH search failed: {e}")
-
-            # Fall back to LanceDB if USEARCH unavailable or failed
-            # M1 8GB optimization: nprobes=8 probes only 8/256 partitions (~3% of index)
-            # instead of scanning the full table — ~97% RAM bandwidth reduction
+            # Step 2: Fall back to LanceDB if USEARCH unavailable or returned nothing
             if not candidates:
-                with self._lock:
-                    try:
-                        results = (
-                            self._table.search(emb_norm.tolist(), vector_column_name="vector")
-                            .metric("cosine")
-                            .nprobes(_IVF_PQ_NPROBES_DEFAULT)
-                            .limit(fetch_limit)
-                            .to_list()
-                        )
-                    except TypeError:
-                        # Fallback for LanceDB versions without nprobes on builder
-                        results = (
-                            self._table.search(emb_norm.tolist(), vector_column_name="vector")
-                            .metric("cosine")
-                            .limit(fetch_limit)
-                            .to_list()
-                        )
-
-                for r in results:
-                    fk = r.get("finding_key", "") or r.get("id", "")
-                    if not fk:
-                        continue
-                    vec = r.get("vector", [])
-                    th = r.get("text_hash", "")
-                    dist = r.get("_distance", 1.0)
-                    if vec:
-                        candidates[fk] = (vec, th, dist)
+                candidates = self._collect_lancedb_candidates(emb_norm, fetch_limit)
 
             if not candidates:
                 return []
 
-            # P2-3: Graph-filter expansion
-            if graph_filter is not None and candidates:
-                try:
-                    candidate_keys = list(candidates.keys())
-                    filtered_keys = graph_filter(candidate_keys)
-                    candidates = {k: v for k, v in candidates.items() if k in filtered_keys}
-                except Exception as e:
-                    logger.debug(f"[ANN] graph_filter failed: {e}")
-
+            # Step 3: Optional graph-aware filtering
+            candidates = self._apply_graph_filter_if_needed(candidates, graph_filter)
             if not candidates:
                 return []
 
-            # MLX exact cosine re-ranking
-            q_vec = np.array(emb_norm, dtype=np.float32)
+            # Step 4: MLX exact cosine re-ranking
             candidate_items = list(candidates.items())
             indices = list(range(len(candidate_items)))
-            vectors = [np.array(v[0], dtype=np.float32) if v[0] else np.zeros(self._embed_dim, dtype=np.float32) for v in candidate_items]
+            vectors = [
+                np.array(v[0], dtype=np.float32) if v[0]
+                else np.zeros(self._embed_dim, dtype=np.float32)
+                for v in candidate_items
+            ]
 
-            reranked = self._mlx_rerank(q_vec, indices, vectors)
+            reranked = self._mlx_rerank(np.array(emb_norm, dtype=np.float32), indices, vectors)
 
+            # Step 5: Build output with score thresholding
             output = []
             for idx, score in reranked[:top_k]:
                 fk, (_, th, _dist) = candidate_items[idx]

@@ -101,6 +101,115 @@ class AcquisitionOrchestrator:
     def __init__(self) -> None:
         pass
 
+    # ── Finalization helpers ───────────────────────────────────────────────
+
+    async def _finalize_parallel(
+        self,
+        ctx: Any,
+        ordered_sources: list[str],
+        duckdb_store: Any,
+        reason: str,
+        message: str,
+        phase: str,
+        wall_clock_start: float,
+        request_windup: bool = False,
+    ) -> None:
+        """Run nonfeed predispatch and truth finalization in parallel TaskGroup.
+
+        Extracted from run() to eliminate 4 identical TaskGroup patterns.
+        Fail-safe: ExceptionGroup is caught and degraded gracefully.
+        """
+        try:
+            async with asyncio.TaskGroup() as _tg:
+                _tg.create_task(
+                    self._ensure_nonfeed_predispatch_before_finalization(
+                        ctx, ordered_sources, duckdb_store, reason
+                    ),
+                    name="finalize:predispatch",
+                )
+                _tg.create_task(
+                    self._finalize_result_truth(ctx, reason, message, phase),
+                    name="finalize:truth",
+                )
+        except ExceptionGroup:
+            pass  # graceful degradation: at least one finalization path ran
+        ctx.result.scheduler_exit_elapsed_s = _time.monotonic() - wall_clock_start
+        if request_windup:
+            ctx.runner.request_windup()
+
+    async def _run_windup_sequence(
+        self,
+        ctx: Any,
+        ordered_sources: list[str],
+        duckdb_store: Any,
+        wall_clock_start: float,
+    ) -> bool:
+        """Execute windup sequence and return True if barrier passed.
+
+        Returns True if mandatory nonfeed succeeded (normal exit).
+        Returns False if mandatory nonfeed failed (forced terminalization).
+        """
+        await self._flush_dedup(ctx)
+
+        # Fire-and-forget IOC co-occurrence
+        safe_create_task_tracked(
+            self._run_ioc_cooccurrence_sidecar(ctx, duckdb_store),
+            name="sprint:ioc_cooccurrence",
+            scope=TaskScope.WINDUP,
+        )
+
+        # Synthesis sidecar
+        _synth_task = safe_create_task_tracked(
+            self._run_synthesis_sidecar(ctx, duckdb_store, ctx.runner),
+            name="sprint:synthesis_windup",
+            scope=TaskScope.WINDUP_SYNTHESIS,
+        )
+        ctx._cycle.synth_windup_task = _synth_task
+
+        # Await synthesis before returning (prevents runner.close() race on M1 8GB)
+        try:
+            async with asyncio.timeout(15.0):
+                await _synth_task
+        except asyncio.TimeoutError:
+            _synth_task.cancel()
+            log.debug("[F259] synthesis task timed out after 15s, cancelled")
+        except Exception:
+            pass  # fail-safe: synthesis errors are non-critical
+
+        await self._run_epistemic_gap_advisory(ctx, duckdb_store)
+
+        if ctx.enrichment_services:
+            await ctx.enrichment_services.flush()
+
+        ctx.evaluate_advisory_gate()
+        await self._maybe_export_partial(ctx, duckdb_store, ctx.runner)
+
+        if await self._ensure_mandatory_nonfeed_before_return(
+            ctx, ordered_sources, duckdb_store, "windup_barrier"
+        ):
+            await self._finalize_parallel(
+                ctx, ordered_sources, duckdb_store,
+                "windup_barrier_passed",
+                "pre-windup barrier satisfied, entered windup",
+                "WINDUP",
+                wall_clock_start,
+            )
+            return True
+
+        await self._ensure_mandatory_nonfeed_before_return(
+            ctx, ordered_sources, duckdb_store, "windup_barrier_forced"
+        )
+        await self._finalize_parallel(
+            ctx, ordered_sources, duckdb_store,
+            "windup_barrier_break",
+            "pre-windup barrier unsatisfied, forced terminalization",
+            "WINDUP",
+            wall_clock_start,
+        )
+        return False
+
+    # ── Main acquisition loop ───────────────────────────────────────────────
+
     async def run(
         self,
         ctx: Any,  # SprintContext
@@ -118,15 +227,12 @@ class AcquisitionOrchestrator:
         cycles_completed = 0
         accepted_findings = 0
         empty_cycles = 0
-        windup_entered = False
-        exit_path = "terminal"
 
         _wall_clock_start = getattr(ctx, "_wall_clock_start", None) or 0.0
         _config = ctx.config
         _result = ctx.result
         _runner = ctx.runner
 
-        # Sprint F278B-2: Ensure lazy dedup loaded before first cycle
         await self._ensure_dedup_loaded(ctx)
 
         try:
@@ -135,58 +241,43 @@ class AcquisitionOrchestrator:
 
                 # ── Hard deadline check ────────────────────────────────────────
                 if not self._check_hard_deadline(ctx):
-                    # Sprint F350M-R Issue #P2: parallelize finalization pipeline
-                    # Issue: _ensure_nonfeed_predispatch + _finalize_result_truth sequential await
-                    # Fix: asyncio.TaskGroup runs both in parallel — nonfeed_predispatch
-                    # completes faster so its result can gate _finalize_result_truth output
-                    try:
-                        async with asyncio.TaskGroup() as _tg:
-                            _tg.create_task(
-                                self._ensure_nonfeed_predispatch_before_finalization(
-                                    ctx, ordered_sources, duckdb_store, "hard_deadline_exceeded"
-                                ),
-                                name="finalize:predispatch",
-                            )
-                            _tg.create_task(
-                                self._finalize_result_truth(
-                                    ctx,
-                                    "hard_deadline_exceeded",
-                                    f"hard deadline exceeded at cycle {cycles_started}",
-                                    "GATHER",
-                                ),
-                                name="finalize:truth",
-                            )
-                    except ExceptionGroup:
-                        pass  # graceful degradation: at least one finalization path ran
-                    _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                    exit_path = "hard_deadline"
-                    break
+                    await self._finalize_parallel(
+                        ctx, ordered_sources, duckdb_store,
+                        "hard_deadline_exceeded",
+                        f"hard deadline exceeded at cycle {cycles_started}",
+                        "GATHER",
+                        _wall_clock_start,
+                    )
+                    return AcquisitionPhaseResult(
+                        cycles_started=cycles_started,
+                        cycles_completed=cycles_completed,
+                        accepted_findings=accepted_findings,
+                        empty_cycles=empty_cycles,
+                        windup_entered=False,
+                        exit_path="hard_deadline",
+                    )
 
                 # ── Stop requested ──────────────────────────────────────────────
                 if getattr(ctx, "_stop_requested", False):
                     if await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "stop_requested"
                     ):
-                        # Sprint F350M-R Issue #P2: parallelize finalization pipeline
-                        try:
-                            async with asyncio.TaskGroup() as _tg:
-                                _tg.create_task(
-                                    self._ensure_nonfeed_predispatch_before_finalization(
-                                        ctx, ordered_sources, duckdb_store, "stop_requested_break"
-                                    ),
-                                    name="finalize:predispatch",
-                                )
-                                _tg.create_task(
-                                    self._finalize_result_truth(
-                                        ctx, "stop_requested_break", "stop_requested guard passed", "GATHER"
-                                    ),
-                                    name="finalize:truth",
-                                )
-                        except ExceptionGroup:
-                            pass
-                        _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                        _runner.request_windup()
-                        break
+                        await self._finalize_parallel(
+                            ctx, ordered_sources, duckdb_store,
+                            "stop_requested_break",
+                            "stop_requested guard passed",
+                            "GATHER",
+                            _wall_clock_start,
+                            request_windup=True,
+                        )
+                        return AcquisitionPhaseResult(
+                            cycles_started=cycles_started,
+                            cycles_completed=cycles_completed,
+                            accepted_findings=accepted_findings,
+                            empty_cycles=empty_cycles,
+                            windup_entered=False,
+                            exit_path="stop_requested",
+                        )
                     continue
 
                 # ── Abort requested ────────────────────────────────────────────
@@ -197,26 +288,22 @@ class AcquisitionOrchestrator:
                     await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "lifecycle_abort"
                     )
-                    # Sprint F350M-R Issue #P2: parallelize finalization pipeline
-                    try:
-                        async with asyncio.TaskGroup() as _tg:
-                            _tg.create_task(
-                                self._ensure_nonfeed_predispatch_before_finalization(
-                                    ctx, ordered_sources, duckdb_store, "lifecycle_abort_break"
-                                ),
-                                name="finalize:predispatch",
-                            )
-                            _tg.create_task(
-                                self._finalize_result_truth(
-                                    ctx, "lifecycle_abort_break", "abort_requested from lifecycle", "GATHER"
-                                ),
-                                name="finalize:truth",
-                            )
-                    except ExceptionGroup:
-                        pass
-                    _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                    _runner.request_windup()
-                    break
+                    await self._finalize_parallel(
+                        ctx, ordered_sources, duckdb_store,
+                        "lifecycle_abort_break",
+                        "abort_requested from lifecycle",
+                        "GATHER",
+                        _wall_clock_start,
+                        request_windup=True,
+                    )
+                    return AcquisitionPhaseResult(
+                        cycles_started=cycles_started,
+                        cycles_completed=cycles_completed,
+                        accepted_findings=accepted_findings,
+                        empty_cycles=empty_cycles,
+                        windup_entered=False,
+                        exit_path="abort",
+                    )
 
                 # ── Periodic tick ───────────────────────────────────────────────
                 _runner.tick(now_monotonic)
@@ -262,102 +349,17 @@ class AcquisitionOrchestrator:
                 )
 
                 if _guard_result:
-                    windup_entered = True
-                    await self._flush_dedup(ctx)
-
-                    # Fire-and-forget IOC co-occurrence — tracked in registry
-                    safe_create_task_tracked(
-                        self._run_ioc_cooccurrence_sidecar(ctx, duckdb_store),
-                        name="sprint:ioc_cooccurrence",
-                        scope=TaskScope.WINDUP,
+                    barrier_passed = await self._run_windup_sequence(
+                        ctx, ordered_sources, duckdb_store, _wall_clock_start
                     )
-
-                    # Synthesis sidecar — tracked in registry, awaited before return
-                    _synth_task = safe_create_task_tracked(
-                        self._run_synthesis_sidecar(ctx, duckdb_store, _runner),
-                        name="sprint:synthesis_windup",
-                        scope=TaskScope.WINDUP_SYNTHESIS,
+                    return AcquisitionPhaseResult(
+                        cycles_started=cycles_started,
+                        cycles_completed=cycles_completed,
+                        accepted_findings=accepted_findings,
+                        empty_cycles=empty_cycles,
+                        windup_entered=True,
+                        exit_path="windup_barrier_passed" if barrier_passed else "windup_barrier_forced",
                     )
-
-                    # ISSUE 2: store task in ctx._cycle so WinddownOrchestrator._await_synthesis
-                    # can retrieve it. Without this, _await_synthesis re-awaiting None is a no-op
-                    # and runner.close() races against the still-running synthesis task.
-                    ctx._cycle.synth_windup_task = _synth_task
-
-                    # ISSUE P1: await synthesis task before returning from windup.
-                    # Prevents "sprint concluded" race where runner.close() is called
-                    # while synthesis is still running (leaves ~2GB Hermes3 loaded on M1 8GB).
-                    try:
-                        async with asyncio.timeout(15.0):
-                            await _synth_task
-                    except asyncio.TimeoutError:
-                        _synth_task.cancel()
-                        log.debug("[F259] synthesis task timed out after 15s, cancelled")
-                    except Exception:
-                        pass  # fail-safe: synthesis errors are non-critical
-
-                    # Epistemic gap advisory
-                    await self._run_epistemic_gap_advisory(ctx, duckdb_store)
-
-                    # Flush forensics
-                    if ctx.enrichment_services:
-                        await ctx.enrichment_services.flush()
-
-                    ctx.evaluate_advisory_gate()
-
-                    await self._maybe_export_partial(ctx, duckdb_store, _runner)
-
-                    if await self._ensure_mandatory_nonfeed_before_return(
-                        ctx, ordered_sources, duckdb_store, "windup_barrier"
-                    ):
-                        # Sprint F350M-R Issue #P2: parallelize finalization pipeline
-                        try:
-                            async with asyncio.TaskGroup() as _tg:
-                                _predispatch_tg = _tg.create_task(
-                                    self._ensure_nonfeed_predispatch_before_finalization(
-                                        ctx, ordered_sources, duckdb_store, "windup_barrier_passed"
-                                    ),
-                                    name="finalize:predispatch",
-                                )
-                                _finalize_tg = _tg.create_task(
-                                    self._finalize_result_truth(
-                                        ctx,
-                                        "windup_barrier_passed",
-                                        "pre-windup barrier satisfied, entered windup",
-                                        "WINDUP",
-                                    ),
-                                    name="finalize:truth",
-                                )
-                        except ExceptionGroup:
-                            pass
-                        _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                        break
-
-                    await self._ensure_mandatory_nonfeed_before_return(
-                        ctx, ordered_sources, duckdb_store, "windup_barrier_forced"
-                    )
-                    # Sprint F350M-R Issue #P2: parallelize finalization pipeline
-                    try:
-                        async with asyncio.TaskGroup() as _tg:
-                            _predispatch_tg = _tg.create_task(
-                                self._ensure_nonfeed_predispatch_before_finalization(
-                                    ctx, ordered_sources, duckdb_store, "windup_barrier_break"
-                                ),
-                                name="finalize:predispatch",
-                            )
-                            _finalize_tg = _tg.create_task(
-                                self._finalize_result_truth(
-                                    ctx,
-                                    "windup_barrier_break",
-                                    "pre-windup barrier unsatisfied, forced terminalization",
-                                    "WINDUP",
-                                ),
-                                name="finalize:truth",
-                            )
-                    except ExceptionGroup:
-                        pass
-                    _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                    break
 
                 # ── Re-prioritize sources in ACTIVE phase ──────────────────────
                 if _runner.current_phase == "ACTIVE":
@@ -370,40 +372,25 @@ class AcquisitionOrchestrator:
                     if await self._ensure_mandatory_nonfeed_before_return(
                         ctx, ordered_sources, duckdb_store, "max_cycles_reached"
                     ):
-                        # Sprint F350M-R Issue #P2: parallelize finalization pipeline
-                        try:
-                            async with asyncio.TaskGroup() as _tg:
-                                _predispatch_tg = _tg.create_task(
-                                    self._ensure_nonfeed_predispatch_before_finalization(
-                                        ctx, ordered_sources, duckdb_store, "max_cycles_reached"
-                                    ),
-                                    name="finalize:predispatch",
-                                )
-                                _finalize_tg = _tg.create_task(
-                                    self._finalize_result_truth(
-                                        ctx,
-                                        "max_cycles_reached",
-                                        f"max_cycles {effective_max_cycles} reached",
-                                        "ACTIVE",
-                                    ),
-                                    name="finalize:truth",
-                                )
-                        except ExceptionGroup:
-                            pass
-                        _result.scheduler_exit_elapsed_s = _time.monotonic() - _wall_clock_start
-                        _runner.request_windup()
-                        break
+                        await self._finalize_parallel(
+                            ctx, ordered_sources, duckdb_store,
+                            "max_cycles_reached",
+                            f"max_cycles {effective_max_cycles} reached",
+                            "ACTIVE",
+                            _wall_clock_start,
+                            request_windup=True,
+                        )
+                        return AcquisitionPhaseResult(
+                            cycles_started=cycles_started,
+                            cycles_completed=cycles_completed,
+                            accepted_findings=accepted_findings,
+                            empty_cycles=empty_cycles,
+                            windup_entered=False,
+                            exit_path="max_cycles_reached",
+                        )
                     continue
 
                 # ── Run one cycle ─────────────────────────────────────────────
-                # P6 FIX: aggressive mode now runs its 3 branches (feed/public/ct)
-                # in parallel via asyncio.TaskGroup — no longer sequential within
-                # the aggressive cycle body. The stable vs aggressive DISPATCHER
-                # itself runs sequentially (only one branch runs per cycle), but
-                # within aggressive mode the feed || public || ct parallelism is
-                # the win. Stable mode already had feed || public parallelism.
-                # RESULT: the _run_one_cycle() call is unchanged — it dispatches
-                # correctly; the P6 gain is inside aggressive's TaskGroup.
                 cycle_result = await self._run_one_cycle(ctx, ordered_sources, now_monotonic, duckdb_store)
 
                 if cycle_result.empty_work_items:
@@ -422,18 +409,17 @@ class AcquisitionOrchestrator:
                 # ── Check zero-findings alert ─────────────────────────────────
                 await self._check_zero_findings_alert(ctx)
 
-            # exit_path is already "terminal" (default); all break paths override explicitly
-
         except asyncio.CancelledError:
             raise
 
+        # Terminal exit (loop completed naturally; windup never entered)
         return AcquisitionPhaseResult(
             cycles_started=cycles_started,
             cycles_completed=cycles_completed,
             accepted_findings=accepted_findings,
             empty_cycles=empty_cycles,
-            windup_entered=windup_entered,
-            exit_path=exit_path,
+            windup_entered=False,
+            exit_path="terminal",
         )
 
     # ── _run_one_cycle dispatcher ─────────────────────────────────────────────
@@ -931,6 +917,75 @@ class AcquisitionOrchestrator:
         """Run IOC co-occurrence analysis sidecar."""
         pass
 
+    # ── Synthesis helpers ────────────────────────────────────────────────
+
+    async def _synthesis_inject_stix_graph(
+        self,
+        runner: Any,
+        duckdb_store: Any,
+    ) -> None:
+        """Inject STIX graph into SynthesisRunner. Fail-safe."""
+        try:
+            stix_graph = getattr(duckdb_store, "get_stix_graph", None)
+            if stix_graph:
+                stix = stix_graph()
+                if stix is not None:
+                    runner.inject_stix_graph(stix)
+        except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
+            pass
+
+    async def _synthesis_collect_batcher_stats(self, runner: Any, ctx: Any) -> None:
+        """Collect MLX batcher stats into ctx. Fail-safe."""
+        try:
+            hermes = getattr(runner, "_hermes_engine", None)
+            if hermes is not None:
+                batcher = getattr(hermes, "_mlx_batcher", None)
+                if batcher is not None and hasattr(batcher, "get_stats"):
+                    ctx.result.mlx_batcher_stats = batcher.get_stats()
+                    log.debug("[F285] batcher stats: %s", ctx.result.mlx_batcher_stats)
+        except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
+            log.debug("[F285] batcher stats collection failed")
+
+    async def _synthesis_write_report(
+        self,
+        ctx: Any,
+        runner: Any,
+        findings: list[dict],
+        report: Any,
+    ) -> None:
+        """Write synthesis report to ctx.result. Fail-safe."""
+        ctx.result.synthesis_findings_count = len(findings)
+        ctx.result.synthesis_success = report is not None
+        ctx.result.synthesis_engine = (
+            getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"
+        )
+        if report is not None:
+            try:
+                ctx.result.synthesis_text = msgspec.json.encode(
+                    {
+                        "query": ctx.query,
+                        "ioc_entities": [
+                            {"type": e.ioc_type, "value": e.value}
+                            for e in getattr(report, "ioc_entities", None) or []
+                        ],
+                        "threat_summary": getattr(report, "threat_summary", ""),
+                        "threat_actors": list(getattr(report, "threat_actors", None) or []),
+                        "confidence": getattr(report, "confidence", 0.0),
+                        "sources_count": getattr(report, "sources_count", 0),
+                        "timestamp": getattr(report, "timestamp", 0.0),
+                    }
+                ).decode("utf-8")
+            except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                ctx.result.synthesis_text = str(report)[:4096]
+            log.info(
+                "[F259] Synthesis complete: success=%s, findings=%d",
+                ctx.result.synthesis_success,
+                ctx.result.synthesis_findings_count,
+            )
+            await self._synthesis_collect_batcher_stats(runner, ctx)
+        else:
+            ctx.result.synthesis_text = ""
+
     async def _run_synthesis_sidecar(
         self,
         ctx: Any,
@@ -938,9 +993,12 @@ class AcquisitionOrchestrator:
         lifecycle: Any,
     ) -> None:
         """Sprint F259: Run SynthesisRunner in WINDUP phase."""
+        # ENV gate
         if not ENV.get_bool("HLEDAC_ENABLE_HERMES_SYNTHESIS"):
             log.debug("[F259] Synthesis skipped -- HLEDAC_ENABLE_SYNTHESIS != '1'")
             return
+
+        # UMA pressure guard
         try:
             from hledac.universal.utils.uma_budget import get_uma_snapshot
 
@@ -953,12 +1011,16 @@ class AcquisitionOrchestrator:
                 return
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             log.debug("[F259] UMA check failed")
+
+        # Early exit: no findings
         if not ctx.result.accepted_findings:
             log.info("[F259-SYN] early-exit: no findings, skipping synthesis")
             return
         if duckdb_store is None:
             log.debug("[F259] Synthesis skipped -- no duckdb_store")
             return
+
+        # Fetch findings
         findings: list[dict] = []
         try:
             if hasattr(duckdb_store, "get_top_findings"):
@@ -971,6 +1033,8 @@ class AcquisitionOrchestrator:
         if not findings:
             log.debug("[F259] Synthesis skipped -- no findings")
             return
+
+        # Import SynthesisRunner
         try:
             from hledac.universal.core.model_runtime import ModelLifecycle
             from hledac.universal.brain.synthesis_runner import SynthesisRunner
@@ -978,9 +1042,10 @@ class AcquisitionOrchestrator:
             log.debug("[F259] SynthesisRunner import failed: %s", e)
             ctx.result.synthesis_engine = "import_failed"
             return
-        # P2-02: Use try/finally to guarantee runner.close() even on exception.
-        # Previously close() was only on success path (line 1324) — synthesize_findings()
-        # exception left model loaded (Hermes3 ~2GB on M1 8GB = significant leak).
+
+        # P2-02: Runner lifecycle with guaranteed close().
+        # Extracted to eliminate depth-3 nesting. close() is called even when
+        # synthesize_findings() raises — fixes ~2GB Hermes3 model leak on M1 8GB.
         runner: SynthesisRunner | None = None
         try:
             lifecycle_instance = ModelLifecycle()
@@ -989,62 +1054,15 @@ class AcquisitionOrchestrator:
             runner._duckdb_store = duckdb_store
             if lifecycle is not None:
                 runner.inject_lifecycle_adapter(lifecycle)
-            try:
-                stix_graph = getattr(duckdb_store, "get_stix_graph", None)
-                if stix_graph:
-                    stix = stix_graph()
-                    if stix is not None:
-                        runner.inject_stix_graph(stix)
-            except Exception:  # noqa: BLE001 — best-effort; DB operation failure; non-critical
-                pass
+            await self._synthesis_inject_stix_graph(runner, duckdb_store)
             report = await runner.synthesize_findings(query=ctx.query, findings=findings, force_synthesis=True)
-            ctx.result.synthesis_findings_count = len(findings)
-            ctx.result.synthesis_success = report is not None
-            ctx.result.synthesis_engine = (
-                getattr(runner, "_last_synthesis_engine", "synthesis_runner") or "synthesis_runner"
-            )
-            if report is not None:
-                try:
-                    ctx.result.synthesis_text = msgspec.json.encode(
-                        {
-                            "query": ctx.query,
-                            "ioc_entities": [
-                                {"type": e.ioc_type, "value": e.value}
-                                for e in getattr(report, "ioc_entities", None) or []
-                            ],
-                            "threat_summary": getattr(report, "threat_summary", ""),
-                            "threat_actors": list(getattr(report, "threat_actors", None) or []),
-                            "confidence": getattr(report, "confidence", 0.0),
-                            "sources_count": getattr(report, "sources_count", 0),
-                            "timestamp": getattr(report, "timestamp", 0.0),
-                        }
-                    ).decode("utf-8")
-                except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                    ctx.result.synthesis_text = str(report)[:4096]
-                log.info(
-                    "[F259] Synthesis complete: success=%s, findings=%d",
-                    ctx.result.synthesis_success,
-                    ctx.result.synthesis_findings_count,
-                )
-                try:
-                    hermes = getattr(runner, "_hermes_engine", None)
-                    if hermes is not None:
-                        batcher = getattr(hermes, "_mlx_batcher", None)
-                        if batcher is not None and hasattr(batcher, "get_stats"):
-                            ctx.result.mlx_batcher_stats = batcher.get_stats()
-                            log.debug("[F285] batcher stats: %s", ctx.result.mlx_batcher_stats)
-                except Exception:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
-                    log.debug("[F285] batcher stats collection failed")
-            else:
-                ctx.result.synthesis_text = ""
+            await self._synthesis_write_report(ctx, runner, findings, report)
         except Exception as e:  # noqa: BLE001 — best-effort; telemetry/stats; best-effort
             log.debug("[F259] Synthesis failed: %s", e)
             ctx.result.synthesis_success = False
             ctx.result.synthesis_engine = "error"
             ctx.result.synthesis_text = ""
         finally:
-            # P2-02: ALWAYS close runner — finally guarantees execution even on exception.
-            # This fixes the ~2GB Hermes3 model leak when synthesize_findings() raises.
             if runner is not None:
                 try:
                     await runner.close()

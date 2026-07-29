@@ -207,6 +207,7 @@ class TransportResolver:
         """Check if Tor is running by probing the SOCKS port (9050).
         D-22 fix: reduced timeout from 2.0s to 0.5s — only called once at init
         via _check_transports(), cached thereafter.
+        Parameterized via _probe_tcp_port (PROBE-I1..I4 invariants).
         """
         return _probe_tcp_port('127.0.0.1', 9050, timeout=0.5)
 

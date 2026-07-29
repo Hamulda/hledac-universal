@@ -20,7 +20,7 @@ _CIDV0_RE = re.compile(r"^Qm[A-Za-z2-7]{44}$")
 _CIDV1_BASE32_RE = re.compile(r"^bafy[a-z2-7]{50,59}$")
 
 
-def _has_explicit_cid(value: str) -> bool:
+def _has_explicit_ipfs_cid(value: str) -> bool:
     """
     Return True if value is an explicit IPFS CID (CIDv0 or CIDv1 base32).
 
@@ -53,14 +53,14 @@ def _extract_cids_from_text(text: str) -> list[str]:
     cids: list[str] = []
     for word in text.split():
         word = word.strip().rstrip("/").rstrip(")")
-        if _has_explicit_cid(word) and word not in cids_seen:
+        if _has_explicit_ipfs_cid(word) and word not in cids_seen:
             cids_seen.add(word)
             cids.append(word)
         # Also check for CID embedded in URL/path
         if "/" in word or ":" in word:
             for part in word.replace(":", "/").split("/"):
                 part = part.strip()
-                if _has_explicit_cid(part) and part not in cids_seen:
+                if _has_explicit_ipfs_cid(part) and part not in cids_seen:
                     cids_seen.add(part)
                     cids.append(part)
     return cids

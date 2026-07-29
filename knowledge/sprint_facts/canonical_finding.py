@@ -65,23 +65,9 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
         return msgspec.json.schema(cls)
 
 
-class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
-    """
-    Sprint 8W: Quality decision contract for CanonicalFinding ingest.
-
-    Fields:
-        accepted:        True if finding passed quality gate
-        reason:          Human-readable reason for reject/accept, or None
-        entropy:         Computed entropy in bits per character
-        normalized_hash: BLAKE2b fingerprint of normalized text (hex, 32 chars)
-        duplicate:       True if exact-content duplicate detected
-    """
-
-    accepted: bool
-    reason: str | None
-    entropy: float
-    normalized_hash: str | None
-    duplicate: bool
+# FindingQualityDecision is defined in knowledge/_quality_types.py.
+# Re-exported here for backward compatibility with code that imports it from this module.
+from .._quality_types import FindingQualityDecision
 
 
 class ActivationResult(msgspec.Struct, frozen=True, gc=False):

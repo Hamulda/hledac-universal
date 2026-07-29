@@ -89,7 +89,7 @@ from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
 from hledac.universal.utils.async_helpers import safe_wait_for
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
 
 __all__ = [
     "RoleBasedPools",
@@ -330,6 +330,60 @@ class RoleBasedPools:
         return available > 0.5  # Need 500MB minimum headroom
 
     # ------------------------------------------------------------------|
+    # Shared helpers (parameterized, eliminates Type-2 clone patterns) |
+    # ------------------------------------------------------------------|
+
+    async def _run_role_a[T](
+        self,
+        semaphore: asyncio.Semaphore,
+        lock_getter: Callable[[], Coroutine[Any, Any, asyncio.Lock]],
+        executor: ThreadPoolExecutor,
+        label: str,
+        fn: "Callable[..., T]",
+        *args: Any,
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> T | None:
+        """
+        Parameterized async runner for CPU/IO-bound roles (hash, regex, async_io).
+
+        Replaces: run_hash, run_regex, run_async_io (Type-2 clone, 3→1).
+        """
+        self._ensure_initialized()
+        assert semaphore is not None
+        assert executor is not None
+
+        async with semaphore:
+            async with await lock_getter():
+                loop = asyncio.get_running_loop()
+                try:
+                    if timeout is not None:
+                        coro = loop.run_in_executor(executor, lambda: fn(*args, **kwargs))
+                        return await safe_wait_for(coro, timeout=timeout, label=f"role_pool:{label}")
+                    return await loop.run_in_executor(executor, lambda: fn(*args, **kwargs))
+                except Exception:
+                    return None
+
+    def _run_role_a_sync[T](
+        self,
+        executor: ThreadPoolExecutor,
+        fn: "Callable[..., T]",
+        *args: Any,
+        **kwargs: Any,
+    ) -> T | None:
+        """
+        Synchronous runner for CPU-bound roles (hash, regex).
+
+        Replaces: run_hash_sync, run_regex_sync (Type-2 clone, 2→1).
+        """
+        self._ensure_initialized()
+        assert executor is not None
+        try:
+            return fn(*args, **kwargs)
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------|
     # Role: HASH — CPU-bound hashing (xxhash, blake3)                  |
     # ------------------------------------------------------------------|
 
@@ -358,19 +412,13 @@ class RoleBasedPools:
         RAM budget: 4 concurrent workers max
         """
         self._ensure_initialized()
-        assert self._hash_semaphore is not None
-        assert self._hash_executor is not None
-
-        async with self._hash_semaphore:
-            async with await self._get_hash_lock():
-                loop = asyncio.get_running_loop()
-                try:
-                    if timeout is not None:
-                        coro = loop.run_in_executor(self._hash_executor, lambda: fn(*args, **kwargs))
-                        return await safe_wait_for(coro, timeout=timeout, label="role_pool:hash")
-                    return await loop.run_in_executor(self._hash_executor, lambda: fn(*args, **kwargs))
-                except Exception:
-                    return None
+        return await self._run_role_a(
+            self._hash_semaphore,  # type: ignore[arg-type]
+            self._get_hash_lock,
+            self._hash_executor,  # type: ignore[arg-type]
+            "hash",
+            fn, *args, timeout=timeout, **kwargs
+        )
 
     def run_hash_sync[T](
         self,
@@ -381,11 +429,7 @@ class RoleBasedPools:
     ) -> T | None:
         """Synchronous version of run_hash for non-async contexts."""
         self._ensure_initialized()
-        assert self._hash_executor is not None
-        try:
-            return fn(*args, **kwargs)
-        except Exception:
-            return None
+        return self._run_role_a_sync(self._hash_executor, fn, *args, **kwargs)
 
     # ------------------------------------------------------------------|
     # Role: EMBED — MLX embedding generation (memory-heavy)             |
@@ -638,19 +682,13 @@ class RoleBasedPools:
         RAM budget: 4 concurrent workers max
         """
         self._ensure_initialized()
-        assert self._regex_semaphore is not None
-        assert self._regex_executor is not None
-
-        async with self._regex_semaphore:
-            async with await self._get_regex_lock():
-                loop = asyncio.get_running_loop()
-                try:
-                    if timeout is not None:
-                        coro = loop.run_in_executor(self._regex_executor, lambda: fn(*args, **kwargs))
-                        return await safe_wait_for(coro, timeout=timeout, label="role_pool:regex")
-                    return await loop.run_in_executor(self._regex_executor, lambda: fn(*args, **kwargs))
-                except Exception:
-                    return None
+        return await self._run_role_a(
+            self._regex_semaphore,  # type: ignore[arg-type]
+            self._get_regex_lock,
+            self._regex_executor,  # type: ignore[arg-type]
+            "regex",
+            fn, *args, timeout=timeout, **kwargs
+        )
 
     def run_regex_sync[T](
         self,
@@ -661,11 +699,7 @@ class RoleBasedPools:
     ) -> T | None:
         """Synchronous version of run_regex for non-async contexts."""
         self._ensure_initialized()
-        assert self._regex_executor is not None
-        try:
-            return fn(*args, **kwargs)
-        except Exception:
-            return None
+        return self._run_role_a_sync(self._regex_executor, fn, *args, **kwargs)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------|
     # Role: ASYNC_IO — Generic blocking I/O wrapper                    |
@@ -693,19 +727,13 @@ class RoleBasedPools:
             Result of fn(*args, **kwargs), or None on error/timeout
         """
         self._ensure_initialized()
-        assert self._async_io_semaphore is not None
-        assert self._async_io_executor is not None
-
-        async with self._async_io_semaphore:
-            async with await self._get_async_io_lock():
-                loop = asyncio.get_running_loop()
-                try:
-                    if timeout is not None:
-                        coro = loop.run_in_executor(self._async_io_executor, lambda: fn(*args, **kwargs))
-                        return await safe_wait_for(coro, timeout=timeout, label="role_pool:async_io")
-                    return await loop.run_in_executor(self._async_io_executor, lambda: fn(*args, **kwargs))
-                except Exception:
-                    return None
+        return await self._run_role_a(
+            self._async_io_semaphore,  # type: ignore[arg-type]
+            self._get_async_io_lock,
+            self._async_io_executor,  # type: ignore[arg-type]
+            "async_io",
+            fn, *args, timeout=timeout, **kwargs
+        )
 
     # ------------------------------------------------------------------|
     # Role: LMDB — Key-value store I/O (I/O-bound, 1 writer)          |
@@ -902,19 +930,40 @@ def get_role_pools() -> RoleBasedPools:
 # Backward-compatibility shims                                      |
 # ------------------------------------------------------------------|
 
+
+async def _deprecated_pool_wrapper[T](
+    shim_name: str,
+    canonical_name: str,
+    pools_method: Callable[..., Coroutine[Any, Any, T]],  # type: ignore[misc]
+    fn: "Callable[..., T]",
+    /,
+    *args: Any,
+    **kwargs: Any,
+) -> T | None:
+    """
+    Shared deprecation wrapper for run_in_*_pool legacy shims.
+
+    Type-1 exact clone elimination: 4 identical fragments (hash/regex/embed/db)
+    replaced with single parameterized helper.
+    """
+    warnings.warn(
+        f"{shim_name} is deprecated. Use RoleBasedPools.{canonical_name}() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    pools = get_role_pools()
+    return await pools_method(pools, fn, *args, **kwargs)
+
+
 async def run_in_hash_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T | None:
     """
     Backward-compat shim for run_in_cpu_pool (hash role).
 
     DEPRECATED: Use RoleBasedPools.run_hash() instead.
     """
-    warnings.warn(
-        "run_in_hash_pool is deprecated. Use RoleBasedPools.run_hash() instead.",
-        DeprecationWarning,
-        stacklevel=2,
+    return await _deprecated_pool_wrapper(
+        "run_in_hash_pool", "run_hash", RoleBasedPools.run_hash, fn, *args, **kwargs
     )
-    pools = get_role_pools()
-    return await pools.run_hash(fn, *args, **kwargs)
 
 
 async def run_in_regex_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T | None:
@@ -923,13 +972,9 @@ async def run_in_regex_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: 
 
     DEPRECATED: Use RoleBasedPools.run_regex() instead.
     """
-    warnings.warn(
-        "run_in_regex_pool is deprecated. Use RoleBasedPools.run_regex() instead.",
-        DeprecationWarning,
-        stacklevel=2,
+    return await _deprecated_pool_wrapper(
+        "run_in_regex_pool", "run_regex", RoleBasedPools.run_regex, fn, *args, **kwargs
     )
-    pools = get_role_pools()
-    return await pools.run_regex(fn, *args, **kwargs)
 
 
 async def run_in_embed_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: Any) -> T | None:
@@ -938,13 +983,9 @@ async def run_in_embed_pool[T](fn: "Callable[..., T]", /, *args: Any, **kwargs: 
 
     DEPRECATED: Use RoleBasedPools.run_embed() instead.
     """
-    warnings.warn(
-        "run_in_embed_pool is deprecated. Use RoleBasedPools.run_embed() instead.",
-        DeprecationWarning,
-        stacklevel=2,
+    return await _deprecated_pool_wrapper(
+        "run_in_embed_pool", "run_embed", RoleBasedPools.run_embed, fn, *args, **kwargs
     )
-    pools = get_role_pools()
-    return await pools.run_embed(fn, *args, **kwargs)
 
 
 async def run_in_db_pool(
@@ -958,10 +999,6 @@ async def run_in_db_pool(
 
     DEPRECATED: Use RoleBasedPools.run_db() instead.
     """
-    warnings.warn(
-        "run_in_db_pool is deprecated. Use RoleBasedPools.run_db() instead.",
-        DeprecationWarning,
-        stacklevel=2,
+    return await _deprecated_pool_wrapper(
+        "run_in_db_pool", "run_db", RoleBasedPools.run_db, fn, *args, **kwargs
     )
-    pools = get_role_pools()
-    return await pools.run_db(fn, *args, **kwargs)
