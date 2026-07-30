@@ -6,6 +6,12 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::OnceLock;
+
+// R4-12 FIX: Cache mlx.core module handle — avoids per-call Python::attach + import overhead.
+// Initialized once per process; py.import() returns a Borrowed reference valid for the
+// Python GIL scope. We store Py<PyModule> (owned reference) so it outlives the borrow.
+static MLX_CORE_MODULE: OnceLock<Py<PyModule>> = OnceLock::new();
 
 static PEAK_RSS_BYTES: AtomicU64 = AtomicU64::new(0);
 
@@ -13,6 +19,13 @@ static PEAK_RSS_BYTES: AtomicU64 = AtomicU64::new(0);
 // 0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency
 // Updated by memory_status_poller Python task, read by get_uma_state_u8().
 static UMA_STATE_ATOMIC: AtomicU8 = AtomicU8::new(0);
+
+// A5-01 FIX: Runtime-configurable memory pressure thresholds.
+// Default values match M1 8GB UMA profile (4 GiB / 5.5 GiB).
+// Synced from Python resource_governor.py at startup via
+// set_memory_pressure_thresholds() — making resource_governor the SSOT.
+static SOFT_GIB_ATOMIC: AtomicU64 = AtomicU64::new(4 * 1024 * 1024 * 1024);
+static HARD_GIB_ATOMIC: AtomicU64 = AtomicU64::new((11 * 1024 / 2) * 1024 * 1024); // 5.5 GiB
 
 /// Returns current UMA state as u8 (0=ok, 1=soft_warn, 2=warn, 3=critical, 4=emergency).
 ///
@@ -164,24 +177,49 @@ pub fn peak_rss_bytes() -> u64 {
 
 /// Returns current memory pressure level 0-2 (normal/elevated/critical).
 ///
-/// Thresholds: normal < 4.0 GiB, elevated 4.0–5.5 GiB, critical > 5.5 GiB.
-/// Independent from fetching/memory_budget_gate.py thresholds — those use
-/// system-available-percentage (psutil), while these use process RSS (PROC_PIDTASKINFO).
+/// Thresholds: normal < SOFT, elevated SOFT–HARD, critical > HARD.
+///
+/// A5-01 FIX: Thresholds are now runtime-configurable via
+/// set_memory_pressure_thresholds(). Default values are 4.0 GiB / 5.5 GiB.
+/// The authoritative threshold values come from Python resource_governor.py
+/// and are synced to this module at startup — making resource_governor the
+/// Single Source of Truth instead of hardcoded Rust constants.
 #[pyfunction]
 pub fn memory_pressure_level() -> u8 {
-    const SOFT_GIB: u64 = 4 * 1024 * 1024 * 1024;
-    const HARD_GIB: u64 = (11 * 1024 / 2) * 1024 * 1024; // 5.5 GiB
+    let soft_gib = SOFT_GIB_ATOMIC.load(Ordering::Relaxed);
+    let hard_gib = HARD_GIB_ATOMIC.load(Ordering::Relaxed);
     let rss = current_rss_bytes();
     if rss == 0 {
         return 0; // Fail-safe: treat as normal.
     }
-    if rss > HARD_GIB {
+    if rss > hard_gib {
         2
-    } else if rss > SOFT_GIB {
+    } else if rss > soft_gib {
         1
     } else {
         0
     }
+}
+
+/// Sets memory pressure thresholds from Python (resource_governor.py).
+///
+/// Called once at startup to sync Rust thresholds with Python SSOT values.
+/// After this call, memory_pressure_level() uses the provided values
+/// instead of the hardcoded defaults.
+///
+/// Args:
+///     soft_gib: soft warning threshold in GiB (RSS above this → level 1)
+///     hard_gib: critical threshold in GiB (RSS above this → level 2)
+#[pyfunction]
+pub fn set_memory_pressure_thresholds(soft_gib: f64, hard_gib: f64) {
+    SOFT_GIB_ATOMIC.store(
+        (soft_gib * 1024.0 * 1024.0 * 1024.0) as u64,
+        Ordering::Relaxed,
+    );
+    HARD_GIB_ATOMIC.store(
+        (hard_gib * 1024.0 * 1024.0 * 1024.0) as u64,
+        Ordering::Relaxed,
+    );
 }
 
 /// Applies MADV_FREE_REUSABLE to a memory region via madvise.
@@ -192,43 +230,60 @@ pub fn memory_pressure_level() -> u8 {
 /// rather than mach_vm_behavior_set (not exposed in libc crate on macOS).
 ///
 /// Returns true on success, false on failure.
-#[cfg(target_os = "macos")]
 #[pyfunction]
 pub fn advise_free(ptr: usize, len: usize) -> bool {
     if ptr == 0 || len == 0 {
         return false;
     }
-    let result = unsafe { libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_FREE_REUSABLE) };
-    result == 0
+    #[cfg(target_os = "macos")]
+    {
+        let result = unsafe { libc::madvise(ptr as *mut libc::c_void, len, libc::MADV_FREE_REUSABLE) };
+        result == 0
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = ptr;
+        let _ = len;
+        false // No-op on non-macOS — MADV_FREE_REUSABLE is Darwin-specific
+    }
 }
 
 /// Returns MLX Metal active memory in bytes (probed from Python mlx.core).
 ///
-/// Lazy-imports mlx.core on first call. Returns 0 if MLX unavailable.
+/// R4-12 FIX: Uses OnceLock-cached mlx.core module handle — avoids per-call
+/// Python::attach + import overhead. Module is imported once and reused across calls.
+///
+/// Returns 0 if MLX unavailable.
 /// This is the canonical MLX memory probe for M1 8GB adaptive decisions.
 /// Uses GIL-protected Python call — safe for rayon worker threads.
 #[pyfunction]
 pub fn get_metal_active_memory_bytes(py: Python<'_>) -> u64 {
-    if let Ok(mlx) = py.import("mlx.core") {
-        // Try modern API first: mx.get_active_memory()
-        let result = mlx.call_method0("get_active_memory");
-        if let Ok(val) = result {
+    // R4-12 FIX: use cached module handle instead of per-call py.import()
+    // get_or_init stores Py<PyModule>, bind() re-borrows it as Bound<'py, PyModule>
+    let Ok(mlx) = MLX_CORE_MODULE
+        .get_or_init(|| py.import("mlx.core").unwrap().unbind())
+        .bind(py)
+    else {
+        return 0;
+    };
+    // Try modern API first: mx.get_active_memory()
+    let result = mlx.call_method0("get_active_memory");
+    if let Ok(val) = result {
+        if let Ok(v) = val.extract::<u64>() {
+            return v;
+        }
+        if let Ok(v) = val.extract::<i64>() {
+            return v.max(0) as u64;
+        }
+    }
+    // Fallback: mx.metal.get_active_memory (MLX < 0.18)
+    if let Ok(metal) = mlx.getattr("metal") {
+        if let Ok(val) = metal.call_method0("get_active_memory") {
             if let Ok(v) = val.extract::<u64>() {
                 return v;
             }
             if let Ok(v) = val.extract::<i64>() {
                 return v.max(0) as u64;
-            }
-        }
-        // Fallback: mx.metal.get_active_memory (MLX < 0.18)
-        if let Ok(metal) = mlx.getattr("metal") {
-            if let Ok(val) = metal.call_method0("get_active_memory") {
-                if let Ok(v) = val.extract::<u64>() {
-                    return v;
-                }
-                if let Ok(v) = val.extract::<i64>() {
-                    return v.max(0) as u64;
-                }
             }
         }
     }
@@ -297,5 +352,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ISSUE-7.2: AtomicU8 UMA state for fast non-blocking reads
     m.add_function(wrap_pyfunction!(get_uma_state_u8, m)?)?;
     m.add_function(wrap_pyfunction!(set_uma_state_u8, m)?)?;
+    // A5-01 FIX: threshold sync from Python SSOT
+    m.add_function(wrap_pyfunction!(set_memory_pressure_thresholds, m)?)?;
     Ok(())
 }

@@ -1447,16 +1447,33 @@ async def search_multi_engine(
             all_results.extend(batch)
 
     # I7: URL deduplication via shared singleton BloomFilter (F06: was per-call RotatingBloomFilter)
+    # R4-11 FIX: batch add — normalize all URLs first, then add_batch() once
     bloom = get_default_bloom_filter()
     deduped: list[dict] = []
+    # Phase 1: normalize all URLs upfront
+    all_norm: list[tuple[dict, str]] = []
     for r in all_results:
         raw_u = r.get("url", "")
-        if not raw_u:
-            continue
-        norm = _normalize_url_for_dedup(raw_u)
-        if norm and norm not in bloom:
-            bloom.add(norm)
+        if raw_u:
+            norm = _normalize_url_for_dedup(raw_u)
+            if norm:
+                all_norm.append((r, norm))
+
+    # Phase 2: batch dedup check — collect non-duplicate normalized URLs
+    new_norms: list[str] = []
+    for r, norm in all_norm:
+        if norm not in bloom:
+            new_norms.append(norm)
             deduped.append(r)
+
+    # Phase 3: batch add all new URLs at once (single lock acquisition)
+    if new_norms and hasattr(bloom, 'add_batch'):
+        bloom.add_batch(new_norms)
+    elif new_norms:
+        # Fallback: single-item add (for non-Rust bloom filters)
+        for norm in new_norms:
+            bloom.add(norm)
+
     return deduped[:max_results]
 
 class DuckDuckGoAdapter(BaseDiscoveryMixin):

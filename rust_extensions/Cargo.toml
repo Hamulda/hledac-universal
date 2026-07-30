@@ -39,8 +39,9 @@ crossbeam-channel = "0.5"
 # provided by the Python duckdb wheel (single authority). This eliminates the
 # ~15MB duplication of DuckDB C++ source in the Rust extension's address space.
 # Python duckdb wheel (>=1.5.4) remains single authority for DuckDB SQL operations.
-duckdb = { version = "1.105", optional = true }
 ipnetwork = "0.20"
+lru = "0.10"
+duckdb = { version = "1.105", optional = true }
 
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
 # Python reads spans from stdout JSON — no opentelemetry dep conflicts
@@ -292,6 +293,8 @@ unexpected_cfgs = "allow"
 # Target-specific flags
 # ---------------------------------------------------------------------------
 # ISSUE E6: SIMD NEON on Apple Silicon M1/M2/M3
+# R4-05 fix: NEON target-feature for aarch64.
+#
 # CRITICAL: Without +neon, core::arch::aarch64 intrinsics compile but emit
 # NO actual SIMD ops — performance degrades to scalar (4-8× slower).
 # +crypto: ARMv8 crypto extensions (AES, SHA1, SHA2 — used by sha2 crate)
@@ -300,10 +303,9 @@ unexpected_cfgs = "allow"
 # These flags ensure the compiler emits NEON instructions rather than
 # falling back to scalar code even when #[cfg(target_arch = "aarch64")]
 # guards are present.
-[target.'cfg(target_arch = "aarch64")']
+#
+# NOTE: Use explicit target triple [target.aarch64-apple-darwin] rather than
+# [target.'cfg(target_arch = "aarch64")'] — the latter's rustflags key
+# is silently ignored by Cargo (confirmed by "unused manifest key" warning).
+[target.aarch64-apple-darwin]
 rustflags = ["-C", "target-feature=+neon,+crypto"]
-
-# aarch64-apple-darwin already implies +neon, but explicit is safer:
-# 1. Overrides any RUSTFLAGS from the environment
-# 2. Documents the requirement clearly
-# 3. Works even if maturin/cargo is invoked with conflicting flags

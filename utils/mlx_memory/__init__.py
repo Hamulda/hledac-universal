@@ -1,8 +1,29 @@
 """
-utils/mlx_memory — Unified MLX Memory Runtime (F330-MLX-DUP-007)
+utils/mlx_memory — Unified MLX Memory Runtime (F330-MLX-DUP-007, A5-04)
 
 Jediný authoritative modul pro veškerou MLX memory management na M1 8GB.
 Ostatní MLX utility moduly jsou deprecated a přesměrovány sem.
+
+A5-04 CONSOLIDATION (2026-07-30)
+=================================
+Tento modul vs. ostatní paměťové moduly:
+
+| Modul                        | Zodpovědnost                        |
+|------------------------------|--------------------------------------|
+| core.memory                  | System-wide: RSS, dostupná RAM,     |
+|                              | pressure level (Rust SSOT)           |
+| core.rust_backend.memory     | DuckDB bridge: domain factory        |
+| utils.mlx_memory._core       | MLX-specific: active_mb, peak_mb,   |
+|                              | cache_mb, pressure_pct (Metal API)  |
+
+MLX METRICS (v tomto modulu):
+    get_mlx_memory_metrics()  — dict: active_mb, peak_mb, cache_mb,
+                                pressure_pct, pressure_level
+    get_mlx_memory_pressure() — tuple: (pressure_pct, "NORMAL|WARNING|CRITICAL")
+
+SYSTEM METRICS (core.memory):
+    get_memory_snapshot() — dict: rss_bytes, available_memory_gib,
+                              total_memory_gib, pressure_level
 
 Struktura:
     _core   — canonical MLX runtime (Metal cache, wired limit, model cache, cleanup)

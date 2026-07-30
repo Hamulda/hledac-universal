@@ -127,21 +127,23 @@ fn compute_scores_neon(
     current_weights: &[f32],
     novelty: &[bool],
 ) -> Vec<f32> {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(neon_available)]
     {
         // SAFETY: NEON intrinsics require aligned memory and valid SIMD state.
         // All our slices are created from Vec<f32> which have 4-byte alignment,
-        // and we use core::arch::aarch64 operations which are sound on aarch64.
+        and we use core::arch::aarch64 operations which are sound on aarch64.
         unsafe { compute_scores_neon_inner(fetched, accepted, current_weights, novelty) }
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(not(neon_available))]
     {
         let _ = (fetched, accepted, current_weights, novelty);
         compute_scores_scalar(fetched, accepted, current_weights, novelty)
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
+#[target_feature(enable = "neon")]
+#[inline]
 unsafe fn compute_scores_neon_inner(
     fetched: &[u32],
     accepted: &[u32],
@@ -391,7 +393,9 @@ fn aggregate_signals_inner(
 ///
 /// Processes 4 signal dimensions in parallel per iteration.
 /// Falls back to scalar on non-aarch64 or any error.
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
+#[target_feature(enable = "neon")]
+#[inline]
 unsafe fn aggregate_signals_neon(
     signals: &[Vec<f32>],
     weights: &[f32],
@@ -438,13 +442,10 @@ unsafe fn aggregate_signals_neon(
         let sig_slice = &sig[..out_len.min(sig.len())];
 
         // NEON chunked processing of signal vector.
+        // M1 supports unaligned NEON loads — load directly from sig_slice.
         for chunk in 0..chunks {
             let base = chunk * 4;
-            let mut s = [0.0_f32; 4];
-            for k in 0..4 {
-                s[k] = *sig_slice.get(base + k).unwrap_or(&0.0_f32);
-            }
-            let sig_vec = vld1q_f32(s.as_ptr());
+            let sig_vec = vld1q_f32(sig_slice.as_ptr().add(base));
             let w_vec = vdupq_n_f32(w);
             let weighted = vmulq_f32(sig_vec, w_vec);
 
@@ -481,7 +482,7 @@ unsafe fn aggregate_signals_neon(
     result
 }}
 
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(not(neon_available))]
 fn aggregate_signals_neon(
     signals: &[Vec<f32>],
     weights: &[f32],
@@ -561,11 +562,11 @@ pub fn batch_compute_scores(
     // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
     let results = Python::attach(|py| {
         release_gil(py, || {
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(neon_available)]
             let r = unsafe {
                 compute_scores_neon_inner(&fetched, &accepted, &current_weights, &novelty)
             };
-            #[cfg(not(target_arch = "aarch64"))]
+            #[cfg(not(neon_available))]
             let r = compute_scores_scalar(&fetched, &accepted, &current_weights, &novelty);
             r
         })
@@ -632,11 +633,11 @@ pub fn batch_aggregate_signals(
     // R6: migrated to PyO3 0.29 Python::attach + py.detach via release_gil().
     let result = Python::attach(|py| {
         release_gil(py, || {
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(neon_available)]
             let r = unsafe {
                 aggregate_signals_neon(&signal_vecs, &weight_vec, normalize)
             };
-            #[cfg(not(target_arch = "aarch64"))]
+            #[cfg(not(neon_available))]
             let r = aggregate_signals_inner(&signal_vecs, &weight_vec, normalize);
             r
         })

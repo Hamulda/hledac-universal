@@ -40,6 +40,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# R4-12 FIX: mlx.core cached per-call via OnceLock — prevents repeated import
+# overhead in the 500ms memory-pressure polling loop. Python-level equivalent
+# of Rust's std::sync::OnceLock pattern. Never hold the GIL across I/O.
+import threading
+from dataclasses import dataclass
+
+
+@dataclass
+class _MLXCache:
+    mx: Any = None
+
+
+_mlx_cache: _MLXCache = _MLXCache()
+_mlx_lock = threading.Lock()
+
+
+def _get_mlx() -> Any:
+    """Lazily import and cache mlx.core. Thread-safe, import-only once."""
+    if _mlx_cache.mx is None:
+        with _mlx_lock:
+            if _mlx_cache.mx is None:  # Double-check under lock
+                import mlx.core as mx
+
+                _mlx_cache.mx = mx
+    return _mlx_cache.mx
+
+
 # Default timeout for mlx bridge operations
 DEFAULT_MLX_BRIDGE_TIMEOUT_S: float = 30.0
 
@@ -250,7 +277,7 @@ async def generate_stream_adaptive(
                     if bridge is not None:
                         # Get actual active memory bytes for bridge
                         try:
-                            import mlx.core as mx
+                            mx = _get_mlx()
 
                             mx.eval([])  # Sync barrier before reading
                             if hasattr(mx.metal, "get_active_memory"):

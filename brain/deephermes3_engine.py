@@ -523,7 +523,7 @@ class DeepHermes3Engine:
         self._batch_medium_pressure_depth = 64
         self._batch_high_pressure_depth = 192
         self._telemetry_ema = {'enqueue_to_dispatch_ms': 0.0, 'dispatch_to_result_ms': 0.0, 'batch_size': 0, 'queue_depth': 0}
-        self._telemetry_counters = {'batch_submitted': 0, 'batch_executed': 0, 'batch_fallback_single': 0, 'schema_mismatch_flushes': 0, 'length_bin_mismatch_flushes': 0, 'batch_shattered': 0, 'prompt_mismatch_flushes': 0, 'emergency_guard_triggered': 0, 'emergency_batch_rejected': 0, 'emergency_single_rejected': 0, 'emergency_pending_failed': 0, 'adaptive_flush_default_entries': 0, 'adaptive_flush_medium_entries': 0, 'adaptive_flush_fast_entries': 0, 'metal_pressure_fast_flush': 0, 'cache_invalidation_count': 0}
+        self._telemetry_counters = {'batch_submitted': 0, 'batch_executed': 0, 'batch_fallback_single': 0, 'schema_mismatch_flushes': 0, 'length_bin_mismatch_flushes': 0, 'batch_shattered': 0, 'prompt_mismatch_flushes': 0, 'emergency_guard_triggered': 0, 'emergency_batch_rejected': 0, 'emergency_single_rejected': 0, 'emergency_pending_failed': 0, 'adaptive_flush_default_entries': 0, 'adaptive_flush_medium_entries': 0, 'adaptive_flush_fast_entries': 0, 'metal_pressure_fast_flush': 0, 'cache_invalidation_count': 0, 'batch_worker_timeout_unload': 0}
         self._pending_futures = set()
         self._ema_alpha = 0.3
         self._flush_cycle_count = 0
@@ -609,11 +609,22 @@ class DeepHermes3Engine:
         self._pending_futures.clear()
         self._batch_worker_shutting_down = True
         self._batch_worker_task.cancel()
+        # A5-05 FIX: Cooperative cancellation via asyncio.timeout.
+        # asyncio.shield() blocks the outer CancelledError from reaching the worker,
+        # BUT asyncio.timeout CANCELLS its own task from within, triggering the
+        # worker's internal cancellation check at its next await point.
+        # This makes MLX-blocking _process_batch interruptible within the timeout.
         try:
             async with asyncio.timeout(timeout):
                 await asyncio.shield(self._batch_worker_task)
         except TimeoutError:
-            pass
+            # A5-05: Worker did not finish within timeout — MLX ops were still running.
+            # The worker task is orphaned and will terminate when its MLX calls complete.
+            # We detach it so the caller can proceed without leaking the reference.
+            self._batch_worker_task = None
+            self._batch_queue = None
+            self._telemetry_counters['batch_worker_timeout_unload'] += 1
+            logger.warning('[A5-05] Batch worker did not cancel within %.1fs — MLX ops still running, detaching', timeout)
         except asyncio.CancelledError:
             self._batch_worker_task = None
             self._batch_queue = None
@@ -686,6 +697,14 @@ class DeepHermes3Engine:
         import itertools
         itertools.count()
         while True:
+            # A5-05 FIX: Cooperative cancellation checkpoint.
+            # asyncio.current_task().cancelled() checks if the task was cancelled
+            # BEFORE entering the next long-running await (_collect_batch → _process_batch → MLX).
+            # This makes the worker interruptible by asyncio.timeout in _shutdown_batch_worker.
+            try:
+                await asyncio.sleep(0)  # yield point — allows CancelledError to propagate
+            except asyncio.CancelledError:
+                break
             if self._should_emergency_shutdown():
                 break
             if getattr(self, '_batch_worker_shutting_down', False):
@@ -860,6 +879,15 @@ class DeepHermes3Engine:
                 by_schema[schema_key] = []
             by_schema[schema_key].append((payload, priority))
         for schema_key, group in by_schema.items():
+            # A5-05 FIX: Cooperative cancellation checkpoint before MLX-blocking batch dispatch.
+            # asyncio.current_task().cancelled() check ensures the worker is responsive
+            # to asyncio.timeout cancellation from _shutdown_batch_worker BEFORE entering
+            # the next _process_structured_batch → _run_structured_single → MLX sequence.
+            # This makes MLX inference interruptible when the engine is unloaded mid-batch.
+            try:
+                await asyncio.sleep(0)  # yield point — allows CancelledError to propagate
+            except asyncio.CancelledError:
+                return
             try:
                 if group[0][0].get('type') == 'structured':
                     await self._process_structured_batch(group)
@@ -868,6 +896,8 @@ class DeepHermes3Engine:
                         future = payload.get('future')
                         if future and (not future.done()):
                             future.set_result({'processed': True})
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.debug(f'Batch process error for schema {schema_key}: {e}')
 
@@ -2275,11 +2305,10 @@ class DeepHermes3Engine:
         # M-01: capture kv_cache for return — needed by caller for session cache store
         kv_cache_after = generate_kwargs.get('prompt_cache')
         _mlx_lock = _get_mlx_inference_lock()
-        try:
-            import mlx.core as _mx
-            _mx.eval([])
-        except Exception:
-            pass
+        # U2-03 FIX: removed pre-inference mx.eval([]) — it blocked the main thread
+        # (Path 2: run_coroutine_threadsafe). Post-inference _mlx_clear_and_timestamp()
+        # handles the barrier + cache cleanup on the worker thread (Path 1) where the
+        # Metal stream context is valid, avoiding any event-loop stall.
         try:
             with _mlx_lock:
                 response = mlx_generate(**generate_kwargs)

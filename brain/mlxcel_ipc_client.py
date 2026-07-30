@@ -66,6 +66,7 @@ back to DeepHermes3Engine (in-process mlx-lm Python bindings fallback).
 """
 from __future__ import annotations
 import asyncio
+from hledac.universal.utils.async_helpers import safe_wait_for
 import orjson as json
 import logging
 import os
@@ -225,7 +226,7 @@ class MlxcelIpcClient:
                 # Disconnect first if connected
                 await self._disconnect_socket()
                 # Try socket connection
-                await asyncio.wait_for(self._connect_socket(), timeout=delay)
+                await safe_wait_for(self._connect_socket(), timeout=delay, label="mlxcel_connect")
                 return
             except (MlxcelUnavailable, asyncio.TimeoutError, OSError) as e:
                 last_error = e if isinstance(e, MlxcelUnavailable) else MlxcelUnavailable(str(e))

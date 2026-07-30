@@ -32,12 +32,42 @@ No MLX imports at module level (lazy).
 import asyncio
 import logging
 import platform
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 from hledac.universal.utils.async_helpers import safe_create_task
-__all__ = ['get_uma_snapshot', 'get_uma_budget', 'get_uma_usage_mb', 'get_uma_pressure_level', 'is_uma_critical', 'is_uma_warn', 'is_uma_emergency', 'format_uma_budget_report', 'UmaWatchdog', 'UmaWatchdogCallbacks', 'UMA_WARN_GIB', 'UMA_CRITICAL_GIB', 'UMA_EMERGENCY_GIB', 'M1_FETCH_SOFT_CEILING_GB', 'GENERAL_HIGH_WATER_RATIO']
+__all__ = ['get_uma_snapshot', 'get_uma_budget', 'get_uma_usage_mb', 'get_uma_pressure_level', 'is_uma_critical', 'is_uma_warn', 'is_uma_emergency', 'format_uma_budget_report', 'UmaWatchdog', 'UmaWatchdogCallbacks', 'UMA_WARN_GIB', 'UMA_CRITICAL_GIB', 'UMA_EMERGENCY_GIB', 'M1_FETCH_SOFT_CEILING_GB', 'GENERAL_HIGH_WATER_RATIO', 'shutdown_uma_callback_executor']
+
+# M1-01 fix: bounded executor for UMA callbacks — prevents unbounded task accumulation.
+# max_workers=2: one for current callback, one for pending (prevents head-of-line blocking).
+# Thread name prefix for debugging: ls /tmp | grep uma_cb
+_uma_callback_executor: ThreadPoolExecutor | None = None
+
+
+def _get_uma_executor() -> ThreadPoolExecutor:
+    global _uma_callback_executor
+    if _uma_callback_executor is None:
+        _uma_callback_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='uma_cb')
+    return _uma_callback_executor
+
+
+async def _run_callback_in_executor(cb, snapshot: dict) -> None:
+    """Run a synchronous callback in the bounded thread pool, propagating exceptions."""
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(_get_uma_executor(), cb, snapshot)
+    except Exception as e:
+        logger.error(f'[UMA-WATCHDOG] UMA callback failed: {e}')
+
+
+def shutdown_uma_callback_executor() -> None:
+    """Shutdown the UMA callback executor. Call from UmaWatchdog.stop() or at app exit."""
+    global _uma_callback_executor
+    if _uma_callback_executor is not None:
+        _uma_callback_executor.shutdown(wait=True, cancel_futures=True)
+        _uma_callback_executor = None
+logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from types import ModuleType
-logger = logging.getLogger(__name__)
 
 def _detect_total_memory_mb() -> int:
     """Detect real system RAM. Floor 4 GB, ceil 64 GB, fallback 8 GB."""
@@ -57,6 +87,18 @@ UMA_WARN_GIB: float = _THRESHOLD_WARN_GIB
 UMA_CRITICAL_GIB: float = _THRESHOLD_CRITICAL_GIB
 UMA_EMERGENCY_GIB: float = _THRESHOLD_EMERGENCY_GIB
 M1_FETCH_SOFT_CEILING_GB: float = round(_UMA_TOTAL_MB / 1024 * 0.88, 2)
+
+# A5-01 FIX: Sync Rust memory.rs thresholds with resource_governor SSOT.
+# memory.rs uses process RSS (PROC_PIDTASKINFO) for its memory_pressure_level(),
+# which is separate from resource_governor's system-used GiB thresholds.
+# We align the Rust hard threshold with resource_governor's critical threshold
+# so that the health.rs telemetry reports consistent "critical" conditions.
+# soft_gib stays at 4.0 GiB (RSS-based "elevated" has no system-wide equivalent).
+try:
+    from hledac.universal.core.memory import set_memory_pressure_thresholds as _set_rust_thresholds
+    _set_rust_thresholds(soft_gib=4.0, hard_gib=_THRESHOLD_CRITICAL_GIB)
+except Exception:
+    pass  # Fail-safe: Rust thresholds stay at defaults (4.0 / 5.5 GiB)
 GENERAL_HIGH_WATER_RATIO: float = 0.85
 MAX_L2_CACHE_SIZE_MB: int = 50
 from hledac.universal.core.memory import get_memory_snapshot as _rust_snapshot
@@ -397,22 +439,19 @@ class UmaWatchdog:
                     snapshot = get_uma_snapshot()
                     if level == 'emergency' and self._callbacks:
                         logger.warning(f"[UMA-WATCHDOG] EMERGENCY triggered: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)")
-                        try:
-                            safe_create_task(asyncio.to_thread(self._callbacks.on_emergency, snapshot), name='uma_budget:emergency_callback')
-                        except (TypeError, AttributeError, asyncio.CancelledError) as e:
-                            logger.error(f'[UMA-WATCHDOG] on_emergency callback error: {e}')
+                        cb = getattr(self._callbacks, 'on_emergency', None)
+                        if cb is not None:
+                            safe_create_task(_run_callback_in_executor(cb, snapshot), name='uma_budget:emergency_callback')
                     elif level == 'critical' and self._callbacks:
                         logger.warning(f"[UMA-WATCHDOG] CRITICAL triggered: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)")
-                        try:
-                            safe_create_task(asyncio.to_thread(self._callbacks.on_critical, snapshot), name='uma_budget:critical_callback')
-                        except (TypeError, AttributeError, asyncio.CancelledError) as e:
-                            logger.error(f'[UMA-WATCHDOG] on_critical callback error: {e}')
+                        cb = getattr(self._callbacks, 'on_critical', None)
+                        if cb is not None:
+                            safe_create_task(_run_callback_in_executor(cb, snapshot), name='uma_budget:critical_callback')
                     elif level == 'warn' and self._callbacks:
                         logger.info(f"[UMA-WATCHDOG] WARN triggered: {snapshot.get('uma_used_mb', 0):,} MB ({snapshot.get('uma_usage_pct', 0)}%)")
-                        try:
-                            safe_create_task(asyncio.to_thread(self._callbacks.on_warn, snapshot), name='uma_budget:warn_callback')
-                        except (TypeError, AttributeError, asyncio.CancelledError) as e:
-                            logger.error(f'[UMA-WATCHDOG] on_warn callback error: {e}')
+                        cb = getattr(self._callbacks, 'on_warn', None)
+                        if cb is not None:
+                            safe_create_task(_run_callback_in_executor(cb, snapshot), name='uma_budget:warn_callback')
             except (OSError, RuntimeError) as e:
                 logger.debug(f'[UMA-WATCHDOG] poll error (fail-open): {e}')
             await asyncio.sleep(self._interval)
@@ -431,11 +470,13 @@ class UmaWatchdog:
         return self._task
 
     def stop(self) -> None:
-        """Stop the watchdog gracefully."""
+        """Stop the watchdog gracefully and shut down the callback executor."""
         self._running = False
         if self._task is not None and (not self._task.done()):
             self._task.cancel()
             self._task = None
+        # M1-01: shutdown bounded executor so threads don't leak
+        shutdown_uma_callback_executor()
 
     @property
     def is_running(self) -> bool:

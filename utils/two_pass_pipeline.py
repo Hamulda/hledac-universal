@@ -5,9 +5,14 @@ Single asyncio.TaskGroup with a queue between producer (pass 1) and consumer (pa
 Backpressure via asyncio.Queue(maxsize=512).
 
 Producer (Pass 1): async I/O — network fetches, disk reads
-    └── queue.put_nowait(item)  [blocks when queue full — backpressure]
+    └── queue.put(item)  [awaits with timeout — signals backpressure to producer caller]
 Consumer (Pass 2): CPU-bound scoring — asyncio.to_thread (GIL released)
     └── queue.get()  [blocks when queue empty — natural flow control]
+
+S1-08 FIX: credit-based flow control replaces naive put().
+- Producer must wait for queue space (backpressure propagated to caller)
+- On TimeoutError: log and break (don't silently drop — data loss risk)
+- Natural credit loop: consumer releases credit via task_done() after each item
 
 Structural pattern matching (PEP 634) used for parsed record classification.
 
@@ -42,7 +47,7 @@ class TwoPassPipelineConfig(msgspec.Struct):
     consumer_concurrency: int = 8
     timeout_s: float | None = None
 
-class PipelineStats(msgspec.Struct, frozen=True):
+class PipelineStats(msgspec.Struct):
     """Runtime statistics for a two-pass pipeline."""
     produced: int = 0
     consumed: int = 0
@@ -62,9 +67,10 @@ class TwoPassPipeline:
     Producer runs as a task in the TaskGroup. Consumer runs as N concurrent
     tasks (consumer_concurrency), each pulling from the shared queue.
 
-    The queue provides natural backpressure: when the queue is full,
-    producer.put_nowait() fails with QueueFull, producer yields (via await
-    asyncio.sleep(0)) and retries on next iteration.
+    S1-08 FIX: credit-based backpressure — producer awaits queue.put() with timeout.
+    When queue is full, producer's caller (upstream fetcher) receives backpressure
+    and can decide to slow down, buffer locally, or drop. This prevents unbounded
+    queue growth and provides true end-to-end flow control.
 
     Consumer uses structural match/case (PEP 634) to classify items.
 
@@ -90,23 +96,15 @@ class TwoPassPipeline:
         """Feed items into the queue. Called once, with items already collected."""
         try:
             for item in items:
-                while True:
-                    try:
-                        match item:
-                            case dict() as _d:
-                                pass
-                            case _ if hasattr(item, '__class__'):
-                                pass
-                            case _:
-                                pass
-                        self._queue.put_nowait(item)
-                        self._stats.produced += 1
-                        water = self._queue.qsize()
-                        if water > self._stats.queue_high_water:
-                            self._stats.queue_high_water = water
-                        break
-                    except asyncio.QueueFull:
-                        await asyncio.sleep(0)
+                try:
+                    await asyncio.wait_for(self._queue.put(item), timeout=5.0)
+                    self._stats.produced += 1
+                    water = self._queue.qsize()
+                    if water > self._stats.queue_high_water:
+                        self._stats.queue_high_water = water
+                except asyncio.TimeoutError:
+                    logger.warning('[%s] Producer timed out waiting for queue space, dropping item', self._config.label)
+                    break
         except Exception:
             self._producer_exc = BaseException(f'[{self._config.label}] Producer error: {traceback.format_exc()}')
             self._stats.producer_errors += 1
@@ -117,11 +115,10 @@ class TwoPassPipeline:
         """Single consumer worker — pulls from queue and applies consumer_fn."""
         while True:
             try:
-                item = self._queue.get_nowait()
-            except asyncio.QueueEmpty:
-                if self._done.is_set():
+                item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                if self._done.is_set() and self._queue.empty():
                     break
-                await asyncio.sleep(0)
                 continue
             except Exception:
                 self._stats.consumer_errors += 1
@@ -171,16 +168,15 @@ class TwoPassPipeline:
         async def feed_stream() -> None:
             try:
                 for item in items_iter:
-                    while True:
-                        try:
-                            self._queue.put_nowait(item)
-                            self._stats.produced += 1
-                            water = self._queue.qsize()
-                            if water > self._stats.queue_high_water:
-                                self._stats.queue_high_water = water
-                            break
-                        except asyncio.QueueFull:
-                            await asyncio.sleep(0)
+                    try:
+                        await asyncio.wait_for(self._queue.put(item), timeout=5.0)
+                        self._stats.produced += 1
+                        water = self._queue.qsize()
+                        if water > self._stats.queue_high_water:
+                            self._stats.queue_high_water = water
+                    except asyncio.TimeoutError:
+                        logger.warning('[%s] Producer timed out waiting for queue space, dropping item', self._config.label)
+                        break
             except Exception:
                 self._producer_exc = BaseException(traceback.format_exc())
                 self._stats.producer_errors += 1

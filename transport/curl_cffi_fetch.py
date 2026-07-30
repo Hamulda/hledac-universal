@@ -489,10 +489,14 @@ async def _get_or_create_session(profile: str) -> Any | None:
 
             from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]
 
+            # P3-04 FIX: Explicit connection pooling + HTTP/2 for connection reuse.
+            # http2=True enables HTTP/2 multiplexing over persistent connections.
+            # max_clients=25 matches max_connections intent; max_keepalive implicit via HTTP/2.
             new_session = AsyncSession(
                 impersonate=profile,
                 timeout=10.0,
-                max_clients=25,  # F273H: increased from 15 for better connection reuse
+                max_clients=25,  # connection pool size (keepalive connections)
+                http2=True,  # P3-04: HTTP/2 for multiplexing and connection reuse
             )
             _curl_cffi_sessions[profile] = new_session
             _curl_cffi_profiles_order.append(profile)

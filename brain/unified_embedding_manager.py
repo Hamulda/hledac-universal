@@ -12,6 +12,7 @@ Default 512d for backward compatibility with existing 384d code.
 M1 8GB: Single model instance, lazy loading, fail-soft degradation.
 """
 import asyncio
+import concurrent.futures
 import hashlib
 import logging
 import threading
@@ -24,6 +25,8 @@ _unified_manager: UnifiedEmbeddingManager | None = None
 _manager_lock = threading.Lock()
 SUPPORTED_DIMS = (256, 512, 768)
 DEFAULT_DIM = 512
+# FLOW-02: M1 8GB safe — truncate text before MLX tokenization to prevent OOM
+MAX_TEXT_LENGTH = 8192
 
 class UnifiedEmbeddingManager:
     """
@@ -108,7 +111,9 @@ class UnifiedEmbeddingManager:
         cached_results: list[tuple[int, list[float]]] = []
         uncached: list[tuple[int, str]] = []
         for i, text in enumerate(texts):
-            key = hashlib.sha256(text.encode()).hexdigest()[:32]
+            # FLOW-02: M1 8GB OOM protection — truncate before embed
+            truncated = text[:MAX_TEXT_LENGTH] if len(text) > MAX_TEXT_LENGTH else text
+            key = hashlib.sha256(truncated.encode()).hexdigest()[:32]
             cached = cache.get(key)
             if cached is not None:
                 cached_results.append((i, cached))

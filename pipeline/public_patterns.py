@@ -56,8 +56,40 @@ _NO_HIT_START = object()
 
 
 # ----------------------------------------------------------------------
-# HTML extraction
+# HTML extraction — OSINT-03: MAX_HTML_INPUT_SIZE bounds DOM node allocation
+# OSINT-04: _HTML_CONTENT_TYPES gate validates content-type before parsing
 # ----------------------------------------------------------------------
+
+### OSINT-03: Maximum HTML input size (5 MB).
+### Prevents OOM on M1 8GB by bounding parser allocation.
+### Enforced at every HTML→text entry point before passing to the parser.
+MAX_HTML_INPUT_SIZE: int = 5 * 1024 * 1024
+
+### OSINT-04: Allowed content-type values for HTML parsing.
+### text/html → HTML parser (lol_html / stdlib HTMLParser)
+### text/plain → passthrough (no parsing needed)
+### application/xhtml+xml → treated as HTML (XHTML is valid HTML)
+### Anything else → rejected (prevents JSON/XML being parsed as HTML)
+_HTML_CONTENT_TYPES: frozenset[str] = frozenset({
+    'text/html',
+    'application/xhtml+xml',
+    'text/plain',  # passthrough — no parsing needed
+})
+
+### Normalized content-type → True if HTML/text parser should run.
+### Fail-safe: returns False for unknown/missing content-type.
+def _is_html_content_type(content_type: str) -> bool:
+    if not content_type:
+        # No content-type header — assume text/plain (safe, no HTML parsing)
+        return False
+    ct = content_type.strip().lower()
+    # Strip parameters (e.g. "text/html; charset=utf-8" → "text/html")
+    if ';' in ct:
+        ct = ct.split(';')[0].strip()
+    return ct in _HTML_CONTENT_TYPES
+
+
+class _HTMLTextExtractor(html.parser.HTMLParser):
 
 
 class _HTMLTextExtractor(html.parser.HTMLParser):

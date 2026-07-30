@@ -71,14 +71,13 @@ def _rss_gib() -> float:
     rss: float = 0.0
 
     # Priority 0: Rust extension via sysinfo (no subprocess, cross-platform).
-    # F265C: Use centralized rust backend
+    # F265C: Use centralized core.memory (A5-04: canonical path)
     try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
+        from core.memory import get_process_rss_gib
 
-        if _rust_backend.is_available and _rust_backend.memory is not None:
-            val = _rust_backend.memory.get_process_rss_gib()
-            if val > 0.0:
-                rss = val
+        val = get_process_rss_gib()
+        if val > 0.0:
+            rss = val
     except Exception:  # noqa: BLE001
         pass
 

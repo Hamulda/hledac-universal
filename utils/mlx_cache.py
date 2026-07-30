@@ -477,6 +477,27 @@ def reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
         return False
 
 
+async def async_reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
+    """
+    U2-07 FIX: Async wrapper for reconfigure_metal_cache_limit.
+
+    Offloads the synchronous Metal cache reconfiguration to a thread pool
+    to avoid blocking the event loop. Call this from async contexts instead
+    of the sync version when adjusting cache limits during runtime.
+
+    Args:
+        uma_state: Current UMA state string ("ok"|"soft_warn"|"warn"|"critical"|"emergency").
+                   When None, uses normal 512 MiB floor.
+
+    Returns:
+        True if reconfiguration succeeded, False otherwise.
+    """
+    try:
+        return await asyncio.to_thread(reconfigure_metal_cache_limit, uma_state)
+    except Exception:
+        return False
+
+
 def init_mlx_buffers() -> bool:
     """
     Initialize MLX buffer limits for M1 8GB.

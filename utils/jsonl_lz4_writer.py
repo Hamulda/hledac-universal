@@ -1,7 +1,9 @@
 import asyncio
+import logging
 import os
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 import threading
+logger = logging.getLogger(__name__)
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -55,6 +57,8 @@ _JSONL_LZ4_QUEUE_MAX = int(os.environ.get('HLEDAC_JSONL_LZ4_QUEUE', '1000'))
 _JSONL_LZ4_FLUSH_BYTES = int(os.environ.get('HLEDAC_JSONL_LZ4_FLUSH', str(32 * 1024)))
 _JSONL_LZ4_COMPRESS_THRESHOLD = int(os.environ.get('HLEDAC_JSONL_LZ4_MIN_COMPRESS', '512'))
 
+_JSONL_LZ4_WRITE_TIMEOUT_S = float(os.environ.get('HLEDAC_JSONL_LZ4_WRITE_TIMEOUT', '5.0'))
+
 class LZ4JSONLWriter:
     """
     Async batch JSONL writer with Rust lz4_flex or Python lz4_flex compression.
@@ -78,15 +82,16 @@ class LZ4JSONLWriter:
         - .jsonl      — uncompressed fallback (on compress error or HLEDAC_JSONL_LZ4=0)
 
     Invariants:
-        [I1] Queue bounded to 1000 lines — write_line() blocks if full
+        [I1] Queue bounded to 1000 lines — write_line() blocks with 5s timeout if full; returns bool
         [I2] Flush: batch full, byte threshold, explicit close()
         [I3] Fail-soft: any write/compress error -> .jsonl fallback, never raises
         [I4] Idempotent close()
         [I5] Bounded memory: max 1000 lines * ~1 KB ~= 1 MB queue
+        [I6] S1-09: write_line() returns False on timeout (caller decides backpressure response); write_stream() returns count of queued lines
     """
-    __slots__ = tuple(('_active_file', '_batch_size', '_closed', '_compress', '_file_jsonl', '_file_zst', '_flush_bytes', '_lock', '_lz4_available', '_lz4_fn', '_path', '_path_jsonl', '_path_zst', '_pending_bytes', '_pending_lines', '_queue', '_writer_task'))
+    __slots__ = tuple(('_active_file', '_batch_size', '_closed', '_compress', '_file_jsonl', '_file_zst', '_flush_bytes', '_lock', '_lz4_available', '_lz4_fn', '_path', '_path_jsonl', '_path_zst', '_pending_bytes', '_pending_lines', '_queue', '_writer_task', '_write_timeout'))
 
-    def __init__(self, path: Path, *, compress: bool=_JSONL_LZ4_ENABLED, batch_size: int=_JSONL_LZ4_BATCH_SIZE, queue_max: int=_JSONL_LZ4_QUEUE_MAX, flush_bytes: int=_JSONL_LZ4_FLUSH_BYTES) -> None:
+    def __init__(self, path: Path, *, compress: bool=_JSONL_LZ4_ENABLED, batch_size: int=_JSONL_LZ4_BATCH_SIZE, queue_max: int=_JSONL_LZ4_QUEUE_MAX, flush_bytes: int=_JSONL_LZ4_FLUSH_BYTES, write_timeout: float=_JSONL_LZ4_WRITE_TIMEOUT_S) -> None:
         self._path = Path(path)
         self._compress = compress and _JSONL_LZ4_ENABLED
         self._batch_size = batch_size
@@ -104,30 +109,55 @@ class LZ4JSONLWriter:
         self._path_zst = Path(str(self._path) + '.zst')
         self._path_jsonl = self._path
         self._lock = threading.Lock()
+        self._write_timeout = write_timeout
 
-    async def write_line(self, obj: dict[str, Any]) -> None:
-        """Encode one object as JSON line and queue it. Blocks on full queue."""
+    async def write_line(self, obj: dict[str, Any]) -> bool:
+        """Encode one object as JSON line and queue it. Blocks on full queue with timeout.
+
+        Returns:
+            True if line was queued, False if queue was full (caller can retry/buffer).
+        """
         if self._closed:
-            return
+            return False
         try:
             line_bytes = _json.encode(obj)
         except Exception:
             import orjson
             line_bytes = orjson.dumps(obj)
         self._ensure_writer_started()
-        await self._queue.put(line_bytes)
+        try:
+            await asyncio.wait_for(self._queue.put(line_bytes), timeout=self._write_timeout)
+            return True
+        except asyncio.TimeoutError:
+            # S1-09 FIX: return False instead of silently dropping. Caller decides
+            # whether to retry, buffer locally, or propagate backpressure upstream.
+            logger.warning('[LZ4] write_line timed out after %.1fs, queue full', self._write_timeout)
+            return False
 
-    async def write_stream(self, source: AsyncGenerator[dict[str, Any], None]) -> None:
-        """Stream objects from an async generator into the writer."""
+    async def write_stream(self, source: AsyncGenerator[dict[str, Any], None]) -> int:
+        """Stream objects from an async generator into the writer.
+
+        Returns:
+            Number of lines successfully queued.
+        """
         if self._closed:
-            return
+            return 0
         self._ensure_writer_started()
+        written = 0
         try:
             async for obj in source:
-                await self._queue.put(_json.encode(obj))
+                try:
+                    await asyncio.wait_for(self._queue.put(_json.encode(obj)), timeout=self._write_timeout)
+                    written += 1
+                except asyncio.TimeoutError:
+                    # S1-09 FIX: count skipped lines instead of silently continuing.
+                    # Caller can inspect return value to detect backpressure.
+                    logger.warning('[LZ4] write_stream timed out after %.1fs, skipping line', self._write_timeout)
+                    continue
         except asyncio.CancelledError:
             await self.close()
             raise
+        return written
 
     async def close(self) -> None:
         """Flush remaining lines and close file handles. Idempotent."""

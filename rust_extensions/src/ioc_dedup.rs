@@ -68,6 +68,54 @@ impl IocType {
             _ => IocType::Unknown,
         }
     }
+
+    /// Returns the serialization index (matches persist/deserialize binary format):
+    /// 0=Ip, 1=Ipv6, 2=Domain, 3=Url, 4=Md5, 5=Sha1, 6=Sha256, 7=Email, 8=Cve, 9=Unknown.
+    #[inline]
+    fn serialization_index(&self) -> usize {
+        match self {
+            IocType::Ip => 0,
+            IocType::Ipv6 => 1,
+            IocType::Domain => 2,
+            IocType::Url => 3,
+            IocType::Md5 => 4,
+            IocType::Sha1 => 5,
+            IocType::Sha256 => 6,
+            IocType::Email => 7,
+            IocType::Cve => 8,
+            IocType::Unknown => 9,
+        }
+    }
+}
+
+/// R4-05 FIX: Pre-computed xxh3_64 type-prefix hashes.
+/// Index matches IocType::serialization_index():
+///   [0]=ip:, [1]=ipv6:, [2]=domain:, [3]=url:,
+///   [4]=md5:, [5]=sha1:, [6]=sha256:, [7]=email:, [8]=cve:, [9]=<empty>
+///
+/// Hot-path benefit: eliminates 2 string allocations per IOC:
+///   - No `ioc_type_str.to_lowercase()` (String alloc)
+///   - No `format!("{}:{}", ...)` (String alloc)
+/// Key = TYPE_PREFIX_HASH[type_idx] ⊕ xxh3_64(normalized.as_bytes())
+/// (⊕ = wrapping_add — xxh3_64 is fast and uniform enough for non-crypto use)
+const TYPE_PREFIX_HASH: [u64; 10] = [
+    xxh3_64(b"ip:"),       // 0: Ip
+    xxh3_64(b"ipv6:"),     // 1: Ipv6
+    xxh3_64(b"domain:"),    // 2: Domain
+    xxh3_64(b"url:"),       // 3: Url
+    xxh3_64(b"md5:"),       // 4: Md5
+    xxh3_64(b"sha1:"),      // 5: Sha1
+    xxh3_64(b"sha256:"),    // 6: Sha256
+    xxh3_64(b"email:"),     // 7: Email
+    xxh3_64(b"cve:"),       // 8: Cve
+    0,                      // 9: Unknown — no prefix, key = just value hash
+];
+
+/// R4-05: Build a composite key from type index + normalized value (no string allocs).
+#[inline]
+fn make_ioc_key(ioc_type: &IocType, normalized: &str) -> u64 {
+    let idx = ioc_type.serialization_index();
+    TYPE_PREFIX_HASH[idx].wrapping_add(xxh3_64(normalized.as_bytes()))
 }
 
 fn normalize_ioc(value: &str, ioc_type: &IocType) -> String {
@@ -372,8 +420,8 @@ impl MmapIocDedupStore {
         if value.is_empty() { return false; }
         let ioc_type = IocType::from_str(ioc_type_str);
         let normalized = normalize_ioc(value, &ioc_type);
-        let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
-        let key = xxh3_64(key_str.as_bytes());
+        // R4-05 FIX: no string alloc — make_ioc_key uses pre-computed type hashes
+        let key = make_ioc_key(&ioc_type, &normalized);
 
         // Issue #1 fix: parking_lot::RwLock + AHashMap (replaces DashMap entry API)
         let mut entries = self.entries.write();
@@ -398,22 +446,25 @@ impl MmapIocDedupStore {
 
     /// Batch add — rayon parallel xxhash3-64, sequential write under lock.
     /// Returns True per new item, False per duplicate.
-    pub fn add_batch(&mut self, items: Vec<(String, String, f32)>) -> Vec<bool> {
+    /// R4-01: Phase1 (par_iter) runs on Rayon worker threads — GIL released via release_gil().
+    pub fn add_batch(&mut self, items: Vec<(String, String, f32)>, py: Python<'_>) -> Vec<bool> {
         use rayon::prelude::*;
         if items.is_empty() {
             return vec![];
         }
-        // Phase 1: parallel xxhash3-64 normalization + hashing.
-        let prepped: Vec<(usize, u64, String, IocType, f32)> = items
-            .par_iter()
-            .map(|(value, ioc_type_str, confidence)| {
-                let ioc_type = IocType::from_str(ioc_type_str);
-                let normalized = normalize_ioc(value, &ioc_type);
-                let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
-                let key = xxh3_64(key_str.as_bytes());
-                (value.len(), key, normalized, ioc_type, *confidence)
-            })
-            .collect();
+        // Phase 1: parallel xxhash3-64 normalization + hashing — GIL released for Rayon workers.
+        // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
+        let prepped: Vec<(usize, u64, String, IocType, f32)> = crate::gil::release_gil(py, || {
+            items
+                .par_iter()
+                .map(|(value, ioc_type_str, confidence)| {
+                    let ioc_type = IocType::from_str(ioc_type_str);
+                    let normalized = normalize_ioc(value, &ioc_type);
+                    let key = make_ioc_key(&ioc_type, &normalized);
+                    (value.len(), key, normalized, ioc_type, *confidence)
+                })
+                .collect()
+        });
 
         // Phase 2: sequential insert under write lock.
         let mut results = Vec::with_capacity(prepped.len());
@@ -447,42 +498,45 @@ impl MmapIocDedupStore {
     }
 
     /// Alias for add_batch — parallel bulk insert.
-    pub fn batch_insert(&mut self, items: Vec<(String, String, f32)>) -> Vec<bool> {
-        self.add_batch(items)
+    pub fn batch_insert(&mut self, items: Vec<(String, String, f32)>, py: Python<'_>) -> Vec<bool> {
+        self.add_batch(items, py)
     }
 
     pub fn contains(&self, value: &str, ioc_type_str: &str) -> bool {
         if value.is_empty() { return false; }
         let ioc_type = IocType::from_str(ioc_type_str);
         let normalized = normalize_ioc(value, &ioc_type);
-        let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
-        let key = xxh3_64(key_str.as_bytes());
+        // R4-05 FIX: no string alloc
+        let key = make_ioc_key(&ioc_type, &normalized);
         self.entries.read().contains_key(&key)
     }
 
     /// Batch IOC dedup check — returns list of bools (True = duplicate).
     /// CONC-SEQ-006: 2-phase parallel — Phase1: rayon parallel xxhash3-64,
     /// Phase2: sequential RwLock read. ~3-5× faster than sequential for large batches.
-    pub fn contains_batch(&self, items: Vec<(String, String)>) -> Vec<bool> {
+    /// R4-01: Phase1 (par_iter) runs on Rayon worker threads — GIL released via release_gil().
+    pub fn contains_batch(&self, items: Vec<(String, String)>, py: Python<'_>) -> Vec<bool> {
         use rayon::prelude::*;
         if items.is_empty() {
             return vec![];
         }
 
-        // Phase 1: Parallel xxhash3-64 normalization + hashing (no lock needed).
-        let prepped: Vec<(u64, bool)> = items
-            .par_iter()
-            .map(|(value, ioc_type_str)| {
-                if value.is_empty() {
-                    return (0, true); // empty = not a duplicate (push false later via flag)
-                }
-                let ioc_type = IocType::from_str(ioc_type_str);
-                let normalized = normalize_ioc(value, &ioc_type);
-                let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
-                let key = xxh3_64(key_str.as_bytes());
-                (key, false) // false = not empty sentinel
-            })
-            .collect();
+        // Phase 1: Parallel xxhash3-64 normalization + hashing (no lock needed) — GIL released for Rayon workers.
+        // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
+        let prepped: Vec<(u64, bool)> = crate::gil::release_gil(py, || {
+            items
+                .par_iter()
+                .map(|(value, ioc_type_str)| {
+                    if value.is_empty() {
+                        return (0, true); // empty = not a duplicate (push false later via flag)
+                    }
+                    let ioc_type = IocType::from_str(ioc_type_str);
+                    let normalized = normalize_ioc(value, &ioc_type);
+                    let key = make_ioc_key(&ioc_type, &normalized);
+                    (key, false) // false = not empty sentinel
+                })
+                .collect()
+        });
 
         // Phase 2: Sequential RwLock read for contains_key lookup.
         let entries = self.entries.read();
@@ -583,8 +637,8 @@ impl IocDedupStore {
         if value.is_empty() { return false; }
         let ioc_type = IocType::from_str(ioc_type_str);
         let normalized = normalize_ioc(value, &ioc_type);
-        let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
-        let key = xxh3_64(key_str.as_bytes());
+        // R4-05 FIX: no string alloc
+        let key = make_ioc_key(&ioc_type, &normalized);
         if let Some(entry) = self.entries.get_mut(&key) {
             entry.last_seen_sprint = self.current_sprint;
             entry.occurrence_count += 1;
@@ -597,22 +651,25 @@ impl IocDedupStore {
         }
     }
 
-    pub fn add_batch(&mut self, items: Vec<(String, String, f32)>) -> Vec<bool> {
+    /// R4-01: Phase1 (par_iter) runs on Rayon worker threads — GIL released via release_gil().
+    pub fn add_batch(&mut self, items: Vec<(String, String, f32)>, py: Python<'_>) -> Vec<bool> {
         use rayon::prelude::*;
         if items.is_empty() {
             return vec![];
         }
-        // Phase 1: parallel xxhash3-64 normalization + hashing.
-        let prepped: Vec<(u64, IocType, String, f32)> = items
-            .par_iter()
-            .map(|(value, ioc_type_str, confidence)| {
-                let ioc_type = IocType::from_str(ioc_type_str);
-                let normalized = normalize_ioc(value, &ioc_type);
-                let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
-                let key = xxh3_64(key_str.as_bytes());
-                (key, ioc_type, normalized, *confidence)
-            })
-            .collect();
+        // Phase 1: parallel xxhash3-64 normalization + hashing — GIL released for Rayon workers.
+        // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
+        let prepped: Vec<(u64, IocType, String, f32)> = crate::gil::release_gil(py, || {
+            items
+                .par_iter()
+                .map(|(value, ioc_type_str, confidence)| {
+                    let ioc_type = IocType::from_str(ioc_type_str);
+                    let normalized = normalize_ioc(value, &ioc_type);
+                    let key = make_ioc_key(&ioc_type, &normalized);
+                    (key, ioc_type, normalized, *confidence)
+                })
+                .collect()
+        });
         // Phase 2: sequential insert.
         let mut results = Vec::with_capacity(prepped.len());
         for (key, ioc_type, normalized, confidence) in prepped {
@@ -632,42 +689,45 @@ impl IocDedupStore {
     }
 
     /// Alias for add_batch — parallel bulk insert.
-    pub fn batch_insert(&mut self, items: Vec<(String, String, f32)>) -> Vec<bool> {
-        self.add_batch(items)
+    pub fn batch_insert(&mut self, items: Vec<(String, String, f32)>, py: Python<'_>) -> Vec<bool> {
+        self.add_batch(items, py)
     }
 
     pub fn contains(&self, value: &str, ioc_type_str: &str) -> bool {
         if value.is_empty() { return false; }
         let ioc_type = IocType::from_str(ioc_type_str);
         let normalized = normalize_ioc(value, &ioc_type);
-        let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
-        let key = xxh3_64(key_str.as_bytes());
+        // R4-05 FIX: no string alloc
+        let key = make_ioc_key(&ioc_type, &normalized);
         self.entries.contains_key(&key)
     }
 
     /// Batch IOC dedup check — returns list of bools (True = duplicate).
     /// CONC-SEQ-006: 2-phase parallel — Phase1: rayon parallel xxhash3-64,
     /// Phase2: sequential HashMap lookup. AHashMap is Sync.
-    pub fn contains_batch(&self, items: Vec<(String, String)>) -> Vec<bool> {
+    /// R4-01: Phase1 (par_iter) runs on Rayon worker threads — GIL released via release_gil().
+    pub fn contains_batch(&self, items: Vec<(String, String)>, py: Python<'_>) -> Vec<bool> {
         use rayon::prelude::*;
         if items.is_empty() {
             return vec![];
         }
 
-        // Phase 1: Parallel xxhash3-64 normalization + hashing (no lock needed).
-        let prepped: Vec<(u64, bool)> = items
-            .par_iter()
-            .map(|(value, ioc_type_str)| {
-                if value.is_empty() {
-                    return (0, true); // true = empty sentinel
-                }
-                let ioc_type = IocType::from_str(ioc_type_str);
-                let normalized = normalize_ioc(value, &ioc_type);
-                let key_str = format!("{}:{}", ioc_type_str.to_lowercase(), normalized);
-                let key = xxh3_64(key_str.as_bytes());
-                (key, false)
-            })
-            .collect();
+        // Phase 1: Parallel xxhash3-64 normalization + hashing (no lock needed) — GIL released for Rayon workers.
+        // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
+        let prepped: Vec<(u64, bool)> = crate::gil::release_gil(py, || {
+            items
+                .par_iter()
+                .map(|(value, ioc_type_str)| {
+                    if value.is_empty() {
+                        return (0, true); // true = empty sentinel
+                    }
+                    let ioc_type = IocType::from_str(ioc_type_str);
+                    let normalized = normalize_ioc(value, &ioc_type);
+                    let key = make_ioc_key(&ioc_type, &normalized);
+                    (key, false)
+                })
+                .collect()
+        });
 
         // Phase 2: Sequential HashMap contains_key lookup (AHashMap is Sync).
         prepped

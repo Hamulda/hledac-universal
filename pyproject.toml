@@ -64,6 +64,7 @@ dependencies = [
     "hishel>=0.0.31,<2.0.0",
     "aiosqlite>=0.20.0",  # hishel AsyncSqliteStorage backend (RFC 9111 cache store)
     # ── Serialization ─────────────────────────────────────────────────────────
+    "regex>=2024.0.0",  # OSINT-01: linear-time regex (vs `re` catastrophic backtracking)
     "orjson>=3.11.0,<4.0.0",   # 3.11+ obsahuje critical perf a memory optimalizace
     # msgspec: gc=True je default az do 0.21.x (confirmed stubs). Hot-path Structs mají
     # explicit gc=False (333 upraveno v F350M-R upgrade). msgspec 0.22+ není na PyPI.
@@ -126,18 +127,22 @@ dependencies = [
     "datasketch>=1.10.0",
     "python-dotenv>=1.0.0",
     "rank-bm25>=0.2.2",
-    # UPGRADE 2026-07-05: Extended upper bound to <0.20.0 for rustworkx 0.18+ support.
-    "rustworkx>=0.17.1,<0.20.0",
+    # D7-05: rustworkx 0.18.0 is latest available on PyPI (no 0.19.x published yet).
+    # API surface verified: PyGraph, add_node/add_edge/neighbors/edge_indices/
+    # num_edges/get_edge_data/endpoints — all used by graph_manager.py.
+    # Upper bound <0.19.0 = no-op until 0.19.x is released; will be updated
+    # proactively when 0.19.x lands (watch: https://pypi.org/project/rustworkx/).
+    "rustworkx>=0.18.0,<0.19.0",
     # python-igraph REMOVED P2-5d: rustworkx is primary graph library (2026-07-17)
     # rustworkx PyGraph replaced igraph.Graph for M1-optimized in-memory graphs
     "rapidfuzz>=3.0.0",
     # ── Parsing / web scraping ────────────────────────────────────────────────
     # selectolax PRIMARY: fast, pure Python, CSS selectors (M1 8GB friendly).
     # lxml FALLBACK: only for complex XPath queries (selectolax cannot do //a/@href).
+    # D7-02 FIX: lxml moved to [xpath] extra — install with: uv sync --extra xpath
     # nh3 (F4): Rust HTML sanitizer, 9× faster than BS4, 4 MB RSS, M1-safe.
     "nh3>=0.2.21",
     "selectolax>=0.4.10",
-    "lxml>=6.1.1",
     "markdownify",
     # ── Dokumenty / OCR ───────────────────────────────────────────────────────
     "pymupdf>=1.27.2.3",
@@ -165,6 +170,8 @@ dependencies = [
     "pyzipper>=0.3.6",
     "stem>=1.8.0",
     # ── Hashing / dedup / Bloom ───────────────────────────────────────────────
+    # D7-01: pyprobables is primary (rotating BloomFilter). "probables" package
+    # doesn't exist on PyPI — code tries it second as fallback, always falls through.
     "pyprobables>=0.7.0",
     # xxhash 3.x is stable. 4.x has breaking API changes (module restructure).
     # IMPORTANT: Use xxhash.xxh3_64() (xxHash3-64, SIMD) — compatible with Rust xxh3_64.
@@ -312,6 +319,11 @@ mlx-embed = [
     # NOTE: exact mlx pin matches [project] main mlx pin — no version conflict.
     "mlx>=0.31.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-embedding-models>=0.0.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+# D7-02: lxml FALLBACK for complex XPath (selectolax is primary, cannot do //a/@href).
+# Install with: uv sync --extra xpath
+xpath = [
+    "lxml>=6.1.1",
 ]
 http3 = [
     # Real QUIC lane for stealth/DA+ profiles (M1 8GB: ~50-80 MB resident).
@@ -859,7 +871,7 @@ markers = [
 # M1 4-performance-cores: -n 4 with loadscope distribution
 # --dist=loadscope: tests grouped by class/module, workers keep same module loaded
 # -ra: show summary of all test results
-addopts = "-ra --tb=short -n 2 --dist=loadscope --timeout=30 -m \"not parity\""
+addopts = "-ra --tb=short -n 4 --dist=loadscope --timeout=30 -m \"not parity\""
 asyncio_mode = "auto"
 # Session-scoped event loop for pytest-asyncio (M1 8GB: reuse loop, avoid recreate)
 # CRITICAL FIX F350M-R: must match session_event_loop fixture scope below

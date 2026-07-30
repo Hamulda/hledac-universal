@@ -188,7 +188,8 @@ class EnrichmentServices:
                                 res_for_lmdb = {k: v for k, v in res.items() if k != '_ioc_canonical_findings'}
                                 try:
                                     import orjson
-                                    payload = orjson.dumps(res_for_lmdb)
+                                    from hledac.universal.evidence_log import _normalize_payload
+                                    payload = orjson.dumps(_normalize_payload(res_for_lmdb))
                                 except ImportError:
                                     import msgspec.json as _msgspec_json
                                     payload = _msgspec_json.encode(res_for_lmdb)
@@ -196,6 +197,8 @@ class EnrichmentServices:
                                 if result is not None:
                                     setattr(result, counter_attr, getattr(result, counter_attr, 0) + 1)
                                 # DuckDB canonical ingest (forensics only)
+                                # A5-07: shield against TaskGroup cancellation mid-write —
+                                # DuckDB/Arrow pipeline must complete atomically.
                                 if store is not None:
                                     try:
                                         from forensics.enrichment_service import make_canonical_finding_from_enrichment
@@ -213,17 +216,23 @@ class EnrichmentServices:
                                                 all_to_ingest.extend(ioc_children_trimmed)
                                                 if result is not None and hasattr(result, 'ioc_findings_total'):
                                                     result.ioc_findings_total += len(ioc_children_trimmed)
-                                            await store.async_ingest_findings_batch(all_to_ingest)
+                                            await asyncio.shield(store.async_ingest_findings_batch(all_to_ingest))
                                     except Exception:
                                         pass
                                 # Evidence log attach (forensics only)
+                                # A5-07: shield — evidence ledger append must not be cancelled mid-write.
                                 if self._evidence_log is not None:
                                     res_for_evidence = {k: v for k, v in res.items() if k != '_ioc_canonical_findings'}
-                                    self._evidence_log.attach_forensic_analysis(
-                                        finding_id=str(fid)[:128],
-                                        forensic_result=res_for_evidence,
-                                        source_id=str(fid)[:128],
-                                        confidence=0.95,
+                                    # attach_forensic_analysis is sync but may do I/O;
+                                    # run in thread pool with shield to survive TaskGroup cancellation.
+                                    await asyncio.shield(
+                                        asyncio.to_thread(
+                                            self._evidence_log.attach_forensic_analysis,
+                                            finding_id=str(fid)[:128],
+                                            forensic_result=res_for_evidence,
+                                            source_id=str(fid)[:128],
+                                            confidence=0.95,
+                                        )
                                     )
                     except Exception:
                         pass
@@ -266,7 +275,8 @@ class EnrichmentServices:
                                 res_for_lmdb = {k: v for k, v in res.items() if k != '_ioc_canonical_findings'}
                                 try:
                                     import orjson
-                                    payload = orjson.dumps(res_for_lmdb)
+                                    from hledac.universal.evidence_log import _normalize_payload
+                                    payload = orjson.dumps(_normalize_payload(res_for_lmdb))
                                 except ImportError:
                                     import msgspec.json as _msgspec_json
                                     payload = _msgspec_json.encode(res_for_lmdb)

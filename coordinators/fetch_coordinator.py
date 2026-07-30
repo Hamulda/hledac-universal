@@ -21,6 +21,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+from cachetools import TTLCache
 from typing import Any
 import httpx
 import msgspec
@@ -358,10 +359,13 @@ class FetchCoordinator(UniversalCoordinator):
     - Run fetch pipeline with security checks
     - Create evidence packets
     - Return bounded outputs (IDs, counts, stop signals)
-    """
-    __slots__ = tuple(('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_effective_ua', '_enqueue_pivot_provider', '_evidence_ids', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
 
-    def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None):
+    A5-02: evidence_sink parameter enables Dependency Inversion —
+    FetchCoordinator never imports EvidenceLog directly.
+    """
+    __slots__ = tuple(('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_effective_ua', '_enqueue_pivot_provider', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
+
+    def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None, evidence_sink: Any=None):
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
         self._config = config or FetchCoordinatorConfig()
         self._pivot_queue_provider = pivot_queue_provider
@@ -379,9 +383,13 @@ class FetchCoordinator(UniversalCoordinator):
         self._frontier: deque = deque(maxlen=1000)
         self._processed_urls: DeduplicationStrategy = _create_dedup_strategy()
         self._evidence_ids: deque = deque(maxlen=500)
+        self._evidence_sink = evidence_sink  # A5-02: Dependency Inversion — injected sink, not direct EvidenceLog import
         self._urls_fetched_count: int = 0
         self._stop_reason: str | None = None
-        self._host_ips_cache: dict[str, list[str]] = {}
+        # M1-04: TTLCache(maxsize=2048, ttl=300) — bounded DNS cache, auto-evicts after 5 min
+        self._host_ips_cache: TTLCache[str, list[str]] = TTLCache(maxsize=2048, ttl=300)
+        # C3-02: Single-flight inflight map — prevents duplicate DNS resolutions within same batch
+        self._host_ips_inflight: dict[str, asyncio.Future[list[str] | None]] = {}
         self._cooldown_seconds = 60
         self._base_retry_delay = 1.0
         self._max_retries = 3
@@ -454,7 +462,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._aimd_semaphore: asyncio.Semaphore = asyncio.Semaphore(CONCURRENCY_CLEARNET)
         self._per_host_limit = 4
         self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=self._per_host_limit)
-        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0}
+        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0}
         self._cover_count: int = 0
         self.init_session_manager()
 
@@ -642,6 +650,11 @@ class FetchCoordinator(UniversalCoordinator):
         by ``run_step`` via the batch DNS resolver) and falls through
         to a per-fetch ``async_getaddrinfo`` on miss. Cache is reset
         every batch so freshness is preserved.
+
+        C3-02 FIX: Single-flight pattern — concurrent cache misses for the same
+        host share one Future so only one DNS resolution runs. The ``_per_host_gate``
+        semaphore still enforces per-host rate limiting; single-flight prevents
+        duplicate work on simultaneous misses.
         """
         try:
             hostname = _fast_url_host(url)
@@ -663,12 +676,32 @@ class FetchCoordinator(UniversalCoordinator):
                     if not self._is_ip_public(ip_str):
                         return (False, {'resolved_ips': list(cached_ips), 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
                 return (True, {'resolved_ips': list(cached_ips)})
+
+            # C3-02: Single-flight — if another task is already resolving this host, wait on its Future
+            if cache_key in self._host_ips_inflight:
+                ips = await self._host_ips_inflight[cache_key]
+                if ips is None or not ips:
+                    return (False, {'resolved_ips': [], 'blocked_reason': 'dns_resolution_failed'})
+                for ip_str in ips:
+                    if not self._is_ip_public(ip_str):
+                        return (False, {'resolved_ips': ips, 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
+                return (True, {'resolved_ips': ips})
+
+            # Reserve slot for new resolution
+            fut: asyncio.Future[list[str] | None] = asyncio.get_event_loop().create_future()
+            self._host_ips_inflight[cache_key] = fut
+
             sem, _op_id = await self._per_host_gate.acquire(hostname)
             try:
                 raw_results = await async_getaddrinfo(hostname, 0, proto=socket.IPPROTO_TCP)
             finally:
                 self._per_host_gate.release(sem)
             ips = sorted({str(r[4][0]) for r in raw_results})
+            async with self._dedup_lock:
+                if ips:
+                    self._host_ips_cache[cache_key] = ips
+                fut.set_result(ips if ips else None)
+                self._host_ips_inflight.pop(cache_key, None)
             if not ips:
                 return (False, {'resolved_ips': [], 'blocked_reason': 'dns_resolution_failed'})
             for ip_str in ips:
@@ -710,6 +743,23 @@ class FetchCoordinator(UniversalCoordinator):
                     _bp_clearing, _bp_stealth, _bp_uma_state, _ = _bp_result
             except (TypeError, ValueError, KeyError):  # noqa: BLE001 — best-effort; concurrency_provider result parsing failure; non-critical
                 pass
+        # U2-05 FIX: Direct governor fetch_limit — bypasses concurrency_provider cache.
+        # At 7.2+ GiB (io_only=True) we arrive here even when batch_cp_result is
+        # _CP_NOT_CALLED. The governor.evaluate() call is fast (0.5s TTL on io_only)
+        # and gives the authoritative fetch_limit for this precise moment.
+        _governor_fetch_limit: int | None = None
+        try:
+            from hledac.universal.core.protocols import get_governor
+            _gov = get_governor()
+            if _gov is not None:
+                _gov_decision = _gov.evaluate()
+                _governor_fetch_limit = _gov_decision.fetch_limit
+                if _bp_clearing is None or _governor_fetch_limit < _bp_clearing:
+                    _bp_clearing = float(_governor_fetch_limit)
+                if _gov_decision.io_only:
+                    _bp_uma_state = _gov_decision.uma_state
+        except Exception:  # noqa: BLE001 — best-effort; governor evaluate failure; continue with cached path
+            pass
         self._telemetry['uma_state'] = _bp_uma_state
 
         # Acquire slot (Rust: lock-free; Python fallback: semaphore)
@@ -884,6 +934,9 @@ class FetchCoordinator(UniversalCoordinator):
             await mark_used('tor', domain)
         return session
 
+    # OSINT-02: max_bytes cap for darknet fetches — prevents OOM from unbounded resp.read()
+    _DARKNET_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB hard cap
+
     async def _fetch_with_tor(self, url: str, session: Any | None=None) -> dict[str, Any] | None:
         """Fetch .onion URL using Tor connection pool.
 
@@ -891,6 +944,8 @@ class FetchCoordinator(UniversalCoordinator):
             url: The .onion URL to fetch.
             session: Pre-acquired Tor session (from _get_tor_session). If None, acquires one.
                      Pre-acquiring outside the retry loop saves ~2s per retry on SOCKS handshake.
+
+        OSINT-02 FIX: Uses chunked streaming with hard 10MB cap instead of unbounded resp.read().
         """
         try:
             domain = _fast_url_host(url)
@@ -899,7 +954,21 @@ class FetchCoordinator(UniversalCoordinator):
             if not session:
                 return None
             async with session.get(url) as resp:
-                return {'status': resp.status, 'headers': dict(resp.headers), 'content': await resp.read()}
+                content_chunks: list[bytes] = []
+                received = 0
+                max_bytes = self._DARKNET_MAX_BYTES
+                async for chunk in resp.aiter_bytes():
+                    remaining = max_bytes - received
+                    if remaining <= 0:
+                        break
+                    if len(chunk) > remaining:
+                        content_chunks.append(chunk[:remaining])
+                        received = max_bytes
+                        logger.debug('[TOR] Body truncated at %d bytes for %s', max_bytes, url)
+                        break
+                    content_chunks.append(chunk)
+                    received += len(chunk)
+                return {'status': resp.status, 'headers': dict(resp.headers), 'content': b''.join(content_chunks)}
         except TimeoutError:
             logger.debug('[TOR] Timeout for %s', url)
             await self._aimd_release_failure()
@@ -924,6 +993,8 @@ class FetchCoordinator(UniversalCoordinator):
             url: The .i2p URL to fetch.
             session: Pre-acquired I2P session (from _get_i2p_session). If None, acquires one.
                      Pre-acquiring outside the retry loop saves ~2s per retry on SOCKS handshake.
+
+        OSINT-02 FIX: Uses chunked streaming with hard 10MB cap instead of unbounded resp.read().
         """
         try:
             domain = _fast_url_host(url)
@@ -932,8 +1003,21 @@ class FetchCoordinator(UniversalCoordinator):
             if not session:
                 return None
             async with session.get(url) as resp:
-                content = await resp.read()
-                return {'url': url, 'content': content, 'status': resp.status, 'headers': dict(resp.headers), 'content_type': resp.content_type}
+                content_chunks: list[bytes] = []
+                received = 0
+                max_bytes = self._DARKNET_MAX_BYTES
+                async for chunk in resp.aiter_bytes():
+                    remaining = max_bytes - received
+                    if remaining <= 0:
+                        break
+                    if len(chunk) > remaining:
+                        content_chunks.append(chunk[:remaining])
+                        received = max_bytes
+                        logger.debug('[I2P] Body truncated at %d bytes for %s', max_bytes, url)
+                        break
+                    content_chunks.append(chunk)
+                    received += len(chunk)
+                return {'url': url, 'content': b''.join(content_chunks), 'status': resp.status, 'headers': dict(resp.headers), 'content_type': resp.content_type}
         except TimeoutError:
             logger.debug('[I2P] Timeout for %s', url)
             await self._aimd_release_failure()
@@ -1285,6 +1369,7 @@ class FetchCoordinator(UniversalCoordinator):
                 trace_dedup_decision(url, url not in unique)
             return (unique, dropped)
         self._host_ips_cache = {}
+        self._host_ips_inflight = {}
         self._batch_cp_result = _CP_NOT_CALLED
         if self._concurrency_provider is not None:
             try:
@@ -1460,6 +1545,12 @@ class FetchCoordinator(UniversalCoordinator):
                 if evidence_id:
                     evidence_ids.append(evidence_id)
                     self._evidence_ids.append(evidence_id)
+                    # A5-02: Write to injected evidence_sink if available (Dependency Inversion)
+                    if self._evidence_sink is not None:
+                        try:
+                            await self._evidence_sink.append_evidence(evidence_id)
+                        except Exception:
+                            pass  # fail-safe: sink error doesn't break fetch pipeline
                 if budget_mgr:
                     allowed, reason = budget_mgr.check_snapshot_allowed()
                     if not allowed:
@@ -1543,18 +1634,31 @@ class FetchCoordinator(UniversalCoordinator):
             _privacy_lane = 'clearnet'
             _privacy_acquired = True
         _aimd_sem: asyncio.Semaphore | None = None
-        if _privacy_acquired:
-            try:
-                from hledac.universal.core.protocols import get_governor
-                gov = get_governor()
-                if gov is not None:
-                    from ..core.resource_governor import Priority
-                    if not gov.can_afford_sync({'ram_mb': 15}, Priority.CRITICAL):
+        # U2-05 FIX: Check io_only BEFORE acquiring AIMD slot, REGARDLESS of privacy lane.
+        # GovernorDecision.io_only means CPU-intensive work must be skipped,
+        # only passive I/O (disk, network passive) should continue.
+        # io_only is cached with 0.5s TTL so this is fast (no blocking eval).
+        try:
+            from hledac.universal.core.protocols import get_governor
+            gov = get_governor()
+            if gov is not None:
+                try:
+                    decision = gov.evaluate()
+                    if decision.io_only:
                         async with self._dedup_lock:
                             self._processed_urls.discard(url)
+                        self._telemetry['io_only_skipped'] += 1
                         return None
-            except (TypeError, ValueError, KeyError):  # noqa: BLE001 — best-effort; resource_governor availability check; non-critical
-                pass
+                except Exception:  # noqa: BLE001 — best-effort; governor evaluate failure; continue
+                    pass
+                from ..core.resource_governor import Priority
+                if not gov.can_afford_sync({'ram_mb': 15}, Priority.CRITICAL):
+                    async with self._dedup_lock:
+                        self._processed_urls.discard(url)
+                    return None
+        except (TypeError, ValueError, KeyError):  # noqa: BLE001 — best-effort; resource_governor availability check; non-critical
+            pass
+        if _privacy_acquired:
             _concurrency, _aimd_sem = await self._aimd_acquire()
 
         # F350M-R: Check if quinn HTTP/3 fallback is viable (H3-capable host)
@@ -1599,17 +1703,38 @@ class FetchCoordinator(UniversalCoordinator):
         base_delay = getattr(self, '_base_retry_delay', 1.0)
         trace_fetch_start(url, 'pending', {'attempt': attempt, 'aimd_window': self._aimd_concurrency})
         result = None
-        # ISSUE-8.1: DNS Rebinding Protection — bind to pre-validated IPs.
+        # ISSUE-8.1 / SEC-02: DNS Rebinding Protection — mandatory IP binding.
         # Computed ONCE before retry loop; dns_meta and resolved_ips are immutable during retries.
+        # SEC-02 FIX: If _resolved_ips is empty (cache miss), perform synchronous DNS
+        # resolution inline so curl_cffi never does its own DNS resolution (TOCTOU close).
         _resolve: dict[str, str] | None = None
         _resolved_ips = dns_meta.get('resolved_ips', [])
-        if _resolved_ips and not url.endswith(('.onion', '.i2p')):
+        _is_darknet_url = url.endswith(('.onion', '.i2p'))
+        if _resolved_ips and not _is_darknet_url:
+            # Warm path: use pre-validated IPs from batch DNS cache.
             try:
                 _hostname = _parsed.host
                 if _hostname:
                     _resolve = {_hostname: _resolved_ips[0]}
             except (ValueError, TypeError):  # noqa: BLE001 — best-effort; URL parse failure; skip resolve binding
                 pass
+        elif not _is_darknet_url and not _resolved_ips:
+            # SEC-02: Cold path — mandatory DNS binding to close TOCTOU window.
+            # Retry resolution inline so curl_cffi never resolves independently.
+            _retry_host = _host_name or (_parsed.host if _parsed else None)
+            if _retry_host:
+                try:
+                    _retry_results = await async_getaddrinfo(_retry_host, 0, proto=socket.IPPROTO_TCP)
+                    if _retry_results:
+                        _retry_ips = sorted({str(r[4][0]) for r in _retry_results})
+                        for _ip_str in _retry_ips:
+                            if not self._is_ip_public(_ip_str):
+                                logger.warning('[SEC-02] DNS rebinding defense: private IP %s for %s', _ip_str, _retry_host)
+                                break
+                        else:
+                            _resolve = {_retry_host: _retry_ips[0]}
+                except (OSError, asyncio.TimeoutError):  # noqa: BLE001 — best-effort; inline DNS retry failed; fetch will use curl_cffi native resolve
+                    pass
         try:
             while attempt <= max_retries:
                 if not canonical_allowed:
@@ -1708,11 +1833,23 @@ class FetchCoordinator(UniversalCoordinator):
 
                     Uses plain httpx — no curl_cffi needed for a lightweight HEAD probe.
                     High confidence signal: 200 + Content-Length > 50 KB → JS-heavy SPA candidate.
+
+                    SEC-04 FIX: Skip darknet URLs — plain httpx has no Tor/I2P proxy,
+                    a HEAD probe would leak the URL to clearnet DNS/IP.
                     """
+                    # SEC-04: Guard — skip darknet URLs to prevent clearnet DNS/IP leak
+                    _url_lower = url.lower()
+                    if _url_lower.endswith(('.onion', '.i2p', '.b32.i2p')):
+                        return None
                     try:
                         import httpx
                         _ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-                        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+                        async with httpx.AsyncClient(
+                            timeout=5.0,
+                            follow_redirects=True,
+                            limits=httpx.Limits(max_connections=25, max_keepalive_connections=10),
+                            http2=True,
+                        ) as client:
                             resp = await client.head(
                                 url,  # B3-FIX: was _js_probe_url (undefined)
                                 headers={'Accept': 'text/html', 'User-Agent': _ua},

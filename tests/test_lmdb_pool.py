@@ -194,4 +194,4 @@ class TestLmdbPoolShutdown:
         assert not pool._initialized
         assert pool._executor is None
         assert pool._semaphore is None
-        assert pool._lock is None
+        # _lock removed in S1-14 fix — LMDB readers are concurrent, no Python-side lock

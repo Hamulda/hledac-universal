@@ -379,14 +379,18 @@ class CircuitBreaker:
                     check_circuit_breaker_alert,
                 )
 
-                asyncio.get_running_loop().create_task(
+                # A5-06 FIX: safe_create_task ensures unhandled exceptions are logged.
+                # Using otel_trace=False since this is fire-and-forget alert.
+                from hledac.universal.utils.async_helpers import safe_create_task
+                safe_create_task(
                     check_circuit_breaker_alert(
                         domain=_domain,
                         is_open=True,
                         recovery_timeout=_timeout,
-                    )
+                    ),
+                    otel_trace=False,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — A5-06: fail-soft, alert is best-effort
                 pass
 
     def record_success(self):

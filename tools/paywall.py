@@ -22,7 +22,10 @@ class PaywallBypass:
         """S49-D: Get or create reusable session."""
         async with self._lock:
             if self._session is None or self._session.is_closed:
-                self._session = httpx.AsyncClient()
+                self._session = httpx.AsyncClient(
+                    limits=httpx.Limits(max_connections=25, max_keepalive_connections=10),
+                    http2=True,
+                )
             return self._session
 
     def detect(self, html: str) -> str | None:

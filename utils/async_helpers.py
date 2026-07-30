@@ -434,7 +434,47 @@ def safe_create_task(
     the safe path. OTel context capture is also fail-safe — any error is
     swallowed and the task runs without trace context.
     """
-    return _safe_task_factory(coro, name=name, eager_start=eager_start, otel_trace=otel_trace)
+    task = _safe_task_factory(coro, name=name, eager_start=eager_start, otel_trace=otel_trace)
+    # A5-01: Mandatory done-callback — logs unhandled exceptions for ALL tasks,
+    # including fire-and-forget (otel_trace=False). Prevents silent swallowing
+    # of background task exceptions. Uses identity check on task.result() to
+    # re-raise and inspect the exception without suppressing it.
+    task.add_done_callback(_log_task_exception)
+    return task
+
+
+def _log_task_exception(task: asyncio.Task[Any]) -> None:
+    """Done-callback: log unhandled exception from a background task.
+
+    A5-01 FIX: Wrapped _log_failure in try/except to prevent callback
+    crashes from crashing the event loop. Previously, if _log_failure
+    raised (e.g., logging subsystem failure), the exception propagated
+    uncaught and could destabilize the event loop.
+
+    Ensures fire-and-forget tasks (otel_trace=False) that raise
+    exceptions still produce a visible log entry instead of silently swallowing
+    the error. Uses task.result() identity check to trigger exception
+    inspection without suppressing it from callers.
+
+    CancelledError is silenced — it is expected for tasks cancelled during
+    shutdown and should not be logged as a failure.
+    """
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except BaseException as e:
+        try:
+            _log_failure("background_task", e, is_escalated=True)
+        except Exception:
+            # A5-01 FIX: Defensive wrap — if _log_failure itself raises,
+            # catch it here to prevent event loop destabilization.
+            # The error is still visible via stderr as a last resort.
+            import sys
+            try:
+                sys.stderr.write(f"Unhandled task exception in background_task: {e!r}\n")
+            except Exception:
+                pass
 
 
 _T = TypeVar("_T", default=Any)
@@ -532,7 +572,13 @@ def _check_gathered(
             cancel_errors.append(item)
         elif isinstance(item, _Ex):  # regular Exception
             other_errors.append(item)
-        elif isinstance(item, _BaseE):  # BaseException but not Exception
+        elif isinstance(item, _BaseE):  # BaseException but not Exception (KeyboardInterrupt, SystemExit)
+            # A5-02 FIX: Bare BaseException (KeyboardInterrupt, SystemExit) must be re-raised
+            # bare, not aggregated — they are critical signals that must NOT be suppressed
+            # by except Exception handlers anywhere in the call chain.
+            # PEP 654 §"bare raise" idiom: single non-Exception BaseException → bare raise.
+            # The len(results)==1 check is redundant — cancel_errors aggregation at lines 587-593
+            # already handles single BaseException correctly (bare raise at line 590 or 593).
             cancel_errors.append(item)
         else:
             ok_results.append(item)
@@ -879,6 +925,49 @@ def _build_by_name(results: list[Any], names: Sequence[str] | None) -> dict[str,
     return {name: results[i] for i, name in enumerate(names) if i < len(results)}
 
 
+def _apply_policy(
+    ok_results: list[Any],
+    errors: list[BaseException],
+    policy: ExceptionPolicy,
+    ctx: str,
+    logger_instance: logging.Logger,
+    results: list[Any],
+    names: Sequence[str] | None = None,
+) -> ParallelResult:
+    """Apply exception policy and return ParallelResult, or raise for raise/first policies.
+
+    A5-08 FIX: Single extraction point for policy dispatch — eliminates divergence
+    risk from having the match block in two places (_parallel_taskgroup).
+    """
+    # by_name must map from original results indices, not ok_results indices
+    by_name = _build_by_name(results, names) if names else {}
+
+    match policy:
+        case "raise":
+            if errors:
+                if len(errors) == 1:
+                    raise errors[0]
+                raise BaseExceptionGroup(f"parallel(taskgroup){' ' + ctx if ctx else ''}", errors)
+            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
+        case "first":
+            if errors:
+                raise errors[0]
+            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
+        case "collect":
+            return ParallelResult(ok=ok_results, by_name=by_name, errors=errors, re_raised=None)
+        case "log":
+            if errors:
+                sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+                suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+                logger_instance.debug(
+                    f"[GHOST] parallel(taskgroup){' ' + ctx if ctx else ''} "
+                    f"dropped {len(errors)} exceptions "
+                    f"(sample: {sample_preview}"
+                    f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
+                )
+            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
+
+
 async def _parallel_taskgroup[T](
     coros: Sequence[Awaitable[T]],
     *,
@@ -923,64 +1012,17 @@ async def _parallel_taskgroup[T](
                 )
                 raise exc from None
             errors.append(exc)
-        # results list is already in original order (indexed by idx)
+        # A5-08: Extract policy dispatch to single helper — eliminates divergence
+        # risk when BaseExceptionGroup is caught (normal match at bottom is unreachable).
         ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
-        by_name = _build_by_name(results, names)
-        # [FIX] Apply policy INSIDE the exception handler — the match block
-        # at line 537 is never reached when BaseExceptionGroup is caught.
-        match policy:
-            case "raise":
-                if len(errors) == 1:
-                    raise errors[0] from None
-                raise BaseExceptionGroup(f"parallel(taskgroup){' ' + ctx if ctx else ''}", errors)
-            case "first":
-                raise errors[0] from None
-            case "collect":
-                return ParallelResult(ok=ok_results, by_name=by_name, errors=errors, re_raised=None)
-            case "log":
-                if errors:
-                    sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
-                    suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
-                    logger_instance.debug(
-                        f"[GHOST] parallel(taskgroup){' ' + ctx if ctx else ''} "
-                        f"dropped {len(errors)} exceptions "
-                        f"(sample: {sample_preview}"
-                        f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-                    )
-                return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
+        return _apply_policy(ok_results, errors, policy, ctx, logger_instance, results, names)
     except asyncio.CancelledError:
         logger_instance.debug("[GHOST] parallel(taskgroup) CancelledError%s", (" " + ctx) if ctx else "")
         raise
 
-    # results list is already in original order (indexed by idx)
+    # Success path — results list is already in original order (indexed by idx)
     ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
-    by_name = _build_by_name(results, names)
-
-    # Apply policy dispatch
-    match policy:
-        case "raise":
-            if errors:
-                if len(errors) == 1:
-                    raise errors[0]
-                raise BaseExceptionGroup(f"parallel(taskgroup){' ' + ctx if ctx else ''}", errors)
-            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
-        case "first":
-            if errors:
-                raise errors[0]
-            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
-        case "collect":
-            return ParallelResult(ok=ok_results, by_name=by_name, errors=errors, re_raised=None)
-        case "log":
-            if errors:
-                sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
-                suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
-                logger_instance.debug(
-                    f"[GHOST] parallel(taskgroup){' ' + ctx if ctx else ''} "
-                    f"dropped {len(errors)} exceptions "
-                    f"(sample: {sample_preview}"
-                    f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-                )
-            return ParallelResult(ok=ok_results, by_name=by_name, errors=[], re_raised=None)
+    return _apply_policy(ok_results, errors, policy, ctx, logger_instance, results, names)
 
 
 # C6: parallel_taskgroup_star — PEP 654 except* syntax for TaskGroup exceptions

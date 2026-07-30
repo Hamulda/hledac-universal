@@ -252,6 +252,7 @@ def get_recommended_concurrency() -> dict[str, int]:
         concurrency['fetch'] = 4
     return concurrency
 import asyncio
+from hledac.universal.utils.async_helpers import safe_wait_for
 import platform
 _CONCURRENCY_FLOOR = 1
 _CONCURRENCY_CEILING = 3
@@ -325,7 +326,7 @@ class AdaptiveSemaphore:
                     self._sem.release()
                     _did_release = True
                     try:
-                        await asyncio.wait_for(self._sem.acquire(), timeout=1.0)
+                        await safe_wait_for(self._sem.acquire(), timeout=1.0, label="resource_allocator_acquire")
                     except asyncio.CancelledError:
                         # We released sem but acquire was interrupted —
                         # undo our own release before propagating.

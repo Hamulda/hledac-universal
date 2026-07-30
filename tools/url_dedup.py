@@ -38,18 +38,19 @@ else:
 # rejects the sentinel `= None` assignment.
 # ---------------------------------------------------------------------------
 
-# Probables library — RotatingBloomFilter from either probables or pyprobables.
-# F3XX: migrated to strict imports with try/except fallback.
+# Probables library — RotatingBloomFilter from either pyprobables (primary) or probables.
+# D7-01: pyprobables is primary (published on PyPI as "pyprobables", not "probables").
+#   code tried "probables" first but that package doesn't exist on PyPI — always fell through.
 _RotatingBloomFilter: type | None = None  # type: ignore[assignment,misc]
 _PROBABLES_AVAILABLE = False
 
 try:
-    from probables import RotatingBloomFilter as _RBF
+    from pyprobables import RotatingBloomFilter as _RBF
     _RotatingBloomFilter = _RBF
     _PROBABLES_AVAILABLE = True
 except ImportError:
     try:
-        from pyprobables import RotatingBloomFilter as _RBF
+        from probables import RotatingBloomFilter as _RBF
         _RotatingBloomFilter = _RBF
         _PROBABLES_AVAILABLE = True
     except ImportError:

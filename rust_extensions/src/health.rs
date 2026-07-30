@@ -89,6 +89,7 @@ pub struct HealthInfo {
     pub dedup_bloom_instances: u64,
     pub dedup_bloom_items: u64,
     pub dedup_bloom_capacity: u64,
+    pub dedup_bloom_memory_bytes: u64,
     pub url_set_instances: u64,
     pub url_set_items: u64,
     pub url_mmap_instances: u64,
@@ -125,6 +126,7 @@ impl HealthInfo {
         // DedupBloomFilter global stats
         let (db_instances, db_items, db_cap) =
             crate::dedup_bloom::global_stats();
+        let db_mem_bytes = crate::dedup_bloom::global_memory_bytes();
 
         // URL set global stats
         let (us_instances, us_items) = url_set::global_stats();
@@ -155,6 +157,7 @@ impl HealthInfo {
             dedup_bloom_instances: db_instances,
             dedup_bloom_items: db_items,
             dedup_bloom_capacity: db_cap,
+            dedup_bloom_memory_bytes: db_mem_bytes,
             url_set_instances: us_instances.0,
             url_set_items: us_items.0,
             url_mmap_instances: us_instances.1,
@@ -202,6 +205,7 @@ fn bump_health_calls() {
 ///     "dedup_bloom_instances": int,      # active DedupBloomFilter singletons
 ///     "dedup_bloom_items": int,          # total items added across all instances
 ///     "dedup_bloom_capacity": int,       # sum of configured capacities
+///     "dedup_bloom_memory_bytes": int,   # total bit array + Count-Min Sketch memory
 ///     "dedup_bloom_capacity_pct": float, # 0-100 (capped at 100)
 ///     "url_set_instances": int,          # in-memory UrlSet count
 ///     "url_set_items": int,              # items in all UrlSets
@@ -243,6 +247,7 @@ pub fn health_check<'a>(py: Python<'a>, m: &'a Bound<'a, PyModule>) -> PyResult<
     dict.set_item("dedup_bloom_instances", info.dedup_bloom_instances)?;
     dict.set_item("dedup_bloom_items", info.dedup_bloom_items)?;
     dict.set_item("dedup_bloom_capacity", info.dedup_bloom_capacity)?;
+    dict.set_item("dedup_bloom_memory_bytes", info.dedup_bloom_memory_bytes)?;
 
     // Derived: capacity utilisation percentage, capped at 100
     let cap_pct = if info.dedup_bloom_capacity > 0 {

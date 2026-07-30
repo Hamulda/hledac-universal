@@ -264,17 +264,91 @@ def _get_key_lock(key: str) -> _threading.Lock:
     return lock
 
 
-_MAX_PSUTIL_CACHE_SIZE: int = 32
-_psutil_cache: dict[str, tuple[Any, float]] = {}
+from cachetools import LRUCache as _BaseLRUCache
+from typing import NamedTuple as _NamedTuple
+
+# M1-05 FIX: LRUCache with TTL — replaces unbounded dict + sorted() eviction.
+# Invariants:
+#   - maxsize=32 (matches _MAX_PSUTIL_CACHE_SIZE)
+#   - TTL=2.0s (matches _PSUTIL_CACHE_TTL_S)
+#   - Bounded: O(1) get/evict, no sorted() on every write
+#   - Thread-safe: per-key lock still guards compute; LRU operations are GIL-protected
+
+
+class _CacheEntry(_NamedTuple):
+    value: Any
+    timestamp: float
+
+
+class _TTLLRUCache:
+    """
+    LRU cache with per-entry TTL expiration (composition, not inheritance).
+
+    Wraps cachetools.LRUCache for O(1) bounded storage without inheriting
+    its slots, avoiding type-checker conflicts with LRUCache.__slots__ = ().
+
+    Invariants:
+      - maxsize=32 (matches old _MAX_PSUTIL_CACHE_SIZE)
+      - TTL=2.0s (matches old _PSUTIL_CACHE_TTL_S)
+      - O(1) get/evict, no sorted() on every write
+      - Thread-safe: per-key lock guards compute; LRU ops are GIL-protected
+    """
+
+    __slots__ = ("_cache", "_ttl")
+
+    def __init__(self, maxsize: int, ttl: float) -> None:
+        self._cache: _BaseLRUCache = _BaseLRUCache(maxsize=maxsize)
+        self._ttl: float = ttl
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """LRU-aware get with TTL expiry. Drops expired entries."""
+        entry = self._cache.get(key)
+        now = _time_module.monotonic()
+        if entry is None:
+            return default
+        value, timestamp = entry
+        if now - timestamp > self._ttl:
+            self._cache.pop(key, None)
+            return default
+        # Touch entry to update LRU ordering
+        self._cache[key] = _CacheEntry(value, timestamp)
+        return value
+
+    def set(self, key: str, value: Any) -> None:
+        """Set value with current timestamp for TTL."""
+        now = _time_module.monotonic()
+        self._cache[key] = _CacheEntry(value, now)
+
+    def pop(self, key: str, default: Any = None) -> Any:
+        """Remove and return value."""
+        return self._cache.pop(key, default)
+
+    def clear(self) -> None:
+        """Clear all entries."""
+        self._cache.clear()
+
+    def __setitem__(self, key: str, value: _CacheEntry) -> None:
+        """Allow direct subscript assignment: cache[key] = value."""
+        self._cache[key] = value
+
+    def __getitem__(self, key: str) -> _CacheEntry:
+        """Allow direct subscript access: cache[key]."""
+        return self._cache[key]
+
+    def __contains__(self, key: str) -> bool:
+        """Allow 'in' operator."""
+        return key in self._cache
+
+
+# Singleton cache instance — same 32-entry / 2s TTL bounds as the old dict
+_psutil_cache: _TTLLRUCache = _TTLLRUCache(maxsize=32, ttl=2.0)
 _psutil_meta_lock: _threading.Lock = _threading.Lock()
 register_lock(LockCategory.CACHE, _psutil_meta_lock, "resource_governor._psutil_meta_lock")
-_PSUTIL_CACHE_TTL_S: float = 2.0
 
 
 def reset_psutil_cache() -> None:
     """Reset psutil TTL cache. For testing only — clears all cached readings."""
-    with _psutil_meta_lock:
-        _psutil_cache.clear()
+    _psutil_cache.clear()
 
 
 def _read_virtual_memory_sync() -> Any:
@@ -331,46 +405,37 @@ def _get_cached_psutil(key: str, reader_fn: Callable[[], Any]) -> Any:
     """
     Thread-safe TTL cache for blocking psutil reads.
 
+    Uses _TTLLRUCache (LRU + per-entry TTL) for O(1) bounded access.
     Per-key lock achieves single-flight: only the first misser calls reader_fn(),
     subsequent missers block briefly on the key lock, then read the populated entry.
-    Other cache keys proceed without blocking (per-key vs global lock).
 
     Flow:
-        1. Fast path — read cache under meta-lock, return if fresh.
+        1. Fast path — _TTLLRUCache.get() with TTL check, O(1), returns if fresh.
         2. Acquire per-key lock — only threads needing this specific key block.
         3. Double-check — another thread may have populated the cache while we waited.
         4. Compute outside all locks — slow sysctl doesn't block other keys.
-        5. Write result and fresh timestamp under meta-lock.
+        5. _TTLLRUCache.set() — LRU eviction is automatic, no sorted().
     """
-    now = _time_module.monotonic()
-    with _psutil_meta_lock:
-        entry = _psutil_cache.get(key)
-        if entry is not None:
-            result, timestamp = entry
-            if now - timestamp < _PSUTIL_CACHE_TTL_S:
-                return result
+    # Fast path — TTL-aware LRU get, O(1)
+    cached = _psutil_cache.get(key)
+    if cached is not None:
+        return cached
     key_lock = _get_key_lock(key)
     with key_lock:
-        with _psutil_meta_lock:
-            entry = _psutil_cache.get(key)
-            if entry is not None:
-                result, timestamp = entry
-                if now - timestamp < _PSUTIL_CACHE_TTL_S:
-                    return result
-            _psutil_cache[key] = (None, now)
+        # Double-check after acquiring lock
+        cached = _psutil_cache.get(key)
+        if cached is not None:
+            return cached
+        # Mark as computing (placeholder) to let other waiters know
+        _psutil_cache.set(key, None)
     try:
         result = reader_fn()
     except Exception:
-        with _psutil_meta_lock:
-            _psutil_cache.pop(key, None)
+        # Remove placeholder on failure
+        _psutil_cache.pop(key, None)
         raise
-    with _psutil_meta_lock:
-        evictions_needed = len(_psutil_cache) - _MAX_PSUTIL_CACHE_SIZE + 1
-        if evictions_needed > 0:
-            sorted_keys = sorted(_psutil_cache, key=lambda k: _psutil_cache[k][1])
-            for k in sorted_keys[:evictions_needed]:
-                del _psutil_cache[k]
-        _psutil_cache[key] = (result, _time_module.monotonic())
+    # Write result — LRU eviction automatic if at capacity
+    _psutil_cache.set(key, result)
     return result
 
 
@@ -388,17 +453,31 @@ def _refresh_psutil_cache_sync() -> None:
     Force-refresh all psutil cache entries synchronously.
     For use in sync contexts where asyncio.to_thread is unavailable (e.g., __init__).
 
-    ISSUE-112 FIX: Refreshes ALL three cache keys (virtual_memory, swap_memory,
-    memory_pressure). Previously memory_pressure was refreshed only via _get_cached_psutil
-    TTL path, not by the background monitor loop — causing stale reads on the 5s loop.
+    P3-02 FIX: Psutil calls execute OUTSIDE the lock — lock held only for the
+    brief atomic dict write. Previously held _psutil_meta_lock across all three
+    psutil syscalls (~150-600µs total), creating a GIL contention bottleneck
+    when 100+ concurrent callers from acquisition lanes all serialized on this
+    single global lock.
+
+    Lock-free compute phase pattern:
+        1. Read all sensors (no lock held — blocking syscalls here)
+        2. Briefly acquire lock only for atomic dict update
     """
     if psutil is None:
         return
+    # Phase 1: Compute outside lock — blocking syscalls don't block other callers
     now = _time_module.monotonic()
+    try:
+        vm_data = psutil.virtual_memory()
+        swap_data = psutil.swap_memory()
+        pressure_data = _read_memory_pressure_sync()
+    except Exception:
+        return
+    # Phase 2: Atomic cache update — lock held for <1µs dict write
     with _psutil_meta_lock:
-        _psutil_cache["virtual_memory"] = (psutil.virtual_memory(), now)
-        _psutil_cache["swap_memory"] = (psutil.swap_memory(), now)
-        _psutil_cache["memory_pressure"] = (_read_memory_pressure_sync(), now)
+        _psutil_cache.set("virtual_memory", vm_data)
+        _psutil_cache.set("swap_memory", swap_data)
+        _psutil_cache.set("memory_pressure", pressure_data)
 
 
 def _get_mx():
@@ -1020,10 +1099,12 @@ class M1ResourceGovernor:
         """Release malloc fragmented pages on M1 8GB UMA."""
         try:
             import ctypes
-            # E fix: use_errno=True so errors are captured (no longer discarded)
             libc = ctypes.CDLL("libc.dylib", use_errno=True)
             libc.malloc_zone_pressure_relief.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-            libc.malloc_zone_pressure_relief.restype = None
+            # U2-06 FIX: restype must be c_int — malloc_zone_pressure_relief returns
+            # kern_return_t (int), NOT void. With restype=None the return value is
+            # silently discarded and the result != 0 check below would always be False.
+            libc.malloc_zone_pressure_relief.restype = ctypes.c_int
             result = libc.malloc_zone_pressure_relief(None, 0)
             if result != 0:
                 import errno

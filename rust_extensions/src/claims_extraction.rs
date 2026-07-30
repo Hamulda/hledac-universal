@@ -334,9 +334,11 @@ pub fn extract_claims(
 /// Extract claims from a batch of texts using rayon parallel (Python API).
 /// texts: list of (text, title, summary, source_type, evidence_type) tuples.
 /// Returns flat list of claims across all texts.
+/// R4-02: GIL released via py.allow_gil for both serial and parallel paths.
 #[pyfunction]
-pub fn batch_extract_claims(
+pub fn batch_extract_claims<'py>(
     texts: Vec<(String, String, String, String, String)>,
+    py: Python<'py>,
 ) -> Vec<(String, String, f64, String, String)> {
     if texts.is_empty() {
         return vec![];
@@ -349,24 +351,28 @@ pub fn batch_extract_claims(
     let use_parallel = n >= adaptive_scheduler::mixed_threshold() || total_bytes >= 16 * 1024;
 
     if !use_parallel {
-        // Serial path
-        return texts
-            .iter()
-            .flat_map(|(text, title, summary, source_type, evidence_type)| {
-                extract_claims_from_text(text, title, summary, source_type, evidence_type)
-                    .into_iter()
-                    .map(|c| (c.text, c.polarity, c.confidence, c.source, c.evidence_type))
-            })
-            .collect();
+        // R4-02 FIX: GIL released for CPU-bound extract_claims_from_text (regex/splitting).
+        // R4-02: Added py.detach() wrapper for serial path — CPU-bound work can run
+        // without GIL, allowing other Python coroutines to progress on this thread.
+        return crate::gil::release_gil(py, || {
+            texts
+                .iter()
+                .flat_map(|(text, title, summary, source_type, evidence_type)| {
+                    extract_claims_from_text(text, title, summary, source_type, evidence_type)
+                        .into_iter()
+                        .map(|c| (c.text, c.polarity, c.confidence, c.source, c.evidence_type))
+                })
+                .collect()
+        });
     }
 
-    // Parallel path
+    // Parallel path — GIL released for rayon workers
     let packets: Vec<(&str, &str, &str, &str, &str)> = texts
         .iter()
         .map(|(t, ti, s, st, et)| (t.as_str(), ti.as_str(), s.as_str(), st.as_str(), et.as_str()))
         .collect();
 
-    let results: Vec<Vec<Claim>> = batch_extract_claims_inner(&packets);
+    let results: Vec<Vec<Claim>> = crate::gil::release_gil(py, || batch_extract_claims_inner(&packets));
 
     results
         .into_iter()
@@ -381,6 +387,7 @@ pub fn batch_extract_claims(
 /// Bulk batch extract — single GIL acquisition for entire batch.
 /// Accepts parallel arrays: texts, titles, summaries, source_types, evidence_types.
 /// Returns flat list of (text, polarity, confidence, source, evidence_type) tuples.
+/// R4-02: GIL released via release_gil() for batch_extract_claims_inner (CPU-intensive claim extraction).
 #[pyfunction]
 pub fn batch_extract_claims_python<'py>(
     texts: &Bound<'py, PyList>,
@@ -388,7 +395,7 @@ pub fn batch_extract_claims_python<'py>(
     summaries: &Bound<'py, PyList>,
     source_types: &Bound<'py, PyList>,
     evidence_types: &Bound<'py, PyList>,
-    _py: Python<'py>,
+    py: Python<'py>,
 ) -> PyResult<Vec<(String, String, f64, String, String)>> {
     let n = texts.len();
 
@@ -433,7 +440,8 @@ pub fn batch_extract_claims_python<'py>(
         .map(|((((t, ti), s), st), et)| (t.as_str(), ti.as_str(), s.as_str(), st.as_str(), et.as_str()))
         .collect();
 
-    let results = batch_extract_claims_inner(&packets);
+    // R4-02: GIL released — batch_extract_claims_inner uses rayon parallel (CPU-intensive)
+    let results: Vec<Vec<Claim>> = crate::gil::release_gil(py, || batch_extract_claims_inner(&packets));
 
     Ok(results
         .into_iter()

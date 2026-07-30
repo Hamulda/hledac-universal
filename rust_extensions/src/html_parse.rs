@@ -16,8 +16,12 @@ use std::sync::{Arc, Mutex};
 use crate::gil::release_gil;
 
 
-/// Maximum HTML document size for extraction (2 MB).
-const MAX_HTML_SIZE: usize = 2 * 1024 * 1024;
+/// Maximum HTML document size for parsing (5 MB).
+/// OSINT-03: Prevents OOM on M1 8GB by bounding DOM node allocation in lol_html.
+/// Enforced at every #[pyfunction] entry point as a hard limit before passing
+/// to the parser. 5MB is sufficient for any realistic HTML document; pages
+/// larger than this are truncated to MAX_HTML_INPUT_SIZE bytes.
+const MAX_HTML_INPUT_SIZE: usize = 5 * 1024 * 1024;
 
 /// Batch cap for batch_extract_links.
 const BATCH_EXTRACT_CAP: usize = 1_000;
@@ -43,7 +47,7 @@ const BATCH_EXTRACT_CAP: usize = 1_000;
 /// Fail-safe: returns empty `Vec<(usize, usize)>` on any parse error.
 #[pyfunction]
 pub fn extract_links_zero_copy(html: &str, _base_url: &str) -> Vec<(usize, usize)> {
-    if html.len() > MAX_HTML_SIZE {
+    if html.len() > MAX_HTML_INPUT_SIZE {
         return Vec::new();
     }
 
@@ -132,7 +136,7 @@ fn find_quote(html_bytes: &[u8], start: usize, end: usize) -> Option<(usize, usi
 /// Fail-safe: returns an empty `Vec<String>` on any parse error.
 #[pyfunction]
 pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
-    if html.len() > MAX_HTML_SIZE {
+    if html.len() > MAX_HTML_INPUT_SIZE {
         return Vec::new();
     }
 
@@ -228,7 +232,7 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
 /// Fail-safe: returns an empty `Vec<(String, String)>` on any parse error.
 #[pyfunction]
 pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, String)> {
-    if html.len() > MAX_HTML_SIZE {
+    if html.len() > MAX_HTML_INPUT_SIZE {
         return Vec::new();
     }
 
@@ -370,7 +374,7 @@ pub fn batch_extract_links_with_text(items: Vec<(String, String)>) -> Vec<Vec<(S
 /// Deduplicated and sorted. Returns empty `Vec<String>` on error.
 #[pyfunction]
 pub fn extract_emails(html: &str) -> Vec<String> {
-    if html.len() > MAX_HTML_SIZE {
+    if html.len() > MAX_HTML_INPUT_SIZE {
         return Vec::new();
     }
 
@@ -416,7 +420,7 @@ static RE_WHITESPACE: std::sync::LazyLock<regex::Regex> =
 /// Uses `doc_text!` handler for zero-allocation text accumulation,
 /// then collapses whitespace with a pre-compiled regex.
 fn extract_html_text_impl(html: &str) -> String {
-    if html.len() > MAX_HTML_SIZE {
+    if html.len() > MAX_HTML_INPUT_SIZE {
         return String::new();
     }
 
@@ -573,7 +577,7 @@ pub fn batch_extract_titles(items: Vec<String>) -> Vec<Option<String>> {
 /// Returns `None` if not found. Trims whitespace.
 #[pyfunction]
 pub fn extract_meta_description(html: &str) -> Option<String> {
-    if html.len() > MAX_HTML_SIZE {
+    if html.len() > MAX_HTML_INPUT_SIZE {
         return None;
     }
 
@@ -606,7 +610,7 @@ pub fn extract_meta_description(html: &str) -> Option<String> {
 /// Returns `None` if not found. Trims whitespace.
 #[pyfunction]
 pub fn extract_title(html: &str) -> Option<String> {
-    if html.len() > MAX_HTML_SIZE {
+    if html.len() > MAX_HTML_INPUT_SIZE {
         return None;
     }
 
@@ -687,7 +691,7 @@ pub struct MicrodataItem {
 /// elements are found.
 #[pyfunction]
 pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
-    if html.len() > MAX_HTML_SIZE {
+    if html.len() > MAX_HTML_INPUT_SIZE {
         return Vec::new();
     }
 

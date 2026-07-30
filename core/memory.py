@@ -1,23 +1,31 @@
 """
-core.memory — INTEL/MEMORY GOVERNANCE SSOT (Issue #38)
-=======================================================
+core.memory — INTEL/MEMORY GOVERNANCE SSOT (Issue #38, A5-04)
+==============================================================
 
-Single source of truth pro všechny memory metriky.
+Single source of truth pro SYSTEM-WIDE memory metriky.
 Rust (memory.rs) je autoritativní zdroj; Python jsou jen tenké wrappers.
 
-Zodpovědnosti:
-- RUST: Všechny raw syscally (PROC_PIDTASKINFO, sysctl, MLX Metal)
-- PYTHON: Lazy import, caching, fail-safe fallback, API wrapper
+TENTO MODUL vs. OSTATNÍ PAMĚŤOVÉ MODULY (A5-04 consolidation)
+==============================================================
+| Modul                        | Zodpovědnost                        |
+|------------------------------|--------------------------------------|
+| core.memory                  | System-wide: RSS, dostupná RAM,     |
+|                              | celková RAM, pressure level (Rust)  |
+| core.rust_backend.memory     | DuckDB bridge: domain factory pro   |
+|                              | _RustMemoryDomain/_PythonMemoryDomain|
+| utils.mlx_memory._core       | MLX-specific: active_mb, peak_mb,  |
+|                              | cache_mb, pressure_pct (Metal API)  |
 
-ŽÁDNÁ duplikovaná logika. ŽÁDNÉ psutil přímé volání mimo fallback.
+ ŽÁDNÝ PŘEKRYV FUNKCÍ — každý modul má jinou roli.
 
-Funkce:
-    get_memory_snapshot()    — vrací dict s rss_bytes, rss_gib, available_gib,
-                                total_gib, metal_active_bytes, metal_active_gib,
-                                pressure_level (0=normal, 1=elevated, 2=critical)
-    get_process_rss_gib()   — proces RSS v GiB
-    get_available_memory_gib() — dostupná RAM v GiB
-    get_metal_active_memory_bytes() — MLX Metal active memory v bytech
+MLX METRICS: Pro MLX-specific metriky použij:
+    from utils.mlx_memory import get_mlx_memory_metrics
+    # dict: active_mb, peak_mb, cache_mb, pressure_pct, pressure_level
+
+SYSTEM METRICS: Pro system-wide metriky použij:
+    from core.memory import get_memory_snapshot
+    # dict: rss_bytes, rss_gib, available_memory_gib, total_memory_gib,
+    #       metal_active_bytes, metal_active_gib, pressure_level
 
 Import: from core.memory import get_memory_snapshot
 """
@@ -33,6 +41,7 @@ __all__ = [
     "get_metal_active_memory_gib",
     "memory_pressure_level",
     "peak_rss_bytes",
+    "set_memory_pressure_thresholds",  # A5-01: sync Rust thresholds from Python SSOT
 ]
 
 logger = logging.getLogger(__name__)
@@ -57,6 +66,7 @@ def _ensure_rust() -> bool:
             get_metal_active_memory_gib as _rust_metal_gib,
             memory_pressure_level as _rust_pressure,
             peak_rss_bytes as _rust_peak,
+            set_memory_pressure_thresholds as _rust_set_thresholds,
         )
         globals()["_rust_snapshot"] = _rust_snapshot
         globals()["_rust_rss"] = _rust_rss
@@ -65,6 +75,7 @@ def _ensure_rust() -> bool:
         globals()["_rust_metal_gib"] = _rust_metal_gib
         globals()["_rust_pressure"] = _rust_pressure
         globals()["_rust_peak"] = _rust_peak
+        globals()["set_memory_pressure_thresholds"] = _rust_set_thresholds
         _RUST_AVAILABLE = True
         logger.debug("[memory] Rust SSOT loaded OK")
     except ImportError:

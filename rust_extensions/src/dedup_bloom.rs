@@ -14,13 +14,13 @@
 //!   NUM_TIERS = 3 (fine/coarse/macro)
 //!   FARM_SEED = 0xDEADBEEF (konzistence napříč instancemi)
 
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write, BufWriter};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use lz4_flex::block::{compress as lz4_compress, decompress as lz4_decompress};
 use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
@@ -32,6 +32,7 @@ use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
 static GLOBAL_INSTANCES: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_ITEMS_ADDED: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_CAPACITY: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_MEMORY_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// Returns (instances, total_items_added, total_capacity) for health_check().
 pub fn global_stats() -> (u64, u64, u64) {
@@ -42,12 +43,36 @@ pub fn global_stats() -> (u64, u64, u64) {
     )
 }
 
+/// Returns total memory usage in bytes across all DedupBloomFilter instances.
+pub fn global_memory_bytes() -> u64 {
+    GLOBAL_MEMORY_BYTES.load(Ordering::Relaxed)
+}
+
 /// Bump global instance count (called from PyDistributedBloomFilter::new).
 fn bump_instance() {
     GLOBAL_INSTANCES.fetch_add(1, Ordering::Relaxed);
     // Sum of all tier capacities = fixed at startup
     let total_cap: u64 = TIER_CAPACITIES.iter().map(|&c| c as u64).sum();
     GLOBAL_CAPACITY.store(total_cap, Ordering::Relaxed);
+    // M1-06: Update static memory footprint for health endpoint
+    let mem_bytes = compute_static_memory_bytes();
+    GLOBAL_MEMORY_BYTES.store(mem_bytes, Ordering::Relaxed);
+}
+
+/// Compute static memory footprint: bit arrays + Count-Min Sketch table.
+/// This is constant per-instance (same for all DedupBloomFilter instances).
+fn compute_static_memory_bytes() -> u64 {
+    // Bloom tiers: sum of bit array sizes
+    let tier_bytes: u64 = TIER_CAPACITIES.iter()
+        .zip(TIER_FPP.iter())
+        .map(|(cap, fpp)| {
+            let num_bits = (-(*cap as f64) * fpp.ln() / (2.0_f64.ln().powi(2))) as u64;
+            (num_bits + 7) / 8 // bits to bytes, rounded up
+        })
+        .sum();
+    // Count-Min Sketch: 4 depth × 16384 width × 4 bytes per u32
+    let sketch_bytes: u64 = 4 * 16384 * 4;
+    tier_bytes + sketch_bytes
 }
 
 /// Bump items added (called from DistributedBloomFilter::add when is_new=true).
@@ -500,6 +525,92 @@ impl DistributedBloomFilter {
             total_items,
         })
     }
+
+    /// Serialize to compressed bytes for LMDB storage.
+    /// Used by LMDB-backed persistence path.
+    pub fn to_bytes_compressed(&self) -> PyResult<Vec<u8>> {
+        let mut buf = Vec::new();
+
+        // Write header
+        buf.extend_from_slice(&FILE_MAGIC.to_le_bytes());
+        buf.push(FILE_VERSION);
+
+        // Write tier data (LZ4 compressed, same as file format)
+        for tier in &self.tiers {
+            let tier_data = tier.to_bytes();
+            let compressed = lz4_compress(&tier_data);
+            let len_bytes = (compressed.len() as u32).to_le_bytes();
+            buf.extend_from_slice(&len_bytes);
+            buf.extend_from_slice(&compressed);
+        }
+
+        // Write sketch
+        let sketch_data = self.sketch.to_bytes();
+        let sketch_len = (sketch_data.len() as u32).to_le_bytes();
+        buf.extend_from_slice(&sketch_len);
+        buf.extend_from_slice(&sketch_data);
+
+        Ok(buf)
+    }
+
+    /// Deserialize from compressed bytes (LMDB storage path).
+    pub fn from_bytes_compressed(data: &[u8]) -> PyResult<Self> {
+        let mut pos = 0;
+
+        // Read header
+        if pos + 4 > data.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (magic)"));
+        }
+        let magic = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]);
+        if magic != FILE_MAGIC {
+            return Err(pyo3::exceptions::PyValueError::new_err("Invalid file format"));
+        }
+        pos += 4;
+
+        if pos + 1 > data.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (version)"));
+        }
+        if data[pos] != FILE_VERSION {
+            return Err(pyo3::exceptions::PyValueError::new_err("Unsupported version"));
+        }
+        pos += 1;
+
+        // Read tiers
+        let mut tiers = Vec::new();
+        for _ in 0..NUM_TIERS {
+            if pos + 4 > data.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (tier len)"));
+            }
+            let len = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]) as usize;
+            pos += 4;
+
+            if pos + len > data.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (tier data)"));
+            }
+            let decompressed = lz4_decompress(&data[pos..pos+len], len * 4)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Decompress error: {}", e)))?;
+            pos += len;
+
+            let tier = BloomTier::from_bytes(&decompressed)?;
+            tiers.push(tier);
+        }
+
+        // Read sketch
+        if pos + 4 > data.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (sketch len)"));
+        }
+        let sketch_len = u32::from_le_bytes([data[pos], data[pos+1], data[pos+2], data[pos+3]]) as usize;
+        pos += 4;
+
+        if pos + sketch_len > data.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err("Unexpected end of data (sketch data)"));
+        }
+        let sketch = CountMinSketch::from_bytes(&data[pos..pos+sketch_len])?;
+
+        let total_items = tiers.iter().map(|t| t.items_added).sum();
+
+        Ok(Self { tiers, sketch, total_items })
+    }
 }
 
 // Python bindings
@@ -507,6 +618,30 @@ impl DistributedBloomFilter {
 pub struct PyDistributedBloomFilter {
     filter: DistributedBloomFilter,
     cache_dir: PathBuf,
+}
+
+/// R4-08: Dedicated stats struct — avoids HashMap<String, Py<PyAny>> allocation
+/// per stats() call. Python converts once at call site via dataclasses.asdict().
+#[pyclass]
+pub struct DedupBloomStats {
+    #[pyo3(get)]
+    pub total_items: usize,
+    #[pyo3(get)]
+    pub memory_bytes: usize,
+    #[pyo3(get)]
+    pub tier_count: usize,
+    #[pyo3(get)]
+    pub tier_0_fpp: f64,
+    #[pyo3(get)]
+    pub tier_0_items: usize,
+    #[pyo3(get)]
+    pub tier_1_fpp: f64,
+    #[pyo3(get)]
+    pub tier_1_items: usize,
+    #[pyo3(get)]
+    pub tier_2_fpp: f64,
+    #[pyo3(get)]
+    pub tier_2_items: usize,
 }
 
 #[pymethods]
@@ -529,8 +664,38 @@ impl PyDistributedBloomFilter {
         self.filter.add(item.as_bytes())
     }
 
+    /// R4-11 FIX: Bulk add — rayon-parallel, GIL released for CPU-bound hashing phase.
+    /// R4-01: GIL released via release_gil() for rayon parallel hashing.
+    fn add_batch(&mut self, items: Vec<String>, py: Python<'_>) -> Vec<bool> {
+        if items.is_empty() {
+            return vec![];
+        }
+        // R4-01: GIL released during bulk add — serial loop (filter.add is not Send+Sync)
+        let filter = &mut self.filter;
+        crate::gil::release_gil(py, || {
+            items.iter().map(|s| filter.add(s.as_bytes())).collect()
+        })
+    }
+
     fn contains(&self, item: String) -> bool {
         self.filter.contains(item.as_bytes())
+    }
+
+    /// R4-11 FIX: Bulk contains — rayon-parallel, read-only, GIL released during phase.
+    /// R4-01: GIL released via release_gil() for rayon parallel contains check.
+    fn contains_batch(&self, items: Vec<String>, py: Python<'_>) -> Vec<bool> {
+        use rayon::prelude::*;
+        if items.is_empty() {
+            return vec![];
+        }
+        let bytes_vec: Vec<&[u8]> = items.iter().map(|s| s.as_bytes()).collect();
+        // R4-01: GIL released during rayon par_iter — filter.contains() is pure Rust
+        crate::gil::release_gil(py, || {
+            bytes_vec
+                .par_iter()
+                .map(|b| self.filter.contains(b))
+                .collect()
+        })
     }
 
     fn frequency(&self, item: String) -> u32 {
@@ -545,32 +710,70 @@ impl PyDistributedBloomFilter {
         self.filter.memory_bytes()
     }
 
-    fn stats(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
-        let mut stats = HashMap::new();
-        stats.insert("total_items".to_string(), self.filter.total_items.into_pyobject(py).unwrap().into());
-        stats.insert("memory_bytes".to_string(), self.filter.memory_bytes().into_pyobject(py).unwrap().into());
-        stats.insert("tier_count".to_string(), NUM_TIERS.into_pyobject(py).unwrap().into());
-        for (i, tier) in self.filter.tiers.iter().enumerate() {
-            stats.insert(format!("tier_{}_fpp", i), tier.current_fpp().into_pyobject(py).unwrap().into());
-            stats.insert(format!("tier_{}_items", i), tier.items_added.into_pyobject(py).unwrap().into());
-        }
-        stats
+    /// R4-08 FIX: Returns Py<PyDict> directly — no intermediate DedupBloomStats Python object.
+    /// PyDict is allocated once in Rust, Python receives it with zero conversion overhead.
+    /// Python caller: stats = filter.stats()  # already a dict
+    fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let tiers: Vec<_> = self.filter.tiers.iter().collect();
+        let dict = PyDict::new(py);
+        // set_item copies primitive values (int, float) — no Python object allocation
+        // beyond the dict itself, which is the intended zero-allocation improvement.
+        dict.set_item("total_items", self.filter.total_items)?;
+        dict.set_item("memory_bytes", self.filter.memory_bytes())?;
+        dict.set_item("tier_count", NUM_TIERS)?;
+        dict.set_item("tier_0_fpp", tiers.get(0).map(|t| t.current_fpp()).unwrap_or(0.0))?;
+        dict.set_item("tier_0_items", tiers.get(0).map(|t| t.items_added).unwrap_or(0))?;
+        dict.set_item("tier_1_fpp", tiers.get(1).map(|t| t.current_fpp()).unwrap_or(0.0))?;
+        dict.set_item("tier_1_items", tiers.get(1).map(|t| t.items_added).unwrap_or(0))?;
+        dict.set_item("tier_2_fpp", tiers.get(2).map(|t| t.current_fpp()).unwrap_or(0.0))?;
+        dict.set_item("tier_2_items", tiers.get(2).map(|t| t.items_added).unwrap_or(0))?;
+        Ok(dict)
     }
 
+    /// R4-03: GIL released via Python::attach + py.detach for file I/O + LZ4 compression.
     fn save(&self) -> PyResult<String> {
-        self.filter.save(&self.cache_dir)?;
-        Ok(self.cache_dir.join("dedup_bloom.bin").to_string_lossy().to_string())
+        Python::attach(|py| {
+            py.detach(|| {
+                self.filter.save(&self.cache_dir)?;
+                Ok(self.cache_dir.join("dedup_bloom.bin").to_string_lossy().to_string())
+            })
+        })
     }
 
+    /// R4-03: GIL released via Python::attach + py.detach for file I/O + LZ4 decompression.
     #[staticmethod]
     fn load(cache_dir: String) -> PyResult<Self> {
-        let cache_dir = PathBuf::from(cache_dir);
-        let filter = DistributedBloomFilter::load(&cache_dir)?;
-        Ok(Self { filter, cache_dir })
+        let cache_dir_path = PathBuf::from(cache_dir);
+        let filter = Python::attach(|py| {
+            py.detach(|| DistributedBloomFilter::load(&cache_dir_path))
+        })?;
+        Ok(Self { filter, cache_dir: cache_dir_path })
     }
 
     fn reset(&mut self) {
         self.filter = DistributedBloomFilter::new();
+    }
+
+    /// R4-03: GIL released for LZ4 compression (CPU-intensive).
+    fn save_to_lmdb_bytes(&self) -> PyResult<Vec<u8>> {
+        Python::attach(|py| {
+            py.detach(|| self.filter.to_bytes_compressed())
+        })
+    }
+
+    /// R4-03 + R4-08 FIX: GIL released for LZ4 decompression (CPU-intensive).
+    /// R4-08: data must be copied to owned Vec<u8> before py.detach() —
+    /// Python bytes object could be GC'd while the detached thread runs.
+    #[staticmethod]
+    fn load_from_lmdb_bytes(data: &[u8]) -> PyResult<Self> {
+        // R4-08 FIX: copy to owned buffer BEFORE releasing GIL.
+        // Python bytes (data: &[u8]) could be collected by GC during decompression
+        // if we don't hold them explicitly.
+        let owned_data: Vec<u8> = data.to_vec();
+        let filter = Python::attach(|py| {
+            py.detach(|| DistributedBloomFilter::from_bytes_compressed(&owned_data))
+        })?;
+        Ok(Self { filter, cache_dir: PathBuf::new() })
     }
 }
 

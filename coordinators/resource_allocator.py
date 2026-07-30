@@ -31,7 +31,6 @@ from collections import deque
 # Makes it configurable for larger machines via env var
 _MAX_COMPLETED_ALLOCATIONS_DEFAULT = 500
 _MAX_COMPLETED_ALLOCATIONS_ENV = "HLEDAC_MAX_COMPLETED_ALLOCATIONS"
-from dataclasses import dataclass
 import msgspec
 from datetime import UTC, datetime
 from enum import Enum

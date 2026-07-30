@@ -14,7 +14,6 @@
 //    and maturin version upgrades that could alter ABI flags.
 
 use pyo3_build_config::use_pyo3_cfgs;
-use std::io::Read;
 
 fn extract_features_from_cargo_toml() -> Vec<String> {
     // Build.rs runs after Cargo parses features, but there's no CARGO_FEATURE_*
@@ -106,6 +105,23 @@ fn main() {
                 );
             }
         }
+    }
+
+    // R4-05 FIX: Emit neon_available cfg for aarch64 targets.
+    // build.rs runs as a PROCESSOR — it does NOT compile the crate, so
+    // cfg(target_arch = "aarch64") in Cargo.toml does NOT apply here.
+    // We detect aarch64 via the CARGO_CFG_TARGET_ARCH environment variable
+    // (set by Cargo when it invokes build.rs) and emit the cfg so that
+    // neon.rs functions with #[target_feature(enable = "neon")] actually
+    // get NEON instructions emitted rather than scalar fallback.
+    //
+    // Without this, the compiler sees #[target_feature(enable = "neon")]
+    // and falls back to scalar code even though #[cfg(target_arch = "aarch64")]
+    // guards are present — the feature is not "enabled" from the compiler's
+    // perspective without +neon in the target features.
+    if std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default() == "aarch64" {
+        println!("cargo:rustc-cfg=neon_available");
+        eprintln!("[build.rs] aarch64 detected — NEON enabled");
     }
 
     // Always re-run if build.rs changes (obvious).

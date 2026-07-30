@@ -1332,7 +1332,6 @@ dependencies = [
     { name = "ipwhois" },
     { name = "jinja2" },
     { name = "lmdb" },
-    { name = "lxml" },
     { name = "lz4" },
     { name = "markdown-it-py" },
     { name = "markdownify" },
@@ -1435,6 +1434,9 @@ otel = [
     { name = "roampal" },
     { name = "structlog" },
 ]
+xpath = [
+    { name = "lxml" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1496,7 +1498,7 @@ requires-dist = [
     { name = "lightgbm", marker = "extra == 'ml'", specifier = ">=4.6.0" },
     { name = "lmdb", specifier = ">=2.2.0" },
     { name = "logfire", extras = ["observability"], marker = "extra == 'otel'", specifier = ">=2.0.0" },
-    { name = "lxml", specifier = ">=6.1.1" },
+    { name = "lxml", marker = "extra == 'xpath'", specifier = ">=6.1.1" },
     { name = "lz4" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "markdownify" },
@@ -1552,7 +1554,7 @@ requires-dist = [
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "rapidfuzz", specifier = ">=3.0.0" },
     { name = "roampal", marker = "extra == 'otel'", specifier = ">=0.5.7" },
-    { name = "rustworkx", specifier = ">=0.17.1,<0.20.0" },
+    { name = "rustworkx", specifier = ">=0.18.0,<0.19.0" },
     { name = "scapy", specifier = ">=2.5.0" },
     { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.9.0" },
     { name = "scipy", marker = "extra == 'ml'", specifier = ">=1.17.1" },
@@ -1575,7 +1577,7 @@ requires-dist = [
     { name = "zeroconf" },
     { name = "zstandard", specifier = ">=0.25.0" },
 ]
-provides-extras = ["otel", "observability", "ml", "ml-diskcache", "mlx-embed", "http3", "m1-local", "graph-storage"]
+provides-extras = ["otel", "observability", "ml", "ml-diskcache", "mlx-embed", "xpath", "http3", "m1-local", "graph-storage"]
 
 [package.metadata.requires-dev]
 dev = [

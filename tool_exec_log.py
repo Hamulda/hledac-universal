@@ -13,6 +13,11 @@ M1 8GB Optimization:
 - Async write worker (non-blocking I/O, never swap on M1)
 - silent_failure flag to bypass logging in pre-flight
 
+S1-13 Fix (2026-07-30):
+- Write queue capacity: 500 → 2000 (4× SQLite batch, 2× flush_interval)
+- Overflow counter: _overflow_count tracks drops; warning on first overflow
+- Change: QueueFull now logs warning once then increments counter (was debug/drop)
+
 CRITICAL INVARIANTS (Issue 8.3):
 - silent_failure=True → all log() calls return None, no I/O
 - silent_failure=False (default) → async queue, batched fsync
@@ -147,7 +152,9 @@ class ToolExecLog:
     MAX_OUTPUT_LEN = 1024 * 1024
     _SQLITE_BATCH_SIZE = 100
     _SQLITE_FLUSH_INTERVAL = 1.0
-    __slots__ = tuple(('_chain_head', '_closed', '_db', '_db_path', '_initialized', '_log', '_loop', '_persist_enabled', '_run_dir', '_run_id', '_seq', '_silent_failure', '_write_queue', '_write_shutdown', '_write_task'))
+    # S1-13 fix: 500→2000 (2× batch × flush_interval = headroom for burst)
+    _WRITE_QUEUE_MAXSIZE = 2000
+    __slots__ = tuple(('_chain_head', '_closed', '_db', '_db_path', '_initialized', '_log', '_loop', '_persist_enabled', '_run_dir', '_run_id', '_seq', '_silent_failure', '_write_queue', '_write_shutdown', '_write_task', '_overflow_count'))
 
     def __init__(self, run_dir: Path, enable_persist: bool=True, run_id: str='default', silent_failure: bool=False):
         """
@@ -170,11 +177,12 @@ class ToolExecLog:
         self._db_path: Path | None = None
         self._db: Any | None = None
         self._initialized = False
-        self._write_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+        self._write_queue: asyncio.Queue = asyncio.Queue(maxsize=self._WRITE_QUEUE_MAXSIZE)
         self._write_task: asyncio.Task | None = None
         self._write_shutdown: asyncio.Event = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._closed = False
+        self._overflow_count: int = 0  # S1-13: metric for queue overflow events
         if enable_persist and (not silent_failure):
             self._init_persist()
         logger.info(f'ToolExecLog initialized: run_id={run_id}, persist={enable_persist}, silent_failure={silent_failure}')
@@ -275,6 +283,8 @@ class ToolExecLog:
                 await db.commit()
             except Exception as e:
                 logger.warning(f'[ToolExecLog] Final batch flush failed: {e}')
+        if self._overflow_count > 0:
+            logger.warning(f'[ToolExecLog] Worker shutdown: {self._overflow_count} events overflowed during run')
         if db:
             await db.close()
 
@@ -321,7 +331,12 @@ class ToolExecLog:
                 record: tuple[int, str, str, str, float] = (event.seq_no, tool_name, orjson.dumps(event.to_dict()).decode(), chain_hash, event.ts)
                 self._write_queue.put_nowait(record)
             except asyncio.QueueFull:
-                logger.debug('[ToolExecLog] Write queue full, dropping event')
+                self._overflow_count += 1
+                if self._overflow_count == 1:
+                    logger.warning(
+                        f'[ToolExecLog] Write queue overflow ({self._WRITE_QUEUE_MAXSIZE} full), '
+                        f'counting overflow events (last seq={event.seq_no})'
+                    )
             except RuntimeError:
                 pass
         self._log.append(event)

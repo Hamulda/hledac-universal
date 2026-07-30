@@ -29,6 +29,15 @@
 //! PyO3 =0.29 — `py.detach()` is the GIL-release API. `allow_threads`
 //! was removed in 0.29 and is NOT used here. The `py.detach()` pattern
 //! follows the same approach as `lmdb_async_*` functions in this module.
+//!
+//! ## R4-07: Environment Caching
+//! LMDB environments are cached per path using OnceLock<RwLock<HashMap>>.
+//! This eliminates the lmdb.open() call overhead on every DHT operation.
+//! Thread-safety: Arc<Py<PyAny>> is Send+Sync (Py<PyAny> is Send, Arc provides Sync).
+//! The RwLock ensures atomic access to the cache map.
+
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use pyo3::prelude::*;
 
@@ -36,20 +45,45 @@ use pyo3::prelude::*;
 // LMDB helpers — direct Python lmdb calls without caching
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Get or create a Python lmdb.Environment for the given path.
-/// Note: Caching removed due to PyO3 0.23 Bound API complexity.
+/// R4-07: Cached LMDB environments — eliminates lmdb.open() overhead per operation.
+///
+/// Uses OnceLock<RwLock<HashMap>> per path so multiple paths can coexist.
+/// Arc<Py<PyAny>> is Send+Sync (Py<PyAny> is Send, Arc provides Sync).
+/// This is the recommended pattern for Python object caching in PyO3 0.29.
+static LMDB_ENV_CACHE: OnceLock<RwLock<HashMap<String, Arc<Py<PyAny>>>>> = OnceLock::new();
+
+/// R4-07: Get or create a cached Python lmdb.Environment for the given path.
+/// Caches environments per path to eliminate repeated lmdb.open() overhead.
 fn get_lmdb_env<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyAny>> {
-    // Import lmdb and open environment
+    let cache = LMDB_ENV_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+
+    // Fast path: check cache with read lock
+    if let Some(env_arc) = cache.read().unwrap().get(path) {
+        let env: Bound<'py, PyAny> = unsafe { Bound::from_borrowed_ptr(py, env_arc.as_ptr()) };
+        return Ok(env);
+    }
+
+    // Slow path: open new env and cache it
     let lmdb = PyModule::import(py, "lmdb")?;
-    // Use getattr on PyModule directly (avoids as_any() lifetime issues)
     let open_fn: Bound<'py, PyAny> = lmdb.getattr("open")?;
     let env: Bound<'py, PyAny> = open_fn.call1((path,))?.into();
+
+    // Store Arc-wrapped Py<PyAny> in cache — clone before unbind since
+    // env is consumed by unbind() but we still need the bound reference.
+    let env_arc = Arc::new(env.clone().unbind());
+    cache.write().unwrap().insert(path.to_string(), env_arc);
+
     Ok(env)
 }
 
-/// Close and remove a cached env (for cleanup / testing).
-fn close_lmdb_env(_path: &str) {
-    // Cache removed - no-op for compatibility
+/// R4-07: Close and remove a cached env (for cleanup / testing).
+/// Returns Ok if removed, Ok(None) if not found.
+fn close_lmdb_env(path: &str) {
+    if let Some(cache) = LMDB_ENV_CACHE.get() {
+        if let Ok(mut guard) = cache.write() {
+            guard.remove(path);
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

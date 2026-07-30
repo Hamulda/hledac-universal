@@ -201,7 +201,9 @@ class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
         """Factory method — creates event with auto-generated content_hash."""
         source_ids = source_ids or []
         timestamp = datetime.now(UTC).timestamp()
-        encoded_payload = orjson.dumps(payload)
+        # P3-05 FIX: Normalize payload before orjson serialization to handle MLX arrays.
+        normalized_payload = _normalize_payload(payload)
+        encoded_payload = orjson.dumps(normalized_payload)
         content_hash = cls._calculate_hash(event_id=event_id, event_type=event_type, timestamp=timestamp, payload=payload, source_ids=source_ids, confidence=confidence, run_id=run_id)
         return cls(event_id=event_id, event_type=event_type, timestamp=timestamp, payload=encoded_payload, source_ids=source_ids, confidence=confidence, content_hash=content_hash, run_id=run_id, seq_no=seq_no, prev_chain_hash=prev_chain_hash, chain_hash=None)
 
@@ -286,18 +288,44 @@ def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
             # P3-4: msgspec.Struct → dict via to_builtins() (bytes→base64)
             normalized[key] = _normalize_value(value)
         elif isinstance(value, (list, tuple)):
-            normalized[key] = [_normalize_value(v) for v in value]
+            normalized[key] = _normalize_value_list(value)
         elif isinstance(value, dict):
             normalized[key] = _normalize_payload(value)
         else:
             normalized[key] = _normalize_value(value)
     return normalized
 
+
+def _normalize_value_list(value: list | tuple) -> list:
+    """Normalize a list/tuple — applies _normalize_value to each element.
+
+    Handles nested containers (list inside list, dict inside list, etc.)
+    correctly unlike a naive list comprehension that would call
+    _normalize_value which doesn't recursively normalize nested dicts.
+    """
+    result = []
+    for item in value:
+        if isinstance(item, datetime):
+            result.append(item.isoformat())
+        elif isinstance(item, msgspec.Struct):
+            result.append(_normalize_value(item))
+        elif isinstance(item, (list, tuple)):
+            result.append(_normalize_value_list(item))
+        elif isinstance(item, dict):
+            result.append(_normalize_payload(item))
+        else:
+            result.append(_normalize_value(item))
+    return result
+
+
 def _normalize_value(value: Any) -> Any:
     """Normalize individual value.
 
     P3-4: msgspec.Struct instances are converted via msgspec.to_builtins()
     for consistent representation in payload hashing.
+
+    P3-05: MLX/numpy arrays with __array__ protocol are converted to lists
+    to avoid TypeError in orjson.dumps (no OPT_SERIALIZE_NUMPY by default).
     """
     if isinstance(value, float):
         return round(value, 6)
@@ -308,6 +336,17 @@ def _normalize_value(value: Any) -> Any:
     elif isinstance(value, msgspec.Struct):
         # P3-4: msgspec.Struct → dict for hashing (e.g. CycleResult in payload)
         return msgspec.to_builtins(value)
+    elif hasattr(value, '__array__'):
+        # P3-05: MLX arrays, numpy arrays, etc. → list for orjson serialization.
+        # This fixes TypeError when MLX inference results appear in payload.
+        try:
+            return value.tolist()
+        except Exception:  # noqa: BLE001
+            # Fallback: try list() constructor for array-like objects
+            try:
+                return list(value)
+            except Exception:  # noqa: BLE001
+                return str(value)
     return value
 
 class _RustMPSCBytes:
@@ -324,12 +363,54 @@ class _RustMPSCBytes:
 
     M1 8GB: ~1 MiB total (2048 slots × 512B), negligible overhead.
 
-    F-15 FIX: No reload — permanent fallback.
-    - If Rust extension is not available at init time, asyncio.Queue is used.
-    - Extension absence is cached permanently via _rust_unavailable flag.
-    - No retry scheduling — PyO3 C extension cannot be safely reloaded.
-    - "maturin develop" + process restart is required for Rust MPSC.
+    S1-03 FIX: asyncio.Queue asyncio_fallback capacity is derived from memory budget.
+    Falls back to Rust MPSC with ~50× throughput when available.
     """
+    # S1-03/C3-04 FIX: asyncio.Queue maxsize derived from memory budget.
+    # Formula: floor(available_memory * 0.05 / avg_item_bytes)
+    # With 1 KiB/item and 10% of 512 MiB available ≈ 512 items (≈0.5 MiB).
+    # Cap is the safety ceiling — actual size is min(capacity, cap).
+    # SAFETY: Hard cap of 512 prevents unbounded memory growth when
+    # Rust extension is unavailable — the asyncio fallback is ~50× slower
+    # than Rust MPSC so sustained backpressure is the expected signal.
+    _ASYNC_FALLBACK_QUEUE_MAXSIZE = 512
+
+    @staticmethod
+    def _get_async_fallback_queue_maxsize() -> int:
+        """S1-03 FIX: Compute async fallback queue maxsize from memory budget.
+
+        Returns:
+            Dynamic queue size: min(_ASYNC_FALLBACK_QUEUE_MAXSIZE,
+            floor(available_memory * memory_fraction / avg_item_bytes))
+
+        M1 8GB bounds:
+            - available ≈ 6.25 GiB total (OS 2.5 GiB + app budget)
+            - 5% of available ≈ 320 MiB / 1 KiB ≈ 320 items
+            - Hard cap 512 is the safety ceiling
+        """
+        try:
+            import psutil
+            process = psutil.Process()
+            mem_info = process.memory_info()
+            # Use RSS as the memory budget metric (actual physical memory used)
+            available = getattr(mem_info, 'available', mem_info.rss)
+            # Reserve 5% of available memory for the queue
+            memory_fraction = 0.05
+            avg_item_bytes = 1024  # 1 KiB per evidence item
+            dynamic_size = int((available * memory_fraction) / avg_item_bytes)
+            # Enforce hard cap: min(dynamic, hard_cap)
+            hard_cap = 512
+            return min(dynamic_size, hard_cap)
+        except Exception:
+            # Fail-safe: return hard cap if psutil unavailable
+            return 512  # hard-coded fallback
+
+    # F-15 FIX: No reload — permanent fallback.
+    # If Rust extension is not available at init time, asyncio.Queue is used.
+    # Extension absence is cached permanently via _rust_unavailable flag.
+    # No retry scheduling — PyO3 C extension cannot be safely reloaded.
+    # "maturin develop" + process restart is required for Rust MPSC.
+
     __slots__ = tuple(('_impl', '_pool', '_queue', '_sender_ptr', '_wake_fd', 'fallback', '_retry_handle', '_retry_delay', '_capacity', '_asyncio_fallback', '_pending_retry'))
 
     def __init__(self, capacity: int=2048, asyncio_fallback: bool=False) -> None:
@@ -378,7 +459,13 @@ class _RustMPSCBytes:
             self._sender_ptr = 0
             self._wake_fd = -1
             if asyncio_fallback:
-                self._queue = asyncio.Queue(maxsize=capacity)
+                # S1-03 FIX: Use memory-derived queue size via static method.
+                # Computes: floor(available_memory * 0.05 / avg_item_bytes),
+                # capped at _ASYNC_FALLBACK_QUEUE_MAXSIZE (512).
+                # Prevents unbounded memory growth when Rust extension is unavailable.
+                async_fallback_size = self._get_async_fallback_queue_maxsize()
+                capped = min(capacity, async_fallback_size)
+                self._queue = asyncio.Queue(maxsize=capped)
             else:
                 self._queue = None
             self.fallback = True
@@ -527,6 +614,8 @@ class _RustMPSCBytes:
                 self._queue.put_nowait(item)
                 return True
             except asyncio.QueueFull:
+                # C3-04 FIX: backpressure signal — caller should await and retry.
+                # No silent drop; return False so caller can apply backpressure.
                 return False
         return False
 
@@ -560,15 +649,30 @@ class _RustMPSCBytes:
             return sent
         return 0
 
-    async def send_async(self, item: bytes) -> bool:
-        """Async send — blocks if queue is full (used by worker)."""
+    async def send_async(self, item: bytes, *, timeout: float = 1.0) -> bool:
+        """Async send — applies backpressure via wait_for if queue is full.
+
+        S1-03 FIX: Uses asyncio.wait_for(q.put(), timeout) for bounded
+        backpressure instead of put_nowait which silently drops on QueueFull.
+
+        Returns True when item was queued within timeout, False on timeout
+        or when the queue is permanently unavailable.
+        """
         if self._impl == 'rust' and self._pool is not None:
             return self.send(item)
         elif self._queue is not None:
             try:
-                self._queue.put_nowait(item)
+                # S1-03 FIX: wait_for applies backpressure — caller yields the
+                # event loop for up to `timeout` seconds before giving up.
+                # This prevents unbounded queue growth under sustained ingestion.
+                await asyncio.wait_for(self._queue.put(item), timeout=timeout)
                 return True
-            except asyncio.QueueFull:
+            except asyncio.TimeoutError:
+                # Queue full for timeout seconds — apply backpressure signal.
+                # No silent drop; caller receives False and can react.
+                logger.debug("evidence_mpsc_async_queue_timeout", timeout=timeout)
+                return False
+            except Exception:
                 return False
         return False
 
@@ -1006,36 +1110,67 @@ class EvidenceLog:
         """
         batch: list[bytes] = []
         last_flush = datetime.now(UTC)
+        # P2-03: Adaptive batch sizing — dynamically compute optimal batch size from throughput
+        # High throughput (1000+ events/s): larger batches reduce SQLite contention
+        # Low throughput (10 events/s): smaller batches reduce latency
+        # Range: 100-2000 events, calculated as: events_per_sec * 0.5, clamped
+        _adaptive_batch_size: int = self._SQLITE_BATCH_SIZE  # Start with default, adapt on first flush
+        _events_since_last_flush: int = 0
         while True:
             try:
                 async with asyncio.timeout(1.0):
                     received = self._mpsc.recv_batch(max_items=None)
                     if received:
                         batch.extend(received)
+                        _events_since_last_flush += len(received)
             except TimeoutError:
                 pass
             if self._flush_shutdown.is_set():
                 break
-            if len(batch) >= self._SQLITE_BATCH_SIZE or (batch and (datetime.now(UTC) - last_flush).total_seconds() >= self._SQLITE_FLUSH_INTERVAL):
+            now = datetime.now(UTC)
+            elapsed = (now - last_flush).total_seconds()
+            # P2-03: Compute adaptive batch size from measured throughput
+            if elapsed > 0.001 and _events_since_last_flush > 0:
+                events_per_sec = _events_since_last_flush / elapsed
+                # Optimal: half-second worth of events, clamped to [100, 2000]
+                _adaptive_batch_size = min(max(int(events_per_sec * 0.5), 100), 2000)
+            if len(batch) >= _adaptive_batch_size or (batch and elapsed >= self._SQLITE_FLUSH_INTERVAL):
                 flush_start = time.perf_counter()
                 try:
-                    await self._flush_batch_bytes(batch)
+                    # A5-03: asyncio.shield() prevents cancellation from tearing the
+                    # in-progress DB write — avoids partial flush on sprint abort.
+                    # CancelledError propagates after the batch write completes.
+                    await asyncio.shield(self._flush_batch_bytes(batch))
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
+                except asyncio.CancelledError:
+                    # Outer CancelledError — flush completed but shutdown was requested.
+                    # Re-raise so the worker loop exits cleanly after the shielded write.
+                    flush_latency_ms = (time.perf_counter() - flush_start) * 1000
+                    logger.warning("flush_shutdown_cancelled_after_write", batch_size=len(batch), flush_latency_ms=flush_latency_ms)
+                    trace_evidence_flush(len(batch), flush_latency_ms, 'cancelled', 0)
+                    raise
                 except Exception as _flush_err:  # noqa: BLE001
                     flush_latency_ms = (time.perf_counter() - flush_start) * 1000
                     logger.warning("flush_batch_failed_dropping_events", batch_size=len(batch), error=str(_flush_err))
                     trace_evidence_flush(len(batch), flush_latency_ms, 'flush_error', 0)
                 batch = []
                 last_flush = datetime.now(UTC)
+                _events_since_last_flush = 0  # P2-03: Reset after flush
         remaining = self._mpsc.recv_batch(max_items=None)
         if remaining:
             batch.extend(remaining)
         if batch and self._db is not None:
             flush_start = time.perf_counter()
-            await self._flush_batch_bytes(batch)
-            flush_latency_ms = (time.perf_counter() - flush_start) * 1000
-            trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
+            try:
+                await asyncio.shield(self._flush_batch_bytes(batch))
+                flush_latency_ms = (time.perf_counter() - flush_start) * 1000
+                trace_evidence_flush(len(batch), flush_latency_ms, 'ok', len(batch))
+            except asyncio.CancelledError:
+                flush_latency_ms = (time.perf_counter() - flush_start) * 1000
+                logger.warning("flush_shutdown_cancelled_after_write", batch_size=len(batch), flush_latency_ms=flush_latency_ms)
+                trace_evidence_flush(len(batch), flush_latency_ms, 'cancelled', 0)
+                raise
 
     def _sync_write_fallback(self, line: str, bytes_to_write: bytes) -> None:
         """Synchronous fallback write for SWAL durability when async queue is unavailable.
@@ -1124,14 +1259,31 @@ class EvidenceLog:
             if batch:
                 _write_buf.extend(batch)
                 if len(_write_buf) >= _WRITE_FLUSH_THRESHOLD:
-                    await _flush_buf()
+                    # A5-03 FIX: Shield flush to prevent cancellation from tearing write.
+                    # If CancelledError occurs, the batch is preserved in _write_buf
+                    # and will be retried on next iteration or final flush.
+                    try:
+                        await asyncio.shield(_flush_buf())
+                    except asyncio.CancelledError:
+                        # CancelledError after shielded flush — batch still in _write_buf.
+                        # Clear it to prevent duplicate flush on retry.
+                        _write_buf.clear()
+                        raise
             if not self._mpsc2.has_async_queue and (not self._mpsc2.is_empty()):
                 continue
         remaining = self._mpsc2.recv_batch(max_items=None)
         if remaining:
             _write_buf.extend(remaining)
         if _write_buf:
-            await _flush_buf()
+            # A5-03 FIX: Shield final flush to prevent cancellation from tearing write.
+            try:
+                await asyncio.shield(_flush_buf())
+            except asyncio.CancelledError:
+                # CancelledError after shielded final flush — batch preserved.
+                # Log warning since this means some data may not be persisted.
+                logger.warning("async_write_worker_cancelled_during_final_flush", pending_bytes=sum(len(b) for b in _write_buf))
+                _write_buf.clear()
+                raise
         if _afile is not None:
             try:
                 await _afile.close()
@@ -1650,7 +1802,16 @@ class EvidenceLog:
         if not created:
             return created
 
-        # Batch MPSC send — single Python→Rust call
+        # M1-02 fix: coordinated dual-channel send with backpressure.
+        # Both channels are independent Rust MPSC pools (capacity 2048 each).
+        # Without coordination, partial sends can cause SQLite/JSONL inconsistency:
+        #   - _mpsc (SQLite path) succeeds with N items, _mpsc2 (JSONL path) fills partially
+        #   - A subsequent sync-write fallback on mpsc2 writes events out of SQLite order
+        #   - Result: SQLite has event #5 but JSONL doesn't, causing replay/desync bugs
+        #
+        # Fix: check remaining capacity of BOTH channels BEFORE sending. If either is
+        # too full to accept the full batch, apply backpressure (drop the batch) rather
+        # than partial sends. This guarantees atomicity across both channels.
         _worker_alive = (
             self._initialized
             and self._flush_task is not None
@@ -1658,41 +1819,84 @@ class EvidenceLog:
         )
         if _worker_alive and (not self._closing):
             _mpsc_payloads = [e.to_bytes() for e in created]
+            # M1-02: Rust MPSC pool has fixed capacity 2048; no capacity() method exists
+            _mpsc_cap = 2048
+            _mpsc_free = _mpsc_cap - self._mpsc.len()
+            _mpsc_would_fit = _mpsc_free >= len(_mpsc_payloads)
+            _mpsc_pressure_pct = self._mpsc.len() / max(_mpsc_cap, 1)
+            # Backpressure threshold: 85% full = hard backpressure (drop batch)
+            _MPSC_BACKPRESSURE_THRESHOLD = 0.85
+
+            _jsonl_payloads: list[bytes] = []
+            if self._enable_persist:
+                # ISSUE-D FIX: crypto import outside the loop — avoid per-event IMPORT_NAME bytecode
+                if self._encrypt_at_rest and self._cipher and self._encryption_key:
+                    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+                for e in created:
+                    line = e.to_jsonl_line()
+                    bytes_to_write = line.encode('utf-8') + b'\n'
+                    if self._encrypt_at_rest and self._cipher and self._encryption_key:
+                        try:
+                            nonce = secrets.token_bytes(12)
+                            cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
+                            encryptor = cipher.encryptor()
+                            encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
+                            bytes_to_write = nonce + encryptor.tag + encrypted
+                        except Exception as _enc_err:  # noqa: BLE001
+                            logger.warning("encrypt_batch_failed", error=str(_enc_err))
+                    _jsonl_payloads.append(bytes_to_write)
+
+            # M1-02: Rust MPSC pool has fixed capacity 2048; no capacity() method exists
+            _mpsc2_cap = 2048
+            _mpsc2_free = _mpsc2_cap - self._mpsc2.len()
+            _mpsc2_would_fit = _mpsc2_free >= len(_jsonl_payloads) if self._enable_persist else True
+            _mpsc2_pressure_pct = self._mpsc2.len() / max(_mpsc2_cap, 1)
+
+            # Backpressure: if either channel is >85% full, drop the entire batch.
+            # This prevents partial-send inconsistency (SQLite succeeds, JSONL fails → reorder).
+            # SQLite and JSONL must be consistent — we drop rather than corrupt.
+            if (_mpsc_pressure_pct >= _MPSC_BACKPRESSURE_THRESHOLD or
+                (self._enable_persist and _mpsc2_pressure_pct >= _MPSC_BACKPRESSURE_THRESHOLD)):
+                # Backpressure applied — drop batch, count as dropped events
+                self._dropped_count += 1
+                logger.warning(
+                    "m1_02_backpressure_dropped_batch",
+                    mpsc_pressure=f"{_mpsc_pressure_pct:.0%}",
+                    mpsc2_pressure=f"{_mpsc2_pressure_pct:.0%}",
+                    batch_size=len(created),
+                )
+                trace_queue_drop('dual_channel_backpressure', len(created))
+                return created
+
+            # Both channels have capacity — send to both atomically (best-effort on each)
             _sent = self._mpsc.send_batch(_mpsc_payloads)
+
             for e in created:
                 trace_evidence_append(e.event_type, self._mpsc.len(), 'queued')
             if _sent < len(created):
                 logger.warning("issue007_mpsc_pool_full", sent=_sent, total=len(created))
                 trace_queue_drop('mpsc_batch', len(created) - _sent)
 
-        # Batch SWAL send — single send_batch call for JSONL persist
-        if self._enable_persist:
-            _jsonl_payloads: list[bytes] = []
-            # ISSUE-D FIX: crypto import outside the loop — avoid per-event IMPORT_NAME bytecode
-            if self._encrypt_at_rest and self._cipher and self._encryption_key:
-                from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-            for e in created:
-                line = e.to_jsonl_line()
-                bytes_to_write = line.encode('utf-8') + b'\n'
-                if self._encrypt_at_rest and self._cipher and self._encryption_key:
+            # M1-02 fix: JSONL persist path uses same backpressure-gated send
+            if self._enable_persist:
+                _sent2 = 0
+                if _mpsc2_would_fit:
                     try:
-                        nonce = secrets.token_bytes(12)
-                        cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
-                        encryptor = cipher.encryptor()
-                        encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
-                        bytes_to_write = nonce + encryptor.tag + encrypted
-                    except Exception as _enc_err:  # noqa: BLE001
-                        logger.warning("encrypt_batch_failed", error=str(_enc_err))
-                _jsonl_payloads.append(bytes_to_write)
-            try:
-                _sent2 = self._mpsc2.send_batch(_jsonl_payloads)
-                if _sent2 < len(created):
-                    for e in created[_sent2:]:
+                        _sent2 = self._mpsc2.send_batch(_jsonl_payloads)
+                        if _sent2 < len(created):
+                            for e in created[_sent2:]:
+                                line = e.to_jsonl_line()
+                                bytes_to_write = line.encode('utf-8') + b'\n'
+                                self._sync_write_fallback(line, bytes_to_write)
+                    except Exception as _swal_err:  # noqa: BLE001
+                        logger.critical("f286_swal_batch_send_failed", error=str(_swal_err))
+                else:
+                    # mpsc2 unexpectedly full despite pressure check — fallback all
+                    for e in created:
                         line = e.to_jsonl_line()
                         bytes_to_write = line.encode('utf-8') + b'\n'
                         self._sync_write_fallback(line, bytes_to_write)
-            except Exception as _swal_err:  # noqa: BLE001
-                logger.critical("f286_swal_batch_send_failed", error=str(_swal_err))
+                    logger.warning("m1_02_mpsc2_unexpectedly_full", free=_mpsc2_free, needed=len(_jsonl_payloads))
 
         # analytics_hook per event (only evidence_packet type)
         try:

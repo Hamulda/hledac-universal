@@ -1378,8 +1378,14 @@ class LanceDBIdentityStore:
             queue = await _get_table_queue(table_name)
             deadline = time.monotonic() + 60.0
             try:
+                # C3-05 FIX: bounded put with backpressure.
+                # asyncio.Queue.put() is a coroutine in Python 3.10+ — awaiting
+                # applies backpressure instead of silent drop via put_nowait().
+                # safe_wait_for timeout enforces the caller's deadline.
                 await safe_wait_for(queue.put((data, deadline)), timeout=max(0.0, deadline - time.monotonic()), label='lancedb_queue_put')
             except asyncio.TimeoutError:
+                # C3-05: deadline expired — signal backpressure to caller.
+                # Do NOT silently drop; let caller handle the backpressure signal.
                 logger.warning('[LANCEDB:QW] Queue full, write dropped (deadline expired)')
                 return False
             tuner = getattr(self, '_autotune', None)

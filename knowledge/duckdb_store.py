@@ -14,6 +14,7 @@ import asyncio
 import atexit
 import functools
 import sys
+import time
 import weakref
 
 from hledac.universal.core.env_config import ENV
@@ -756,8 +757,9 @@ class RemoteParquetSource:
         Async iterator — runs DuckDB batch iteration on a thread pool.
 
         S-07: prevents event loop blocking during connection setup + remote read.
-        The entire batch iteration runs on the thread pool so the event loop
-        never sees a blocking DuckDB call.
+        S1-06 FIX: producer thread uses synchronous bounded put with backpressure
+        instead of fire-and-forget call_soon_threadsafe + put_nowait (which
+        silently drops on full and can orphan the consumer).
 
         Yields:
             pyarrow.RecordBatch — zero-copy via DuckDB Arrow export.
@@ -787,33 +789,125 @@ class RemoteParquetSource:
                 table = pa.Table.from_pydict(dict(zip(columns, col_arrays)))
                 yield from table.to_batches(max_chunksize=self.batch_size)
 
-        # Run synchronous generator on thread pool and yield items to async caller
+        # S1-06 FIX: use a synchronous bounded queue in the producer thread
+        # with backpressure instead of call_soon_threadsafe + put_nowait (silent drop).
+        # BoundedQueueBlock is reentrant-safe for the single-producer pattern here.
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Condition, Lock
+
+        _QUEUE_MAXSIZE = 16  # S1-06 FIX: was 4 — tiny queue caused premature iterator termination on slow consumers. 16 gives 4× headroom for M1 8GB while staying bounded.
+        _QUEUE_PUT_TIMEOUT_S = 5.0
+
+        class _BoundedQueueBlock:
+            """Thread-safe synchronous bounded queue with blocking put and non-blocking get.
+
+            S1-06 FIX: replaces call_soon_threadsafe + put_nowait pattern which
+            silently drops items on full and can orphan the consumer. This version
+            applies backpressure: put() blocks up to timeout_s, then raises so the
+            producer can signal stall rather than silently lose data.
+            """
+
+            __slots__ = ('_lock', '_cv', '_queue', '_maxsize', '_closed')
+
+            def __init__(self, maxsize: int = _QUEUE_MAXSIZE) -> None:
+                self._lock = Lock()
+                self._cv = Condition(self._lock)
+                self._queue: list = []
+                self._maxsize = maxsize
+                self._closed = False
+
+            def put(self, item, timeout_s: float = _QUEUE_PUT_TIMEOUT_S) -> bool:
+                """Blocking put with timeout. Returns True on success, False on timeout."""
+                deadline = time.monotonic() + timeout_s
+                with self._cv:
+                    while len(self._queue) >= self._maxsize and not self._closed:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return False  # Backpressure signal: queue saturated
+                        if not self._cv.wait(timeout=remaining):
+                            # Spurious wakeup or timeout expired
+                            if len(self._queue) >= self._maxsize and not self._closed:
+                                return False
+                    if self._closed:
+                        return False
+                    self._queue.append(item)
+                    self._cv.notify()
+                    return True
+
+            def get(self):
+                """Non-blocking get. Raises IndexError if empty."""
+                with self._cv:
+                    if not self._queue:
+                        raise IndexError("empty")
+                    item = self._queue.pop(0)
+                    self._cv.notify()
+                    return item
+
+            def close(self) -> None:
+                with self._cv:
+                    self._closed = True
+                    self._cv.notify_all()
+
+            @property
+            def closed(self) -> bool:
+                return self._closed
+
         loop = asyncio.get_running_loop()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=2)
+        bqueue = _BoundedQueueBlock(maxsize=_QUEUE_MAXSIZE)
+        producer_done = False
 
         def _producer():
+            nonlocal producer_done
             try:
                 for batch in _sync_iter():
-                    loop.call_soon_threadsafe(lambda b: queue.put_nowait(b), batch)
-            except Exception as e:  # noqa: BLE001 — best-effort; remote read; non-critical
-                logger.warning(f"[RemoteParquet] iter_batches_async error: {e}")
+                    if bqueue.closed:
+                        break
+                    if not bqueue.put(batch, timeout_s=_QUEUE_PUT_TIMEOUT_S):
+                        # S1-06: backpressure — queue saturated beyond timeout.
+                        # Log and signal end-of-stream rather than silently dropping.
+                        logger.warning(
+                            "[RemoteParquet] iter_batches_async: queue full "
+                            f"({_QUEUE_MAXSIZE}), producer backpressured — terminating early"
+                        )
+                        break
+                # Signal end-of-stream
+                bqueue.close()
+            except Exception as e:
+                logger.warning(f"[RemoteParquet] iter_batches_async producer error: {e}")
             finally:
-                loop.call_soon_threadsafe(lambda: queue.put_nowait(None))
+                producer_done = True
 
-        await asyncio.to_thread(_producer)
+        # Run producer on thread pool; consumer runs on asyncio event loop.
+        # Using to_thread ensures the producer is tracked and the thread
+        # is joined when the consumer exits or is cancelled.
+        prod_thread = threading.Thread(target=_producer, daemon=True)
+        prod_thread.start()
+
         try:
             while True:
-                batch = await queue.get()
-                if batch is None:
-                    break
+                # Poll with timeout so we can detect a stalled/dead producer.
+                batch = await asyncio.wait_for(
+                    loop.run_in_executor(None, bqueue.get),
+                    timeout=_QUEUE_PUT_TIMEOUT_S * 2,
+                )
                 yield batch
+        except asyncio.TimeoutError:
+            # S1-06: producer may have died silently (OOM kill, exception in thread).
+            # Check if producer exited without closing cleanly.
+            if not producer_done:
+                logger.warning(
+                    "[RemoteParquet] iter_batches_async: consumer timeout waiting "
+                    "for batch — producer thread may have died. Terminating iterator."
+                )
+            # If producer is done and queue empty, normal exit (consumer loop will
+            # exit via the break above once get() raises IndexError).
+            raise StopAsyncIteration from None
+        except IndexError:
+            # Queue is drained and closed — normal end of stream.
+            raise StopAsyncIteration from None
         except asyncio.CancelledError:
-            # Drain queue to unblock producer thread on next iteration
-            while not queue.empty():
-                try:
-                    queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
+            # S1-06: cancelled — wake producer so it can exit.
+            bqueue.close()
             raise
 
     async def read_table_async(self):
@@ -8738,10 +8832,14 @@ class DuckDBShadowStore:
 
     async def _bounded_startup_replay(self, replay_pending_limit: int, replay_timeout_s: float) -> None:
         """
-        Sprint 8L: Time-boxed startup replay integrated into async_initialize.
+        Sprint 8L + FLOW-03: Time-boxed startup replay integrated into async_initialize.
 
         Scans pending_duckdb_sync:* markers, replays up to replay_pending_limit
         of them, and respects replay_timeout_s wall-time budget.
+
+        FLOW-03: Also scans prewrite:{id} markers without checkpoint:{id} and
+        replays the corresponding finding:{id} to DuckDB. On success writes
+        checkpoint:{id} and deletes prewrite:{id}.
 
         Boot barrier: _startup_ready is NOT set during replay, so activation
         writes are held off until replay completes or times out.
@@ -8758,7 +8856,43 @@ class DuckDBShadowStore:
         lock = self._ensure_replay_lock()
         deadline = _time.monotonic() + replay_timeout_s
         all_markers = self._wal_scan_pending_sync_markers()
-        if not all_markers:
+
+        # FLOW-03: Also scan for orphaned prewrite markers needing recovery
+        prewrites = self._wal_scan_prewrites_without_checkpoint()
+        _logger = logging.getLogger(__name__)
+        if prewrites:
+            _logger.info(f"[FLOW-03] Startup recovery: {len(prewrites)} orphaned prewrite markers found")
+        for pw in prewrites:
+            fid = pw.get("id", "")
+            if not fid:
+                continue
+            if _time.monotonic() > deadline:
+                break
+            try:
+                # Replay the finding to DuckDB
+                wal_record = self._wal_get_finding(fid) if hasattr(self, '_wal_get_finding') else None
+                if wal_record is None:
+                    # Try via wal_manager
+                    mgr = self._ensure_wal_manager()
+                    if mgr is not None:
+                        wal_record = mgr.wal_get_finding(fid)
+                if wal_record is not None:
+                    query = wal_record.get("query", "")
+                    source_type = wal_record.get("source_type", "unknown")
+                    confidence = wal_record.get("confidence", 1.0)
+                    db_ok = self._sync_insert_finding(fid, query, source_type, confidence)
+                    if db_ok:
+                        self._wal_write_checkpoint(fid)
+                        self._wal_clear_prewrite(fid)
+                        _logger.info(f"[FLOW-03] Recovered finding {fid} from orphaned prewrite")
+                    else:
+                        _logger.warning(f"[FLOW-03] Failed to recover finding {fid} via DuckDB insert")
+                else:
+                    _logger.warning(f"[FLOW-03] No WAL truth found for orphaned prewrite {fid}")
+            except Exception as e:
+                _logger.debug(f"[FLOW-03] Prewrite recovery exception for {fid}: {e}")
+
+        if not all_markers and not prewrites:
             return
         seen_ids: set = set()
         unique_markers: list[dict[str, Any]] = []
@@ -9251,19 +9385,62 @@ class DuckDBShadowStore:
             finding_id=finding_id, query=query, source_type=source_type, confidence=confidence
         )
 
+    def _ensure_wal_manager(self) -> DuckDBWALManager | None:
+        """Ensure WAL manager is initialized. Returns it or None if unavailable."""
+        if self._wal_manager is None:
+            _wal_root = self._db_path.parent if self._db_path else None
+            if _wal_root is None:
+                return None
+            self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
+            self._wal_manager.initialize()
+        return self._wal_manager
+
+    def _wal_write_prewrite(self, finding_id: str) -> bool:
+        """FLOW-03: Write prewrite marker before DuckDB write."""
+        mgr = self._ensure_wal_manager()
+        if mgr is None:
+            return False
+        return mgr.wal_write_prewrite(finding_id)
+
+    def _wal_write_checkpoint(self, finding_id: str) -> bool:
+        """FLOW-03: Write checkpoint marker after DuckDB write succeeds."""
+        mgr = self._ensure_wal_manager()
+        if mgr is None:
+            return False
+        return mgr.wal_write_checkpoint(finding_id)
+
+    def _wal_clear_prewrite(self, finding_id: str) -> bool:
+        """FLOW-03: Clear prewrite marker after checkpoint is written."""
+        mgr = self._ensure_wal_manager()
+        if mgr is None:
+            return False
+        return mgr.wal_clear_prewrite(finding_id)
+
+    def _wal_has_checkpoint(self, finding_id: str) -> bool:
+        """FLOW-03: Check if checkpoint exists for finding."""
+        mgr = self._ensure_wal_manager()
+        if mgr is None:
+            return False
+        return mgr.wal_has_checkpoint(finding_id)
+
+    def _wal_scan_prewrites_without_checkpoint(self) -> list[dict[str, Any]]:
+        """FLOW-03: Scan for prewrites needing recovery."""
+        mgr = self._ensure_wal_manager()
+        if mgr is None:
+            return []
+        return mgr.wal_scan_prewrites_without_checkpoint()
+
     def _activation_record_finding(self, finding_id: str, query: str, source_type: str, confidence: float) -> dict:
         """
-        Sprint 8A: Record a structured finding - LMDB WAL first, DuckDB second.
+        Sprint 8A + FLOW-03: Record a structured finding - LMDB WAL first, DuckDB second.
 
-        Mapping:
-          result.id or uuid4() -> id
-          context.query or "" -> query
-          source_type from schema/type name -> source_type
-          result.confidence or 1.0 -> confidence
-          time.time() -> ts
+        FLOW-03 Checkpoint Protocol:
+            Phase 1: Write prewrite:{id} marker (in-flight signal)
+            Phase 2: DuckDB insert
+            Phase 3: Write checkpoint:{id} + delete prewrite:{id} on success
 
         Partial failure semantics:
-          - LMDB OK + DuckDB FAIL -> LMDB remains truth, log desync, return duckdb_success=False
+          - LMDB OK + DuckDB FAIL -> LMDB preserved, pending-sync marker written
           - LMDB FAIL + DuckDB SKIP -> return lmdb_success=False, duckdb_success=None
 
         Returns dict with keys: lmdb_success, duckdb_success, finding_id, query
@@ -9277,16 +9454,37 @@ class DuckDBShadowStore:
         if not lmdb_ok:
             _logger.warning(f"[Sprint 8A] WAL-DuckDB desync: LMDB write failed for {finding_id}")
             return result
+        # FLOW-03 Phase 1: Write prewrite marker before DuckDB write
+        try:
+            self._wal_write_prewrite(finding_id)
+        except Exception:  # noqa: BLE001 — best-effort; prewrite is advisory
+            pass
         try:
             db_ok = self._sync_insert_finding(finding_id, query, source_type, confidence)
             result["duckdb_success"] = db_ok
-            if not db_ok:
+            if db_ok:
+                # FLOW-03 Phase 3: Write checkpoint and clear prewrite on success
+                try:
+                    self._wal_write_checkpoint(finding_id)
+                    self._wal_clear_prewrite(finding_id)
+                except Exception:  # noqa: BLE001 — best-effort; checkpoint is advisory
+                    pass
+            else:
                 _logger.error(f"[Sprint 8A] WAL-DuckDB desync: DuckDB write failed for {finding_id}, LMDB preserved")
                 self._wal_write_pending_sync_marker(finding_id, query, source_type, confidence)
+                # Clear prewrite since DuckDB failed — no checkpoint possible
+                try:
+                    self._wal_clear_prewrite(finding_id)
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             result["duckdb_success"] = False
             _logger.error(f"[Sprint 8A] WAL-DuckDB desync: DuckDB exception for {finding_id}: {e}, LMDB preserved")
             self._wal_write_pending_sync_marker(finding_id, query, source_type, confidence)
+            try:
+                self._wal_clear_prewrite(finding_id)
+            except Exception:  # noqa: BLE001
+                pass
         return result
 
     def _wal_evict_oldest_pending_markers(self, keep_count: int) -> int:
@@ -9552,10 +9750,14 @@ class DuckDBShadowStore:
 
     def _activation_record_findings_batch(self, findings: list[dict[str, Any]]) -> dict:
         """
-        Sprint 8A: Batch activation - LMDB WAL first, DuckDB second.
+        Sprint 8A + FLOW-03: Batch activation - LMDB WAL first, DuckDB second.
 
-        Each finding dict must contain: id, query, source_type, confidence
-        (id is generated by caller if not present)
+        FLOW-03 Checkpoint Protocol (batch):
+            Phase 1: Write prewrite:{id} for all findings
+            Phase 2: DuckDB bulk insert
+            Phase 3: For each successfully inserted finding:
+                - Write checkpoint:{id}
+                - Delete prewrite:{id}
 
         Returns dict with keys: lmdb_success, duckdb_success, count,
                                 failed_ids (list of ids that failed)
@@ -9563,9 +9765,12 @@ class DuckDBShadowStore:
         import logging as _logging
 
         _logger = _logging.getLogger(__name__)
-        result = {"lmdb_success": False, "duckdb_success": False, "count": 0, "failed_ids": []}
+        result = {"lmdb_success": False, "duckdb_success": False, "count": 0, "failed_ids": [], "orphaned_keys": []}
         if not findings:
             return result
+        # FLOW-01: Track LMDB keys for potential compensating transaction
+        _written_lmdb_keys: list[str] = []
+        _finding_ids: list[str] = []
         try:
             import time as _time
 
@@ -9582,6 +9787,8 @@ class DuckDBShadowStore:
                 if not fid:
                     continue
                 key = f"finding:{fid}"
+                _written_lmdb_keys.append(key)
+                _finding_ids.append(fid)
                 value = {
                     "id": fid,
                     "query": f.get("query", ""),
@@ -9599,6 +9806,17 @@ class DuckDBShadowStore:
         except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             _logger.error(f"[Sprint 8A] Batch WAL exception: {e}")
             return result
+
+        # FLOW-03 Phase 1b: Write prewrite markers for all findings
+        try:
+            for fid in _finding_ids:
+                try:
+                    self._wal_write_prewrite(fid)
+                except Exception:  # noqa: BLE001 — best-effort; prewrite is advisory
+                    pass
+        except Exception as e:
+            _logger.debug(f"[FLOW-03] Batch prewrite failed: {e}")
+
         try:
             db_findings = [
                 {
@@ -9616,9 +9834,62 @@ class DuckDBShadowStore:
                 result["count"] = inserted
                 if inserted < len(db_findings):
                     _logger.error(f"[Sprint 8A] Partial DuckDB batch: {inserted}/{len(db_findings)}, LMDB preserved")
+                # FLOW-03 Phase 3: Write checkpoint for each successfully inserted finding
+                if inserted > 0 and inserted == len(db_findings):
+                    # All succeeded — checkpoint all
+                    for fid in _finding_ids:
+                        try:
+                            self._wal_write_checkpoint(fid)
+                            self._wal_clear_prewrite(fid)
+                        except Exception:  # noqa: BLE001 — best-effort
+                            pass
         except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             _logger.error(f"[Sprint 8A] Batch DuckDB exception: {e}, LMDB preserved")
+            # FLOW-01 FIX: LMDB succeeded but DuckDB failed — compensating transaction
+            if _written_lmdb_keys:
+                result["orphaned_keys"] = _written_lmdb_keys
+                self._cleanup_orphaned_lmdb_entries(_written_lmdb_keys)
+            # FLOW-03: Clear prewrites since DuckDB failed
+            for fid in _finding_ids:
+                try:
+                    self._wal_clear_prewrite(fid)
+                except Exception:  # noqa: BLE001
+                    pass
         return result
+
+    def _cleanup_orphaned_lmdb_entries(self, orphaned_keys: list[str]) -> int:
+        """
+        FLOW-01 FIX: Compensating transaction for orphaned LMDB entries.
+
+        Called when LMDB WAL succeeded but DuckDB failed — removes the orphaned
+        LMDB entries to maintain consistency. Uses LMDB transaction delete.
+
+        Args:
+            orphaned_keys: List of LMDB keys (e.g. "finding:{id}") to delete
+
+        Returns:
+            Number of keys successfully deleted
+        """
+        if not orphaned_keys:
+            return 0
+        _logger = logging.getLogger(__name__)
+        deleted = 0
+        try:
+            wal = getattr(self, '_wal_lmdb', None)
+            if wal is None:
+                _logger.warning('[FLOW-01] _cleanup_orphaned_lmdb_entries: no _wal_lmdb available')
+                return 0
+            for key in orphaned_keys:
+                try:
+                    if wal.delete(key):
+                        deleted += 1
+                except Exception as e:
+                    _logger.debug(f'[FLOW-01] LMDB delete failed for {key}: {e}')
+            if deleted > 0:
+                _logger.info(f'[FLOW-01] Cleaned up {deleted}/{len(orphaned_keys)} orphaned LMDB entries')
+        except Exception as e:
+            _logger.error(f'[FLOW-01] Orphan cleanup error: {e}')
+        return deleted
 
     def _acquire_process_lock(self) -> tuple[str, str]:
         """

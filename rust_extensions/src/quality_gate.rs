@@ -128,7 +128,7 @@ pub fn compute_entropy(text: &str) -> f64 {
 
     // Engage NEON histogram on aarch64 for sufficiently large inputs.
     // Below ENTROPY_NEON_THRESHOLD the scalar loop is faster.
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(neon_available)]
     if n >= ENTROPY_NEON_THRESHOLD {
         let hist = unsafe { compute_histogram_neon(bytes) };
         return entropy_from_histogram(&hist, n);

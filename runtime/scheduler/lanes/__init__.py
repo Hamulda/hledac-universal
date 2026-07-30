@@ -5,6 +5,7 @@ allowed per sprint/cycle under M1 constraints. AcquisitionStrategy does NOT
 fetch network — it only emits a bounded plan dict per lane. See
 :ref:`acquisition-strategy` for lane definitions, strategy rules, and invariants.
 """
+import asyncio
 import logging
 import re
 from collections.abc import AsyncGenerator, Callable
@@ -1291,7 +1292,8 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if candidate_findings and store is not None:
                     if hasattr(store, 'async_ingest_findings_batch'):
                         try:
-                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
+                            # A5-07: shield critical DuckDB write from cancellation
+                            ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
                         except Exception:
                             pass
@@ -1345,7 +1347,8 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if candidate_findings and store is not None:
                     if hasattr(store, 'async_ingest_findings_batch'):
                         try:
-                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
+                            # A5-07: shield critical DuckDB write from cancellation
+                            ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
                         except Exception:
                             pass
@@ -1395,7 +1398,8 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if candidate_findings and store is not None:
                     if hasattr(store, 'async_ingest_findings_batch'):
                         try:
-                            ingest_results = await store.async_ingest_findings_batch(candidate_findings)
+                            # A5-07: shield critical DuckDB write from cancellation
+                            ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
                         except Exception:
                             pass

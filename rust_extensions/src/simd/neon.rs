@@ -59,7 +59,14 @@ impl EmbeddingError {
 /// - `Ok(true)` — normalized successfully
 /// - `Ok(false)` — zero/near-zero vector, vector left unchanged
 /// - `Err(EmbeddingError)` — preconditions not met
-#[cfg(target_arch = "aarch64")]
+///
+/// R4-05 FIX: Guard changed from #[cfg(target_arch = "aarch64")] to
+/// #[cfg(neon_available)] — neon_available is set by build.rs only when
+/// the +neon,+crypto target-feature flags are active. Without those flags
+/// the compiler would emit scalar code even though #[cfg(target_arch = "aarch64")]
+/// is true; the #[target_feature(enable = "neon")] attribute requires the
+/// +neon target feature to actually generate NEON instructions.
+#[cfg(neon_available)]
 #[target_feature(enable = "neon")]
 pub fn normalize_neon(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
     let len = vec.len();
@@ -130,7 +137,7 @@ pub fn normalize_neon(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
 ///
 /// # Returns
 /// Cosine similarity in [-1.0, 1.0], or Err on dimension mismatch.
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
 #[target_feature(enable = "neon")]
 pub fn cosine_neon(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     if a.len() != b.len() {
@@ -200,9 +207,9 @@ pub fn cosine_scalar(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
 /// Normalize using best available SIMD, with scalar fallback.
 /// ISSUE-007: Returns Result — zero/near-zero vector is Err(EmbeddingErrorKind::ZeroVector).
 ///
-/// On aarch64: tries NEON first (unsafe but fast), falls back to scalar.
+/// On aarch64 with NEON: tries NEON first (unsafe but fast), falls back to scalar.
 /// On other arches: scalar only.
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
 pub fn normalize_simd(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
     if vec.len() >= 4 && vec.len() % 4 == 0 {
         match unsafe { normalize_neon(vec) } {
@@ -218,17 +225,17 @@ pub fn normalize_simd(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
     normalize_scalar(vec)
 }
 
-/// Scalar-only normalize for non-aarch64 platforms.
-#[cfg(not(target_arch = "aarch64"))]
+/// Scalar-only normalize for non-aarch64 platforms or aarch64 without NEON.
+#[cfg(not(neon_available))]
 pub fn normalize_simd(vec: &mut [f32]) -> Result<bool, EmbeddingError> {
     normalize_scalar(vec)
 }
 
 /// Compute cosine similarity using best available SIMD.
 ///
-/// On aarch64: tries NEON first (unsafe but fast), falls back to scalar.
+/// On aarch64 with NEON: tries NEON first (unsafe but fast), falls back to scalar.
 /// On other arches: scalar only.
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
 pub fn cosine_simd(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     if a.len() >= 4 && a.len() % 4 == 0 {
         if let Ok(score) = unsafe { cosine_neon(a, b) } {
@@ -238,8 +245,8 @@ pub fn cosine_simd(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     cosine_scalar(a, b)
 }
 
-/// Scalar-only cosine for non-aarch64 platforms.
-#[cfg(not(target_arch = "aarch64"))]
+/// Scalar-only cosine for non-aarch64 platforms or aarch64 without NEON.
+#[cfg(not(neon_available))]
 pub fn cosine_simd(a: &[f32], b: &[f32]) -> Result<f32, EmbeddingError> {
     cosine_scalar(a, b)
 }

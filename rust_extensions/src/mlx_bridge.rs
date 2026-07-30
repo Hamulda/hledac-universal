@@ -47,6 +47,7 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
+use rayon::prelude::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -463,7 +464,11 @@ impl MLXBridge {
 // batch_tokenize — Rayon-parallel prompt tokenization
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Parallel tokenization of multiple prompts using rayon.
+/// R4-04 FIX: Parallel tokenization of multiple prompts using rayon.
+///
+/// GIL strategy: Acquire GIL once, collect ALL tokenizer Bound references,
+/// then release GIL and run rayon par_iter over the collected refs.
+/// This avoids N × Python::attach() overhead (each attach = GIL re-acquire).
 ///
 /// CPU-bound: tokenization runs in parallel across prompts.
 /// GPU-bound mlx_lm.generate() stays in Python (Metal is single-stream).
@@ -486,33 +491,36 @@ pub fn batch_tokenize_(
         ));
     }
 
-    // Collect results into a Vec of Vec<u32> first, then create PyList
-    let mut results: Vec<Vec<u32>> = Vec::with_capacity(tokenizers.len());
-    for i in 0..tokenizers.len() {
-        let p = &prompts[i];
-        let ids: Vec<u32> = Python::attach(|py| {
-            // Clone the Py pointer so we can call into_bound without moving
-            let tok = Py::clone_ref(&tokenizers[i], py);
-            let tok_bound: Bound<'_, PyAny> = tok.into_bound(py);
-            let result = match tok_bound.call_method1("encode", (p,)) {
-                Ok(r) => r,
-                Err(_) => {
-                    return vec![];
-                }
-            };
-            let ids: Vec<u32> = if result.is_instance_of::<PyList>() {
-                result.extract::<Vec<u32>>().unwrap_or_default()
-            } else if result.is_instance_of::<PyTuple>() {
-                result.extract::<Vec<u32>>().unwrap_or_default()
-            } else {
-                vec![]
-            };
-            ids
-        });
-        results.push(ids);
-    }
+    // R4-04 FIX: Collect ALL Bound references under a SINGLE GIL acquisition.
+    // Each tokenizers[i] is cloned_ref so the original Py<PyAny> stays valid.
+    let bound_tokenizers: Vec<Bound<'_, PyAny>> = tokenizers
+        .iter()
+        .map(|t| Py::clone_ref(t, py).into_bound(py))
+        .collect();
 
-    // Build PyList from results
+    // R4-04 FIX: Release GIL for parallel work. rayon par_iter runs on worker
+    // threads with no Python interpreter — safe because we hold no GIL-dependent
+    // state. Results are Vec<Vec<u32>> (plain Rust types, no Python objects).
+    let results: Vec<Vec<u32>> = crate::gil::release_gil(py, || {
+        bound_tokenizers
+            .par_iter()
+            .zip(prompts.par_iter())
+            .map(|(tok, prompt)| {
+                let result = match tok.call_method1("encode", (prompt,)) {
+                    Ok(r) => r,
+                    Err(_) => return vec![],
+                };
+                if result.is_instance_of::<PyList>() {
+                    result.extract::<Vec<u32>>().unwrap_or_default()
+                } else if result.is_instance_of::<PyTuple>() {
+                    result.extract::<Vec<u32>>().unwrap_or_default()
+                } else {
+                    vec![]
+                }
+            })
+            .collect()
+    });
+
     let py_list = PyList::new(py, &results)?;
     Ok(py_list)
 }

@@ -8,18 +8,29 @@ Python/Rust extension via PyO3 (`cdylib`), build via `maturin develop` / `maturi
 cd rust_extensions
 
 # Standard build (default: core + data) — DuckDB wired
-maturin develop
+# ⚠️ M1/M2/M3: RUSTFLAGS required for NEON SIMD — maturin ignores Cargo.toml
+# [target.aarch64-apple-darwin] rustflags (cargo:rustc-cfg=neon_available via build.rs
+# is still set, but +neon compiler flag must come from RUSTFLAGS env var).
+RUSTFLAGS="-C target-feature=+neon,+crypto" maturin develop
 
 # Fast dev build (bez DuckDB, bez Metal) — ~5× rychlejší
-maturin develop --no-default-features --features ""
+# ⚠️ M1/M2/M3: stejné RUSTFLAGS pro NEON SIMD
+RUSTFLAGS="-C target-feature=+neon,+crypto" maturin develop --no-default-features --features ""
 
 # Full build (vše) — pouze CI
-maturin develop --features "full"
+# ⚠️ M1/M2/M3: stejné RUSTFLAGS pro NEON SIMD
+RUSTFLAGS="-C target-feature=+neon,+crypto" maturin develop --features "full"
 
 # Release wheel
-maturin build --release
-maturin build --release --features "full"
+RUSTFLAGS="-C target-feature=+neon,+crypto" maturin build --release
+RUSTFLAGS="-C target-feature=+neon,+crypto" maturin build --release --features "full"
 ```
+
+**Proč RUSTFLAGS env var:** Maturin při `maturin develop` / `maturin build` sestavuje vlastní
+`cargo` příkaz a Cargo.toml `[target.aarch64-apple-darwin]` rustflags jsou ignorovány.
+`build.rs` správně nastavuje `cargo:rustc-cfg=neon_available` (detekce přes
+`CARGO_CFG_TARGET_ARCH`), ale bez `+neon` v target-features compiler pouze
+používá skalární fallback — žádné SIMD instrukce se neemitují.
 
 ## Feature flags (D3 fix)
 

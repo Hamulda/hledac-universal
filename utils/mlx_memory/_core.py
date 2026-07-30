@@ -63,15 +63,25 @@ def _detect_mlx_available() -> bool:
 
 MLX_AVAILABLE: bool = _detect_mlx_available()
 
+# P3-03 FIX: Module-level cached reference replaces sys.modules.get() lookup.
+# In can_afford_sync, get_mx() is called 6× per check (hasattr×4, eval, metal).
+# sys.modules dict lookup is ~100ns but adds up in tight MLX inference loops.
+# Pattern matches resource_governor._get_mx() — one import on first use.
+_mx_module: Any = None
+
 
 def get_mx():
     """
-    Lazy accessor for mlx.core module — never holds a module-level reference.
+    Lazy accessor for mlx.core module — cached after first import.
     Returns the mlx.core module object if available, otherwise None.
+
+    P3-03 FIX: Replaced sys.modules.get() with module-level cached reference.
+    Previously did dict lookup on every call — now O(1) with no module traversal.
     """
-    if not MLX_AVAILABLE:
-        return None
-    return sys.modules.get("mlx.core")
+    global _mx_module
+    if _mx_module is None and MLX_AVAILABLE:
+        import mlx.core as _mx_module
+    return _mx_module
 
 
 # Sentinel for unset lazy module reference
@@ -458,7 +468,26 @@ def set_cache_limit_with_debounce(limit_mb: int, min_interval_seconds: float = 1
 
 
 def safe_clear_metal_cache() -> bool:
-    """Alias for clear_mlx_cache() for backward compatibility."""
+    """
+    Alias for clear_mlx_cache() for backward compatibility.
+
+    U2-04 FIX: This function is a public API entry point. Some callers
+    invoke it directly without knowing it delegates to mlx_cleanup_sync().
+    We add the mx.eval([]) barrier here directly so that even if the
+    delegation chain changes, this remains correct.
+
+    The barrier ensures GPU queue is flushed before clear_cache() is called,
+    otherwise Metal cache is NOT actually released (MLX lazy eval).
+    """
+    if not MLX_AVAILABLE:
+        return False
+    mx = get_mx()
+    if mx is None:
+        return False
+    try:
+        mx.eval([])  # U2-04: barrier — flush GPU queue before clear_cache
+    except Exception as _e:
+        logger.warning(f"[CRITICAL] safe_clear_metal_cache mx.eval([]) barrier failed: {_e}")
     return clear_mlx_cache()
 
 
@@ -831,11 +860,27 @@ def mlx_managed(func: Fn) -> Fn:
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 result = func(*args, **kwargs)
-                _maybe_eval_sync()
-                _clear_metal_cache_sync()
+                # U2-01 FIX: offload sync MLX ops to thread — prevents event-loop stall.
+                # asyncio.to_thread() is non-blocking; the thread runs in background.
+                try:
+                    _loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # No event loop (e.g. bare thread) — fall back to direct call.
+                    # This is safe: we're already in a sync function, no event loop to block.
+                    _maybe_eval_sync()
+                    _clear_metal_cache_sync()
+                else:
+                    # Schedule cleanup in background thread; don't await it here.
+                    _loop.run_in_executor(None, _sync_cleanup_sequence)
                 return result
             except Exception:
-                _clear_metal_cache_sync()
+                # U2-01 FIX: cleanup on exception path too — no await, same offload.
+                try:
+                    _loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    _clear_metal_cache_sync()
+                else:
+                    _loop.run_in_executor(None, _clear_metal_cache_sync)
                 raise
 
         return sync_wrapper  # type: ignore[return-value]
@@ -854,20 +899,36 @@ def mlx_managed(func: Fn) -> Fn:
         return async_wrapper  # type: ignore[return-value]
 
 
+def _sync_cleanup_sequence() -> None:
+    """U2-01 FIX: sequential sync cleanup for executor offload (no async)."""
+    _maybe_eval_sync()
+    _clear_metal_cache_sync()
+
+
 def mlx_cleanup_after(func: Fn) -> Fn:
     """
     Decorator: cleanup after function (eval + clear) regardless of outcome.
+    U2-01 FIX: sync functions offload cleanup to executor thread.
     """
     if not inspect.iscoroutinefunction(func):
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 result = func(*args, **kwargs)
-                _maybe_eval_sync()
-                _clear_metal_cache_sync()
+                try:
+                    _loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    _sync_cleanup_sequence()
+                else:
+                    _loop.run_in_executor(None, _sync_cleanup_sequence)
                 return result
             except Exception:
-                _clear_metal_cache_sync()
+                try:
+                    _loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    _clear_metal_cache_sync()
+                else:
+                    _loop.run_in_executor(None, _clear_metal_cache_sync)
                 raise
 
         return sync_wrapper  # type: ignore[return-value]

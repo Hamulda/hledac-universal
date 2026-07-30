@@ -25,14 +25,17 @@ use pyo3::prelude::*;
 
 /// Returns the SIMD feature level available on this platform.
 /// 0 = scalar only, 1 = NEON (Apple Silicon M1+), 2 = Advanced NEON
+///
+/// R4-05 FIX: Check neon_available (set by build.rs on aarch64 with +neon
+/// target-feature flag) rather than just target_arch. Without the target-feature
+/// flag, the compiler would emit scalar code even for aarch64.
 #[pyfunction]
 pub fn simd_feature_level() -> u32 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(neon_available)]
     {
-        // Apple Silicon M1 and later support NEON
         1
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(not(neon_available))]
     {
         0
     }

@@ -1050,6 +1050,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // R4.5: Distribuovaný BloomFilter s Count-Min Sketch.
     // dedup_bloom is always compiled — no feature gate needed
     m.add_class::<dedup_bloom::PyDistributedBloomFilter>()?;
+    m.add_class::<dedup_bloom::DedupBloomStats>()?;
 
     // Issue #22: Health endpoint
     health::register(m)?;

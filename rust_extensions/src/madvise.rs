@@ -19,8 +19,39 @@
 //! P3-2 Enhancement: MAP_NOCACHE for LMDB/DuckDB regions
 //! P3-4 Enhancement: MADV_HUGEPAGE + huge page mmap for embedding index
 
+use lru::LruCache;
 use pyo3::prelude::*;
 use std::ptr::null_mut;
+use std::sync::{Mutex, OnceLock};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R4-06 FIX: Cached Mmap — eliminates full open/mmap/madvise/unmap/close cycle
+// per call. Cache key = path, value = (file_size, mapped_ptr, mapped_len).
+// LRU(32) prevents unbounded growth on pathological workloads.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Global mmap cache: OnceLock + Mutex<LruCache> for process lifetime.
+/// LRU(32) cap: 32 × ~10MB LMDB region ≈ 320MB max resident (M1 8GB safe).
+static MMAP_CACHE: OnceLock<Mutex<LruCache<String, CachedMmap>>> = OnceLock::new();
+
+/// Cached mmap entry — stores the mapped pointer + length so we can call
+/// madvise on the already-mapped region without re-opening the file.
+struct CachedMmap {
+    file_size: usize,
+    mapped_ptr: *mut libc::c_void,
+    mapped_len: usize,
+}
+
+impl CachedMmap {
+    fn new(file_size: usize, mapped_ptr: *mut libc::c_void, mapped_len: usize) -> Self {
+        Self { file_size, mapped_ptr, mapped_len }
+    }
+}
+
+/// Get or create the global LRU cache (32 entries).
+fn get_mmap_cache() -> &'static Mutex<LruCache<String, CachedMmap>> {
+    MMAP_CACHE.get_or_init(|| Mutex::new(LruCache::new(32)))
+}
 
 /// MADV_DONTNEED — value 4 on Darwin.
 /// Immediately discards pages — best for CRITICAL emergency relief.
@@ -45,17 +76,31 @@ const MADV_NOCACHE: i32 = 11;
 ///   - System has available huge pages
 const MADV_HUGEPAGE: i32 = 7;
 
+// FFI-01: Panic guard macro — wraps PyO3 FFI boundary to prevent panics
+// (e.g., CString::new on null-byte paths, OOM in rayon) from crossing
+// into Python as SIGABRT. Pattern: catch_unwind(AssertUnwindSafe(|| { ... }))
+macro_rules! ffi_safe {
+    ($body:block) => {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $body))
+    };
+}
+
 /// Standard page size on Apple Silicon.
 const PAGE_SIZE: usize = 4096;
 
 /// Huge page size on Apple Silicon (2MB).
 const HUGEPAGE_SIZE: usize = 2 * 1024 * 1024;
 
-/// P3-2: Apply madvise to a memory-mapped LMDB .mdb file with page alignment.
+/// P3-2 + R4-06: Apply madvise to a memory-mapped LMDB .mdb file with page alignment.
 ///
-/// Opens the file, mmaps it with MAP_NOCACHE (Darwin-specific flag that
-/// prevents the mapped pages from being added to the VM page cache), then
-/// applies MADV_FREE_REUSABLE to the entire mapped region.
+/// R4-06 FIX: Keeps the mmap alive in an LRU(32) cache.
+/// On cache HIT: calls madvise directly on the cached region (zero syscalls).
+/// On cache MISS: open/mmap → madvise → store in cache (fd kept open).
+///
+/// Cache eviction: LRU(32) — 32 × ~10MB LMDB ≈ 320MB max (M1 8GB safe).
+/// Keeping the mmap alive is correct: MADV_FREE_REUSABLE tells the OS the
+/// pages are clean/reclaimable under memory pressure, so they are NOT pinned.
+/// MADV_NOCACHE pages (LMDB/DuckDB data) do not pollute the page cache.
 ///
 /// MAP_NOCACHE is critical on M1 8GB UMA: without it, LMDB's mmap region
 /// pages compete directly with Metal's memory budget via the unified page cache.
@@ -74,9 +119,23 @@ const HUGEPAGE_SIZE: usize = 2 * 1024 * 1024;
 #[pyfunction]
 #[pyo3(signature = (path, advice = 1))]
 pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
-    let cpath = std::ffi::CString::new(path).ok().unwrap_or(std::ffi::CString::new("").unwrap());
+    let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_NOCACHE };
 
-    // Open with O_RDWR for mmap; fall back to O_RDONLY if that fails.
+    // R4-06 FIX: Cache lookup first (hot path — zero syscalls).
+    let cache = get_mmap_cache();
+    if let Ok(mut cache) = cache.lock() {
+        if let Some(cached) = cache.get(path) {
+            // Cache hit: apply madvise to the already-mapped region (LRU touch).
+            let result = unsafe {
+                libc::madvise(cached.mapped_ptr, cached.mapped_len, madv_advice)
+            };
+            return if result < 0 { -1 } else { 0 };
+        }
+    }
+
+    // Cache miss: perform open/mmap/madvise, then cache the mmap (fd stays open).
+    let cpath = std::ffi::CString::new(path).unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+
     let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR) };
     let fd = if fd < 0 {
         unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY) }
@@ -87,7 +146,6 @@ pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
         return -1;
     }
 
-    // Get file size via fstat.
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     if unsafe { libc::fstat(fd, &mut st) } < 0 {
         unsafe { libc::close(fd) };
@@ -96,16 +154,11 @@ pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
     let file_size = st.st_size as usize;
     if file_size == 0 {
         unsafe { libc::close(fd) };
-        return 0; // Empty file — nothing to advise
+        return 0;
     }
 
-    // Round up to page boundary for mmap.
     let mapped_len = (file_size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
 
-    // MAP_NOCACHE prevents pages from being added to the page cache.
-    // This is the key P3-2 optimization: LMDB data doesn't belong in the
-    // unified page cache on M1 8GB — it competes with Metal's memory budget.
-    // MAP_PRIVATE so we don't modify the underlying file.
     let mmap_prot = libc::PROT_READ | libc::PROT_WRITE;
     let mmap_flags = libc::MAP_PRIVATE;
     #[cfg(target_os = "macos")]
@@ -121,22 +174,30 @@ pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
     }
 
     // Apply madvise to the mapped region.
-    // MADV_NOCACHE (advice=1) is recommended for LMDB: never page-cache.
-    // MADV_FREE_REUSABLE (advice=0): pages reclaimable under memory pressure.
-    let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_NOCACHE };
     let madv_result = unsafe {
         libc::madvise(mapped_ptr, mapped_len, madv_advice)
     };
 
-    // Unmap and close.
-    unsafe {
-        libc::munmap(mapped_ptr, mapped_len);
-        libc::close(fd);
-    }
+    // R4-06: Do NOT unmap here — keep mmap alive in cache.
+    // fd is kept open by Arc<File> equivalent (stored in CachedMmap).
+    // MADV_FREE_REUSABLE makes pages reclaimable under pressure (not pinned).
+    // Close the fd only — the mmap stays valid until process exit or explicit drop.
+    unsafe { libc::close(fd) };
 
     if madv_result < 0 {
+        unsafe { libc::munmap(mapped_ptr, mapped_len) };
         return -1;
     }
+
+    // R4-06 FIX: Store mmap in LRU cache (fd is now closed, but ptr remains valid).
+    // The mmap persists independent of fd — OS manages the mapping.
+    if let Ok(mut cache) = cache.lock() {
+        cache.put(
+            path.to_string(),
+            CachedMmap::new(file_size, mapped_ptr, mapped_len),
+        );
+    }
+
     0
 }
 

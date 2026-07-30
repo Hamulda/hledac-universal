@@ -4,9 +4,18 @@ Dedicated LMDB operation pool — extracted from role_based_pools.py.
 LMDB is single-writer but supports concurrent readers. This pool provides:
 - ThreadPoolExecutor with 2 workers (1 writer + 1 reader)
 - asyncio.Semaphore(2) for bounded concurrency
-- asyncio.Lock for submit serialization
+- NO asyncio.Lock — removed in S1-14 fix: LMDB readers are lock-free
+  between each other; run_in_executor is thread-safe; the global write
+  lock is enforced by LMDB C library, not Python.
 - Timeout support via safe_wait_for
 - atexit registration for clean shutdown on process exit
+
+S1-14 Fix Rationale:
+  The previous asyncio.Lock serialized ALL submits (read + write). This
+  caused a convoy effect: a slow read blocked all writes, and a slow write
+  blocked all reads. LMDB's MDB_RDONLY transactions are fully concurrent
+  between readers — no Python-side lock is needed. The Semaphore(2) already
+  bounds total concurrency to match LMDB writer limit.
 
 This is a focused, single-role module extracted from the monolithic
 role_based_pools.py (959 LOC) which had many pools with zero callers.
@@ -116,9 +125,14 @@ class LmdbPool:
     """
     Dedicated thread pool for LMDB operations.
 
-    LMDB is single-writer but supports concurrent readers. Pool has 2 workers:
-    1 writer + 1 reader. The asyncio.Semaphore bounds concurrency to 2.
-    The asyncio.Lock serializes all submits (LMDB write lock is global).
+    LMDB is single-writer but supports concurrent readers. Pool has 2 workers
+    (matches LMDB reader parallelism). The asyncio.Semaphore(2) bounds total
+    concurrency — no asyncio.Lock is needed because LMDB's own write lock
+    serializes writers, and MDB_RDONLY transactions are fully concurrent.
+
+    S1-14 Fix: The previous asyncio.Lock was removed because it caused a
+    convoy effect where a slow read blocked all writes and vice versa.
+    LMDB's C-level locking makes a Python-side submit lock redundant.
 
     Design rationale:
       - Separated from worker_pool.py because LMDB has specific semantics
@@ -131,7 +145,6 @@ class LmdbPool:
     __slots__ = (
         "_executor",
         "_semaphore",
-        "_lock",
         "_initialized",
         "_init_lock",
         "_atexit_cb",
@@ -142,7 +155,6 @@ class LmdbPool:
         self._init_lock = threading.Lock()
         self._executor: ThreadPoolExecutor | None = None
         self._semaphore: asyncio.Semaphore | None = None
-        self._lock: asyncio.Lock | None = None
         self._atexit_cb: Callable[[], None] | None = None
 
     def _ensure_initialized(self) -> None:
@@ -158,17 +170,11 @@ class LmdbPool:
                 thread_name_prefix="hledac-lmdb",
             )
             self._semaphore = asyncio.Semaphore(_LMDB_WORKERS)
-            self._lock = asyncio.Lock()
             # Register atexit cleanup — must be done in async context would be
             # too late, so register at init time; cleanup function is idempotent.
             if self._atexit_cb is None:
                 self._atexit_cb = self._shutdown
                 atexit.register(self._atexit_cb)
-
-    async def _get_lock(self) -> asyncio.Lock:
-        self._ensure_initialized()
-        assert self._lock is not None
-        return self._lock
 
     async def run_lmdb[T](
         self,
@@ -194,21 +200,20 @@ class LmdbPool:
         assert self._executor is not None
 
         async with self._semaphore:
-            async with await self._get_lock():
-                loop = asyncio.get_running_loop()
-                try:
-                    if timeout is not None:
-                        coro = loop.run_in_executor(
-                            self._executor, lambda: fn(*args, **kwargs)
-                        )
-                        return await safe_wait_for(
-                            coro, timeout=timeout, label="lmdb_pool:run"
-                        )
-                    return await loop.run_in_executor(
+            loop = asyncio.get_running_loop()
+            try:
+                if timeout is not None:
+                    coro = loop.run_in_executor(
                         self._executor, lambda: fn(*args, **kwargs)
                     )
-                except Exception:
-                    return None
+                    return await safe_wait_for(
+                        coro, timeout=timeout, label="lmdb_pool:run"
+                    )
+                return await loop.run_in_executor(
+                    self._executor, lambda: fn(*args, **kwargs)
+                )
+            except Exception:
+                return None
 
     def run_lmdb_sync[T](
         self,
@@ -236,7 +241,6 @@ class LmdbPool:
             self._executor.shutdown(wait=wait)
             self._executor = None
         self._semaphore = None
-        self._lock = None
         self._initialized = False
 
     def shutdown(self, wait: bool = True) -> None:

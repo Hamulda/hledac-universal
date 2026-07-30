@@ -15,7 +15,6 @@ import time
 import weakref
 from collections import deque
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any

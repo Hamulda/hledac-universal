@@ -22,9 +22,28 @@ LMDB NAMESPACE (dedicated WAL LMDB):
     finding:{id}              → WAL truth record
     pending_duckdb_sync:{id}  → pending recovery marker
     deadletter_ingest:{id}     → permanently failed marker
+    prewrite:{id}             → in-flight DuckDB write (FLOW-03)
+    checkpoint:{id}            → committed DuckDB write (FLOW-03)
 
 F272: When using unified store, keys are prefixed with "wal:" namespace:
     wal:finding:{id}, wal:pending_duckdb_sync:{id}, wal:deadletter_ingest:{id}
+
+CHECKPOINT PROTOCOL (FLOW-03 — at-least-once delivery):
+    Phase 1 (pre-write):  prewrite:{id}  → {"ts": float, "id": id}
+    Phase 2 (DuckDB write): _sync_insert_finding() → DuckDB
+    Phase 3 (checkpoint):  checkpoint:{id} → {"ts": float, "id": id} + DELETE prewrite:{id}
+
+    Recovery on startup:
+        Scan all prewrite:{id} keys.
+        For each prewrite without checkpoint:{id}:
+            → Replay finding:{id} to DuckDB
+            → On success: write checkpoint:{id}, DELETE prewrite:{id}
+            → On failure: leave prewrite:{id} for next recovery cycle
+
+    This closes the crash-gap: if process dies between Phase 1 and Phase 3,
+    the orphaned prewrite is found at startup and replayed. If it also dies
+    before Phase 2 completes, the next recovery will fail gracefully (no
+    checkpoint, WAL truth exists → pending-sync marker written).
 """
 import asyncio
 import atexit
@@ -52,6 +71,8 @@ class WALManager:
     """
     MAX_PENDING_SYNC_MARKERS: int = 10000
     DEAD_LETTER_PREFIX: str = 'deadletter_ingest:'
+    PREWRITE_PREFIX: str = 'prewrite:'
+    CHECKPOINT_PREFIX: str = 'checkpoint:'
     __slots__ = tuple(('_compact_interval_s', '_compact_write_threshold', '_finalize_handle', '_initialized', '_last_compact_ts', '_map_size', '_unified_store', '_use_unified', '_wal_lmdb', '_wal_path', '_write_count_since_compact', '__weakref__'))
 
     def __init__(self, wal_path: str, *, map_size: int=256 * 1024 * 1024, unified_store: Any=None) -> None:
@@ -128,6 +149,14 @@ class WALManager:
     def _key_deadletter(self, finding_id: str) -> str:
         """Build deadletter key."""
         return f'{self.DEAD_LETTER_PREFIX}{finding_id}'
+
+    def _key_prewrite(self, finding_id: str) -> str:
+        """FLOW-03: Build prewrite marker key."""
+        return f'{self.PREWRITE_PREFIX}{finding_id}'
+
+    def _key_checkpoint(self, finding_id: str) -> str:
+        """FLOW-03: Build checkpoint marker key."""
+        return f'{self.CHECKPOINT_PREFIX}{finding_id}'
 
     def wal_write_finding(self, finding_id: str, query: str, source_type: str, confidence: float) -> bool:
         """
@@ -247,6 +276,146 @@ class WALManager:
             return self._wal_lmdb.delete(self._key_pending_sync(finding_id))
         except Exception:
             return False
+
+    # ── FLOW-03: Checkpoint protocol ────────────────────────────────────────────
+
+    def wal_write_prewrite(self, finding_id: str) -> bool:
+        """
+        FLOW-03: Write a prewrite marker (Phase 1 of checkpoint protocol).
+
+        Called BEFORE DuckDB write. Existence of prewrite:{id} without a
+        corresponding checkpoint:{id} at startup signals an in-flight write
+        that needs recovery replay.
+
+        Returns True if marker written successfully.
+        """
+        if not self._initialized:
+            self.initialize()
+        value = {'id': finding_id, 'ts': _time.time()}
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.put_str('wal', self._key_prewrite(finding_id), value)
+        if self._wal_lmdb is None:
+            return False
+        try:
+            result = self._wal_lmdb.put(self._key_prewrite(finding_id), value)
+            if result:
+                self._write_count_since_compact += 1
+            return result
+        except Exception:
+            return False
+
+    def wal_write_checkpoint(self, finding_id: str) -> bool:
+        """
+        FLOW-03: Write a checkpoint marker (Phase 3 of checkpoint protocol).
+
+        Called AFTER successful DuckDB write. Signals that the finding is
+        durably committed. On next startup, this finding will be skipped
+        during prewrite recovery scan.
+
+        Returns True if checkpoint written successfully.
+        """
+        if not self._initialized:
+            self.initialize()
+        value = {'id': finding_id, 'ts': _time.time()}
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.put_str('wal', self._key_checkpoint(finding_id), value)
+        if self._wal_lmdb is None:
+            return False
+        try:
+            result = self._wal_lmdb.put(self._key_checkpoint(finding_id), value)
+            if result:
+                self._write_count_since_compact += 1
+            return result
+        except Exception:
+            return False
+
+    def wal_clear_prewrite(self, finding_id: str) -> bool:
+        """
+        FLOW-03: Delete prewrite marker after checkpoint is written.
+
+        Called after wal_write_checkpoint() succeeds to clean up the
+        prewrite marker and keep the WAL lean.
+
+        Returns True if deletion succeeded.
+        """
+        if self._use_unified and self._unified_store is not None:
+            return self._unified_store.delete('wal', self._key_prewrite(finding_id))
+        if self._wal_lmdb is None:
+            return False
+        try:
+            return self._wal_lmdb.delete(self._key_prewrite(finding_id))
+        except Exception:
+            return False
+
+    def wal_has_checkpoint(self, finding_id: str) -> bool:
+        """
+        FLOW-03: Check if a checkpoint marker exists for a finding.
+
+        Returns True if checkpoint:{id} exists, False otherwise.
+        Used during prewrite recovery scan to determine if a prewrite
+        needs replay or can be skipped.
+        """
+        if self._use_unified and self._unified_store is not None:
+            val = self._unified_store.get_str('wal', self._key_checkpoint(finding_id))
+            return val is not None
+        if self._wal_lmdb is None:
+            return False
+        try:
+            return self._wal_lmdb.get(self._key_checkpoint(finding_id)) is not None
+        except Exception:
+            return False
+
+    def wal_scan_prewrites_without_checkpoint(self) -> list[dict[str, Any]]:
+        """
+        FLOW-03: Scan for all prewrite markers that lack a corresponding checkpoint.
+
+        This is the core recovery scan called at startup. For each prewrite:{id}
+        found:
+          - If checkpoint:{id} exists → skip (already committed)
+          - If checkpoint:{id} missing → this finding needs recovery replay
+
+        Returns list of prewrite marker dicts (each with 'id' and 'ts').
+        """
+        if self._use_unified and self._unified_store is not None:
+            results: list[dict[str, Any]] = []
+            all_entries = self._unified_store.scan_prefix('wal')
+            for key, value in all_entries:
+                if key.startswith(self.PREWRITE_PREFIX):
+                    fid = key[len(self.PREWRITE_PREFIX):]
+                    if not self._unified_store.get_str('wal', self._key_checkpoint(fid)):
+                        results.append(value)
+            return results
+        if self._wal_lmdb is None:
+            return []
+        try:
+            env = self._wal_lmdb._env
+            if env is None:
+                return []
+            results = []
+            prefix = self.PREWRITE_PREFIX
+            prefix_bytes = prefix.encode('utf-8')
+            with env.begin(write=False, buffers=True) as txn:
+                cursor = txn.cursor()
+                if cursor.set_range(prefix_bytes):
+                    for key_bytes, value_bytes in cursor.iternext():
+                        key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
+                        if not key.startswith(prefix):
+                            break
+                        fid = key[len(prefix):]
+                        # Check if checkpoint exists for this finding_id
+                        checkpoint_key = self._key_checkpoint(fid)
+                        with env.begin(write=False, buffers=True) as chk_txn:
+                            chk_val = chk_txn.get(checkpoint_key.encode('utf-8'))
+                            if chk_val is None:
+                                # No checkpoint → needs recovery
+                                try:
+                                    value = orjson.loads(value_bytes)
+                                    results.append(value)
+                                except Exception:
+                                    continue
+            return results
+        except Exception:
+            return []
 
     def wal_get_pending_marker(self, finding_id: str) -> dict[str, Any] | None:
         """Get a single pending marker value by finding_id."""

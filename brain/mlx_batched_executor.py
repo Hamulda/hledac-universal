@@ -76,6 +76,11 @@ FUTURE_TIMEOUT_S: float = 30.0
 URGENT_PRIORITY: float = 0.0
 ADAPTIVE_CONTEXT_PREFLIGHT: bool = True
 
+# C3-08 FIX: single-flight dict size bound — prevents unbounded memory growth
+# when many unique prompts arrive concurrently (e.g. RAG with diverse queries).
+# Matched to B.S6 batch queue bound (256) for consistency.
+MAX_SINGLE_FLIGHT: int = 256
+
 def _batcher_at_exit_shutdown(instance: MLXBatchedExecutor) -> None:
     """Called by weakref.finalize at interpreter exit if explicit close() was not called.
 
@@ -119,7 +124,7 @@ class MLXBatchedExecutor:
         - PID adaptive batch sizing adjusts effective_batch_size based on
           memory EMA trend (Kp=0.5, Ki=0.05, Kd=0.1)
     """
-    __slots__ = tuple(('_batch_size_high', '_batch_size_low', '_batch_size_max', '_effective_batch_size', '_ema_alpha', '_engine', '_finalizer', '_init_event', '_init_guard', '_init_lock', '_memory_check_failures', '_memory_ema', '_memory_ema_alpha', '_scheduler', '_stats', '_worker_thread'))
+    __slots__ = tuple(('_batch_size_high', '_batch_size_low', '_batch_size_max', '_effective_batch_size', '_ema_alpha', '_engine', '_finalizer', '_init_event', '_init_guard', '_init_lock', '_memory_check_failures', '_memory_ema', '_memory_ema_alpha', '_scheduler', '_single_flight', '_single_flight_order', '_stats', '_worker_thread'))
 
     def __init__(self, engine: DeepHermes3Engine, worker_thread: Any=None) -> None:
         """
@@ -140,7 +145,7 @@ class MLXBatchedExecutor:
         self._init_event: asyncio.Event | None = None
         self._init_lock: asyncio.Lock | None = None
         self._init_guard: threading.Lock = threading.Lock()
-        self._stats: dict[str, Any] = {'submits': 0, 'empty_prompt_bypass': 0, 'long_output_bypass': 0, 'long_system_msg_bypass': 0, 'direct_fallback': 0, 'batch_executed': 0, 'batch_shattered': 0, 'fail_soft': 0, 'memory_guard_disabled': 0, 'urgent_bypass': 0, 'speculative_bypass': 0, 'latency_ema_ms': 0.0, 'baseline_ema_ms': 0.0, 'overhead_ema_ms': 0.0}
+        self._stats: dict[str, Any] = {'submits': 0, 'empty_prompt_bypass': 0, 'long_output_bypass': 0, 'long_system_msg_bypass': 0, 'direct_fallback': 0, 'batch_executed': 0, 'batch_shattered': 0, 'fail_soft': 0, 'memory_guard_disabled': 0, 'urgent_bypass': 0, 'speculative_bypass': 0, 'single_flight_hit': 0, 'latency_ema_ms': 0.0, 'baseline_ema_ms': 0.0, 'overhead_ema_ms': 0.0}
         self._ema_alpha: float = 0.3
         self._memory_check_failures: int = 0
         self._memory_ema: float = 0.0
@@ -151,6 +156,13 @@ class MLXBatchedExecutor:
         self._batch_size_max: int = MAX_BATCH_SIZE_M1
         self._finalizer = weakref.finalize(self, _batcher_at_exit_shutdown, self)
         atexit.register(self._finalizer)
+        # C3-06 FIX: prompt-level single-flight — identical prompts reuse one Future.
+        # dict[int, asyncio.Future] keyed by hash(prompt) to avoid duplicate MLX compute.
+        self._single_flight: dict[int, asyncio.Future] = {}
+        # C3-08 FIX: LRU order tracking for bounded single-flight dict.
+        # list[int] — ordered list of prompt_hash values (oldest → newest).
+        # Evicts oldest entry when MAX_SINGLE_FLIGHT is exceeded.
+        self._single_flight_order: list[int] = []
 
     def _get_mlx_memory(self) -> Any:
         """Lazy-load mlx_memory module for adaptive batching (ISSUE-094)."""
@@ -350,14 +362,57 @@ class MLXBatchedExecutor:
         if not self._get_init_event().is_set() or self._scheduler is None:
             self._stats['direct_fallback'] += 1
             return await self._call_engine_direct(prompt, temperature, max_tokens, system_msg)
-        try:
 
+        # C3-06 FIX: prompt-level single-flight.
+        # Register Future BEFORE awaiting so concurrent identical prompts share it.
+        prompt_hash = hash(prompt)
+        in_flight: asyncio.Future | None = self._single_flight.get(prompt_hash)
+
+        # C3-08 FIX: evict oldest entry if bounded dict would exceed MAX_SINGLE_FLIGHT.
+        # This prevents unbounded memory growth when many unique prompts arrive concurrently.
+        if in_flight is None and len(self._single_flight) >= MAX_SINGLE_FLIGHT:
+            if self._single_flight_order:
+                oldest_hash = self._single_flight_order.pop(0)
+                self._single_flight.pop(oldest_hash, None)
+                logger.debug('[MLXBatch] single-flight evicted hash=%d (LRU, size=%d)', oldest_hash, len(self._single_flight))
+        if in_flight is not None:
+            self._stats['single_flight_hit'] += 1
+            logger.debug('[MLXBatch] single-flight hit for prompt hash=%d', prompt_hash)
+            # Another request for the same prompt is already in flight — await it.
+            try:
+                result = await asyncio.wait_for(asyncio.shield(in_flight), timeout=FUTURE_TIMEOUT_S)
+                return str(result)
+            except TimeoutError:
+                if in_flight.done() and (not in_flight.cancelled()):
+                    return str(in_flight.result())
+                # Stale or cancelled — fall through to submit a fresh one.
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Unexpected error — fall through to direct path.
+                pass
+
+        # Submit a new Future and register it BEFORE awaiting.
+        # This allows concurrent identical prompts to find and share it.
+        try:
             submitted_at = time.monotonic()
-            scheduler_future: asyncio.Future = await self._scheduler.submit(prompt=prompt, response_model=_FreeTextSchema, priority=priority, temperature=temperature if temperature is not None else 0.1, max_tokens=max_tokens if max_tokens is not None else 512, system_msg=system_msg)
+            scheduler_future: asyncio.Future = await self._scheduler.submit(
+                prompt=prompt,
+                response_model=_FreeTextSchema,
+                priority=priority,
+                temperature=temperature if temperature is not None else 0.1,
+                max_tokens=max_tokens if max_tokens is not None else 512,
+                system_msg=system_msg,
+            )
             self._stats['submits'] += 1
+            self._single_flight[prompt_hash] = scheduler_future
+            # C3-08 FIX: maintain LRU order on insert
+            if prompt_hash in self._single_flight_order:
+                self._single_flight_order.remove(prompt_hash)
+            self._single_flight_order.append(prompt_hash)
             timeout = max(5.0 * DEFAULT_FLUSH_INTERVAL_S, 10.0)
             try:
-                result = await asyncio.wait_for(asyncio.shield(scheduler_future), timeout=timeout)  # noqa: F911  # Shield patterns MUST use asyncio.wait_for
+                result = await asyncio.wait_for(asyncio.shield(scheduler_future), timeout=timeout)  # noqa: F911
             except TimeoutError:
                 if scheduler_future.done() and (not scheduler_future.cancelled()):
                     result = scheduler_future.result()
@@ -380,6 +435,14 @@ class MLXBatchedExecutor:
             self._stats['fail_soft'] += 1
             self._stats['direct_fallback'] += 1
             return await self._call_engine_direct(prompt, temperature, max_tokens, system_msg)
+        finally:
+            # C3-06: clean up single-flight entry on completion or cancellation.
+            self._single_flight.pop(prompt_hash, None)
+            # C3-08 FIX: also clean up LRU order tracking.
+            try:
+                self._single_flight_order.remove(prompt_hash)
+            except ValueError:
+                pass  # not in list — entry was LRU-evicted before submission
 
     async def _execute_callback(self, payload: dict[str, Any]) -> str:
         """

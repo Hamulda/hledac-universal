@@ -1,12 +1,31 @@
-# memory.py — Memory Info domain
+# memory.py — Memory Info domain (A5-04: deprecated aliases)
 """
 Memory availability and total system memory queries.
 Used for M1 resource governance and memory pressure monitoring.
+
+A5-04 CONSOLIDATION (2026-07-30)
+=================================
+Tento modul obsahuje DOMAIN FACTORY pattern pro DuckDB bridge.
+NEMÁ overlp s core.memory — každý modul má jinou roli:
+
+| Modul                        | Zodpovědnost                        |
+|------------------------------|--------------------------------------|
+| core.memory                  | System-wide metrics (Rust SSOT)       |
+| core.rust_backend.memory     | DuckDB bridge: domain factory         |
+| utils.mlx_memory._core       | MLX-specific: Metal API               |
+
+DEPRECATED ALIASES (A5-04):
+    get_process_rss_gib() → core.memory.get_process_rss_gib()
+    get_available_memory_gib() → core.memory.get_available_memory_gib()
+    get_metal_active_memory_bytes() → core.memory.get_metal_active_memory_bytes()
+
+Pro nový kód používej přímo core.memory.
 """
 
 from __future__ import annotations
 
 import sys
+import warnings
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -14,7 +33,56 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
-# Memory Domain
+# Deprecated aliases — point to core.memory (A5-04)
+# =============================================================================
+
+def get_process_rss_gib() -> float:
+    """
+    DEPRECATED (A5-04): Use core.memory.get_process_rss_gib() instead.
+    Kept for backward compatibility with callers of this module.
+    """
+    warnings.warn(
+        "core.rust_backend.memory.get_process_rss_gib() is deprecated. "
+        "Use core.memory.get_process_rss_gib() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    from core.memory import get_process_rss_gib as _fn
+    return _fn()
+
+
+def get_available_memory_gib() -> float:
+    """
+    DEPRECATED (A5-04): Use core.memory.get_available_memory_gib() instead.
+    Kept for backward compatibility with callers of this module.
+    """
+    warnings.warn(
+        "core.rust_backend.memory.get_available_memory_gib() is deprecated. "
+        "Use core.memory.get_available_memory_gib() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    from core.memory import get_available_memory_gib as _fn
+    return _fn()
+
+
+def get_metal_active_memory_bytes() -> int:
+    """
+    DEPRECATED (A5-04): Use core.memory.get_metal_active_memory_bytes() instead.
+    Kept for backward compatibility with callers of this module.
+    """
+    warnings.warn(
+        "core.rust_backend.memory.get_metal_active_memory_bytes() is deprecated. "
+        "Use core.memory.get_metal_active_memory_bytes() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    from core.memory import get_metal_active_memory_bytes as _fn
+    return _fn()
+
+
+# =============================================================================
+# Memory Domain (original implementation)
 # =============================================================================
 
 

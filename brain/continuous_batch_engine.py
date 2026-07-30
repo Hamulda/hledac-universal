@@ -112,7 +112,16 @@ class ContinuousBatchEngine:
         self._next_id += 1
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         req = _BatchRequest(id=req_id, prompt=prompt, max_tokens=max_tokens, temperature=temperature, system_msg=system_msg, priority=priority, future=fut)
-        await self._queue.put(req)
+        # S1-12 FIX: put() can block indefinitely when queue is full (maxsize=128).
+        # Wrap with wait_for so caller gets TimeoutError instead of deadlock.
+        # 5s timeout means caller can fall back / retry rather than hang.
+        try:
+            async with asyncio.timeout(5.0):
+                await self._queue.put(req)
+        except asyncio.TimeoutError:
+            if not fut.done():
+                fut.cancel()
+            raise
         return await fut
 
     async def generate_stream(self, prompt: str, *, max_tokens: int=512, temperature: float=0.1, system_msg: str | None=None) -> AsyncIterator[str]:

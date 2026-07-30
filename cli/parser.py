@@ -37,9 +37,14 @@ def main() -> int:
 
     Raises SystemExit on parse error so the envelope in ``__main__.py``
     can distinguish exit code 2 (config error) from exit code 1.
+
+    M6-01: Uses asyncio.Runner() instead of asyncio.run() for Python 3.14+
+    forward compatibility. asyncio.run() is deprecated in library code but
+    still allowed in entry points; Runner is preferred.
     """
     try:
-        return asyncio.run(async_main())
+        with asyncio.Runner() as runner:
+            return runner.run(async_main())
     except KeyboardInterrupt:
         return 130  # SIGINT
 

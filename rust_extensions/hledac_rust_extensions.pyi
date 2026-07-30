@@ -296,6 +296,23 @@ class PyGraphLRUCache:
     def stats(self) -> dict[str, int]: ...
 
 # R4.5: Distributed BloomFilter (rust_extensions/src/dedup_bloom.rs)
+
+# R4-08: DedupBloomStats — avoids HashMap allocation per stats() call
+class DedupBloomStats:
+    """DedupBloomStats — zero-allocation stats struct for DedupBloomFilter.
+
+    Python can use dataclasses.asdict() or access fields directly.
+    """
+    total_items: int
+    memory_bytes: int
+    tier_count: int
+    tier_0_fpp: float
+    tier_0_items: int
+    tier_1_fpp: float
+    tier_1_items: int
+    tier_2_fpp: float
+    tier_2_items: int
+
 class PyDistributedBloomFilter:
     """Multi-tier BloomFilter with Count-Min Sketch frequency estimation.
 
@@ -308,11 +325,14 @@ class PyDistributedBloomFilter:
     def frequency(self, item: str) -> int: ...
     def len(self) -> int: ...
     def memory_bytes(self) -> int: ...
-    def stats(self) -> dict[str, Any]: ...
+    def stats(self) -> dict[str, int | float]: ...  # R4-08: zero-allocation, Py<PyDict> from Rust
     def save(self) -> str: ...  # returns path
     @staticmethod
     def load(cache_dir: str) -> PyDistributedBloomFilter: ...
     def reset(self) -> None: ...
+    def save_to_lmdb_bytes(self) -> bytes: ...
+    @staticmethod
+    def load_from_lmdb_bytes(data: bytes) -> PyDistributedBloomFilter: ...
 
 # F265B-IV: Telemetry aggregator (rust_extensions/src/telemetry_agg.rs)
 class TelemetryAggregator:
@@ -412,6 +432,10 @@ def peak_rss_bytes() -> int:
 
 def memory_pressure_level() -> int:
     """Memory pressure level 0-2: 0=normal (<4GiB), 1=elevated (4-5.5GiB), 2=critical (>5.5GiB)."""
+    ...
+
+def set_memory_pressure_thresholds(soft_gib: float, hard_gib: float) -> None:
+    """Set memory pressure thresholds. A5-01 SSOT: syncs Rust thresholds from Python resource_governor."""
     ...
 
 def advise_free(ptr: int, len: int) -> bool:

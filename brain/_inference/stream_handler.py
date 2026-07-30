@@ -90,8 +90,17 @@ class StreamHandler:
                 async for token in generate_fn(*args, **kwargs):
                     if self._cancelled:
                         break
-                    async with asyncio.timeout(self._config.cancel_timeout):
-                        await self._queue.put(token)
+                    # S1-11 FIX: put() can block when queue is full (backpressure).
+                    # Wrap with wait_for so producer yields and retries instead of dead-locking.
+                    # If queue stays full beyond 1s, skip the token (stream continues).
+                    try:
+                        async with asyncio.timeout(1.0):
+                            await self._queue.put(token)
+                    except asyncio.TimeoutError:
+                        # Queue saturated — skip this token to keep stream alive.
+                        # Consumer is behind; skipping is preferable to stalling generation.
+                        self._stats.stream_errors += 1
+                        continue
                 # Signal end of stream
                 await self._queue.put(None)  # type: ignore
             except asyncio.CancelledError:
@@ -99,7 +108,10 @@ class StreamHandler:
             except Exception as e:
                 logger.warning(f'[StreamHandler] Producer error: {e}')
                 self._stats.stream_errors += 1
-                await self._queue.put(None)  # type: ignore
+                try:
+                    self._queue.put_nowait(None)  # type: ignore
+                except asyncio.QueueFull:
+                    pass
 
         # Start producer
         producer_task = asyncio.create_task(producer())

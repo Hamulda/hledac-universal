@@ -63,7 +63,8 @@ const MAX_QUERIES: usize = 100;
 
 /// Normalize a vector in-place using ARM NEON (aarch64).
 /// Returns false on zero-vector.
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
+#[target_feature(enable = "neon")]
 unsafe fn normalize_neon(vec: &mut [f32]) -> bool {
     use core::arch::aarch64::*;
 
@@ -185,7 +186,7 @@ fn normalize_sse(vec: &mut [f32]) -> bool {
 /// Dispatcher: normalize with best available SIMD strategy.
 #[inline]
 fn normalize(vec: &mut [f32]) -> bool {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(neon_available)]
     {
         // SAFETY: vec has valid f32 data and 4-byte alignment from Vec.
         unsafe { normalize_neon(vec) }
@@ -216,7 +217,8 @@ fn normalize(vec: &mut [f32]) -> bool {
 /// Compute dot product using ARM NEON.
 /// Caller guarantees a and b have the same length.
 /// ISSUE-007: now validates length match — original had no check.
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
+#[target_feature(enable = "neon")]
 #[inline]
 unsafe fn dot_neon(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::aarch64::*;
@@ -289,7 +291,7 @@ unsafe fn dot_sse3(a: &[f32], b: &[f32]) -> f32 {
 /// Dispatcher: dot product with best available SIMD.
 #[inline]
 unsafe fn dot(a: &[f32], b: &[f32]) -> f32 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(neon_available)]
     {
         dot_neon(a, b)
     }
@@ -572,7 +574,8 @@ pub fn batch_topk_indices(
 /// Count set bits in a 16-byte chunk using ARM NEON.
 /// 16 × u8 → 8 × u16 (vpaddl) → 4 × u32 (vpaddl) → 2 × u64 (vpaddl) → sum
 /// Caller guarantees buf.len() >= 16.
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
+#[target_feature(enable = "neon")]
 #[inline]
 unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 { unsafe {
     use core::arch::aarch64::*;
@@ -594,7 +597,8 @@ unsafe fn popcount_neon_chunk(buf: &[u8]) -> u32 { unsafe {
 /// Processes 16 bytes per iteration; scalar tail for remainder.
 /// # Safety
 /// Buffer must be valid for read (non-empty is OK, handles tail safely).
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
+#[target_feature(enable = "neon")]
 #[inline]
 unsafe fn popcount_neon(buf: &[u8]) -> u32 { unsafe {
     let mut count: u32 = 0;
@@ -618,7 +622,7 @@ unsafe fn popcount_neon(buf: &[u8]) -> u32 { unsafe {
 }}
 
 /// Count set bits using a portable SWAR algorithm (fallback for non-NEON).
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(not(neon_available))]
 #[inline]
 fn popcount_portable(buf: &[u8]) -> u32 {
     let mut count: u32 = 0;
@@ -635,12 +639,12 @@ fn popcount_portable(buf: &[u8]) -> u32 {
 /// Dispatcher: popcount with best available SIMD strategy.
 #[inline]
 fn popcount(buf: &[u8]) -> u32 {
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(neon_available)]
     {
         // SAFETY: buf is valid for read; tail loop handles partial chunk safely.
         unsafe { popcount_neon(buf) }
     }
-    #[cfg(not(target_arch = "aarch64"))]
+    #[cfg(not(neon_available))]
     {
         popcount_portable(buf)
     }

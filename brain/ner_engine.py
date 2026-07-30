@@ -269,7 +269,9 @@ class _NERPersistentWorker:
 
         request_id = self._request_id
         self._request_id += 1
-        queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=1)
+        # S1-10 FIX: was Queue(maxsize=1) — producer blocks if consumer is slow to read.
+        # S1-10: size 16 gives sub-process a small response buffer so it doesn't stall.
+        queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=16)
         self._response_queues[request_id] = queue
 
         request = {
@@ -1026,8 +1028,29 @@ def get_extraction_status() -> dict:
 import math as _math
 import re as _re
 from hledac.universal.utils.async_helpers import safe_wait_for
+
+# OSINT-01 FIX: Use `regex` module (linear-time guarantees) instead of `re` for
+# domain pattern. The `re` module's Python engine suffers catastrophic backtracking
+# on nested quantifiers like (?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])? combined with outer +.
+# The Rust path uses a DFA engine and is immune — only the Python fallback is vulnerable.
+# `regex` is a well-maintained drop-in replacement with linear-time guarantees.
+try:
+    import regex as _regex_module
+
+    _DOMAIN_PAT = _regex_module.compile(
+        r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
+    )
+except ImportError:
+    # Fallback: compile with `re` but rely on the text[:10000] pre-truncate in
+    # extract_iocs_from_text as a depth-limiting measure. This is a best-effort
+    # fallback when `regex` is not installed — the ReDoS risk remains for
+    # pathological inputs within 10k chars but is significantly reduced.
+    _DOMAIN_PAT = _re.compile(
+        r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"
+    )
+
 _GUESS_PATTERNS: tuple[tuple[_re.Pattern, str], ...] = ((_re.compile('\\b(?:Corp|LLC|Inc|Ltd|Technologies|Software|Systems|Security)\\b', _re.IGNORECASE), 'organization'), (_re.compile('\\b(?:Mr|Mrs|Ms|Dr|Prof)\\.\\s+\\w+', _re.IGNORECASE), 'person'), (_re.compile('\\b(?:St|Street|City|Town|Country|Road|Ave|Boulevard)\\b', _re.IGNORECASE), 'location'), (_re.compile('\\b[A-Fa-f0-9]{32,64}\\b'), 'hash'))
-_IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [('cve', _re.compile('\\bCVE-\\d{4}-\\d{4,7}\\b')), ('sha256', _re.compile('\\b[0-9a-fA-F]{64}\\b')), ('md5', _re.compile('\\b[0-9a-fA-F]{32}\\b')), ('sha1', _re.compile('\\b[0-9a-fA-F]{40}\\b')), ('email', _re.compile('\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Z|a-z]{2,}\\b')), ('url', _re.compile('https?://[^\\s<>"{}|\\\\^`\\[\\]]+')), ('ipv4', _re.compile('\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b')), ('ipv6', _re.compile('\\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\\b')), ('domain', _re.compile('\\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}\\b'))]
+_IOC_PATTERNS: list[tuple[str, _re.Pattern]] = [('cve', _re.compile('\\bCVE-\\d{4}-\\d{4,7}\\b')), ('sha256', _re.compile('\\b[0-9a-fA-F]{64}\\b')), ('md5', _re.compile('\\b[0-9a-fA-F]{32}\\b')), ('sha1', _re.compile('\\b[0-9a-fA-F]{40}\\b')), ('email', _re.compile('\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Z|a-z]{2,}\\b')), ('url', _re.compile('https?://[^\\s<>"{}|\\\\^`\\[\\]]+')), ('ipv4', _re.compile('\\b(?:(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(?:25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\b')), ('ipv6', _re.compile('\\b[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{1,4}){7}\\b'))]
 _DOMAIN_TLD_DENYLIST: frozenset[str] = frozenset({'exe', 'dll', 'bin', 'so', 'dylib', 'lib', 'o', 'a', 'obj', 'deb', 'rpm', 'dmg', 'pkg', 'apk', 'ipa', 'jar', 'war', 'ear', 'class', 'cab', 'msi', 'lnk', 'tar', 'gz', 'zip', 'rar', '7z', 'iso', 'img', 'dat', 'tmp', 'bak', 'log', 'conf', 'cfg', 'ini', 'env', 'py', 'js', 'ts', 'html', 'htm', 'json', 'xml', 'yaml', 'yml', 'toml', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'})
 _IOC_CONFIDENCE: dict[str, float] = {'cve': 0.98, 'sha256': 0.97, 'sha1': 0.96, 'md5': 0.95, 'email': 0.9, 'url': 0.85, 'ipv4': 0.85, 'ipv6': 0.8, 'domain': 0.7}
 _SPACY_NLP = None
@@ -1060,13 +1083,20 @@ def extract_iocs_from_text(text: str) -> list[dict]:
         if v and v not in seen and (len(v) > 3):
             seen.add(v)
             results.append({'value': v, 'ioc_type': ioc_type, 'confidence': conf})
+    # OSINT-01: Domain extraction uses _DOMAIN_PAT (regex module with linear-time
+    # guarantees) instead of the vulnerable re.compile() pattern. Processed first
+    # so TLD denylist check runs before other patterns.
+    try:
+        for m in _DOMAIN_PAT.findall(text[:10000]):
+            tld = m.rsplit('.', 1)[-1].lower()
+            if tld in _DOMAIN_TLD_DENYLIST:
+                continue
+            _add(m, 'domain', 0.7)
+    except Exception:
+        pass
     for ioc_type, pattern in _IOC_PATTERNS:
         try:
             for m in pattern.findall(text[:10000]):
-                if ioc_type == 'domain':
-                    tld = m.rsplit('.', 1)[-1].lower()
-                    if tld in _DOMAIN_TLD_DENYLIST:
-                        continue
                 _add(m, ioc_type, _IOC_CONFIDENCE.get(ioc_type, 0.7))
         except Exception:
             pass

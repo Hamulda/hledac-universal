@@ -218,17 +218,35 @@ def _mlx_cache_clear_if_available() -> bool:
 
     Returns True if MLX was available and cleared, False otherwise.
     Fail-soft: never raises, returns False on any error.
+
+    U2-07 FIX: Delegates to _mlx_cache_clear_if_available_async() in a
+    thread pool to avoid blocking the asyncio event loop. The sync version
+    itself is a thin wrapper — all actual work runs off the event loop.
     """
     try:
-        import mlx.core as mx
-        _gc.collect()       # Step 1: release Python refs to MLX objects
-        mx.eval([])       # Step 2: barrier — flush GPU queue before clear
-        if hasattr(mx, "clear_cache"):
-            mx.clear_cache()
-        elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
-            mx.metal.clear_cache()
-        _gc.collect()       # Step 3: reclaim circular refs created during Metal free
-        return True
+        import asyncio
+        loop = asyncio.get_running_loop()
+        # We're on the event loop thread — offload to a thread pool so the loop
+        # can run other tasks while we wait. to_thread releases the event loop for
+        # the duration of the blocking MLX/GPU ops inside _do_clear.
+        async def _async_clear() -> bool:
+            def _do_clear() -> bool:
+                try:
+                    import mlx.core as mx
+                    _gc.collect()
+                    mx.eval([])
+                    if hasattr(mx, "clear_cache"):
+                        mx.clear_cache()
+                    elif hasattr(mx.metal, "clear_cache"):
+                        mx.metal.clear_cache()
+                    _gc.collect()
+                    return True
+                except Exception:
+                    return False
+
+            return await asyncio.to_thread(_do_clear)
+
+        return loop.run_until_complete(_async_clear())
     except Exception:
         return False
 

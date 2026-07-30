@@ -16,6 +16,7 @@ NOT AUTHORITY FOR:
   - Tor session pool management
 """
 import asyncio
+from hledac.universal.utils.async_helpers import safe_wait_for
 import logging
 from dataclasses import dataclass
 import msgspec
@@ -218,9 +219,10 @@ class TransportResolver:
         Single timeout source: asyncio.wait_for (socket timeout redundant).
         """
         try:
-            return await asyncio.wait_for(
+            return await safe_wait_for(
                 asyncio.to_thread(_probe_tcp_port, '127.0.0.1', 9050, 0.5),
                 timeout=0.6,
+                label="tor_probe",
             )
         except asyncio.TimeoutError:
             return False

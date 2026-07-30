@@ -18,7 +18,8 @@ pub(crate) const ENTROPY_NEON_THRESHOLD: usize = 64;
 // NEON-based 256-bin histogram for aarch64.
 // Safe: hist is stack-allocated [u32; 256] written in bounded loop.
 // Falls back to scalar on non-NEON targets.
-#[cfg(target_arch = "aarch64")]
+#[cfg(neon_available)]
+#[target_feature(enable = "neon")]
 pub(crate) unsafe fn compute_histogram_neon(data: &[u8]) -> [u32; 256] {
     use core::arch::aarch64::*;
     let mut hist = [0u32; 256];
@@ -26,23 +27,30 @@ pub(crate) unsafe fn compute_histogram_neon(data: &[u8]) -> [u32; 256] {
     let mut i = 0usize;
 
     // Process 16 bytes at a time via NEON.
-    // Strategy: for each byte value v, build a 16-lane vector with all lanes = v,
-    // compare against the data chunk, and popcount how many lanes matched.
-    // vceqq + vaddvq gives 16 counts per lane in a single instruction.
-    // Unrolled pairs: process 2 byte values per outer iteration (halves loop overhead).
+    // Strategy: for each 16-byte chunk, extract each lane and increment its bin directly.
+    // This is O(n) vs the naive O(256*n) approach of comparing each byte against all 256 values.
     while i + 16 <= n {
         let bytes = vld1q_u8(data.as_ptr().add(i));
 
-        let mut v: usize = 0;
-        while v < 256 {
-            let mask0 = vceqq_u8(bytes, vdupq_n_u8(v as u8));
-            let mask1 = vceqq_u8(bytes, vdupq_n_u8((v + 1) as u8));
-            let cnt0 = vaddvq_u8(mask0) as u32;
-            let cnt1 = vaddvq_u8(mask1) as u32;
-            hist[v] = hist[v].wrapping_add(cnt0);
-            hist[v + 1] = hist[v + 1].wrapping_add(cnt1);
-            v += 2;
-        }
+        // Extract individual bytes from the NEON vector and increment their bins.
+        // vgetq_lane_u8 extracts a single lane — we do 16 of these per chunk.
+        hist[vgetq_lane_u8(bytes, 0) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 1) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 2) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 3) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 4) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 5) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 6) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 7) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 8) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 9) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 10) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 11) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 12) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 13) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 14) as usize] += 1;
+        hist[vgetq_lane_u8(bytes, 15) as usize] += 1;
+
         i += 16;
     }
 
@@ -54,7 +62,7 @@ pub(crate) unsafe fn compute_histogram_neon(data: &[u8]) -> [u32; 256] {
     hist
 }
 
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(not(neon_available))]
 pub(crate) unsafe fn compute_histogram_neon(_data: &[u8]) -> [u32; 256] {
     // On non-aarch64, fall back to scalar histogram.
     let mut hist = [0u32; 256];

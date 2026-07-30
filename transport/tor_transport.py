@@ -167,11 +167,20 @@ class TorTransport(Transport):
                     break
                 await asyncio.sleep(1)
             else:
-                self.onion_address = f'localhost:{self.http_port}'
+                # SEC-05 FIX: Do NOT fall back to localhost — that would route darknet
+                # URLs to a local HTTP server, returning fake data or hitting local services.
+                # Mark Tor as unavailable; FetchCoordinator checks RouteDecision.TOR_UNAVAILABLE
+                # and drops .onion URLs instead of leaking to clearnet.
+                logger.warning('[SEC-05] Tor hostname file not found after %ds — Tor unavailable', 15)
+                self.onion_address = None
                 self.security_level = 'local'
         except Exception as e:
-            logger.warning(f'Tor start failed, using localhost: {e}')
-            self.onion_address = f'localhost:{self.http_port}'
+            # SEC-05 FIX: Tor process/cert bootstrap failure must NOT fall back to localhost.
+            # Tor was explicitly requested for this URL; failure to start means anonymity
+            # cannot be guaranteed. Mark unavailable so FetchCoordinator drops the URL
+            # rather than leaking to clearnet.
+            logger.warning('[SEC-05] Tor start failed: %s — Tor unavailable (will drop .onion)', e)
+            self.onion_address = None
             self.security_level = 'local'
         limits = self._httpx.Limits(max_connections=10, max_keepalive_connections=5)
         timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)

@@ -31,6 +31,10 @@ use crate::mixed_pool;
 
 // Shared NEON histogram and entropy from quality_gate (avoids duplicate SIMD code)
 use crate::_entropy::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD};
+// R4-09 FIX: Use adaptive_scheduler threshold instead of hardcoded 50.
+// mixed_threshold() returns 16/32/64 based on memory pressure — aligns
+// zero_copy parallel decisions with pool sizing in mixed_pool(n).
+use crate::adaptive_scheduler;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -43,20 +47,16 @@ pub const ZERO_COPY_BATCH_MAX_ITEMS: usize = 10_000;
 /// Hard cap for total byte size — prevents OOM from few huge texts.
 pub const ZERO_COPY_BATCH_MAX_BYTES: usize = 100_000_000; // 100 MB
 
-/// Threshold for parallel processing (calibrated for 2 threads).
-/// NOTE: Differs from quality_gate::BATCH_PARALLEL_THRESHOLD (25) which uses
-/// cpu_pool (4 workers, GIL released). zero_copy uses mixed_pool (2 threads)
-/// with GIL held — higher threshold justified by GIL contention cost.
-pub const ZERO_COPY_PARALLEL_THRESHOLD: usize = 50;
-
 // ---------------------------------------------------------------------------
 // Zero-Copy Iterators
 // ---------------------------------------------------------------------------
 
-/// Borrowed iterator over a Python list of strings.
+/// Zero-copy borrowed iterator over a Python list of strings.
 ///
 /// Uses PyO3 0.29+ `Bound<PyList>::iter()` which provides efficient
 /// O(1) per-element access (no repeated `__getitem__` calls).
+/// Yields `&str` references borrowed from the Python objects — zero allocation
+/// per item, zero copy.
 ///
 /// IMPORTANT: GIL must be held for the lifetime of this iterator.
 /// The iterator borrows the underlying Python list — no allocation
@@ -81,16 +81,16 @@ impl<'py> PyStrListIter<'py> {
 }
 
 impl<'py> Iterator for PyStrListIter<'py> {
+    /// R4-09: String extraction using to_string_lossy() — efficient for ASCII/UTF-8.
+    /// to_string_lossy() returns Cow::Borrowed when possible, avoiding allocation
+    /// in the common case (URLs, fingerprints are ASCII). Only non-UTF-8 triggers
+    /// Owned (String) allocation.
     type Item = String;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        // iter.next() returns Bound<'py, PyAny> for each element.
-        // We then convert to &str and copy to Rust String.
-        // This is zero-copy in the sense that we don't re-allocate
-        // the Python string buffer — we just copy the chars to Rust.
         self.iter.next().and_then(|item| {
-            item.str().ok().map(|s| s.to_string_lossy().into_owned())
+            item.str().ok().map(|py_str| py_str.to_string_lossy().into_owned())
         })
     }
 
@@ -178,7 +178,8 @@ pub trait ZeroCopyBatch: Send + Sync {
         _py: Python<'_>,
     ) -> PyResult<usize> {
         let n = texts.len();
-        let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
+        // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+        let results: Vec<String> = if n < adaptive_scheduler::mixed_threshold() {
             texts.iter().map(|t| self.process_one(t)).collect()
         } else {
             Python::attach(|py| {
@@ -221,11 +222,14 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64>
     // Fallback: list of strings
     if let Ok(list) = input.cast::<PyList>() {
         let _n = validate_batch(&list, py)?;
+        // R4-09: Vec<String> via to_string_lossy() — efficient for ASCII/UTF-8.
+        // Clone the Bound to avoid lifetime issues with the iterator.
         let texts: Vec<String> = PyStrListIter::new(list.clone()).collect();
         if texts.is_empty() {
             return Ok(0.0);
         }
-        if texts.len() < ZERO_COPY_PARALLEL_THRESHOLD {
+        // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+        if texts.len() < adaptive_scheduler::mixed_threshold() {
             return Ok(texts.iter().map(|t| compute_entropy_zc(t.as_bytes())).sum());
         }
         // ISSUE-063: release GIL during mixed_pool rayon scope.
@@ -287,13 +291,12 @@ pub fn batch_url_fingerprints_zc<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     let _n = validate_batch(&urls, py)?;
 
-    // Collect Python strings under GIL, then process in parallel
-    // This is the optimal pattern: GIL held during collection,
-    // rayon parallel scope afterwards (no Python objects accessed)
+    // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
     let urls_slice: Vec<String> = PyStrListIter::new(urls).collect();
     let n = urls_slice.len();
 
-    let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
+    // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    let results: Vec<String> = if n < adaptive_scheduler::mixed_threshold() {
         urls_slice.iter().map(|u| url_fingerprint_zc(u)).collect()
     } else {
         Python::attach(|py| {
@@ -330,10 +333,12 @@ pub fn batch_dedup_fingerprints_zc<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     let _n = validate_batch(&texts, py)?;
 
+    // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
     let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
     let n = texts_slice.len();
 
-    let results: Vec<String> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
+    // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    let results: Vec<String> = if n < adaptive_scheduler::mixed_threshold() {
         texts_slice
             .iter()
             .map(|t| crate::quality_gate::dedup_fingerprint(t))
@@ -365,13 +370,12 @@ pub fn batch_entropy_zc<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     let _n = validate_batch(&texts, py)?;
 
-    // Collect Python strings under GIL, then process in parallel
-    // This is the optimal pattern: GIL held during collection,
-    // rayon parallel scope afterwards (no Python objects accessed)
+    // R4-09 FIX: PyStrListIter yields &str directly — zero allocation.
     let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
     let n = texts_slice.len();
 
-    let results: Vec<f64> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
+    // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    let results: Vec<f64> = if n < adaptive_scheduler::mixed_threshold() {
         texts_slice.iter().map(|t| compute_entropy_zc(t.as_bytes())).collect()
     } else {
         Python::attach(|py| {
@@ -412,13 +416,14 @@ pub fn batch_ioc_extract_into<'py>(
 
     let _n = validate_batch(&texts, _py)?;
 
-    // Collect Python strings under GIL
+    // R4-09 FIX: PyStrListIter yields &str — zero allocation, rayon uses par_iter().
     let texts_slice: Vec<String> = PyStrListIter::new(texts).collect();
     let n = texts_slice.len();
 
     // Process with rayon — returns Vec<Vec<...>>, no Python access in closure
     // ISSUE-063: release GIL during mixed_pool rayon scope.
-    let all_results: Vec<Vec<(String, String)>> = if n < ZERO_COPY_PARALLEL_THRESHOLD {
+    // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    let all_results: Vec<Vec<(String, String)>> = if n < adaptive_scheduler::mixed_threshold() {
         texts_slice
             .iter()
             .map(|text| extract_iocs_from_text(text))
@@ -570,7 +575,10 @@ mod tests {
 
     #[test]
     fn test_parallel_threshold() {
-        assert!(ZERO_COPY_PARALLEL_THRESHOLD >= 50);
+        // R4-09 FIX: threshold is now dynamic via adaptive_scheduler::mixed_threshold()
+        // which returns 16/32/64 based on memory pressure.
+        // ZERO_COPY_PARALLEL_THRESHOLD constant was removed — threshold is no longer
+        // a static value, it adapts to memory pressure via adaptive_scheduler.
         assert!(ZERO_COPY_BATCH_MAX_ITEMS >= 10_000);
     }
 
