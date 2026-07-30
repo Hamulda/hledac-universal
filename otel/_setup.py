@@ -120,6 +120,12 @@ def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
 
     TEL-01: Returns SamplingSpanProcessor(BatchSpanProcessor(DuckDBSpanExporter))
     to filter high-frequency spans before DuckDB write.
+
+    Sampling is two-layered:
+      - SDK sampler (HLEDAC_OTEL_SAMPLE_RATIO, from TelemetryConfig) decides
+        whether a trace produces any spans at all (TraceIdRatioBased).
+      - SamplingSpanProcessor (HLEDAC_OTEL_SPAN_SAMPLE_RATE, below) decides
+        which already-produced spans are persisted to DuckDB.
     """
     try:
         import duckdb as _duckdb

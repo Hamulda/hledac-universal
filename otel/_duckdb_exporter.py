@@ -112,6 +112,7 @@ class SamplingSpanProcessor:
       4. All other spans → export
 
     Telemetry metrics:
+      - _total_count: all spans seen by this processor
       - _filtered_count: spans dropped by sampling
       - _exported_count: spans passed through
 
@@ -126,6 +127,7 @@ class SamplingSpanProcessor:
     __slots__ = (
         "_next",
         "_sample_rate",
+        "_total_count",
         "_filtered_count",
         "_exported_count",
         "_lock",
@@ -143,6 +145,7 @@ class SamplingSpanProcessor:
     ) -> None:
         self._next = next_processor
         self._sample_rate = sample_rate
+        self._total_count = 0
         self._filtered_count = 0
         self._exported_count = 0
         self._lock = threading.Lock()
@@ -164,6 +167,7 @@ class SamplingSpanProcessor:
 
     def on_end(self, span: Span) -> None:
         """Called by OTel SDK when a span ends. Apply sampling rules."""
+        self._total_count += 1
         try:
             if self._should_export(span):
                 self._next.on_end(span)
@@ -230,6 +234,7 @@ class SamplingSpanProcessor:
         """Return sampling statistics."""
         with self._lock:
             return {
+                "total": self._total_count,
                 "filtered": self._filtered_count,
                 "exported": self._exported_count,
             }

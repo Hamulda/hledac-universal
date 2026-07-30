@@ -418,7 +418,7 @@ fn compute_num_hashes(num_bits: usize, capacity: usize) -> usize {
 /// The lock serializes bitmap access (all mutations go through RwLock guards).
 /// MmapBloomFilter is #[pyclass(unsendable)] so Python prevents cross-thread transfer.
 /// ISSUE-6 fix: this enables rayon par_iter in contains_batch / add_batch_impl.
-
+struct MmapBloomFilter {
     /// Bitmap pointer protected by RwLock. FFI-04: RwLock<NonNull<u64>> replaces
     /// the previous RwLock<SendSyncPtr> — no unsafe impl needed, parking_lot
     /// RwLock is Send+Sync by default and NonNull<u64> is Send.

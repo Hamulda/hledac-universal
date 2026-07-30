@@ -2940,6 +2940,26 @@ class DeepHermes3Engine:
             if thinking:
                 system = f'{self._DEEP_THINKING_PREFIX}\n\n{system}'
             sanitized_prompt = prompt[:MAX_LLM_PROMPT_CHARS]
+            # LLM-01: ALWAYS sanitize via prompt injection validator (fail-safe, always-on)
+            # No conditional — web content must NEVER reach LLM without sanitization
+            try:
+                from hledac.universal.brain.prompt_injection_validator import sanitize_prompt_injection_patterns
+                validation_result = sanitize_prompt_injection_patterns(sanitized_prompt)
+                if validation_result.suspicious:
+                    _high_risk = any(p in validation_result.patterns for p in (
+                        'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
+                        'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
+                        'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
+                        'structural_repeated_delimiters', 'structural_html_comment',
+                    ))
+                    if _high_risk:
+                        logger.warning('[LLM-01] generate_stream: high-risk prompt injection REJECTED: %s', validation_result.patterns[:3])
+                        return  # yields nothing — high-risk injection blocked
+                    sanitized_prompt = validation_result.safe_text
+                    logger.warning('[LLM-01] generate_stream: suspicious prompt sanitized: %s', validation_result.patterns)
+            except Exception:
+                logger.error('[LLM-01] generate_stream: prompt injection validation internal error — rejecting prompt')
+                return  # yields nothing — fail-safe rejection
             # Issue #14: Stage 1 — CPU prep in thread pool (parallel with GPU of prior prompt)
             def _sync_stream_prep() -> str:
                 sanitized = self._sanitize_for_llm(sanitized_prompt) if self._sanitize_for_llm else sanitized_prompt

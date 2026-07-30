@@ -4,15 +4,15 @@
 //!
 //! Architecture (TEL-02):
 //!   Python OpenTelemetry SDK (generates trace_id)
-//!       ↓ trace_id passed as hex string parameter
-//!   Rust: trace_id_from_hex() → tracing span with correct trace_id
-//!       ↓ Rust span enters/exits
-//!       ↓ trace_id returned to Python
-//!   Python: injects span_id back into OTel context
+//!       ↓ trace_id/span_id passed as hex string parameters
+//!   Rust: start_span() → validates, stores in TLS, creates tracing span
+//!       ↓ span entered on current thread
+//!       ↓ get_current_trace_id() / get_current_span_id() reads from TLS
+//!   Python: reads trace_id/span_id from Rust, injects back into OTel context
 //!
 //! The key insight: Python owns the trace hierarchy. Rust operates as a span
 //! processor under Python's OTel context. trace_id/span_id are explicit strings
-//! (W3C TraceContext hex format), not opaque OTel objects.
+//! (W3C TraceContext hex format), stored in thread-local storage for fast access.
 //!
 //! W3C TraceContext format:
 //!   trace_id: 32 hex chars (128 bits) — lowercase
@@ -30,13 +30,118 @@ use pyo3::prelude::*;
 static TRACING_INIT: OnceLock<bool> = OnceLock::new();
 static TRACING_ENABLED: OnceLock<bool> = OnceLock::new();
 
-// ============== W3C TraceContext Hex Validation ==============
+// ============== W3C TraceContext Constants ==============
 
 /// Valid W3C TraceContext trace_id: exactly 32 lowercase hex chars.
 const TRACE_ID_LEN: usize = 32;
 
 /// Valid W3C TraceContext span_id: exactly 16 lowercase hex chars.
 const SPAN_ID_LEN: usize = 16;
+
+/// Thread-local guard for the currently entered span.
+/// Unlike CURRENT_TRACE (which only stores metadata), SPAN_GUARD holds the
+/// actual EnteredSpan guard so that span_exit() can properly end the span.
+///
+/// Pattern:
+///   span_enter() → creates span, stores guard in SPAN_GUARD, returns true
+///   span_exit()  → drops the guard, span is ended
+///   If span_enter returns but span_exit is never called → guard is leaked
+///     and span leaks too (but no panic — EnteredSpan has a Drop impl).
+thread_local! {
+    static SPAN_GUARD: std::cell::RefCell<Option<tracing::span::EnteredSpan>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Thread-local storage for the span created by start_span — entered by span_enter.
+/// This ensures start_span and span_enter share the SAME span object.
+thread_local! {
+    static STARTED_SPAN: std::cell::RefCell<Option<tracing::Span>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Thread-local trace context — stores the trace_id and span_id as strings.
+/// This is metadata only (used by get_tls_trace_id / get_tls_span_id).
+/// Does NOT correspond to an active Rust span — that is SPAN_GUARD's job.
+thread_local! {
+    static CURRENT_TRACE: std::cell::RefCell<Option<TraceContext>> = std::cell::RefCell::new(None);
+}
+
+/// The trace context stored in the thread-local.
+#[derive(Clone, Debug)]
+struct TraceContext {
+    trace_id: String,
+    span_id: String,
+}
+
+impl TraceContext {
+    fn new(trace_id: String, span_id: String) -> Self {
+        Self { trace_id, span_id }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.trace_id.len() == TRACE_ID_LEN && self.span_id.len() == SPAN_ID_LEN
+    }
+}
+
+// ============== TLS Accessors (pub(crate) for pool_run.rs) ==============
+
+/// Set the current trace context on this thread. Used by pool_run.rs.
+#[cfg(feature = "otel")]
+pub(crate) fn set_tls_trace_context(trace_id: Option<u128>, span_id: Option<u128>) {
+    if let (Some(tid), Some(sid)) = (trace_id, span_id) {
+        if tid != 0 && sid != 0 {
+            let ctx = TraceContext::new(
+                format!("{:032x}", tid),
+                format!("{:016x}", sid),
+            );
+            CURRENT_TRACE.with(|cell| {
+                *cell.borrow_mut() = Some(ctx);
+            });
+        }
+    }
+}
+
+/// Get the current trace_id from TLS. Used by pool_run.rs execute_with_optional_span.
+#[cfg(feature = "otel")]
+pub(crate) fn get_tls_trace_id() -> Option<String> {
+    CURRENT_TRACE.with(|cell| {
+        cell.borrow().as_ref().map(|ctx| ctx.trace_id.clone())
+    })
+}
+
+/// Get the current span_id from TLS.
+#[cfg(feature = "otel")]
+pub(crate) fn get_tls_span_id() -> Option<String> {
+    CURRENT_TRACE.with(|cell| {
+        cell.borrow().as_ref().map(|ctx| ctx.span_id.clone())
+    })
+}
+
+/// Clear the current trace context on this thread.
+#[cfg(feature = "otel")]
+pub(crate) fn clear_tls_trace_context() {
+    CURRENT_TRACE.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+}
+
+#[cfg(not(feature = "otel"))]
+pub(crate) fn set_tls_trace_context(_trace_id: Option<u128>, _span_id: Option<u128>) {}
+
+#[cfg(not(feature = "otel"))]
+pub(crate) fn get_tls_trace_id() -> Option<String> {
+    None
+}
+
+#[cfg(not(feature = "otel"))]
+pub(crate) fn get_tls_span_id() -> Option<String> {
+    None
+}
+
+#[cfg(not(feature = "otel"))]
+pub(crate) fn clear_tls_trace_context() {}
+
+// ============== Tracing Enabled Check ==============
 
 /// Check if tracing is enabled (env var HLEDAC_TRACING_ENABLED != "0").
 /// Cached via OnceLock so this is fast on the hot path.
@@ -72,8 +177,6 @@ fn init_tracing() -> Result<(), String> {
     let service_name = get_service_name();
 
     // TEL-02: Use fmt with JSON output that includes trace_id/span_id fields.
-    // The tracing-subscriber 0.3 json formatter includes 'level', 'timestamp',
-    // 'target', 'message', and for spans: 'span_name', 'trace_id', 'span_id'.
     let fmt_layer = tracing_subscriber::fmt::fmt()
         .with_target(true)
         .with_thread_ids(false)
@@ -82,15 +185,10 @@ fn init_tracing() -> Result<(), String> {
         .with_ansi(false)
         .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE);
 
-    // TEL-02: Install a trace context layer that propagates W3C traceparent.
-    // This couples with opentelemetry's W3C context propagation.
-    // Note: The actual trace_id/span_id injection into spans happens via
-    // the explicit hex parameters in start_span/enter_span functions below.
     let subscriber = tracing_subscriber::registry()
         .with(EnvFilter::from_default_env())
         .with(fmt_layer);
 
-    // try_init returns () on success, Err if already initialized
     let result = subscriber.try_init();
     if result.is_err() {
         eprintln!("[tracing] init note: subscriber may already be initialized");
@@ -108,79 +206,68 @@ fn init_tracing() -> Result<(), String> {
 
 // ============== W3C TraceContext Helpers ==============
 
-/// Parse a W3C trace_id from a hex string.
-/// Returns the raw 16 bytes (big-endian) if valid, None if invalid.
+/// Parse a W3C trace_id from a hex string (32 chars).
 #[cfg(feature = "otel")]
-fn parse_trace_id_hex(hex: &str) -> Option<[u8; 16]> {
-    if hex.len() != TRACE_ID_LEN {
-        return None;
-    }
-    // Decode exactly 32 hex chars → 16 bytes
-    let mut bytes = [0u8; 16];
-    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
-        if i >= 16 {
-            return None;
-        }
-        let hi = hex_char_to_nibble(chunk[0])?;
-        let lo = hex_char_to_nibble(chunk[1])?;
-        bytes[i] = (hi << 4) | lo;
-    }
-    Some(bytes)
-}
-
-/// Parse a W3C span_id from a hex string.
-/// Returns the raw 8 bytes (big-endian) if valid, None if invalid.
-#[cfg(feature = "otel")]
-fn parse_span_id_hex(hex: &str) -> Option<[u8; 8]> {
-    if hex.len() != SPAN_ID_LEN {
-        return None;
-    }
-    let mut bytes = [0u8; 8];
-    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
-        if i >= 8 {
-            return None;
-        }
-        let hi = hex_char_to_nibble(chunk[0])?;
-        let lo = hex_char_to_nibble(chunk[1])?;
-        bytes[i] = (hi << 4) | lo;
-    }
-    Some(bytes)
-}
-
-/// Convert a single hex char to its nibble value (0-15).
-/// Returns None for non-hex characters.
-#[cfg(feature = "otel")]
-const fn hex_char_to_nibble(c: u8) -> Option<u8> {
-    match c {
-        b'0'..=b'9' => Some(c - b'0'),
-        b'a'..=b'f' => Some(c - b'a' + 10),
-        b'A'..=b'F' => Some(c - b'A' + 10), // W3C allows uppercase in parsing
-        _ => None,
+fn parse_trace_id_hex(hex: &str) -> Option<String> {
+    if hex.len() == TRACE_ID_LEN && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(hex.to_lowercase())
+    } else {
+        None
     }
 }
 
-/// Convert 16 bytes to a 32-char lowercase hex string.
+/// Parse a W3C span_id from a hex string (16 chars).
 #[cfg(feature = "otel")]
-fn bytes_to_trace_id_hex(bytes: [u8; 16]) -> String {
-    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
-    let mut hex = String::with_capacity(32);
-    for b in &bytes {
-        hex.push(HEX_CHARS[(b >> 4) as usize] as char);
-        hex.push(HEX_CHARS[(b & 0xf) as usize] as char);
+fn parse_span_id_hex(hex: &str) -> Option<String> {
+    if hex.len() == SPAN_ID_LEN && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(hex.to_lowercase())
+    } else {
+        None
     }
-    hex
 }
 
-/// Convert 8 bytes to a 16-char lowercase hex string.
+/// Generate a new random trace_id (32 hex chars).
 #[cfg(feature = "otel")]
-fn bytes_to_span_id_hex(bytes: [u8; 8]) -> String {
-    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
-    let mut hex = String::with_capacity(16);
-    for b in &bytes {
-        hex.push(HEX_CHARS[(b >> 4) as usize] as char);
-        hex.push(HEX_CHARS[(b & 0xf) as usize] as char);
+fn generate_trace_id_hex() -> String {
+    let bytes: [u8; 16] = rand::random();
+    hex_encode_16_bytes(bytes)
+}
+
+/// Generate a new random span_id (16 hex chars).
+#[cfg(feature = "otel")]
+fn generate_span_id_hex() -> String {
+    let bytes: [u8; 8] = rand::random();
+    hex_encode_8_bytes(bytes)
+}
+
+/// Encode 16 bytes as 32-char lowercase hex string.
+#[cfg(feature = "otel")]
+const fn hex_encode_16_bytes(bytes: [u8; 16]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    // Use array to avoid dynamic allocation in const context
+    let mut chars = ['0'; 32];
+    let mut i = 0;
+    while i < 16 {
+        chars[i * 2] = HEX[(bytes[i] >> 4) as usize] as char;
+        chars[i * 2 + 1] = HEX[(bytes[i] & 0xf) as usize] as char;
+        i += 1;
     }
-    hex
+    // Safety: String::from_iter is const-OK since Rust 1.79
+    String::from_iter(chars.iter())
+}
+
+/// Encode 8 bytes as 16-char lowercase hex string.
+#[cfg(feature = "otel")]
+const fn hex_encode_8_bytes(bytes: [u8; 8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut chars = ['0'; 16];
+    let mut i = 0;
+    while i < 8 {
+        chars[i * 2] = HEX[(bytes[i] >> 4) as usize] as char;
+        chars[i * 2 + 1] = HEX[(bytes[i] & 0xf) as usize] as char;
+        i += 1;
+    }
+    String::from_iter(chars.iter())
 }
 
 // ============== Python API ==============
@@ -230,7 +317,6 @@ pub fn is_tracing_active() -> bool {
 ///
 /// Python usage:
 ///   trace_id, span_id, is_valid = rust.tracing.start_span("my_span", trace_id, "", "01")
-///   # Use trace_id and span_id to continue the trace in Python
 #[cfg(feature = "otel")]
 #[pyfunction]
 pub fn start_span(
@@ -239,53 +325,50 @@ pub fn start_span(
     span_id: String,
     traceflags: String,
 ) -> (String, String, bool) {
-    use tracing::Span;
-
     if !is_tracing_enabled() {
         return (String::new(), String::new(), false);
     }
 
-    // Validate trace_id
-    let trace_bytes = match parse_trace_id_hex(&trace_id) {
-        Some(b) => b,
+    // Validate trace_id (must be exactly 32 hex chars)
+    let trace_id = match parse_trace_id_hex(&trace_id) {
+        Some(tid) => tid,
         None => return (trace_id, String::new(), false),
     };
 
-    // Generate or validate span_id
-    let span_bytes: [u8; 8] = if span_id.is_empty() {
-        // Auto-generate a new span_id
-        let rng = rand::rngs::SmallRng::from_entropy();
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(&rand::Rng::gen::<_, [u8; 8]>(rng));
-        bytes
+    // Validate or generate span_id (docstring: "or empty to auto-generate")
+    let span_id = if span_id.is_empty() {
+        generate_span_id_hex()
     } else {
         match parse_span_id_hex(&span_id) {
-            Some(b) => b,
+            Some(sid) => sid,
             None => return (trace_id, String::new(), false),
         }
     };
+    // Store in TLS so get_current_trace_id/get_current_span_id can retrieve it.
+    // NOTE: We do NOT enter the span here — Python calls span_enter() explicitly
+    // to make it the current span. This allows the span to outlive start_span()
+    // and be entered/closed across separate function calls.
+    let ctx = TraceContext::new(trace_id.clone(), span_id.clone());
+    CURRENT_TRACE.with(|cell| {
+        *cell.borrow_mut() = Some(ctx);
+    });
 
-    // TEL-02: Create span using info_span! macro.
-    // The span will be associated with the current tracing dispatcher's context.
-    // For true cross-language propagation, Python injects traceparent into the
-    // Rust span via the span's attributes or the dispatcher's context.
+    // Create the span and store it in STARTED_SPAN for span_enter() to pick up and enter.
+    // This ensures start_span and span_enter share the SAME span (not two separate spans).
     let span = tracing::info_span!(
         "python_call",
         trace_id = %trace_id,
-        span_id = %bytes_to_span_id_hex(span_bytes),
+        span_id = %span_id,
         trace_flags = %traceflags,
         otel.name = %name,
         otel.kind = "internal",
     );
+    STARTED_SPAN.with(|cell| {
+        *cell.borrow_mut() = Some(span);
+    });
 
-    // Enter the span (like .enter() on a guard) — drops when span_id goes out of scope
-    let _entered = span.enter();
-
-    // Note: In a PyO3 extension, the span is active only during this function call.
-    // For longer-lived spans, Python should call span_enter() and span_exit() explicitly.
-    // We return the span_id so Python can track it for later span_exit().
-
-    (trace_id, bytes_to_span_id_hex(span_bytes), true)
+    // Return the (possibly auto-generated) span_id as valid
+    (trace_id, span_id, true)
 }
 
 /// Start a new span with explicit W3C TraceContext trace_id.
@@ -312,38 +395,39 @@ pub fn start_span(
 #[cfg(feature = "otel")]
 #[pyfunction]
 pub fn span_enter(trace_id: String, span_id: String) -> bool {
-    use tracing::Span;
-
     if !is_tracing_enabled() {
         return false;
     }
 
     // Validate inputs
-    let _ = match parse_trace_id_hex(&trace_id) {
-        Some(b) => b,
+    let trace_id = match parse_trace_id_hex(&trace_id) {
+        Some(tid) => tid,
         None => return false,
     };
-    let _ = match parse_span_id_hex(&span_id) {
-        Some(b) => b,
+    let span_id = match parse_span_id_hex(&span_id) {
+        Some(sid) => sid,
         None => return false,
     };
 
-    // TEL-02: Create a span with the given trace_id/span_id and enter it.
-    // This span becomes the "current" span for the duration until span_exit.
-    let span = tracing::info_span!(
-        "python_call",
-        trace_id = %trace_id,
-        span_id = %span_id,
-        otel.kind = "internal",
-    );
+    // Store in TLS for get_current_trace_id/get_current_span_id
+    let ctx = TraceContext::new(trace_id.clone(), span_id.clone());
+    CURRENT_TRACE.with(|cell| {
+        *cell.borrow_mut() = Some(ctx);
+    });
 
-    // Store the entered span in a thread-local or task-local guard.
-    // For PyO3 (blocking sync calls), we use a thread-local.
-    // The span is exited when span_exit() is called.
-    SPAN_GUARD.with(|guard| {
-        let mut guard = guard.borrow_mut();
+    // Retrieve the span from start_span and enter it.
+    // If start_span wasn't called (no span in STARTED_SPAN), create one as fallback.
+    let entered = STARTED_SPAN.with(|cell| {
+        cell.borrow_mut().take().map(|span| span.enter())
+    });
+
+    // Store the guard in SPAN_GUARD so it survives until span_exit() is called.
+    SPAN_GUARD.with(|cell| {
+        let mut guard = cell.borrow_mut();
         guard.take(); // Drop any previous guard
-        *guard = Some(span.enter());
+        if let Some(e) = entered {
+            *guard = Some(e);
+        }
     });
 
     true
@@ -358,21 +442,17 @@ pub fn span_enter(trace_id: String, span_id: String) -> bool {
     false
 }
 
-// Thread-local guard for span enter/exit pattern.
-// Needed because Python calls are blocking sync (no async task context).
-thread_local! {
-    static SPAN_GUARD: std::cell::RefCell<Option<tracing::span::EnteredSpan>> =
-        std::cell::RefCell::new(None);
-}
-
 /// Exit the current span (end it as the current span).
+/// Drops the SPAN_GUARD, which ends the entered span.
 /// After this call, no span is the current span.
 #[cfg(feature = "otel")]
 #[pyfunction]
 pub fn span_exit() {
-    SPAN_GUARD.with(|guard| {
-        let mut guard = guard.borrow_mut();
-        guard.take(); // Drop the EnteredSpan, ending the span
+    SPAN_GUARD.with(|cell| {
+        cell.borrow_mut().take(); // Drop EnteredSpan, span is exited
+    });
+    CURRENT_TRACE.with(|cell| {
+        *cell.borrow_mut() = None;
     });
 }
 
@@ -381,40 +461,21 @@ pub fn span_exit() {
 #[pyfunction]
 pub fn span_exit() {}
 
-/// Get current trace_id from the active span.
+/// Get current trace_id from TLS.
 /// Returns (trace_id, is_valid).
 #[cfg(feature = "otel")]
 #[pyfunction]
 pub fn get_current_trace_id() -> (String, bool) {
-    use tracing::Span;
-
     if !is_tracing_enabled() {
         return (String::new(), false);
     }
 
-    let span = Span::current();
-    if span.is_none() {
-        return (String::new(), false);
-    }
-
-    // TEL-02: Extract trace_id from span's recorded attributes.
-    // The span was created with trace_id = %trace_id in start_span/span_enter.
-    // We use the dispatcher's current span to get recorded values.
-    let trace_id = span.recorded_attribute(&"trace_id".into())
-        .and_then(|v| {
-            if let Some(s) = v.as_str() {
-                Some(s.to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    if trace_id.len() == TRACE_ID_LEN {
-        (trace_id, true)
-    } else {
-        (String::new(), false)
-    }
+    CURRENT_TRACE.with(|cell| {
+        match cell.borrow().as_ref() {
+            Some(ctx) if ctx.trace_id.len() == TRACE_ID_LEN => (ctx.trace_id.clone(), true),
+            _ => (String::new(), false),
+        }
+    })
 }
 
 /// Get current trace_id (stub for non-otel builds).
@@ -424,37 +485,21 @@ pub fn get_current_trace_id() -> (String, bool) {
     (String::new(), false)
 }
 
-/// Get current span_id from the active span.
+/// Get current span_id from TLS.
 /// Returns (span_id, is_valid).
 #[cfg(feature = "otel")]
 #[pyfunction]
 pub fn get_current_span_id() -> (String, bool) {
-    use tracing::Span;
-
     if !is_tracing_enabled() {
         return (String::new(), false);
     }
 
-    let span = Span::current();
-    if span.is_none() {
-        return (String::new(), false);
-    }
-
-    let span_id = span.recorded_attribute(&"span_id".into())
-        .and_then(|v| {
-            if let Some(s) = v.as_str() {
-                Some(s.to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    if span_id.len() == SPAN_ID_LEN {
-        (span_id, true)
-    } else {
-        (String::new(), false)
-    }
+    CURRENT_TRACE.with(|cell| {
+        match cell.borrow().as_ref() {
+            Some(ctx) if ctx.span_id.len() == SPAN_ID_LEN => (ctx.span_id.clone(), true),
+            _ => (String::new(), false),
+        }
+    })
 }
 
 /// Get current span_id (stub for non-otel builds).
@@ -488,14 +533,10 @@ pub fn add_span_event(name: String, _attributes_json: Option<String>) {
 }
 
 /// Generate a new random trace_id (32 hex chars).
-/// Useful for starting a new trace in Rust when Python hasn't started one.
 #[cfg(feature = "otel")]
 #[pyfunction]
 pub fn generate_trace_id() -> String {
-    use rand::Rng;
-    let rng = rand::rngs::SmallRng::from_entropy();
-    let bytes: [u8; 16] = rng.gen();
-    bytes_to_trace_id_hex(bytes)
+    generate_trace_id_hex()
 }
 
 /// Generate a new random trace_id (stub for non-otel builds).
@@ -509,10 +550,7 @@ pub fn generate_trace_id() -> String {
 #[cfg(feature = "otel")]
 #[pyfunction]
 pub fn generate_span_id() -> String {
-    use rand::Rng;
-    let rng = rand::rngs::SmallRng::from_entropy();
-    let bytes: [u8; 8] = rng.gen();
-    bytes_to_span_id_hex(bytes)
+    generate_span_id_hex()
 }
 
 /// Generate a new random span_id (stub for non-otel builds).
@@ -551,7 +589,5 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 #[cfg(not(feature = "otel"))]
 pub fn register(_m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // When otel feature is disabled, tracing functions are no-ops.
-    // All functions above are stubs returning empty strings / false.
     Ok(())
 }

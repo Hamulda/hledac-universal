@@ -949,8 +949,12 @@ class TestSamplingSpanProcessor:
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.",),
         )
-        # Span with problematic trace_id (empty) that might cause hash error
-        span = _FakeSpan(name="fetch.url", trace_id=0, span_id=0)
+        # Span whose get_span_context() raises — triggers fail-soft path
+        class _RaisingFakeSpan(_FakeSpan):
+            def get_span_context(self) -> Any:
+                raise AttributeError("simulated trace_id unavailable")
+
+        span = _RaisingFakeSpan(name="fetch.url", trace_id=0, span_id=0)
         proc.on_end(span)  # type: ignore[arg-type]
         # Should still pass through on error
         assert len(next_proc.ended) == 1
@@ -977,15 +981,39 @@ class TestSamplingSpanProcessor:
         assert len(set(results)) == 1, "Sampling should be deterministic for same trace_id+name"
 
     def test_integration_with_ring_exporter(self) -> None:
-        """SamplingSpanProcessor works end-to-end with ring sink."""
+        """SamplingSpanProcessor works end-to-end with ring sink.
+
+        RingBufferExporter only has export() (SpanExporter interface), not
+        on_end() (SpanProcessor interface). Wrap it so SamplingSpanProcessor
+        can delegate via on_end() → export() conversion.
+        """
         from otel._duckdb_exporter import SamplingSpanProcessor
         from otel._buffer import BoundedRing
         from otel._exporter_ring import RingBufferExporter
 
+        class _RingExporterWrapper:
+            """Adapt SpanExporter (export) to SpanProcessor (on_start/on_end)."""
+            __slots__ = ("_exporter",)
+
+            def __init__(self, exporter: Any) -> None:
+                self._exporter = exporter
+
+            def on_start(self, span: Any) -> None:
+                pass
+
+            def on_end(self, span: Any) -> None:
+                self._exporter.export([span])
+
+            def shutdown(self, timeout_ms: float = 5_000) -> None:
+                self._exporter.shutdown()
+
+            def force_flush(self, timeout_ms: float = 5_000) -> None:
+                pass
+
         ring = BoundedRing(capacity=1000)
         ring_exporter = RingBufferExporter(ring=ring, max_attrs=32)
         proc = SamplingSpanProcessor(
-            next_processor=ring_exporter,
+            next_processor=_RingExporterWrapper(ring_exporter),
             sample_rate=0.1,
             slow_span_threshold_ms=100.0,
             skip_prefixes=("fetch.", "http."),
@@ -993,11 +1021,10 @@ class TestSamplingSpanProcessor:
         # Submit 1000 fast high-freq spans
         for i in range(1000):
             span = _FakeSpan(name="fetch.url", duration_ms=5.0, trace_id=i)
-            proc.on_end(span)
-        # With 10% sample rate, expect ~100 in ring
-        # Allow window 50-200 due to statistical variance
+            proc.on_end(span)  # type: ignore[arg-type]
+        # With 10% sample rate, expect ~100 in ring (statistical window 50-200)
         ring_size = len(ring)
         assert 50 <= ring_size <= 200, f"Expected ~100, got {ring_size}"
         stats = proc.stats
-        assert stats["exported"] == ring_size
+        assert stats["exported"] == ring_size, f"exported={stats['exported']} != ring_size={ring_size}"
         assert stats["filtered"] == 1000 - ring_size

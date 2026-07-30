@@ -47,7 +47,8 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, Sender, Receiver};
 
 use crate::cpu_pool;
-use crate::tracing::is_tracing_enabled;
+#[cfg(feature = "otel")]
+use crate::tracing::{is_tracing_enabled, set_tls_trace_context, clear_tls_trace_context};
 use crate::io_pool;
 use crate::mixed_pool;
 
@@ -206,6 +207,16 @@ fn run_mixed_dispatcher_loop(rx: Arc<Receiver<WorkItem>>) {
 // TEL-02: Trace context propagation — optional tracing span wrapper
 // ---------------------------------------------------------------------------
 
+// Stub when otel is disabled — just execute the closure directly.
+#[cfg(not(feature = "otel"))]
+fn execute_with_optional_span<R>(
+    _trace_context: Option<TraceContext>,
+    f: impl FnOnce() -> R,
+) -> R {
+    f()
+}
+
+#[cfg(feature = "otel")]
 /// Execute a closure, optionally wrapped in a tracing span for cross-language
 /// trace propagation (TEL-02).
 ///
@@ -221,16 +232,33 @@ fn execute_with_optional_span<R>(
 ) -> R {
     match trace_context {
         Some(ctx) if is_tracing_enabled() => {
-            // TEL-02: Wrap in a tracing span linked to Python OTel parent span.
-            // The span carries W3C traceparent-compatible attributes so that
-            // Rust JSON traces can be correlated with Python OTel traces.
+            // TEL-02: Set TLS context for Rust-side tracing span created below.
+            // Note: get_tls_trace_id() / get_tls_span_id() are accessor functions exposed
+            // to Python but are NOT called by pool_run.rs — only set/clear are needed here.
+            set_tls_trace_context(Some(ctx.trace_id), Some(ctx.span_id));
+
+            // Create tracing span with W3C traceparent-compatible attributes
             let span = tracing::info_span!(
                 "rayon_worker",
                 raython.trace_id = %format!("{:032x}", ctx.trace_id),
                 raython.span_id = %format!("{:016x}", ctx.span_id),
                 raython.pool_work = true,
             );
-            span.in_scope(f)
+
+            // F351 FIX: Use catch_unwind to guarantee TLS cleanup even on panic.
+            // If f() panics, in_scope propagates the panic and clear_tls_trace_context()
+            // would never run — leaving stale TLS context on the worker thread,
+            // contaminating subsequent work items processed by the same thread.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| span.in_scope(f)));
+
+            // Always clear TLS after span ends — both on success and on panic
+            clear_tls_trace_context();
+
+            // Propagate panic as-is (re-panic via resume_unwind)
+            match result {
+                Ok(v) => v,
+                Err(payload) => std::panic::panic_any(payload),
+            }
         }
         _ => f(),
     }
@@ -376,6 +404,14 @@ pub fn rayon_submit_channel_(
     //   - Worker upgrades Weak → valid Arc for duration of execute_work_item
     //   - When worker finishes: if Arc still alive (Python hasn't dropped), condvar fires
     //   - If Python never calls rayon_join: work_shared is leaked (acceptable for abort path)
+    // R5 FIX: Use Arc::new_cyclic so the Weak in WorkItem can upgrade to the Arc.
+    // Ownership model:
+    //   - WorkItem.shared = Weak<SharedTask> (does NOT keep SharedTask alive)
+    //   - Python receives Arc::into_raw(work_shared) as usize pointer
+    //   - Python passes usize back → Arc::from_raw reconstructs Arc in join/abort
+    //   - Worker upgrades Weak → valid Arc for duration of execute_work_item
+    //   - When worker finishes: if Arc still alive (Python hasn't dropped), condvar fires
+    //   - If Python never calls rayon_join: work_shared is leaked (acceptable for abort path)
     let work_shared: Arc<SharedTask> = Arc::new_cyclic(|weak| SharedTask {
         result: parking_lot::Mutex::new(None),
         cancel_flag: AtomicBool::new(false),
@@ -383,11 +419,14 @@ pub fn rayon_submit_channel_(
         condvar: parking_lot::Condvar::new(),
     });
 
+    // Get Weak from Arc for WorkItem — weak is out of scope here (closure ended)
+    let work_shared_weak = std::sync::Arc::downgrade(&work_shared);
+
     let work = WorkItem {
         func: func_clone,
         args: args_clone,
         n_items,
-        shared: weak.clone(),
+        shared: work_shared_weak,
         trace_context,
     };
 

@@ -1362,7 +1362,7 @@ def _get_memory_pressure() -> "MemoryPressureLevel":
 
 def export_findings_to_parquet(
     path: str,
-    query: str = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings",
+    query: str = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json FROM canonical_findings",
     batch_size: int = 100000,
     _memory_pressure_gate: bool = True,
 ) -> bool:
@@ -1730,7 +1730,7 @@ def _validate_duckdb_threads(value: str | int, setting_name: str = "threads") ->
 from hledac.universal.config.dedup_config import DEDUP_LMDB_MAP_SIZE
 
 _DEDUP_LMDB_MAP_SIZE: int = DEDUP_LMDB_MAP_SIZE
-_SCHEMA_SQL = '\n    CREATE TABLE IF NOT EXISTS canonical_findings (\n        id              VARCHAR PRIMARY KEY,\n        query           VARCHAR,\n        source_type     VARCHAR,\n        confidence      DOUBLE,\n        ts              DOUBLE,\n        provenance_json TEXT,\n        payload_text    TEXT,\n        UNIQUE (id),\n        UNIQUE (query, source_type)\n    );\n    -- Sprint STORAGE-FIX-1: time-range + per-query lookups\n    -- canonical_findings is queried with WHERE query LIKE ? ORDER BY ts DESC LIMIT N (6+ sites).\n    -- time-range + per-query lookups, indexes for performance\n    CREATE INDEX IF NOT EXISTS idx_canonical_findings_ts ON canonical_findings(ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_canonical_findings_query ON canonical_findings(query);\n    CREATE TABLE IF NOT EXISTS shadow_runs (\n        run_id      VARCHAR PRIMARY KEY,\n        started_at  TIMESTAMP,\n        ended_at    TIMESTAMP,\n        total_fds   INTEGER,\n        rss_mb      INTEGER\n    );\n    CREATE TABLE IF NOT EXISTS sprint_delta (\n        sprint_id TEXT PRIMARY KEY,\n        ts DOUBLE NOT NULL,\n        query TEXT,\n        duration_s REAL DEFAULT 0,\n        new_findings INT DEFAULT 0,\n        dedup_hits INT DEFAULT 0,\n        ioc_nodes INT DEFAULT 0,\n        ioc_new_this_sprint INT DEFAULT 0,\n        uma_peak_gib REAL DEFAULT 0,\n        synthesis_success BOOL DEFAULT false,\n        findings_per_minute REAL DEFAULT 0,\n        top_source_type TEXT,\n        synthesis_confidence REAL DEFAULT 0\n    );\n    -- Index for ORDER BY ts DESC queries (scoreboard, recent sprints)\n    CREATE INDEX IF NOT EXISTS idx_sprint_delta_ts ON sprint_delta(ts DESC);\n    CREATE TABLE IF NOT EXISTS source_hit_log (\n        sprint_id TEXT,\n        ts DOUBLE,\n        source_type TEXT,\n        findings_count INT,\n        ioc_count INT,\n        hit_rate REAL\n    );\n    -- Sprint F-B: indexes for per-sprint + time-range source_hit_log lookups\n    CREATE INDEX IF NOT EXISTS idx_source_hit_log_sprint_ts\n        ON source_hit_log(sprint_id, ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_source_hit_log_ts\n        ON source_hit_log(ts DESC);\n    CREATE TABLE IF NOT EXISTS sprint_scorecard (\n        sprint_id TEXT PRIMARY KEY,\n        ts DOUBLE NOT NULL,\n        findings_per_minute REAL,\n        ioc_density REAL,\n        semantic_novelty REAL,\n        source_yield_json TEXT,\n        phase_timings_json TEXT,\n        outlines_used BOOL,\n        accepted_findings INT,\n        ioc_nodes INT\n    );\n    CREATE INDEX IF NOT EXISTS idx_sprint_scorecard_ts\n        ON sprint_scorecard(ts DESC);\n    CREATE TABLE IF NOT EXISTS research_episodes (\n        episode_id   TEXT PRIMARY KEY,\n        sprint_id    TEXT NOT NULL,\n        query        TEXT NOT NULL,\n        summary      TEXT,\n        top_findings JSON,\n        ioc_clusters JSON,\n        source_yield JSON,\n        synthesis_engine TEXT,\n        duration_s   REAL,\n        ts           DOUBLE NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_episodes_ts ON research_episodes(ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_episodes_sprint\n        ON research_episodes(sprint_id);\n    CREATE TABLE IF NOT EXISTS target_profiles (\n        target_id TEXT PRIMARY KEY,\n        first_seen DOUBLE,\n        last_seen DOUBLE,\n        cumulative_finding_count INTEGER,\n        entity_summary_json TEXT\n    );\n    -- Sprint F-B: target_profiles queried by last_seen DESC for recent targets\n    CREATE INDEX IF NOT EXISTS idx_target_profiles_last_seen\n        ON target_profiles(last_seen DESC);\n    CREATE TABLE IF NOT EXISTS hypothesis_feedback (\n        id TEXT PRIMARY KEY,\n        target_id TEXT,\n        pivot_type TEXT,\n        ioc_type TEXT,\n        produced_count INTEGER,\n        accepted_count INTEGER,\n        signal_value DOUBLE,\n        ts DOUBLE\n    );\n    -- Sprint F-B: hypothesis_feedback target_id is the primary filter\n    -- for per-target pivot analytics. Index avoids scan.\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_feedback_target_ts\n        ON hypothesis_feedback(target_id, ts DESC);\n    CREATE TABLE IF NOT EXISTS hypothesis_tracking (\n        hypothesis_id TEXT PRIMARY KEY,\n        sprint_id TEXT,\n        hypothesis_text TEXT,\n        status TEXT,\n        confidence REAL,\n        falsification_result TEXT,\n        disproved_by_sprint_id TEXT,\n        ts DOUBLE\n    );\n    -- Sprint F-B: hypothesis_tracking is queried by sprint_id and status\n    -- in the windup_engine hypothesis summarizer.\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_tracking_sprint\n        ON hypothesis_tracking(sprint_id);\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_tracking_status_ts\n        ON hypothesis_tracking(status, ts DESC);\n    CREATE TABLE IF NOT EXISTS target_memory (\n        target_id TEXT PRIMARY KEY,\n        first_seen_ts DOUBLE NOT NULL,\n        last_seen_ts DOUBLE NOT NULL,\n        sprint_count INTEGER NOT NULL,\n        cumulative_finding_count INTEGER NOT NULL,\n        entity_facets_json TEXT NOT NULL,\n        exposure_facets_json TEXT NOT NULL,\n        pivot_facets_json TEXT NOT NULL,\n        confidence_drift_json TEXT NOT NULL,\n        updated_by_sprint_id TEXT NOT NULL\n    );\n    -- Sprint F-B: target_memory last_seen_ts is the primary sort key\n    -- for "recent targets" queries in F204D.\n    CREATE INDEX IF NOT EXISTS idx_target_memory_last_seen\n        ON target_memory(last_seen_ts DESC);\n    -- Sprint F224A: DHT metadata table for torrent content discovery\n    CREATE TABLE IF NOT EXISTS dht_metadata (\n        infohash TEXT PRIMARY KEY,\n        name TEXT,\n        files_json TEXT,\n        size_bytes BIGINT,\n        first_seen DOUBLE,\n        last_seen DOUBLE,\n        peer_count INT,\n        sources_json TEXT\n    );\n    -- Sprint F-B: dht_metadata is queried by last_seen DESC and peer_count\n    -- for "recent active torrents" and "popular torrents" lookups.\n    CREATE INDEX IF NOT EXISTS idx_dht_metadata_last_seen\n        ON dht_metadata(last_seen DESC);\n    CREATE INDEX IF NOT EXISTS idx_dht_metadata_peer_count\n        ON dht_metadata(peer_count DESC);\n    -- Sprint F350M: Cross-sprint research session memory\n    CREATE TABLE IF NOT EXISTS research_sessions (\n        session_id TEXT PRIMARY KEY,\n        sprint_id TEXT NOT NULL,\n        query TEXT NOT NULL,\n        ts DOUBLE NOT NULL,\n        findings_count INTEGER,\n        accepted_count INTEGER,\n        gaps_json TEXT,\n        entities_json TEXT,\n        source_patterns_json TEXT,\n        unexplored_angles_json TEXT,\n        temporal_anomalies_json TEXT\n    );\n    CREATE INDEX IF NOT EXISTS idx_research_sessions_sprint\n        ON research_sessions(sprint_id);\n    CREATE INDEX IF NOT EXISTS idx_research_sessions_ts\n        ON research_sessions(ts DESC);\n    -- Sprint F350M: Entity observations for temporal tracking\n    CREATE TABLE IF NOT EXISTS entity_observations (\n        observation_id TEXT PRIMARY KEY,\n        entity_value TEXT NOT NULL,\n        entity_type TEXT NOT NULL,\n        sprint_id TEXT NOT NULL,\n        source_type TEXT NOT NULL,\n        confidence REAL,\n        ts DOUBLE NOT NULL,\n        finding_id TEXT NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_entity_observations_entity\n        ON entity_observations(entity_value);\n    CREATE INDEX IF NOT EXISTS idx_entity_observations_sprint\n        ON entity_observations(sprint_id);\n    -- Sprint F330: IOC co-occurrence matrix for speculative edge mining\n    CREATE TABLE IF NOT EXISTS ioc_cooccurrence (\n        ioc_a TEXT NOT NULL,\n        ioc_b TEXT NOT NULL,\n        ioc_type_a TEXT NOT NULL,\n        ioc_type_b TEXT NOT NULL,\n        support INTEGER NOT NULL,\n        confidence REAL NOT NULL,\n        score REAL NOT NULL,\n        last_seen REAL NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_score\n        ON ioc_cooccurrence(score DESC);\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_ioc_a\n        ON ioc_cooccurrence(ioc_a);\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_ioc_b\n        ON ioc_cooccurrence(ioc_b);\n'
+_SCHEMA_SQL = '\n    CREATE TABLE IF NOT EXISTS canonical_findings (\n        id              VARCHAR PRIMARY KEY,\n        query           VARCHAR,\n        source_type     VARCHAR,\n        confidence      DOUBLE,\n        ts              DOUBLE,\n        provenance_json TEXT,\n        payload_text    TEXT,\n        claims_json     TEXT,\n        UNIQUE (id),\n        UNIQUE (query, source_type)\n    );\n    -- Sprint F360M-R: claims_json column added for sentence-level claims extraction.\n    -- Sprint STORAGE-FIX-1: time-range + per-query lookups\n    -- canonical_findings is queried with WHERE query LIKE ? ORDER BY ts DESC LIMIT N (6+ sites).\n    -- time-range + per-query lookups, indexes for performance\n    CREATE INDEX IF NOT EXISTS idx_canonical_findings_ts ON canonical_findings(ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_canonical_findings_query ON canonical_findings(query);\n    CREATE TABLE IF NOT EXISTS shadow_runs (\n        run_id      VARCHAR PRIMARY KEY,\n        started_at  TIMESTAMP,\n        ended_at    TIMESTAMP,\n        total_fds   INTEGER,\n        rss_mb      INTEGER\n    );\n    CREATE TABLE IF NOT EXISTS sprint_delta (\n        sprint_id TEXT PRIMARY KEY,\n        ts DOUBLE NOT NULL,\n        query TEXT,\n        duration_s REAL DEFAULT 0,\n        new_findings INT DEFAULT 0,\n        dedup_hits INT DEFAULT 0,\n        ioc_nodes INT DEFAULT 0,\n        ioc_new_this_sprint INT DEFAULT 0,\n        uma_peak_gib REAL DEFAULT 0,\n        synthesis_success BOOL DEFAULT false,\n        findings_per_minute REAL DEFAULT 0,\n        top_source_type TEXT,\n        synthesis_confidence REAL DEFAULT 0\n    );\n    -- Index for ORDER BY ts DESC queries (scoreboard, recent sprints)\n    CREATE INDEX IF NOT EXISTS idx_sprint_delta_ts ON sprint_delta(ts DESC);\n    CREATE TABLE IF NOT EXISTS source_hit_log (\n        sprint_id TEXT,\n        ts DOUBLE,\n        source_type TEXT,\n        findings_count INT,\n        ioc_count INT,\n        hit_rate REAL\n    );\n    -- Sprint F-B: indexes for per-sprint + time-range source_hit_log lookups\n    CREATE INDEX IF NOT EXISTS idx_source_hit_log_sprint_ts\n        ON source_hit_log(sprint_id, ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_source_hit_log_ts\n        ON source_hit_log(ts DESC);\n    CREATE TABLE IF NOT EXISTS sprint_scorecard (\n        sprint_id TEXT PRIMARY KEY,\n        ts DOUBLE NOT NULL,\n        findings_per_minute REAL,\n        ioc_density REAL,\n        semantic_novelty REAL,\n        source_yield_json TEXT,\n        phase_timings_json TEXT,\n        outlines_used BOOL,\n        accepted_findings INT,\n        ioc_nodes INT\n    );\n    CREATE INDEX IF NOT EXISTS idx_sprint_scorecard_ts\n        ON sprint_scorecard(ts DESC);\n    CREATE TABLE IF NOT EXISTS research_episodes (\n        episode_id   TEXT PRIMARY KEY,\n        sprint_id    TEXT NOT NULL,\n        query        TEXT NOT NULL,\n        summary      TEXT,\n        top_findings JSON,\n        ioc_clusters JSON,\n        source_yield JSON,\n        synthesis_engine TEXT,\n        duration_s   REAL,\n        ts           DOUBLE NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_episodes_ts ON research_episodes(ts DESC);\n    CREATE INDEX IF NOT EXISTS idx_episodes_sprint\n        ON research_episodes(sprint_id);\n    CREATE TABLE IF NOT EXISTS target_profiles (\n        target_id TEXT PRIMARY KEY,\n        first_seen DOUBLE,\n        last_seen DOUBLE,\n        cumulative_finding_count INTEGER,\n        entity_summary_json TEXT\n    );\n    -- Sprint F-B: target_profiles queried by last_seen DESC for recent targets\n    CREATE INDEX IF NOT EXISTS idx_target_profiles_last_seen\n        ON target_profiles(last_seen DESC);\n    CREATE TABLE IF NOT EXISTS hypothesis_feedback (\n        id TEXT PRIMARY KEY,\n        target_id TEXT,\n        pivot_type TEXT,\n        ioc_type TEXT,\n        produced_count INTEGER,\n        accepted_count INTEGER,\n        signal_value DOUBLE,\n        ts DOUBLE\n    );\n    -- Sprint F-B: hypothesis_feedback target_id is the primary filter\n    -- for per-target pivot analytics. Index avoids scan.\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_feedback_target_ts\n        ON hypothesis_feedback(target_id, ts DESC);\n    CREATE TABLE IF NOT EXISTS hypothesis_tracking (\n        hypothesis_id TEXT PRIMARY KEY,\n        sprint_id TEXT,\n        hypothesis_text TEXT,\n        status TEXT,\n        confidence REAL,\n        falsification_result TEXT,\n        disproved_by_sprint_id TEXT,\n        ts DOUBLE\n    );\n    -- Sprint F-B: hypothesis_tracking is queried by sprint_id and status\n    -- in the windup_engine hypothesis summarizer.\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_tracking_sprint\n        ON hypothesis_tracking(sprint_id);\n    CREATE INDEX IF NOT EXISTS idx_hypothesis_tracking_status_ts\n        ON hypothesis_tracking(status, ts DESC);\n    CREATE TABLE IF NOT EXISTS target_memory (\n        target_id TEXT PRIMARY KEY,\n        first_seen_ts DOUBLE NOT NULL,\n        last_seen_ts DOUBLE NOT NULL,\n        sprint_count INTEGER NOT NULL,\n        cumulative_finding_count INTEGER NOT NULL,\n        entity_facets_json TEXT NOT NULL,\n        exposure_facets_json TEXT NOT NULL,\n        pivot_facets_json TEXT NOT NULL,\n        confidence_drift_json TEXT NOT NULL,\n        updated_by_sprint_id TEXT NOT NULL\n    );\n    -- Sprint F-B: target_memory last_seen_ts is the primary sort key\n    -- for "recent targets" queries in F204D.\n    CREATE INDEX IF NOT EXISTS idx_target_memory_last_seen\n        ON target_memory(last_seen_ts DESC);\n    -- Sprint F224A: DHT metadata table for torrent content discovery\n    CREATE TABLE IF NOT EXISTS dht_metadata (\n        infohash TEXT PRIMARY KEY,\n        name TEXT,\n        files_json TEXT,\n        size_bytes BIGINT,\n        first_seen DOUBLE,\n        last_seen DOUBLE,\n        peer_count INT,\n        sources_json TEXT\n    );\n    -- Sprint F-B: dht_metadata is queried by last_seen DESC and peer_count\n    -- for "recent active torrents" and "popular torrents" lookups.\n    CREATE INDEX IF NOT EXISTS idx_dht_metadata_last_seen\n        ON dht_metadata(last_seen DESC);\n    CREATE INDEX IF NOT EXISTS idx_dht_metadata_peer_count\n        ON dht_metadata(peer_count DESC);\n    -- Sprint F350M: Cross-sprint research session memory\n    CREATE TABLE IF NOT EXISTS research_sessions (\n        session_id TEXT PRIMARY KEY,\n        sprint_id TEXT NOT NULL,\n        query TEXT NOT NULL,\n        ts DOUBLE NOT NULL,\n        findings_count INTEGER,\n        accepted_count INTEGER,\n        gaps_json TEXT,\n        entities_json TEXT,\n        source_patterns_json TEXT,\n        unexplored_angles_json TEXT,\n        temporal_anomalies_json TEXT\n    );\n    CREATE INDEX IF NOT EXISTS idx_research_sessions_sprint\n        ON research_sessions(sprint_id);\n    CREATE INDEX IF NOT EXISTS idx_research_sessions_ts\n        ON research_sessions(ts DESC);\n    -- Sprint F350M: Entity observations for temporal tracking\n    CREATE TABLE IF NOT EXISTS entity_observations (\n        observation_id TEXT PRIMARY KEY,\n        entity_value TEXT NOT NULL,\n        entity_type TEXT NOT NULL,\n        sprint_id TEXT NOT NULL,\n        source_type TEXT NOT NULL,\n        confidence REAL,\n        ts DOUBLE NOT NULL,\n        finding_id TEXT NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_entity_observations_entity\n        ON entity_observations(entity_value);\n    CREATE INDEX IF NOT EXISTS idx_entity_observations_sprint\n        ON entity_observations(sprint_id);\n    -- Sprint F330: IOC co-occurrence matrix for speculative edge mining\n    CREATE TABLE IF NOT EXISTS ioc_cooccurrence (\n        ioc_a TEXT NOT NULL,\n        ioc_b TEXT NOT NULL,\n        ioc_type_a TEXT NOT NULL,\n        ioc_type_b TEXT NOT NULL,\n        support INTEGER NOT NULL,\n        confidence REAL NOT NULL,\n        score REAL NOT NULL,\n        last_seen REAL NOT NULL\n    );\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_score\n        ON ioc_cooccurrence(score DESC);\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_ioc_a\n        ON ioc_cooccurrence(ioc_a);\n    CREATE INDEX IF NOT EXISTS idx_ioc_cooccurrence_ioc_b\n        ON ioc_cooccurrence(ioc_b);\n'
 
 
 def _apply_schema(conn, schema_sql: str) -> None:
@@ -2809,7 +2809,7 @@ class DuckDBShadowStore:
         - Arrow->dict conversion helpers are shared
         """
 
-        _SQL_INSERT_SHADOW_FINDING = "INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json, claims_json) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING"
+        _SQL_INSERT_SHADOW_FINDING = "INSERT INTO canonical_findings (id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING"
         _SQL_INSERT_SHADOW_RUN = (
             "INSERT INTO shadow_runs (run_id, started_at, ended_at, total_fds, rss_mb) VALUES (?, ?, ?, ?, ?)"
         )
@@ -2822,7 +2822,7 @@ class DuckDBShadowStore:
             "SELECT target_id, first_seen, last_seen, cumulative_finding_count, entity_summary_json"
         )
         _SQL_SELECT_HYPOTHESIS_FEEDBACK = "SELECT id, target_id, pivot_type, ioc_type"
-        _SQL_SELECT_SHADOW_FINDINGS = "SELECT id, query, source_type, confidence, ts, provenance_json"
+        _SQL_SELECT_SHADOW_FINDINGS = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json"
         _SQL_INSERT_RESEARCH_SESSION = "INSERT INTO research_sessions (session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         _SQL_INSERT_ENTITY_OBSERVATION = "INSERT OR REPLACE INTO entity_observations (observation_id, entity_value, entity_type, sprint_id, source_type, confidence, ts, finding_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         _SQL_SELECT_RESEARCH_SESSIONS_BY_SPRINT = "SELECT session_id, sprint_id, query, ts, findings_count, accepted_count, gaps_json, entities_json, source_patterns_json, unexplored_angles_json, temporal_anomalies_json FROM research_sessions WHERE sprint_id = ? ORDER BY ts DESC"
@@ -3240,14 +3240,13 @@ class DuckDBShadowStore:
                         # B1-FIX: MERGE replaces 2× INSERT round-trips with 1.
                         # Handles both PK (id) and UK (query, source_type) conflicts.
                         # DuckDB supports MERGE since v0.10.0; this codebase requires v1.0+ (F275).
-                        # F350M-R: claims_json added to MERGE — matches _SQL_INSERT_SHADOW_FINDING 7-column schema.
-                        # Arrow batch path provides claims_json=null for pre-enrichment batches;
-                        # bulk path (_enrich_findings_with_claims) populates it before insert.
+                        # F360M-R: payload_text + claims_json added to MERGE — matches 8-column schema.
+                        # Arrow batch paths now include scrubbed payload_text (SEC-01) and claims_json.
                         conn.execute(
                             f"MERGE INTO canonical_findings AS target USING {reg_name} AS source\n"
                             f"ON target.id = source.id\n"
-                            f"WHEN NOT MATCHED THEN INSERT (id, query, source_type, confidence, ts, provenance_json, claims_json)\n"
-                            f"VALUES (source.id, source.query, source.source_type, source.confidence, source.ts, source.provenance_json, source.claims_json)"
+                            f"WHEN NOT MATCHED THEN INSERT (id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json)\n"
+                            f"VALUES (source.id, source.query, source.source_type, source.confidence, source.ts, source.provenance_json, source.payload_text, source.claims_json)"
                         )
                     finally:
                         try:
@@ -3314,7 +3313,7 @@ class DuckDBShadowStore:
             conn = self._conn()
             if conn is None:
                 return []
-            sql = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings ORDER BY ts DESC LIMIT ?"
+            sql = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json FROM canonical_findings ORDER BY ts DESC LIMIT ?"
             try:
                 from time import perf_counter_ns
 
@@ -4489,10 +4488,10 @@ class DuckDBShadowStore:
         if not self._initialized or self._closed:
             return
         if sprint_id_filter is None:
-            sql = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings ORDER BY ts DESC"
+            sql = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json FROM canonical_findings ORDER BY ts DESC"
             params: list[Any] | None = None
         else:
-            sql = "SELECT id, query, source_type, confidence, ts, provenance_json FROM canonical_findings WHERE query LIKE ? ORDER BY ts DESC"
+            sql = "SELECT id, query, source_type, confidence, ts, provenance_json, payload_text, claims_json FROM canonical_findings WHERE query LIKE ? ORDER BY ts DESC"
             params = [f"%{sprint_id_filter}%"]
         try:
             async for batch in self.async_query_arrow_batches(sql, params, batch_size=batch_size):
@@ -8545,7 +8544,7 @@ class DuckDBShadowStore:
         """
         Path 1: Rust zero-copy column-path via build_record_batch_from_structs.
 
-        Builds IPC bytes by passing 6 pre-separated Python list columns to Rust,
+        Builds IPC bytes by passing 7 pre-separated Python list columns to Rust,
         which iterates them via PyO3 Bound API (zero GIL overhead per item).
         Returns (count, None) on success, (0, None) on empty batch,
         (0, error_type) on failure.
@@ -8559,10 +8558,22 @@ class DuckDBShadowStore:
         conf_list = [f.confidence for f in findings]
         ts_list = [f.ts for f in findings]
         prov_list = [_provenance_to_arrow_native(f.provenance) for f in findings]
+        # SEC-01: scrub payload_text before passing to Rust Arrow builder
+        payload_list: list[str] = []
+        for f in findings:
+            raw = f.payload_text or ""
+            if raw:
+                try:
+                    from hledac.universal.security.secrets_scrubber import scrub_secrets
+                    payload_list.append(scrub_secrets(raw))
+                except Exception:  # noqa: BLE001 — fail-safe
+                    payload_list.append(raw)
+            else:
+                payload_list.append("")
 
         try:
             ipc_bytes = _rust_record_batch_cols_func(
-                ids_list, queries_list, src_types_list, conf_list, ts_list, prov_list
+                ids_list, queries_list, src_types_list, conf_list, ts_list, prov_list, payload_list
             )
         except Exception as _e:  # noqa: BLE001 — best-effort; non-critical fallback path
             _logger.debug("[Arrow-Rust] record_batch_cols failed: %s", _e)
@@ -8596,6 +8607,21 @@ class DuckDBShadowStore:
         import pyarrow as _pa
 
         if findings_dicts is None:
+            # SEC-01: scrub payload_text before building dicts for Rust Arrow path
+            try:
+                from hledac.universal.security.secrets_scrubber import scrub_secrets
+                _scrub = scrub_secrets
+            except Exception:  # noqa: BLE001 — fail-safe
+                _scrub = lambda t: t  # type: ignore[assignment,misc]
+
+            def _scrub_payload(raw: str | None) -> str:
+                if not raw:
+                    return ""
+                try:
+                    return _scrub(raw)
+                except Exception:  # noqa: BLE001 — fail-safe
+                    return raw
+
             findings_dicts = [
                 {
                     "id": f.finding_id,
@@ -8604,6 +8630,7 @@ class DuckDBShadowStore:
                     "confidence": f.confidence,
                     "ts": f.ts,
                     "provenance_json": _provenance_to_arrow_native(f.provenance),
+                    "payload_text": _scrub_payload(f.payload_text),
                     "claims_json": None,
                 }
                 for f in findings
@@ -8635,12 +8662,27 @@ class DuckDBShadowStore:
         """
         Path 3: Pure Python pa.RecordBatch.from_arrays — universal fallback.
 
-        Builds a 7-column RecordBatch (id, query, source_type, confidence,
-        ts, provenance_json, claims_json) entirely in Python.
+        Builds an 8-column RecordBatch (id, query, source_type, confidence,
+        ts, provenance_json, payload_text, claims_json) entirely in Python.
         Returns (count, None) on success, (0, error_type) on failure.
         """
         import logging as _logging
         import pyarrow as _pa
+
+        # SEC-01: lazy import scrubber
+        try:
+            from hledac.universal.security.secrets_scrubber import scrub_secrets
+            _scrub = scrub_secrets
+        except Exception:  # noqa: BLE001 — fail-safe
+            _scrub = lambda t: t  # type: ignore[assignment,misc]
+
+        def _scrub_payload(raw: str | None) -> str:
+            if not raw:
+                return ""
+            try:
+                return _scrub(raw)
+            except Exception:  # noqa: BLE001 — fail-safe
+                return raw
 
         try:
             if findings_dicts is not None:
@@ -8651,9 +8693,10 @@ class DuckDBShadowStore:
                 src_arr = _pa.array([d["source_type"] for d in findings_dicts], type=_pa.string())
                 conf_arr = _pa.array([d["confidence"] for d in findings_dicts], type=_pa.float64())
                 ts_arr = _pa.array([d["ts"] for d in findings_dicts], type=_pa.float64())
+                payload_arr = _pa.array([_scrub_payload(d.get("payload_text")) for d in findings_dicts], type=_pa.string())
                 claims_arr = _pa.array([d.get("claims_json") for d in findings_dicts], type=_pa.string())
             else:
-                # Non-enriched path: null claims for all
+                # Non-enriched path: null claims for all, scrubbed payload_text
                 provenance_arr = _pa.array(
                     [_provenance_to_arrow_native(f.provenance) for f in findings], type=_pa.string()
                 )
@@ -8662,11 +8705,12 @@ class DuckDBShadowStore:
                 src_arr = _pa.array([f.source_type for f in findings], type=_pa.string())
                 conf_arr = _pa.array([f.confidence for f in findings], type=_pa.float64())
                 ts_arr = _pa.array([f.ts for f in findings], type=_pa.float64())
+                payload_arr = _pa.array([_scrub_payload(f.payload_text) for f in findings], type=_pa.string())
                 claims_arr = _pa.array([None] * len(findings), type=_pa.string())
 
             record_batch = _pa.RecordBatch.from_arrays(
-                [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr, claims_arr],
-                names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "claims_json"],
+                [id_arr, query_arr, src_arr, conf_arr, ts_arr, provenance_arr, payload_arr, claims_arr],
+                names=["id", "query", "source_type", "confidence", "ts", "provenance_json", "payload_text", "claims_json"],
             )
         except Exception as _e:  # noqa: BLE001 — best-effort; DB build failure
             _logging.getLogger(__name__).error(

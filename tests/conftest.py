@@ -337,6 +337,7 @@ def _get_all_loops() -> set[asyncio.AbstractEventLoop]:
 asyncio._all_loops = _get_all_loops  # type: ignore[attr-defined]
 import json  # noqa: E402
 import tempfile  # noqa: E402
+import warnings  # noqa: E402
 from collections.abc import Generator  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
@@ -600,7 +601,7 @@ def _env_config_cache_clear() -> None:
     Order: runs BEFORE _gc_and_close_loops (alphabetical: _e < _g).
     """
     try:
-        from core.env_config import _get_cached
+        from hledac.universal.core.env_config import _get_cached
         # @functools.cache stores in func.__wrapped__.__dict__ or func.__dict__
         _get_cached.cache_clear()
     except Exception:
@@ -1370,13 +1371,13 @@ def _duckdb_pool_cleanup() -> None:
 
     F350M-R FIX TEST-04: _DUCKDB_POOL v core/rust_backend/query.py je procesní
     singleton. Připojení se hromadí napříč testy a způsobují non-determinismus.
-    clear_duckdb_pool() vyprázdní všechny fronty připojení.
+    _pool_close_all() vyprázdní všechny fronty připojení.
     """
     yield
     try:
-        from hledac.universal.core.rust_backend.query import clear_duckdb_pool
+        from hledac.universal.core.rust_backend.query import _pool_close_all
 
-        clear_duckdb_pool()
+        _pool_close_all()
     except Exception:
         pass  # fail-soft: don't fail tests for cleanup errors
 

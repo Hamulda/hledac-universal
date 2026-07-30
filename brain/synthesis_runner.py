@@ -37,6 +37,7 @@ from hledac.universal.utils.async_helpers import safe_create_task, parallel, fir
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
+from hledac.universal.core.dlq_manager import dlq_catch  # DLQ-02
 
 # Precompiled regex patterns — compile once, use repeatedly
 _MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)

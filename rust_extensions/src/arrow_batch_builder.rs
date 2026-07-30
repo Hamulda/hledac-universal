@@ -57,6 +57,7 @@ struct FindingsRow {
     confidence: f64,
     ts: f64,
     provenance_json: String,
+    payload_text: String,
 }
 
 impl FindingsRow {
@@ -88,6 +89,11 @@ impl FindingsRow {
                 .unwrap_or(0.0),
             provenance_json: item
                 .get_item("provenance_json")
+                .and_then(|v| v.str())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            payload_text: item
+                .get_item("payload_text")
                 .and_then(|v| v.str())
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
@@ -188,6 +194,8 @@ fn make_schema_body() -> Vec<u8> {
     body.extend_from_slice(&encode_field("ts", 6));
     // provenance_json: Utf8
     body.extend_from_slice(&encode_field("provenance_json", 4));
+    // payload_text: Utf8
+    body.extend_from_slice(&encode_field("payload_text", 4));
     body
 }
 
@@ -199,6 +207,7 @@ fn make_batch_body(
     confidences: &[f64],
     timestamps: &[f64],
     provenance_jsons: &[String],
+    payload_texts: &[String],
 ) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&encode_string_array(ids));
@@ -207,6 +216,7 @@ fn make_batch_body(
     body.extend_from_slice(&encode_f64_array(confidences));
     body.extend_from_slice(&encode_f64_array(timestamps));
     body.extend_from_slice(&encode_string_array(provenance_jsons));
+    body.extend_from_slice(&encode_string_array(payload_texts));
     body
 }
 
@@ -220,6 +230,7 @@ fn build_ipc_bytes(
     confidences: Vec<f64>,
     timestamps: Vec<f64>,
     provenance_jsons: Vec<String>,
+    payload_texts: Vec<String>,
     n: usize,
 ) -> Result<Vec<u8>, String> {
     if n == 0 {
@@ -236,7 +247,7 @@ fn build_ipc_bytes(
     }
 
     let schema_body = make_schema_body();
-    let batch_body = make_batch_body(&ids, &queries, &source_types, &confidences, &timestamps, &provenance_jsons);
+    let batch_body = make_batch_body(&ids, &queries, &source_types, &confidences, &timestamps, &provenance_jsons, &payload_texts);
 
     // IPC stream: magic(8) + schema_size(4) + schema + batch_count(4) + batch_size(4) + batch + footer(4)
     let mut result = Vec::with_capacity(24 + schema_body.len() + batch_body.len());
@@ -255,7 +266,7 @@ fn build_ipc_bytes(
 // Column builders (serial + parallel)
 // ---------------------------------------------------------------------------
 
-fn build_columns(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>, Vec<f64>, Vec<f64>, Vec<String>) {
+fn build_columns(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>, Vec<f64>, Vec<f64>, Vec<String>, Vec<String>) {
     let n = rows.len();
     let mut ids = Vec::with_capacity(n);
     let mut queries = Vec::with_capacity(n);
@@ -263,6 +274,7 @@ fn build_columns(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>
     let mut confidences = Vec::with_capacity(n);
     let mut timestamps = Vec::with_capacity(n);
     let mut provenance_jsons = Vec::with_capacity(n);
+    let mut payload_texts = Vec::with_capacity(n);
     for row in rows {
         ids.push(row.id.clone());
         queries.push(row.query.clone());
@@ -270,14 +282,15 @@ fn build_columns(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>
         confidences.push(row.confidence);
         timestamps.push(row.ts);
         provenance_jsons.push(row.provenance_json.clone());
+        payload_texts.push(row.payload_text.clone());
     }
-    (ids, queries, source_types, confidences, timestamps, provenance_jsons)
+    (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts)
 }
 
 /// Single-pass columnar transpose via par_chunks + reduce.
 /// Replaces 6× par_iter() (6 Rayon scopes → 1 scope).
 /// Chunking by 1024 improves cache locality vs flat par_iter.
-fn build_columns_parallel(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>, Vec<f64>, Vec<f64>, Vec<String>) {
+fn build_columns_parallel(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Vec<String>, Vec<f64>, Vec<f64>, Vec<String>, Vec<String>) {
     const CHUNK_SIZE: usize = 1024;
 
     rows.par_chunks(CHUNK_SIZE)
@@ -288,6 +301,7 @@ fn build_columns_parallel(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Ve
             let mut confidences = Vec::with_capacity(chunk.len());
             let mut timestamps = Vec::with_capacity(chunk.len());
             let mut provenance_jsons = Vec::with_capacity(chunk.len());
+            let mut payload_texts = Vec::with_capacity(chunk.len());
 
             for row in chunk {
                 ids.push(row.id.clone());
@@ -296,21 +310,23 @@ fn build_columns_parallel(rows: &[FindingsRow]) -> (Vec<String>, Vec<String>, Ve
                 confidences.push(row.confidence);
                 timestamps.push(row.ts);
                 provenance_jsons.push(row.provenance_json.clone());
+                payload_texts.push(row.payload_text.clone());
             }
 
-            (ids, queries, source_types, confidences, timestamps, provenance_jsons)
+            (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts)
         })
         .reduce(
-            || (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-            |(mut a_ids, mut a_q, mut a_st, mut a_c, mut a_ts, mut a_p),
-             (b_ids, b_q, b_st, b_c, b_ts, b_p)| {
+            || (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            |(mut a_ids, mut a_q, mut a_st, mut a_c, mut a_ts, mut a_p, mut a_pl),
+             (b_ids, b_q, b_st, b_c, b_ts, b_p, b_pl)| {
                 a_ids.extend(b_ids);
                 a_q.extend(b_q);
                 a_st.extend(b_st);
                 a_c.extend(b_c);
                 a_ts.extend(b_ts);
                 a_p.extend(b_p);
-                (a_ids, a_q, a_st, a_c, a_ts, a_p)
+                a_pl.extend(b_pl);
+                (a_ids, a_q, a_st, a_c, a_ts, a_p, a_pl)
             },
         )
 }
@@ -351,7 +367,7 @@ pub fn build_arrow_batch_from_findings<'py>(
         .collect();
 
     // Build columns (parallel if N >= threshold)
-    let (ids, queries, source_types, confidences, timestamps, provenance_jsons) =
+    let (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts) =
         if n < PARALLEL_THRESHOLD {
             build_columns(&rows)
         } else {
@@ -359,7 +375,7 @@ pub fn build_arrow_batch_from_findings<'py>(
         };
 
     // Serialize to IPC
-    let ipc_bytes = match build_ipc_bytes(ids, queries, source_types, confidences, timestamps, provenance_jsons, n) {
+    let ipc_bytes = match build_ipc_bytes(ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts, n) {
         Ok(bytes) => bytes,
         Err(_) => return Ok(None),
     };
@@ -399,7 +415,7 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
         .collect();
 
     // Build columns (parallel if N >= threshold)
-    let (ids, queries, source_types, confidences, timestamps, provenance_jsons) =
+    let (ids, queries, source_types, confidences, timestamps, provenance_jsons, payload_texts) =
         if n < PARALLEL_THRESHOLD {
             build_columns(&rows)
         } else {
@@ -414,6 +430,7 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
         confidences,
         timestamps,
         provenance_jsons,
+        payload_texts,
         n,
     ) {
         Ok(bytes) => bytes,
@@ -453,13 +470,13 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
 //   - 5-10× fewer Python objects in flight
 // ---------------------------------------------------------------------------
 
-/// Build Arrow IPC RecordBatch bytes from 6 pre-separated PyList column slices.
+/// Build Arrow IPC RecordBatch bytes from 7 pre-separated PyList column slices.
 ///
 /// P4-7: Zero-copy column-path replacement for build_arrow_batch_from_findings.
 /// Avoids dict roundtrip by accepting (ids, queries, source_types, confidences,
-/// timestamps, provenance_jsons) as individual PyList references.
+/// timestamps, provenance_jsons, payload_texts) as individual PyList references.
 ///
-/// Schema: id, query, source_type, confidence, ts, provenance_json
+/// Schema: id, query, source_type, confidence, ts, provenance_json, payload_text
 /// IPC format: RecordBatchStream (magic + schema + batch_count + batch_body + footer)
 ///
 /// Args:
@@ -469,6 +486,7 @@ pub fn build_compressed_arrow_batch_from_findings<'py>(
 ///     confidences: PyList[float] — confidence scores
 ///     timestamps: PyList[float] — UNIX timestamps
 ///     provenance_jsons: PyList[str] — JSON-encoded provenance tuples
+///     payload_texts: PyList[str] — raw text content (scrubbed before insert)
 ///
 /// Returns:
 ///     `bytes` Arrow IPC RecordBatchStream bytes, or `None` on error.
@@ -480,6 +498,7 @@ pub fn build_record_batch_from_structs<'py>(
     confidences: &'py Bound<'py, PyList>,
     timestamps: &'py Bound<'py, PyList>,
     provenance_jsons: &'py Bound<'py, PyList>,
+    payload_texts: &'py Bound<'py, PyList>,
     py: Python<'py>,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
     let n = ids.len();
@@ -490,6 +509,7 @@ pub fn build_record_batch_from_structs<'py>(
         || n != confidences.len()
         || n != timestamps.len()
         || n != provenance_jsons.len()
+        || n != payload_texts.len()
     {
         return Ok(None);
     }
@@ -509,6 +529,7 @@ pub fn build_record_batch_from_structs<'py>(
     let mut confidences_out: Vec<f64> = Vec::with_capacity(n);
     let mut timestamps_out: Vec<f64> = Vec::with_capacity(n);
     let mut provenance_jsons_out: Vec<String> = Vec::with_capacity(n);
+    let mut payload_texts_out: Vec<String> = Vec::with_capacity(n);
 
     // Collect into columnar Vecs — rayon not needed here (pure CPU-bound copy,
     // GIL held for entire loop, ~1µs/item is acceptable)
@@ -542,6 +563,11 @@ pub fn build_record_batch_from_structs<'py>(
             .and_then(|v| v.str())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let payload_val = payload_texts
+            .get_item(i)
+            .and_then(|v| v.str())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
 
         ids_out.push(id_val);
         queries_out.push(query_val);
@@ -549,6 +575,7 @@ pub fn build_record_batch_from_structs<'py>(
         confidences_out.push(conf_val);
         timestamps_out.push(ts_val);
         provenance_jsons_out.push(prov_val);
+        payload_texts_out.push(payload_val);
     }
 
     // Build IPC bytes
@@ -559,6 +586,7 @@ pub fn build_record_batch_from_structs<'py>(
         confidences_out,
         timestamps_out,
         provenance_jsons_out,
+        payload_texts_out,
         n,
     ) {
         Ok(bytes) => bytes,

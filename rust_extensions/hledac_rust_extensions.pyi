@@ -1450,3 +1450,72 @@ def rust_validate_onion_batch(addresses: list[str]) -> list[bool]:
     GRAPH-03: Vectorized validation — rayon parallel, bounded Vec output.
     """
     ...
+
+# TEL-02: Trace context propagation Python↔Rust via W3C TraceContext
+# These functions enable end-to-end tracing across the Python↔Rust language boundary.
+
+def configure_tracing(enabled: bool, otlp_endpoint: str | None, service_name: str | None, debug: bool) -> bool:
+    """Configure Rust tracing subsystem. Call once at startup.
+
+    Returns True if tracing is active after configuration.
+    """
+    ...
+
+def is_tracing_active() -> bool:
+    """Return True if tracing is initialized and enabled."""
+    ...
+
+def start_span(name: str, trace_id: str, span_id: str, traceflags: str) -> tuple[str, str, bool]:
+    """Start a new span with explicit W3C TraceContext trace_id (TEL-02).
+
+    Args:
+        name: Span name
+        trace_id: 32-char hex string (W3C TraceContext format)
+        span_id: 16-char hex string, or empty to auto-generate
+        traceflags: "01" for sampled, "00" for not sampled
+
+    Returns:
+        (trace_id, span_id, is_valid) — is_valid=False if trace_id was malformed
+    """
+    ...
+
+def span_enter(trace_id: str, span_id: str) -> bool:
+    """Enter an existing span (make it the current span).
+
+    Returns True if span was entered, False if tracing disabled or span_id invalid.
+    """
+    ...
+
+def span_exit() -> None:
+    """Exit the current span (end it as the current span)."""
+    ...
+
+def get_current_trace_id() -> tuple[str, bool]:
+    """Get current trace_id from the active span.
+
+    Returns (trace_id, is_valid).
+    """
+    ...
+
+def get_current_span_id() -> tuple[str, bool]:
+    """Get current span_id from the active span.
+
+    Returns (span_id, is_valid).
+    """
+    ...
+
+def add_span_event(name: str, attributes_json: str | None) -> None:
+    """Record a custom event on the current span."""
+    ...
+
+def generate_trace_id() -> str:
+    """Generate a new random trace_id (32 hex chars)."""
+    ...
+
+def generate_span_id() -> str:
+    """Generate a new random span_id (16 hex chars)."""
+    ...
+
+def flush_tracing() -> None:
+    """Flush pending spans (no-op for stdout subscriber)."""
+    ...

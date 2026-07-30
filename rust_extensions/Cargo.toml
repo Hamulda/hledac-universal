@@ -213,7 +213,6 @@ metal = []            # R22: Metal GPU batch matmul for MoE router (stub, CPU fa
 otel = [
     "dep:tracing",
     "dep:tracing-subscriber",
-    "rand",
 ]
 
 # py-version: Python version compiled-for (via pyo3-build-config intercept_version)

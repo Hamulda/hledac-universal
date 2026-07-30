@@ -203,14 +203,21 @@ class EvidenceEvent(msgspec.Struct, frozen=False, gc=False):
         timestamp = datetime.now(UTC).timestamp()
         # P3-05 FIX: Normalize payload before orjson serialization to handle MLX arrays.
         normalized_payload = _normalize_payload(payload)
-        # SEC-01: Scrub secrets from payload before storage to prevent API keys/tokens
-        # from being permanently stored in evidence logs (LMDB/SQLite).
-        try:
-            from hledac.universal.security.secrets_scrubber import scrub_dict_recursive
-            scrubbed_payload = scrub_dict_recursive(normalized_payload)
-        except Exception:
-            # Fail-safe: store original if scrubbing fails
+        # TEL-03: Fast-path guard — skip expensive scrub_dict_recursive() for
+        # primitive-only payloads (no strings that could hold API keys/tokens).
+        # _payload_needs_scrubbing() uses the same stack-based iterative scan
+        # as _payload_needs_normalization() — O(n), no recursion overhead.
+        if not _payload_needs_scrubbing(normalized_payload):
             scrubbed_payload = normalized_payload
+        else:
+            # SEC-01: Scrub secrets from payload before storage to prevent API keys/tokens
+            # from being permanently stored in evidence logs (LMDB/SQLite).
+            try:
+                from hledac.universal.security.secrets_scrubber import scrub_dict_recursive
+                scrubbed_payload = scrub_dict_recursive(normalized_payload)
+            except Exception:
+                # Fail-safe: store original if scrubbing fails
+                scrubbed_payload = normalized_payload
         encoded_payload = orjson.dumps(scrubbed_payload)
         # Hash computed from scrubbed payload to maintain integrity verification
         content_hash = cls._calculate_hash(event_id=event_id, event_type=event_type, timestamp=timestamp, payload=scrubbed_payload, source_ids=source_ids, confidence=confidence, run_id=run_id)
@@ -295,6 +302,35 @@ _SAFE_BUILTIN = (type(None), bool, int, float, str)
 # Types that DO need normalization (mutable containers + special types)
 _COMPLEX_TYPES = (datetime, bytes, list, tuple, dict, set, frozenset)
 _msgspec_struct_type: type = msgspec.Struct
+
+
+def _payload_needs_scrubbing(payload: dict[str, Any]) -> bool:
+    """Fast O(n) scan — returns True only if payload contains types that may hold secrets.
+
+    TEL-03: Skips the expensive scrub_dict_recursive() pass entirely for payloads
+    that contain only primitives (int, float, bool, None) — zero risk of secrets
+    since strings are the only type that can encode API keys/tokens.
+
+    Called BEFORE scrub_dict_recursive() to decide whether to skip it.
+    """
+    # Stack-based iterative scan (same pattern as _payload_needs_normalization)
+    stack: list[Any] = list(payload.values())
+    while stack:
+        item = stack.pop()
+        if item is None or isinstance(item, _SAFE_BUILTIN):
+            continue
+        # Strings CAN hold secrets — needs scrubbing
+        if isinstance(item, str):
+            return True
+        # Containers may hold nested strings — needs scrubbing
+        if isinstance(item, _COMPLEX_TYPES):
+            return True
+        if isinstance(item, _msgspec_struct_type):
+            return True
+        if hasattr(item, '__array__'):
+            # MLX/numpy arrays — no secrets embedded
+            continue
+    return False
 
 
 def _payload_needs_normalization(payload: dict[str, Any]) -> bool:
@@ -810,7 +846,7 @@ class EvidenceLog:
     - Dotazování podle typu a confidence
     - Shrnutí pro Hermes (ne celý raw log)
     """
-    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_cancel_event', '_cancel_watcher_task', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled')
+    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_cancel_event', '_cancel_watcher_task', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled', '_dlq_manager')
     MAX_RAM_EVENTS = 50
     MAX_PAYLOAD_PREVIEW = 200
     JSONL_ROTATE_SIZE = 10 * 1024 * 1024
@@ -913,6 +949,8 @@ class EvidenceLog:
         # ISSUE-11: DuckDB Arrow IPC support
         self._duckdb_conn: Any = None
         self._duckdb_enabled: bool = False
+        # DLQ-02: Dead-Letter Queue for corrupted payloads
+        self._dlq_manager: Any = None
 
     def _sync_close(self) -> None:
         """Synchronous cleanup: cancel flush task, close Arrow writer, sync persist."""
@@ -1022,6 +1060,13 @@ class EvidenceLog:
         # E2: Start cancel watcher — triggers aclose() when lifecycle cancel_event is set.
         # This ensures workers exit cleanly even when aclose() is not called explicitly.
         self._start_cancel_watcher()
+
+        # DLQ-02: Lazy DLQ manager initialization
+        try:
+            from hledac.universal.core.dlq_manager import get_dlq_manager
+            self._dlq_manager = get_dlq_manager()
+        except Exception:  # noqa: BLE001
+            self._dlq_manager = None
 
     def inject_cancel_event(self, cancel_event: asyncio.Event) -> None:
         """
@@ -1708,6 +1753,22 @@ class EvidenceLog:
                     self._sync_write_fallback(line, bytes_to_write)
             except Exception as e:
                 logger.critical("f286_swal_write_failed_fatal", error=str(e))
+                # DLQ-02: Store corrupted payload for later inspection
+                try:
+                    if self._dlq_manager is not None:
+                        self._dlq_manager.store_payload(
+                            payload_data=event.to_bytes(),
+                            sprint_id=self._run_id,
+                            source="evidence_log.append",
+                            error=e,
+                            metadata={
+                                'event_id': event.event_id,
+                                'event_type': event.event_type,
+                                'timestamp': event.timestamp,
+                            },
+                        )
+                except Exception:  # noqa: BLE001
+                    pass  # Fail-silent for DLQ
                 raise RuntimeError(f'EvidenceLog SWAL write failed: {e}') from e
         decoded_payload = orjson.loads(event.payload)
         trimmed_payload = self._trim_payload(decoded_payload)
@@ -1823,17 +1884,34 @@ class EvidenceLog:
         created: list[EvidenceEvent] = []
         chain_head = self._chain_head
 
+        # SEC-01: Import once outside the loop — avoid per-event import overhead.
+        _scrub_dict_recursive: Any = None
+        try:
+            from hledac.universal.security.secrets_scrubber import scrub_dict_recursive
+            _scrub_dict_recursive = scrub_dict_recursive
+        except Exception:  # noqa: BLE001
+            pass
+
         for event_type, payload, source_ids, confidence in events:
             if event_type != "error" and self._sample_rate < 1.0:
                 if _random.random() > self._sample_rate:
                     continue
 
             event_id = f"{self._run_id}_{uuid.uuid4().hex[:12]}"
+            # TEL-03: Normalize payload for consistent hashing (same as create_event path).
+            normalized_payload = _normalize_payload(payload)
+            # TEL-03: Fast-path guard — skip expensive scrubbing for primitive-only payloads.
+            if not _payload_needs_scrubbing(normalized_payload):
+                scrubbed_payload = normalized_payload
+            elif _scrub_dict_recursive is not None:
+                scrubbed_payload = _scrub_dict_recursive(normalized_payload)
+            else:
+                scrubbed_payload = normalized_payload
             event = EvidenceEvent(
                 event_id=event_id,
                 event_type=event_type,
                 timestamp=datetime.now(UTC).timestamp(),
-                payload=orjson.dumps(payload),
+                payload=orjson.dumps(scrubbed_payload),
                 source_ids=source_ids or [],
                 confidence=confidence,
                 content_hash="",
