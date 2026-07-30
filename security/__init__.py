@@ -26,6 +26,7 @@ from hledac.universal.security.zkp_research_engine import ZKPResearchEngine  # n
 # Real implementations from security/
 from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm  # noqa: F401, E402
 from hledac.universal.security.ram_vault import RamDiskVault  # noqa: F401, E402
+from hledac.universal.security.secrets_scrubber import scrub_dict_recursive, scrub_secrets  # noqa: F401, E402
 
 __all__ = [
     "KeyManager",

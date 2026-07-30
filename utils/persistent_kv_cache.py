@@ -195,7 +195,7 @@ class PersistentKVCache:
         import lmdb  # type: ignore
 
         try:
-            from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
+            from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock, _chmod_lmdb_path
 
             meta_path = self._cache_dir / _META_LMDB
             cleanup_stale_lmdb_lock(meta_path)
@@ -203,14 +203,25 @@ class PersistentKVCache:
             meta_path.parent.mkdir(parents=True, exist_ok=True)
             self._cache_subdir.mkdir(parents=True, exist_ok=True)
 
-            self._lmdb_env = lmdb.open(
-                str(meta_path),
-                map_size=_LMDB_MAP_SIZE,
-                subdir=True,
-                readonly=False,
-                create=True,
-                max_dbs=1,
-            )
+            # SEC-02: umask + explicit mode=0o600 so files are never world-readable
+            import os
+            import stat as _stat
+
+            _old_umask = os.umask(0o077)
+            try:
+                self._lmdb_env = lmdb.open(
+                    str(meta_path),
+                    map_size=_LMDB_MAP_SIZE,
+                    subdir=True,
+                    readonly=False,
+                    create=True,
+                    max_dbs=1,
+                    mode=0o600,
+                )
+                # SEC-02: double-enforce to cover all LMDB-created files
+                _chmod_lmdb_path(meta_path.parent)
+            finally:
+                os.umask(_old_umask)
             self._lmdb_db = self._lmdb_env.open_db(b"pkv")
             self._initialized = True
             logger.info(

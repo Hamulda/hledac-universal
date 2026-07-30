@@ -181,6 +181,28 @@ class DuckDBWALManager:
         """Clear pending-sync marker after successful DuckDB write."""
         self._wal_manager.wal_clear_pending_sync_marker(finding_id)
 
+    # ── FLOW-03: Checkpoint protocol ────────────────────────────────────────
+
+    def wal_write_prewrite(self, finding_id: str) -> bool:
+        """FLOW-03: Write prewrite marker before DuckDB write."""
+        return self._wal_manager.wal_write_prewrite(finding_id)
+
+    def wal_write_checkpoint(self, finding_id: str) -> bool:
+        """FLOW-03: Write checkpoint marker after DuckDB write succeeds."""
+        return self._wal_manager.wal_write_checkpoint(finding_id)
+
+    def wal_clear_prewrite(self, finding_id: str) -> bool:
+        """FLOW-03: Delete prewrite marker after checkpoint is written."""
+        return self._wal_manager.wal_clear_prewrite(finding_id)
+
+    def wal_has_checkpoint(self, finding_id: str) -> bool:
+        """FLOW-03: Check if checkpoint exists for finding."""
+        return self._wal_manager.wal_has_checkpoint(finding_id)
+
+    def wal_scan_prewrites_without_checkpoint(self) -> list[dict[str, Any]]:
+        """FLOW-03: Scan for prewrites needing recovery."""
+        return self._wal_manager.wal_scan_prewrites_without_checkpoint()
+
     # ── Deadletter markers ───────────────────────────────────────────────────
 
     def wal_write_deadletter_marker(self, finding_id: str, reason: str) -> None:

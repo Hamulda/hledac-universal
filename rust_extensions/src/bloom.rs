@@ -406,34 +406,23 @@ fn compute_num_hashes(num_bits: usize, capacity: usize) -> usize {
     k.round().max(1.0) as usize
 }
 
-/// Send+Sync wrapper for NonNull<u64> bitmap pointer.
+/// FFI-04 FIX: Replaced custom SendSyncPtr wrapper with parking_lot::RwLock<NonNull<u64>>.
 ///
-/// NonNull<T> is !Sync by default because &T is not Send,
-/// but we need the bitmap to be accessible from rayon worker threads.
-/// This wrapper claims safety based on:
-///   - mmap with MAP_SHARED: OS coherency, not CPU cache coherency
-///   - parking_lot RwLock guards serialize all bitmap access
-///   - No raw pointer escaping: all access goes through ptr.read()/ptr.write()
+/// Previous approach used a custom `SendSyncPtr(NonNull<u64>)` struct with unsafe impl Send.
+/// FFI-04 simplifies this by using `RwLock<NonNull<u64>>` directly.
 ///
+/// parking_lot::RwLock is Send+Sync by default (lock protects interior mutability).
+/// NonNull<u64> is Send (raw pointer, no interior mutability).
+/// Together: RwLock<NonNull<u64>> is Send+Sync without any unsafe impl needed.
+///
+/// The lock serializes bitmap access (all mutations go through RwLock guards).
+/// MmapBloomFilter is #[pyclass(unsendable)] so Python prevents cross-thread transfer.
 /// ISSUE-6 fix: this enables rayon par_iter in contains_batch / add_batch_impl.
-#[derive(Clone, Copy)]
-struct SendSyncPtr(NonNull<u64>);
 
-// SAFETY: SendSyncPtr is Send because:
-//   - NonNull<T> is Send (valid pointer, no interior mutability)
-//   - The pointer is to mmap'd memory (MAP_SHARED), safe to transfer between threads
-//   - All mutations are protected by parking_lot::RwLock (which is Send+Sync)
-// SAFETY: SendSyncPtr is Sync because:
-//   - The underlying mmap region is MAP_SHARED (OS-coherent, not CPU-cache-coherent)
-//   - All read/write access is guarded by parking_lot::RwLock guards
-//   - No data races possible: OS handles mmap coherency, locks serialize mutations
-unsafe impl Send for SendSyncPtr {}
-unsafe impl Sync for SendSyncPtr {}
-
-#[pyclass(unsendable)]
-pub struct MmapBloomFilter {
-    /// RwLock-wrapped pointer — makes MmapBloomFilter Sync-safe (parking_lot::RwLock is Send+Sync).
-    ptr: RwLock<SendSyncPtr>,
+    /// Bitmap pointer protected by RwLock. FFI-04: RwLock<NonNull<u64>> replaces
+    /// the previous RwLock<SendSyncPtr> — no unsafe impl needed, parking_lot
+    /// RwLock is Send+Sync by default and NonNull<u64> is Send.
+    ptr: RwLock<NonNull<u64>>,
     fd: c_int,
     file_path: String,
     num_u64s: usize,    // = ceil(num_bits / 64)
@@ -444,28 +433,30 @@ pub struct MmapBloomFilter {
     fp_rate: f64,
 }
 
-// SAFETY: MmapBloomFilter is now Sync-safe via parking_lot::RwLock<NonNull<u64>>.
-// parking_lot::RwLock is Send+Sync by default (no unsafe impl needed).
-// Bitmap access is protected by read/write locks — multiple threads can check bits
-// concurrently via contains_batch (read lock), while add/check_and_add take write lock.
-
-// Sync: REMOVED (F320-23-ISSUE).
+// SAFETY: FFI-04: MmapBloomFilter is Sync via parking_lot::RwLock<NonNull<u64>>.
+// Thread safety comes from:
+//   1. #[pyclass(unsendable)]: PyO3 prevents MmapBloomFilter from ever
+//      crossing thread boundaries at the Python/Rust FFI boundary.
+//   2. parking_lot::RwLock guards serialize bitmap access — multiple threads can
+//      check bits concurrently via contains_batch (read lock), while add/check_and_add
+//      take the write lock exclusively.
+//   3. MAP_SHARED: OS handles mmap coherency across threads.
+//
+// FFI-04: RwLock<NonNull<u64>> replaces the previous RwLock<SendSyncPtr>.
+// NonNull<u64> is Send (raw pointer, no interior mutability).
+// parking_lot::RwLock is Send+Sync by default.
+// No unsafe impl Sync needed — the lock provides the necessary guarantees.
 //
 // Previously: `unsafe impl Sync for MmapBloomFilter {}` claimed safety based
 // on CPython GIL + Python-level threading.Lock (in MmapBloomFilterAdapter).
-// This is UNSOUND because:
+// This was UNSOUND because:
 //   1. The GIL does NOT protect Rust code running on asyncio.to_thread()
 //      worker threads — the GIL is released before Rust code executes.
 //   2. If multiple MmapBloomFilter instances (different Python objects)
 //      point to the same mmap file path, they have independent locks and
 //      can race on the shared bitmap without any synchronization.
-//
-// Correctness guarantees now come solely from:
-//   - #[pyclass(unsendable)]: PyO3 prevents MmapBloomFilter from ever
-//     crossing thread boundaries at the Python/Rust FFI boundary.
-//   - MAP_SHARED: OS handles mmap coherency.
-// If cross-thread sharing becomes necessary, replace unsafe impl Sync
-// with Arc<File> + Arc<Mutex<()>> protecting bitmap ops.
+// If cross-thread sharing becomes necessary in the future, replace the
+// unsendable annotation with Arc<File> + Arc<Mutex<()>> protecting bitmap ops.
 
 impl MmapBloomFilter {
     fn open_or_create(
@@ -573,7 +564,7 @@ impl MmapBloomFilter {
         }
 
         let instance = Self {
-            ptr: RwLock::new(SendSyncPtr(ptr)),
+            ptr: RwLock::new(ptr),  // FFI-04: RwLock<NonNull<u64>> replaces RwLock<SendSyncPtr>
             fd,
             file_path: path.to_string(),
             num_u64s,
@@ -600,12 +591,14 @@ impl MmapBloomFilter {
     }
 
     fn header_ptr(&self) -> *mut u8 {
-        self.ptr.read().0.as_ptr() as *mut u8
+        // FFI-04: RwLock<NonNull<u64>> — deref guard to get NonNull, then as_ptr()
+        (*self.ptr.read()).as_ptr() as *mut u8
     }
 
     fn bitmap_ptr(&self) -> *mut u64 {
         // Header occupies MMAP_HEADER_SIZE bytes; bitmap follows.
-        unsafe { self.ptr.read().0.as_ptr().add(MMAP_HEADER_SIZE / 8) }
+        // FFI-04: RwLock<NonNull<u64>> — deref guard to get NonNull
+        unsafe { (*self.ptr.read()).as_ptr().add(MMAP_HEADER_SIZE / 8) }
     }
 
     fn items_added(&self) -> usize {

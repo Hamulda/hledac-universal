@@ -56,10 +56,17 @@ class _DuckDBQueryCache:
             object.__setattr__(self, "_l2_env", None)
             return
         try:
-            import lmdb
+            from hledac.universal.knowledge.lmdb_boot_guard import open_lmdb_with_guard
 
             lmdb_path.parent.mkdir(parents=True, exist_ok=True)
-            env = lmdb.open(str(lmdb_path), map_size=16 * 1024 * 1024, writemap=False, readahead=False, meminit=False)
+            # SEC-02: open_lmdb_with_guard provides umask + mode=0o600 + chmod hardening
+            env = open_lmdb_with_guard(
+                str(lmdb_path),
+                map_size=16 * 1024 * 1024,
+                writemap=False,
+                readahead=False,
+                meminit=False,
+            )
             object.__setattr__(self, "_l2_env", env)
         except Exception:  # noqa: BLE001 — best-effort; export failure; non-critical
             object.__setattr__(self, "_l2_env", None)

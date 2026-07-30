@@ -432,8 +432,129 @@ class UnifiedLMDBStore:
     def __enter__(self) -> UnifiedLMDBStore:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    def __exit__(self, *_: Any) -> None:
         self.close()
+
+    def compact_database(self) -> bool:
+        """
+        Compact the unified LMDB store to reclaim space after bulk deletions.
+
+        Uses copy-to-new-DB pattern: iterates all live key-value pairs from
+        the current env and writes them to a new temp LMDB, then atomically
+        swaps the data.mdb file.
+
+        M1 8GB safe: compaction is done in a single write transaction so
+        memory usage is bounded by the batch size, not the total DB size.
+
+        Returns:
+            True on success, False on failure (store remains usable).
+        """
+        import pathlib
+        import shutil
+        import tempfile
+
+        if self._closed or not self._initialized:
+            return False
+
+        try:
+            # Pre-check: estimate live entries
+            total_entries = 0
+            with self._env.begin() as txn:
+                stats = txn.stat()
+                total_entries = stats.get("entries", 0)
+            if total_entries == 0:
+                logger.debug("[LMDB-UNIFIED] compact_database: empty, skipping")
+                return True
+
+            # Phase 1: Create temp LMDB and copy all live data
+            temp_dir = tempfile.TemporaryDirectory(prefix="lmdb_compact_unified_")
+            temp_path = pathlib.Path(temp_dir.name)
+
+            import lmdb
+
+            new_env = lmdb.open(
+                str(temp_path),
+                map_size=self._map_size,
+                max_dbs=1,
+                writemap=False,
+                metasync=False,
+            )
+            new_db = new_env.open_db()
+
+            # Copy all live data via cursor iteration
+            with self._env.begin(buffers=True) as src_txn:
+                src_cursor = src_txn.cursor()
+                with new_env.begin(write=True, db=new_db) as dst_txn:
+                    dst_cursor = dst_txn.cursor()
+                    copied = 0
+                    for key, value in src_cursor:
+                        dst_cursor.put(key, value)
+                        copied += 1
+                    logger.debug(
+                        "[LMDB-UNIFIED] compact_database: copied %d entries",
+                        copied,
+                    )
+
+            # Phase 2: Sync and close temp env (durable write)
+            new_env.sync(force=True)
+            new_env.close()
+
+            # Phase 3: Atomic swap
+            old_path = pathlib.Path(self._path)
+            backup_path = old_path.with_suffix(".bak")
+            data_mdb = old_path / "data.mdb"
+
+            # Close current env before replacing files
+            self._env.close()
+            self._env = None
+            self._initialized = False
+
+            # Swap files
+            if data_mdb.exists():
+                shutil.move(str(data_mdb), str(backup_path))
+            shutil.move(str(temp_path / "data.mdb"), str(data_mdb))
+
+            # Move lock file if present
+            temp_lock = temp_path / "lock.mdb"
+            old_lock = old_path / "lock.mdb"
+            if temp_lock.exists():
+                old_lock.unlink(missing_ok=True)
+                shutil.move(str(temp_lock), str(old_lock))
+
+            # Reopen the store
+            self._env = lmdb.open(
+                str(self._path),
+                map_size=self._map_size,
+                max_dbs=1,
+                writemap=False,
+                metasync=True,
+            )
+            self._initialized = True
+
+            # Cleanup backup
+            shutil.rmtree(str(backup_path), ignore_errors=True)
+            temp_dir.cleanup()
+
+            logger.info("[LMDB-UNIFIED] compact_database: done (%d entries)", copied)
+            return True
+
+        except Exception as exc:
+            logger.warning("[LMDB-UNIFIED] compact_database failed: %s", exc)
+            # Try to restore — reopen if we closed the env
+            if not self._initialized:
+                try:
+                    import lmdb
+                    self._env = lmdb.open(
+                        str(self._path),
+                        map_size=self._map_size,
+                        max_dbs=1,
+                        writemap=False,
+                        metasync=True,
+                    )
+                    self._initialized = True
+                except Exception:
+                    self._closed = True
+            return False
 
 
 def open_unified_lmdb(

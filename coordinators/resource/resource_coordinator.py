@@ -340,12 +340,19 @@ class BackpressureDecision(msgspec.Struct, frozen=True, gc=False):
     """
     Backpressure decision for the fetch lane.
     Derived from GovernorDecision but scoped to fetch concurrency only.
+
+    HW-03: Includes thermal scaling factors for worker/batch adjustment.
     """
     clearnet_max: int
     stealth_max: int
     uma_state: str
     io_only: bool
     swap_detected: bool = False  # ISSUE-35: expose swap signal for telemetry
+    # HW-03: Thermal scaling factors from GovernorDecision
+    thermal_throttled: bool = False
+    thermal_headroom: float = 1.0
+    worker_scale_factor: float = 1.0  # 0.0-1.0, scales max_workers
+    batch_scale_factor: float = 1.0  # 0.0-1.0, scales MLX batch size
 
 
 class BackpressureMonitor:
@@ -413,7 +420,10 @@ class BackpressureMonitor:
                 return self._decision
 
             governor_cap = governor_decision.fetch_limit
-            clearnet_max = max(self._min_clearnet, min(governor_cap, self._max_clearnet))
+            # HW-03: Apply thermal scaling to fetch concurrency
+            worker_scale = governor_decision.worker_scale_factor
+            scaled_cap = max(1, int(governor_cap * worker_scale))
+            clearnet_max = max(self._min_clearnet, min(scaled_cap, self._max_clearnet))
             stealth_max = max(1, clearnet_max - 1)
             # ISSUE-35: Use governor's io_only directly — it already incorporates
             # swap_detected signal and hysteresis via should_enter_io_only_mode().
@@ -424,6 +434,10 @@ class BackpressureMonitor:
                 uma_state=governor_decision.uma_state,
                 io_only=io_only,
                 swap_detected=governor_decision.swap_detected,
+                thermal_throttled=governor_decision.thermal_throttled,
+                thermal_headroom=governor_decision.thermal_headroom,
+                worker_scale_factor=governor_decision.worker_scale_factor,
+                batch_scale_factor=governor_decision.batch_scale_factor,
             )
             if new_decision.uma_state != self._last_state:
                 # F1 FIX: propagate UMA state to ConcurrencyBudgetRegistry so all
@@ -470,6 +484,11 @@ class BackpressureMonitor:
             "io_only": self._decision.io_only,
             "swap_detected": self._decision.swap_detected,
             "state_changes": self._state_changes,
+            # HW-03: Thermal telemetry
+            "thermal_throttled": self._decision.thermal_throttled,
+            "thermal_headroom": self._decision.thermal_headroom,
+            "worker_scale_factor": self._decision.worker_scale_factor,
+            "batch_scale_factor": self._decision.batch_scale_factor,
         }
 
 

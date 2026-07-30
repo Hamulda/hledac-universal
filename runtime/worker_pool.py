@@ -41,6 +41,15 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from hledac.universal.utils.async_helpers import safe_wait_for
 
+# TEL-02: Lazy import — OTel context capture for trace propagation across Rust boundary.
+# Falls back to a no-op when OTel is not installed (safe for all code paths).
+try:
+    from hledac.universal.utils.async_helpers import current_otel_context
+except ImportError:
+    # Fallback no-op when OTel instrumentation is absent.
+    def current_otel_context() -> dict | None:
+        return None
+
 # ISSUE #014: Memory-aware — uses sample_uma_status() + ConcurrencyPreset at runtime
 try:
     from hledac.universal.core.resource_governor import (
@@ -374,15 +383,40 @@ class RustWorkerPool:
         async with async_lock:
             self._active_count += 1
 
+        # TEL-02: Capture OTel trace context before crossing into Rust rayon pool.
+        # current_otel_context() returns {trace_id, span_id} as HEX STRINGS (not ints!)
+        # from otel._instrumentation.current_trace_id() which does format(ctx.trace_id, "032x").
+        # We parse them to integers here so Rust receives u128 as expected.
+        # Guard: "0"*32 / "0"*16 are truthy strings in Python — filter them out.
+        otel_ctx = current_otel_context()
+        if otel_ctx:
+            trace_id_raw = otel_ctx.get("trace_id")
+            span_id_raw = otel_ctx.get("span_id")
+            # Parse hex strings to integers; filter "0"*N all-zeros as "no trace"
+            try:
+                trace_id: int | None = int(trace_id_raw, 16) if trace_id_raw and trace_id_raw != "0" * 32 else None
+            except (ValueError, TypeError):
+                trace_id = None
+            try:
+                span_id: int | None = int(span_id_raw, 16) if span_id_raw and span_id_raw != "0" * 16 else None
+            except (ValueError, TypeError):
+                span_id = None
+        else:
+            trace_id = None
+            span_id = None
+
         loop = asyncio.get_running_loop()
 
         def _do_submit() -> int:
             """Run in asyncio-to_thread worker: submit work to rayon dispatcher and return handle."""
+            # TEL-02: Pass trace_id/span_id as u128 for cross-language trace propagation.
             return rayon_submit_channel(
                 self._pool_type,
                 n_items,
                 fn,
                 args,
+                trace_id,
+                span_id,
             )
 
         try:

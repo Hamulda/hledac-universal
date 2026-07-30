@@ -218,19 +218,6 @@ class TestIOCExtractionPropertyBased:
         result = rust.ioc.extract_iocs_flat(text_content)
         assert isinstance(result, list)
 
-    @given(
-        text_content=text(min_size=10, max_size=500),
-    )
-    @settings(verbosity=Verbosity.verbose, max_examples=50)
-    def test_ioc_extract_no_crash(self, text_content):
-        """extract_iocs_flat never crashes on arbitrary text."""
-        from hledac.universal.core.rust_backend import rust
-
-        # Should not raise any exception
-        result = rust.ioc.extract_iocs_flat(text_content)
-        assert isinstance(result, list)
-
-
 # ---------------------------------------------------------------------------
 # Memory Pressure Hysteresis — state machine invariants
 # ---------------------------------------------------------------------------

@@ -74,10 +74,12 @@ __all__ = [
     "TRANSPORT_CIRCUIT_CLOSE",
     "TRANSPORT_CIRCUIT_HALF_OPEN",
     "TRANSPORT_CIRCUIT_OPEN",
+    "TransportCircuitBreaker",
     "checked_aiohttp_get",
     "get_all_breaker_states",
     "get_all_breaker_states_async",
     "get_breaker",
+    "get_transport_breaker",
     "get_transport_event_callback",
     "record_failure",
     "rust_circuit_is_open",
@@ -320,7 +322,10 @@ class CircuitBreaker:
                         allowed=True,
                         domain=self.domain,
                         state="half_open",
-                        retry_after_s=0.0,
+                        # CB-01 FIX: jittered retry_after prevents thundering herd.
+                        # All waiting requests get staggered wake-up times instead of
+                        # firing simultaneously when the circuit transitions to HALF_OPEN.
+                        retry_after_s=self._jittered_retry_after(),
                         reason="circuit_half_open_recovery_probe",
                     )
                 # F285-JITTER: return jittered retry_after to stagger incoming requests
@@ -357,11 +362,16 @@ class CircuitBreaker:
                         reason="circuit_half_open_max_probes_reached",
                     )
                 self._half_open_probes += 1
+                # CB-01 FIX: Apply jitter to half-open probe failure.
+                # After record_failure() bumped recovery_timeout (exponential backoff),
+                # return jittered retry_after so all waiting callers get staggered
+                # wake-up instead of hammering simultaneously.
+                jittered = self._jittered_retry_after()
                 return CircuitDecision(
                     allowed=True,
                     domain=self.domain,
                     state="half_open",
-                    retry_after_s=0.0,
+                    retry_after_s=jittered,
                     reason="circuit_half_open_probe_allowed",
                 )
             return CircuitDecision(
@@ -471,6 +481,15 @@ class CircuitBreaker:
                 self._state = CBState.OPEN
                 self._opened_at_monotonic = time.monotonic()
                 self._state_entered_at_monotonic = time.monotonic()
+                # CB-01 FIX: HALF_OPEN → OPEN exponential backoff.
+                # When a half-open probe fails, the server is still struggling.
+                # Double recovery_timeout to prevent thundering herd on next recovery.
+                if prev == CBState.HALF_OPEN:
+                    if sprint_remaining_s is not None and sprint_remaining_s > 0:
+                        _sprint_ceiling = min(sprint_remaining_s / 2, MAX_RECOVERY_TIMEOUT_S)
+                        self.recovery_timeout = min(self.recovery_timeout * 2, _sprint_ceiling)
+                    else:
+                        self.recovery_timeout = min(self.recovery_timeout * 2, MAX_RECOVERY_TIMEOUT_S)
                 if prev != CBState.OPEN:
                     self._record_state_duration(prev, CBState.OPEN)
                     try:
@@ -840,6 +859,176 @@ class ModelCircuitBreaker:
                 if self._last_failure_time > 0
                 else None,
             }
+
+
+# =============================================================================
+# TransportCircuitBreaker — transport-level (Tor/I2P) circuit breaker
+# =============================================================================
+# CB-03: Transport-level circuit breaker for Tor and I2P transports.
+# When the transport-level breaker is OPEN, ALL darknet fetches are skipped
+# regardless of domain-level circuit breaker state.
+#
+# This prevents repeated connection attempts from worsening transport overload
+# (e.g., Tor circuit exhaustion, I2P router overload).
+#
+# Invariants:
+# - Thread-safe via _state_lock (RLock)
+# - Bounded: max 2 transport breakers (tor, i2p)
+# - Fail-soft: if breaker check fails, fetch continues via safe path
+# - M1 8GB: negligible RAM (~few KB for 2 breakers)
+# =============================================================================
+
+
+class TransportCircuitBreaker:
+    """Transport-level circuit breaker for Tor/I2P.
+
+    Independent of domain CircuitBreaker (per-domain). When this breaker
+    is OPEN, ALL darknet fetches using that transport are skipped.
+
+    CB-03: Separate CircuitBreaker instances for transport:tor and transport:i2p.
+    """
+
+    def __init__(
+        self,
+        transport: str,  # "tor" or "i2p"
+        failure_threshold: int = 3,
+        recovery_timeout: float = 60.0,
+    ) -> None:
+        if transport not in ("tor", "i2p"):
+            raise ValueError(f"Transport must be 'tor' or 'i2p', got {transport!r}")
+        self.transport = transport
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self._failure_count: int = 0
+        self._state: CBState = CBState.CLOSED
+        self._last_failure_time: float = 0.0
+        self._state_lock = threading.RLock()
+        self._half_open_probes: int = 0
+        self._state_entered_at_monotonic: float = time.monotonic()
+
+    def is_open(self) -> bool:
+        """Return True if transport circuit is OPEN (blocked)."""
+        with self._state_lock:
+            if self._state == CBState.OPEN:
+                if time.monotonic() - self._last_failure_time > self.recovery_timeout:
+                    self._transition_to(CBState.HALF_OPEN)
+                    return False
+                return True
+            return False
+
+    def check_circuit(self) -> CircuitDecision:
+        """Check transport circuit state and return decision."""
+        with self._state_lock:
+            if self._state == CBState.OPEN:
+                if time.monotonic() - self._last_failure_time > self.recovery_timeout:
+                    self._transition_to(CBState.HALF_OPEN)
+                    return CircuitDecision(
+                        allowed=True,
+                        domain=f"transport:{self.transport}",
+                        state="half_open",
+                        retry_after_s=0.0,
+                        reason="transport_circuit_half_open_recovery",
+                    )
+                jitter = _JITTER_RNG.uniform(
+                    _JITTER_MIN_MULTIPLIER * self.recovery_timeout,
+                    _JITTER_MAX_MULTIPLIER * self.recovery_timeout,
+                ) if self.recovery_timeout > 0 else 0.0
+                return CircuitDecision(
+                    allowed=False,
+                    domain=f"transport:{self.transport}",
+                    state="open",
+                    retry_after_s=jitter,
+                    reason="transport_circuit_open_overload",
+                )
+            if self._state == CBState.HALF_OPEN:
+                if self._half_open_probes >= CIRCUIT_HALF_OPEN_PROBES:
+                    self._transition_to(CBState.CLOSED)
+                    return CircuitDecision(
+                        allowed=False,
+                        domain=f"transport:{self.transport}",
+                        state="closed",
+                        retry_after_s=0.0,
+                        reason="transport_circuit_half_open_max_probes",
+                    )
+                self._half_open_probes += 1
+                return CircuitDecision(
+                    allowed=True,
+                    domain=f"transport:{self.transport}",
+                    state="half_open",
+                    retry_after_s=0.0,
+                    reason="transport_circuit_half_open_probe",
+                )
+            return CircuitDecision(
+                allowed=True,
+                domain=f"transport:{self.transport}",
+                state="closed",
+                retry_after_s=0.0,
+                reason="transport_circuit_closed",
+            )
+
+    def record_success(self) -> None:
+        """Reset breaker on successful fetch."""
+        with self._state_lock:
+            if self._state in (CBState.HALF_OPEN, CBState.CLOSED):
+                self._transition_to(CBState.CLOSED)
+
+    def record_failure(self, is_timeout: bool = False) -> None:
+        """Record transport-level failure (e.g., Tor circuit exhausted)."""
+        with self._state_lock:
+            self._last_failure_time = time.monotonic()
+            self._failure_count += 1
+            if self._failure_count >= self.failure_threshold:
+                self._transition_to(CBState.OPEN)
+
+    def _transition_to(self, new_state: CBState) -> None:
+        """Transition to new state and record metrics."""
+        prev = self._state
+        self._state = new_state
+        self._state_entered_at_monotonic = time.monotonic()
+        if prev == CBState.OPEN and new_state == CBState.HALF_OPEN:
+            self._half_open_probes = 0
+            _metrics_safe_increment("transport_circuit_breaker_state_transitions")
+            _metrics_safe_increment("transport_circuit_breaker_half_open_count")
+            _emit_transport_event(f"TRANSPORT_CIRCUIT_{new_state.value.upper()}", f"transport:{self.transport}")
+        elif prev == CBState.HALF_OPEN and new_state == CBState.CLOSED:
+            _metrics_safe_increment("transport_circuit_breaker_state_transitions")
+            _metrics_safe_increment("transport_circuit_breaker_recovery_success")
+            _emit_transport_event(f"TRANSPORT_CIRCUIT_{new_state.value.upper()}", f"transport:{self.transport}")
+        elif prev == CBState.CLOSED and new_state == CBState.OPEN:
+            _metrics_safe_increment("transport_circuit_breaker_state_transitions")
+            _metrics_safe_increment("transport_circuit_breaker_open_count")
+            _emit_transport_event(f"TRANSPORT_CIRCUIT_{new_state.value.upper()}", f"transport:{self.transport}")
+        elif prev == CBState.HALF_OPEN and new_state == CBState.OPEN:
+            _metrics_safe_increment("transport_circuit_breaker_state_transitions")
+            _metrics_safe_increment("transport_circuit_breaker_open_count")
+            _emit_transport_event(f"TRANSPORT_CIRCUIT_{new_state.value.upper()}", f"transport:{self.transport}")
+
+
+# Singleton registry for transport circuit breakers
+_TRANSPORT_BREAKERS: dict[str, TransportCircuitBreaker] = {
+    "tor": TransportCircuitBreaker("tor", failure_threshold=3, recovery_timeout=60.0),
+    "i2p": TransportCircuitBreaker("i2p", failure_threshold=3, recovery_timeout=60.0),
+}
+
+
+def get_transport_breaker(transport: str) -> TransportCircuitBreaker | None:
+    """Get transport circuit breaker for tor or i2p.
+
+    CB-03: Returns the transport-level breaker. When is_open() returns True,
+    ALL darknet fetches using that transport should be skipped.
+    Returns None if transport is not 'tor' or 'i2p'.
+    """
+    return _TRANSPORT_BREAKERS.get(transport)
+
+
+def get_tor_transport_breaker() -> TransportCircuitBreaker:
+    """Get Tor transport circuit breaker."""
+    return _TRANSPORT_BREAKERS["tor"]
+
+
+def get_i2p_transport_breaker() -> TransportCircuitBreaker:
+    """Get I2P transport circuit breaker."""
+    return _TRANSPORT_BREAKERS["i2p"]
 
 
 # =============================================================================

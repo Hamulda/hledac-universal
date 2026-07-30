@@ -90,9 +90,6 @@ def _is_html_content_type(content_type: str) -> bool:
 
 
 class _HTMLTextExtractor(html.parser.HTMLParser):
-
-
-class _HTMLTextExtractor(html.parser.HTMLParser):
     """
     Lightweight HTMLParser that collects only text from body-level tags.
     Fail-soft: never raises on malformed HTML.
@@ -136,12 +133,27 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
         return result
 
 
-def _html_to_text(html_content: str) -> str:
+def _html_to_text(
+    html_content: str,
+    content_type: str | None = None,
+) -> str:
     """
     Convert HTML to plain text using stdlib HTMLParser.
     Falls back to Rust `extract_html_text` (lol_html) when available — ~2-3×
     faster on large documents. Caller is responsible for asyncio.to_thread.
+
+    OSINT-03: Truncates input to MAX_HTML_INPUT_SIZE (5 MB) before parsing.
+    OSINT-04: Validates content-type before parsing. Non-HTML content returns
+    empty string (prevents JSON/XML parser confusion attacks).
     """
+    # OSINT-04: Validate content-type before parsing.
+    # text/plain passthrough: return as-is (already plain text).
+    # Unknown/missing content-type: treat as plain text (safe — no HTML parsing).
+    if content_type is not None and not _is_html_content_type(content_type):
+        return ''
+    # OSINT-03: Bound input size before parsing to prevent OOM on M1 8GB.
+    if len(html_content) > MAX_HTML_INPUT_SIZE:
+        html_content = html_content[:MAX_HTML_INPUT_SIZE]
     # Fast path: try Rust lol_html backend (zero-allocation, ~2-3× faster)
     try:
         from hledac_rust_extensions import extract_html_text
@@ -174,18 +186,23 @@ def _batch_html_to_text(html_contents: list[str]) -> list[str]:
         List of plain text strings in same order as input
 
     Fallback: sequential Python HTMLParser if Rust unavailable.
+
+    OSINT-03: Each item truncated to MAX_HTML_INPUT_SIZE (5 MB) before
+    passing to Rust batch to avoid wasted work on oversized items.
     """
     if not html_contents:
         return []
+    # OSINT-03: Truncate each item before passing to Rust to avoid wasted work.
+    truncated = [h[:MAX_HTML_INPUT_SIZE] for h in html_contents]
     # Fast path: try Rust batch backend (4 P-cores, rayon)
     try:
         from hledac_rust_extensions import batch_extract_html_text
 
-        return batch_extract_html_text(html_contents)
+        return batch_extract_html_text(truncated)
     except (ImportError, Exception):
         pass
     # Fallback: sequential Python HTMLParser
-    return [_html_to_text(html) for html in html_contents]
+    return [_html_to_text(html) for html in truncated]
 
 
 # ----------------------------------------------------------------------

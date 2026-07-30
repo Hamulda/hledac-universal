@@ -162,9 +162,38 @@ class KeyManager:
     def _open_lmdb(self) -> Any:
         """Open LMDB environment for salt metadata storage."""
         import lmdb
+        import os
+        import stat as _stat
+
+        # SEC-02: Create directory with 0700 before umask scope
         self._db_path.mkdir(parents=True, exist_ok=True)
-        map_size = 64 * 1024  # 64 KB — tiny, just for salt
-        return lmdb.open(str(self._db_path), map_size=map_size, writemap=True, readahead=False)
+
+        # SEC-02: Set umask to 0077 so LMDB files inherit 0o600
+        _old_umask = os.umask(0o077)
+        try:
+            map_size = 64 * 1024  # 64 KB — tiny, just for salt
+            env = lmdb.open(str(self._db_path), map_size=map_size, writemap=True, readahead=False, mode=0o600)
+            # SEC-02: Double-enforce after open to cover all files LMDB creates
+            self._chmod_lmdb_path()
+            return env
+        finally:
+            os.umask(_old_umask)
+
+    def _chmod_lmdb_path(self) -> None:
+        """SEC-02: Enforce 0o600 on LMDB directory and files."""
+        import os
+        import stat as _stat
+
+        try:
+            os.chmod(self._db_path, _stat.S_IRUSR | _stat.S_IWUSR | _stat.S_IXUSR)  # 0o700
+        except OSError:
+            pass
+        for suffix in ("*.mdb", "*.lock"):
+            for file_path in self._db_path.glob(suffix):
+                try:
+                    os.chmod(file_path, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
+                except OSError:
+                    pass
 
     def _store_salt_in_lmdb(self, salt: bytes) -> None:
         """Store salt in LMDB metadata (salt is not sensitive, only used for HKDF)."""

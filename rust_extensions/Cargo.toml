@@ -13,6 +13,9 @@ aho-corasick = "1.1"
 # CI ban: with_gil / allow_threads removed from all code (only comments remain).
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py312"] }
 rayon = "1.10"
+# GRAPH-01: petgraph for graph algorithms (PageRank, Louvain community detection)
+# Provides: GraphMap, UnGraph, DiGraph, NodeIndex, algo::kosaraju_scc
+petgraph = { version = "0.6", features = ["serde-1"] }
 regex = "1.11"
 regex-automata = { version = "0.4.16", default-features = false, features = ["meta"] }
 url = "2"
@@ -20,6 +23,7 @@ lol_html = "2.9"
 xml = "1.3"
 xxhash-rust = { version = "0.8", features = ["xxh3", "const_xxh3", "xxh64"] }
 sha2 = "0.10"
+sha3 = "0.10"  # GRAPH-03: SHA3-256 for .onion v3 checksum validation
 aes-gcm = "0.10"
 pbkdf2 = { version = "0.12", features = ["simple"] }
 rand = "0.8"
@@ -133,11 +137,12 @@ data = [
 ]
 
 
-# graph: Graph analytics (LSH index, hot edges, centrality) — no heavy deps, pure Rust
+# graph: Graph analytics (LSH index, hot edges, centrality, petgraph) — no heavy deps, pure Rust
 graph = [
     "lsh_index",
     "hot_edges",
     "graph_centrality",
+    "graph_analytics",  # GRAPH-01: petgraph-based PageRank + Louvain + SCC
 ]
 
 # accelerate: Accelerate/vDSP FFI for NER cosine similarity — OPTIONAL on macOS 26.5+
@@ -193,6 +198,7 @@ lsh_index = []        # Referenced by graph
 hot_edges = []         # Deprecated: module is hot_edges_rs, guarded by graph feature
 # NOTE: hot_edges_rs is the actual module name, hot_edges feature is legacy alias
 graph_centrality = [] # Referenced by graph — rayon-based parallel centrality
+graph_analytics = []  # Referenced by graph — petgraph-based PageRank + Louvain + SCC
 duckdb = []           # Referenced by data
 feed_pipeline = []    # Referenced by advanced
 federated_qtable = [] # Referenced by advanced
@@ -207,6 +213,7 @@ metal = []            # R22: Metal GPU batch matmul for MoE router (stub, CPU fa
 otel = [
     "dep:tracing",
     "dep:tracing-subscriber",
+    "rand",
 ]
 
 # py-version: Python version compiled-for (via pyo3-build-config intercept_version)

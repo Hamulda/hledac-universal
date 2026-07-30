@@ -708,6 +708,10 @@ class UMAStatus(msgspec.Struct, frozen=True, gc=False):
     metal_peak_gib: float = 0.0
     swap_detected: bool = False
     last_error: str | None = None
+    # HW-02: Power status fields
+    on_battery: bool = False
+    battery_level: int | None = None
+    ac_attached: bool = True
 
 
 class MemoryPressureHysteresis:
@@ -852,6 +856,224 @@ class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     fetch_limit: int
     block_model_load: bool = False
     swap_detected: bool = False  # ISSUE-35: expose swap signal for backpressure decisions
+    thermal_throttled: bool = False  # HW-01: CPU/GPU thermal throttling detected
+    thermal_headroom: float = 1.0  # HW-01: 0.0-1.0, 1.0 = no throttling
+    # HW-03: Thermal scaling factors derived from thermal_headroom
+    worker_scale_factor: float = 1.0  # 0.0-1.0, scales max_workers
+    batch_scale_factor: float = 1.0  # 0.0-1.0, scales MLX batch size
+    power_status: dict[str, bool | int | float | None] = {}  # HW-02: battery state info
+
+
+class M1ThermalStatus(msgspec.Struct, frozen=True, gc=False):
+    """
+    HW-01: Termální stav M1 procesoru.
+
+    sleduje CPU teplotu, GPU teplotu, CPU frekvenci a detekuje termální throttling.
+    M1 čipy mají limity: CPU ~60-70°C, GPU ~85°C. Při překročení dochází
+    k automatickému throttlingu s 2-3x zpomalením ML inferencí.
+    """
+
+    cpu_temperature_c: float | None = None
+    gpu_temperature_c: float | None = None
+    cpu_frequency_mhz: float | None = None
+    cpu_core_count: int = 0
+    is_throttled: bool = False
+    thermal_headroom: float = 1.0  # 0.0-1.0, 1.0 = žádný throttling
+
+
+class M1ThermalMonitor:
+    """
+    HW-01: Monitor termálního stavu M1 procesoru.
+
+    Implementuje sysctl-based čtení CPU teploty a frekvence.
+    Rate-limited čtení (min 0.5s interval) pro minimalizaci syscall overhead.
+
+    Throttling limity:
+        - CPU: >70°C začíná throttling, >85°C plný throttling
+        - GPU: >80°C varování, >85°C throttling
+
+    Vždy fail-soft: při jakékoli chybě vrací None hodnoty.
+    """
+
+    _CPU_TEMP_PATHS: tuple[str, ...] = ("hw.sensors.cpu_temperature", "hw.cputemperature")
+    _GPU_TEMP_PATHS: tuple[str, ...] = ("hw.sensors.gpu_temperature", "hw.sensors.gpu_0_temperature")
+    _CPU_FREQ_PATHS: tuple[str, ...] = ("hw.cpufrequency", "hw.cpufrequency_max")
+    _READ_INTERVAL_S: float = 0.5
+    _CPU_THROTTLE_TEMP: float = 70.0  # °C, začátek CPU throttlingu
+    _CPU_CRITICAL_TEMP: float = 85.0  # °C, plný throttling
+    _GPU_THROTTLE_TEMP: float = 80.0  # °C, začátek GPU throttlingu
+    _GPU_CRITICAL_TEMP: float = 85.0  # °C, plný throttling
+
+    __slots__ = ("_last_reading", "_last_read_time")
+
+    def __init__(self) -> None:
+        self._last_reading: M1ThermalStatus | None = None
+        self._last_read_time: float = 0.0
+
+    @staticmethod
+    def _get_cpu_core_count() -> int:
+        """Počet CPU jader (P+E jádra)."""
+        try:
+            import psutil as _psutil
+
+            return _psutil.cpu_count(logical=False) or 8
+        except Exception:
+            return 8  # Default pro M1
+
+    @staticmethod
+    def _read_sysctl_float(path: str) -> float | None:
+        """Čte sysctl hodnotu a vrací float nebo None."""
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["sysctl", "-n", path],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+            if result.returncode == 0:
+                return float(result.stdout.strip())
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _read_cpu_temperature() -> float | None:
+        """Čte průměrnou CPU teplotu z sysctl (macOS Ventura+)."""
+        for path in M1ThermalMonitor._CPU_TEMP_PATHS:
+            value = M1ThermalMonitor._read_sysctl_float(path)
+            if value is not None:
+                # sysctl vrací hodnotu v tisícinách stupňů nebo přímo ve stupních
+                # Normalizace: pokud > 100, pravděpodobně máme setiny
+                if value > 100:
+                    value = value / 1000.0
+                return value
+        return None
+
+    @staticmethod
+    def _read_gpu_temperature() -> float | None:
+        """Čte GPU teplotu z MLX nebo sysctl."""
+        # 1. Zkusit MLX Metal
+        try:
+            import mlx.core as _mx
+
+            if hasattr(_mx.metal, "get_device_temperature"):
+                return float(_mx.metal.get_device_temperature())
+        except Exception:
+            pass
+        # 2. Zkusit sysctl pro GPU
+        for path in M1ThermalMonitor._GPU_TEMP_PATHS:
+            value = M1ThermalMonitor._read_sysctl_float(path)
+            if value is not None:
+                if value > 100:
+                    value = value / 1000.0
+                return value
+        return None
+
+    @staticmethod
+    def _read_cpu_frequency() -> float | None:
+        """Čte aktuální CPU frekvenci v MHz z sysctl."""
+        for path in M1ThermalMonitor._CPU_FREQ_PATHS:
+            value = M1ThermalMonitor._read_sysctl_float(path)
+            if value is not None:
+                # sysctl vrací Hz, převedeme na MHz
+                if value > 1_000_000:
+                    return value / 1_000_000.0
+                return value
+        return None
+
+    @staticmethod
+    def _detect_throttling(
+        cpu_temp: float | None,
+        gpu_temp: float | None,
+        cpu_freq: float | None,
+    ) -> tuple[bool, float]:
+        """
+        Detekuje termální throttling a počítá thermal headroom.
+
+        Vrací: (is_throttled, thermal_headroom)
+            - is_throttled: True pokud probíhá throttling
+            - thermal_headroom: 0.0-1.0, kde 1.0 = žádný throttling
+        """
+        headroom = 1.0
+        is_throttled = False
+
+        # CPU throttling detekce
+        if cpu_temp is not None:
+            if cpu_temp >= M1ThermalMonitor._CPU_CRITICAL_TEMP:
+                is_throttled = True
+                headroom = 0.0
+            elif cpu_temp > M1ThermalMonitor._CPU_THROTTLE_TEMP:
+                # Lineární interpolace od THROTTLE_TEMP do CRITICAL_TEMP
+                temp_range = M1ThermalMonitor._CPU_CRITICAL_TEMP - M1ThermalMonitor._CPU_THROTTLE_TEMP
+                headroom = min(headroom, (M1ThermalMonitor._CPU_CRITICAL_TEMP - cpu_temp) / temp_range)
+                is_throttled = True
+
+        # GPU throttling detekce
+        if gpu_temp is not None:
+            if gpu_temp >= M1ThermalMonitor._GPU_CRITICAL_TEMP:
+                is_throttled = True
+                headroom = min(headroom, 0.0)
+            elif gpu_temp > M1ThermalMonitor._GPU_THROTTLE_TEMP:
+                gpu_range = M1ThermalMonitor._GPU_CRITICAL_TEMP - M1ThermalMonitor._GPU_THROTTLE_TEMP
+                gpu_headroom = (M1ThermalMonitor._GPU_CRITICAL_TEMP - gpu_temp) / gpu_range
+                headroom = min(headroom, gpu_headroom)
+                is_throttled = True
+
+        # Frekvenční detekce throttlingu je ненадёжná bez kontextu:
+        # - M1 E-cores běží na 600-1000MHz i v normálním režimu
+        # - Bez teploty nelze frekvenci spolehlivě interpretovat
+        # - Ignorujeme frekvenci pokud nemáme teplotu — teplota je primární signál
+
+        return is_throttled, headroom
+
+    def read_thermal_status(self, emergency: bool = False) -> M1ThermalStatus:
+        """Čte aktuální termální stav (rate-limited, emergency bypass).
+
+        Args:
+            emergency: Pokud True, vynutí fresh čtení i když je v rate limit okně.
+                       Použít při detekci throttlingu nebo vysokých teplot.
+        """
+        import time as _time
+
+        now = _time.monotonic()
+
+        # Rate limiting: minimální interval mezi čteními
+        # Emergency bypass: vynutí fresh čtení při podezření na thermal emergency
+        if (
+            not emergency
+            and self._last_reading is not None
+            and now - self._last_read_time < self._READ_INTERVAL_S
+        ):
+            return self._last_reading
+
+        cpu_temp = self._read_cpu_temperature()
+        gpu_temp = self._read_gpu_temperature()
+        cpu_freq = self._read_cpu_frequency()
+        is_throttled, headroom = self._detect_throttling(cpu_temp, gpu_temp, cpu_freq)
+
+        status = M1ThermalStatus(
+            cpu_temperature_c=cpu_temp,
+            gpu_temperature_c=gpu_temp,
+            cpu_frequency_mhz=cpu_freq,
+            cpu_core_count=self._get_cpu_core_count(),
+            is_throttled=is_throttled,
+            thermal_headroom=headroom,
+        )
+
+        self._last_reading = status
+        self._last_read_time = now
+        return status
+
+    async def read_thermal_status_async(self, emergency: bool = False) -> M1ThermalStatus:
+        """Asynchronní čtení termálního stavu.
+
+        Args:
+            emergency: Pokud True, vynutí fresh čtení i když je v rate limit okně.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: self.read_thermal_status(emergency=emergency))
 
 
 class M1ResourceGovernor:
@@ -877,13 +1099,54 @@ class M1ResourceGovernor:
     _last_evaluated_memory_ratio: float = 0.0
     _decision_lock_factory: threading.Lock = threading.Lock()
     _decision_lock: asyncio.Lock | None = None
-    __slots__ = ("_hysteresis", "_legacy_cache_ttl_s", "_mpc_controller")
+    __slots__ = ("_hysteresis", "_legacy_cache_ttl_s", "_mpc_controller", "_thermal_monitor", "_power_monitor")
 
     def __init__(self, cache_ttl_s: float = 5.0):
         self._legacy_cache_ttl_s = cache_ttl_s
         self._hysteresis = MemoryPressureHysteresis(total_gib=None)
         self._mpc_controller = AdaptiveMPCController()
+        self._thermal_monitor = M1ThermalMonitor()
         self._last_evaluated_memory_ratio = 0.0
+        # HW-02: Lazy power monitor initialization
+        self._power_monitor: "PowerStatusMonitor | None" = None
+
+    @property
+    def _pw_monitor(self) -> "PowerStatusMonitor":
+        """Lazy accessor for power monitor (avoids import at module load)."""
+        if self._power_monitor is None:
+            from hledac.universal.utils.uma_budget import PowerStatusMonitor
+
+            self._power_monitor = PowerStatusMonitor()
+        return self._power_monitor
+
+    # HW-03: Thermal scaling configuration
+    _THERMAL_THROTTLE_THRESHOLD: float = 0.7  # headroom < 0.7 = throttling
+    _THERMAL_SEVERE_THRESHOLD: float = 0.3  # headroom < 0.3 = severe throttling
+    _WORKER_SCALE_FACTOR: float = 0.7  # mild throttle → 70% workers
+    _BATCH_SCALE_FACTOR: float = 0.5  # mild throttle → 50% batch size
+
+    def _compute_thermal_scales(self, headroom: float) -> tuple[float, float]:
+        """
+        HW-03: Compute worker and batch scaling factors from thermal headroom.
+
+        Args:
+            headroom: 0.0-1.0, where 1.0 = no throttling
+
+        Returns:
+            tuple of (worker_scale_factor, batch_scale_factor), both 0.0-1.0
+        """
+        if headroom >= self._THERMAL_THROTTLE_THRESHOLD:
+            # No throttling
+            return (1.0, 1.0)
+        elif headroom >= self._THERMAL_SEVERE_THRESHOLD:
+            # Mild throttling — apply standard factors
+            return (self._WORKER_SCALE_FACTOR, self._BATCH_SCALE_FACTOR)
+        else:
+            # Severe throttling — quadratic reduction
+            return (
+                self._WORKER_SCALE_FACTOR ** 2,
+                self._BATCH_SCALE_FACTOR ** 2,
+            )
 
     @classmethod
     async def _ensure_decision_lock(cls) -> asyncio.Lock:
@@ -949,8 +1212,14 @@ class M1ResourceGovernor:
     async def _evaluate_impl(self) -> GovernorDecision:
         """
         Interní evaluace — gruz na sample_uma_status_async + threshold logika.
+        HW-01: Přidán termální monitoring pro CPU/GPU teplotu a frekvenci.
         Fail-soft: vrací bezpečné default při jakékoli chybě.
         """
+        # HW-01: Čtení termálního stavu — vždy emergency pro fresh data
+        # Termální stav se mění v sekundách, rate limit není potřeba.
+        # Emergency=True zajistí fresh data i během aktivního throttlingu.
+        thermal_status = await self._thermal_monitor.read_thermal_status_async(emergency=True)
+
         try:
             uma = await sample_uma_status_async()
         except Exception:
@@ -961,6 +1230,8 @@ class M1ResourceGovernor:
                 fetch_limit=preset.fetch_limit,
                 block_model_load=preset.block_model_load,
                 swap_detected=False,
+                thermal_throttled=thermal_status.is_throttled,
+                thermal_headroom=thermal_status.thermal_headroom,
             )
         preset = ConcurrencyPreset.from_state(uma.state)
         now = time.monotonic()
@@ -974,18 +1245,85 @@ class M1ResourceGovernor:
         gated_state = state_map.get(hysteresis_state, uma.state)
         mpc_control, _mpc_metrics = await self._mpc_controller.compute_control(uma.system_used_gib, uma.state)
         scaled_fetch_limit = max(1, int(preset.fetch_limit * mpc_control))
+
+        # HW-01: Škálování podle termálního headroom
+        if thermal_status.is_throttled and thermal_status.thermal_headroom < 1.0:
+            thermal_scale = max(0.1, thermal_status.thermal_headroom)
+            scaled_fetch_limit = max(1, int(scaled_fetch_limit * thermal_scale))
+
         try:
             from hledac.universal.metrics_registry import get_metrics_registry
 
             get_metrics_registry().set_gauge("memory_layer_pressure_pct", memory_ratio * 100.0)
+            # HW-01: Report termální metriky
+            if thermal_status.cpu_temperature_c is not None:
+                get_metrics_registry().set_gauge("thermal_cpu_temp_c", thermal_status.cpu_temperature_c)
+            if thermal_status.gpu_temperature_c is not None:
+                get_metrics_registry().set_gauge("thermal_gpu_temp_c", thermal_status.gpu_temperature_c)
+            get_metrics_registry().set_gauge("thermal_headroom", thermal_status.thermal_headroom * 100.0)
         except Exception:
             pass
-        return GovernorDecision(
+
+        # HW-03: Compute thermal scaling factors from headroom
+        worker_scale, batch_scale = self._compute_thermal_scales(thermal_status.thermal_headroom)
+
+        base_decision = GovernorDecision(
             uma_state=gated_state,
             io_only=uma.io_only,
             fetch_limit=scaled_fetch_limit,
             block_model_load=preset.block_model_load,
             swap_detected=uma.swap_detected,
+            thermal_throttled=thermal_status.is_throttled,
+            thermal_headroom=thermal_status.thermal_headroom,
+            worker_scale_factor=worker_scale,
+            batch_scale_factor=batch_scale,
+        )
+        return self._adjust_for_power(uma, base_decision)
+
+    def _adjust_for_power(self, uma: UMAStatus, base_decision: GovernorDecision) -> GovernorDecision:
+        """
+        HW-02: Adaptuje governor rozhodnutí na základě stavu napájení.
+
+        Na baterii snižuje aggressivitu MLX operací a I/O operací pro:
+        - Prodloužení výdrže baterie
+        - Prevenci termálního throttlingu
+        - Snížení rizika swapování
+
+        power_factor:
+        - <20% battery: 0.4 (agresivní úspora)
+        - <50% battery: 0.6 (střední úspora)
+        - >=50% battery: 0.8 (mírná úspora)
+        - AC attached: 1.0 (žádná úspora)
+        """
+        if not uma.on_battery or uma.ac_attached:
+            return base_decision
+
+        battery_level = uma.battery_level
+        if battery_level is not None and battery_level < 20:
+            power_factor = 0.4
+        elif battery_level is not None and battery_level < 50:
+            power_factor = 0.6
+        else:
+            power_factor = 0.8
+
+        adjusted_fetch = max(1, int(base_decision.fetch_limit * power_factor))
+
+        return GovernorDecision(
+            uma_state=base_decision.uma_state,
+            io_only=base_decision.io_only or (power_factor < 0.6),
+            fetch_limit=adjusted_fetch,
+            block_model_load=base_decision.block_model_load or (power_factor < 0.5),
+            swap_detected=base_decision.swap_detected,
+            thermal_throttled=base_decision.thermal_throttled,
+            thermal_headroom=base_decision.thermal_headroom,
+            worker_scale_factor=base_decision.worker_scale_factor * power_factor,
+            batch_scale_factor=base_decision.batch_scale_factor * power_factor,
+            power_status={
+                "on_battery": uma.on_battery,
+                "battery_level": uma.battery_level,
+                "ac_attached": uma.ac_attached,
+                "power_factor": power_factor,
+            },
         )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
@@ -1171,6 +1509,7 @@ class Priority(Enum):
 class ResourceGovernor:
     """
     Hlídá zdroje a rozhoduje, zda je možné provést náročnou operaci.
+    HW-01: Sjednocen GPU thermal check přes M1ThermalMonitor.
     """
 
     __slots__ = tuple(
@@ -1181,13 +1520,13 @@ class ResourceGovernor:
             "_lock_factory",
             "_priority_factor",
             "high_water",
-            "thermal_threshold",
+            "_thermal_monitor",
         )
     )
 
     def __init__(self, memory_high_water_mb: float = 5632, thermal_threshold: float = 82.0):
         self.high_water = memory_high_water_mb
-        self.thermal_threshold = thermal_threshold
+        self._thermal_monitor = M1ThermalMonitor()
         self._active_tasks = 0
         self._lock_factory = threading.Lock()
         self.__lock: asyncio.Lock | None = None
@@ -1245,14 +1584,14 @@ class ResourceGovernor:
                     return False
             except Exception:
                 pass
-        try:
-            if hasattr(_get_mx().metal, "get_device_temperature"):
-                gpu_temp = _get_mx().metal.get_device_temperature()
-                if gpu_temp > self.thermal_threshold and priority != Priority.CRITICAL:
-                    logger.warning(f"GPU thermal limit reached: {gpu_temp}°C > {self.thermal_threshold}°C")
-                    return False
-        except AttributeError:
-            pass
+        # HW-01: GPU thermal check přes M1ThermalMonitor — sjednocená cesta
+        thermal_status = self._thermal_monitor.read_thermal_status()
+        if thermal_status.is_throttled and priority != Priority.CRITICAL:
+            logger.warning(
+                f"GPU thermal throttled: cpu={thermal_status.cpu_temperature_c}°C, "
+                f"gpu={thermal_status.gpu_temperature_c}°C, headroom={thermal_status.thermal_headroom:.2f}"
+            )
+            return False
         try:
             if hasattr(_get_mx().metal, "get_ane_utilization"):
                 ane = _get_mx().metal.get_ane_utilization()
@@ -1556,6 +1895,11 @@ def sample_uma_status() -> UMAStatus:
     swap_detected = swap_used_gib > 5.0 or _pressure_status in ("CRITICAL", "RED")
     prev_io_only, io_only = _update_io_only_latch_with_lock(system_used_gib, swap_detected=swap_detected)
     _record_transition(state, prev_io_only, io_only)
+    # HW-02: Get power status for battery vs AC detection
+    from hledac.universal.utils.uma_budget import get_power_monitor
+
+    _power = get_power_monitor().get_power_status()
+
     return UMAStatus(
         rss_gib=rss_gib,
         system_used_gib=system_used_gib,
@@ -1569,6 +1913,9 @@ def sample_uma_status() -> UMAStatus:
         metal_peak_gib=metal_peak_gib,
         swap_detected=swap_detected,
         last_error=last_error,
+        on_battery=bool(_power.get("on_battery", False)),
+        battery_level=_power.get("battery_level"),
+        ac_attached=bool(_power.get("ac_attached", True)),
     )
 
 

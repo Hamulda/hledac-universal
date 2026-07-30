@@ -60,6 +60,7 @@ _PROVIDER: Any = None
 _PROCESSOR: Any = None
 _EXPORTER: Any = None
 _CONFIG: TelemetryConfig | None = None
+_DUCKDB_CONN: Any = None  # TEL-01: track DuckDB conn for proper shutdown
 _LOCK = threading.Lock()
 
 def is_initialized() -> bool:
@@ -112,29 +113,66 @@ def _build_otlp_exporter(cfg: TelemetryConfig) -> Any:
         return None
 
 def _build_duckdb_exporter(cfg: TelemetryConfig) -> Any:
-    """Issue #23: DuckDB span exporter for analytical queries.
+    """Issue #23/ TEL-01: DuckDB span exporter + SamplingSpanProcessor.
 
     Stores spans in otel_spans table for AVG/PERCENTILE/throughput queries.
     DuckDB path from HLEDAC_OTEL_DUCKDB_PATH env or in-memory.
+
+    TEL-01: Returns SamplingSpanProcessor(BatchSpanProcessor(DuckDBSpanExporter))
+    to filter high-frequency spans before DuckDB write.
     """
     try:
-        import duckdb
+        import duckdb as _duckdb
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from hledac.universal.otel._duckdb_exporter import DuckDBSpanExporter
+        from hledac.universal.otel._duckdb_exporter import (
+            DuckDBSpanExporter,
+            SamplingSpanProcessor,
+            create_otel_spans_table,
+        )
         db_path = os.environ.get('HLEDAC_OTEL_DUCKDB_PATH', '').strip()
         if db_path:
-            conn = duckdb.connect(db_path, read_only=False)
+            conn = _duckdb.connect(db_path, read_only=False)
         else:
-            conn = duckdb.connect(database=':memory:', read_only=False)
+            conn = _duckdb.connect(database=':memory:', read_only=False)
         # M1 8GB: memory_limit + threads + preserve_insertion_order
         conn.execute("SET memory_limit = '256MB'")
         conn.execute("PRAGMA threads = 2")
         conn.execute("SET preserve_insertion_order = false")
-        from hledac.universal.otel._duckdb_exporter import create_otel_spans_table
         create_otel_spans_table(conn)
-        exporter = DuckDBSpanExporter(conn=conn, max_batch_size=500)
-        exporter.start()
-        return exporter
+        db_exporter = DuckDBSpanExporter(conn=conn, max_batch_size=500)
+        db_exporter.start()
+        # TEL-01: Store DuckDB conn for proper shutdown
+        global _DUCKDB_CONN
+        _DUCKDB_CONN = conn
+        # TEL-01: Wrap in BatchSpanProcessor then SamplingSpanProcessor
+        batch_processor = BatchSpanProcessor(
+            db_exporter,
+            max_queue_size=cfg.max_queue_size,
+            max_export_batch_size=cfg.max_export_batch,
+            schedule_delay_millis=cfg.schedule_delay_ms,
+        )
+        sample_rate = float(os.environ.get('HLEDAC_OTEL_SPAN_SAMPLE_RATE', '0.1'))
+        sample_rate = max(0.01, min(1.0, sample_rate))
+
+        # TEL-01: slow_span_threshold from env (default 100ms)
+        try:
+            slow_threshold = float(os.environ.get('HLEDAC_OTEL_SLOW_SPAN_MS', '100.0'))
+        except (TypeError, ValueError):
+            slow_threshold = 100.0
+
+        # TEL-01: configurable skip_prefixes from env (default: fetch.,http.,db.,lmdb.,cache.,duckdb.)
+        skip_env = os.environ.get('HLEDAC_OTEL_SKIP_PREFIXES', '').strip()
+        if skip_env:
+            skip_prefixes = tuple(p.strip() for p in skip_env.split(',') if p.strip())
+        else:
+            skip_prefixes = None  # use defaults
+
+        return SamplingSpanProcessor(
+            next_processor=batch_processor,
+            sample_rate=sample_rate,
+            slow_span_threshold_ms=slow_threshold,
+            skip_prefixes=skip_prefixes,
+        )
     except Exception as e:
         sys.stderr.write(f'[telemetry] duckdb exporter init failed: {e}\n')
         return None
@@ -236,12 +274,22 @@ def init_telemetry(cfg: TelemetryConfig | None=None) -> bool:
             trace.set_tracer_provider(provider)
             exporter = _build_exporter(cfg)
             if exporter is not None:
-                processor = BatchSpanProcessor(exporter, max_queue_size=cfg.max_queue_size, max_export_batch_size=cfg.max_export_batch, schedule_delay_millis=cfg.schedule_delay_ms)
+                # TEL-01: duckdb exporter already returns SamplingSpanProcessor with
+                # internal BatchSpanProcessor - don't wrap again
+                from opentelemetry.sdk.trace.export import SpanExporter
+                if isinstance(exporter, SpanExporter):
+                    # Standard exporters (stdout, otlp, ring) need BatchSpanProcessor
+                    processor = BatchSpanProcessor(exporter, max_queue_size=cfg.max_queue_size, max_export_batch_size=cfg.max_export_batch, schedule_delay_millis=cfg.schedule_delay_ms)
+                    exporter_to_store = exporter
+                else:
+                    # TEL-01: duckdb returns SamplingSpanProcessor already wrapped
+                    processor = exporter
+                    exporter_to_store = getattr(exporter, '_next', None) or getattr(exporter, '_exporter', None)
                 if hasattr(provider, '_span_processors') and provider._span_processors:
                     provider._span_processors.clear()
                 provider.add_span_processor(processor)
                 _PROCESSOR = processor
-                _EXPORTER = exporter
+                _EXPORTER = exporter_to_store or exporter
             _PROVIDER = provider
             _INITIALIZED = True
             try:
@@ -256,7 +304,7 @@ def init_telemetry(cfg: TelemetryConfig | None=None) -> bool:
 
 def shutdown_telemetry(timeout_ms: int=5000) -> None:
     """Flush + shutdown. Idempotent. Safe to call from finally/atexit."""
-    global _INITIALIZED, _PROVIDER, _PROCESSOR, _EXPORTER
+    global _INITIALIZED, _PROVIDER, _PROCESSOR, _EXPORTER, _DUCKDB_CONN
     with _LOCK:
         if not _INITIALIZED:
             return
@@ -290,3 +338,12 @@ def shutdown_telemetry(timeout_ms: int=5000) -> None:
             _PROVIDER = None
             _PROCESSOR = None
             _EXPORTER = None
+            # TEL-01: close DuckDB connection to prevent resource leak
+            # Must be in finally (not just in normal shutdown path) because
+            # _EXPORTER may not be set if exception occurs during init
+            if _DUCKDB_CONN is not None:
+                try:
+                    _DUCKDB_CONN.close()
+                except Exception:
+                    pass
+                _DUCKDB_CONN = None

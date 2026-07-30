@@ -119,86 +119,94 @@ const HUGEPAGE_SIZE: usize = 2 * 1024 * 1024;
 #[pyfunction]
 #[pyo3(signature = (path, advice = 1))]
 pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
-    let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_NOCACHE };
+    // FFI-01: catch_unwind guards CString::new panics and all unsafe libc calls.
+    // On panic: returns -1 instead of SIGABRT (Python process survives).
+    match ffi_safe!({
+        let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_NOCACHE };
 
-    // R4-06 FIX: Cache lookup first (hot path — zero syscalls).
-    let cache = get_mmap_cache();
-    if let Ok(mut cache) = cache.lock() {
-        if let Some(cached) = cache.get(path) {
-            // Cache hit: apply madvise to the already-mapped region (LRU touch).
-            let result = unsafe {
-                libc::madvise(cached.mapped_ptr, cached.mapped_len, madv_advice)
-            };
-            return if result < 0 { -1 } else { 0 };
+        // R4-06 FIX: Cache lookup first (hot path — zero syscalls).
+        let cache = get_mmap_cache();
+        if let Ok(mut cache) = cache.lock() {
+            if let Some(cached) = cache.get(path) {
+                // Cache hit: apply madvise to the already-mapped region (LRU touch).
+                let result = unsafe {
+                    libc::madvise(cached.mapped_ptr, cached.mapped_len, madv_advice)
+                };
+                return if result < 0 { -1 } else { 0 };
+            }
         }
-    }
 
-    // Cache miss: perform open/mmap/madvise, then cache the mmap (fd stays open).
-    let cpath = std::ffi::CString::new(path).unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+        // Cache miss: perform open/mmap/madvise, then cache the mmap (fd stays open).
+        let cpath = std::ffi::CString::new(path)
+            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
 
-    let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR) };
-    let fd = if fd < 0 {
-        unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY) }
-    } else {
-        fd
-    };
-    if fd < 0 {
-        return -1;
-    }
+        let fd = unsafe { libc::open(cpath.as_ptr(), libc::O_RDWR) };
+        let fd = if fd < 0 {
+            unsafe { libc::open(cpath.as_ptr(), libc::O_RDONLY) }
+        } else {
+            fd
+        };
+        if fd < 0 {
+            return -1;
+        }
 
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstat(fd, &mut st) } < 0 {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut st) } < 0 {
+            unsafe { libc::close(fd) };
+            return -1;
+        }
+        let file_size = st.st_size as usize;
+        if file_size == 0 {
+            unsafe { libc::close(fd) };
+            return 0;
+        }
+
+        let mapped_len = (file_size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+
+        let mmap_prot = libc::PROT_READ | libc::PROT_WRITE;
+        let mmap_flags = libc::MAP_PRIVATE;
+        #[cfg(target_os = "macos")]
+        let mmap_flags = mmap_flags | libc::MAP_NOCACHE;
+
+        let mapped_ptr = unsafe {
+            libc::mmap(null_mut(), mapped_len, mmap_prot, mmap_flags, fd, 0)
+        };
+
+        if mapped_ptr == libc::MAP_FAILED {
+            unsafe { libc::close(fd) };
+            return -1;
+        }
+
+        // Apply madvise to the mapped region.
+        let madv_result = unsafe {
+            libc::madvise(mapped_ptr, mapped_len, madv_advice)
+        };
+
+        // R4-06: Do NOT unmap here — keep mmap alive in cache.
+        // fd is kept open by Arc<File> equivalent (stored in CachedMmap).
+        // MADV_FREE_REUSABLE makes pages reclaimable under pressure (not pinned).
+        // Close the fd only — the mmap stays valid until process exit or explicit drop.
         unsafe { libc::close(fd) };
-        return -1;
+
+        if madv_result < 0 {
+            unsafe { libc::munmap(mapped_ptr, mapped_len) };
+            return -1;
+        }
+
+        // R4-06 FIX: Store mmap in LRU cache (fd is now closed, but ptr remains valid).
+        // The mmap persists independent of fd — OS manages the mapping.
+        if let Ok(mut cache) = cache.lock() {
+            cache.put(
+                path.to_string(),
+                CachedMmap::new(file_size, mapped_ptr, mapped_len),
+            );
+        }
+
+        0i32
+    }) {
+        Ok(r) => r,
+        Err(_) => -1,
     }
-    let file_size = st.st_size as usize;
-    if file_size == 0 {
-        unsafe { libc::close(fd) };
-        return 0;
-    }
-
-    let mapped_len = (file_size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-
-    let mmap_prot = libc::PROT_READ | libc::PROT_WRITE;
-    let mmap_flags = libc::MAP_PRIVATE;
-    #[cfg(target_os = "macos")]
-    let mmap_flags = mmap_flags | libc::MAP_NOCACHE;
-
-    let mapped_ptr = unsafe {
-        libc::mmap(null_mut(), mapped_len, mmap_prot, mmap_flags, fd, 0)
-    };
-
-    if mapped_ptr == libc::MAP_FAILED {
-        unsafe { libc::close(fd) };
-        return -1;
-    }
-
-    // Apply madvise to the mapped region.
-    let madv_result = unsafe {
-        libc::madvise(mapped_ptr, mapped_len, madv_advice)
-    };
-
-    // R4-06: Do NOT unmap here — keep mmap alive in cache.
-    // fd is kept open by Arc<File> equivalent (stored in CachedMmap).
-    // MADV_FREE_REUSABLE makes pages reclaimable under pressure (not pinned).
-    // Close the fd only — the mmap stays valid until process exit or explicit drop.
-    unsafe { libc::close(fd) };
-
-    if madv_result < 0 {
-        unsafe { libc::munmap(mapped_ptr, mapped_len) };
-        return -1;
-    }
-
-    // R4-06 FIX: Store mmap in LRU cache (fd is now closed, but ptr remains valid).
-    // The mmap persists independent of fd — OS manages the mapping.
-    if let Ok(mut cache) = cache.lock() {
-        cache.put(
-            path.to_string(),
-            CachedMmap::new(file_size, mapped_ptr, mapped_len),
-        );
-    }
-
-    0
 }
 
 /// P3-2: Apply madvise to an already-mapped memory region by pointer + length.
@@ -216,13 +224,19 @@ pub fn madvise_lmdb_mmap(path: &str, advice: i32) -> i32 {
 /// 0 on success, -1 on failure
 #[pyfunction]
 pub fn madvise_on_mmap_region(addr: usize, length: usize, advice: i32) -> i32 {
-    if length == 0 {
-        return 0;
+    // FFI-01: catch_unwind guards the unsafe madvise call.
+    match ffi_safe!({
+        if length == 0 {
+            return 0i32;
+        }
+        let ptr = addr as *mut libc::c_void;
+        let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_NOCACHE };
+        let result = unsafe { libc::madvise(ptr, length, madv_advice) };
+        result
+    }) {
+        Ok(r) => r,
+        Err(_) => -1,
     }
-    let ptr = addr as *mut libc::c_void;
-    let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_NOCACHE };
-    let result = unsafe { libc::madvise(ptr, length, madv_advice) };
-    result
 }
 
 /// P3-4: Apply MADV_HUGEPAGE to a memory region.
@@ -246,24 +260,30 @@ pub fn madvise_on_mmap_region(addr: usize, length: usize, advice: i32) -> i32 {
 /// 0 on success (or THP not available), -1 on failure
 #[pyfunction]
 pub fn madvise_hugepage(addr: usize, length: usize) -> i32 {
-    if length == 0 || addr == 0 {
-        return 0; // No-op for zero-sized regions
-    }
+    // FFI-01: catch_unwind guards the unsafe madvise call.
+    match ffi_safe!({
+        if length == 0 || addr == 0 {
+            return 0i32; // No-op for zero-sized regions
+        }
 
-    // MADV_HUGEPAGE on Darwin uses the same value as MADV_FREE_REUSABLE (7).
-    // The kernel distinguishes them by the hint flag in the madvise call.
-    // On non-Darwin, this gracefully degrades.
-    #[cfg(target_os = "macos")]
-    {
-        let ptr = addr as *mut libc::c_void;
-        let result = unsafe { libc::madvise(ptr, length, MADV_HUGEPAGE) };
-        result
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = addr;
-        let _ = length;
-        0 // No-op on non-Darwin
+        // MADV_HUGEPAGE on Darwin uses the same value as MADV_FREE_REUSABLE (7).
+        // The kernel distinguishes them by the hint flag in the madvise call.
+        // On non-Darwin, this gracefully degrades.
+        #[cfg(target_os = "macos")]
+        {
+            let ptr = addr as *mut libc::c_void;
+            let result = unsafe { libc::madvise(ptr, length, MADV_HUGEPAGE) };
+            return result;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = addr;
+            let _ = length;
+            0i32 // No-op on non-Darwin
+        }
+    }) {
+        Ok(r) => r,
+        Err(_) => -1,
     }
 }
 
@@ -294,43 +314,49 @@ pub fn madvise_hugepage(addr: usize, length: usize) -> i32 {
 /// ```
 #[pyfunction]
 pub fn mmap_alloc_with_hugepage(size: usize, read_write: bool) -> (usize, usize) {
-    if size == 0 {
-        return (0, 0);
-    }
-
-    // Round up to nearest huge page boundary
-    let actual_size = (size + HUGEPAGE_SIZE - 1) & !(HUGEPAGE_SIZE - 1);
-
-    let prot = if read_write {
-        libc::PROT_READ | libc::PROT_WRITE
-    } else {
-        libc::PROT_READ
-    };
-
-    // MAP_ANONYMOUS: no file backing
-    // MAP_PRIVATE: copy-on-write
-    // On macOS: MAP_HUGETLB is not available in libc. THP is enabled via
-    // madvise(MADV_HUGEPAGE) on the mapped region after allocation.
-    let flags = libc::MAP_ANONYMOUS | libc::MAP_PRIVATE;
-
-    let mapped_ptr = unsafe {
-        libc::mmap(null_mut(), actual_size, prot, flags, -1, 0)
-    };
-
-    if mapped_ptr == libc::MAP_FAILED {
-        return (0, 0);
-    }
-
-    // Apply MADV_HUGEPAGE to promote to THP after allocation
-    // This is the correct macOS path: allocate first, then hint for THP
-    #[cfg(target_os = "macos")]
-    {
-        unsafe {
-            libc::madvise(mapped_ptr, actual_size, MADV_HUGEPAGE);
+    // FFI-01: catch_unwind guards all unsafe mmap/madvise calls.
+    match ffi_safe!({
+        if size == 0 {
+            return (0usize, 0usize);
         }
-    }
 
-    (mapped_ptr as usize, actual_size)
+        // Round up to nearest huge page boundary
+        let actual_size = (size + HUGEPAGE_SIZE - 1) & !(HUGEPAGE_SIZE - 1);
+
+        let prot = if read_write {
+            libc::PROT_READ | libc::PROT_WRITE
+        } else {
+            libc::PROT_READ
+        };
+
+        // MAP_ANONYMOUS: no file backing
+        // MAP_PRIVATE: copy-on-write
+        // On macOS: MAP_HUGETLB is not available in libc. THP is enabled via
+        // madvise(MADV_HUGEPAGE) on the mapped region after allocation.
+        let flags = libc::MAP_ANONYMOUS | libc::MAP_PRIVATE;
+
+        let mapped_ptr = unsafe {
+            libc::mmap(null_mut(), actual_size, prot, flags, -1, 0)
+        };
+
+        if mapped_ptr == libc::MAP_FAILED {
+            return (0usize, 0usize);
+        }
+
+        // Apply MADV_HUGEPAGE to promote to THP after allocation
+        // This is the correct macOS path: allocate first, then hint for THP
+        #[cfg(target_os = "macos")]
+        {
+            unsafe {
+                libc::madvise(mapped_ptr, actual_size, MADV_HUGEPAGE);
+            }
+        }
+
+        (mapped_ptr as usize, actual_size)
+    }) {
+        Ok(r) => r,
+        Err(_) => (0, 0),
+    }
 }
 
 /// Free a huge-page-allocated memory region.
@@ -343,12 +369,18 @@ pub fn mmap_alloc_with_hugepage(size: usize, read_write: bool) -> (usize, usize)
 /// true on success, false on failure
 #[pyfunction]
 pub fn mmap_free_hugepage(addr: usize, size: usize) -> bool {
-    if addr == 0 || size == 0 {
-        return false;
+    // FFI-01: catch_unwind guards the unsafe munmap call.
+    match ffi_safe!({
+        if addr == 0 || size == 0 {
+            return false;
+        }
+        let ptr = addr as *mut libc::c_void;
+        let result = unsafe { libc::munmap(ptr, size) };
+        result == 0
+    }) {
+        Ok(r) => r,
+        Err(_) => false,
     }
-    let ptr = addr as *mut libc::c_void;
-    let result = unsafe { libc::munmap(ptr, size) };
-    result == 0
 }
 
 /// P3-4: Memory-map a file with huge page hinting for the OS.
@@ -371,64 +403,72 @@ pub fn mmap_free_hugepage(addr: usize, size: usize) -> bool {
 /// Tuple of (address, size) or (0, 0) on complete failure
 #[pyfunction]
 pub fn mmap_hugepage(path: &str, read_only: bool) -> (usize, usize) {
-    let cpath = std::ffi::CString::new(path).ok().unwrap_or(std::ffi::CString::new("").unwrap());
+    // FFI-01: catch_unwind guards CString::new panic and all unsafe libc calls.
+    match ffi_safe!({
+        let cpath = std::ffi::CString::new(path)
+            .ok()
+            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
 
-    let open_flags = if read_only {
-        libc::O_RDONLY
-    } else {
-        libc::O_RDWR
-    };
+        let open_flags = if read_only {
+            libc::O_RDONLY
+        } else {
+            libc::O_RDWR
+        };
 
-    let fd = unsafe { libc::open(cpath.as_ptr(), open_flags) };
-    if fd < 0 {
-        return (0, 0);
-    }
+        let fd = unsafe { libc::open(cpath.as_ptr(), open_flags) };
+        if fd < 0 {
+            return (0usize, 0usize);
+        }
 
-    // Get file size
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    if unsafe { libc::fstat(fd, &mut st) } < 0 {
+        // Get file size
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut st) } < 0 {
+            unsafe { libc::close(fd) };
+            return (0usize, 0usize);
+        }
+        let file_size = st.st_size as usize;
+        if file_size == 0 {
+            unsafe { libc::close(fd) };
+            return (0usize, 0usize);
+        }
+
+        // Round up to huge page boundary
+        let mapped_len = (file_size + HUGEPAGE_SIZE - 1) & !(HUGEPAGE_SIZE - 1);
+
+        let prot = if read_only {
+            libc::PROT_READ
+        } else {
+            libc::PROT_READ | libc::PROT_WRITE
+        };
+
+        // MAP_PRIVATE: copy-on-write, don't modify the underlying file
+        // Note: MAP_HUGETLB is not available in macOS libc. THP backing is
+        // enabled via madvise(MADV_HUGEPAGE) after mmap succeeds.
+        let flags = libc::MAP_PRIVATE;
+
+        let mapped_ptr = unsafe {
+            libc::mmap(null_mut(), mapped_len, prot, flags, fd, 0)
+        };
+
+        if mapped_ptr == libc::MAP_FAILED {
+            unsafe { libc::close(fd) };
+            return (0usize, 0usize);
+        }
+
+        // Close fd — mmap keeps the mapping independent of fd
         unsafe { libc::close(fd) };
-        return (0, 0);
+
+        // Apply MADV_HUGEPAGE to promote to THP
+        #[cfg(target_os = "macos")]
+        {
+            unsafe { libc::madvise(mapped_ptr, mapped_len, MADV_HUGEPAGE) };
+        }
+
+        (mapped_ptr as usize, mapped_len)
+    }) {
+        Ok(r) => r,
+        Err(_) => (0, 0),
     }
-    let file_size = st.st_size as usize;
-    if file_size == 0 {
-        unsafe { libc::close(fd) };
-        return (0, 0);
-    }
-
-    // Round up to huge page boundary
-    let mapped_len = (file_size + HUGEPAGE_SIZE - 1) & !(HUGEPAGE_SIZE - 1);
-
-    let prot = if read_only {
-        libc::PROT_READ
-    } else {
-        libc::PROT_READ | libc::PROT_WRITE
-    };
-
-    // MAP_PRIVATE: copy-on-write, don't modify the underlying file
-    // Note: MAP_HUGETLB is not available in macOS libc. THP backing is
-    // enabled via madvise(MADV_HUGEPAGE) after mmap succeeds.
-    let flags = libc::MAP_PRIVATE;
-
-    let mapped_ptr = unsafe {
-        libc::mmap(null_mut(), mapped_len, prot, flags, fd, 0)
-    };
-
-    if mapped_ptr == libc::MAP_FAILED {
-        unsafe { libc::close(fd) };
-        return (0, 0);
-    }
-
-    // Close fd — mmap keeps the mapping independent of fd
-    unsafe { libc::close(fd) };
-
-    // Apply MADV_HUGEPAGE to promote to THP
-    #[cfg(target_os = "macos")]
-    {
-        unsafe { libc::madvise(mapped_ptr, mapped_len, MADV_HUGEPAGE) };
-    }
-
-    (mapped_ptr as usize, mapped_len)
 }
 
 /// Unmap a huge-page memory-mapped region.
@@ -441,12 +481,18 @@ pub fn mmap_hugepage(path: &str, read_only: bool) -> (usize, usize) {
 /// true on success, false on failure
 #[pyfunction]
 pub fn munmap_hugepage(addr: usize, size: usize) -> bool {
-    if addr == 0 || size == 0 {
-        return false;
+    // FFI-01: catch_unwind guards the unsafe munmap call.
+    match ffi_safe!({
+        if addr == 0 || size == 0 {
+            return false;
+        }
+        let ptr = addr as *mut libc::c_void;
+        let result = unsafe { libc::munmap(ptr, size) };
+        result == 0
+    }) {
+        Ok(r) => r,
+        Err(_) => false,
     }
-    let ptr = addr as *mut libc::c_void;
-    let result = unsafe { libc::munmap(ptr, size) };
-    result == 0
 }
 
 /// ISSUE-16: madvise(MADV_FREE_REUSABLE) on an arbitrary memory region.
@@ -467,12 +513,18 @@ pub fn munmap_hugepage(addr: usize, size: usize) -> bool {
 /// 0 on success, -1 on failure
 #[pyfunction]
 pub fn madvise_free_reusable(addr: usize, length: usize, advice: i32) -> i32 {
-    if length == 0 || addr == 0 {
-        return 0;
+    // FFI-01: catch_unwind guards the unsafe madvise call.
+    match ffi_safe!({
+        if length == 0 || addr == 0 {
+            return 0i32;
+        }
+        let ptr = addr as *mut libc::c_void;
+        let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_DONTNEED };
+        unsafe { libc::madvise(ptr, length, madv_advice) }
+    }) {
+        Ok(r) => r,
+        Err(_) => -1,
     }
-    let ptr = addr as *mut libc::c_void;
-    let madv_advice = if advice == 0 { MADV_FREE_REUSABLE } else { MADV_DONTNEED };
-    unsafe { libc::madvise(ptr, length, madv_advice) }
 }
 
 /// Get system huge page size in bytes.

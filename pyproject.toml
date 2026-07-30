@@ -799,6 +799,17 @@ allowed-unresolved-imports = [
 testpaths = ["tests"]
 pythonpath = [".", "tests"]
 
+# TEST-01: Global timeout enforcement — prevents CI pipeline hangs on:
+#   - Network timeouts (DNS, HTTP, external services)
+#   - Deadlocks (import cycles, lock contention)
+#   - Infinite loops (malformed test data, broken mocks)
+#   - Resource exhaustion (memory/CPU thrashing)
+# Default: 300s per test. Override per-test with @pytest.mark.timeout(N).
+# timeout_method="thread": uses threading.Timer (works with asyncio tests).
+# NOTE: --timeout=30 in addopts below is CLI override; this is the canonical default.
+timeout = 300
+timeout_method = "thread"
+
 python_files = [
     "test_*.py",
     "*_test.py",

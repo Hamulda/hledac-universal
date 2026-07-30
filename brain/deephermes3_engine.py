@@ -965,20 +965,80 @@ class DeepHermes3Engine:
         loop = asyncio.get_running_loop()
         system = system_msg or 'You are a helpful assistant.'
 
-        def _sync_prep() -> str:
-            # Issue #14: sanitize before formatting (full prep pipeline)
-            raw_sanitized = self._sanitize_for_llm(prompt) if self._sanitize_for_llm else prompt
-            sanitized = raw_sanitized[:MAX_LLM_PROMPT_CHARS]
-            return self._format_chatml(system_msg=system, user_msg=sanitized)
+        def _sync_prep() -> tuple[str, str]:
+            """Stage 1: CPU prep — returns (formatted_prompt, raw_sanitized).
 
-        formatted_prompt = await loop.run_in_executor(self._prep_executor, _sync_prep)
+            raw_sanitized is returned so LLM-03 can re-truncate and re-sanitize
+            if the formatted prompt still exceeds context window after formatting.
+            """
+            # Stage 1a: Apply custom sanitize callback if provided
+            raw_sanitized = self._sanitize_for_llm(prompt) if self._sanitize_for_llm else prompt
+
+            # LLM-01: ALWAYS validate via prompt injection validator (fail-safe, always-on)
+            # No conditional — web content must NEVER reach LLM without sanitization
+            try:
+                validation_result = sanitize_prompt_injection_patterns(raw_sanitized)
+                if validation_result.suspicious:
+                    _high_risk = any(p in validation_result.patterns for p in (
+                        'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
+                        'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
+                        'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
+                        'structural_repeated_delimiters', 'structural_html_comment',
+                    ))
+                    if _high_risk:
+                        # Block high-risk injection: do NOT let it through even sanitized
+                        logger.warning(
+                            f'[LLM-01-BLOCK] High-risk prompt injection in structured output: {validation_result.patterns}')
+                        raise RuntimeError(
+                            f'[LLM-01] Structured prompt injection REJECTED: {validation_result.patterns[:3]}')
+                    logger.warning(
+                        "[PROMPT-INJECTION] Detected patterns in structured prompt: %s. Reason: %s",
+                        validation_result.patterns,
+                        validation_result.reason,
+                    )
+                    sanitized = validation_result.safe_text
+                else:
+                    sanitized = validation_result.safe_text
+            except RuntimeError:
+                raise
+            except Exception:
+                # LLM-01 fail-safe: reject on any internal error
+                logger.error('[LLM-01] Structured prompt injection validation failed internally')
+                raise RuntimeError('[LLM-01] Structured prompt injection validation internal error')
+
+            sanitized = sanitized[:MAX_LLM_PROMPT_CHARS]
+            formatted = self._format_chatml(system_msg=system, user_msg=sanitized)
+            return formatted, raw_sanitized
+
+        formatted_prompt, raw_sanitized = await loop.run_in_executor(self._prep_executor, _sync_prep)
 
         # Stage 2: GPU exec — serial (MLX single command queue)
         # M-03: Tokenize once — avoids double encode in _build_generate_kwargs
+        # LLM-03: Hard token limit check AFTER formatting (accounts for ChatML overhead)
+        # LLM-02 protection (estimate inside _sync_prep) may fire first; this is the
+        # definitive guard using actual token count with 50-token safety margin.
         try:
             batch_prompt_tokens = self._tokenizer.encode(formatted_prompt)
         except Exception:
             batch_prompt_tokens = None
+
+        if batch_prompt_tokens is not None:
+            _prompt_len = len(batch_prompt_tokens)
+            _max_total = self.config.context_window - max_tokens - 50  # 50-token safety margin
+            if _prompt_len > _max_total:
+                # Truncate and re-apply sanitization pipeline
+                _max_prompt_tokens = max(1, _max_total)
+                _max_prompt_chars = int(_max_prompt_tokens * 3.5)  # ~1 token ≈ 3.5 chars (English)
+                _truncated_user = raw_sanitized[:_max_prompt_chars]
+                # Re-sanitize to maintain LLM-01 protection on truncated input
+                _truncated_sanitized = _truncated_user[:MAX_LLM_PROMPT_CHARS]
+                formatted_prompt = self._format_chatml(system_msg=system, user_msg=_truncated_sanitized)
+                batch_prompt_tokens = self._tokenizer.encode(formatted_prompt)
+                logger.warning(
+                    '[LLM-02] TOKEN-OVERFLOW truncated %d→%d tokens to fit window=%d (max_tokens=%d)',
+                    _prompt_len, len(batch_prompt_tokens), self.config.context_window, max_tokens
+                )
+
         timeout_s = _get_hermes_timeout_s()
         # M-01: _run_inference returns (response, kv_cache_after); discard cache here
         raw_text, _ = await self._submit_inference(
@@ -2639,17 +2699,43 @@ class DeepHermes3Engine:
                     self._telemetry_counters['uma_state'] = decision.uma_state
 
         # ---- Prompt injection detection ----
-        if sanitize_prompt_injection_patterns is not None:
+        # LLM-01: ALWAYS sanitize via prompt injection validator (fail-safe, always-on)
+        # No conditional — web content must NEVER reach LLM without sanitization
+        try:
             validation_result = sanitize_prompt_injection_patterns(prompt)
             if validation_result.suspicious:
-                logger.debug(f'[P1G-A] prompt_injection_guard: suspicious=True, '
-                           f'patterns={len(validation_result.patterns)}, reason={validation_result.reason}')
-            prompt = validation_result.safe_text
+                _high_risk = any(p in validation_result.patterns for p in (
+                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
+                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
+                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
+                    'structural_repeated_delimiters', 'structural_html_comment',
+                ))
+                if _high_risk:
+                    # Block high-risk injection: do NOT let it through even sanitized
+                    logger.warning(
+                        f'[LLM-01-BLOCK] High-risk prompt injection detected: {validation_result.patterns}. '
+                        f'Rejecting prompt (reason={validation_result.reason})')
+                    raise RuntimeError(
+                        f'[LLM-01] Prompt injection REJECTED: {validation_result.patterns[:3]}')
+                logger.warning(
+                    f'[P1G-A] prompt_injection_guard: suspicious=True, '
+                    f'patterns={validation_result.patterns}, reason={validation_result.reason}')
+                prompt = validation_result.safe_text
+            else:
+                prompt = validation_result.safe_text
+        except RuntimeError:
+            raise
+        except Exception:
+            # Fallback: reject on any internal error (fail-safe for LLM-01)
+            logger.error('[LLM-01] Prompt injection validation failed with internal error — rejecting prompt')
+            raise RuntimeError('[LLM-01] Prompt injection validation internal error')
 
+        # GAP-5: Secondary detection layer
         is_injection, patterns = _detect_prompt_injection(prompt if isinstance(prompt, str) else str(prompt))
         if is_injection:
             logger.warning(
-                f'GAP-5: Prompt injection patterns detected: {patterns[:3]} — proceeding with sanitized input (fail-soft)')
+                f'GAP-5: Prompt injection patterns detected: {patterns[:3]} — rejecting prompt (LLM-01 fail-safe)')
+            raise RuntimeError(f'[GAP-5] Prompt injection REJECTED: {patterns[:3]}')
 
         # ---- Bandit arm selection ----
         loop = asyncio.get_running_loop()
@@ -2697,6 +2783,30 @@ class DeepHermes3Engine:
             gen_prompt_tokens = self._tokenizer.encode(formatted_prompt)
         except Exception:
             gen_prompt_tokens = None
+
+        # LLM-02/03: Hard token limit check AFTER formatting (accounts for ChatML overhead)
+        # This is the definitive guard using actual token count with 50-token safety margin.
+        if gen_prompt_tokens is not None:
+            _prompt_len = len(gen_prompt_tokens)
+            _max_total = self.config.context_window - max_tok - 50  # 50-token safety margin
+            if _prompt_len > _max_total:
+                # LLM-02: Truncate and re-apply sanitization pipeline
+                _max_prompt_tokens = max(1, _max_total)
+                _max_prompt_chars = int(_max_prompt_tokens * 3.5)  # ~1 token ≈ 3.5 chars (English)
+                _truncated_user = sanitized_for_prep[:_max_prompt_chars]
+                # Re-sanitize to maintain LLM-01 protection on truncated input
+                _truncated_sanitized = _truncated_user[:MAX_LLM_PROMPT_CHARS]
+                formatted_prompt = self._format_chatml(system_msg=system_for_prep, user_msg=_truncated_sanitized)
+                try:
+                    gen_prompt_tokens = self._tokenizer.encode(formatted_prompt)
+                except Exception:
+                    gen_prompt_tokens = None
+                if gen_prompt_tokens is not None:
+                    logger.warning(
+                        '[LLM-02] TOKEN-OVERFLOW truncated %d→%d tokens to fit window=%d (max_tokens=%d)',
+                        _prompt_len, len(gen_prompt_tokens), self.config.context_window, max_tok
+                    )
+                    self._telemetry_counters['context_truncated'] = self._telemetry_counters.get('context_truncated', 0) + 1
 
         # ---- Inference ----
         response, populated_kv = await self._submit_inference(

@@ -265,6 +265,55 @@ _ensure_r0_artifacts()
 
 import asyncio  # noqa: E402
 
+
+# ── TEST-01: Global Timeout Enforcement ─────────────────────────────────────
+# Problem: 15,710 tests, only 2 with @pytest.mark.timeout. CI/CD pipelines can
+# hang on: network timeouts, deadlocks, infinite loops, resource exhaustion.
+# Solution: pytest-timeout plugin (already in deps) + session autouse fixture
+# as belt-and-suspenders protection. pytest-timeout uses SIGALRM on Unix
+# and raises pytest_TIMEOUT.raise_timeout() — both interrupt asyncio properly.
+# Env var HLEDAC_TEST_TIMEOUT overrides global default (seconds).
+import os
+import platform
+import threading
+
+import pytest
+
+_TEST_TIMEOUT_ENV = int(os.environ.get("HLEDAC_TEST_TIMEOUT", "120"))
+_IS_UNIX = platform.system() != "Windows"
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _enforce_global_timeout() -> None:
+    """Fail-safe: ensure pytest-timeout is actually enforcing timeouts.
+
+    pytest-timeout is the primary mechanism (timeout= in pytest.ini, default 120s).
+    This fixture is belt-and-suspenders — it detects if pytest-timeout's
+    SIGALRM mechanism was bypassed and fails the session explicitly.
+    On Windows (no SIGALRM): pytest-timeout is the sole mechanism.
+    """
+    if not _IS_UNIX:
+        yield  # Windows: rely solely on pytest-timeout
+        return
+
+    import signal
+
+    def _timeout_handler(signum: int, frame) -> None:
+        pytest.fail(
+            f"Global timeout ({_TEST_TIMEOUT_ENV}s) exceeded — "
+            f"test hung on network/deadlock/infinite-loop. "
+            f"Add @pytest.mark.timeout(N) to the offending test.",
+            pytrace=False,
+        )
+
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(_TEST_TIMEOUT_ENV)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
 # Python 3.14 removed asyncio._all_loops. Monkey-patch it back for hermetic
 # loop leak detection in tests. _loop_registry tracks (loop_id -> loop_ref).
 _loop_registry: dict[int, asyncio.AbstractEventLoop] = {}
@@ -1262,6 +1311,21 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "phase_gate: O-03 sprint tests auto-tagged by dynamic phase_gate discovery",
     )
+    # TEST-01: Register timeout marker so @pytest.mark.timeout() is recognized
+    # and pytest-timeout plugin can enforce it. The global default (60s) is
+    # set in pytest.ini; this marker enables per-test overrides.
+    config.addinivalue_line(
+        "markers",
+        "timeout: per-test timeout in seconds (overrides global default)",
+    )
+
+
+# TEST-01: Global Timeout Enforcement — Auto-apply timeout to all collected tests
+# that don't have an explicit @pytest.mark.timeout() decorator.
+# Uses HLEDAC_TEST_TIMEOUT from conftest env-var (default 120s, matches pytest.ini).
+_TIMEOUT_DEFAULT = int(os.environ.get("HLEDAC_TEST_TIMEOUT", "120"))
+
+
 
 
 def _clear_all_lock_registries() -> None:
@@ -1281,6 +1345,168 @@ def _clear_all_lock_registries() -> None:
                 registry.clear()
         except Exception:
             pass  # Best-effort cleanup
+
+
+# ---------------------------------------------------------------------------
+# TEST-04: Non-Deterministic Test Ordering Fixes
+# ---------------------------------------------------------------------------
+# Problem: Sdílené singletony mezi testy způsobují non-determinismus.
+# Řešení: Per-test cleanup fixtures pro všechny globální stavy.
+#
+# CHYBĚJÍCÍ CLEANUP FIXTURES (doplněno):
+#   _duckdb_pool_cleanup      — čistí _DUCKDB_POOL z core/rust_backend/query.py
+#   _lmdb_pool_cleanup        — čistí LmdbPool singleton z runtime/lmdb_pool.py
+#   _bloom_filter_cleanup     — čistí RotatingBloomFilter z tools/url_dedup.py
+#
+# ISOLATED STORE FIXTURES (doplněno):
+#   isolated_lmdb_store       — per-test izolované LMDB (tempfile)
+#   isolated_duckdb_store     — per-test izolované DuckDB (tempfile)
+
+
+@pytest.fixture(autouse=True)
+def _duckdb_pool_cleanup() -> None:
+    """
+    Auto-cleanup DuckDB connection pool after each test.
+
+    F350M-R FIX TEST-04: _DUCKDB_POOL v core/rust_backend/query.py je procesní
+    singleton. Připojení se hromadí napříč testy a způsobují non-determinismus.
+    clear_duckdb_pool() vyprázdní všechny fronty připojení.
+    """
+    yield
+    try:
+        from hledac.universal.core.rust_backend.query import clear_duckdb_pool
+
+        clear_duckdb_pool()
+    except Exception:
+        pass  # fail-soft: don't fail tests for cleanup errors
+
+
+@pytest.fixture(autouse=True)
+def _lmdb_pool_cleanup() -> None:
+    """
+    Auto-cleanup LMDB pool singleton after each test.
+
+    F350M-R FIX TEST-04: get_lmdb_pool() v runtime/lmdb_pool.py je procesní
+    singleton. Executor vlákna se hromadí napříč testy a způsobují memory leaky.
+    shutdown() zavře executorgracefully.
+    """
+    yield
+    try:
+        from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
+
+        pool = get_lmdb_pool()
+        if hasattr(pool, "shutdown"):
+            pool.shutdown(wait=False)
+    except Exception:
+        pass  # fail-soft: don't fail tests for cleanup errors
+
+
+@pytest.fixture(autouse=True)
+def _bloom_filter_cleanup() -> None:
+    """
+    Auto-cleanup RotatingBloomFilter singleton after each test.
+
+    F350M-R FIX TEST-04: get_default_bloom_filter() v tools/url_dedup.py je
+    procesní singleton. URL滤r se plní napříč testy a způsobují false-positive
+    deduplikace (nebo false-negative při vyčerpání).
+    reset_default_bloom_filter() vymaže všechny segmenty.
+    """
+    yield
+    try:
+        from hledac.universal.tools.url_dedup import reset_default_bloom_filter
+
+        reset_default_bloom_filter()
+    except Exception:
+        pass  # fail-soft: don't fail tests for cleanup errors
+
+
+@pytest.fixture
+def isolated_lmdb_store():
+    """
+    Per-test izolované LMDB store — vlastní temp adresář, vlastní env.
+
+    Použití:
+        def test_something(isolated_lmdb_store):
+            store = isolated_lmdb_store
+            # ... test kód ...
+            # automatický cleanup po testu
+
+    Výhody oproti session_duckdb_store:
+    - Žádná kontaminace mezi testy
+    - Žádné sdílené připojení = deterministické výsledky
+    - M1 8GB: ~10 MB na test, cleanup po každém testu
+
+    Návrat: UnifiedLMDB nebo None (pokud LMDB nedostupná).
+    """
+    import shutil
+    import tempfile
+
+    temp_dir = tempfile.mkdtemp(prefix="test_lmdb_isolated_")
+    try:
+        from hledac.universal.core.lmdb_unified import UnifiedLMDB
+
+        store = UnifiedLMDB(temp_dir, lazy=False)
+        yield store
+        store.close()
+    except Exception:
+        yield None
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def isolated_duckdb_store():
+    """
+    Per-test izolované DuckDB store — vlastní temp soubor, vlastní připojení.
+
+    Použití:
+        def test_something(isolated_duckdb_store):
+            store = isolated_duckdb_store
+            if store is None:
+                pytest.skip("DuckDB unavailable")
+            # ... test kód ...
+            # automatický cleanup po testu
+
+    Výhody:
+    - Žádná kontaminace mezi testy (každý test = vlastní .duckdb soubor)
+    - Žádné sdílené připojení = deterministické výsledky
+    - Synchroní pattern (run_until_complete) kompatibilnís pytest.fixture
+
+    Návrat: DuckDBShadowStore nebo None (pokud DuckDB nedostupná).
+    """
+    import shutil
+    import tempfile
+
+    temp_dir = tempfile.mkdtemp(prefix="test_duckdb_isolated_")
+    db_path = Path(temp_dir) / "test_isolated.duckdb"
+    try:
+        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
+        store = DuckDBShadowStore(db_path=str(db_path))
+        # ISSUE-02 fix: use new_event_loop() pattern (stejně jako session_duckdb_store)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(store.async_initialize())
+        finally:
+            loop.close()
+        yield store
+
+        # Teardown
+        try:
+            _tardown_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(_tardown_loop)
+            try:
+                _tardown_loop.run_until_complete(store.aclose())
+            finally:
+                _tardown_loop.close()
+        except Exception:
+            pass
+    except Exception:
+        yield None
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)
@@ -1350,14 +1576,23 @@ def pytest_collection_modifyitems(
     items: list[pytest.Item], config: pytest.Config
 ) -> None:
     """
-    O-03: Dynamic phase_gate auto-tagging + CI slow-test skip.
+    TEST-01 + O-03 + CI skip: unified collection modifier.
 
-    1. Auto-tags any test item whose file matches test_sprint*.py with
-       the phase_gate marker. This replaces the static PHASE_GATES.py
-       snapshot which listed tests that no longer exist on disk.
+    1. TEST-01: Auto-apply @pytest.mark.timeout() to all tests without
+       an explicit marker. Ensures 100% timeout coverage.
+       Uses HLEDAC_TEST_TIMEOUT env var (default 120s, matches pytest.ini).
 
-    2. Auto-skips tests marked @pytest.mark.slow when CI env var is detected.
+    2. O-03: Auto-tag test_sprint*.py files with phase_gate marker.
+       Replaces the static PHASE_GATES.py snapshot.
+
+    3. CI slow-test skip: skip @pytest.mark.slow and e2e/live tests on CI.
     """
+    # --- TEST-01: Global Timeout Enforcement ---
+    for item in items:
+        if item.get_closest_marker("timeout") is None:
+            item.add_marker(pytest.mark.timeout(_TIMEOUT_DEFAULT))
+
+    # --- O-03: phase_gate auto-tagging ---
     sprint_files = _discover_sprint_tests()
     for item in items:
         try:

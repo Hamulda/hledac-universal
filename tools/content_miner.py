@@ -144,6 +144,9 @@ class RustMiner:
         try:
             if not html_content or not isinstance(html_content, str):
                 return MiningResult(content='', url=url, success=False, error='Invalid HTML content')
+            # OSINT-03: Bound input size before parsing to prevent OOM on M1 8GB.
+            if len(html_content) > self._MAX_HTML_INPUT_SIZE:
+                html_content = html_content[:self._MAX_HTML_INPUT_SIZE]
             logger.info('[MINER] Extraction started...')
             if self.prefer_rust and self._trafilex_available:
                 return self._mine_with_trafilex(html_content, url, include_metadata)
@@ -317,10 +320,17 @@ class RustMiner:
             score -= 0.2
         return max(0.0, min(1.0, score))
 
+    # OSINT-03: Maximum HTML input size (5 MB) for selectolax parsing.
+    # Prevents OOM on M1 8GB by bounding DOM node allocation.
+    _MAX_HTML_INPUT_SIZE: int = 5 * 1024 * 1024
+
     def _extract_links_selectolax(self, html: str, base_url: str, max_links: int=50) -> list[dict[str, Any]]:
         """Extract links using selectolax (fast, safe CSS selectors)."""
         if not SELECTOLAX_AVAILABLE:
             return []
+        # OSINT-03: Bound input size before parsing to prevent OOM on M1 8GB.
+        if len(html) > self._MAX_HTML_INPUT_SIZE:
+            html = html[:self._MAX_HTML_INPUT_SIZE]
         try:
             parser = HTMLParser(html)
             links = []
@@ -391,6 +401,9 @@ class RustMiner:
         try:
             if not html_content:
                 return []
+            # OSINT-03: Bound input size before lxml fallback parsing.
+            if len(html_content) > self._MAX_HTML_INPUT_SIZE:
+                html_content = html_content[:self._MAX_HTML_INPUT_SIZE]
             links = self._extract_links_selectolax(html_content, base_url, max_links)
             if links:
                 return links

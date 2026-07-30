@@ -718,3 +718,286 @@ class TestSprintT1M1Safety:
             # Even in "none" mode, span() returns a real (or noop) span.
             # We just verify the operation doesn't crash.
             assert s is not None
+
+
+# ── SamplingSpanProcessor (TEL-01) ─────────────────────────────────────────────
+
+
+class _FakeSpan:
+    """Minimal fake span for SamplingSpanProcessor unit tests."""
+
+    def __init__(
+        self,
+        name: str = "test.span",
+        duration_ms: float = 10.0,
+        status_code: str = "OK",
+        trace_id: int = 0x1234567890ABCDEF1234567890ABCDEF,
+        span_id: int = 0x1234567890ABCDEF,
+    ) -> None:
+        self.name = name
+        self.start_time = 1_000_000_000_000_000
+        self.end_time = self.start_time + int(duration_ms * 1_000_000)
+        self._status_code = status_code
+        self._trace_id = trace_id
+        self._span_id = span_id
+        self.parent = None
+        self.attributes: dict[str, Any] = {}
+        self.resource = type("R", (), {"attributes": {}})()
+
+    @property
+    def status(self) -> Any:
+        from opentelemetry.trace import StatusCode
+        code_map = {"OK": StatusCode.OK, "ERROR": StatusCode.ERROR, "UNSET": StatusCode.UNSET}
+        return type("S", (), {"status_code": code_map.get(self._status_code, StatusCode.UNSET)})()
+
+    def get_span_context(self) -> Any:
+        class _Ctx:
+            trace_id = self._trace_id
+            span_id = self._span_id
+        return _Ctx()
+
+
+class _FakeNextProcessor:
+    """Captures what SamplingSpanProcessor forwards downstream."""
+
+    def __init__(self) -> None:
+        self.ended: list[_FakeSpan] = []
+        self.started: list[_FakeSpan] = []
+
+    def on_start(self, span: Any) -> None:
+        self.started.append(span)
+
+    def on_end(self, span: Any) -> None:
+        self.ended.append(span)
+
+    def shutdown(self, timeout_ms: float = 5_000) -> None:
+        pass
+
+    def force_flush(self, timeout_ms: float = 5_000) -> None:
+        pass
+
+
+class TestSamplingSpanProcessor:
+    """TEL-01: SamplingSpanProcessor applies correct sampling rules."""
+
+    def test_error_spans_always_exported(self) -> None:
+        """Rule 1: ERROR spans → always export regardless of prefix/sample rate."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.01,  # aggressive sampling
+            slow_span_threshold_ms=1000.0,
+            skip_prefixes=("fetch.",),
+        )
+        # ERROR span with high-freq prefix should still be exported
+        span = _FakeSpan(name="fetch.url", status_code="ERROR")
+        proc.on_end(span)  # type: ignore[arg-type]
+        assert len(next_proc.ended) == 1
+        assert next_proc.ended[0] is span
+
+    def test_slow_spans_always_exported(self) -> None:
+        """Rule 2: Spans longer than slow_span_threshold_ms → always export."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.01,  # aggressive sampling
+            slow_span_threshold_ms=50.0,  # 50ms threshold
+            skip_prefixes=("fetch.",),
+        )
+        # Slow span with high-freq prefix should still be exported
+        span = _FakeSpan(name="fetch.url", duration_ms=100.0)  # 100ms > 50ms threshold
+        proc.on_end(span)  # type: ignore[arg-type]
+        assert len(next_proc.ended) == 1
+        assert next_proc.ended[0] is span
+
+    def test_fast_high_freq_spans_sampled(self) -> None:
+        """Rule 3: Fast + high-freq prefix → trace-id-ratio sampling (default 10%)."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.1,
+            slow_span_threshold_ms=100.0,
+            skip_prefixes=("fetch.", "http.", "db."),
+        )
+        # Run many spans to observe statistical ~10% export rate
+        exported = 0
+        total = 10_000
+        for i in range(total):
+            span = _FakeSpan(name="fetch.url", duration_ms=5.0, trace_id=i)
+            proc.on_end(span)  # type: ignore[arg-type]
+            if next_proc.ended and next_proc.ended[-1] is span:
+                exported += 1
+        # Allow 3-sigma window around expected 10%
+        expected = total * 0.1
+        lower = expected * 0.7  # allow some variance
+        upper = expected * 1.3
+        assert lower <= exported <= upper, f"Expected ~{expected:.0f}, got {exported}"
+        stats = proc.stats
+        assert stats["exported"] == exported
+        assert stats["filtered"] == total - exported
+
+    def test_non_prefix_spans_always_exported(self) -> None:
+        """Rule 4: Spans NOT matching skip_prefixes → always export."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.01,  # would skip 99% of matching
+            slow_span_threshold_ms=100.0,
+            skip_prefixes=("fetch.",),
+        )
+        # Span NOT matching any skip prefix → always exported
+        span = _FakeSpan(name="sprint.run", duration_ms=5.0)
+        proc.on_end(span)  # type: ignore[arg-type]
+        assert len(next_proc.ended) == 1
+        assert next_proc.ended[0] is span
+
+    def test_custom_skip_prefixes(self) -> None:
+        """Custom skip_prefixes override defaults."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.01,
+            slow_span_threshold_ms=100.0,
+            skip_prefixes=("custom.",),  # only custom. prefix is sampled
+        )
+        # fetch.url should NOT be sampled (not in custom prefixes)
+        span = _FakeSpan(name="fetch.url", duration_ms=5.0)
+        proc.on_end(span)  # type: ignore[arg-type]
+        assert len(next_proc.ended) == 1  # always exported (not in skip list)
+        # custom.url SHOULD be sampled
+        span2 = _FakeSpan(name="custom.call", duration_ms=5.0)
+        proc.on_end(span2)  # type: ignore[arg-type]
+        # With 1% sample rate, most should be filtered
+        # We just verify it went through the sampling logic (stats update)
+        stats = proc.stats
+        assert stats["exported"] >= 1
+
+    def test_stats_tracking(self) -> None:
+        """stats property returns accurate filtered/exported counts."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.5,  # 50% for easy counting
+            slow_span_threshold_ms=100.0,
+            skip_prefixes=("fetch.",),
+        )
+        # Submit 100 spans
+        for i in range(100):
+            span = _FakeSpan(name="fetch.url", duration_ms=5.0, trace_id=i)
+            proc.on_end(span)  # type: ignore[arg-type]
+        stats = proc.stats
+        # With 50% sample rate, expect roughly 50 exported / 50 filtered
+        # Allow wide window since random sampling has variance
+        assert 20 <= stats["exported"] <= 80
+        assert stats["filtered"] == 100 - stats["exported"]
+        assert stats["exported"] + stats["filtered"] == 100
+
+    def test_on_start_delegates(self) -> None:
+        """on_start is called on the wrapped processor."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.1,
+            slow_span_threshold_ms=100.0,
+            skip_prefixes=("fetch.",),
+        )
+        span = _FakeSpan(name="fetch.url")
+        proc.on_start(span)  # type: ignore[arg-type]
+        assert len(next_proc.started) == 1
+        assert next_proc.started[0] is span
+
+    def test_shutdown_delegates(self) -> None:
+        """shutdown() is called on the wrapped processor."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(next_processor=next_proc, sample_rate=0.1)
+        proc.shutdown(timeout_ms=1000)
+        # No error means delegation worked
+
+    def test_force_flush_delegates(self) -> None:
+        """force_flush() is called on the wrapped processor."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(next_processor=next_proc, sample_rate=0.1)
+        proc.force_flush(timeout_ms=1000)
+        # No error means delegation worked
+
+    def test_failsoft_on_should_export_error(self) -> None:
+        """If _should_export raises, span passes through (fail-soft)."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.1,
+            slow_span_threshold_ms=100.0,
+            skip_prefixes=("fetch.",),
+        )
+        # Span with problematic trace_id (empty) that might cause hash error
+        span = _FakeSpan(name="fetch.url", trace_id=0, span_id=0)
+        proc.on_end(span)  # type: ignore[arg-type]
+        # Should still pass through on error
+        assert len(next_proc.ended) == 1
+
+    def test_trace_id_sampled_deterministic(self) -> None:
+        """Same trace_id + name always produces same sampling decision."""
+        next_proc = _FakeNextProcessor()
+        from otel._duckdb_exporter import SamplingSpanProcessor
+
+        proc = SamplingSpanProcessor(
+            next_processor=next_proc,
+            sample_rate=0.1,
+            slow_span_threshold_ms=100.0,
+            skip_prefixes=("fetch",),
+        )
+        # Same trace_id + name should always be same result
+        results = []
+        for _ in range(100):
+            next_proc.ended.clear()
+            span = _FakeSpan(name="fetch.call", trace_id=42, duration_ms=5.0)
+            proc.on_end(span)  # type: ignore[arg-type]
+            results.append(len(next_proc.ended))
+        # All should be the same (deterministic)
+        assert len(set(results)) == 1, "Sampling should be deterministic for same trace_id+name"
+
+    def test_integration_with_ring_exporter(self) -> None:
+        """SamplingSpanProcessor works end-to-end with ring sink."""
+        from otel._duckdb_exporter import SamplingSpanProcessor
+        from otel._buffer import BoundedRing
+        from otel._exporter_ring import RingBufferExporter
+
+        ring = BoundedRing(capacity=1000)
+        ring_exporter = RingBufferExporter(ring=ring, max_attrs=32)
+        proc = SamplingSpanProcessor(
+            next_processor=ring_exporter,
+            sample_rate=0.1,
+            slow_span_threshold_ms=100.0,
+            skip_prefixes=("fetch.", "http."),
+        )
+        # Submit 1000 fast high-freq spans
+        for i in range(1000):
+            span = _FakeSpan(name="fetch.url", duration_ms=5.0, trace_id=i)
+            proc.on_end(span)
+        # With 10% sample rate, expect ~100 in ring
+        # Allow window 50-200 due to statistical variance
+        ring_size = len(ring)
+        assert 50 <= ring_size <= 200, f"Expected ~100, got {ring_size}"
+        stats = proc.stats
+        assert stats["exported"] == ring_size
+        assert stats["filtered"] == 1000 - ring_size

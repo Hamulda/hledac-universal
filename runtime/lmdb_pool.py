@@ -24,7 +24,12 @@ INVARIANTS (Python 3.14+):
   1. Always-on: no feature flags, lazy-initialized
   2. Bounded: 2 workers max, semaphore-controlled
   3. Fail-safe: returns None on error, never raises
+     RES-01: lmdb.MapFullError returns LMDB_MAP_FULL sentinel (not None),
+     enabling callers to distinguish map_size exhaustion from generic errors.
+     Callers MUST check: ``if result is LMDB_MAP_FULL: trigger_recovery()``
   4. Clean shutdown: atexit.register ensures cleanup on process exit
+  5. RES-01 telemetry: map_full events are logged at WARNING and increment
+     a module-level counter (``_map_full_count``) for operator visibility.
 
 USAGE:
   from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
@@ -36,6 +41,7 @@ USAGE:
 from __future__ import annotations
 
 import atexit
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -45,6 +51,18 @@ import asyncio
 from hledac.universal.utils.async_helpers import safe_wait_for
 from hledac.universal.runtime._shared.lmdb_pool_helpers import _LMDB_WORKERS
 
+import lmdb  # required project dependency — no lazy import needed here
+
+logger = logging.getLogger(__name__)
+
+# Sentinel value returned by run_lmdb when lmdb.MapFullError is raised.
+# Distinguishes MAP_FULL from generic errors (None).
+# Callers can check: `if result is LMDB_MAP_FULL: ...`
+LMDB_MAP_FULL: Any = object()
+
+# RES-01: Telemetry counter for MAP_FULL events — operator visibility
+_map_full_count: int = 0
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -53,6 +71,8 @@ __all__ = [
     "run_lmdb",
     "run_lmdb_sync",
     "_LMDB_WORKERS",
+    "LMDB_MAP_FULL",
+    "_map_full_count",
 ]
 
 T = TypeVar("T")
@@ -212,7 +232,23 @@ class LmdbPool:
                 return await loop.run_in_executor(
                     self._executor, lambda: fn(*args, **kwargs)
                 )
-            except Exception:
+            except lmdb.MapFullError:
+                # RES-01: map_size exhausted. Do NOT return None (generic error).
+                # Return LMDB_MAP_FULL sentinel so caller can distinguish this
+                # specific condition and decide to retry with a larger map_size.
+                global _map_full_count
+                _map_full_count += 1
+                logger.warning(
+                    "[LMDB_MAP_FULL] map_size exhausted in %s ( cumulative=%d ) — "
+                    "consider increasing GHOST_LMDB_MAX_SIZE_MB or triggering compaction. "
+                    "Error: %s",
+                    fn.__name__ if hasattr(fn, "__name__") else str(fn),
+                    _map_full_count,
+                    "MDB_MAP_FULL",
+                )
+                return LMDB_MAP_FULL
+            except Exception as e:
+                logger.debug("[LMDB_POOL] Operation failed in %s: %s", fn.__name__ if hasattr(fn, "__name__") else str(fn), e)
                 return None
 
     def run_lmdb_sync[T](
@@ -232,6 +268,18 @@ class LmdbPool:
         self._ensure_initialized()
         try:
             return fn(*args, **kwargs)
+        except lmdb.MapFullError:
+            global _map_full_count
+            _map_full_count += 1
+            logger.warning(
+                "[LMDB_MAP_FULL] map_size exhausted in %s (sync, cumulative=%d) — "
+                "consider increasing GHOST_LMDB_MAX_SIZE_MB. "
+                "Error: %s",
+                fn.__name__ if hasattr(fn, "__name__") else str(fn),
+                _map_full_count,
+                "MDB_MAP_FULL",
+            )
+            return LMDB_MAP_FULL
         except Exception:
             return None
 

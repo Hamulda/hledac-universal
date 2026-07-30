@@ -41,6 +41,8 @@ pub mod graph_traverse;
 #[cfg(feature = "graph")]
 pub mod graph_centrality;
 #[cfg(feature = "graph")]
+pub mod graph_analytics; // GRAPH-01: petgraph-based PageRank + Louvain + SCC
+#[cfg(feature = "graph")]
 pub mod hot_edges_rs;
 pub mod html_parse;
 pub mod int_counter_layout;
@@ -131,6 +133,7 @@ pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB saf
 #[cfg(feature = "data")]
 pub mod async_query; // R26: Async DuckDB queries via Rust executor
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
+pub mod onion_validation; // GRAPH-03: .onion v3 address validation (Ed25519 checksum)
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -1047,6 +1050,14 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "graph")]
     graph_centrality::register_functions(m)?;
 
+    // GRAPH-01: petgraph-based graph analytics (PageRank, Louvain community detection, SCC).
+    // rust_pagerank: power iteration PageRank
+    // rust_louvain_communities: Louvain modularity optimization
+    // rust_scc: Kosaraju strongly connected components
+    // rust_graph_analytics_all: all three in single pass
+    #[cfg(feature = "graph")]
+    graph_analytics::register_functions(m)?;
+
     // R4.5: Distribuovaný BloomFilter s Count-Min Sketch.
     // dedup_bloom is always compiled — no feature gate needed
     m.add_class::<dedup_bloom::PyDistributedBloomFilter>()?;
@@ -1116,6 +1127,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // R24: OpenTelemetry tracing
     #[cfg(feature = "otel")]
     tracing::register(m)?;
+
+    // GRAPH-03: .onion v3 address validation — Ed25519 checksum verification
+    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3, m))?;
+    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3_detailed, m))?;
+    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_batch, m))?;
 
 Ok(())
 }

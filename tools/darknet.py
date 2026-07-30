@@ -43,7 +43,9 @@ class DarknetConnector:
         self.tor_controller = None
         self._tor_port = 9050
         self._tor_control_port = 9051
-        self._i2p_port = 4444
+        # SEC: I2P SOCKS5 proxy port is 7654 (not 4444 which is HTTP proxy).
+        # Port 4444 would cause SOCKS handshake to fail → fallback to clearnet.
+        self._i2p_port = 7654
         self._tor_client: httpx.AsyncClient | None = None
         self._i2p_client: httpx.AsyncClient | None = None
 

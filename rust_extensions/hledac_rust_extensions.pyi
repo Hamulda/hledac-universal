@@ -1066,6 +1066,29 @@ def rayon_submit(pool_type: str, n_items: int, func: Callable[..., Any], args: t
     """
     ...
 
+# TEL-02: Channel-based dispatch — preferred over rayon_submit for low-overhead dispatch.
+# trace_id/span_id: Optional u128 trace context for cross-language OTel propagation (TEL-02).
+def rayon_submit_channel(
+    pool_type: str,
+    n_items: int,
+    func: Callable[..., Any],
+    args: tuple[Any, ...],
+    trace_id: int | None,
+    span_id: int | None,
+) -> int:
+    """Submit a Python function to the rayon pool via channel dispatch (TEL-02).
+
+    pool_type: "cpu" | "io" | "mixed"
+    n_items: batch size hint for mixed pool adaptive threading
+    func: Python callable
+    args: Python tuple of arguments
+    trace_id: Optional u128 trace ID from Python OTel context (None = no tracing)
+    span_id: Optional u128 span ID from Python OTel context (None = no tracing)
+
+    Returns: opaque handle pointer (int) to pass to rayon_join_channel.
+    """
+    ...
+
 def rayon_join(handle: int, timeout: float | None = None, /) -> Any:
     """Wait for a rayon_submit task to complete and return the Python result.
 
@@ -1401,5 +1424,29 @@ def feed_branch_verdict(
 ) -> str:
     """Compute a rich dict-style verdict for feed branch economics.
     Returns JSON string for dict[str, Any] compatibility.
+    """
+    ...
+
+# GRAPH-03: .onion v3 address validation (rust_extensions/src/onion_validation.rs)
+
+def rust_validate_onion_v3(address: str) -> bool:
+    """Validate .onion v3 address. Returns True if valid, False otherwise.
+
+    GRAPH-03: Fast path — no allocation on valid addresses.
+    Validates: length, base32 encoding, version byte (0x03), Ed25519 checksum.
+    """
+    ...
+
+def rust_validate_onion_v3_detailed(address: str) -> str:
+    """Validate .onion v3 address. Returns "valid" or "invalid: <reason>".
+
+    GRAPH-03: Detailed validation result for error reporting and logging.
+    """
+    ...
+
+def rust_validate_onion_batch(addresses: list[str]) -> list[bool]:
+    """Batch validate .onion v3 addresses.
+
+    GRAPH-03: Vectorized validation — rayon parallel, bounded Vec output.
     """
     ...

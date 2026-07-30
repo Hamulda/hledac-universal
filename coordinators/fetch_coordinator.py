@@ -18,6 +18,7 @@ import os
 import secrets
 import socket
 import time
+import threading
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
@@ -104,7 +105,7 @@ def _create_dedup_strategy():
 _CP_NOT_CALLED = object()
 _CP_RETURNED_NONE = object()
 from ..tools.url_dedup import dedupe_url_list
-from ..utils.async_helpers import BoundedPerHostGate, async_getaddrinfo
+from ..utils.async_helpers import BoundedPerHostGate, DomainRateLimiter, async_getaddrinfo
 from ..utils.batch_dns import get_batch_dns_resolver
 
 # F350M-R: DNS via hickory-dns — replaces batch_dns.py triple-path duplication
@@ -363,7 +364,7 @@ class FetchCoordinator(UniversalCoordinator):
     A5-02: evidence_sink parameter enables Dependency Inversion —
     FetchCoordinator never imports EvidenceLog directly.
     """
-    __slots__ = tuple(('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_effective_ua', '_enqueue_pivot_provider', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
+    __slots__ = tuple(('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
 
     def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None, evidence_sink: Any=None):
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
@@ -462,7 +463,16 @@ class FetchCoordinator(UniversalCoordinator):
         self._aimd_semaphore: asyncio.Semaphore = asyncio.Semaphore(CONCURRENCY_CLEARNET)
         self._per_host_limit = 4
         self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=self._per_host_limit)
+        # CB-02: Per-domain rate limiter — 0.5 RPS default (1 req / 2s)
+        # Configurable via HLEDAC_RATE_LIMIT_RPS env var
+        _rate_limit_rps = float(os.environ.get("HLEDAC_RATE_LIMIT_RPS", "0.5"))
+        self._domain_rate_limiter = DomainRateLimiter(rate=_rate_limit_rps, max_hosts=512)
         self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0}
+        # CB-04: Retry budget per domain — track total retries in last 60s to prevent amplification
+        self._retry_budget: dict[str, list[float]] = {}  # domain -> list of retry timestamps
+        self._retry_budget_lock = threading.Lock()
+        self._retry_budget_max = 20  # max retries per domain per 60s window
+        self._retry_budget_window = 60.0  # sliding window in seconds
         self._cover_count: int = 0
         self.init_session_manager()
 
@@ -500,6 +510,77 @@ class FetchCoordinator(UniversalCoordinator):
         except (ImportError, AttributeError, OSError):  # noqa: BLE001 — best-effort; circuit_breaker telemetry; non-critical
             pass
 
+    def _check_transport_circuit(self, transport: str) -> tuple[bool, str, float]:
+        """CB-03: Check transport-level circuit breaker for Tor/I2P.
+
+        When transport circuit is OPEN, ALL darknet fetches using that transport
+        are skipped regardless of domain-level circuit breaker state.
+        """
+        if transport not in ("tor", "i2p"):
+            return (True, f'unknown_transport:{transport}', 0.0)
+        try:
+            from hledac.universal.transport import circuit_breaker as cb
+            breaker = cb.get_transport_breaker(transport)
+            if breaker is None:
+                return (True, f'transport_breaker_not_found:{transport}', 0.0)
+            decision = breaker.check_circuit()
+            return (decision.allowed, decision.reason, decision.retry_after_s)
+        except (ImportError, AttributeError, OSError) as e:  # noqa: BLE001 — best-effort; transport circuit breaker unavailable; fail-open is safe
+            return (True, f'transport_cb_error:{e}', 0.0)
+
+    def _record_transport_failure(self, transport: str, is_timeout: bool = False) -> None:
+        """CB-03: Record transport-level failure (Tor circuit exhausted, I2P router overload)."""
+        if transport not in ("tor", "i2p"):
+            return
+        try:
+            from hledac.universal.transport import circuit_breaker as cb
+            breaker = cb.get_transport_breaker(transport)
+            if breaker is not None:
+                breaker.record_failure(is_timeout=is_timeout)
+        except (ImportError, AttributeError, OSError):  # noqa: BLE001 — best-effort; transport circuit breaker telemetry; non-critical
+            pass
+
+    def _record_transport_success(self, transport: str) -> None:
+        """CB-03: Record transport-level success."""
+        if transport not in ("tor", "i2p"):
+            return
+        try:
+            from hledac.universal.transport import circuit_breaker as cb
+            breaker = cb.get_transport_breaker(transport)
+            if breaker is not None:
+                breaker.record_success()
+        except (ImportError, AttributeError, OSError):  # noqa: BLE001 — best-effort; transport circuit breaker telemetry; non-critical
+            pass
+
+    def _check_retry_budget(self, domain: str) -> tuple[bool, str]:
+        """CB-04: Check if domain has exceeded retry budget.
+
+        Returns (allowed, reason) where allowed=False means skip retries for this domain.
+        Uses sliding window of 60s to count retries.
+        """
+        if not domain:
+            return (True, "empty_domain")
+        now = time.monotonic()
+        with self._retry_budget_lock:
+            # Clean expired entries
+            if domain in self._retry_budget:
+                self._retry_budget[domain] = [
+                    ts for ts in self._retry_budget[domain]
+                    if now - ts < self._retry_budget_window
+                ]
+                if len(self._retry_budget[domain]) >= self._retry_budget_max:
+                    return (False, f"retry_budget_exceeded:{len(self._retry_budget[domain])}/{self._retry_budget_max}")
+            return (True, "retry_budget_ok")
+
+    def _record_retry(self, domain: str) -> None:
+        """CB-04: Record a retry attempt for domain."""
+        if not domain:
+            return
+        now = time.monotonic()
+        with self._retry_budget_lock:
+            if domain not in self._retry_budget:
+                self._retry_budget[domain] = []
+            self._retry_budget[domain].append(now)
 
     def get_captcha_stats(self) -> dict[str, Any]:
         """Sprint P3: Return CAPTCHA detection stats for RL telemetry."""
@@ -937,13 +1018,15 @@ class FetchCoordinator(UniversalCoordinator):
     # OSINT-02: max_bytes cap for darknet fetches — prevents OOM from unbounded resp.read()
     _DARKNET_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB hard cap
 
-    async def _fetch_with_tor(self, url: str, session: Any | None=None) -> dict[str, Any] | None:
+    async def _fetch_with_tor(self, url: str, session: Any | None=None, *, max_bytes: int | None=None) -> dict[str, Any] | None:
         """Fetch .onion URL using Tor connection pool.
 
         Args:
             url: The .onion URL to fetch.
             session: Pre-acquired Tor session (from _get_tor_session). If None, acquires one.
                      Pre-acquiring outside the retry loop saves ~2s per retry on SOCKS handshake.
+            max_bytes: Optional per-call cap. Defaults to _DARKNET_MAX_BYTES (10 MB).
+                       Pass lower values for targeted fetches (e.g., 1 MB for metadata-only).
 
         OSINT-02 FIX: Uses chunked streaming with hard 10MB cap instead of unbounded resp.read().
         """
@@ -956,15 +1039,15 @@ class FetchCoordinator(UniversalCoordinator):
             async with session.get(url) as resp:
                 content_chunks: list[bytes] = []
                 received = 0
-                max_bytes = self._DARKNET_MAX_BYTES
+                cap = max_bytes if max_bytes is not None else self._DARKNET_MAX_BYTES
                 async for chunk in resp.aiter_bytes():
-                    remaining = max_bytes - received
+                    remaining = cap - received
                     if remaining <= 0:
                         break
                     if len(chunk) > remaining:
                         content_chunks.append(chunk[:remaining])
-                        received = max_bytes
-                        logger.debug('[TOR] Body truncated at %d bytes for %s', max_bytes, url)
+                        received = cap
+                        logger.debug('[TOR] Body truncated at %d bytes for %s', cap, url)
                         break
                     content_chunks.append(chunk)
                     received += len(chunk)
@@ -986,13 +1069,15 @@ class FetchCoordinator(UniversalCoordinator):
             await mark_used('i2p', domain)
         return session
 
-    async def _fetch_with_i2p(self, url: str, session: Any | None=None) -> dict[str, Any] | None:
+    async def _fetch_with_i2p(self, url: str, session: Any | None=None, *, max_bytes: int | None=None) -> dict[str, Any] | None:
         """Fetch .i2p URL using I2P connection pool.
 
         Args:
             url: The .i2p URL to fetch.
             session: Pre-acquired I2P session (from _get_i2p_session). If None, acquires one.
                      Pre-acquiring outside the retry loop saves ~2s per retry on SOCKS handshake.
+            max_bytes: Optional per-call cap. Defaults to _DARKNET_MAX_BYTES (10 MB).
+                       Pass lower values for targeted fetches (e.g., 1 MB for metadata-only).
 
         OSINT-02 FIX: Uses chunked streaming with hard 10MB cap instead of unbounded resp.read().
         """
@@ -1005,15 +1090,15 @@ class FetchCoordinator(UniversalCoordinator):
             async with session.get(url) as resp:
                 content_chunks: list[bytes] = []
                 received = 0
-                max_bytes = self._DARKNET_MAX_BYTES
+                cap = max_bytes if max_bytes is not None else self._DARKNET_MAX_BYTES
                 async for chunk in resp.aiter_bytes():
-                    remaining = max_bytes - received
+                    remaining = cap - received
                     if remaining <= 0:
                         break
                     if len(chunk) > remaining:
                         content_chunks.append(chunk[:remaining])
-                        received = max_bytes
-                        logger.debug('[I2P] Body truncated at %d bytes for %s', max_bytes, url)
+                        received = cap
+                        logger.debug('[I2P] Body truncated at %d bytes for %s', cap, url)
                         break
                     content_chunks.append(chunk)
                     received += len(chunk)
@@ -1340,7 +1425,10 @@ class FetchCoordinator(UniversalCoordinator):
             """
             hosts: set[str] = set()
             for url in raw_batch:
-                if url.endswith('.onion') or url.endswith('.i2p'):
+                # SEC-03 FIX: case-insensitive darknet TLD check — uppercase .ONION
+                # would otherwise bypass this guard and hit the OS DNS resolver.
+                _url_lower = url.lower()
+                if _url_lower.endswith('.onion') or _url_lower.endswith('.i2p'):
                     continue
                 try:
                     # Fast path: find host between :// and : or / or end
@@ -1569,7 +1657,9 @@ class FetchCoordinator(UniversalCoordinator):
         """
         async def _dns_check() -> tuple[bool, dict[str, Any]]:
             """DNS validation — cached after first call."""
-            if url.endswith('.onion') or url.endswith('.i2p'):
+            # SEC-03 FIX: case-insensitive darknet TLD check
+            _url_lower = url.lower()
+            if _url_lower.endswith('.onion') or _url_lower.endswith('.i2p'):
                 return (True, {})
             return await self._validate_fetch_target(url)
 
@@ -1624,7 +1714,11 @@ class FetchCoordinator(UniversalCoordinator):
             _host_name = _fast_url_host(url) or ''
         except (ValueError, TypeError):  # noqa: BLE001 — best-effort; fast host extraction failure; skip gate
             pass
-        if _host_name and (not url.endswith(('.onion', '.i2p'))):
+        if _host_name and (not url.lower().endswith(('.onion', '.i2p'))):
+            # CB-02: Per-domain rate limiting — wait for token bucket before acquiring concurrency slot
+            _rate_wait = await self._domain_rate_limiter.acquire(_host_name)
+            if _rate_wait > 0:
+                logger.debug('[RATE_LIMIT] Waited %.2fs for rate limit on %s', _rate_wait, _host_name)
             _host_sem, _ = await self._per_host_gate.acquire(_host_name)
         _privacy_lane = 'clearnet'
         _privacy_acquired = False
@@ -1709,7 +1803,7 @@ class FetchCoordinator(UniversalCoordinator):
         # resolution inline so curl_cffi never does its own DNS resolution (TOCTOU close).
         _resolve: dict[str, str] | None = None
         _resolved_ips = dns_meta.get('resolved_ips', [])
-        _is_darknet_url = url.endswith(('.onion', '.i2p'))
+        _is_darknet_url = url.lower().endswith(('.onion', '.i2p'))
         if _resolved_ips and not _is_darknet_url:
             # Warm path: use pre-validated IPs from batch DNS cache.
             try:
@@ -1748,6 +1842,14 @@ class FetchCoordinator(UniversalCoordinator):
                         logger.debug('[TOR] Tor unavailable, dropping %s', url)
                         trace_fetch_end(url, 'tor', 'unavailable', 0.0)
                         return None
+                    # CB-03: Check transport-level circuit breaker BEFORE attempting Tor fetch
+                    transport_allowed, transport_reason, transport_retry_after = self._check_transport_circuit("tor")
+                    if not transport_allowed:
+                        logger.debug('[TOR] Transport circuit breaker open: %s (retry in %.1fs)', transport_reason, transport_retry_after)
+                        self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
+                        trace_fetch_end(url, 'tor', 'transport_circuit_open', 0.0)
+                        self._record_transport_failure("tor")
+                        return None
                     trace_fetch_start(url, 'tor', {'attempt': attempt, 'timeout': TIMEOUT_TOR})
                     if self._tor_transport_enabled and self._tor_transport:
                         from ..transport.base import TransportConfig
@@ -1772,6 +1874,14 @@ class FetchCoordinator(UniversalCoordinator):
                     if route_decision is RouteDecision.I2P_UNAVAILABLE:
                         logger.debug('[I2P] I2P router unavailable, dropping %s', url)
                         trace_fetch_end(url, 'i2p', 'unavailable', 0.0)
+                        return None
+                    # CB-03: Check transport-level circuit breaker BEFORE attempting I2P fetch
+                    transport_allowed, transport_reason, transport_retry_after = self._check_transport_circuit("i2p")
+                    if not transport_allowed:
+                        logger.debug('[I2P] Transport circuit breaker open: %s (retry in %.1fs)', transport_reason, transport_retry_after)
+                        self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
+                        trace_fetch_end(url, 'i2p', 'transport_circuit_open', 0.0)
+                        self._record_transport_failure("i2p")
                         return None
                     trace_fetch_start(url, 'i2p', {'attempt': attempt, 'timeout': TIMEOUT_I2P})
                     result = await self._fetch_with_i2p(url, session=_pre_acquired_i2p_session)
@@ -1925,11 +2035,21 @@ class FetchCoordinator(UniversalCoordinator):
                         trace_fetch_end(url, 'lightpanda', 'failed', 0.0)
                 if result is None or result.get('error') == 'timeout' or result.get('status_code', 200) >= 500:
                     if attempt < max_retries:
-                        # Exponential backoff with jitter: base * 2^attempt + uniform(0, 1)
-                        delay = base_delay * (2 ** attempt) + 0.5  # ~1.5s, 3.5s, 7.5s
-                        delay = min(delay, 30.0)
+                        # CB-04: Check retry budget BEFORE scheduling retry
+                        budget_allowed, budget_reason = self._check_retry_budget(_host_name)
+                        if not budget_allowed:
+                            logger.debug('[RETRY-BUDGET] Skipping retry for %s: %s', _host_name, budget_reason)
+                            self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
+                            break
+                        # CB-01 FIX: Exponential backoff with full jitter (not just +0.5 fixed).
+                        # Full jitter: delay ∈ [0, base * 2^attempt] prevents thundering herd.
+                        _delay = base_delay * (2 ** attempt)
+                        jitter = _JITTER_RNG.uniform(0, _delay)
+                        delay = min(_delay + jitter, 30.0)  # ~0-3s, 0-6s, 0-12s (capped at 30s)
                         logger.debug('[RETRY] Attempt %s/%s for %s after %ss', attempt + 1, max_retries, url, delay)
                         trace_fetch_end(url, 'none', 'retry', 0.0, {'attempt': attempt, 'delay': delay})
+                        # CB-04: Record retry attempt for budget tracking
+                        self._record_retry(_host_name)
                         await asyncio.sleep(delay)
                         attempt += 1
                         continue
@@ -1938,10 +2058,20 @@ class FetchCoordinator(UniversalCoordinator):
                 result.setdefault('success', True)
                 await self._aimd_release_success()
                 self._record_success(_host_name)
+                # CB-03: Record transport-level success to reset transport circuit breaker
+                if url_transport is Transport.TOR:
+                    self._record_transport_success("tor")
+                elif url_transport is Transport.I2P:
+                    self._record_transport_success("i2p")
                 self._maybe_fire_cover_traffic(transport=url_transport.name.lower())
             elif result is None or result.get('error'):
                 is_timeout = result.get('error') == 'timeout' if result else True
                 self._record_failure(_host_name, is_timeout=is_timeout, failure_kind='fetch_error')
+                # CB-03: Record transport-level failure when darknet fetch fails
+                if url_transport is Transport.TOR:
+                    self._record_transport_failure("tor", is_timeout=is_timeout)
+                elif url_transport is Transport.I2P:
+                    self._record_transport_failure("i2p", is_timeout=is_timeout)
         except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx/network request failure; non-critical
             logger.warning('[_fetch_url] Unexpected error for %s: %s', url, e)
             await self._aimd_release_failure()
@@ -1969,6 +2099,15 @@ class FetchCoordinator(UniversalCoordinator):
                     result['bypassed'] = bypass_result.get('bypassed')
                     result['paywall'] = bypass_result.get('paywall')
         trace_fetch_end(url, 'none', 'done', 0.0)
+        # OSINT-04 FIX: Validate content-type BEFORE parsing — prevents parser dispatch on binary/image data
+        if result and result.get('content'):
+            ct = result.get('content_type', '') or ''
+            # Known content-types that are safe to parse
+            _safe_ct_prefixes = ('text/', 'application/json', 'application/xml', 'application/xhtml', 'application/ld+json')
+            if ct and not any(ct.startswith(p) for p in _safe_ct_prefixes):
+                _ct_log = ct[:128]
+                logger.debug('[OSINT-04] Blocking parse for content-type %s on %s', _ct_log, url)
+                result['content'] = b''
         if self._captcha_detector is not None and result and result.get('content'):
             ct = result.get('content_type', '')
             content_bytes = result['content']

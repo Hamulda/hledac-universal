@@ -1825,6 +1825,26 @@ class SynthesisRunner:
         Returns:
             (dict | None, outlines_used: bool) — stejný formát jako structured_generate
         """
+        # LLM-01: ALWAYS sanitize prompt before LLM inference (fail-safe, always-on)
+        try:
+            _sanitize_fn = __import__('hledac.universal.brain.prompt_injection_validator', fromlist=['sanitize_prompt_injection_patterns']).sanitize_prompt_injection_patterns
+            validation_result = _sanitize_fn(prompt)
+            if validation_result.suspicious:
+                _high_risk = any(p in validation_result.patterns for p in (
+                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
+                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
+                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
+                    'structural_repeated_delimiters', 'structural_html_comment',
+                ))
+                if _high_risk:
+                    logger.warning(f'[LLM-01-BLOCK] High-risk prompt injection in streaming: {validation_result.patterns}')
+                    return None
+                logger.warning('[SYNTHESIS] streaming prompt_injection: suspicious=%s, patterns=%s', validation_result.suspicious, validation_result.patterns)
+            prompt = validation_result.safe_text
+        except Exception:
+            # LLM-01 fail-safe: reject on any internal error
+            logger.error('[LLM-01] streaming prompt injection validation failed internally')
+            return None
 
         try:
             model, tokenizer, _model_path = await self._lifecycle._ensure_loaded()
@@ -1941,6 +1961,27 @@ class SynthesisRunner:
             model, tokenizer, _model_path = await self._lifecycle._ensure_loaded()
         except RuntimeError as e:
             logger.warning("[SYNTHESIS] xgrammar model load failed: %s", e)
+            return None, False
+
+        # LLM-01: ALWAYS sanitize prompt before LLM inference (fail-safe, always-on)
+        try:
+            _sanitize_fn = __import__('hledac.universal.brain.prompt_injection_validator', fromlist=['sanitize_prompt_injection_patterns']).sanitize_prompt_injection_patterns
+            validation_result = _sanitize_fn(prompt)
+            if validation_result.suspicious:
+                _high_risk = any(p in validation_result.patterns for p in (
+                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
+                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
+                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
+                    'structural_repeated_delimiters', 'structural_html_comment',
+                ))
+                if _high_risk:
+                    logger.warning(f'[LLM-01-BLOCK] High-risk prompt injection in xgrammar: {validation_result.patterns}')
+                    return None, False
+                logger.warning('[SYNTHESIS] xgrammar prompt_injection: suspicious=%s, patterns=%s', validation_result.suspicious, validation_result.patterns)
+            prompt = validation_result.safe_text
+        except Exception:
+            # LLM-01 fail-safe: reject on any internal error
+            logger.error('[LLM-01] xgrammar prompt injection validation failed internally')
             return None, False
 
         # Format prompt OUTSIDE _xgrammar_sync so tokenizer.count_tokens() is accessible

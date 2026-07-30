@@ -18,9 +18,67 @@ import logging
 import threading
 from pathlib import Path
 from typing import Any
+
 import numpy as np
+
+import msgspec
+
 from hledac.universal.utils.cache import PyCacheDict
+
 logger = logging.getLogger(__name__)
+
+
+class EmbeddingResult(msgspec.Struct, frozen=True, gc=False):
+    """
+    FLOW-04: Structured embedding result with explicit dimension validation.
+
+    Replaces raw list[list[float]] as the contract between UnifiedEmbeddingManager
+    and downstream consumers (DuckDBRAGStore, lancedb_store).
+
+    Fields:
+        text_hash:  SHA256 of input text (truncated to 32 chars) — for cache key validation
+        dimensions:  Expected embedding dimension (e.g. 256, 384, 512, 768)
+        vector:     The embedding vector as a list of floats
+        model:      Model identifier used (e.g. "mlx-community/...", "fastembed-...")
+
+    Invariant: len(vector) == dimensions — enforced at construction time.
+    This prevents wrong-dimension embeddings from silently corrupting LanceDB/DuckDB
+    vector indices.
+    """
+
+    text_hash: str
+    dimensions: int
+    vector: list[float]
+    model: str
+
+    def __post_init__(self) -> None:
+        """Validate embedding dimension matches vector length."""
+        if len(self.vector) != self.dimensions:
+            raise ValueError(
+                f"EmbeddingResult dimension mismatch: dimensions={self.dimensions} "
+                f"but len(vector)={len(self.vector)}"
+            )
+
+    @classmethod
+    def from_text(
+        cls,
+        text: str,
+        vector: list[float],
+        dimensions: int,
+        model: str,
+    ) -> "EmbeddingResult":
+        """
+        Create EmbeddingResult from raw embedding computation.
+
+        Computes text_hash from the input text automatically.
+        """
+        text_hash = hashlib.sha256(text.encode()).hexdigest()[:32]
+        return cls(
+            text_hash=text_hash,
+            dimensions=dimensions,
+            vector=vector,
+            model=model,
+        )
 _unified_manager: UnifiedEmbeddingManager | None = None
 _manager_lock = threading.Lock()
 SUPPORTED_DIMS = (256, 512, 768)
@@ -111,14 +169,15 @@ class UnifiedEmbeddingManager:
         cached_results: list[tuple[int, list[float]]] = []
         uncached: list[tuple[int, str]] = []
         for i, text in enumerate(texts):
-            # FLOW-02: M1 8GB OOM protection — truncate before embed
+            # FLOW-02: M1 8GB OOM protection — truncate before embed.
+            # Use truncated for BOTH cache key and encode input so they stay in sync.
             truncated = text[:MAX_TEXT_LENGTH] if len(text) > MAX_TEXT_LENGTH else text
             key = hashlib.sha256(truncated.encode()).hexdigest()[:32]
             cached = cache.get(key)
             if cached is not None:
                 cached_results.append((i, cached))
             else:
-                uncached.append((i, text))
+                uncached.append((i, truncated))  # truncated, not original
         if not uncached:
             results = [[0.0] * self._dim for _ in texts]
             for idx, emb in cached_results:
@@ -156,7 +215,9 @@ class UnifiedEmbeddingManager:
             for j, (i, text) in enumerate(uncached):
                 emb = arr[j].tolist()
                 results[i] = emb
-                key = hashlib.sha256(text.encode()).hexdigest()[:32]
+                # FLOW-02: Use truncated text for cache key (matches lookup key above)
+                truncated = text[:MAX_TEXT_LENGTH] if len(text) > MAX_TEXT_LENGTH else text
+                key = hashlib.sha256(truncated.encode()).hexdigest()[:32]
                 cache[key] = emb
             return results
         except Exception as e:
@@ -241,6 +302,44 @@ class UnifiedEmbeddingManager:
         except Exception as e:
             logger.warning(f'[UnifiedEmbedder] embed_async failed: {e}')
             return [[0.0] * self._dim for _ in texts]
+
+    def embed_structured(self, texts: list[str]) -> list[EmbeddingResult]:
+        """
+        FLOW-04: Embed texts and return structured EmbeddingResult objects.
+
+        This is the preferred API for downstream consumers that need dimension
+        validation and metadata (text_hash, model). Use this instead of embed()
+        when the result will be stored in LanceDB or DuckDB.
+
+        Args:
+            texts: List of text strings.
+
+        Returns:
+            List of EmbeddingResult objects with validated dimensions.
+            Raises ValueError if any returned embedding has wrong dimension.
+        """
+        vectors = self.embed(texts)
+        model_name = "unknown"
+        if self._mlx_manager is not None:
+            model_name = getattr(self._mlx_manager, "model_path", "mlx") or "mlx"
+        results: list[EmbeddingResult] = []
+        for i, text in enumerate(texts):
+            vector = vectors[i]
+            if len(vector) != self._dim:
+                logger.warning(
+                    f"[FLOW-04] Wrong-dimension embedding detected: "
+                    f"expected dim={self._dim}, got {len(vector)}. "
+                    f"Returning zero vector for text[{i}]."
+                )
+                vector = [0.0] * self._dim
+            result = EmbeddingResult.from_text(
+                text=text,
+                vector=vector,
+                dimensions=self._dim,
+                model=model_name,
+            )
+            results.append(result)
+        return results
 
     def encode(self, texts: str | list[str]) -> np.ndarray:
         """

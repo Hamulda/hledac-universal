@@ -263,18 +263,21 @@ async def _fetch_and_process_page(
 
         # ---- Unpack fetch result ---------------------------------------
         fetched_text: str | None
+        fetched_content_type: str | None
         fetched_failure_stage: str | None = None
         fetched_redirected: bool = False
         fetched_redirect_target: str | None = None
         fetched_js_skip_reason: str | None = None
         if hasattr(result, "text"):
             fetched_text = str(result.text) if result.text else None
+            fetched_content_type = getattr(result, "content_type", None)
             fetched_failure_stage = getattr(result, "failure_stage", None)
             fetched_redirected = getattr(result, "redirected", False)
             fetched_redirect_target = getattr(result, "redirect_target", None)
             fetched_js_skip_reason = getattr(result, "js_renderer_skipped_reason", None)
         else:
             fetched_text = None
+            fetched_content_type = None
 
         # ---- Empty text: decide skip vs JS retry ----------------------
         if not fetched_text:
@@ -316,7 +319,10 @@ async def _fetch_and_process_page(
             from .public_patterns import _html_to_text
 
             try:
-                extracted_text = await run_in_cpu_pool_async(_html_to_text, fetched_text)
+                # OSINT-04: Pass content_type to gate HTML parsing.
+                extracted_text = await run_in_cpu_pool_async(
+                    lambda: _html_to_text(fetched_text, fetched_content_type)
+                )
             except Exception as exc:
                 from .public_patterns import _compute_page_usable_fields
                 from .public_stages import PipelinePageResult
@@ -402,7 +408,10 @@ async def _fetch_and_process_page(
                 from .public_patterns import _html_to_text
 
                 try:
-                    extracted_text = await run_in_cpu_pool_async(_html_to_text, js_result.text)
+                    js_content_type = getattr(js_result, "content_type", None)
+                    extracted_text = await run_in_cpu_pool_async(
+                        lambda: _html_to_text(js_result.text, js_content_type)
+                    )
                 except Exception:
                     extracted_text = js_result.text or ""
                 if len(extracted_text) > MAX_EXTRACTED_TEXT_CHARS:

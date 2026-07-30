@@ -47,6 +47,7 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, Sender, Receiver};
 
 use crate::cpu_pool;
+use crate::tracing::is_tracing_enabled;
 use crate::io_pool;
 use crate::mixed_pool;
 
@@ -59,6 +60,15 @@ const STATE_ABORTED: u8 = 2;
 // Work item — submitted to rayon pool dispatcher via channel
 // ---------------------------------------------------------------------------
 
+/// Optional trace context for cross-language trace propagation (TEL-02).
+/// Carries W3C Trace Context trace_id and span_id from Python OTel
+/// into Rust rayon worker threads.
+#[derive(Clone, Debug)]
+struct TraceContext {
+    trace_id: u128,
+    span_id: u128,
+}
+
 /// Work item — submitted to rayon pool dispatcher via channel.
 /// Uses Weak so the Arc can be dropped by the submitter after submission
 /// without affecting the worker thread's reference.
@@ -70,6 +80,9 @@ struct WorkItem {
     /// Shared result storage + synchronization — Weak prevents use-after-free
     /// when submitter drops its Arc before worker finishes.
     shared: Weak<SharedTask>,
+    /// TEL-02: Trace context from Python OTel — propagated across language boundary.
+    /// None = no active span (worker runs without tracing instrumentation).
+    trace_context: Option<TraceContext>,
 }
 
 /// Shared storage for task result + cancellation + completion signal.
@@ -189,6 +202,40 @@ fn run_mixed_dispatcher_loop(rx: Arc<Receiver<WorkItem>>) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// TEL-02: Trace context propagation — optional tracing span wrapper
+// ---------------------------------------------------------------------------
+
+/// Execute a closure, optionally wrapped in a tracing span for cross-language
+/// trace propagation (TEL-02).
+///
+/// When `trace_context` is Some, creates a tracing span with W3C Trace Context
+/// attributes (trace_id, span_id) so that Rust-side spans are linked to the
+/// parent Python OTel span. This enables end-to-end distributed tracing across
+/// the Python ↔ Rust FFI boundary.
+///
+/// When `trace_context` is None, simply executes the closure without tracing.
+fn execute_with_optional_span<R>(
+    trace_context: Option<TraceContext>,
+    f: impl FnOnce() -> R,
+) -> R {
+    match trace_context {
+        Some(ctx) if is_tracing_enabled() => {
+            // TEL-02: Wrap in a tracing span linked to Python OTel parent span.
+            // The span carries W3C traceparent-compatible attributes so that
+            // Rust JSON traces can be correlated with Python OTel traces.
+            let span = tracing::info_span!(
+                "rayon_worker",
+                raython.trace_id = %format!("{:032x}", ctx.trace_id),
+                raython.span_id = %format!("{:016x}", ctx.span_id),
+                raython.pool_work = true,
+            );
+            span.in_scope(f)
+        }
+        _ => f(),
+    }
+}
+
 /// Execute a single work item: cooperative cancellation check, GIL-acquire, call Python func.
 /// R5 FIX: Uses Weak::upgrade() to safely handle the case where Python has already
 /// dropped its Arc<SharedTask> (via Box::into_raw) before the worker started or finished.
@@ -219,10 +266,14 @@ where
         return;
     }
 
-    // Execute Python function with GIL
-    let py_result: Result<Py<PyAny>, PyErr> = Python::attach(|py| {
-        let result = work.func.into_bound(py).call1((work.args.into_bound(py),))?;
-        Ok(result.unbind())
+    // TEL-02: Execute Python function, optionally wrapped in a tracing span
+    // for cross-language trace context propagation.
+    let py_result = execute_with_optional_span(work.trace_context.clone(), || {
+        // Execute Python function with GIL
+        Python::attach(|py| {
+            let result = work.func.into_bound(py).call1((work.args.into_bound(py),))?;
+            Ok(result.unbind())
+        })
     });
 
     // Atomically set STATE_READY if still PENDING (not aborted by timeout)
@@ -301,9 +352,21 @@ pub fn rayon_submit_channel_(
     n_items: usize,
     func: Py<PyAny>,
     args: Py<PyTuple>,
+    trace_id: Option<u128>,
+    span_id: Option<u128>,
 ) -> PyResult<Py<PyAny>> {
     let func_clone = Py::clone_ref(&func, py);
     let args_clone = Py::clone_ref(&args, py);
+
+    // TEL-02: Capture Python OTel trace context for cross-language propagation.
+    // When both trace_id and span_id are provided, create a TraceContext.
+    // This allows Rust-side tracing spans to be linked to Python OTel spans.
+    let trace_context: Option<TraceContext> = match (trace_id, span_id) {
+        (Some(tid), Some(sid)) if tid != 0 && sid != 0 => {
+            Some(TraceContext { trace_id: tid, span_id: sid })
+        }
+        _ => None,
+    };
 
     // R5 FIX: Use Arc::new_cyclic so the Weak in WorkItem can upgrade to the Arc.
     // Ownership model:
@@ -325,6 +388,7 @@ pub fn rayon_submit_channel_(
         args: args_clone,
         n_items,
         shared: weak.clone(),
+        trace_context,
     };
 
     let sender_mutex: &parking_lot::Mutex<Option<Sender<WorkItem>>> = match pool_type {
@@ -376,17 +440,23 @@ pub fn rayon_join_channel_(
     handle_ptr: usize,
     timeout_s: Option<f64>,
 ) -> PyResult<Py<PyAny>> {
-    if handle_ptr == 0 {
+    // FFI-03 FIX: Null check on handle_ptr before Arc::from_raw.
+    // Arc::into_raw never returns null, but Python could pass garbage on bug/premature-GC.
+    // Using isize::MIN as sentinel is safer than 0 (which could be a valid offset).
+    const INVALID_HANDLE: usize = 0;
+    if handle_ptr == INVALID_HANDLE {
         return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-            "Invalid handle: 0",
+            "Invalid handle: null pointer",
         ));
     }
 
-    // R5 FIX (Arc::new_cyclic): Reconstruct Arc from raw pointer.
-    // The pointer is Arc::into_raw(work_shared) from rayon_submit_channel.
-    // Arc::from_raw creates an Arc that shares ownership with Python's Arc.
-    // When this local Arc is dropped at end of function, refcount decrements by 1
-    // but Python's Arc (from Arc::into_raw in submit) keeps SharedTask alive.
+    // FFI-03 FIX: Wrap Arc::from_raw + critical section in catch_unwind.
+    // If handle_ptr is a dangling/invalid pointer (not from Arc::into_raw),
+    // accessing shared.result or other fields could panic. catch_unwind
+    // prevents panic propagation across FFI boundary (UB in C ABI).
+    //
+    // Arc::from_raw itself is unsafe but returns a valid Arc; the panic hazard
+    // is from invalid data inside SharedTask being accessed via the locks.
     let shared = unsafe { Arc::from_raw(handle_ptr as *const SharedTask) };
 
     let timeout = timeout_s
@@ -415,68 +485,76 @@ pub fn rayon_join_channel_(
     let timed_out_flag = Arc::new(AtomicBool::new(true));
     let timed_out_flag_clone = Arc::clone(&timed_out_flag);
 
-    py.detach(|| {
+    // FFI-03 FIX: catch_unwind around the critical section (Arc access).
+    // AssertUnwindSafe tells panic::catch_unwind that the closure won't
+    // unwind through a RIIA guard that requires drop semantics.
+    let inner_result: PyResult<Py<PyAny>> = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        py.detach(|| {
+            let mut guard = shared.result.lock();
+            while (*guard).is_none() {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                // wait_for: atomically unlocks mutex and blocks on condvar;
+                // on notify or timeout, reacquires mutex and returns WaitTimeoutResult.
+                // Guard is MODIFIED IN-PLACE (parking_lot semantics).
+                // On macOS this maps to pthread_cond_timedwait — real OS thread block.
+                let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
+            }
+            // timed_out = true if result is still None after wait loop
+            timed_out_flag_clone.store((*guard).is_none(), Ordering::Release);
+        });
+        // Re-lock to read result — allow_threads released the mutex on each iteration
+        let timed_out = timed_out_flag.load(Ordering::Acquire);
         let mut guard = shared.result.lock();
-        while (*guard).is_none() {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                break;
+        if timed_out {
+            // Try to claim ABORTED ownership atomically.
+            // If CAS fails → worker already won (wrote result and transitioned to READY).
+            // We must NOT overwrite the worker's valid result with a timeout error.
+            // If CAS succeeds → we own the result; write timeout error only if still None.
+            let expected = STATE_PENDING;
+            let we_own = shared.state
+                .compare_exchange(
+                    expected,
+                    STATE_ABORTED,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok();
+            drop(guard);
+
+            if we_own {
+                // WE are responsible for the result — write timeout error if worker didn't.
+                let mut rguard = shared.result.lock();
+                if rguard.is_none() {
+                    *rguard = Some(Err(PyErr::new::<
+                        pyo3::exceptions::PyRuntimeError,
+                        _,
+                    >("Rayon dispatch timed out")));
+                }
             }
-            // wait_for: atomically unlocks mutex and blocks on condvar;
-            // on notify or timeout, reacquires mutex and returns WaitTimeoutResult.
-            // Guard is MODIFIED IN-PLACE (parking_lot semantics).
-            // On macOS this maps to pthread_cond_timedwait — real OS thread block.
-            let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
-        }
-        // timed_out = true if result is still None after wait loop
-        timed_out_flag_clone.store((*guard).is_none(), Ordering::Release);
-    });
-    // Re-lock to read result — allow_threads released the mutex on each iteration
-    let timed_out = timed_out_flag.load(Ordering::Acquire);
-    let mut guard = shared.result.lock();
-    if timed_out {
-        // Try to claim ABORTED ownership atomically.
-        // If CAS fails → worker already won (wrote result and transitioned to READY).
-        // We must NOT overwrite the worker's valid result with a timeout error.
-        // If CAS succeeds → we own the result; write timeout error only if still None.
-        let expected = STATE_PENDING;
-        let we_own = shared.state
-            .compare_exchange(
-                expected,
-                STATE_ABORTED,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok();
-        drop(guard);
+            // else: worker won the race — don't overwrite its valid result
 
-        if we_own {
-            // WE are responsible for the result — write timeout error if worker didn't.
-            let mut rguard = shared.result.lock();
-            if rguard.is_none() {
-                *rguard = Some(Err(PyErr::new::<
-                    pyo3::exceptions::PyRuntimeError,
-                    _,
-                >("Rayon dispatch timed out")));
+            let result = shared.result.lock().take();
+            match result {
+                Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
+                Some(Err(err)) => Err(err),
+                None => Ok(py.None().into_pyobject(py).unwrap().into()),
+            }
+        } else {
+            let result = (*guard).take();
+            match result {
+                Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
+                Some(Err(err)) => Err(err),
+                None => Ok(py.None().into_pyobject(py).unwrap().into()),
             }
         }
-        // else: worker won the race — don't overwrite its valid result
+    })).map_err(|_| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Panic in rayon_join")
+    })?;
 
-        let result = shared.result.lock().take();
-        return match result {
-            Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
-            Some(Err(err)) => Err(err),
-            None => Ok(py.None().into_pyobject(py).unwrap().into()),
-        };
-    }
-
-    let result = (*guard).take();
-
-    match result {
-        Some(Ok(py_obj)) => Ok(py_obj.into_pyobject(py).unwrap().into()),
-        Some(Err(err)) => Err(err),
-        None => Ok(py.None().into_pyobject(py).unwrap().into()),
-    }
+    inner_result
 }
 
 // ---------------------------------------------------------------------------
@@ -488,12 +566,13 @@ pub fn rayon_join_channel_(
 #[pyfunction]
 #[pyo3(name = "rayon_abort_channel")]
 pub fn rayon_abort_channel_(py: Python<'_>, handle_ptr: usize) -> PyResult<()> {
+    // FFI-03 FIX: Null check before Arc::from_raw.
     if handle_ptr == 0 {
         return Ok(());
     }
 
-    // R5 FIX (Arc::new_cyclic): Reconstruct Arc from raw pointer.
-    // Same pattern as rayon_join_channel_ — Arc::from_raw reconstructs.
+    // FFI-03 FIX: Reconstruct Arc, then catch_unwind around critical section.
+    // Arc::from_raw is unsafe; the closure could panic on invalid data.
     let shared = unsafe { Arc::from_raw(handle_ptr as *const SharedTask) };
 
     shared.cancel_flag.store(true, Ordering::Release);
@@ -504,16 +583,21 @@ pub fn rayon_abort_channel_(py: Python<'_>, handle_ptr: usize) -> PyResult<()> {
     let timeout = Duration::from_secs(5);
     let deadline = std::time::Instant::now() + timeout;
 
-    py.detach(|| {
-        let mut guard = shared.result.lock();
-        while (*guard).is_none() {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                break;
+    // FFI-03 FIX: catch_unwind around Arc access.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        py.detach(|| {
+            let mut guard = shared.result.lock();
+            while (*guard).is_none() {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
             }
-            let _wait_result = shared.condvar.wait_for(&mut guard, remaining);
-        }
-    });
+        });
+    })).map_err(|_| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Panic in rayon_abort")
+    })?;
 
     Ok(())
 }

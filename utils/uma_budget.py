@@ -496,3 +496,114 @@ class UmaWatchdog:
 
 # Canonical alias: Watchdog = UmaWatchdog (A-01 compat migration)
 Watchdog = UmaWatchdog
+
+
+# HW-02: Power status monitoring for battery vs AC power detection
+_POWER_CHECK_INTERVAL_S: float = 5.0
+
+
+class PowerStatusMonitor:
+    """
+    HW-02: Monitor stavu napájení (baterie vs. síť).
+
+    Detects whether the system is running on battery or AC power on macOS/Linux.
+    On battery, aggressive MLX and I/O operations should be reduced to conserve
+    battery life and prevent thermal throttling.
+
+    Uses IOKit on macOS and sysfs on Linux. Fail-soft: returns AC attached
+    (no battery conservation) when detection fails.
+
+    Invariants:
+    - Cached: polls every _POWER_CHECK_INTERVAL_S (5s) to avoid subprocess overhead
+    - Fail-safe: any error returns {'on_battery': False, 'ac_attached': True}
+    - Platform-specific: only implemented for Darwin and Linux
+    """
+
+    __slots__ = ("_last_check_time", "_last_status")
+
+    def __init__(self) -> None:
+        self._last_check_time: float = 0.0
+        self._last_status: dict[str, bool | int | None] | None = None
+
+    @staticmethod
+    def _get_power_status_mac() -> dict[str, bool | int | None]:
+        """Získá stav napájení na macOS pomocí IOKit / pmset."""
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["pmset", "-g", "batt"],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            if result.returncode != 0:
+                return {"on_battery": False, "ac_attached": False, "battery_level": None, "charging": False}
+
+            output = result.stdout.lower()
+            status: dict[str, bool | int | None] = {
+                "on_battery": False,
+                "ac_attached": False,
+                "battery_level": None,
+                "charging": False,
+            }
+
+            # Parse battery power line: "Battery Power" or "InternalBattery-0"
+            status["on_battery"] = "battery power" in output or "internalbattery" in output
+            status["ac_attached"] = "ac attached" in output or "charging" in output
+            status["charging"] = "charging" in output
+
+            # Parse battery percentage
+            import re
+
+            level_match = re.search(r"(\d+)%", output)
+            if level_match:
+                status["battery_level"] = int(level_match.group(1))
+
+            return status
+        except Exception:
+            return {"on_battery": False, "ac_attached": False, "battery_level": None, "charging": False}
+
+    @staticmethod
+    def _get_power_status_linux() -> dict[str, bool | int | None]:
+        """Získá stav napájení na Linuxu přes sysfs."""
+        try:
+            ac_online_path = "/sys/class/power_supply/AC/online"
+            with open(ac_online_path, "r") as f:
+                ac_online = f.read().strip() == "1"
+            return {"on_battery": not ac_online, "ac_attached": ac_online, "battery_level": None, "charging": False}
+        except Exception:
+            return {"on_battery": False, "ac_attached": False, "battery_level": None, "charging": False}
+
+    def get_power_status(self) -> dict[str, bool | int | None]:
+        """Získá aktuální stav napájení (s 5s cache)."""
+        import time
+
+        now = time.monotonic()
+        if self._last_status is not None and now - self._last_check_time < _POWER_CHECK_INTERVAL_S:
+            return self._last_status
+
+        self._last_check_time = now
+        import platform
+
+        system = platform.system()
+        if system == "Darwin":
+            self._last_status = self._get_power_status_mac()
+        elif system == "Linux":
+            self._last_status = self._get_power_status_linux()
+        else:
+            self._last_status = {"on_battery": False, "ac_attached": False, "battery_level": None, "charging": False}
+
+        return self._last_status
+
+
+# Module-level singleton for cross-module reuse
+_power_monitor_instance: PowerStatusMonitor | None = None
+
+
+def get_power_monitor() -> PowerStatusMonitor:
+    """Lazy singleton for PowerStatusMonitor."""
+    global _power_monitor_instance
+    if _power_monitor_instance is None:
+        _power_monitor_instance = PowerStatusMonitor()
+    return _power_monitor_instance

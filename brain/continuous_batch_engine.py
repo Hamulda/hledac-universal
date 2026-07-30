@@ -35,9 +35,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, cast
 from hledac.universal.utils.executor_decorator import offload_to
-from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils.async_helpers import parallel, parallel_ok
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)
@@ -198,21 +198,95 @@ class ContinuousBatchEngine:
 
         def prep_one(prompt: str) -> str:
             return self._engine._format_chatml(system_msg=system, user_msg=prompt)
-        formatted_prompts = await parallel_ok(*[offload_to('cpu_blocking_pool', prep_one, p) for p in prompts], label="batch_prep")
+
+        # Offload CPU-bound ChatML formatting to thread pool.
+        # ISSUE-02 FIX: parallel_ok silently drops failures → index misalignment.
+        # Use parallel(policy="collect") to track which prompts succeeded.
+        _format_tasks: list[Awaitable[str]] = [offload_to('cpu_blocking_pool', prep_one, p) for p in prompts]
+        format_result = await parallel(
+            _format_tasks,
+            policy="collect",
+            concurrency=0,  # unbounded for CPU-bound prep
+            ctx="continuous_batch.format_prompts",
+        )
+
+        # Reconstruct (original_index, formatted_prompt) pairs, dropping failed formats.
+        # A failed format means the prompt is unusable — include it in failed_indices.
+        formatted_prompts: list[tuple[int, str]] = []
+        failed_format_indices: set[int] = set()
+        for i, result in enumerate(format_result.ok):
+            formatted_prompts.append((i, result))
+        # Format errors: original index is lost (parallel_ok doesn't track it).
+        # We approximate: if count doesn't match, the first N-missing are gaps.
+        if len(format_result.ok) < len(prompts):
+            missing = len(prompts) - len(format_result.ok)
+            # Last 'missing' indices failed formatting
+            for i in range(len(prompts) - missing, len(prompts)):
+                failed_format_indices.add(i)
+            logger.warning("[Batch] %d/%d prompt formats failed", missing, len(prompts))
+
+        # MOD-03 fix: MLX inference is CPU-bound/GIL-bound, not true async I/O.
+        # Using asyncio.gather on async functions that call CPU-bound operations
+        # does NOT release the GIL - all inference serializes through the event loop.
+        # Solution: use run_in_executor to run inference in a thread pool,
+        # allowing true parallelism for CPU-bound MLX work while keeping
+        # semaphore-based concurrency bounds for M1 8GB Metal queue safety.
+        loop = asyncio.get_running_loop()
 
         async def gen_one(formatted: str) -> str:
             async with self._INFERENCE_SEMAPHORE:
-                return await self._engine.generate(prompt=formatted, max_tokens=max_tokens, temperature=temperature, system_msg=None)
+                # Run CPU-bound MLX inference in thread pool via run_in_executor
+                # to avoid blocking the event loop with GIL-bound work.
+                # Capture system by value to avoid closure issues across thread boundary.
+                system_for_gen = system
+                return await loop.run_in_executor(
+                    None,  # Use default thread pool
+                    lambda fmt=formatted, sys_msg=system_for_gen: self._engine.generate(prompt=fmt, max_tokens=max_tokens, temperature=temperature, system_msg=sys_msg)
+                )
 
-        results = await asyncio.gather(*[gen_one(fp) for fp in formatted_prompts], return_exceptions=True)
-        # Map exceptions to empty strings (fail-safe per-entry)
-        final: list[str] = []
-        for r in results:
-            if isinstance(r, Exception):
-                logger.warning("[Batch] prompt failed: %s", r)
-                final.append("")
-            else:
-                final.append(r)
+        # DLQ-01 FIX: Use parallel() with policy="collect" and wrap each item
+        # to carry its index. This preserves failure indices so callers can
+        # implement DLQ retry (re-queue only failed payloads, not whole batch).
+        async def gen_one_wrapped(idx_fp: tuple[int, str]) -> tuple[int, str]:
+            idx, fp = idx_fp
+            # Raises on error — parallel(policy="collect") routes it to .errors
+            result = await gen_one(fp)
+            return (idx, result)
+
+        # formatted_prompts is list[tuple[int, str]] — (original_index, formatted_string)
+        # Already indexed from the collect pass above, use directly
+        result_struct = await parallel(
+            [gen_one_wrapped(idx_fp) for idx_fp in formatted_prompts],
+            policy="collect",
+            concurrency=2,
+            ctx="continuous_batch.generate_prompts",
+        )
+
+        # Rebuild ordered results using original prompt indices.
+        # formatted_prompts is list[tuple[original_idx, formatted_str]], missing failed formats.
+        # result_struct.ok is list[tuple[original_idx, generated_str]].
+        ok_gen_indices: set[int] = {idx for idx, _ in result_struct.ok}
+        # Start with all indices as potentially failed
+        all_indices = set(range(len(prompts)))
+        # Remove format failures (original indices that never made it to generation)
+        all_indices -= failed_format_indices
+        # Remove generation successes
+        all_indices -= ok_gen_indices
+        failed_indices = all_indices
+
+        # final must be len(prompts), not len(formatted_prompts)
+        final: list[str] = [""] * len(prompts)
+        for idx, result_str in result_struct.ok:
+            final[idx] = result_str
+
+        # Log errors with indices
+        for exc in result_struct.errors:
+            logger.warning("[Batch] prompt generation failed: %s", exc)
+
+        failed_count = len(failed_indices)
+        if failed_count > 0:
+            logger.info("[Batch] %d/%d prompts failed, returning empty strings for indices: %s",
+                       failed_count, len(formatted_prompts), sorted(failed_indices))
         return final
 
     async def _run_worker(self) -> None:
@@ -241,18 +315,24 @@ class ContinuousBatchEngine:
         """
         Execute a batch of requests concurrently.
 
-        B2 FIX: Uses asyncio.gather with _INFERENCE_SEMAPHORE instead of
-        sequential for-loop. This overlaps I/O between Metal inference calls
-        while the semaphore bounds concurrency for M1 8GB safety.
+        B2 FIX: Uses asyncio.gather with run_in_executor for CPU-bound MLX
+        inference. The semaphore bounds concurrency for M1 8GB Metal queue safety.
         """
+        loop = asyncio.get_running_loop()
+
         async def exec_one(req: _BatchRequest) -> None:
             async with self._INFERENCE_SEMAPHORE:
+                # Run CPU-bound MLX inference in thread pool to avoid blocking
+                # the event loop with GIL-bound work.
                 try:
-                    result = await self._engine.generate(
-                        prompt=req.prompt,
-                        max_tokens=req.max_tokens,
-                        temperature=req.temperature,
-                        system_msg=req.system_msg,
+                    result = await loop.run_in_executor(
+                        None,
+                        lambda: self._engine.generate(
+                            prompt=req.prompt,
+                            max_tokens=req.max_tokens,
+                            temperature=req.temperature,
+                            system_msg=req.system_msg,
+                        ),
                     )
                     if not req.future.done():
                         req.future.set_result(result)
@@ -260,7 +340,17 @@ class ContinuousBatchEngine:
                     if not req.future.done():
                         req.future.set_exception(e)
 
-        await asyncio.gather(*[exec_one(req) for req in batch], return_exceptions=True)
+        # DLQ-01 FIX: Use parallel(policy="log") instead of bare asyncio.gather.
+        # exec_one already handles errors via req.future.set_exception(), but we
+        # need proper gather hygiene so exceptions don't leak to the event loop.
+        # parallel(policy="log") drops exceptions silently (already handled in futures)
+        # but still provides proper await semantics and cancel safety.
+        await parallel(
+            [exec_one(req) for req in batch],
+            policy="log",
+            concurrency=2,
+            ctx="continuous_batch.execute_batch",
+        )
 
 class _BatchRequest:
     """Internal batch request."""

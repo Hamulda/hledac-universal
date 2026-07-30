@@ -23,6 +23,8 @@ env = open_lmdb_with_guard(path, map_size=...)
 
 import logging
 import os
+import pathlib
+import stat as _stat
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -33,6 +35,32 @@ logger = logging.getLogger(__name__)
 # Threshold: lock file older than this → candidate for stale cleanup (seconds)
 # Used ONLY when holder PID cannot be resolved; age threshold is a fallback safety net
 _LOCK_AGE_THRESHOLD_SECONDS: float = 60.0
+
+
+# ---------------------------------------------------------------------------
+# SEC-02: LMDB file permission hardening
+# ---------------------------------------------------------------------------
+
+def _chmod_lmdb_path(path: pathlib.Path) -> None:
+    """
+    SEC-02: Enforce 0o600 on LMDB directory and 0o600 on data files.
+
+    Called immediately after lmdb.open() to double-enforce permissions
+    on all files LMDB creates (data.mdb, lock.lck, etc.).
+
+    Fails silently on platforms where chmod is not supported
+    (e.g. some network filesystems on non-Unix).
+    """
+    try:
+        os.chmod(path, _stat.S_IRUSR | _stat.S_IWUSR | _stat.S_IXUSR)  # 0o700
+    except OSError:
+        pass
+    for suffix in ("*.mdb", "*.lock"):
+        for file_path in path.glob(suffix):
+            try:
+                os.chmod(file_path, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
+            except OSError:
+                pass
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -265,22 +293,38 @@ def open_lmdb_with_guard(
         # Defensive: never let cleanup failure prevent open attempt
         logger.debug(f"pre-open lock cleanup attempt failed: {e}")
 
-    # First open attempt
+    # SEC-02: Create directory with 0700 before umask scope
+    _path = pathlib.Path(_path_str)
+    _path.mkdir(parents=True, exist_ok=True)
+
+    # SEC-02: Set umask to 0077 so LMDB files inherit 0o600
+    _old_umask = os.umask(0o077)
     try:
-        return lmdb.open(_path_str, map_size=map_size, **kw)
-    except lmdb.LockError:
-        # Sprint 8AG §1.4: stale-lock recovery with strict liveness check
-        removed, reason = cleanup_stale_lmdb_lock(_path_str)
-        logger.debug(f"LMDB lock recovery: removed={removed} reason={reason}")
-        if removed:
-            # Holder was confirmed dead — safe to retry
-            try:
-                return lmdb.open(_path_str, map_size=map_size, **kw)
-            except lmdb.LockError:
-                # Still failing after confirmed-dead cleanup — fail soft
-                raise
-        # Nothing was removed (no lock file or holder alive) — propagate
-        raise
+        # SEC-02: add mode=0o600 to defaults; callers can override via **kw
+        kw.setdefault("mode", 0o600)
+        # First open attempt
+        try:
+            env = lmdb.open(_path_str, map_size=map_size, **kw)
+            # SEC-02: double-enforce after open to cover all files LMDB creates
+            _chmod_lmdb_path(_path)
+            return env
+        except lmdb.LockError:
+            # Sprint 8AG §1.4: stale-lock recovery with strict liveness check
+            removed, reason = cleanup_stale_lmdb_lock(_path_str)
+            logger.debug(f"LMDB lock recovery: removed={removed} reason={reason}")
+            if removed:
+                # Holder was confirmed dead — safe to retry
+                try:
+                    env = lmdb.open(_path_str, map_size=map_size, **kw)
+                    _chmod_lmdb_path(_path)
+                    return env
+                except lmdb.LockError:
+                    # Still failing after confirmed-dead cleanup — fail soft
+                    raise
+            # Nothing was removed (no lock file or holder alive) — propagate
+            raise
+    finally:
+        os.umask(_old_umask)
 
 
 def compact_lmdb(env: lmdb.Environment) -> dict[str, int] | None:

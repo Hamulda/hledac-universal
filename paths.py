@@ -5,7 +5,7 @@ import contextvars
 from dataclasses import dataclass
 import msgspec
 from typing import cast
-__all__ = ['RAMDISK_ROOT', 'FALLBACK_ROOT', 'RAMDISK_ACTIVE', 'CACHE_ROOT', 'LIGHTRAG_ROOT', 'DB_ROOT', 'LMDB_ROOT', 'SPRINT_LMDB_ROOT', 'EVIDENCE_ROOT', 'KEYS_ROOT', 'TOR_ROOT', 'NYM_ROOT', 'I2P_ROOT', 'RUNS_ROOT', 'SOCKETS_ROOT', 'SPRINT_STORE_ROOT', 'IOC_DB_PATH', 'PATHS', 'get_current_paths', 'set_current_paths', 'reset_current_paths', 'get_sprint_parquet_dir', 'get_dedup_paths', 'get_ioc_db_path', 'get_sprint_report_path', 'get_sprint_json_report_path', 'get_sprint_next_seeds_path', 'assert_ramdisk_alive', 'cleanup_fallback_artifacts', 'is_auto_ramdisk', 'lmdb_map_size', 'get_lmdb_max_size_mb', 'open_lmdb', 'cleanup_stale_lmdb_locks', 'cleanup_stale_sockets', 'CTI_EXPORT_DIR', 'RUNTIME_STATE', 'EMBEDDING_CACHE', 'BENCHMARK_CACHE', '_ensure_ramdisk_active_async']
+__all__ = ['RAMDISK_ROOT', 'FALLBACK_ROOT', 'RAMDISK_ACTIVE', 'CACHE_ROOT', 'LIGHTRAG_ROOT', 'DB_ROOT', 'LMDB_ROOT', 'SPRINT_LMDB_ROOT', 'EVIDENCE_ROOT', 'KEYS_ROOT', 'TOR_ROOT', 'NYM_ROOT', 'I2P_ROOT', 'RUNS_ROOT', 'SOCKETS_ROOT', 'SPRINT_STORE_ROOT', 'IOC_DB_PATH', 'PATHS', 'get_current_paths', 'set_current_paths', 'reset_current_paths', 'get_sprint_parquet_dir', 'get_dedup_paths', 'get_ioc_db_path', 'get_sprint_report_path', 'get_sprint_json_report_path', 'get_sprint_next_seeds_path', 'assert_ramdisk_alive', 'cleanup_fallback_artifacts', 'is_auto_ramdisk', 'lmdb_map_size', 'get_lmdb_max_size_mb', 'open_lmdb', 'cleanup_stale_lmdb_locks', 'compact_sprint_lmdb', 'cleanup_stale_sockets', 'CTI_EXPORT_DIR', 'RUNTIME_STATE', 'EMBEDDING_CACHE', 'BENCHMARK_CACHE', '_ensure_ramdisk_active_async']
 _paths_context_var: contextvars.ContextVar[_Paths | None] = contextvars.ContextVar('_paths_context', default=None)
 
 def get_current_paths() -> _Paths:
@@ -322,9 +322,39 @@ def get_lmdb_max_size_mb() -> int:
         except (ValueError, TypeError):
             return 256
 
+def _chmod_lmdb_path(path: pathlib.Path) -> None:
+    """
+    SEC-02: Harden LMDB directory and data file permissions.
+
+    Ensures the LMDB directory is 0700 and all .mdb data files are 0600.
+    Covers the lock file (.lock) as well. Fails silently on platforms
+    where chmod is not supported (e.g. some network filesystems).
+    """
+    import os
+    import stat as _stat
+
+    # Harden directory
+    try:
+        os.chmod(path, _stat.S_IRUSR | _stat.S_IWUSR | _stat.S_IXUSR)  # 0o700
+    except OSError:
+        pass
+
+    # Harden LMDB data files and lock file
+    for suffix in ("*.mdb", "*.lock"):
+        for file_path in path.glob(suffix):
+            try:
+                os.chmod(file_path, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
+            except OSError:
+                pass
+
+
 def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
     """
     Open an LMDB environment with consistent defaults and single-retry lock recovery.
+
+    SEC-02: Enforces 0o600 on LMDB data files and 0o700 on the directory.
+    Uses os.umask + explicit chmod to guarantee permissions regardless of
+    the process umask inherited from the parent shell.
 
     Args:
         path: Path to LMDB directory
@@ -341,44 +371,61 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
         - On LockError: single retry after safe cleanup (only if holder confirmed dead)
     """
     import lmdb
+    import os
+    import stat as _stat
+
     if map_size is None:
         map_size = lmdb_map_size()
+
+    # SEC-02: Create directory with 0700 (must happen before umask scope)
+    path.mkdir(parents=True, exist_ok=True)
+
+    # SEC-02: Set umask to 0077 for the duration of lmdb.open so that
+    # any files created by lmdb (data.mdb, lock.lck) inherit 0o600.
+    _old_umask = os.umask(0o077)
     try:
-        from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
-        cleanup_stale_lmdb_lock(path)
-    except Exception:
-        pass
-    _effective_map_size: int = map_size  # always set above (line 272 guarantees non-None)
-    defaults = {'writemap': False, 'sync': False}
-    merged_kw = {**defaults, **kw}
-    _instrument_lmdb_env = None
-    try:
-        from hledac.universal.runtime._telemetry_setup import instrument_lmdb_env as _instrument_lmdb_env
-    except ImportError:
-        pass
-    try:
-        env = lmdb.open(str(path), map_size=map_size, **merged_kw)
-        if _instrument_lmdb_env is not None:
-            env = _instrument_lmdb_env(env)
-        return env
-    except lmdb.LockError:
         try:
             from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
-            removed, reason = cleanup_stale_lmdb_lock(path)
-            import logging
-            _logger = logging.getLogger(__name__)
-            _logger.debug(f'LMDB lock recovery: removed={removed} reason={reason}')
+            cleanup_stale_lmdb_lock(path)
         except Exception:
-            removed = 0
-        if removed:
+            pass
+        _effective_map_size: int = map_size
+        # SEC-02: explicit mode=0o600 in defaults so lmdb respects our umask intent
+        defaults = {'writemap': False, 'sync': False, 'mode': 0o600}
+        merged_kw = {**defaults, **kw}
+        _instrument_lmdb_env = None
+        try:
+            from hledac.universal.runtime._telemetry_setup import instrument_lmdb_env as _instrument_lmdb_env
+        except ImportError:
+            pass
+        try:
+            env = lmdb.open(str(path), map_size=map_size, **merged_kw)
+            # SEC-02: Double-enforce permissions after open to cover all files
+            _chmod_lmdb_path(path)
+            if _instrument_lmdb_env is not None:
+                env = _instrument_lmdb_env(env)
+            return env
+        except lmdb.LockError:
             try:
-                env = lmdb.open(str(path), map_size=_effective_map_size, **merged_kw)
-                if _instrument_lmdb_env is not None:
-                    env = _instrument_lmdb_env(env)
-                return env
-            except lmdb.LockError:
-                raise
-        raise
+                from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
+                removed, reason = cleanup_stale_lmdb_lock(path)
+                import logging
+                _logger = logging.getLogger(__name__)
+                _logger.debug(f'LMDB lock recovery: removed={removed} reason={reason}')
+            except Exception:
+                removed = 0
+            if removed:
+                try:
+                    env = lmdb.open(str(path), map_size=_effective_map_size, **merged_kw)
+                    _chmod_lmdb_path(path)
+                    if _instrument_lmdb_env is not None:
+                        env = _instrument_lmdb_env(env)
+                    return env
+                except lmdb.LockError:
+                    raise
+            raise
+    finally:
+        os.umask(_old_umask)
 _PROJECT_ROOT: Path = Path(__file__).parent
 RUNTIME_BASE: Path = _PROJECT_ROOT / 'runtime'
 CTI_EXPORT_DIR: Path = RUNTIME_BASE / 'cti'
@@ -441,6 +488,9 @@ def resolve_dedup_paths(env_prefix: str='HLEDAC_DEDUP') -> dict[str, Path]:
     except Exception:
         bloom_dir = lmdb_root / 'bloom'
         bloom_dir.mkdir(parents=True, exist_ok=True)
+    # SEC-02: Enforce permissions on dedup LMDB root and bloom directory
+    _chmod_lmdb_path(lmdb_root)
+    _chmod_lmdb_path(bloom_dir)
     return {'lmdb_root': lmdb_root, 'dedup_lmdb': lmdb_root / 'dedup.lmdb', 'bloom_dir': bloom_dir, 'bloom_active': bloom_dir / 'bloom_active.mmap', 'bloom_previous': bloom_dir / 'bloom_previous.mmap', 'bloom_lock': bloom_dir / 'bloom.lock'}
 
 def get_dedup_paths() -> dict[str, Path]:
@@ -468,6 +518,15 @@ def get_sprint_parquet_dir(sprint_id: str) -> Path:
     return p
 IOC_DB_PATH: Path = SPRINT_STORE_ROOT.parent / 'ioc_graph.duckdb'
 IOC_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+# SEC-02: chmod IOC_DB_PATH to 0o600 — DuckDB creates file on first write,
+# we chmod immediately after so the file never exists with world-readable perms.
+try:
+    import os as _os_chmod
+    import stat as _stat_chmod
+    _os_chmod.chmod(IOC_DB_PATH, _stat_chmod.S_IRUSR | _stat_chmod.S_IWUSR)  # 0o600
+    _os_chmod.chmod(IOC_DB_PATH.parent, _stat_chmod.S_IRUSR | _stat_chmod.S_IWUSR | _stat_chmod.S_IXUSR)  # 0o700
+except Exception:
+    pass
 
 class _Paths(msgspec.Struct, frozen=True):
     """Immutable bundle of canonical runtime paths.
@@ -660,6 +719,60 @@ def cleanup_stale_lmdb_locks(lmdb_root: Path) -> int:
     except OSError:
         pass
     return removed
+
+
+def compact_sprint_lmdb() -> dict[str, object]:
+    """
+    Compact the sprint unified LMDB store to reclaim space after bulk deletions.
+
+    RES-04: LMDB copy-to-new-DB compaction pattern.
+    - Copies all live data from sprint_unified.lmdb to a new temp env
+    - Atomically swaps the data.mdb to reclaim dead pages
+    - Updates LMDB statistics
+
+    Also calls cleanup_stale_lmdb_locks to remove orphaned lock files.
+
+    M1 8GB safe: compaction is done in a single pass with bounded memory.
+
+    Returns:
+        Dict with keys:
+          - 'unified_compacted': bool — sprint_unified.lmdb compaction result
+          - 'locks_removed': int — count of stale lock files removed
+    """
+    import logging
+
+    _logger = logging.getLogger(__name__)
+    results: dict[str, object] = {
+        "unified_compacted": False,
+        "locks_removed": 0,
+    }
+
+    # Step 1: Remove stale lock files first
+    try:
+        locks_removed = cleanup_stale_lmdb_locks(SPRINT_LMDB_ROOT)
+        results["locks_removed"] = locks_removed
+        _logger.debug("[LMDB-COMPACT] Removed %d stale lock files", locks_removed)
+    except Exception as exc:
+        _logger.debug("[LMDB-COMPACT] cleanup_stale_lmdb_locks failed: %s", exc)
+
+    # Step 2: Compact the unified LMDB store (sprint_unified.lmdb)
+    unified_path = SPRINT_LMDB_ROOT / "sprint_unified.lmdb"
+    if unified_path.exists():
+        try:
+            from hledac.universal.knowledge.lmdb_subdb import open_unified_lmdb
+
+            store = open_unified_lmdb(str(unified_path), lazy=False)
+            success = store.compact_database()
+            store.close()
+            results["unified_compacted"] = success
+            _logger.info(
+                "[LMDB-COMPACT] sprint_unified.lmdb compaction: %s",
+                "success" if success else "failed",
+            )
+        except Exception as exc:
+            _logger.warning("[LMDB-COMPACT] sprint_unified.lmdb compact failed: %s", exc)
+
+    return dict(results)  # ensure JSON-serializable for callers
 
 def _is_socket_orphaned(sock_path: Path) -> bool:
     """

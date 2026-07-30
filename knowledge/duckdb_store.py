@@ -100,6 +100,35 @@ except ImportError:
     _HAS_LMDB = False
 
 
+# ---------------------------------------------------------------------------
+# SEC-02: DuckDB file permission hardening
+# ---------------------------------------------------------------------------
+
+def _harden_duckdb_permissions(db_path: Path) -> None:
+    """
+    SEC-02: Enforce 0o600 on DuckDB data files.
+
+    Called immediately after duckdb.connect() creates or opens a file-based
+    database. DuckDB creates multiple files (.duckdb, .wal) so we glob
+    for all extensions. Fails silently if chmod is not supported.
+    """
+    import os
+    import stat as _stat
+
+    if db_path is None:
+        return
+    # If db_path is a directory (WAL temp), glob all files inside
+    if db_path.is_dir():
+        files = list(db_path.glob("*"))
+    else:
+        files = list(db_path.parent.glob(f"{db_path.stem}*"))
+    for f in files:
+        try:
+            os.chmod(f, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
+        except OSError:
+            pass
+
+
 if TYPE_CHECKING:
     import polars as pl
 
@@ -1980,7 +2009,17 @@ class DuckDBShadowStore:
         self._ingest_breaker_last_failure: float = 0.0
         self._ingest_breaker_cooldown: float = 30.0
         self._ingest_breaker_threshold: int = 5
+        # RES-03: Automatic maintenance scheduler — op-count + time-based VACUUM/CHECKPOINT
+        self._vacuum_interval_ops: int = 10000  # VACUUM every 10K write ops
+        self._checkpoint_interval_ops: int = 5000  # CHECKPOINT every 5K ops
+        self._write_op_counter: int = 0
+        self._last_vacuum_time: float = 0.0
+        self._last_checkpoint_time: float = 0.0
+        self._vacuum_interval_seconds: float = 3600.0  # 1 hour
+        self._checkpoint_interval_seconds: float = 1800.0  # 30 min
         self._checkpoint_task: asyncio.Task | None = None
+        # RES-04: LMDB compaction timer (initialized in _maintenance_loop)
+        self._last_lmdb_compact_time: float = 0.0
         self._read_pool: list[Any] = []
         self._read_pool_idx: int = 0
         self._adjust_executor_pool()
@@ -2463,6 +2502,8 @@ class DuckDBShadowStore:
     def _create_schema_and_migrate(self, duckdb, runtime, read_only: bool) -> None:
         """Create schema and run migrations on setup connection, then close it."""
         setup_conn = duckdb.connect(str(self._db_path), read_only=read_only)
+        # SEC-02: enforce 0o600 on DuckDB data files immediately after creation
+        _harden_duckdb_permissions(self._db_path)
         try:
             self._configure_connection(setup_conn, runtime, is_read_only=read_only)
             if not read_only:
@@ -2483,6 +2524,8 @@ class DuckDBShadowStore:
     def _create_file_connection(self, duckdb, runtime, read_only: bool) -> None:
         """Create and configure the main file connection."""
         self._file_conn = duckdb.connect(str(self._db_path), read_only=read_only)
+        # SEC-02: enforce 0o600 on DuckDB data files immediately after creation
+        _harden_duckdb_permissions(self._db_path)
         if instrument_duckdb_connection:
             self._file_conn = instrument_duckdb_connection(self._file_conn)
         self._configure_file_connections(runtime)
@@ -2516,6 +2559,8 @@ class DuckDBShadowStore:
         """Add a single read-only connection to the read pool. Returns True on success."""
         try:
             read_conn = duckdb.connect(str(self._db_path), read_only=True)
+            # SEC-02: enforce 0o600 on DuckDB data files immediately after creation
+            _harden_duckdb_permissions(self._db_path)
             if instrument_duckdb_connection:
                 read_conn = instrument_duckdb_connection(read_conn)
             self._configure_connection(read_conn, runtime, is_read_only=True)
@@ -2624,6 +2669,8 @@ class DuckDBShadowStore:
             self._query_cache.invalidate()
         duckdb = _get_duckdb()
         conn = duckdb.connect(str(self._db_path))
+        # SEC-02: enforce 0o600 on DuckDB data files immediately after creation
+        _harden_duckdb_permissions(self._db_path)
         try:
             conn.execute("SET memory_limit = '1GB'")
             conn.execute("PRAGMA threads = 2")
@@ -2988,8 +3035,14 @@ class DuckDBShadowStore:
                     "_idx": i,
                 }
                 findings_dicts.append(d)
-                payload = f.payload_text or ""
-                if payload:
+                # SEC-01: Scrub secrets from payload_text before claims extraction and DuckDB storage.
+                raw_payload = f.payload_text or ""
+                if raw_payload:
+                    try:
+                        from hledac.universal.security.secrets_scrubber import scrub_secrets
+                        payload = scrub_secrets(raw_payload)
+                    except Exception:  # noqa: BLE001 — fail-safe: use raw if scrubbing fails
+                        payload = raw_payload
                     texts_data.append((i, payload, "", f.query, f.source_type, "finding"))
 
             if not texts_data:
@@ -4181,7 +4234,7 @@ class DuckDBShadowStore:
             self._startup_replay_done = True
         self.ensure_target_profiles_schema()
         if self._db_path is not None:
-            self._checkpoint_task = safe_create_task(self._checkpoint_loop())
+            self._checkpoint_task = safe_create_task(self._maintenance_loop())
         self._startup_ready.set()
         try:
             if hasattr(self, "_arrow_metrics") and self._arrow_metrics is not None:
@@ -8273,6 +8326,10 @@ class DuckDBShadowStore:
             get_metrics_registry().set_gauge("duckdb_ingest_latency_ms", _ingest_latency_ms)
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
+        # RES-03: Track write ops for auto-maintenance
+        self._write_op_counter += accepted_total
+        # RES-03: Trigger automatic VACUUM/CHECKPOINT if thresholds reached
+        await self._maybe_auto_maintenance()
         return results
 
     def _envelope_to_payload(self, envelope: FindingEnvelope) -> str | None:
@@ -8324,6 +8381,16 @@ class DuckDBShadowStore:
                 existing["payload_text"] = payload_text
             else:
                 return False
+            # SEC-01: Scrub secrets from serialized envelope payload before WAL storage.
+            scrubbed_payload = existing.get("payload_text")
+            if scrubbed_payload:
+                try:
+                    from hledac.universal.security.secrets_scrubber import scrub_secrets
+
+                    scrubbed_payload = scrub_secrets(scrubbed_payload)
+                except Exception:  # noqa: BLE001 — fail-safe: use raw if scrubbing fails
+                    scrubbed_payload = existing.get("payload_text")
+            existing["payload_text"] = scrubbed_payload
             return self._wal_lmdb.put(key, existing)
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
             return False
@@ -8637,6 +8704,17 @@ class DuckDBShadowStore:
             n = len(findings)
             items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
             for i, f in enumerate(findings):
+                # SEC-01: Scrub secrets from payload_text before LMDB WAL storage.
+                raw_payload_text = f.payload_text
+                if raw_payload_text:
+                    try:
+                        from hledac.universal.security.secrets_scrubber import scrub_secrets
+
+                        payload_text = scrub_secrets(raw_payload_text)
+                    except Exception:  # noqa: BLE001 — fail-safe: use raw if scrubbing fails
+                        payload_text = raw_payload_text
+                else:
+                    payload_text = raw_payload_text
                 items[i] = (f"finding:{f.finding_id}", {
                     "id": f.finding_id,
                     "query": f.query,
@@ -8644,7 +8722,7 @@ class DuckDBShadowStore:
                     "confidence": f.confidence,
                     "ts": f.ts,
                     "provenance": f.provenance,
-                    "payload_text": f.payload_text,
+                    "payload_text": payload_text,
                 })
             if items:
                 results = (
@@ -8710,6 +8788,17 @@ class DuckDBShadowStore:
             # B2-FIX: pre-allocate items list — avoids O(n) list reallocation.
             items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
             for i, f in enumerate(findings):
+                # SEC-01: Scrub secrets from payload_text before LMDB WAL storage.
+                raw_payload_text = f.payload_text
+                if raw_payload_text:
+                    try:
+                        from hledac.universal.security.secrets_scrubber import scrub_secrets
+
+                        payload_text = scrub_secrets(raw_payload_text)
+                    except Exception:  # noqa: BLE001 — fail-safe: use raw if scrubbing fails
+                        payload_text = raw_payload_text
+                else:
+                    payload_text = raw_payload_text
                 items[i] = (f"finding:{f.finding_id}", {
                     "id": f.finding_id,
                     "query": f.query,
@@ -8717,7 +8806,7 @@ class DuckDBShadowStore:
                     "confidence": f.confidence,
                     "ts": f.ts,
                     "provenance": f.provenance,
-                    "payload_text": f.payload_text,
+                    "payload_text": payload_text,
                 })
             if items:
                 lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
@@ -9239,6 +9328,59 @@ class DuckDBShadowStore:
             return await self.vacuum_async()
         return False
 
+    async def _maybe_auto_maintenance(self) -> None:
+        """
+        RES-03: Trigger automatic maintenance based on op count (time-based
+        triggers are handled by _maintenance_loop).
+
+        Called after each write batch via async_ingest_findings_batch.
+        Op-count based triggers: VACUUM every 10K ops, CHECKPOINT every 5K ops.
+        Fail-safe: any error is silently caught and logged.
+        """
+        try:
+            current_time = _time.monotonic()
+
+            # Op-count based VACUUM
+            if self._write_op_counter >= self._vacuum_interval_ops:
+                await self.vacuum_async()
+                self._write_op_counter = 0
+                self._last_vacuum_time = current_time
+
+            # Op-count based CHECKPOINT
+            elif self._write_op_counter >= self._checkpoint_interval_ops:
+                await self._checkpoint_async()
+                self._write_op_counter = 0
+                self._last_checkpoint_time = current_time
+        except Exception:  # noqa: BLE001 — best-effort; maintenance failure; non-critical
+            pass
+
+    async def _checkpoint_async(self) -> bool:
+        """
+        Execute CHECKPOINT to flush WAL to main DB.
+
+        Fail-safe: any error is logged and False is returned.
+        """
+        if self._db_path is None:
+            return False
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(self._executor, self._checkpoint_sync)
+            return True
+        except Exception as e:
+            logger.warning(f"[duckdb_checkpoint] CHECKPOINT failed: {e}")
+            return False
+
+    def _checkpoint_sync(self) -> None:
+        """Execute CHECKPOINT synchronously on worker thread."""
+        if self._db_path is None:
+            return
+        duckdb = _get_duckdb()
+        tmp_conn = duckdb.connect(str(self._db_path), read_only=False)
+        try:
+            tmp_conn.execute("CHECKPOINT")
+        finally:
+            tmp_conn.close()
+
     @property
     def executor(self) -> ThreadPoolExecutor:
         """Return the internal executor (for test introspection)."""
@@ -9429,6 +9571,13 @@ class DuckDBShadowStore:
         if mgr is None:
             return []
         return mgr.wal_scan_prewrites_without_checkpoint()
+
+    def _wal_get_finding(self, finding_id: str) -> dict[str, Any] | None:
+        """Get WAL truth record for a finding."""
+        mgr = self._ensure_wal_manager()
+        if mgr is None:
+            return None
+        return mgr.wal_get_finding(finding_id)
 
     def _activation_record_finding(self, finding_id: str, query: str, source_type: str, confidence: float) -> dict:
         """
@@ -10274,32 +10423,77 @@ class DuckDBShadowStore:
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
 
-    async def _checkpoint_loop(self) -> None:
+    async def _maintenance_loop(self) -> None:
         """
-        Background checkpoint task for DuckDB native WAL.
+        RES-03: Unified background maintenance loop for DuckDB VACUUM and CHECKPOINT.
 
-        Runs every 300s (O3) to flush WAL to main database file, bounding WAL growth.
-        duckdb_autocheckpoint=262144 (256MB) provides a secondary safety valve between
-        runs. Fail-safe: any error is silently caught and logged.
+        Replaces the old _checkpoint_loop (hardcoded 300s). This loop:
+        - Checks time-based VACUUM trigger (every 1h by default)
+        - Checks time-based CHECKPOINT trigger (every 30min by default)
+        - Handles LMDB compaction via unified store (RES-04)
+        - Also triggered opportunistically after writes via _maybe_auto_maintenance
+
+        duckdb_autocheckpoint=51200 provides a secondary safety valve between runs.
+        Fail-safe: any error is silently caught and logged.
         Only active for file mode; _checkpoint_task is None for :memory: mode.
         """
         _logger = logging.getLogger(__name__)
+        _now = _time.monotonic()
+        self._last_vacuum_time = _now
+        self._last_checkpoint_time = _now
+        self._last_lmdb_compact_time = _now
+        _LMDB_COMPACT_INTERVAL = 7200.0  # RES-04: LMDB compact every 2h
+
         while True:
             try:
-                await asyncio.sleep(300)
+                # RES-03: Use configured interval instead of hardcoded 300s
+                _check_interval = min(self._vacuum_interval_seconds, self._checkpoint_interval_seconds, _LMDB_COMPACT_INTERVAL)
+                await asyncio.sleep(min(_check_interval, 300))  # Cap at 300s to stay responsive
                 if self._closed:
                     break
                 if self._file_conn is None:
                     continue
-                try:
-                    self._file_conn.execute("PRAGMA checkpoint")
-                    self._file_conn.execute("ANALYZE")
-                except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                    _logger.debug(f"[P3-2] checkpoint/ANALYZE error: {e}")
+
+                current_time = _time.monotonic()
+
+                # RES-04: LMDB compaction — reclaim deleted pages from unified store
+                if (current_time - self._last_lmdb_compact_time) >= _LMDB_COMPACT_INTERVAL:
+                    try:
+                        if hasattr(self, "_wal_lmdb") and self._wal_lmdb is not None:
+                            if hasattr(self._wal_lmdb, "compact_database"):
+                                compact_ok = self._wal_lmdb.compact_database()
+                                if compact_ok:
+                                    _logger.info("[RES-04] LMDB compaction succeeded")
+                                else:
+                                    _logger.debug("[RES-04] LMDB compaction skipped or failed")
+                    except Exception as e:  # noqa: BLE001 — best-effort; LMDB compaction failure; non-critical
+                        _logger.debug(f"[RES-04] LMDB compact error: {e}")
+                    self._last_lmdb_compact_time = current_time
+
+                # Time-based CHECKPOINT (DuckDB WAL → main file)
+                if (current_time - self._last_checkpoint_time) >= self._checkpoint_interval_seconds:
+                    try:
+                        self._file_conn.execute("PRAGMA checkpoint")
+                        self._file_conn.execute("ANALYZE")
+                        self._last_checkpoint_time = current_time
+                        _logger.debug("[RES-03] CHECKPOINT triggered by time interval")
+                    except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+                        _logger.debug(f"[RES-03] CHECKPOINT error: {e}")
+
+                # Time-based VACUUM (reclaim deleted pages, shrink file)
+                if (current_time - self._last_vacuum_time) >= self._vacuum_interval_seconds:
+                    try:
+                        _vac_loop = asyncio.get_running_loop()
+                        await _vac_loop.run_in_executor(self._executor, self._vacuum_sync)
+                        self._last_vacuum_time = current_time
+                        _logger.info("[RES-03] VACUUM triggered by time interval")
+                    except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+                        _logger.debug(f"[RES-03] VACUUM error: {e}")
+
             except asyncio.CancelledError:
                 break
             except Exception as e:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
-                _logger.debug(f"[P3-2] checkpoint loop error: {e}")
+                _logger.debug(f"[RES-03] maintenance loop error: {e}")
 
     # ── FTS5: Full-Text Search ────────────────────────────────────────────────
 

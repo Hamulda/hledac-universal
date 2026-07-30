@@ -22,6 +22,7 @@ use lz4_flex::block::{compress as lz4_compress, decompress as lz4_decompress};
 use std::collections::{HashMap, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
+use std::panic; // FFI-05: catch_unwind for mmap across FFI boundary
 use std::path::PathBuf;
 
 use super::TraversalResult;
@@ -200,6 +201,12 @@ impl LRUCache {
     }
 
     /// Load cache from mmap file (if exists and valid).
+    ///
+    /// FFI-05 fix: `map_mut` can panic if the file is deleted between
+    /// `open()` and `map_mut()` (TOCTOU race). Panic crossing the FFI boundary
+    /// is UB on macOS (Mach ports don't support Rust unwinding). We use
+    /// `catch_unwind` as a safety net AND re-verify file existence before
+    /// mapping to close the TOCTOU gap.
     pub fn load_from_mmap(&mut self) {
         let path = CacheKey::file_path(&self.cache_dir);
         let Ok(mut file) = OpenOptions::new().read(true).write(true).open(&path) else {
@@ -223,10 +230,33 @@ impl LRUCache {
             return;
         }
 
-        // Mmap the file for reading entries
-        let mmap = match unsafe { memmap2::MmapMut::map_mut(&file) } {
-            Ok(m) => m,
-            Err(_) => return,
+        // FFI-05: Re-verify file still exists before mmap to close TOCTOU race.
+        // If another process truncates/deletes the file between the earlier
+        // `file.metadata()` and this call, `map_mut` would panic.
+        let Ok(current_metadata) = file.metadata() else {
+            return;
+        };
+        if current_metadata.len() < CacheHeader::SIZE as u64 {
+            return;
+        }
+
+        // FFI-05: Wrap `map_mut` in `catch_unwind`. If a panic occurs
+        // (e.g., due to memory pressure or TOCTOU race), we catch it and
+        // return gracefully instead of propagating panic across the FFI boundary.
+        let mmap = match panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            unsafe { memmap2::MmapMut::map_mut(&file) }
+        })) {
+            Ok(Ok(m)) => m,
+            Ok(Err(e)) => {
+                eprintln!("[graph_traverse/cache] load_from_mmap: mmap error: {}", e);
+                return;
+            }
+            Err(_) => {
+                // Panic was caught — file may have been deleted/truncated by another process.
+                // Return gracefully (cache miss) rather than propagate panic across FFI.
+                eprintln!("[graph_traverse/cache] load_from_mmap: map_mut panicked (file race?), skipping cache load");
+                return;
+            }
         };
 
         let data_size = header.data_size as usize;

@@ -683,9 +683,14 @@ async def fetch_via_tor_curl_cffi(
     profile: str = "chrome136",
     tor_manager: Any = None,
     circuit_rotation_count: int = 50,
+    use_conditional_cache: bool = True,
 ) -> dict[str, Any]:
     """
     Fetch URL via curl_cffi through Tor SOCKS5H proxy with circuit rotation.
+
+    GRAPH-02 FIX: Now uses fetch_via_curl_cffi_cached for conditional-GET
+    support (ETag/Last-Modified 304 shortcuts). Darknet content changes
+    less frequently than clearnet; 1h TTL balances freshness vs bandwidth.
 
     Args:
         url: URL to fetch (.onion only)
@@ -695,7 +700,29 @@ async def fetch_via_tor_curl_cffi(
         profile: TLS profile for JA3 fingerprint
         tor_manager: TorManager instance for circuit rotation (NEWNYM via stem)
         circuit_rotation_count: Rotate circuit every N requests (default 50)
+        use_conditional_cache: Use conditional-GET caching (default True, GRAPH-02)
     """
+    # GRAPH-03: Validate onion v3 address BEFORE circuit allocation.
+    # Rejecting an invalid address here saves 10-30s (Tor circuit timeout).
+    # Only validate .onion URLs — I2P uses different address format.
+    if ".onion" in url:
+        try:
+            from hledac.universal.rust_extensions import rust_validate_onion_v3_detailed
+
+            validation_result = rust_validate_onion_v3_detailed(url)
+            if validation_result != "valid":
+                return _make_error_result(
+                    url=url,
+                    error=f"onion_v3_validation_failed: {validation_result}",
+                    failure_stage="onion_validation",
+                    network_error_kind="validation_error",
+                    selected_transport="tor_curl_cffi",
+                    tls_impersonate=profile,
+                )
+        except Exception:  # noqa: BLE001
+            # rust_extensions unavailable (build not present) — skip validation
+            pass
+
     global _tor_curl_request_count
     _tor_curl_request_count += 1
     count = _tor_curl_request_count
@@ -708,6 +735,22 @@ async def fetch_via_tor_curl_cffi(
             logger.warning(f"[TOR] circuit rotation failed: {e}")
 
     proxies = {"https": _TOR_CURL_PROXY}
+
+    if use_conditional_cache:
+        try:
+            return await fetch_via_curl_cffi_cached(
+                url=url,
+                headers=headers,
+                timeout_s=timeout_s,
+                max_bytes=max_bytes,
+                profile=profile,
+                proxies=proxies,
+                ttl_s=3600,  # Darknet content: 1h freshness window
+            )
+        except Exception:  # noqa: BLE001
+            # Fallback to uncached on any error
+            pass
+
     return await fetch_via_curl_cffi(
         url=url,
         headers=headers,
@@ -724,9 +767,14 @@ async def fetch_via_i2p_curl_cffi(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     max_bytes: int = DEFAULT_MAX_BYTES,
     profile: str = "chrome136",
+    use_conditional_cache: bool = True,
 ) -> dict[str, Any]:
     """
     Fetch URL via curl_cffi through I2P SOCKS5H proxy.
+
+    GRAPH-02 FIX: Now uses fetch_via_curl_cffi_cached for conditional-GET
+    support (ETag/Last-Modified 304 shortcuts). I2P content is typically
+    more stable than Tor; 2h TTL reflects lower change frequency.
 
     F260: I2P has no NEWNYM equivalent — circuit rotation is intentionally
     absent. I2P tunnels are inherently e2e and short-lived; explicit rotation
@@ -739,8 +787,25 @@ async def fetch_via_i2p_curl_cffi(
         timeout_s: Request timeout
         max_bytes: Max bytes to read
         profile: TLS profile for JA3 fingerprint
+        use_conditional_cache: Use conditional-GET caching (default True, GRAPH-02)
     """
     proxies = {"https": _I2P_CURL_PROXY}
+
+    if use_conditional_cache:
+        try:
+            return await fetch_via_curl_cffi_cached(
+                url=url,
+                headers=headers,
+                timeout_s=timeout_s,
+                max_bytes=max_bytes,
+                profile=profile,
+                proxies=proxies,
+                ttl_s=7200,  # I2P content: 2h freshness window (more stable than Tor)
+            )
+        except Exception:  # noqa: BLE001
+            # Fallback to uncached on any error
+            pass
+
     return await fetch_via_curl_cffi(
         url=url,
         headers=headers,

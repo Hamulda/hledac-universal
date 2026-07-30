@@ -21,6 +21,7 @@ DuckDB analytical queries:
 """
 
 
+import hashlib
 import json
 import threading
 from datetime import datetime, timezone
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DuckDBSpanExporter",
+    "SamplingSpanProcessor",
     "create_otel_spans_table",
     "QueryBuilder",
 ]
@@ -88,6 +90,149 @@ def create_otel_spans_table(conn: Any) -> None:
     for idx_sql in _OTEL_SPANS_INDEXES:
         cursor.execute(idx_sql)
     cursor.close()
+
+
+# --------------------------------------------------------------------------- #
+# SamplingSpanProcessor — TEL-01: Filter high-frequency spans before export
+# --------------------------------------------------------------------------- #
+
+class SamplingSpanProcessor:
+    """
+    SpanProcessor wrapper that applies sampling rules before passing spans downstream.
+
+    M1 8GB safe: reduces DuckDB write volume by filtering high-frequency spans.
+
+    Always-on, fail-soft: on any error, passes spans through unchanged.
+
+    Sampling rules:
+      1. ERROR spans → always export
+      2. Slow spans (>slow_span_threshold_ms) → always export (performance signal)
+      3. High-frequency prefixes (configurable via HLEDAC_OTEL_SKIP_PREFIXES) →
+         trace-id-ratio sampling at HLEDAC_OTEL_SPAN_SAMPLE_RATE (default 0.1 = 10%)
+      4. All other spans → export
+
+    Telemetry metrics:
+      - _filtered_count: spans dropped by sampling
+      - _exported_count: spans passed through
+
+    Usage:
+        processor = SamplingSpanProcessor(
+            next_processor=BatchSpanProcessor(DuckDBSpanExporter(...)),
+            sample_rate=0.1,
+        )
+        provider.add_span_processor(processor)
+    """
+
+    __slots__ = (
+        "_next",
+        "_sample_rate",
+        "_filtered_count",
+        "_exported_count",
+        "_lock",
+        "_skip_prefixes",
+        "_slow_span_threshold_ms",
+    )
+
+    def __init__(
+        self,
+        next_processor: Any,
+        *,
+        sample_rate: float = 0.1,
+        slow_span_threshold_ms: float = 100.0,
+        skip_prefixes: tuple[str, ...] | None = None,
+    ) -> None:
+        self._next = next_processor
+        self._sample_rate = sample_rate
+        self._filtered_count = 0
+        self._exported_count = 0
+        self._lock = threading.Lock()
+        self._slow_span_threshold_ms = slow_span_threshold_ms
+        if skip_prefixes is not None:
+            self._skip_prefixes = skip_prefixes
+        else:
+            self._skip_prefixes = (
+                "fetch.",
+                "http.",
+                "db.",
+                "lmdb.",
+                "cache.",
+                "duckdb.",
+            )
+
+    def on_start(self, span: Span) -> None:
+        self._next.on_start(span)
+
+    def on_end(self, span: Span) -> None:
+        """Called by OTel SDK when a span ends. Apply sampling rules."""
+        try:
+            if self._should_export(span):
+                self._next.on_end(span)
+                with self._lock:
+                    self._exported_count += 1
+            else:
+                with self._lock:
+                    self._filtered_count += 1
+        except Exception:
+            # Fail-soft: pass through on error
+            try:
+                self._next.on_end(span)
+                with self._lock:
+                    self._exported_count += 1
+            except Exception:
+                pass
+
+    def shutdown(self, timeout_ms: float = 5_000) -> None:
+        if hasattr(self._next, "shutdown"):
+            self._next.shutdown(timeout_ms)
+
+    def force_flush(self, timeout_ms: float = 5_000) -> None:
+        if hasattr(self._next, "force_flush"):
+            self._next.force_flush(timeout_ms)
+
+    def _should_export(self, span: Span) -> bool:
+        """Determine if span should be exported based on sampling rules."""
+        # Rule 1: ERROR spans always export
+        status: Status = span.status
+        if status.status_code == StatusCode.ERROR:
+            return True
+
+        # Rule 2: Slow spans (>{slow_span_threshold_ms}ms) always export
+        start_ns = span.start_time or 0
+        end_ns = span.end_time or 0
+        duration_ms = (end_ns - start_ns) / 1_000_000.0
+        if duration_ms > self._slow_span_threshold_ms:
+            return True
+
+        # Rule 3: High-frequency prefix → trace-id-ratio sampling
+        span_name = span.name or ""
+        if span_name.startswith(self._skip_prefixes):
+            return self._trace_id_sampled(span)
+
+        # Rule 4: All other spans export
+        return True
+
+    def _trace_id_sampled(self, span: Span) -> bool:
+        """Deterministic trace-id-ratio sampling for span consistency."""
+        try:
+            ctx = span.get_span_context()
+            trace_id_bytes = ctx.trace_id.to_bytes(16, "big")
+            name_bytes = (span.name or "").encode("utf-8")
+            hash_input = trace_id_bytes + name_bytes
+            hash_val = int.from_bytes(
+                hashlib.sha256(hash_input).digest()[:8], "big"
+            )
+            return (hash_val % 1000) < (self._sample_rate * 1000)
+        except Exception:
+            return True  # Fail-safe: export on error
+
+    @property
+    def stats(self) -> dict[str, int]:
+        """Return sampling statistics."""
+        with self._lock:
+            return {
+                "filtered": self._filtered_count,
+                "exported": self._exported_count,
+            }
 
 
 # --------------------------------------------------------------------------- #

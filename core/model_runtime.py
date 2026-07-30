@@ -276,6 +276,27 @@ class ModelLifecycle:
             logger.warning("[LIFECYCLE] structured_generate skipped: %s", e)
             return None
 
+        # LLM-01: ALWAYS sanitize input prompt before LLM inference (fail-safe, always-on)
+        try:
+            _sanitize_fn = __import__('hledac.universal.brain.prompt_injection_validator', fromlist=['sanitize_prompt_injection_patterns']).sanitize_prompt_injection_patterns
+            validation_result = _sanitize_fn(prompt)
+            if validation_result.suspicious:
+                _high_risk = any(p in validation_result.patterns for p in (
+                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
+                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
+                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
+                    'structural_repeated_delimiters', 'structural_html_comment',
+                ))
+                if _high_risk:
+                    logger.warning(f'[LLM-01-BLOCK] High-risk prompt injection in structured_generate: {validation_result.patterns}')
+                    return (None, False)
+                logger.warning('[LIFECYCLE] prompt_injection: suspicious=%s, patterns=%s', validation_result.suspicious, validation_result.patterns)
+            prompt = validation_result.safe_text
+        except Exception:
+            # LLM-01 fail-safe: reject on any internal error
+            logger.error('[LLM-01] structured_generate prompt injection validation failed internally')
+            return (None, False)
+
         full_prompt = f"<|system|>{system_prompt}<|user|>{prompt}<|assistant|>"
 
         # Sprint 8TA B.1: PRIMÁRNÍ PATH — Outlines json_schema dict

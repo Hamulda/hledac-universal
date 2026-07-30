@@ -195,3 +195,91 @@ class TestLmdbPoolShutdown:
         assert pool._executor is None
         assert pool._semaphore is None
         # _lock removed in S1-14 fix — LMDB readers are concurrent, no Python-side lock
+
+
+class TestLmdbPoolMapFull:
+    """RES-01: MapFullError handling — distinguishes LMDB_MAP_FULL from generic None."""
+
+    @pytest.mark.asyncio
+    async def test_run_lmdb_returns_lmdb_map_full_on_map_full_error(self) -> None:
+        """run_lmdb returns LMDB_MAP_FULL sentinel when lmdb.MapFullError is raised."""
+        import lmdb
+
+        from hledac.universal.runtime.lmdb_pool import LMDB_MAP_FULL, get_lmdb_pool
+
+        pool = get_lmdb_pool()
+
+        def raise_map_full() -> None:
+            raise lmdb.MapFullError("test map full")
+
+        result = await pool.run_lmdb(raise_map_full)
+        assert result is LMDB_MAP_FULL
+
+    def test_run_lmdb_sync_returns_lmdb_map_full_on_map_full_error(self) -> None:
+        """run_lmdb_sync returns LMDB_MAP_FULL sentinel when lmdb.MapFullError is raised."""
+        import lmdb
+
+        from hledac.universal.runtime.lmdb_pool import LMDB_MAP_FULL, get_lmdb_pool
+
+        pool = get_lmdb_pool()
+
+        def raise_map_full() -> None:
+            raise lmdb.MapFullError("test map full sync")
+
+        result = pool.run_lmdb_sync(raise_map_full)
+        assert result is LMDB_MAP_FULL
+
+    @pytest.mark.asyncio
+    async def test_run_lmdb_returns_none_on_generic_exception(self) -> None:
+        """run_lmdb still returns None for non-MapFullError exceptions."""
+        from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
+
+        pool = get_lmdb_pool()
+
+        def raise_generic() -> None:
+            raise RuntimeError("generic error")
+
+        result = await pool.run_lmdb(raise_generic)
+        assert result is None
+
+    def test_run_lmdb_sync_returns_none_on_generic_exception(self) -> None:
+        """run_lmdb_sync still returns None for non-MapFullError exceptions."""
+        from hledac.universal.runtime.lmdb_pool import get_lmdb_pool
+
+        pool = get_lmdb_pool()
+
+        def raise_generic() -> None:
+            raise ValueError("generic sync error")
+
+        result = pool.run_lmdb_sync(raise_generic)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_run_lmdb_returns_none_on_timeout(self) -> None:
+        """run_lmdb returns None on timeout (not LMDB_MAP_FULL)."""
+        import time
+
+        from hledac.universal.runtime.lmdb_pool import LMDB_MAP_FULL, get_lmdb_pool
+
+        pool = get_lmdb_pool()
+
+        def slow() -> int:
+            time.sleep(0.5)
+            return 42
+
+        result = await pool.run_lmdb(slow, timeout=0.01)
+        assert result is None
+        assert result is not LMDB_MAP_FULL
+
+    def test_run_lmdb_sync_returns_none_on_success(self) -> None:
+        """run_lmdb_sync returns actual result on success (not LMDB_MAP_FULL)."""
+        from hledac.universal.runtime.lmdb_pool import LMDB_MAP_FULL, get_lmdb_pool
+
+        pool = get_lmdb_pool()
+
+        def compute() -> int:
+            return 99
+
+        result = pool.run_lmdb_sync(compute)
+        assert result == 99
+        assert result is not LMDB_MAP_FULL
