@@ -30,7 +30,7 @@ import msgspec
 from hledac.universal.core.system_metrics import get_system_snapshot
 from hledac.universal.utils.async_helpers import safe_create_task
 
-from .base import DecisionResponse, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
+from .base import DecisionResponse, ExecutionResult, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -222,29 +222,23 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         """Return supported operation types."""
         return [OperationType.MONITORING]
 
-    async def handle_request(self, operation_ref: str, decision: DecisionResponse) -> OperationResult:
-        """
-        Handle monitoring request with intelligent routing.
+    def _get_operation_type_for_tracking(self) -> str:
+        """Return operation type for tracking."""
+        return 'monitoring'
 
-        Args:
-            operation_ref: Unique operation reference
-            decision: Monitoring decision with routing info
-
-        Returns:
-            OperationResult with monitoring outcome
-        """
-        start_time = time.time()
-        operation_id = self.generate_operation_id()
-        try:
-            self.track_operation(operation_id, {'operation_ref': operation_ref, 'decision': decision, 'type': 'monitoring'})
-            result = await self._execute_monitoring_decision(decision)
-            operation_result = OperationResult(operation_id=operation_id, status='completed' if result.success else 'failed', result_summary=result.summary, execution_time=time.time() - start_time, success=result.success, metadata={'monitoring_type': result.monitoring_type, 'alert_triggered': result.alert_triggered, 'metrics_collected': len(result.metrics)})
-        except Exception as e:
-            operation_result = OperationResult(operation_id=operation_id, status='failed', result_summary=f'Monitoring failed: {str(e)}', execution_time=time.time() - start_time, success=False, error_message=str(e))
-        finally:
-            self.untrack_operation(operation_id)
-        self.record_operation_result(operation_result)
-        return operation_result
+    async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
+        """Execute monitoring decision — routes to appropriate backend."""
+        result = await self._execute_monitoring_decision(decision)
+        return ExecutionResult(
+            status='completed' if result.success else 'failed',
+            result_summary=result.summary,
+            success=result.success,
+            metadata={
+                'monitoring_type': result.monitoring_type,
+                'alert_triggered': result.alert_triggered,
+                'metrics_collected': len(result.metrics),
+            },
+        )
 
     async def _execute_monitoring_decision(self, decision: DecisionResponse) -> MonitoringResult:
         """Route monitoring decision to appropriate backend."""
@@ -342,11 +336,11 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             try:
                 await self._execute_system_monitoring()
                 interval = self._collection_interval
-                if self._current_memory_pressure == MemoryPressureLevel.ELEVATED:
+                if self._components.memory.current_level == MemoryPressureLevel.ELEVATED:
                     interval *= 1.5
-                elif self._current_memory_pressure == MemoryPressureLevel.HIGH:
+                elif self._components.memory.current_level == MemoryPressureLevel.HIGH:
                     interval *= 2.0
-                elif self._current_memory_pressure == MemoryPressureLevel.CRITICAL:
+                elif self._components.memory.current_level == MemoryPressureLevel.CRITICAL:
                     interval *= 3.0
                 try:
                     async with asyncio.timeout(interval):
@@ -554,7 +548,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     def get_monitoring_stats(self) -> dict[str, Any]:
         """Get monitoring statistics."""
-        return {'collections_count': self._collections_count, 'alerts_triggered': self._alerts_triggered, 'health_checks_performed': self._health_checks_performed, 'metrics_history_size': len(self._metrics_history), 'benchmark_history_size': len(self._benchmark_history), 'background_collection_active': self._collection_task is not None and (not self._collection_task.done()), 'current_memory_pressure': self._current_memory_pressure.value}
+        return {'collections_count': self._collections_count, 'alerts_triggered': self._alerts_triggered, 'health_checks_performed': self._health_checks_performed, 'metrics_history_size': len(self._metrics_history), 'benchmark_history_size': len(self._benchmark_history), 'background_collection_active': self._collection_task is not None and (not self._collection_task.done()), 'current_memory_pressure': self._components.memory.current_level.value}
 
     def get_available_monitoring_systems(self) -> dict[str, bool]:
         """Get availability status of all monitoring systems."""

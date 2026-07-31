@@ -26,7 +26,7 @@ from typing import Any
 
 import msgspec
 
-from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -130,45 +130,26 @@ class OpsECCoordinator(UniversalCoordinator):
     def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.SECURITY]
 
-    async def handle_request(self, operation_ref: str, decision: DecisionResponse) -> OperationResult:
+    def _get_operation_type_for_tracking(self) -> str:
+        """Return operation type for tracking."""
+        return 'opsec'
+
+    async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
         """Handle OPSEC request — delegates to appropriate backend."""
-        start_time = time.time()
-        operation_id = self.generate_operation_id()
-        try:
-            self.track_operation(operation_id, {
-                'operation_ref': operation_ref,
-                'decision': decision,
-                'type': 'opsec',
-            })
-            chosen = decision.chosen_option.lower()
-            if any(k in chosen for k in ('stealth', 'evasion', 'anonymize')):
-                if self._stealth_available:
-                    result = await self._execute_stealth_op(decision, '', SecurityLevel.MINIMAL)
-                    operation_result = OperationResult(
-                        operation_id=operation_id,
-                        status='completed' if result.success else 'failed',
-                        result_summary=result.summary,
-                        execution_time=time.time() - start_time,
-                        success=result.success,
-                        metadata={'operation_type': result.operation_type},
-                    )
-                else:
-                    raise RuntimeError('No OPSEC backends available')
+        chosen = decision.chosen_option.lower()
+        if any(k in chosen for k in ('stealth', 'evasion', 'anonymize')):
+            if self._stealth_available:
+                result = await self._execute_stealth_op(decision, '', SecurityLevel.MINIMAL)
+                return ExecutionResult(
+                    status='completed' if result.success else 'failed',
+                    result_summary=result.summary,
+                    success=result.success,
+                    metadata={'operation_type': result.operation_type},
+                )
             else:
-                raise RuntimeError(f'Unhandled OPSEC operation: {decision.chosen_option}')
-        except Exception as e:
-            operation_result = OperationResult(
-                operation_id=operation_id,
-                status='failed',
-                result_summary=f'OPSEC operation failed: {str(e)}',
-                execution_time=time.time() - start_time,
-                success=False,
-                error_message=str(e),
-            )
-        finally:
-            self.untrack_operation(operation_id)
-        self.record_operation_result(operation_result)
-        return operation_result
+                raise RuntimeError('No OPSEC backends available')
+        else:
+            raise RuntimeError(f'Unhandled OPSEC operation: {decision.chosen_option}')
 
     async def _execute_stealth_op(
         self,
@@ -496,7 +477,7 @@ class OpsECCoordinator(UniversalCoordinator):
         jitter_scale: float = 2.0,
         min_delay: float = 0.5,
         max_delay: float = 10.0,
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """Stealth HTTP request with Weibull-distributed jitter delays."""
         import asyncio

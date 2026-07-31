@@ -537,10 +537,8 @@ class FetchCoordinator(UniversalCoordinator):
             from hledac.universal.transport import circuit_breaker as cb
             sprint_remaining = None
             if self._sprint_remaining_provider is not None:
-                try:
+                with contextlib.suppress(Exception):
                     sprint_remaining = self._sprint_remaining_provider()
-                except Exception:  # noqa: BLE001 — best-effort; sprint_remaining provider unavailable; non-critical
-                    pass
             cb.domain_breaker_record_failure(domain, is_timeout=is_timeout, failure_kind=failure_kind or 'fetch_error', sprint_remaining_s=sprint_remaining)
         except (ImportError, AttributeError, OSError):  # noqa: BLE001 — best-effort; circuit_breaker telemetry; non-critical
             pass
@@ -1391,10 +1389,8 @@ class FetchCoordinator(UniversalCoordinator):
             return (False, 'robots_blocked')
         _delay = _rp.get_crawl_delay(_ua, _doc)
         if _delay > 0:
-            try:
+            with contextlib.suppress(TimeoutError, asyncio.CancelledError):
                 await asyncio.sleep(_delay)
-            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001 — best-effort; crawl-delay sleep interrupted; continue
-                pass
         return (True, None)
 
     async def _robots_check_fast(
@@ -1669,10 +1665,8 @@ class FetchCoordinator(UniversalCoordinator):
                     self._evidence_ids.append(evidence_id)
                     # A5-02: Write to injected evidence_sink if available (Dependency Inversion)
                     if self._evidence_sink is not None:
-                        try:
+                        with contextlib.suppress(Exception):
                             await self._evidence_sink.append_evidence(evidence_id)
-                        except Exception:
-                            pass  # fail-safe: sink error doesn't break fetch pipeline
                 if budget_mgr:
                     allowed, reason = budget_mgr.check_snapshot_allowed()
                     if not allowed:
@@ -1744,10 +1738,8 @@ class FetchCoordinator(UniversalCoordinator):
         # before DNS check completes for either (issue B2).
         _host_sem: asyncio.Semaphore | None = None
         _host_name = ''
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             _host_name = _fast_url_host(url) or ''
-        except (ValueError, TypeError):  # noqa: BLE001 — best-effort; fast host extraction failure; skip gate
-            pass
         if _host_name and (not url.lower().endswith(('.onion', '.i2p'))):
             # CB-02: Per-domain rate limiting — wait for token bucket before acquiring concurrency slot
             _rate_wait = await self._domain_rate_limiter.acquire(_host_name)
@@ -2211,31 +2203,23 @@ class FetchCoordinator(UniversalCoordinator):
         self._cover_count = 0
         await self._stop_checkpoint_loop()
         if self._session_manager is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._session_manager.close()
-            except Exception:  # noqa: BLE001 — best-effort; session_manager.close() failure; shutdown best-effort
-                pass
             self._session_manager = None
         # F-05: cleanup RobotsParser async session
         if self._robots_parser is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._robots_parser.__aexit__(None, None, None)
-            except Exception:  # noqa: BLE001 — best-effort; RobotsParser shutdown failure; non-critical
-                pass
             self._robots_parser = None
         if self._session_lmdb_env is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._session_lmdb_env.close()
-            except Exception:  # noqa: BLE001 — best-effort; LMDB env.close() failure; shutdown best-effort
-                pass
             self._session_lmdb_env = None
         from ..transport.darknet_session_provider import close_all as _close_darknet_sessions
         await _close_darknet_sessions()
         if self._lightpanda_pool is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._lightpanda_pool.close()
-            except Exception:  # noqa: BLE001 — best-effort; lightpanda_pool.close() failure; shutdown best-effort
-                pass
             self._lightpanda_pool = None
         await asyncio.sleep(0.25)
 

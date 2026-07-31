@@ -608,9 +608,8 @@ class FetchServiceRegistry:
 
         # Check for darknet indicators
         lower_url = url.lower()
-        if '.onion/' in lower_url or url.startswith('tor://'):
-            if 'tor' in self._transports:
-                return 'tor'
+        if ('.onion/' in lower_url or url.startswith('tor://')) and 'tor' in self._transports:
+            return 'tor'
 
         return 'clearnet'
 

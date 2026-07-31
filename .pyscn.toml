@@ -66,6 +66,7 @@ packages = [
     "knowledge.duckdb_rag_store",
     "knowledge.duckdb_vector_store",
     "knowledge.duckdb_migrator",
+    "knowledge.duckdb_write_coordinator",
     "knowledge.lancedb_store",
     "knowledge.semantic_store",
     "knowledge.semantic_store_buffer",
@@ -146,6 +147,41 @@ packages = [
 ]
 
 [[architecture.layers]]
+name = "transport"
+packages = [
+    "transport.base",
+    "transport.transport_supervisor",
+    "transport.unified_transport",
+    "transport.gopher_transport",
+    "transport.curl_cffi_runtime",
+    "transport.body_limiter",
+    "transport.decompression",
+    "transport.prewarm_pool",
+    "transport.httpx_transport",
+    "transport.session_pool",
+    "transport.policy",
+    "transport.connection_pool_manager",
+    "transport.conditional_cache",
+    "transport.tor_transport",
+    "transport.i2p_client",
+    "transport.transport_router",
+    "transport.http_cache",
+    "transport.curl_cffi_transport",
+    "transport.nym_transport",
+    "transport.http_utils",
+    "transport.circuit_breaker",
+    "transport.transport_resolver",
+    "transport.httpx_client",
+    "transport.i2p_transport",
+    "transport.tor_manager",
+    "transport.darknet_session_provider",
+    "transport.http3_lane",
+    "transport.curl_cffi_fetch",
+    "transport.url_utils",
+    "transport.dns_cache",
+]
+
+[[architecture.layers]]
 name = "pipeline"
 packages = [
     "pipeline",
@@ -190,8 +226,8 @@ allow = ["infrastructure", "cache", "wal", "quality", "dedup"]
 
 [[architecture.rules]]
 from = "storage"
-# storage is the central orchestrator — intentionally depends on foundational layers + sprint (for fact tracking)
-allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "sprint"]
+# storage is the central orchestrator — intentionally depends on foundational layers + sprint + crosscutting
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "sprint", "crosscutting"]
 
 [[architecture.rules]]
 from = "graph"
@@ -223,15 +259,19 @@ allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph
 
 [[architecture.rules]]
 from = "brain"
-allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "brain"]
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "transport", "brain"]
 
 [[architecture.rules]]
 from = "coordinators"
-allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph", "sprint", "analytics", "memory", "protocols", "crosscutting", "root", "brain", "coordinators"]
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph", "sprint", "analytics", "memory", "protocols", "crosscutting", "root", "brain", "transport", "coordinators"]
+
+[[architecture.rules]]
+from = "transport"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "transport"]
 
 [[architecture.rules]]
 from = "pipeline"
-allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph", "sprint", "analytics", "memory", "protocols", "crosscutting", "root", "brain", "coordinators", "pipeline"]
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph", "sprint", "analytics", "memory", "protocols", "crosscutting", "root", "brain", "transport", "coordinators", "pipeline"]
 
 # =============================================================================
 # SINGLE RESPONSIBILITY (SRP)
@@ -247,6 +287,13 @@ max_responsibilities = 15
 # - knowledge._quality_types (warning): 1 tiny msgspec struct, imported by 4 modules = intentional API boundary
 # - knowledge.duckdb_store (error): Central orchestrator/facade, depends on 12 subsystems = intentional design
 #   Splitting duckdb_store would be 6+ months of risky work for marginal benefit on M1 8GB.
+# - coordinators.base (error): Base coordinator facade, re-exports types from 5 transport submodules via TYPE_CHECKING.
+#   Fan-in 11 = 11 concrete coordinators importing it. Inherent aggregator pattern, not a design flaw.
+# - transport.base (error): Transport protocol facade per [TP-1] invariant. Re-exports from 5 submodules for single import point.
+#   Fan-out 5 = 5 re-exported concerns. Removing re-exports would break [TP-1] and scatter imports.
+# - transport.curl_cffi_fetch (error): Fetch function that fans into 4 concerns (retry, error-handling, TLS config, UA).
+#   Not a class — function-level SRP doesn't apply the same way. Inline extraction would hurt readability.
+# - transport.tor_transport (warning): Transport aggregator, fans into 3 concerns (Tor, tunnel, DNS). Low severity.
 
 # =============================================================================
 # CLONE DETECTION

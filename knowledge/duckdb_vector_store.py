@@ -458,3 +458,21 @@ class DuckDBVectorStore:
         except Exception as e:  # noqa: BLE001
             _logger.debug("[DUCKDB:VEC] vector_search_entities failed: %s", e)
             return []
+
+    # ── Lifecycle ───────────────────────────────────────────────────────────────
+
+    def close(self) -> None:
+        """
+        F360M: Close DuckDBVectorStore — no-op since DuckDB connection
+        is owned by DuckDBShadowStore (composed, not owned).
+
+        Called by DuckDBShadowStore._cleanup_vector_store() during shutdown.
+        This method exists for API compatibility with the cleanup protocol.
+        The actual DuckDB connection is closed by DuckDBShadowStore._do_sync_close().
+        """
+        # DuckDBVectorStore does NOT own the connection — DuckDBShadowStore does.
+        # Setting _duckdb_conn to None signals that the store is closed.
+        self._duckdb_conn = None
+        self._initialized = False
+        self._rag_schema_initialized = False
+        self._entity_schema_initialized = False

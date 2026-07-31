@@ -54,8 +54,8 @@ class ModernBertModelAdapter:
 
     __slots__ = ('_engine', '_loaded', '_model_name')
 
-    def __init__(self, config: Any | None = None):
-        self._engine = ModernBertEngine(config=config)
+    def __init__(self, config: Any | None = None) -> None:  # type: ignore[explicit-any]
+        self._engine: ModernBertEngine = ModernBertEngine(config=config)  # type: ignore[no-untyped-call]
         self._loaded = False
         self._model_name: str = "modernbert-embed-base"
 
@@ -78,10 +78,11 @@ class ModernBertModelAdapter:
 
     async def generate(
         self,
-        prompt: str,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        system_msg: str | None = None,
+        prompt: str,  # type: ignore[unused]
+        temperature: float | None = None,  # type: ignore[unused]
+        max_tokens: int | None = None,  # type: ignore[unused]
+        system_msg: str | None = None,  # type: ignore[unused]
+        _: str | None = None,  # type: ignore[unused]
     ) -> str:
         """
         Not supported on ModernBertModelAdapter.
@@ -99,13 +100,13 @@ class ModernBertModelAdapter:
 
     async def generate_structured(
         self,
-        prompt: str,
+        prompt: str,  # type: ignore[unused-arg]
         response_model: type[T],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        system_msg: str | None = None,
-        max_retries: int = 2,
-        priority: float = 1.0,
+        temperature: float | None = None,  # type: ignore[unused-arg]
+        max_tokens: int | None = None,  # type: ignore[unused-arg]
+        system_msg: str | None = None,  # type: ignore[unused-arg]
+        max_retries: int = 2,  # type: ignore[unused-arg]
+        priority: float = 1.0,  # type: ignore[unused-arg]
     ) -> T:
         """
         Not supported on ModernBertModelAdapter.

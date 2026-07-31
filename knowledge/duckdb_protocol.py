@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from ._quality_types import FindingQualityDecision
 
 
 @runtime_checkable
@@ -320,3 +321,90 @@ class DuckDBStoreProtocol(Protocol):
 
     async def async_upsert_target_profile(self, profile: dict[str, Any]) -> bool:
         """Upsert target_profiles row."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DedupManager Protocol — F360 Phase 2
+# ─────────────────────────────────────────────────────────────────────────────
+
+@runtime_checkable
+class DedupManagerProtocol(Protocol):
+    """
+    Typed contract for DedupManager — enables Protocol-based DI in DuckDBShadowStore.
+
+    F360 Phase 2: DuckDBShadowStore.__init__ accepts DedupManagerProtocol | None,
+    with lazy init fallback. This reduces CBO by making DedupManager an injected
+    dependency rather than a direct instantiation.
+
+    DuckDBShadowStore calls these methods on _dedup_manager:
+      - add_ioc_batch(iocs)            — IOC bloom filter + LMDB
+      - store_persistent_dedup_batch   — batch persistent dedup storage
+      - lookup_persistent_dedup        — LMDB lookup
+      - semantic_dedup_cache           — property (SemanticDedupCache or None)
+      - hot_cache_lookup              — in-process LRU lookup
+      - add_to_hot_cache              — add to LRU cache
+      - is_duplicate_ioc_batch        — batch IOC dedup check
+      - get_runtime_status             — dedup subsystem status
+      - close                          — graceful shutdown
+    """
+
+    def add_ioc_batch(self, iocs: list[Any]) -> None:
+        """Add IOC batch to bloom filter and persistent store."""
+
+    def store_persistent_dedup_batch(
+        self, fingerprints: list[tuple[str, str]]
+    ) -> None:
+        """Store fingerprint → finding_id mappings in LMDB."""
+
+    def lookup_persistent_dedup(self, fingerprint: str) -> str | None:
+        """Lookup finding_id by fingerprint from persistent LMDB."""
+
+    @property
+    def semantic_dedup_cache(self) -> Any:
+        """Return SemanticDedupCache instance or None."""
+
+    def hot_cache_lookup(self, fingerprint: str) -> str | None:
+        """In-process LRU cache lookup."""
+
+    def add_to_hot_cache(self, fingerprint: str, finding_id: str) -> None:
+        """Add fingerprint → finding_id to hot cache."""
+
+    def is_duplicate_ioc_batch(
+        self, iocs: list[Any]
+    ) -> tuple[set[str], list[dict[str, Any]]]:
+        """
+        Check batch for duplicate IOCs.
+
+        Returns (duplicate_iocs, new_iocs) where duplicate_iocs is set of
+        duplicate IOC values and new_iocs is list of non-duplicate IOC dicts.
+        """
+
+    def get_runtime_status(self) -> dict[str, Any]:
+        """Return dedup subsystem status (bloom, LMDB, semantic, hot cache)."""
+
+    def close(self) -> None:
+        """Close all dedup subsystems (LMDB, bloom filter, mmap stores)."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QualityGate Protocol — F360 Phase 3
+# ─────────────────────────────────────────────────────────────────────────────
+
+@runtime_checkable
+class QualityGateProtocol(Protocol):
+    """
+    Typed contract for DuckDBQualityGate — enables Protocol-based DI in DuckDBShadowStore.
+
+    F360 Phase 3: DuckDBShadowStore.__init__ accepts QualityGateProtocol | None,
+    with lazy init fallback. This reduces CBO by making DuckDBQualityGate an
+    injected dependency rather than a direct instantiation.
+
+    DuckDBShadowStore calls these methods on _quality_gate:
+      - _assess_finding_quality(finding) → FindingQualityDecision
+
+    Note: _quality_state (QualityAssessmentState from quality_assessment.py) is
+    a separate state object owned by duckdb_store itself, NOT injected.
+    """
+
+    def _assess_finding_quality(self, finding: Any) -> "FindingQualityDecision":
+        """Apply quality rules to a single finding. Returns FindingQualityDecision."""

@@ -682,16 +682,16 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     def _stealth_activations(self) -> int:
         return self._opsec._stealth_activations
 
-    async def stealth_request_with_jitter(self, **kwargs) -> dict[str, Any]:
+    async def stealth_request_with_jitter(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.stealth_request_with_jitter(**kwargs)
 
-    async def stealth_scrape(self, **kwargs) -> dict[str, Any]:
+    async def stealth_scrape(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.stealth_scrape(**kwargs)
 
-    async def batch_stealth_requests(self, **kwargs) -> list[dict[str, Any]]:
+    async def batch_stealth_requests(self, **kwargs: Any) -> list[dict[str, Any]]:
         return await self._opsec.batch_stealth_requests(**kwargs)
 
-    async def enable_stealth_mode(self, **kwargs) -> dict[str, Any]:
+    async def enable_stealth_mode(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.enable_stealth_mode(**kwargs)
 
     def is_stealth_active(self) -> bool:
@@ -700,34 +700,34 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     async def fetch_with_limit(self, url: str) -> dict[str, Any]:
         return await self._opsec.fetch_with_limit(url)
 
-    def get_browser_fingerprint(self, **kwargs) -> dict[str, Any]:
+    def get_browser_fingerprint(self, **kwargs: Any) -> dict[str, Any]:
         return self._opsec.get_browser_fingerprint(**kwargs)
 
-    async def resurrect_from_archive(self, **kwargs) -> dict[str, Any]:
+    async def resurrect_from_archive(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.resurrect_from_archive(**kwargs)
 
-    async def establish_vpn_connection(self, **kwargs) -> dict[str, Any]:
+    async def establish_vpn_connection(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.establish_vpn_connection(**kwargs)
 
     async def disconnect_vpn(self) -> dict[str, Any]:
         return await self._opsec.disconnect_vpn()
 
-    async def establish_privacy_connection(self, **kwargs) -> dict[str, Any]:
+    async def establish_privacy_connection(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.establish_privacy_connection(**kwargs)
 
-    async def send_anonymous_email(self, **kwargs) -> dict[str, Any]:
+    async def send_anonymous_email(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.send_anonymous_email(**kwargs)
 
-    async def check_data_leaks(self, **kwargs) -> dict[str, Any]:
+    async def check_data_leaks(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.check_data_leaks(**kwargs)
 
-    async def manage_data_leak_monitoring(self, **kwargs) -> dict[str, Any]:
+    async def manage_data_leak_monitoring(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.manage_data_leak_monitoring(**kwargs)
 
-    async def create_pgp_identity(self, **kwargs) -> dict[str, Any]:
+    async def create_pgp_identity(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.create_pgp_identity(**kwargs)
 
-    async def establish_secure_channel(self, **kwargs) -> dict[str, Any]:
+    async def establish_secure_channel(self, **kwargs: Any) -> dict[str, Any]:
         return await self._opsec.establish_secure_channel(**kwargs)
 
     # ─── Security passthrough ────────────────────────────────────────────────
@@ -776,25 +776,25 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     def _security_contexts(self) -> dict:
         return self._security._security_contexts
 
-    async def detect_pii(self, **kwargs) -> dict[str, Any]:
+    async def detect_pii(self, **kwargs: Any) -> dict[str, Any]:
         return await self._security.detect_pii(**kwargs)
 
-    async def redact_pii(self, **kwargs) -> dict[str, Any]:
+    async def redact_pii(self, **kwargs: Any) -> dict[str, Any]:
         return await self._security.redact_pii(**kwargs)
 
     async def sanitize_outbound(self, content: str, force_fallback: bool = False) -> dict[str, Any]:
         return await self._security.sanitize_outbound(content=content, force_fallback=force_fallback)
 
-    async def analyze_threat_intelligence(self, **kwargs) -> dict[str, Any]:
+    async def analyze_threat_intelligence(self, **kwargs: Any) -> dict[str, Any]:
         return await self._security.analyze_threat_intelligence(**kwargs)
 
-    async def correlate_threats(self, **kwargs) -> dict[str, Any]:
+    async def correlate_threats(self, **kwargs: Any) -> dict[str, Any]:
         return await self._security.correlate_threats(**kwargs)
 
-    async def threat_intel_lookup(self, **kwargs) -> dict[str, Any]:
+    async def threat_intel_lookup(self, **kwargs: Any) -> dict[str, Any]:
         return await self._security.threat_intel_lookup(**kwargs)
 
-    async def create_secure_vault(self, **kwargs) -> dict[str, Any]:
+    async def create_secure_vault(self, **kwargs: Any) -> dict[str, Any]:
         return await self._security.create_secure_vault(**kwargs)
 
     # ─── Shared state passthrough ─────────────────────────────────────────────

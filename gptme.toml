@@ -14,16 +14,12 @@ files = ["README.md"]
 
 [plugins]
 paths = ["/Users/vojtechhamada/.config/gptme/contrib/plugins"]
-enabled = ["codegraph", "lsp", "tooloutput-trimmer", "rag", "ace", "attention-tracker", "retrieval", "user-memories"]
+enabled = ["codegraph", "lsp", "tooloutput-trimmer", "ace", "attention-tracker", "retrieval", "user-memories"]
 
 [plugin.retrieval]
-enabled = true
+enabled = false
 backend = "qmd"
 mode = "query"
 max_results = 5
 threshold = 0.3
 inject_as = "system"
-
-[plugin.lsp.servers]
-python = ["pyright-langserver", "--stdio"]
-rust = ["rust-analyzer"]

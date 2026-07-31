@@ -175,11 +175,9 @@ class AgentPool:
 
     def _is_agent_expired(self, agent: Any) -> bool:
         """Check if agent instance has expired."""
-        if hasattr(agent, '_execution_policy'):
-            policy = getattr(agent, '_execution_policy', None)
-            if policy and hasattr(policy, 'circuit_breaker'):
-                if getattr(policy.circuit_breaker, 'state', None) == 'open':
-                    return True
+        policy = getattr(agent, '_execution_policy', None)
+        if policy is not None and hasattr(policy, 'circuit_breaker') and getattr(policy.circuit_breaker, 'state', None) == 'open':
+            return True
         return False
 
     async def _should_return_to_pool(self, agent_name: str, _agent: Any) -> bool:
@@ -584,10 +582,9 @@ class AgentPerformanceOptimizer:
         """Reset circuit breakers that may be stuck open."""
         metrics = self.agent_pool.get_metrics()
         for agent_name, metric in metrics.items():
-            if metric.circuit_breaker_open:
-                if time.time() - metric.last_used > self.config.circuit_breaker_timeout:
-                    metric.circuit_breaker_open = False
-                    logger.info(f'Auto-reset circuit breaker for agent {agent_name}')
+            if metric.circuit_breaker_open and time.time() - metric.last_used > self.config.circuit_breaker_timeout:
+                metric.circuit_breaker_open = False
+                logger.info(f'Auto-reset circuit breaker for agent {agent_name}')
 
     def get_comprehensive_metrics(self) -> dict[str, Any]:
         """Get comprehensive performance metrics."""

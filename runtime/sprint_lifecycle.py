@@ -12,6 +12,7 @@ No async. No threads. No I/O.
 
 import collections.abc
 import time
+import warnings
 import msgspec
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -109,6 +110,16 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
     _on_phase_exit_callbacks: list = field(default_factory=list)
 
     # ── Phase exit callbacks (Issue 1.2) ───────────────────────────────────────
+
+    @staticmethod
+    def _deprecate(name: str, canonical: str) -> None:
+        """Emit deprecation warning for COMPAT alias. F360M-R."""
+        warnings.warn(
+            f"{name} is deprecated — use {canonical} directly. "
+            f"See future_owner in docstring for migration path.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     def add_phase_exit_callback(
         self,
@@ -394,6 +405,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
           future_owner: __main__.py
           removal_condition: All call-sites migrated to .start()
         """
+        self._deprecate("begin_sprint", "start()")
         self.start()
 
     # ── COMPAT: mark_warmup_done ────────────────────────────────────────────
@@ -418,6 +430,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         Side effect: resets warmup failure counters on all domain circuit breakers.
         This ensures warmup/probe failures do not affect production threshold.
         """
+        self._deprecate("mark_warmup_done", "transition_to(SprintPhase.ACTIVE)")
         # Reset warmup counters on all domain circuit breakers
         try:
             # mark_warmup_done on each breaker resets its warmup counter
@@ -449,6 +462,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
           future_owner: __main__.py
           removal_condition: All call-sites use transition_to(WINDUP)
         """
+        self._deprecate("request_windup", "transition_to(SprintPhase.WINDUP)")
         # Idempotent: don't re-trigger if already winding down
         if self._current_phase in (
             SprintPhase.WINDUP,
@@ -476,6 +490,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
           future_owner: __main__.py
           removal_condition: All call-sites use mark_export_started()
         """
+        self._deprecate("request_export", "mark_export_started()")
         if self._current_phase in (SprintPhase.EXPORT, SprintPhase.TEARDOWN):
             return
         self.mark_export_started()
@@ -498,6 +513,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
           future_owner: __main__.py
           removal_condition: All call-sites use mark_teardown_started()
         """
+        self._deprecate("request_teardown", "mark_teardown_started()")
         if self._current_phase == SprintPhase.TEARDOWN:
             return
         self.mark_teardown_started()
@@ -511,12 +527,14 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
 
     def is_windup_phase(self) -> bool:
         """
-        COMPAT ALIAS — forwards to should_enter_windup().
+        COMPAT ALIAS — checks if in WINDUP phase (time-based heuristic).
 
-        Canonical: use should_enter_windup() directly.
+        Canonical: use should_enter_windup() for time-based check,
+        or in_phase(SprintPhase.WINDUP) for phase-state check.
 
-        NOTE: This is a time-based heuristic (remaining <= windup_lead_s),
-        NOT a phase-state check. Use in_phase(SprintPhase.WINDUP) for phase-state.
+        NOTE: This alias returns the time-based heuristic result (matching
+        the deprecated API contract). For phase-state only, use
+        in_phase(SprintPhase.WINDUP).
 
         DIAGNOSTIC ONLY — for read-only shadow paths only.
 
@@ -524,6 +542,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
           future_owner: synthesis_runner.py
           removal_condition: synthesis_runner uses should_enter_windup() from runtime path
         """
+        self._deprecate("is_windup_phase()", "should_enter_windup() or in_phase(SprintPhase.WINDUP)")
         return self.should_enter_windup()
 
     # ── COMPAT: is_active property ───────────────────────────────────────────
@@ -547,6 +566,12 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
           future_owner: callers (shadow_* modules)
           removal_condition: Callers use in_phase(SprintPhase.ACTIVE)
         """
+        warnings.warn(
+            "is_active is deprecated — use in_phase(SprintPhase.ACTIVE) or "
+            "current_phase == SprintPhase.ACTIVE. See future_owner in docstring for migration path.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._current_phase == SprintPhase.ACTIVE
 
     # ── COMPAT: is_winding_down property ─────────────────────────────────────
@@ -570,6 +595,13 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
           future_owner: callers (shadow_* modules)
           removal_condition: Callers use in_phase() checks
         """
+        warnings.warn(
+            "is_winding_down is deprecated — use in_phase(SprintPhase.WINDUP) or "
+            "current_phase in (WINDUP, EXPORT, TEARDOWN). "
+            "See future_owner in docstring for migration path.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._current_phase in (
             SprintPhase.WINDUP,
             SprintPhase.EXPORT,

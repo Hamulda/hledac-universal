@@ -33,7 +33,7 @@ import msgspec
 from hledac.universal.utils.async_helpers import ParallelResult, parallel, safe_wait_for
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 
-from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
 _level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
 logger = logging.getLogger(__name__)
@@ -273,29 +273,23 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """Return supported operation types."""
         return [OperationType.RESEARCH]
 
-    async def handle_request(self, operation_ref: str, decision: DecisionResponse) -> OperationResult:
-        """
-        Handle research request with intelligent routing.
+    def _get_operation_type_for_tracking(self) -> str:
+        """Return operation type for tracking."""
+        return 'research'
 
-        Args:
-            operation_ref: Unique operation reference
-            decision: Research decision with routing info
-
-        Returns:
-            OperationResult with research outcome
-        """
-        start_time = time.time()
-        operation_id = self.generate_operation_id()
-        try:
-            self.track_operation(operation_id, {'operation_ref': operation_ref, 'decision': decision, 'type': 'research'})
-            result = await self._execute_research_decision(decision)
-            operation_result = OperationResult(operation_id=operation_id, status='completed' if result.confidence > 0 else 'failed', result_summary=result.summary, execution_time=time.time() - start_time, success=result.confidence > 0, metadata={'source': result.source, 'sources_found': result.sources_found, 'research_confidence': result.confidence})
-        except Exception as e:
-            operation_result = OperationResult(operation_id=operation_id, status='failed', result_summary=f'Research failed: {str(e)}', execution_time=time.time() - start_time, success=False, error_message=str(e))
-        finally:
-            self.untrack_operation(operation_id)
-        self.record_operation_result(operation_result)
-        return operation_result
+    async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
+        """Handle research request — routes to appropriate backend."""
+        result = await self._execute_research_decision(decision)
+        return ExecutionResult(
+            status='completed' if result.confidence > 0 else 'failed',
+            result_summary=result.summary,
+            success=result.confidence > 0,
+            metadata={
+                'source': result.source,
+                'sources_found': result.sources_found,
+                'research_confidence': result.confidence,
+            },
+        )
 
     async def _execute_research_decision(self, decision: DecisionResponse) -> ResearchResult:
         """

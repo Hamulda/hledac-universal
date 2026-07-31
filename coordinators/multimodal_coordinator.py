@@ -29,7 +29,7 @@ except ImportError:
     np = None
     NDArray = 'NDArray'
     HAS_NUMPY = False
-from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
 try:
     import mlx.core as mx
@@ -349,9 +349,12 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         self.modality_processors[ModalityType.DOCUMENT] = self._process_document
         self.modality_processors[ModalityType.CHART] = self._process_chart
 
-    async def handle_request(self, operation_ref: str, decision: DecisionResponse) -> OperationResult:
+    def _get_operation_type_for_tracking(self) -> str:
+        """Return operation type for tracking."""
+        return 'multimodal'
+
+    async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
         """Handle multimodal processing request."""
-        start_time = time.time()
         try:
             operation = decision.metadata.get('multimodal_operation', 'detect_and_process')
             if operation == 'detect_and_process':
@@ -362,9 +365,19 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
                 result = await self.fuse_multimodal(contents)
             else:
                 result = {'success': False, 'error': f'Unknown operation: {operation}'}
-            return OperationResult(operation_id=self.generate_operation_id(), status='completed' if result.get('success') else 'failed', result_summary=result.get('summary', 'Multimodal processing completed'), execution_time=time.time() - start_time, success=result.get('success', False), metadata=result)
+            return ExecutionResult(
+                status='completed' if result.get('success') else 'failed',
+                result_summary=result.get('summary', 'Multimodal processing completed'),
+                success=result.get('success', False),
+                metadata=result,
+            )
         except Exception as e:
-            return OperationResult(operation_id=self.generate_operation_id(), status='failed', result_summary=f'Multimodal processing failed: {str(e)}', execution_time=time.time() - start_time, success=False, error_message=str(e))
+            return ExecutionResult(
+                status='failed',
+                result_summary=f'Multimodal processing failed: {str(e)}',
+                success=False,
+                error_message=str(e),
+            )
 
     async def detect_modality(self, content: Any) -> ModalityType:
         """

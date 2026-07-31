@@ -73,35 +73,33 @@ CREATE INDEX IF NOT EXISTS idx_entity_fts_entity ON entity_fts(entity_value);
 
 -- ─── Vector embeddings: cross-sprint RAG ─────────────────────────────────
 
--- rag_embeddings: stores document chunk embeddings as DuckDB LIST<FLOAT>
+-- rag_embeddings: stores document chunk embeddings as DuckDB FLOAT[] array
 -- Schema:
 --   chunk_id    VARCHAR PRIMARY KEY — unique chunk identifier
 --   document_id VARCHAR — parent document (for MMR diversity)
 --   content     TEXT — raw text chunk
 --   metadata    JSON — source, sprint_id, etc.
---   embedding   LIST<FLOAT> — 384-dim embedding vector (MLX / FastEmbed)
+--   embedding   FLOAT[] — 384-dim embedding vector (MLX / FastEmbed)
 --   created_at  DOUBLE — unix timestamp
 CREATE TABLE IF NOT EXISTS rag_embeddings (
     chunk_id          VARCHAR PRIMARY KEY,
     document_id       VARCHAR NOT NULL,
     content           TEXT,
     metadata_json     VARCHAR,
-    embedding         LIST<FLOAT>,
+    embedding         FLOAT[],
     embedding_dim     INTEGER DEFAULT 384,
     created_at        DOUBLE NOT NULL
 );
 
--- HNSW index for ANN — array_cosine_distance is DuckDB's cosine distance
--- hnsw_cosine: cosine distance with hnsw index (DuckDB 1.5+)
--- M: number of bi-directional links (default 16, good for M1 8GB)
--- ef_construction: search scope during build (default 200)
-CREATE INDEX IF NOT EXISTS idx_rag_embeddings_hnsw
-    ON rag_embeddings USING hnsw (embedding)
-    WITH (metric = 'cosine', m = 16, ef_construction = 128);
+-- HNSW index for ANN — requires duckdb_extensions HNSW module (DuckDB 1.6+)
+-- M1 8GB: sequential scan with ORDER BY array_cosine_distance works without index.
+-- HNSW is optional; uncomment when DuckDB with HNSW extension is available.
+--
+-- CREATE INDEX IF NOT EXISTS idx_rag_embeddings_hnsw
+--     ON rag_embeddings USING hnsw (embedding)
+--     WITH (metric = 'cosine', m = 16, ef_construction = 128);
 
--- Fallback index: cannot use IF NOT EXISTS on HNSW/Cosine
--- (DuckDB requires explicit DROP before recreate)
--- Sequential scan with ORDER BY array_cosine_distance works without index.
+-- Fallback: sequential scan with ORDER BY array_cosine_distance works without index.
 
 -- ─── Entity embeddings: identity resolution ────────────────────────────────
 
@@ -112,11 +110,12 @@ CREATE TABLE IF NOT EXISTS entity_embeddings (
     entity_value   VARCHAR NOT NULL,
     entity_type    VARCHAR,
     metadata_json  VARCHAR,
-    embedding      LIST<FLOAT>,
+    embedding      FLOAT[],
     embedding_dim  INTEGER DEFAULT 384,
     updated_at     DOUBLE NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_entity_embeddings_hnsw
-    ON entity_embeddings USING hnsw (embedding)
-    WITH (metric = 'cosine', m = 16, ef_construction = 128);
+-- HNSW index for entity embeddings (same constraints as rag_embeddings)
+-- CREATE INDEX IF NOT EXISTS idx_entity_embeddings_hnsw
+--     ON entity_embeddings USING hnsw (embedding)
+--     WITH (metric = 'cosine', m = 16, ef_construction = 128);

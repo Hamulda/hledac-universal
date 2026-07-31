@@ -25,6 +25,12 @@ Usage:
   hub.record_phase("ACQUISITION")
   hub.record_transition("PRELUDE", "ACQUISITION")
   health = hub.get_sprint_health()  # dict with all metrics
+
+Architecture (F360M-R):
+  - ObservabilityHub: Records events, computes health, orchestrates attachments
+  - MetricsQuerier: Extracts metrics from MetricsRegistry (11 _get_* methods)
+  - TelemetryAggregator: Stores events, phases, transitions, source stats
+  - HealthComputer: Computes health snapshot from all sources
 """
 from __future__ import annotations
 import logging
@@ -32,7 +38,10 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
 _OTEL_AVAILABLE: bool | None = None
 MAX_EVENT_HISTORY = 10000
 MAX_PHASE_SAMPLES = 100
@@ -107,7 +116,143 @@ class SprintHealth(msgspec.Struct, gc=False):
         if not self.ts:
             self.ts = datetime.now(UTC).isoformat()
 
-class ObservabilityHub:
+
+class MetricsQuerier:
+    """
+    F360M-R: Extracts metrics from MetricsRegistry.
+
+    Responsibility: All _get_* methods that query MetricsRegistry.
+    Separated from ObservabilityHub to improve cohesion.
+
+    All methods are fail-soft: return None on error.
+    """
+    __slots__ = ()
+
+    def _get_cb_open_count(self) -> int | None:
+        """Get circuit breaker open count from MetricsRegistry."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get('circuit_breaker_open_count', 0)
+        except Exception:
+            return None
+
+    def _get_cb_half_open_count(self) -> int | None:
+        """Get circuit breaker half-open count."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get('circuit_breaker_half_open_count', 0)
+        except Exception:
+            return None
+
+    def _get_cb_closed_count(self) -> int | None:
+        """Get circuit breaker closed count."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get('circuit_breaker_closed_count', 0)
+        except Exception:
+            return None
+
+    def _get_cb_open_duration(self) -> float | None:
+        """Get circuit breaker total open duration in seconds."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return float(reg._counters.get('circuit_breaker_open_duration_s', 0))
+        except Exception:
+            return None
+
+    def _get_fetch_blocked_domains(self) -> int | None:
+        """Get number of currently blocked domains from FetchCoordinator."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get('fetch_coordinator_blocked_domains')
+            return int(val) if val is not None else None
+        except Exception:
+            return None
+
+    def _get_fetch_circuit_open(self) -> bool | None:
+        """Check if any circuit breaker is open."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get('fetch_coordinator_circuit_open')
+            return bool(val) if val is not None else None
+        except Exception:
+            return None
+
+    def _get_memory_layer_pressure(self) -> float | None:
+        """Get memory layer pressure from MemoryLayer."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get('memory_layer_pressure_pct')
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+    def _get_duckdb_ingest_latency(self) -> float | None:
+        """Get average DuckDB ingest latency."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get('duckdb_ingest_latency_ms')
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+    def _get_duckdb_query_latency(self) -> float | None:
+        """Get average DuckDB query latency."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get('duckdb_query_latency_ms')
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+    def _get_gather_tasks_gathered(self) -> int | None:
+        """Get total tasks gathered via bounded_gather."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get('bounded_gather_tasks_gathered', 0)
+        except Exception:
+            return None
+
+    def _get_gather_tasks_errors(self) -> int | None:
+        """Get total errors from bounded_gather."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get('bounded_gather_tasks_errors', 0)
+        except Exception:
+            return None
+
+    def _get_gather_errors_suppressed(self) -> int | None:
+        """Get total suppressed errors from bounded_gather."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            return reg._counters.get('bounded_gather_errors_suppressed', 0)
+        except Exception:
+            return None
+
+    def _get_sprint_budget_remaining(self) -> float | None:
+        """Get remaining sprint budget from MetricsRegistry."""
+        try:
+            from hledac.universal.metrics_registry import get_metrics_registry
+            reg = get_metrics_registry()
+            val = reg._gauges.get('sprint_budget_remaining_ms')
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+
+class ObservabilityHub(MetricsQuerier):
     """
     Unified observability hub — aggregates all sprint telemetry.
 
@@ -120,6 +265,8 @@ class ObservabilityHub:
 
     Thread-safe for concurrent access from multiple async tasks.
     All public methods are fail-soft: never raise, always return safe fallback.
+
+    Inherits from MetricsQuerier for all _get_* registry queries.
     """
     __slots__ = tuple(('_duckdb_store', '_events', '_otel_tracer', '_phase', '_phase_samples', '_resource_governor', '_session_id', '_source_stats', '_sprint_metrics', '_started_at', '_telemetry_logger', '_transition_samples'))
 
@@ -131,7 +278,7 @@ class ObservabilityHub:
         self._sprint_metrics: Any = None
         self._duckdb_store: Any = None
         self._resource_governor: Any = None
-        self._events: deque[dict] = deque(maxlen=MAX_EVENT_HISTORY)
+        self._events: deque[dict[str, Any]] = deque(maxlen=MAX_EVENT_HISTORY)
         self._phase_samples: deque[_PhaseSample] = deque(maxlen=MAX_PHASE_SAMPLES)
         self._transition_samples: deque[_TransitionSample] = deque(maxlen=MAX_PHASE_SAMPLES)
         self._source_stats: deque[_SourceStats] = deque(maxlen=MAX_SOURCE_STATS)
@@ -272,129 +419,6 @@ class ObservabilityHub:
             return (avg, p50, p95)
         except Exception:
             return (None, None, None)
-
-    def _get_cb_open_count(self) -> int | None:
-        """Get circuit breaker open count from MetricsRegistry."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            return reg._counters.get('circuit_breaker_open_count', 0)
-        except Exception:
-            return None
-
-    def _get_cb_half_open_count(self) -> int | None:
-        """Get circuit breaker half-open count."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            return reg._counters.get('circuit_breaker_half_open_count', 0)
-        except Exception:
-            return None
-
-    def _get_cb_closed_count(self) -> int | None:
-        """Get circuit breaker closed count."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            return reg._counters.get('circuit_breaker_closed_count', 0)
-        except Exception:
-            return None
-
-    def _get_cb_open_duration(self) -> float | None:
-        """Get circuit breaker total open duration in seconds."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            return float(reg._counters.get('circuit_breaker_open_duration_s', 0))
-        except Exception:
-            return None
-
-    def _get_fetch_blocked_domains(self) -> int | None:
-        """Get number of currently blocked domains from FetchCoordinator."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            val = reg._gauges.get('fetch_coordinator_blocked_domains')
-            return int(val) if val is not None else None
-        except Exception:
-            return None
-
-    def _get_fetch_circuit_open(self) -> bool | None:
-        """Check if any circuit breaker is open."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            val = reg._gauges.get('fetch_coordinator_circuit_open')
-            return bool(val) if val is not None else None
-        except Exception:
-            return None
-
-    def _get_memory_layer_pressure(self) -> float | None:
-        """Get memory layer pressure from MemoryLayer."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            val = reg._gauges.get('memory_layer_pressure_pct')
-            return float(val) if val is not None else None
-        except Exception:
-            return None
-
-    def _get_duckdb_ingest_latency(self) -> float | None:
-        """Get average DuckDB ingest latency."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            val = reg._gauges.get('duckdb_ingest_latency_ms')
-            return float(val) if val is not None else None
-        except Exception:
-            return None
-
-    def _get_duckdb_query_latency(self) -> float | None:
-        """Get average DuckDB query latency."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            val = reg._gauges.get('duckdb_query_latency_ms')
-            return float(val) if val is not None else None
-        except Exception:
-            return None
-
-    def _get_gather_tasks_gathered(self) -> int | None:
-        """Get total tasks gathered via bounded_gather."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            return reg._counters.get('bounded_gather_tasks_gathered', 0)
-        except Exception:
-            return None
-
-    def _get_gather_tasks_errors(self) -> int | None:
-        """Get total errors from bounded_gather."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            return reg._counters.get('bounded_gather_tasks_errors', 0)
-        except Exception:
-            return None
-
-    def _get_gather_errors_suppressed(self) -> int | None:
-        """Get total suppressed errors from bounded_gather."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            return reg._counters.get('bounded_gather_errors_suppressed', 0)
-        except Exception:
-            return None
-
-    def _get_sprint_budget_remaining(self) -> float | None:
-        """Get remaining sprint budget from MetricsRegistry."""
-        try:
-            from hledac.universal.metrics_registry import get_metrics_registry
-            reg = get_metrics_registry()
-            val = reg._gauges.get('sprint_budget_remaining_ms')
-            return float(val) if val is not None else None
-        except Exception:
-            return None
 
     def get_recent_events(self, limit: int=100) -> list[dict]:
         """Return the most recent telemetry events (newest last)."""

@@ -96,7 +96,7 @@ class PrivacyEnhancedResearch:
         self._operation_counter = 0
         logger.info(f'PrivacyEnhancedResearch initialized (level: {self.config.level.value})')
 
-    async def execute(self, query: str, research_func: Callable, **kwargs) -> dict[str, Any]:
+    async def execute(self, query: str, research_func: Callable, **kwargs: Any) -> dict[str, Any]:
         """
         Execute research with privacy protection.
 
@@ -237,7 +237,7 @@ class PrivacyEnhancedResearch:
         """Get privacy statistics."""
         return {'config': {'level': self.config.level.value, 'retention': self.config.retention.value, 'anonymize_requests': self.config.anonymize_requests, 'sanitize_results': self.config.sanitize_results, 'audit_logging': self.config.audit_logging}, 'operations': {'total': len(self._audit_log), 'active_sessions': len(self._active_sessions)}, 'audit_log_size': len(self._audit_log)}
 
-async def private_research(query: str, research_func: Callable, level: PrivacyLevel=PrivacyLevel.ENHANCED, **kwargs) -> dict[str, Any]:
+async def private_research(query: str, research_func: Callable, level: PrivacyLevel=PrivacyLevel.ENHANCED, **kwargs: Any) -> dict[str, Any]:
     """
     Quick privacy-enhanced research.
 

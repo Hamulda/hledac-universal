@@ -1,5 +1,5 @@
 """
-runtime/protocols/graph_protocol.py — F350M-R: Graph Interface v3
+runtime/protocols/graph_protocol.py — F350M-R: Graph Interface v4
 
 Unified protocol covering both DuckPGQGraph (analytics) and IOCGraph (STIX/truth-write).
 Now inherits from AnalyticsProtocol (TIER_A) and StixProtocol (TIER_S).
@@ -12,10 +12,14 @@ GHOST_INVARIANTS:
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from .analytics_protocol import AnalyticsProtocol
 from .stix_protocol import StixProtocol
+
+if TYPE_CHECKING:
+    # Avoid circular import at runtime — protocols are only used for type checking
+    pass
 
 
 @runtime_checkable
@@ -44,6 +48,9 @@ class GraphProtocol(AnalyticsProtocol, StixProtocol, Protocol):
     Consumers check capability via hasattr() before calling tier-specific methods.
 
     For focused interfaces, use AnalyticsProtocol or StixProtocol directly.
+
+    NOTE: If a method is not supported by the implementation, it returns
+    []. Consumers should always check hasattr() before calling.
     """
 
     # Methods are inherited from AnalyticsProtocol (TIER_A) and StixProtocol (TIER_S).

@@ -21,6 +21,7 @@ from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
+from hledac.universal.knowledge.duckdb_protocol import DedupManagerProtocol, QualityGateProtocol
 
 # OTEL instrumentation — importlib chain, lookup cached once
 @functools.lru_cache(maxsize=1)
@@ -1890,6 +1891,7 @@ class DuckDBShadowStore:
         "_max_flush_interval",
         "_quality_gate",  # F360: DuckDBQualityGate (extracted from _assess_finding_quality)
         "_graph_attachment",  # F360: DuckDBGraphAttachment (replaces _graph_store lazy-init)
+        "_vector_store",  # F360M: DuckDBVectorStore composition (eliminates duplicate RAG/vector methods)
         "_stmt_insert_finding",
         "_stmt_insert_finding_conn_id",
         "DEAD_LETTER_PREFIX",
@@ -1987,8 +1989,8 @@ class DuckDBShadowStore:
         # separate to avoid API mismatch. Counters stay consistent via the fact that
         # _quality_gate._assess_finding_quality() is called FIRST and its decisions
         # are reflected in the batch results that update _quality_state.
-        self._quality_gate: DuckDBQualityGate = DuckDBQualityGate()
-        self._dedup_manager: DedupManager | None = None
+        self._quality_gate: QualityGateProtocol = DuckDBQualityGate()  # F360 Phase 3: Protocol-based DI
+        self._dedup_manager: DedupManagerProtocol | None = None  # F360 Phase 2: Protocol-based DI
         self._wal_lmdb: Any | None = None
         self._dedup_lmdb: Any | None = None
         self._query_cache: _DuckDBQueryCache | None = None
@@ -2042,6 +2044,11 @@ class DuckDBShadowStore:
             atexit.register(self._finalizer)
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             self._finalizer = None
+
+        # F360M-R Phase 1: DuckDBWriteCoordinator (lazy init in async_record_canonical_findings_batch_arrow)
+        self._write_coordinator: Any | None = None
+        # F360M: DuckDBVectorStore composition (lazy init in _ensure_vector_store)
+        self._vector_store: Any | None = None
 
     def _adjust_executor_pool(self) -> None:
         """
@@ -3518,6 +3525,13 @@ class DuckDBShadowStore:
             self._safe_cleanup("semantic_store.close", self._semantic_store.close)
             self._semantic_store = None
 
+    def _cleanup_vector_store(self) -> None:
+        """F360M: Cleanup DuckDBVectorStore composition."""
+        _vs = getattr(self, "_vector_store", None)
+        if _vs is not None:
+            self._safe_cleanup("vector_store.close", _vs.close)
+            self._vector_store = None
+
     def _cleanup_wal_lmdb(self) -> None:
         _wal = getattr(self, "_wal_lmdb", None)
         if _wal is not None:
@@ -3598,6 +3612,7 @@ class DuckDBShadowStore:
         self._cleanup_executor_submit()
         self._cleanup_truth_graph()
         self._cleanup_semantic_store()
+        self._cleanup_vector_store()
         self._cleanup_wal_lmdb()
         self._cleanup_read_pool()
         self._cleanup_dedup_manager()
@@ -3733,9 +3748,38 @@ class DuckDBShadowStore:
             await loop.run_in_executor(self._executor, self._init_connection)
             self._initialized = True
             self._startup_ready.set()
+            # F360M Phase 2: Early binding of DuckDBVectorStore for faster first RAG operation
+            await self._ensure_vector_store()
             return True
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
+
+    async def _ensure_vector_store(self) -> Any:
+        """
+        F360M: Lazy composition accessor for DuckDBVectorStore.
+
+        Creates DuckDBVectorStore instance wired to this DuckDBShadowStore's
+        connection on first access. Eliminates duplicate RAG/vector methods
+        from DuckDBShadowStore by delegating to this store.
+
+        Returns:
+            DuckDBVectorStore instance, or None if connection not ready.
+        """
+        if self._vector_store is not None:
+            return self._vector_store
+        self.ensure_connected()
+        if self._conn is None:
+            return None
+        try:
+            from hledac.universal.knowledge.duckdb_vector_store import DuckDBVectorStore
+
+            self._vector_store = DuckDBVectorStore(
+                duckdb_conn=self._conn,
+                executor=self._executor,
+            )
+            return self._vector_store
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+            return None
 
     async def async_record_shadow_run(
         self, run_id: str, started_at: float, ended_at: float | None, total_fds: int, rss_mb: int
@@ -5985,156 +6029,27 @@ class DuckDBShadowStore:
         """
         Sprint P0-4: Arrow zero-copy batch ingest for CanonicalFinding DTO list.
 
-        10-stupňový fallback na legacy `async_record_canonical_findings_batch`:
-          1. `HLEDAC_ARROW_INGEST == "0"` (env gate, default ON, opt-out) -> legacy
-          2. `len(findings) < _ARROW_MIN_BATCH` (default 5) -> legacy
-          3. pyarrow není dostupný (cached O(1) check) -> legacy
-          4. store not initialized or closed -> legacy
-          5. startup barrier timeout (30 s) -> legacy
-          6. WAL executor error -> legacy
-          7. WAL phase failed (wal_ok is False) -> legacy
-          8. DuckDB executor threw exception -> legacy
-          9. sync helper returned empty results -> legacy
-          10. all duckdb_success=False despite non-empty results -> legacy
-
-        ISSUE-032: WAL parallel (executor) + DuckDB sequential (executor).
-        No _write_semaphore needed — DuckDB serializes internally via shared executor.
-        Při úspěchu: WAL first (LMDB put_many) + DuckDB Arrow register+INSERT (one roundtrip).
-        Zero-copy: pa.array() drží C++ buffery, DuckDB čte přes Arrow C Data Interface.
-
-        Invarianty (shodné s legacy):
-          - 1:1 result mapping (len(results) == len(findings))
-          - `self._quality_state._accepted_count` += count of lmdb_success
-          - graph + semantic buffer triggered for accepted findings
-          - thread-affine execution on `self._executor`
-          - LMDB WAL precedes DuckDB (recovery invariant)
+        F360M-R Phase 1: Deleguje na DuckDBWriteCoordinator.ingest_batch_arrow().
+        Tato metoda je nyní tenká fasáda — veškerá logika je vyextrahována.
 
         Returns list[ActivationResult]. Empty list for empty findings input.
         """
-        if not findings:
-            return []
-        if not _ARROW_INGEST_ENABLED:
-            self._arrow_metrics["arrow_fallback_env"] += len(findings)
-            logger.debug(f"[D7-arrow-fallback] HLEDAC_ARROW_INGEST=0, using legacy path for {len(findings)} findings")
-            return await self.async_record_canonical_findings_batch(findings)
-        if len(findings) < _ARROW_MIN_BATCH:
-            self._arrow_metrics["arrow_fallback_batch"] += len(findings)
-            logger.debug(
-                f"[D7-arrow-fallback] batch size {len(findings)} < _ARROW_MIN_BATCH({_ARROW_MIN_BATCH}), using legacy path"
-            )
-            return await self.async_record_canonical_findings_batch(findings)
-        if not _check_pyarrow_available():
-            self._arrow_metrics["arrow_fallback_pyarrow"] += len(findings)
-            logger.debug(f"[D7-arrow-fallback] pyarrow not available, using legacy path for {len(findings)} findings")
-            return await self.async_record_canonical_findings_batch(findings)
-        if not self._initialized or self._closed:
-            return await self.async_record_canonical_findings_batch(findings)
-        if not self._startup_ready.is_set():
-            try:
-                async with asyncio.timeout(30.0):
-                    await self._startup_ready.wait()
-            except TimeoutError:
-                self._arrow_metrics["arrow_fallback_init"] += len(findings)
-                return await self.async_record_canonical_findings_batch(findings)
+        # F360M-R Phase 1: Lazy init WriteCoordinator
+        if self._write_coordinator is None:
+            wal_root = self._db_path.parent if self._db_path else None
+            from .duckdb_write_coordinator import DuckDBWriteCoordinator
 
-        # ISSUE-032: WAL parallel (fast I/O). DuckDB sequential via shared executor.
-        # Replaces old _write_semaphore(4) which serialized both unnecessarily.
-        loop = asyncio.get_running_loop()
-        wal_future = loop.run_in_executor(self._wal_executor, self._wal_put_many_sync, findings)
-        duckdb_future = loop.run_in_executor(self._duckdb_arrow_executor, self._duckdb_arrow_sync, findings)
-
-        # Wait for WAL first (WAL-first invariant)
-        wal_ok_or_exc: bool | Exception = await wal_future
-        if isinstance(wal_ok_or_exc, Exception):
-            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
-            logger.warning(
-                f"[D7-arrow-fallback] WAL executor error ({wal_ok_or_exc}), using legacy path for {len(findings)} findings"
+            self._write_coordinator = DuckDBWriteCoordinator(
+                duckdb=self,
+                wal_root=wal_root,
+                wal_executor=self._wal_executor,
+                duckdb_arrow_executor=self._duckdb_arrow_executor,
+                semantic_buffer=self._semantic_buffer,
+                quality_gate=self._quality_gate,
+                quality_state=self._quality_state,
+                startup_ready=self._startup_ready,
             )
-            return await self.async_record_canonical_findings_batch(findings)
-        wal_ok = wal_ok_or_exc
-        if not wal_ok:
-            self._arrow_metrics["arrow_fallback_empty"] += len(findings)
-            _logger.error(
-                "[D7] Arrow WAL phase failed for %d findings - falling back to legacy executemany.", len(findings)
-            )
-            return await self.async_record_canonical_findings_batch(findings)
-
-        # Wait for DuckDB result (from run_in_executor)
-        try:
-            duckdb_result: tuple[int, str | None] | Exception = await duckdb_future
-        except asyncio.CancelledError:
-            duckdb_result = (0, "cancelled")
-
-        if isinstance(duckdb_result, Exception):
-            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
-            logger.warning(
-                f"[D7-arrow-fallback] DuckDB executor error ({duckdb_result}), using legacy path for {len(findings)} findings"
-            )
-            return await self.async_record_canonical_findings_batch(findings)
-        logger.debug(f"[D7-arrow] WAL ok, DuckDB result={duckdb_result!r} batch={len(findings)}")
-        duckdb_count, duckdb_err = duckdb_result
-
-        if duckdb_err is not None:
-            _logger.error(f"[D7] DuckDB Arrow bulk failed: {duckdb_err}")
-            duckdb_all_ok = False
-        elif duckdb_count < len(findings):
-            self._arrow_metrics["arrow_partial_duplicates"] += 1
-            _logger.debug(
-                f"[D7-arrow] DuckDB MERGE deduplication: {duckdb_count}/{len(findings)} inserted (rest were deduplicated by MERGE)"
-            )
-            duckdb_all_ok = True
-        else:
-            duckdb_all_ok = True
-        results = [
-            {"finding_id": f.finding_id, "lmdb_success": wal_ok, "duckdb_success": duckdb_all_ok, "error": duckdb_err}
-            for f in findings
-        ]
-        if not results:
-            self._arrow_metrics["arrow_fallback_empty"] += len(findings)
-            _logger.error(
-                "[D7] Arrow path returned 0 results for %d findings - falling back to legacy executemany. Enable HLEDAC_ARROW_INGEST=0 to use legacy path only.",
-                len(findings),
-            )
-            return await self.async_record_canonical_findings_batch(findings)
-        if results and all((r.get("duckdb_success") is False for r in results)):
-            self._arrow_metrics["arrow_fallback_all_fail"] += len(results)
-            errors_in_results = [r.get("error") for r in results if r.get("error")]
-            if errors_in_results and errors_in_results[0] == "duckdb_error":
-                self._arrow_metrics["arrow_error_duckdb_insert"] += len(results)
-            elif errors_in_results and errors_in_results[0] == "table_build":
-                self._arrow_metrics["arrow_error_table_build"] += len(results)
-            else:
-                self._arrow_metrics["arrow_error_partial"] += len(results)
-            logger.error(
-                "[D7] Arrow path: all %d findings failed DuckDB write - falling back to legacy executemany.",
-                len(results),
-            )
-            return await self.async_record_canonical_findings_batch(findings)
-        if results and any((r.get("lmdb_success") for r in results)):
-            if self.truth_write_graph_supports_buffered_writes():
-                await self._graph_ingest_findings(findings)
-            self._semantic_buffer_findings(findings)
-        accepted_total = sum((1 for r in results if r.get("lmdb_success")))
-        self._quality_state._accepted_count += accepted_total
-        self._arrow_metrics["arrow_selected"] += len(findings)
-        self._arrow_metrics["arrow_success_count"] += len(findings)
-        lmdb_ok = sum((1 for r in results if r.get("lmdb_success")))
-        duckdb_ok = sum((1 for r in results if r.get("duckdb_success")))
-        self._arrow_metrics["arrow_success_lmdb_count"] += lmdb_ok
-        self._arrow_metrics["arrow_success_duckdb_count"] += duckdb_ok
-        logger.info(f"[D7-arrow] path=arrow batch={len(findings)} lmdb_ok={lmdb_ok} duckdb_ok={duckdb_ok}")
-        return [
-            ActivationResult(
-                finding_id=str(r.get("finding_id", "")),
-                lmdb_success=bool(r.get("lmdb_success")),
-                duckdb_success=r.get("duckdb_success"),
-                lmdb_key=f"finding:{r.get('finding_id', '')}",
-                desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
-                error=r.get("error"),
-                accepted=bool(r.get("lmdb_success")),
-            )
-            for r in results
-        ]
+        return await self._write_coordinator.ingest_batch_arrow(findings)
 
     async def async_get_recent_findings(self, limit: int = 10) -> list[CanonicalFinding]:
         """
@@ -8866,6 +8781,42 @@ class DuckDBShadowStore:
         except Exception:  # noqa: BLE001 — best-effort; maintenance failure; non-critical
             pass
 
+    # -------------------------------------------------------------------------
+    # DuckDBWriteCoordinator integration helpers (F360M-R Phase 1 refactor)
+    # -------------------------------------------------------------------------
+
+    def trigger_vacuum_if_needed(self) -> None:
+        """
+        Sync wrapper for DuckDBWriteCoordinator maintenance trigger.
+        Calls async_vacuum_if_needed synchronously via executor.
+        """
+        if self._db_path is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(
+                self._executor,
+                lambda: asyncio.create_task(self.async_vacuum_if_needed()),
+            )
+        except Exception:  # noqa: BLE001 — best-effort; non-critical
+            pass
+
+    def trigger_checkpoint_if_needed(self) -> None:
+        """
+        Sync wrapper for DuckDBWriteCoordinator maintenance trigger.
+        Calls _checkpoint_async synchronously via executor.
+        """
+        if self._db_path is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(
+                self._executor,
+                lambda: asyncio.create_task(self._checkpoint_async()),
+            )
+        except Exception:  # noqa: BLE001 — best-effort; non-critical
+            pass
+
     async def _checkpoint_async(self) -> bool:
         """
         Execute CHECKPOINT to flush WAL to main DB.
@@ -10232,8 +10183,9 @@ class DuckDBShadowStore:
         chunks: list[dict[str, Any]],
     ) -> int:
         """
-        Batch upsert RAG document chunk embeddings.
+        F360M: Delegated to DuckDBVectorStore via _ensure_vector_store().
 
+        Batch upsert RAG document chunk embeddings.
         Stores in rag_embeddings table with LIST<FLOAT> vectors.
         Uses INSERT OR REPLACE for idempotent upserts.
 
@@ -10249,42 +10201,11 @@ class DuckDBShadowStore:
         Returns:
             Number of chunks upserted.
         """
-        if not chunks:
+        _store = await self._ensure_vector_store()
+        if _store is None:
             return 0
+        return await _store.upsert_rag_embeddings(chunks)
 
-        await self.async_initialize_schema()
-        self.ensure_connected()
-
-        conn = self._conn
-        if conn is None:
-            return 0
-
-        rows_inserted = 0
-        for chunk in chunks:
-            try:
-                embedding_list = chunk.get("embedding", [])
-                metadata_json = _orjson_mod.dumps(chunk.get("metadata", {}))
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO rag_embeddings
-                    (chunk_id, document_id, content, metadata_json, embedding, embedding_dim, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        str(chunk["chunk_id"]),
-                        str(chunk["document_id"]),
-                        str(chunk.get("content", "")),
-                        metadata_json,
-                        embedding_list,
-                        len(embedding_list),
-                        float(chunk.get("created_at", 0.0)),
-                    ],
-                )
-                rows_inserted += 1
-            except Exception as e:  # noqa: BLE001 — best-effort per chunk
-                _logger.debug(f"[DUCKDB:VEC] upsert_rag_embeddings failed for {chunk.get('chunk_id','?')}: {e}")
-
-        return rows_inserted
 
     async def vector_search_rag(
         self,
@@ -10293,8 +10214,9 @@ class DuckDBShadowStore:
         document_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """
-        ANN vector search over rag_embeddings using DuckDB HNSW.
+        F360M: Delegated to DuckDBVectorStore via _ensure_vector_store().
 
+        ANN vector search over rag_embeddings using DuckDB HNSW.
         Uses array_cosine_distance with HNSW index (or sequential scan fallback).
         M1 8GB: bounded to k <= 100 to prevent runaway memory.
 
@@ -10306,61 +10228,11 @@ class DuckDBShadowStore:
         Returns:
             List of dicts: {chunk_id, document_id, content, metadata, distance}
         """
-        await self.async_initialize_schema()
-        self.ensure_connected()
-
-        k = min(k, 100)  # M1 8GB safety cap
-        conn = self._conn
-        if conn is None:
+        _store = await self._ensure_vector_store()
+        if _store is None:
             return []
+        return await _store.vector_search_rag(query_vector, k=k, document_id=document_id)
 
-        try:
-            if document_id is not None:
-                sql = """
-                    SELECT
-                        chunk_id,
-                        document_id,
-                        content,
-                        metadata_json,
-                        array_cosine_distance(embedding, ?) AS distance
-                    FROM rag_embeddings
-                    WHERE document_id = ?
-                    ORDER BY distance ASC
-                    LIMIT ?
-                """
-                rows = await asyncio.to_thread(
-                    conn.execute, sql, [query_vector, document_id, k]
-                ).fetchall()
-            else:
-                sql = """
-                    SELECT
-                        chunk_id,
-                        document_id,
-                        content,
-                        metadata_json,
-                        array_cosine_distance(embedding, ?) AS distance
-                    FROM rag_embeddings
-                    ORDER BY distance ASC
-                    LIMIT ?
-                """
-                rows = await asyncio.to_thread(
-                    conn.execute, sql, [query_vector, k]
-                ).fetchall()
-
-            return [
-                {
-                    "chunk_id": str(r[0]),
-                    "document_id": str(r[1]),
-                    "content": r[2] or "",
-                    "metadata": _ORJSON_DECODER(r[3]) if r[3] else {},
-                    "distance": float(r[4]) if r[4] is not None else 1.0,
-                }
-                for r in rows
-            ]
-
-        except Exception as e:  # noqa: BLE001 — HNSW unavailable or query error
-            _logger.debug(f"[DUCKDB:VEC] vector_search_rag failed: {e}")
-            return []
 
     async def vector_search_rag_mmr(
         self,
@@ -10384,13 +10256,10 @@ class DuckDBShadowStore:
         Returns:
             List of dicts: {chunk_id, document_id, content, distance}
         """
-        await self.async_initialize_schema()
-        self.ensure_connected()
-
         k = min(k, 100)
         fetch_k = min(fetch_k, 200)  # cap for M1 8GB
 
-        # Fetch candidates
+        # Fetch candidates — DuckDBVectorStore.vector_search_rag calls _ensure_schema() internally
         candidates = await self.vector_search_rag(query_vector, k=fetch_k)
         if not candidates:
             return []
@@ -10441,6 +10310,8 @@ class DuckDBShadowStore:
         entities: list[dict[str, Any]],
     ) -> int:
         """
+        F360M: Delegated to DuckDBVectorStore via _ensure_vector_store().
+
         Batch upsert entity embeddings for identity resolution.
 
         Args:
@@ -10455,42 +10326,10 @@ class DuckDBShadowStore:
         Returns:
             Number of entities upserted.
         """
-        if not entities:
+        _store = await self._ensure_vector_store()
+        if _store is None:
             return 0
-
-        await self.async_initialize_schema()
-        self.ensure_connected()
-
-        conn = self._conn
-        if conn is None:
-            return 0
-
-        rows_inserted = 0
-        for entity in entities:
-            try:
-                embedding_list = entity.get("embedding", [])
-                metadata_json = _orjson_mod.dumps(entity.get("metadata", {}))
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO entity_embeddings
-                    (entity_id, entity_value, entity_type, metadata_json, embedding, embedding_dim, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        str(entity["entity_id"]),
-                        str(entity["entity_value"]),
-                        str(entity.get("entity_type", "")),
-                        metadata_json,
-                        embedding_list,
-                        len(embedding_list),
-                        float(entity.get("updated_at", 0.0)),
-                    ],
-                )
-                rows_inserted += 1
-            except Exception as e:  # noqa: BLE001
-                _logger.debug(f"[DUCKDB:VEC] upsert_entity_embeddings failed for {entity.get('entity_id','?')}: {e}")
-
-        return rows_inserted
+        return await _store.upsert_entity_embeddings(entities)
 
     async def vector_search_entities(
         self,
@@ -10499,8 +10338,9 @@ class DuckDBShadowStore:
         entity_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """
-        ANN vector search over entity_embeddings.
+        F360M: Delegated to DuckDBVectorStore via _ensure_vector_store().
 
+        ANN vector search over entity_embeddings.
         Used for entity identity clustering and alias resolution.
 
         Args:
@@ -10511,61 +10351,11 @@ class DuckDBShadowStore:
         Returns:
             List of dicts: {entity_id, entity_value, entity_type, metadata, distance}
         """
-        await self.async_initialize_schema()
-        self.ensure_connected()
-
-        k = min(k, 100)
-        conn = self._conn
-        if conn is None:
+        _store = await self._ensure_vector_store()
+        if _store is None:
             return []
+        return await _store.vector_search_entities(query_vector, k=k, entity_type=entity_type)
 
-        try:
-            if entity_type is not None:
-                sql = """
-                    SELECT
-                        entity_id,
-                        entity_value,
-                        entity_type,
-                        metadata_json,
-                        array_cosine_distance(embedding, ?) AS distance
-                    FROM entity_embeddings
-                    WHERE entity_type = ?
-                    ORDER BY distance ASC
-                    LIMIT ?
-                """
-                rows = await asyncio.to_thread(
-                    conn.execute, sql, [query_vector, entity_type, k]
-                ).fetchall()
-            else:
-                sql = """
-                    SELECT
-                        entity_id,
-                        entity_value,
-                        entity_type,
-                        metadata_json,
-                        array_cosine_distance(embedding, ?) AS distance
-                    FROM entity_embeddings
-                    ORDER BY distance ASC
-                    LIMIT ?
-                """
-                rows = await asyncio.to_thread(
-                    conn.execute, sql, [query_vector, k]
-                ).fetchall()
-
-            return [
-                {
-                    "entity_id": str(r[0]),
-                    "entity_value": str(r[1]),
-                    "entity_type": r[2],
-                    "metadata": _ORJSON_DECODER(r[3]) if r[3] else {},
-                    "distance": float(r[4]) if r[4] is not None else 1.0,
-                }
-                for r in rows
-            ]
-
-        except Exception as e:  # noqa: BLE001
-            _logger.debug(f"[DUCKDB:VEC] vector_search_entities failed: {e}")
-            return []
 
     # ── Hybrid: FTS + Vector ───────────────────────────────────────────────────
 

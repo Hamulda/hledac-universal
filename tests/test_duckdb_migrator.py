@@ -83,7 +83,7 @@ class TestSchemaMigratorFreshDB:
             "SELECT version, description FROM schema_version ORDER BY version"
         ).fetchall()
         versions = [r[0] for r in rows]
-        assert versions == [1, 2], f"Expected [1, 2], got {versions}"
+        assert versions == [1, 2, 3, 4], f"Expected [1, 2, 3, 4], got {versions}"
 
         # Verify init schema was applied (canonical_findings table)
         tables = duckdb_conn.execute(

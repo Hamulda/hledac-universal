@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .duckdb_store import DuckDBShadowStore
-    from .duckdb_wal_manager import WALManager
+    from .duckdb_store import ActivationResult, CanonicalFinding, DuckDBShadowStore
+    from .duckdb_wal_manager import DuckDBWALManager
     from .duckdb_quality_gate import QualityAssessmentState
     from .semantic_store_buffer import SemanticStoreBuffer
 
@@ -98,7 +98,7 @@ class DuckDBWriteCoordinator:
     def __init__(
         self,
         duckdb: DuckDBShadowStore,
-        wal_manager: WALManager | None = None,
+        wal_manager: DuckDBWALManager | None = None,
         wal_root: Path | None = None,
         graph_service: Any | None = None,
         semantic_buffer: SemanticStoreBuffer | None = None,
@@ -163,7 +163,7 @@ class DuckDBWriteCoordinator:
     # -------------------------------------------------------------------------
 
     def _check_circuit_breaker(self) -> bool:
-        """ Vrátí True pokud je write path otevřená (není v open/half_open). """
+        """Vrátí True pokud je write path otevřená (není v open/half_open)."""
         import time as _time
 
         now = _time.time()
@@ -241,8 +241,8 @@ class DuckDBWriteCoordinator:
     # -------------------------------------------------------------------------
 
     async def ingest_batch_arrow(
-        self, findings: list[Any]
-    ) -> list[Any]:
+        self, findings: list[CanonicalFinding]
+    ) -> list[ActivationResult]:
         """
         Sprint P0-4: Arrow zero-copy batch ingest.
 
@@ -286,7 +286,7 @@ class DuckDBWriteCoordinator:
 
         # Pyarrow check (cached)
         try:
-            import pyarrow as _pa
+            import pyarrow as _pa  # noqa: F401
         except ImportError:
             self._arrow_metrics["arrow_fallback_pyarrow"] += len(findings)
             logger.debug(
@@ -311,39 +311,42 @@ class DuckDBWriteCoordinator:
 
         # WAL first (parallel s DuckDB)
         wal_ok = False
-        wal_exc: Exception | None = None
         try:
             wal_ok = await self._wal_put_many(findings)
         except Exception as e:
-            wal_exc = e
-
-        if wal_exc is not None or not wal_ok:
-            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
             logger.warning(
-                f"[WriteCoordinator-arrow-fallback] WAL error ({wal_exc or 'failed'}), "
+                f"[WriteCoordinator-arrow-fallback] WAL error ({e}), "
                 f"using legacy path for {len(findings)} findings"
+            )
+            self._arrow_metrics["arrow_fallback_executor"] += len(findings)
+            return await self.ingest_batch_legacy(findings)
+
+        if not wal_ok:
+            self._arrow_metrics["arrow_fallback_empty"] += len(findings)
+            logger.error(
+                "[D7] Arrow WAL phase failed for %d findings - falling back to legacy executemany.",
+                len(findings),
             )
             return await self.ingest_batch_legacy(findings)
 
         # DuckDB Arrow insert (parallel s WAL, ale čekáme na WAL first)
-        duckdb_result: tuple[int, str | None] | None = None
+        duckdb_count = 0
+        duckdb_err: str | None = None
         try:
             loop = asyncio.get_running_loop()
-            duckdb_result = await loop.run_in_executor(
+            duckdb_result: tuple[int, str | None] = await loop.run_in_executor(
                 self._duckdb_arrow_executor,
                 self._duckdb_arrow_sync,
                 findings,
             )
+            duckdb_count, duckdb_err = duckdb_result
         except asyncio.CancelledError:
-            duckdb_result = (0, "cancelled")
+            duckdb_err = "cancelled"
+            duckdb_count = 0
         except Exception as e:
             logger.error(f"[WriteCoordinator] DuckDB Arrow executor error: {e}")
-            duckdb_result = (0, str(e))
-
-        if duckdb_result is None:
-            return await self.ingest_batch_legacy(findings)
-
-        duckdb_count, duckdb_err = duckdb_result
+            duckdb_err = str(e)
+            duckdb_count = 0
 
         if duckdb_err is not None:
             logger.error(f"[WriteCoordinator] DuckDB Arrow bulk failed: {duckdb_err}")
@@ -369,20 +372,7 @@ class DuckDBWriteCoordinator:
         ]
 
         # Build ActivationResult list
-        from .duckdb_store import ActivationResult
-
-        activation_results = [
-            ActivationResult(
-                finding_id=str(r.get("finding_id", "")),
-                lmdb_success=bool(r.get("lmdb_success")),
-                duckdb_success=r.get("duckdb_success"),
-                lmdb_key=f"finding:{r.get('finding_id', '')}",
-                desync=bool(r.get("lmdb_success") and r.get("duckdb_success") is False),
-                error=r.get("error"),
-                accepted=bool(r.get("lmdb_success")),
-            )
-            for r in results
-        ]
+        activation_results = self._build_activation_results(results)
 
         # Graph + semantic buffer pro accepted findings
         if results and any(r.get("lmdb_success") for r in results):
@@ -403,7 +393,6 @@ class DuckDBWriteCoordinator:
         now = _time.time()
         if self._should_vacuum():
             self._last_vacuum_time = now
-            # VACUUM se volá přes DuckDBShadowStore hook
             self._duckdb.trigger_vacuum_if_needed()
         if self._should_checkpoint():
             self._last_checkpoint_time = now
@@ -430,8 +419,8 @@ class DuckDBWriteCoordinator:
         return activation_results
 
     async def ingest_batch_legacy(
-        self, findings: list[Any]
-    ) -> list[Any]:
+        self, findings: list[CanonicalFinding]
+    ) -> list[ActivationResult]:
         """
         Legacy batch path — volá _sync_record_canonical_findings_batch_arrow_standalone
         přes executor. Používá se jako fallback z Arrow path nebo přímo.
@@ -439,29 +428,16 @@ class DuckDBWriteCoordinator:
         if not findings:
             return []
 
-        from .duckdb_store import ActivationResult
-
         loop = asyncio.get_running_loop()
         try:
-            sync_results: list[dict] = await loop.run_in_executor(
+            sync_results: list[dict[str, Any]] = await loop.run_in_executor(
                 self._duckdb_arrow_executor,
                 self._duckdb._sync_record_canonical_findings_batch_arrow_standalone,
                 findings,
             )
         except Exception as e:
             logger.error(f"[WriteCoordinator-legacy] executor error: {e}")
-            return [
-                ActivationResult(
-                    finding_id=str(f.finding_id),
-                    lmdb_success=False,
-                    duckdb_success=None,
-                    lmdb_key=f"finding:{f.finding_id}",
-                    desync=False,
-                    error=str(e),
-                    accepted=False,
-                )
-                for f in findings
-            ]
+            return self._build_activation_results_from_findings(findings, str(e))
 
         # Graph + semantic buffer
         if sync_results and any(r.get("lmdb_success") for r in sync_results):
@@ -477,6 +453,14 @@ class DuckDBWriteCoordinator:
                 getattr(self._quality_state, "_accepted_count", 0) + accepted_total
             )
 
+        return self._build_activation_results(sync_results)
+
+    def _build_activation_results(
+        self, results: list[dict[str, Any]]
+    ) -> list[ActivationResult]:
+        """Build ActivationResult list from raw dict results."""
+        from .duckdb_store import ActivationResult
+
         return [
             ActivationResult(
                 finding_id=str(r.get("finding_id", "")),
@@ -487,14 +471,33 @@ class DuckDBWriteCoordinator:
                 error=r.get("error"),
                 accepted=bool(r.get("lmdb_success")),
             )
-            for r in sync_results
+            for r in results
+        ]
+
+    def _build_activation_results_from_findings(
+        self, findings: list[CanonicalFinding], error: str
+    ) -> list[ActivationResult]:
+        """Build error ActivationResult list for all findings."""
+        from .duckdb_store import ActivationResult
+
+        return [
+            ActivationResult(
+                finding_id=str(f.finding_id),
+                lmdb_success=False,
+                duckdb_success=None,
+                lmdb_key=f"finding:{f.finding_id}",
+                desync=False,
+                error=error,
+                accepted=False,
+            )
+            for f in findings
         ]
 
     # -------------------------------------------------------------------------
     # WAL putmany (thread pool, WAL-first invariant)
     # -------------------------------------------------------------------------
 
-    async def _wal_put_many(self, findings: list[Any]) -> bool:
+    async def _wal_put_many(self, findings: list[CanonicalFinding]) -> bool:
         """WAL putmany přes executor. Vrací True při úspěchu."""
         if not findings:
             return True
@@ -513,12 +516,12 @@ class DuckDBWriteCoordinator:
             logger.error(f"[WriteCoordinator] WAL putmany error: {e}")
             return False
 
-    def _wal_put_many_sync(self, findings: list[Any]) -> bool:
+    def _wal_put_many_sync(self, findings: list[CanonicalFinding]) -> bool:
         """Sync WAL putmany helper — volá se v threadpool."""
         if self._wal_manager is None:
             return False
         n = len(findings)
-        items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
+        items: list[tuple[str, dict[str, Any]]] = [None] * n  # type: ignore[assignment]
         for i, f in enumerate(findings):
             items[i] = (
                 f"finding:{f.finding_id}",
@@ -533,8 +536,11 @@ class DuckDBWriteCoordinator:
                 },
             )
         try:
+            # DuckDBWALManager.wal_put_many has wrong type hint (bytes vs dict).
+            # In practice it accepts dict and delegates to WALManager.wal_put_many(dict).
+            # The hasattr guard + duckdb type ignore handles the mismatch.
             if hasattr(self._wal_manager, "wal_put_many"):
-                return self._wal_manager.wal_put_many(items)
+                return bool(self._wal_manager.wal_put_many(items))  # type: ignore[arg-type]
             return False
         except Exception as e:
             logger.error(f"[WriteCoordinator] WAL putmany sync error: {e}")
@@ -545,7 +551,7 @@ class DuckDBWriteCoordinator:
     # -------------------------------------------------------------------------
 
     def _duckdb_arrow_sync(
-        self, findings: list[Any]
+        self, findings: list[CanonicalFinding]
     ) -> tuple[int, str | None]:
         """
         DuckDB Arrow sync helper — volá se v threadpool.
@@ -557,7 +563,7 @@ class DuckDBWriteCoordinator:
     # Graph ingest (conditional na truth_write_graph_supports_buffered_writes)
     # -------------------------------------------------------------------------
 
-    async def _graph_ingest_findings(self, findings: list[Any]) -> None:
+    async def _graph_ingest_findings(self, findings: list[CanonicalFinding]) -> None:
         """Graph ingest přes DuckDBShadowStore._graph_ingest_findings."""
         try:
             await self._duckdb._graph_ingest_findings(findings)

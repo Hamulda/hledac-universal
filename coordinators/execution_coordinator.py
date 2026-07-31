@@ -26,7 +26,7 @@ import msgspec
 
 from hledac.universal.utils.async_helpers import first_completed, parallel, safe_create_task  # ISSUE-15
 
-from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -40,32 +40,13 @@ class ExecutionTask(msgspec.Struct, gc=False):
     timeout: float = 60.0
     retries: int = 0
 
-class ExecutionResult(msgspec.Struct, frozen=True, gc=False):
+class TaskResult(msgspec.Struct, frozen=True, gc=False):
     """
-    Result of task execution.
+    Result of task execution (local type for execution_coordinator internals).
 
-    NON-CANONICAL LOCAL SCAFFOLD (Sprint 8VF):
-    ════════════════════════════════════════════════
-    This dataclass is a LOCAL scaffold — it does NOT belong to the
-    canonical types.py scaffold surface.
-
-    RELATIONSHIP TO CANONICAL:
-    - Canonical ExecutionResult is types.py:1441 (ExecutionResult with slots=True)
-    - This local version exists because execution_coordinator owns its own
-      task result model independently of the canonical handoff pipeline
-    - The two are NOT aligned — field names differ
-
-    BOUNDARY RULE (Sprint 8VF):
-    - execution_coordinator may use this local type internally
-    - Any CROSS-COMPONENT handoff that carries execution state to another
-      component (e.g. analyzer→router, windup→export) MUST use the canonical
-      types.py ExecutionResult, not this one
-
-    MIGRATION CONDITION:
-    When execution_coordinator is refactored to pass typed handoffs through
-    the canonical pipeline, this local ExecutionResult becomes redundant.
-
-    See: types.py CANONICAL SCAFFOLD header (line 1269)
+    This is a LOCAL type — it differs from the canonical TaskResult in
+    types.py and from the CoordinatorTaskResult in _dto.py.
+    Used internally by execution_coordinator for task-level results.
     """
     task_id: str
     success: bool
@@ -108,7 +89,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         self._parallel_max_tasks = 5
         self._ray_max_tasks = 10
         self._pending_tasks: dict[str, ExecutionTask] = {}
-        self._completed_tasks: dict[str, ExecutionResult] = {}
+        self._completed_tasks: dict[str, TaskResult] = {}
         self._max_completed_history = 100
         self._ghost_executions = 0
         self._parallel_executions = 0
@@ -186,31 +167,24 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         """Return supported operation types."""
         return [OperationType.EXECUTION]
 
-    async def handle_request(self, operation_ref: str, decision: DecisionResponse) -> OperationResult:
-        """
-        Handle execution request with intelligent routing.
+    def _get_operation_type_for_tracking(self) -> str:
+        """Return operation type for tracking."""
+        return 'execution'
 
-        Args:
-            operation_ref: Unique operation reference
-            decision: Execution decision with routing info
+    async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
+        """Handle execution request — routes to appropriate backend."""
+        result = await self._execute_decision(decision)
+        return ExecutionResult(
+            status='completed' if result.success else 'failed',
+            result_summary=result.summary,
+            success=result.success,
+            metadata={
+                'executor': result.executor,
+                'tasks_executed': 1 if result.executor == 'ghost' else result.result_data.get('task_count', 1),
+            },
+        )
 
-        Returns:
-            OperationResult with execution outcome
-        """
-        start_time = time.time()
-        operation_id = self.generate_operation_id()
-        try:
-            self.track_operation(operation_id, {'operation_ref': operation_ref, 'decision': decision, 'type': 'execution'})
-            result = await self._execute_decision(decision)
-            operation_result = OperationResult(operation_id=operation_id, status='completed' if result.success else 'failed', result_summary=result.summary, execution_time=time.time() - start_time, success=result.success, metadata={'executor': result.executor, 'tasks_executed': 1 if result.executor == 'ghost' else result.result_data.get('task_count', 1)})
-        except Exception as e:
-            operation_result = OperationResult(operation_id=operation_id, status='failed', result_summary=f'Execution failed: {str(e)}', execution_time=time.time() - start_time, success=False, error_message=str(e))
-        finally:
-            self.untrack_operation(operation_id)
-        self.record_operation_result(operation_result)
-        return operation_result
-
-    async def _execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
+    async def _execute_decision(self, decision: DecisionResponse) -> TaskResult:
         """
         Route execution decision to appropriate backend.
 
@@ -240,11 +214,11 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         if self._ray_available and primary != 'ray':
             backends.append(('ray', self._execute_ray_cluster(decision)))
         if not backends:
-            return ExecutionResult(task_id='none', success=False, summary='No backends available', executor='none', execution_time=0.0, error='All execution backends unavailable')
+            return TaskResult(task_id='none', success=False, summary='No backends available', executor='none', execution_time=0.0, error='All execution backends unavailable')
         timeout_value = decision.estimated_duration if decision.estimated_duration else 10.0
-        winner_result: ExecutionResult | None = None
+        winner_result: TaskResult | None = None
         # ISSUE-15: asyncio.wait(FIRST_COMPLETED) → first_completed helper
-        backend_tasks: list[asyncio.Task[ExecutionResult]] = [
+        backend_tasks: list[asyncio.Task[TaskResult]] = [
             safe_create_task(coro, name=f'exec:{name}') for name, coro in backends
         ]
         try:
@@ -255,7 +229,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                         t.cancel()
                 winner_result = winner_task.result()
         except TimeoutError:
-            return ExecutionResult(task_id='none', success=False, summary=f'All backends timed out after {timeout_value}s', executor='none', execution_time=timeout_value, error='Backend race timeout')
+            return TaskResult(task_id='none', success=False, summary=f'All backends timed out after {timeout_value}s', executor='none', execution_time=timeout_value, error='Backend race timeout')
         except Exception as e:
             logger.warning(f'Backend race failed: {e}')
         if winner_result is not None:
@@ -269,9 +243,9 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             except Exception as e:
                 last_error = e
                 continue
-        return ExecutionResult(task_id='none', success=False, summary=f'All execution backends failed. Last error: {last_error}', executor='none', execution_time=0.0, error=str(last_error) if last_error else None)
+        return TaskResult(task_id='none', success=False, summary=f'All execution backends failed. Last error: {last_error}', executor='none', execution_time=0.0, error=str(last_error) if last_error else None)
 
-    async def _execute_ghost_director(self, decision: DecisionResponse) -> ExecutionResult:
+    async def _execute_ghost_director(self, decision: DecisionResponse) -> TaskResult:
         """Execute using GhostDirector (mission-based)."""
         start_time = time.time()
         if not self._ghost_director:
@@ -280,9 +254,9 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         result = await self._ghost_director.execute_mission(mission)
         execution_time = time.time() - start_time
         self._ghost_executions += 1
-        return ExecutionResult(task_id=decision.decision_id, success=result.get('success', False), summary=result.get('summary', 'Ghost mission completed'), executor='ghost', execution_time=execution_time, result_data=result)
+        return TaskResult(task_id=decision.decision_id, success=result.get('success', False), summary=result.get('summary', 'Ghost mission completed'), executor='ghost', execution_time=execution_time, result_data=result)
 
-    async def _execute_parallel_processing(self, decision: DecisionResponse) -> ExecutionResult:
+    async def _execute_parallel_processing(self, decision: DecisionResponse) -> TaskResult:
         """Execute using ParallelExecutionOptimizer."""
         start_time = time.time()
         if not self._parallel_executor:
@@ -293,9 +267,9 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         execution_time = time.time() - start_time
         self._parallel_executions += 1
         success_count = sum(1 for r in results if r.get('success', False))
-        return ExecutionResult(task_id=f'parallel_{decision.decision_id}', success=success_count > 0, summary=f'Parallel execution: {success_count}/{len(results)} tasks succeeded', executor='parallel', execution_time=execution_time, result_data={'task_count': len(results), 'success_count': success_count, 'tasks': results})
+        return TaskResult(task_id=f'parallel_{decision.decision_id}', success=success_count > 0, summary=f'Parallel execution: {success_count}/{len(results)} tasks succeeded', executor='parallel', execution_time=execution_time, result_data={'task_count': len(results), 'success_count': success_count, 'tasks': results})
 
-    async def _execute_ray_cluster(self, decision: DecisionResponse) -> ExecutionResult:
+    async def _execute_ray_cluster(self, decision: DecisionResponse) -> TaskResult:
         """Execute using RayClusterManager."""
         start_time = time.time()
         if not self._ray_cluster:
@@ -305,7 +279,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         results = await self._ray_cluster.distribute_tasks(tasks)
         execution_time = time.time() - start_time
         self._ray_executions += 1
-        return ExecutionResult(task_id=f'ray_{decision.decision_id}', success=results, summary=f'Distributed execution: {len(results)} tasks across cluster', executor='ray', execution_time=execution_time, result_data={'task_count': len(results), 'distributed': True, 'tasks': results})
+        return TaskResult(task_id=f'ray_{decision.decision_id}', success=results, summary=f'Distributed execution: {len(results)} tasks across cluster', executor='ray', execution_time=execution_time, result_data={'task_count': len(results), 'distributed': True, 'tasks': results})
 
     def _calculate_task_count(self, confidence: float, max_tasks: int) -> int:
         """
@@ -332,7 +306,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             tasks.append(task)
         return tasks
 
-    async def execute_with_fallback(self, task: ExecutionTask, fallback_chain: list[str] | None=None) -> ExecutionResult:
+    async def execute_with_fallback(self, task: ExecutionTask, fallback_chain: list[str] | None=None) -> TaskResult:
         """
         Execute task with automatic fallback between backends.
 
@@ -370,9 +344,9 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 last_error = e
                 logger.warning(f"Fallback execution failed for '{executor}': {e}")
                 continue
-        return ExecutionResult(task_id=task.task_id, success=False, summary=f'All fallback executors failed. Last error: {last_error}', executor='none', execution_time=0.0, error=str(last_error))
+        return TaskResult(task_id=task.task_id, success=False, summary=f'All fallback executors failed. Last error: {last_error}', executor='none', execution_time=0.0, error=str(last_error))
 
-    async def execute_batch(self, tasks: list[ExecutionTask], max_parallel: int=5) -> list[ExecutionResult]:
+    async def execute_batch(self, tasks: list[ExecutionTask], max_parallel: int=5) -> list[TaskResult]:
         """
         Execute batch of tasks with controlled parallelism.
 
@@ -400,7 +374,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             except Exception:
                 pass  # Fall back to max_parallel
 
-        async def execute_task(task: ExecutionTask) -> ExecutionResult:
+        async def execute_task(task: ExecutionTask) -> TaskResult:
             decision = DecisionResponse(decision_id=task.task_id, chosen_option=task.executor, confidence=0.7 if task.priority == 'high' else 0.5, reasoning=task.description, estimated_duration=task.timeout)
             return await self._execute_decision(decision)
 
@@ -414,7 +388,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         self._pending_tasks[task.task_id] = task
         return task.task_id
 
-    def complete_task(self, result: ExecutionResult) -> None:
+    def complete_task(self, result: TaskResult) -> None:
         """Mark task as completed."""
         if result.task_id in self._pending_tasks:
             del self._pending_tasks[result.task_id]
@@ -436,7 +410,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         """Get list of pending task IDs."""
         return list(self._pending_tasks.keys())
 
-    def get_completed_tasks(self, limit: int=10) -> list[ExecutionResult]:
+    def get_completed_tasks(self, limit: int=10) -> list[TaskResult]:
         """Get recently completed tasks."""
         return list(self._completed_tasks.values())[-limit:]
 

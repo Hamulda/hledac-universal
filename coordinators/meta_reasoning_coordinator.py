@@ -27,7 +27,7 @@ import msgspec
 
 from hledac.universal.utils.async_helpers import parallel_ok
 
-from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
 _RNG = secrets.SystemRandom()
@@ -91,9 +91,12 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.REASONING, OperationType.SYNTHESIS]
 
-    async def handle_request(self, operation_ref: str, decision: DecisionResponse) -> OperationResult:
+    def _get_operation_type_for_tracking(self) -> str:
+        """Return operation type for tracking."""
+        return 'meta_reasoning'
+
+    async def _do_execute_decision(self, decision: DecisionResponse) -> ExecutionResult:
         """Handle meta-reasoning request."""
-        start_time = time.time()
         try:
             operation = decision.metadata.get('reasoning_operation', 'reason')
             query = decision.metadata.get('query', '')
@@ -104,9 +107,19 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 result = await self._ensemble_reason(query)
             else:
                 result = {'success': False, 'error': f'Unknown operation: {operation}'}
-            return OperationResult(operation_id=self.generate_operation_id(), status='completed' if result.get('success') else 'failed', result_summary=result.get('summary', 'Meta-reasoning completed'), execution_time=time.time() - start_time, success=result.get('success', False), metadata=result)
+            return ExecutionResult(
+                status='completed' if result.get('success') else 'failed',
+                result_summary=result.get('summary', 'Meta-reasoning completed'),
+                success=result.get('success', False),
+                metadata=result,
+            )
         except Exception as e:
-            return OperationResult(operation_id=self.generate_operation_id(), status='failed', result_summary=f'Meta-reasoning failed: {str(e)}', execution_time=time.time() - start_time, success=False, error_message=str(e))
+            return ExecutionResult(
+                status='failed',
+                result_summary=f'Meta-reasoning failed: {str(e)}',
+                success=False,
+                error_message=str(e),
+            )
 
     async def reason(self, query: str, strategy: ReasoningStrategy | None=None) -> dict[str, Any]:
         """

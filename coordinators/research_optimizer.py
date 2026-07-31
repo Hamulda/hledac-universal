@@ -96,7 +96,7 @@ class ResearchOptimizer:
         self._max_history = 1000
         logger.info(f'ResearchOptimizer initialized ({self.config.strategy.value})')
 
-    async def execute(self, query: str, research_func: Callable, **kwargs) -> OptimizedResult:
+    async def execute(self, query: str, research_func: Callable, **kwargs: Any) -> OptimizedResult:
         """
         Execute research with optimizations.
 
@@ -154,7 +154,7 @@ class ResearchOptimizer:
                 del self._in_flight[query_hash]
             raise
 
-    async def execute_batch(self, queries: list[str], research_func: Callable, **kwargs) -> list[OptimizedResult]:
+    async def execute_batch(self, queries: list[str], research_func: Callable, **kwargs: Any) -> list[OptimizedResult]:
         """
         Execute multiple queries with batching optimization.
 
@@ -263,7 +263,7 @@ class ResearchOptimizer:
         logger.info(f'Cache cleared: {count} entries removed')
         return count
 
-async def optimized_research(query: str, research_func: Callable, strategy: OptimizationStrategy=OptimizationStrategy.BALANCED, **kwargs) -> OptimizedResult:
+async def optimized_research(query: str, research_func: Callable, strategy: OptimizationStrategy=OptimizationStrategy.BALANCED, **kwargs: Any) -> OptimizedResult:
     """
     Quick optimized research.
 
