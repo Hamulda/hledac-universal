@@ -1,5 +1,4 @@
-"""
-Match stage — PatternMatcher dispatch for public OSINT pipeline.
+"""Match stage — PatternMatcher dispatch for public OSINT pipeline.
 
 Responsibilities:
 - Dispatch pattern matching to PatternMatcher (offloaded to thread pool)
@@ -25,8 +24,7 @@ _DEFAULT_MATCH_CONCURRENCY: int = 8
 
 
 class MatchStage:
-    """
-    Match stage: ScoredBatch → MatchedBatch.
+    """Match stage: ScoredBatch → MatchedBatch.
 
     Applies PatternMatcher to each page's text.
     """
@@ -43,14 +41,14 @@ class MatchStage:
     async def process(
         self, input_batch: ScoredBatch | None
     ) -> tuple[MatchedBatch, dict[str, Any]]:
-        """
-        Match patterns in scored pages.
+        """Match patterns in scored pages.
 
         Args:
             input_batch: ScoredBatch with scored pages
 
         Returns:
             Tuple of (MatchedBatch, telemetry)
+
         """
         if input_batch is None or not input_batch.urls:
             return self._empty_batch(), {}
@@ -140,8 +138,7 @@ async def _match_batch(
     texts: list[str],
     concurrency: int = _DEFAULT_MATCH_CONCURRENCY,
 ) -> list[dict[str, Any]]:
-    """
-    Match patterns in a batch of texts.
+    """Match patterns in a batch of texts.
 
     Args:
         texts: List of text strings to match against
@@ -149,6 +146,7 @@ async def _match_batch(
 
     Returns:
         List of match results (one per text)
+
     """
     if not texts:
         return []
@@ -171,8 +169,7 @@ async def _match_batch(
 
 
 def _sync_match_text(text: str, idx: int) -> dict[str, Any]:
-    """
-    Synchronous pattern match — runs in thread pool.
+    """Match patterns synchronously in thread pool.
 
     Delegates to PatternMatcher from live_public_pipeline.py.
     """

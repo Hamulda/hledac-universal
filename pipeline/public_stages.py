@@ -1,6 +1,4 @@
-"""
-Public pipeline stages — PipelinePageResult, PipelineRunResult dataclasses
-and async_run_live_public_pipeline() entry point.
+"""Public pipeline stages — PipelinePageResult, PipelineRunResult dataclasses and async_run_live_public_pipeline() entry point.
 
 Extracted from live_public_pipeline.py.
 Contains only: struct definitions + thin orchestration stub.
@@ -24,6 +22,7 @@ from typing import Any
 
 class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     """Result of processing a single discovered page."""
+
     url: str
     fetched: bool
     matched_patterns: int
@@ -53,6 +52,7 @@ class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
 
 class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
     """Top-level result of a full pipeline run."""
+
     query: str
     discovered: int
     fetched: int
@@ -217,8 +217,7 @@ async def async_run_live_public_pipeline(
     export_dir: str | None = None,
     _sprint_id: str = "",
 ) -> Any:  # temporarily delegates to live_public_pipeline.PipelineRunResult
-    """
-    Public pipeline entry point.
+    """Public pipeline entry point.
 
     This is a thin wrapper around the monolithic live_public_pipeline.py.
     After the full split is complete, this function will wire together

@@ -10,11 +10,10 @@ in opsec_coordinator.py and re-exported from here for convenience.
 """
 import importlib
 import logging
-import secrets
 import time
 from typing import Any
 
-from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 from .opsec_coordinator import (
     OpsECCoordinator,
     SecurityContext,
@@ -44,14 +43,14 @@ class SecurityCoordinator(UniversalCoordinator):
     - 'quantum'/'crypto'/'encrypt' → QuantumResistantCrypto
     - 'zkp'/'proof'/'verify' → ZKPResearchEngine
     """
-    __slots__ = tuple((
+    __slots__ = (
         '_crypto_operations', '_global_threat_level', '_max_contexts',
         '_pq_backend', '_security_contexts',
         '_threat_analyses', '_threat_available', '_threat_intelligence',
         '_zkp_available', '_zkp_engine', '_zkp_operations', '_crypto_available',
-    ))
+    )
 
-    def __init__(self, max_concurrent: int = 5):
+    def __init__(self, max_concurrent: int = 5) -> None:
         super().__init__(
             name='security_coordinator',
             max_concurrent=max_concurrent,
@@ -89,7 +88,7 @@ class SecurityCoordinator(UniversalCoordinator):
             except Exception as e:
                 logger.warning(f'SecurityCoordinator: {factory_name} init failed: {e}')
         try:
-            from hledac.universal.security.pq_crypto import PQAvailability, create_post_quantum_backend
+            from hledac.universal.security.pq_crypto import PQAvailability, create_post_quantum_backend  # noqa: F401
             self._pq_backend, pq_status = await create_post_quantum_backend(
                 enabled=True, key_id='hledac.security.v1',
             )
@@ -129,46 +128,26 @@ class SecurityCoordinator(UniversalCoordinator):
     def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.SECURITY]
 
-    async def handle_request(
+    async def _do_execute_decision(
         self,
-        operation_ref: str,
         decision: DecisionResponse,
-    ) -> OperationResult:
+    ) -> ExecutionResult:
         """Handle security request — routes to threat/crypto/ZKP backend."""
-        start_time = time.time()
-        operation_id = self.generate_operation_id()
-        try:
-            self.track_operation(
-                operation_id,
-                {'operation_ref': operation_ref, 'decision': decision, 'type': 'security'},
-            )
-            result = await self._execute_security_decision(decision)
-            operation_result = OperationResult(
-                operation_id=operation_id,
-                status='completed' if result.success else 'failed',
-                result_summary=result.summary,
-                execution_time=time.time() - start_time,
-                success=result.success,
-                metadata={
-                    'security_operation': result.operation_type,
-                    'security_level': result.security_level.value,
-                    'measures_activated': result.measures_activated,
-                    'threats_found': result.threats_found,
-                },
-            )
-        except Exception as e:
-            operation_result = OperationResult(
-                operation_id=operation_id,
-                status='failed',
-                result_summary=f'Security operation failed: {str(e)}',
-                execution_time=time.time() - start_time,
-                success=False,
-                error_message=str(e),
-            )
-        finally:
-            self.untrack_operation(operation_id)
-        self.record_operation_result(operation_result)
-        return operation_result
+        result = await self._execute_security_decision(decision)
+        return ExecutionResult(
+            status='completed' if result.success else 'failed',
+            result_summary=result.summary,
+            success=result.success,
+            metadata={
+                'security_operation': result.operation_type,
+                'security_level': result.security_level.value,
+                'measures_activated': result.measures_activated,
+                'threats_found': result.threats_found,
+            },
+        )
+
+    def _get_operation_type_for_tracking(self) -> str:
+        return 'security'
 
     async def _execute_security_decision(
         self,
@@ -184,9 +163,8 @@ class SecurityCoordinator(UniversalCoordinator):
         elif any(k in chosen for k in ('quantum', 'crypto', 'encrypt')):
             if self._crypto_available:
                 return await self._execute_crypto_operation(decision, security_level)
-        elif any(k in chosen for k in ('zkp', 'proof', 'verify')):
-            if self._zkp_available:
-                return await self._execute_zkp_operation(decision, context, security_level)
+        elif any(k in chosen for k in ('zkp', 'proof', 'verify')) and self._zkp_available:
+            return await self._execute_zkp_operation(decision, context, security_level)
         if self._threat_available:
             return await self._execute_threat_analysis(decision, context, security_level)
         return SecurityResult(
@@ -453,7 +431,7 @@ class SecurityCoordinator(UniversalCoordinator):
     async def create_secure_vault(self, size_mb: int = 256) -> dict[str, Any]:
         """Create secure RAM disk vault."""
         try:
-            from hledac.universal.hledac.supreme.security.ram_disk_vault import RamDiskVault
+            from hledac.universal.supreme.security.ram_disk_vault import RamDiskVault
             vault = RamDiskVault(size_mb=size_mb)
             mount_point = vault.mount()
             return {
@@ -556,9 +534,9 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
     - 'stealth'/'evasion'/'anonymize'/'privacy'/'vpn'/'pgp' → OpsECCoordinator
     - 'threat'/'intelligence'/'detect'/'crypto'/'zkp' → SecurityCoordinator
     """
-    __slots__ = tuple(('_opsec', '_security'))
+    __slots__ = ('_opsec', '_security')
 
-    def __init__(self, max_concurrent: int = 5):
+    def __init__(self, max_concurrent: int = 5) -> None:
         super().__init__(
             name='universal_security_coordinator',
             max_concurrent=max_concurrent,
@@ -639,9 +617,8 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
         elif any(k in chosen for k in ('quantum', 'crypto', 'encrypt')):
             if self._security._crypto_available:
                 return await self._security._execute_crypto_operation(decision, security_level)
-        elif any(k in chosen for k in ('zkp', 'proof', 'verify')):
-            if self._security._zkp_available:
-                return await self._security._execute_zkp_operation(decision, context, security_level)
+        elif any(k in chosen for k in ('zkp', 'proof', 'verify')) and self._security._zkp_available:
+            return await self._security._execute_zkp_operation(decision, context, security_level)
 
         # Fallback to OpsEC
         if self._opsec._stealth_available:
@@ -934,7 +911,7 @@ class UniversalSecurityCoordinator(UniversalCoordinator):
                 logger.warning(f'Comprehensive security: ZKP failed: {e}')
 
         total_time = time.time() - start_time
-        successful = sum((1 for r in results if r.success))
+        successful = sum(1 for r in results if r.success)
         return {
             'success': successful > 0,
             'summary': f'Comprehensive security: {successful}/{len(results)} layers active',

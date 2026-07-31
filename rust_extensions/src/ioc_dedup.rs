@@ -27,6 +27,7 @@ use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use xxhash_rust::xxh3::xxh3_64;
 
 // madvise constants (Darwin)
@@ -98,7 +99,7 @@ impl IocType {
 ///   - No `format!("{}:{}", ...)` (String alloc)
 /// Key = TYPE_PREFIX_HASH[type_idx] ⊕ xxh3_64(normalized.as_bytes())
 /// (⊕ = wrapping_add — xxh3_64 is fast and uniform enough for non-crypto use)
-const TYPE_PREFIX_HASH: [u64; 10] = [
+static TYPE_PREFIX_HASH: LazyLock<[u64; 10]> = LazyLock::new(|| [
     xxh3_64(b"ip:"),       // 0: Ip
     xxh3_64(b"ipv6:"),     // 1: Ipv6
     xxh3_64(b"domain:"),    // 2: Domain
@@ -109,7 +110,7 @@ const TYPE_PREFIX_HASH: [u64; 10] = [
     xxh3_64(b"email:"),     // 7: Email
     xxh3_64(b"cve:"),       // 8: Cve
     0,                      // 9: Unknown — no prefix, key = just value hash
-];
+]);
 
 /// R4-05: Build a composite key from type index + normalized value (no string allocs).
 #[inline]

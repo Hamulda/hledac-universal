@@ -51,6 +51,10 @@ from .pivot_protocol import PivotProtocol
 from .prefetch_protocol import PrefetchProtocol
 from .score_protocol import ScoreProtocol
 
+# Graph tier protocols (F350M-R)
+from .analytics_protocol import AnalyticsProtocol
+from .stix_protocol import StixProtocol
+
 # Re-export all protocols for convenience
 from .storage_protocol import StorageProtocol
 from .transport_protocol import TransportProtocol
@@ -65,6 +69,8 @@ __all__ = [
     "FetchProtocol",
     # Graph
     "GraphProtocol",
+    "AnalyticsProtocol",
+    "StixProtocol",
     # Brain
     "BrainProtocol",
     # Layers

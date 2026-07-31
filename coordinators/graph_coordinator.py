@@ -14,11 +14,13 @@ graph reasoning to this coordinator.
 import asyncio
 import logging
 from collections import deque
-from dataclasses import dataclass
-import msgspec
 from typing import Any
 from urllib.parse import urlparse
+
+import msgspec
+
 from .base import UniversalCoordinator
+
 logger = logging.getLogger(__name__)
 MAX_RETURNED_PATHS = 20
 MAX_PENDING_QUERIES = 1000
@@ -41,9 +43,9 @@ class GraphCoordinator(UniversalCoordinator):
     - Run quantum pathfinder walks
     - Return bounded outputs (paths, metrics)
     """
-    __slots__ = tuple(('_config', '_ctx', '_favicon_index', '_fingerprint_edges', '_orchestrator', '_paths_returned', '_pending_queries', '_seen_queries', '_stop_reason', '_walks_executed'))
+    __slots__ = ('_config', '_ctx', '_favicon_index', '_fingerprint_edges', '_orchestrator', '_paths_returned', '_pending_queries', '_seen_queries', '_stop_reason', '_walks_executed')
 
-    def __init__(self, config: GraphCoordinatorConfig | None=None, max_concurrent: int=2):
+    def __init__(self, config: GraphCoordinatorConfig | None=None, max_concurrent: int=2) -> None:
         super().__init__(name='GraphCoordinator', max_concurrent=max_concurrent)
         self._config = config or GraphCoordinatorConfig()
         self._pending_queries: deque = deque(maxlen=MAX_PENDING_QUERIES)

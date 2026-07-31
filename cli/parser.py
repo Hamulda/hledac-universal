@@ -47,6 +47,9 @@ def main() -> int:
             return runner.run(async_main())
     except KeyboardInterrupt:
         return 130  # SIGINT
+    except (NameError, AttributeError, ImportError) as _e:
+        from hledac.universal.runtime.sprint_entrypoint import _fatal
+        _fatal(_e, code=3)  # logs _MAIN_FATAL + exits 3
 
 
 async def async_main() -> int:
@@ -80,7 +83,10 @@ async def dispatch_async(args: argparse.Namespace) -> int:
     sprint_target = getattr(args, "sprint", None)
 
     if sub == "sprint" or sprint_target is not None:
-        return await _dispatch_sprint_async(args)
+        try:
+            return await _dispatch_sprint_async(args)
+        except (NameError, AttributeError, ImportError):
+            raise  # propagate to main() → code 3
     elif sub == "pivot":
         return await _dispatch_pivot_async(args)
     elif sub == "ct":
@@ -106,15 +112,12 @@ async def dispatch_async(args: argparse.Namespace) -> int:
 
 
 async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
-    """Run canonical sprint via ``runtime.sprint_entrypoint.run_sprint()``."""
-    from hledac.universal.runtime.sprint_entrypoint import (
-        SprintFlags,
-        dry_run_sprint,
-        run_sprint,
-    )
+    """Run canonical sprint via ``core.__main__.run_sprint()``."""
+    from hledac.universal.core.__main__ import run_sprint
+    from hledac.universal.runtime.sprint_entrypoint import SprintFlags
 
     logger = logging.getLogger(__name__)
-    logger.info("[CLI] sprint: delegating to runtime.sprint_entrypoint.run_sprint()")
+    logger.info("[CLI] sprint: delegating to core.__main__.run_sprint()")
 
     target: str = getattr(args, "sprint", None) or ""
     duration: float = getattr(args, "duration", 1800.0)
@@ -133,27 +136,28 @@ async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
     if vault:
         os.environ["HLEDAC_VAULT_EXPORT"] = "1"
 
-    # F350M-R ISSUE #4: asyncio.Runner subclass with bounded drain on SIGINT.
-    # Standard Runner.run() closes the loop without draining cancelled tasks,
-    # so DuckDB commits / MLX evals can be abandoned.
+    # F350M-R: asyncio.Runner subclass that guards against nested asyncio contexts.
+    # Standard Runner.close() raises RuntimeError when called on an already-running
+    # loop (nested asyncio context, e.g. pytest subprocess). We suppress that so
+    # the original exception from the `with` body is preserved.
+    # Note: task draining on SIGINT (run_until_complete in close()) is impossible —
+    # run_until_complete cannot drain a running loop. SIGINT cleanup relies on
+    # KeyboardInterrupt propagation + Runner's own finally: loop.close().
     class _BoundedRunner(asyncio.Runner):
-        """Runner that drains tasks with a bounded timeout before closing the loop."""
+        """Runner that silently handles nested asyncio contexts on close()."""
 
         def close(self) -> None:
-            """Drain pending tasks then close the event loop."""
+            """Silently close the loop if already running; guard against RuntimeError."""
             if self._loop is None or self._loop.is_closed():
                 return
             try:
-                self._loop.run_until_complete(
-                    _cancel_all_tasks(timeout_s=5.0)
-                )
-            except Exception:
-                pass
-            super().close()
-            # M1 8GB: reclaim event-loop allocations
-            try:
-                gc.collect()
-            except Exception:
+                super().close()
+            except RuntimeError:
+                # Loop is already running (nested context). finally: loop.close()
+                # in asyncio.Runner.close() already ran and closed the loop — this
+                # RuntimeError propagates from shutdown_asyncgens() and is safe to
+                # suppress. The original KeyboardInterrupt / exception from the
+                # `with` body is preserved.
                 pass
 
     try:
@@ -163,44 +167,26 @@ async def _dispatch_sprint_async(args: argparse.Namespace) -> int:
         else:
             root_flags = SprintFlags(force=force)
             shutdown_event = asyncio.Event()
-
-            async def _run_with_shutdown() -> None:
-                await run_sprint(
-                    query=target,
-                    duration_s=duration,
-                    export_dir=export_dir,
-                    aggressive_mode=aggressive,
-                    deep_probe_enabled=deep_probe,
-                    ui_mode=ui,
-                    windup_lead_s=windup_lead,
-                    acquisition_profile=profile,
-                    flags=root_flags,
-                    shutdown_event=shutdown_event,
-                )
-
-            with _BoundedRunner() as runner:
-                runner.run(_run_with_shutdown())
+            await run_sprint(
+                query=target,
+                duration_s=duration,
+                export_dir=export_dir,
+                aggressive_mode=aggressive,
+                deep_probe_enabled=deep_probe,
+                ui_mode=ui,
+                windup_lead_s=windup_lead,
+                acquisition_profile=profile,
+                flags=root_flags,
+                shutdown_event=shutdown_event,
+            )
         return 0
-    except (NameError, AttributeError, ImportError):
+    except (NameError, AttributeError, ImportError) as _e:
         raise  # propagate to main() → code 3
-    except SystemExit as e:
-        return e.code if isinstance(e.code, int) else 1
-    except Exception as e:
-        logger.error("[CLI] sprint failed: %s", e, exc_info=True)
+    except SystemExit as _e:
+        return _e.code if isinstance(_e.code, int) else 1
+    except Exception as _e:
+        logger.error("[CLI] sprint failed: %s", _e, exc_info=True)
         return 1
-
-
-async def _cancel_all_tasks(timeout_s: float) -> None:
-    """Cancel all running tasks with a bounded timeout."""
-    try:
-        tasks = [t for t in asyncio.all_tasks() if not t.done()]
-        if not tasks:
-            return
-        for t in tasks:
-            t.cancel()
-        await asyncio.wait(tasks, timeout=timeout_s)
-    except Exception:
-        pass
 
 
 # ── Pivot ─────────────────────────────────────────────────────────────────────

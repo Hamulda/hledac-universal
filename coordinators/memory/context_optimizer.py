@@ -18,14 +18,13 @@ Canonical import:
 
 import logging
 import time
-from dataclasses import dataclass, field
-import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import msgspec
+
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
-from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 
 logger = logging.getLogger(__name__)
 
@@ -79,11 +78,11 @@ class ContextOptimizationManager:
 
     Three-tier storage: hot (RAM), warm (cache), cold (disk).
     """
-    __slots__ = tuple((
+    __slots__ = (
         'cold_storage', 'embedder', 'embedding_dim', 'enable_embeddings',
         'hot_context', 'hot_tokens', 'max_hot_tokens', 'max_warm_tokens',
         'phase_weights', 'stats', 'storage_path', 'warm_context', 'warm_tokens'
-    ))
+    )
 
     def __init__(
         self,

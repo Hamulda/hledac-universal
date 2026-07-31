@@ -1,5 +1,4 @@
-"""
-pipeline/scoring.py — Shared scoring utilities for live public and feed pipelines.
+"""pipeline/scoring.py — Shared scoring utilities for live public and feed pipelines.
 
 Sprint F222: Extract shared scoring/normalization logic from live_public_pipeline.py
 and live_feed_pipeline.py into a single module. Both pipelines import from it.
@@ -35,10 +34,11 @@ except ImportError:
 
 
 class EntryQualitySignal:
-    """
-    Lightweight quality signal for a single entry.
+    """Lightweight quality signal for a single entry.
+
     Used for routing decisions and observability — NOT for filtering findings.
     """
+
     __slots__ = (
         "quality_band",
         "quality_score",
@@ -55,6 +55,7 @@ class EntryQualitySignal:
         metadata_boost: bool = False,
         language_mismatch: bool = False,
     ) -> None:
+        """Initialize EntryQualitySignal with quality parameters."""
         self.quality_band = quality_band
         self.quality_score = quality_score
         self.quality_reason_tag = quality_reason_tag
@@ -62,6 +63,7 @@ class EntryQualitySignal:
         self.language_mismatch = language_mismatch
 
     def __repr__(self) -> str:
+        """Return string representation of EntryQualitySignal."""
         return (
             f"EntryQualitySignal(band={self.quality_band!r}, score={self.quality_score}, "
             f"tag={self.quality_reason_tag!r}, boost={self.metadata_boost}, "
@@ -69,6 +71,7 @@ class EntryQualitySignal:
         )
 
     def __eq__(self, other: object) -> bool:
+        """Check equality based on quality band and score."""
         if not isinstance(other, EntryQualitySignal):
             return NotImplemented
         return (
@@ -89,8 +92,7 @@ def _compute_entry_quality_signal(
     feed_language: str,
     adapter_quality_score: float | None = None,
 ) -> EntryQualitySignal:
-    """
-    Compute lightweight quality signal from entry metadata.
+    """Compute lightweight quality signal from entry metadata.
 
     No LLM. No new model. Pure heuristic.
     """
@@ -204,8 +206,7 @@ _RICH_CONTENT_MIN_CHARS: int = 40
 
 
 def _strip_html_tags_from_text(text: str) -> str:
-    """
-    Strip HTML tags word-boundary safe, OSINT-safe.
+    """Strip HTML tags word-boundary safe, OSINT-safe.
 
     Steps (strict order per invariant B.9):
     1. Remove entire <script> and <style> blocks
@@ -229,8 +230,7 @@ def _strip_html_tags_from_text(text: str) -> str:
 
 
 def _convert_rich_html_to_text(rich_html: str) -> str:
-    """
-    Convert rich HTML content to clean text.
+    """Convert rich HTML content to clean text.
 
     Priority (per Sprint 8BE Phase 1):
     1. markdownify (if available) — preserves structure
@@ -270,8 +270,7 @@ def _classify_assembly_substance(
     summary: str,
     rich_content: str,
 ) -> tuple[str, int]:
-    """
-    Classify how much substantive content was assembled from feed-native sources.
+    """Classify how much substantive content was assembled from feed-native sources.
 
     Returns (tier_name, tier_level):
       "no_content"       — nothing assembled (sentinel only)
@@ -318,8 +317,7 @@ def _assemble_enriched_feed_text(
     feed_title: str = "",
     entry_author: str = "",
 ) -> tuple[str, str]:
-    """
-    Assemble deterministic clean text from title + summary + rich_content + metadata.
+    """Assemble deterministic clean text from title + summary + rich_content + metadata.
 
     Sprint 8BE PHASE 1 + F150H: source-specific text enrichment with
     corrected priority so rich HTML content is used as primary surface.
@@ -389,8 +387,7 @@ def _assemble_enriched_feed_text(
 
 
 def _assemble_clean_feed_text(title: str, summary: str) -> str:
-    """
-    Assemble deterministic clean text from title + summary.
+    """Assemble deterministic clean text from title + summary.
 
     Deterministic assembly order:
     1. title (if non-empty)

@@ -1,5 +1,4 @@
-"""
-Public pipeline fetch — _fetch_and_process_page.
+"""Public pipeline fetch — _fetch_and_process_page.
 
 Extracted from live_public_pipeline.py.
 Handles: single-page fetch + extract + match + store loop.
@@ -21,6 +20,36 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any
+
+# ----------------------------------------------------------------------
+# Module-level imports — hoisted from function bodies.
+# All inline imports in _fetch_and_process_page and helpers were runtime
+# lazy-loads to avoid circular imports; the module already loads without
+# error, so these can safely live at module level (avoids re-import on
+# every call — critical for a pipeline running 1000s of URLs/sprint).
+# ----------------------------------------------------------------------
+from urllib.parse import urlparse
+
+from .public_acceptance import _build_public_finding
+from .public_acceptance import _extract_live_public_findings_from_page
+from .public_discovery import _compute_fetch_policy
+from .public_patterns import _compute_page_usable_fields
+from .public_patterns import _enrich_text_with_metadata
+from .public_patterns import _html_to_text
+from .public_patterns import _js_confidence_from_verdict
+from .public_patterns import _make_finding_id
+from .public_patterns import _score_page_quality
+from .public_stages import PipelinePageResult
+from hledac.universal.brain.model_manager import get_model_manager
+from hledac.universal.embedding_pipeline import generate_embeddings_async
+from hledac.universal.layers import get_temporal_signal_layer
+from hledac.universal.layers.temporal_signal_layer import event_from_finding_like
+from hledac.universal.runtime.graph_accumulator import SprintGraphAccumulator
+from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.rayon_pool import run_in_cpu_pool_async
+from hledac.universal.utils.patterns.pattern_matcher import PatternHit
+
+import numpy as np
 
 # ----------------------------------------------------------------------
 # DI globals — patched by tests; real code uses _ensure_patched()
@@ -65,7 +94,7 @@ def _ensure_patched() -> None:
 
         _ASYNC_FETCH_PUBLIC_TEXT = async_fetch_public_text
     if _SYNC_MATCH_TEXT is None:
-        from hledac.universal.patterns.pattern_matcher import match_text
+        from hledac.universal.utils.patterns.pattern_matcher import match_text
 
         _SYNC_MATCH_TEXT = match_text
 
@@ -121,15 +150,12 @@ async def _fetch_and_process_page(
     vector_store: Any | None = None,
     graph: Any | None = None,
 ) -> Any:  # PipelinePageResult
-    """
-    Single-page fetch + extract + match + store.
+    """Single-page fetch + extract + match + store.
 
     Returns PipelinePageResult (frozen msgspec.Struct).
 
     F226B: PUBLIC acceptance uplift telemetry — each parallel task has its own counters.
     """
-    from urllib.parse import urlparse
-
     # Local telemetry accumulators (per-page, not shared)
     _pub_build_success_count: int = 0
     _pub_build_failure_count: int = 0
@@ -469,7 +495,7 @@ async def _fetch_and_process_page(
         _result_matched = getattr(_matched_source, "matched_patterns", None) or ()
         if _result_matched:
             try:
-                from patterns.pattern_matcher import PatternHit
+                from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 
                 hits = [
                     PatternHit(label=p[0], pattern=p[1], start=0, end=0, value=p[2])
@@ -506,7 +532,7 @@ async def _fetch_and_process_page(
                 _text_lower = _search_text.lower()
                 _found_terms = [_t for _t in _query_terms if _t in _text_lower]
                 if _found_terms:
-                    from patterns.pattern_matcher import PatternHit
+                    from hledac.universal.utils.patterns.pattern_matcher import PatternHit
 
                     for _term in _found_terms:
                         _idx = _text_lower.find(_term)

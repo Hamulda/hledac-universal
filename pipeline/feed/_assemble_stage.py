@@ -1,5 +1,4 @@
-"""
-Assemble stage — text assembly from feed entries for feed pipeline.
+"""Assemble stage — text assembly from feed entries for feed pipeline.
 
 Responsibilities:
 - Assemble clean text from feed entry title + summary
@@ -20,8 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class AssembleStage:
-    """
-    Assemble stage: FeedEntryBatch → FeedAssembledBatch.
+    """Assemble stage: FeedEntryBatch → FeedAssembledBatch.
 
     Assembles clean text from feed entries and computes quality signals.
     """
@@ -35,14 +33,14 @@ class AssembleStage:
     async def process(
         self, input_batch: FeedEntryBatch | None
     ) -> tuple[FeedAssembledBatch, dict[str, Any]]:
-        """
-        Assemble feed entry texts.
+        """Assemble feed entry texts.
 
         Args:
             input_batch: FeedEntryBatch with raw feed entries
 
         Returns:
             Tuple of (FeedAssembledBatch, telemetry)
+
         """
         if input_batch is None or not input_batch.entry_urls:
             return self._empty_batch(), {}
@@ -98,8 +96,7 @@ class AssembleStage:
 
 
 def _assemble_clean_feed_text(title: str, summary: str) -> str:
-    """
-    Assemble clean text from feed entry title + summary.
+    """Assemble clean text from feed entry title + summary.
 
     From pipeline/scoring.py _assemble_clean_feed_text.
     """
@@ -141,8 +138,7 @@ def _strip_html_tags(text: str) -> str:
 
 
 def _compute_entry_quality_signal(text: str, text_len: int) -> dict[str, Any]:
-    """
-    Compute quality signal for a feed entry.
+    """Compute quality signal for a feed entry.
 
     From pipeline/scoring.py _compute_entry_quality_signal.
     Returns EntryQualitySignal as dict.

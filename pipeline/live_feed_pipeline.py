@@ -1,5 +1,4 @@
-"""
-Sprint 8AN: Live RSS/Atom feed pipeline v2 — pattern-backed findings.
+"""Sprint 8AN: Live RSS/Atom feed pipeline v2 — pattern-backed findings.
 
 feed_url -> 8AF fetch+parse -> entry normalization
     -> HTML->text (word-boundary safe, entity-safe)
@@ -306,6 +305,7 @@ class FeedIngestContext:
         graph_accumulator: SprintGraphAccumulator for cross-sprint graph (may be None).
         temporal_predictor: TemporalPredictor for pattern learning (may be None).
         layer_manager: LayerManager for privacy layer resolution (optional).
+
     """
 
     privacy_layer: Any = dataclasses.field(default=None)
@@ -407,8 +407,7 @@ class FeedIngestContext:
 
 
 class FallbackDecision(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structured fallback decision output.
+    """Structured fallback decision output.
 
     reason: canonical reason tag for the decision
     should_fetch: True if article fetch should be attempted
@@ -437,8 +436,7 @@ def _classify_fallback_decision(
     adapter_metadata_richness_band: str,
     adapter_entry_usefulness_band: str,
 ) -> FallbackDecision:
-    """
-    Classify the fallback decision outcome with a single structured output.
+    """Classify the fallback decision outcome with a single structured output.
 
     Decision tree (in priority order):
     1. If pre-fallback hits exist → fallback was wasteful (wasted=True)
@@ -628,8 +626,7 @@ def _compute_winning_source_breakdown(
     findings: list[dict],
     adapter_selection_reason: str,
 ) -> dict[str, int]:
-    """
-    Breakdown of which source layer produced the winning findings.
+    """Breakdown of which source layer produced the winning findings.
 
     Fallback is 'mixed' when article fallback was used alongside existing feed-native signal
     (both contributed to findings). 'feed_native' when only feed-native had hits.
@@ -664,8 +661,7 @@ def _compute_adapter_adjusted_confidence(
     adapter_selection_reason: str,
     feed_native_signal_carried: bool,
 ) -> int:
-    """
-    Fail-soft adjustment of feed_confidence_score using adapter-derived signals.
+    """Fail-soft adjustment of feed_confidence_score using adapter-derived signals.
 
     adapter_selection_reason is used fail-soft: if it contains keywords like
     "curated", "priority", "high" it adds a small boost; if it contains
@@ -854,8 +850,7 @@ _QUERY_STOPWORD_PATTERN: typing.Final[re.Pattern[str]] = re.compile(
 def _derive_query_context_terms(
     query: str,
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    """
-    Derive focused search terms from a query for feed entry scanning.
+    """Derive focused search terms from a query for feed entry scanning.
 
     Returns (domains, ipv4s, ipv6s, terms) extracted from the query.
     terms = unquoted, non-stopword tokens for word-based matching.
@@ -938,8 +933,7 @@ async def _scan_query_context_terms(
     text: str,
     query_context: str | None,
 ) -> list[dict]:
-    """
-    Scan *text* for domain/IP terms derived from *query_context*.
+    """Scan *text* for domain/IP terms derived from *query_context*.
 
     Returns list of pseudo-PatternHit dicts with {pattern, label, value, start, end}
     that can be merged with normal pattern hits downstream.
@@ -1038,8 +1032,7 @@ async def _scan_query_context_terms(
 
 
 def _assemble_clean_feed_text(title: str, summary: str) -> str:  # noqa: F811
-    """
-    Assemble deterministic clean text from title + summary.
+    """Assemble deterministic clean text from title + summary.
 
     Deterministic assembly order:
     1. title (if non-empty)
@@ -1076,10 +1069,9 @@ def _entry_to_candidate_findings(
     entry: Any,
     query_context: str | None,
 ) -> list[dict]:
-    """
-    [DEPRECATED — Sprint 8AN] Entry-backed CanonicalFinding dicts.
-    Replaced by pattern-backed _entry_to_pattern_findings().
+    """Entry-backed CanonicalFinding dicts (deprecated).
 
+    Replaced by pattern-backed _entry_to_pattern_findings().
     This function is kept for probe_8ah test compatibility only.
     """
     title = getattr(entry, "title", "") or ""
@@ -1139,8 +1131,8 @@ def _make_feed_finding_id(
     pattern: str,
     value: str = "",
 ) -> str:
-    """
-    Deterministic ID via sha256 using pattern identity fields.
+    """Deterministic ID via sha256 using pattern identity fields.
+
     No hash() — deterministic across runs.
     """
     key = f"{feed_url}\x00{entry_url}\x00{label}\x00{pattern}\x00{value}"
@@ -1169,8 +1161,7 @@ from hledac.universal.utils.patterns.feed_pipeline_wrapper import (  # noqa: E40
 
 
 def _keyword_filter_entries(entries: list | tuple, query_context: str) -> list:
-    """
-    P0-4: Keyword fallback for feed lanes.
+    """P0-4: Keyword fallback for feed lanes.
 
     When query is a concept term (not a domain/URL), filter feed entries to only
     those whose title or summary contains at least one keyword derived from the
@@ -1209,8 +1200,7 @@ def _keyword_filter_entries(entries: list | tuple, query_context: str) -> list:
 
 
 async def _async_scan_feed_text(text: str) -> list:
-    """
-    Offload pattern scan to thread executor with shared semaphore.
+    """Offload pattern scan to thread executor with shared semaphore.
 
     PatternMatcher.match_text() handles lowercasing internally.
     Empty registry = empty list (valid zero-findings state).
@@ -1218,6 +1208,7 @@ async def _async_scan_feed_text(text: str) -> list:
     Raises:
         RuntimeError: if the pattern matcher itself fails (for fail-soft guard).
         CancelledError: propagated if task is cancelled.
+
     """
     if not text:
         return []
@@ -1241,8 +1232,7 @@ def _extract_payload_context(
     hit_start: int,
     hit_end: int,
 ) -> str:
-    """
-    Extract unicode-safe payload context around pattern hit.
+    """Extract unicode-safe payload context around pattern hit.
 
     Uses FEED_PAYLOAD_CONTEXT_CHARS radius.
     Cuts at whitespace boundaries if possible.
@@ -1298,8 +1288,7 @@ def _pattern_hit_to_finding(
     query_context: str | None,
     clean_text: str,
 ) -> dict:
-    """
-    Map a single PatternHit to a CanonicalFinding dict.
+    """Map a single PatternHit to a CanonicalFinding dict.
 
     PatternHit: pattern, start, end, value, label
     """
@@ -1351,8 +1340,7 @@ _WAYBACK_CDX_TIMEOUT = 4.0
 
 
 async def _check_wayback_cdx(entry_url: str, session: httpx.AsyncClient) -> str | None:
-    """
-    F183E: Check Wayback Machine CDX API for recent capture of entry_url.
+    """F183E: Check Wayback Machine CDX API for recent capture of entry_url.
 
     Returns archive URL if recent capture exists (within _WAYBACK_CDX_MAX_AGE_DAYS),
     otherwise None. Does NOT raise — returns None on any failure.
@@ -1397,8 +1385,7 @@ async def _check_wayback_cdx(entry_url: str, session: httpx.AsyncClient) -> str 
 
 
 async def _wayback_resolve(wayback_session: httpx.AsyncClient, entry_url: str) -> tuple[str, bool, int]:
-    """
-    Wayback-only fallback: resolve via CDX then fetch.
+    """Wayback-only fallback: resolve via CDX then fetch.
 
     Called only when the primary fetch failed — the CDX check that would have
     run in parallel with the primary fetch is skipped here since we already know
@@ -1454,8 +1441,7 @@ async def _wayback_resolve(wayback_session: httpx.AsyncClient, entry_url: str) -
 
 
 async def _safe_fetch(session: httpx.AsyncClient, fetch_url: str) -> tuple[bytes, int]:
-    """
-    Fetch URL and return (raw_bytes, status_code).
+    """Fetch URL and return (raw_bytes, status_code).
 
     Returns (b"", 0) on any error — the caller decides what to do with it.
     CancelledError propagates.
@@ -1478,8 +1464,7 @@ async def _fetch_with_wayback_fallback(
     session: Any,
     wayback_session: Any,
 ) -> tuple[str, bool, int]:
-    """
-    Issue #10: Parallel raw fetch + Wayback CDX lookup; first-success wins.
+    """Issue #10: Parallel raw fetch + Wayback CDX lookup; first-success wins.
 
     Both the primary fetch and the Wayback CDX check run concurrently via
     asyncio.gather. The first one to return a usable article text wins.
@@ -1565,8 +1550,7 @@ async def _fetch_with_wayback_fallback(
 
 
 async def _fetch_article_text(entry_url: str) -> tuple[str, bool, int]:
-    """
-    Fetch article body via direct httpx GET and strip HTML.
+    """Fetch article body via direct httpx GET and strip HTML.
 
     F183E EXPANSION: Wayback CDX seam — before live fetch, check if archive
     capture exists and is recent (within 90 days). If so, fetch from archive
@@ -1636,8 +1620,7 @@ async def _entry_to_pattern_findings(
     int,
     int,
 ]:
-    """
-    Entry -> pattern-backed CanonicalFinding dicts.
+    """Entry -> pattern-backed CanonicalFinding dicts.
 
     Returns (in order):
       findings, patterns_configured, matched_patterns, assembled_text_len,
@@ -1918,8 +1901,7 @@ async def _entry_to_pattern_findings(
 
 
 async def _check_uma_emergency() -> bool:
-    """
-    Return True if UMA is in emergency state.
+    """Return True if UMA is in emergency state.
 
     ISSUE-003 FIX: Uses sample_uma_status_async() instead of sample_uma_status()
     to avoid blocking the event loop. The sync version calls threading.RLock
@@ -1951,8 +1933,7 @@ async def async_run_live_feed_pipeline(
     sprint_id: str = "",  # F268: graph accumulation context
     ingest_ctx: FeedIngestContext | None = None,  # Bug-4 FIX: ingest dependencies
 ) -> FeedPipelineRunResult:
-    """
-    Run live feed pipeline for a single feed_url.
+    """Run live feed pipeline for a single feed_url.
 
     Steps:
     1. Check UMA emergency -> fail-soft abort
@@ -1977,11 +1958,14 @@ async def async_run_live_feed_pipeline(
         Feed fetch timeout.
     max_bytes : int
         Max bytes to fetch.
+    ingest_ctx : FeedIngestContext | None
+        Feed ingest context for cascading quality signals.
 
     Returns
     -------
     FeedPipelineRunResult
         With patterns_configured and matched_patterns observability.
+
     """
     # Step 1: UMA emergency check
     try:
@@ -2299,7 +2283,10 @@ async def async_run_live_feed_pipeline(
     # Speedup: 50 entries × 200ms HTTP → parallel(concurrency=10) ≈ 1-2s total.
 
     async def _process_entry(idx: int, entry: Any, entry_url: str) -> tuple[int, str, Any, Exception | None]:
-        """Wrapper: runs _entry_to_pattern_findings, returns (idx, entry_url, result_or_None, exc)."""
+        """Run _entry_to_pattern_findings and return tuple.
+
+        Returns (idx, entry_url, result_or_None, exc).
+        """
         try:
             result = await _entry_to_pattern_findings(feed_url, entry, query_context, entry_deduper)
             return (idx, entry_url, result, None)
@@ -2919,10 +2906,9 @@ async def async_run_live_feed_pipeline(
 def _coerce_source_to_tuple(
     source: object,
 ) -> tuple[str, str, str, int]:
-    """
-    Coerce FeedSeed / FeedDiscoveryHit / MergedFeedSource / plain str
-    into a unified (feed_url, label, origin, priority) tuple.
+    """Coerce FeedSeed / FeedDiscoveryHit / MergedFeedSource / plain str.
 
+    into a unified (feed_url, label, origin, priority) tuple.
     Label fallback = "" (never None -> "None" string).
     FeedSeed uses 'source' field for origin.
     FeedDiscoveryHit has no origin/priority — use "" and 0.
@@ -2959,8 +2945,7 @@ def compute_feed_dominance_score(
     total_feed_findings: int,
     feed_sources_successful: int,
 ) -> float:
-    """
-    Compute a 0.0-1.0 feed dominance score.
+    """Compute a 0.0-1.0 feed dominance score.
 
     Combines dominant share (60%) and source concentration (40%) into a single
     score where 0 = balanced multi-source, 1 = single-source domination.
@@ -3010,8 +2995,7 @@ def compute_feed_balance_recommendation(
     feed_sources_successful: int,
     total_feed_findings: int,
 ) -> str:
-    """
-    Produce an actionable recommendation string from dominance metrics.
+    """Produce an actionable recommendation string from dominance metrics.
 
     Recommendation strings:
       "balanced"               -- no action needed, sources well-distributed
@@ -3039,8 +3023,7 @@ def estimate_per_source_soft_cap(
     total_budget: int,
     source_count: int,
 ) -> int:
-    """
-    Dry-run per-source soft cap estimator.
+    """Dry-run per-source soft cap estimator.
 
     Returns a suggested per-source ceiling. Does NOT enforce -- callers use
     this value only for reporting/recommendation purposes.
@@ -3069,8 +3052,7 @@ async def async_run_feed_source_batch(
     per_feed_timeout_s: float = 45.0,
     batch_timeout_s: float = 300.0,
 ) -> FeedSourceBatchRunResult:
-    """
-    Run a one-shot batch over heterogeneous feed sources.
+    """Run a one-shot batch over heterogeneous feed sources.
 
     Unchanged signature from 8AL — no breaking changes to public API.
     """
@@ -3304,8 +3286,7 @@ async def async_run_default_feed_batch(
     per_feed_timeout_s: float = 45.0,
     batch_timeout_s: float = 300.0,
 ) -> FeedSourceBatchRunResult:
-    """
-    Run a one-shot batch over the default curated feed seeds (8AJ).
+    """Run a one-shot batch over the default curated feed seeds (8AJ).
 
     Unchanged signature from 8AL.
 

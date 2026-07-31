@@ -1,5 +1,4 @@
-"""
-Stage Graph Orchestrator — data-oriented pipeline framework.
+"""Stage Graph Orchestrator — data-oriented pipeline framework.
 
 Python orchestrates stages; CPU stages use Rust pipeline_compose / rayon;
 GPU stages use MLX; IO stages use async DuckDB/LMDB.
@@ -48,8 +47,7 @@ logger = logging.getLogger(__name__)
 
 
 class StageResult(msgspec.Struct, frozen=True, gc=False):
-    """
-    Typed result from a single stage run.
+    """Typed result from a single stage run.
 
     All fields are explicitly typed for mypy/catch mismatches.
     """
@@ -75,8 +73,7 @@ class StageStats(msgspec.Struct, gc=False):
 
 
 class StageOrchestrator:
-    """
-    Orchestrates typed stages in topological order.
+    """Orchestrates typed stages in topological order.
 
     Each stage receives an input batch, produces an output batch + telemetry,
     and passes the output to the next stage.
@@ -103,13 +100,13 @@ class StageOrchestrator:
         self,
         stages: list[tuple[str, "StageLike"]],
     ) -> None:
-        """
-        Initialize orchestrator with ordered stages.
+        """Initialize orchestrator with ordered stages.
 
         Args:
             stages: list of (name, stage_instance) tuples.
                    Order matters — stages run in the order given.
                    Use topological_sort() if stages have dependencies.
+
         """
         self._stages = stages
         self._stats: dict[str, StageStats] = {
@@ -132,8 +129,7 @@ class StageOrchestrator:
         *,
         max_batch_size: int = 256,
     ) -> tuple[StageResult, ...]:
-        """
-        Run all stages in order.
+        """Run all stages in order.
 
         Args:
             initial_input: Input to the first stage.
@@ -142,6 +138,7 @@ class StageOrchestrator:
         Returns:
             Tuple of StageResult, one per stage.
             Results are in stage order.
+
         """
         if self._running:
             raise RuntimeError("StageOrchestrator.run() is not reentrant")
@@ -210,13 +207,13 @@ class StageOrchestrator:
         *,
         bypass_stages: set[str] | None = None,
     ) -> tuple[StageResult, ...]:
-        """
-        Run stages, skipping any stages in bypass_stages.
+        """Run stages, skipping any stages in bypass_stages.
 
         Args:
             initial_input: Input to the first non-bypassed stage.
             bypass_stages: Set of stage names to skip.
                           Useful for testing individual stages in isolation.
+
         """
         bypass = bypass_stages or set()
         if self._running:
@@ -283,8 +280,7 @@ class StageOrchestrator:
 
 
 def topological_sort(stages: list[tuple[str, "StageLike"]]) -> list[tuple[str, "StageLike"]]:
-    """
-    Sort stages topologically by name dependency.
+    """Sort stages topologically by name dependency.
 
     Convention: stage name ending with '_x_to_y' declares dependency on 'x'.
     Example: 'build' depends on 'match', 'match' depends on 'fetch'.

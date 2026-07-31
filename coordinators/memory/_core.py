@@ -8,7 +8,6 @@ Used by memory_coordinator.py, context_optimizer.py, and multi_level_cache.py.
 Extracted from memory_coordinator.py (F320 refactor) to eliminate duplicate class definitions.
 """
 from collections.abc import Callable
-from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import Any
 

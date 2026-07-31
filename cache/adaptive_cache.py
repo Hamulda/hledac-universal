@@ -37,7 +37,7 @@ def _get_rust() -> Any:
             # Double-check po lock
             if _rust is None:
                 try:
-                    from hledac.universal.hledac.universal import rust_extensions
+                    from hledac.universal import rust_extensions
                     _rust = rust_extensions
                 except ImportError:
                     logger.warning("[AdaptiveCache] Rust extensions unavailable, using fallback")

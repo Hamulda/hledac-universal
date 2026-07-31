@@ -200,7 +200,7 @@ def _run_research_loop(scorecard: dict[str, Any], query: str, profile: str, spri
                 return tmp_path
             return _orig_nsc_get(sid)
         nsc.get_sprint_next_seeds_path = _fake_path
-        from hledac.universal.hledac.universal import paths as pp
+        from hledac.universal.universal import paths as pp
         _orig_pp_get = pp.get_sprint_next_seeds_path
         pp.get_sprint_next_seeds_path = _fake_path
         try:

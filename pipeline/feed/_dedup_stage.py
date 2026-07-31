@@ -1,5 +1,4 @@
-"""
-Dedup stage — per-entry and run-level dedup for feed pipeline.
+"""Dedup stage — per-entry and run-level dedup for feed pipeline.
 
 Responsibilities:
 - Per-entry dedup by (label, pattern, value)
@@ -20,8 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class DedupStage:
-    """
-    Dedup stage: FeedMatchedBatch → FeedMatchedBatch (with dedup flags).
+    """Dedup stage: FeedMatchedBatch → FeedMatchedBatch (with dedup flags).
 
     Applies per-entry and run-level dedup.
     """
@@ -42,14 +40,14 @@ class DedupStage:
     async def process(
         self, input_batch: FeedMatchedBatch | None
     ) -> tuple[FeedMatchedBatch, dict[str, Any]]:
-        """
-        Apply dedup to matched batch.
+        """Apply dedup to matched batch.
 
         Args:
             input_batch: FeedMatchedBatch with match results
 
         Returns:
             Tuple of (FeedMatchedBatch with dedup flags, telemetry)
+
         """
         if input_batch is None or not input_batch.entry_urls:
             return self._empty_batch(), {}

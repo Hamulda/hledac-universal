@@ -92,32 +92,6 @@ assert SYNTHESIS_STRATEGY in ("sequential_preferred", "race_first_wins"), (
 
 # ---------------------------------------------------------------------------
 # Issue #20 improvement: Adaptive KV cache for M1 8GB Metal memory
-# Mirrors DeepHermes3Engine._get_kv_cache_kwargs() + _get_adaptive_kv_bits()
-# ---------------------------------------------------------------------------
-
-def _synthesis_get_metal_tier_thresholds() -> tuple[int, int, int]:
-    """
-    Probes Rust FFI get_metal_limit_bytes_py() for dynamic M1 Metal cache ceiling.
-    Fallback: static M1 8GB values.
-    """
-    try:
-        from hledac.universal.rust_extensions import rust_extensions as _rust
-        limit_bytes = _rust.get_metal_limit_bytes_py()
-        if limit_bytes > 0:
-            return (
-                int(limit_bytes * 1.75),  # emergency
-                int(limit_bytes * 1.05),  # critical
-                int(limit_bytes * 0.70),  # warn
-            )
-    except Exception:
-        pass
-    return (
-        2_684_354_560,  # emergency = 2.5 GiB
-        1_610_612_736,  # critical = 1.5 GiB
-        1_073_741_824,  # warn = 1.0 GiB
-    )
-
-
 # ---------------------------------------------------------------------------
 # Sprint 8UF B.1: xgrammar grammar cache — compile ONCE per schema lifetime
 # ---------------------------------------------------------------------------
@@ -227,6 +201,52 @@ _GRAMMAR_CACHE: PyCacheDict[str, object] = PyCacheDict(256, 600.0)
 
 # Issue #12.6: Thread-safe grammar compilation lock
 _GRAMMAR_BUILD_LOCK = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# G2: Streaming findings infrastructure for M1 8GB memory efficiency
+# ---------------------------------------------------------------------------
+
+from typing import AsyncIterator, Protocol, TypeAlias
+
+# Type alias: findings can be a list or an async iterator
+FindingsSource: TypeAlias = "list[dict] | AsyncIterator[dict]"
+
+
+async def _collect_findings_bounded(
+    source: FindingsSource,
+    max_buffered: int = 50,
+    max_total: int | None = None,
+) -> list[dict]:
+    """
+    G2: Collect findings from list or async iterator with bounded buffering.
+
+    For M1 8GB memory efficiency: prevents unbounded accumulation of findings
+    by enforcing max_buffered and optional max_total limits.
+
+    Args:
+        source: Either a list of findings or an async iterator
+        max_buffered: Maximum findings to hold in memory before yielding back
+        max_total: Optional hard cap on total findings collected
+
+    Returns:
+        List of collected findings (up to max_total)
+    """
+    if isinstance(source, list):
+        if max_total is not None:
+            return source[:max_total]
+        return source
+
+    # Async iterator path
+    collected: list[dict] = []
+    async for finding in source:
+        collected.append(finding)
+        if len(collected) >= max_buffered:
+            # Yield control back to event loop — allows other tasks to run
+            await asyncio.sleep(0)
+        if max_total is not None and len(collected) >= max_total:
+            break
+    return collected
 
 
 def _get_cached_grammar(schema_json_str: str, tokenizer) -> object:
@@ -807,65 +827,49 @@ class SynthesisRunner:
         return self._inference_pipeliner
 
     # ------------------------------------------------------------------
-    # Issue #20 improvement: Adaptive KV cache methods (mirrors DeepHermes3Engine)
-    # ------------------------------------------------------------------
-    # Issue #20: Combined Metal memory probe — called ONCE per synthesis call
-    # Caches result in _metal_probe_cache to avoid repeated Rust FFI calls
-    # Returns: (kv_bits: int, tier: str, thresholds: tuple[int,int,int])
+    # Issue #20 improvement: Adaptive KV cache methods
+    # G2: Now delegates to brain.kv_cache_config — single source of truth
     # ------------------------------------------------------------------
 
     def _probe_metal_memory(self) -> tuple[int, str, tuple[int, int, int]]:
         """
-        Issue #20-A: Combined Metal memory probe with result caching.
+        Issue #20-A + G2: Delegates to MetalProbe in kv_cache_config.
 
-        Probes active memory ONCE and returns kv_bits + tier + thresholds.
         Caches by active_bytes bucket (rounded to 64 MiB) to handle
         repeated calls within the same synthesis batch.
 
         Returns:
             (kv_bits, tier_name, (emergency_bytes, critical_bytes, warn_bytes))
         """
-        try:
-            import mlx.core as mx
+        from brain.kv_cache_config import get_metal_probe
 
-            active = 0
-            if hasattr(mx, "get_active_memory"):
-                active = int(mx.get_active_memory())
-            elif hasattr(mx.metal, "get_active_memory"):
-                active = int(mx.metal.get_active_memory())
+        probe = get_metal_probe()
+        result = probe.probe()
+        from brain.kv_cache_config import get_metal_tier_thresholds
 
-            # Round to 64 MiB bucket for cache stability
-            bucket = (active // (64 * 1024 * 1024)) * (64 * 1024 * 1024)
+        thresholds = get_metal_tier_thresholds()
 
-            if bucket in self._metal_probe_cache:
-                return self._metal_probe_cache[bucket]
+        # Map MemoryTier to legacy string tier
+        tier_map = {
+            "normal": "normal",
+            "warn": "medium",
+            "critical": "high",
+            "emergency": "emergency",
+        }
+        tier_str = tier_map.get(result.tier.value, "normal")
+        kv_bits = max(4, self._kv_bits)
 
-            thresholds = _synthesis_get_metal_tier_thresholds()
-            emergency_bytes, critical_bytes, warn_bytes = thresholds
-
-            active_gib = active / (1024**3)
-            if active_gib > 2.0:
-                tier = "high"
-                kv_bits = 8
-            elif active_gib > 1.5:
-                tier = "medium"
-                kv_bits = 6
-            else:
-                tier = "normal"
-                kv_bits = max(4, self._kv_bits)
-
-            result = (kv_bits, tier, thresholds)
-            self._metal_probe_cache[bucket] = result
-            return result
-        except Exception:
-            pass
-
-        return (max(4, self._kv_bits), "normal", _synthesis_get_metal_tier_thresholds())
+        # Round to 64 MiB bucket for cache stability (matches old logic)
+        bucket = (result.active_bytes // (64 * 1024 * 1024)) * (64 * 1024 * 1024)
+        self._metal_probe_cache[bucket] = (kv_bits, tier_str, thresholds)
+        return (kv_bits, tier_str, thresholds)
 
     def _get_adaptive_kv_bits(self) -> int:
-        """Issue #20: Adaptive KV quantization bits based on Metal memory pressure."""
-        kv_bits, _, _ = self._probe_metal_memory()
-        return kv_bits
+        """G2: Delegates to brain.kv_cache_config.get_kv_cache_config()."""
+        from brain.kv_cache_config import get_kv_cache_config
+
+        config = get_kv_cache_config(kv_bits_override=self._kv_bits)
+        return config.kv_bits
 
     def _get_kv_cache_kwargs(
         self,
@@ -873,49 +877,18 @@ class SynthesisRunner:
         max_tokens: int | None = None,
     ) -> dict:
         """
-        Issue #20-A: Adaptive KV cache sizing using cached Metal probe.
+        G2: Delegates to brain.kv_cache_config.get_kv_cache_config().
 
-        O1 optimization: min(input_tokens + headroom, memory_tier_cap).
-        Uses _probe_metal_memory() cache to avoid repeated Rust FFI calls.
-
-        Memory-pressure tiers:
-        - normal → max_kv_size = full (8192 or adaptive)
-        - warn → 50% reduction
-        - critical → 75% reduction
-        - emergency → KV cache off {}
-
-        Returns:
-            dict: kwargs pro mlx_lm.generate() — {} nebo {"max_kv_size": N}
+        Single source of truth for KV cache sizing on M1 8GB.
         """
-        # Issue #20-A: use cached probe instead of redundant Metal FFI calls
-        _, tier, thresholds = self._probe_metal_memory()
-        emergency_bytes, critical_bytes, warn_bytes = thresholds
+        from brain.kv_cache_config import get_kv_cache_config
 
-        # Determine tier from thresholds (high/medium/normal from probe → emergency/warn/critical)
-        if tier == "high":
-            tier = "critical"
-        elif tier == "medium":
-            tier = "warn"
-        else:
-            tier = "normal"
-
-        # O1: input-length-aware cache sizing
-        _in_tokens = input_tokens if input_tokens is not None else 0
-        _max_tok = max_tokens if max_tokens is not None else 512
-        _headroom = min(_max_tok, 1024)
-        _min_cache = _in_tokens + _headroom
-
-        if tier == "emergency":
-            base_size = 0
-        elif tier == "critical":
-            base_size = max(256, self._max_kv_size // 4)
-        elif tier == "warn":
-            base_size = max(1024, self._max_kv_size // 2)
-        else:
-            base_size = self._max_kv_size
-
-        final_size = 0 if base_size == 0 else max(_min_cache, base_size)
-        return {"max_kv_size": final_size} if final_size > 0 else {}
+        config = get_kv_cache_config(
+            input_tokens=input_tokens,
+            max_tokens=max_tokens,
+            kv_bits_override=self._kv_bits,
+        )
+        return config.as_kwargs()
 
     # ------------------------------------------------------------------
     # F214: HypothesisEngine injection
@@ -1517,6 +1490,71 @@ class SynthesisRunner:
             operator_note=f"engines={used_engine}, raw_dict={'set' if raw_dict is not None else 'None'}",
         )
         return None
+
+    # ------------------------------------------------------------------
+    # G2: Streaming synthesis for M1 8GB memory efficiency
+    # ------------------------------------------------------------------
+
+    async def synthesize_findings_streaming(
+        self,
+        findings_source: FindingsSource,
+        query: str,
+        max_findings: int = 50,
+        max_buffered: int = 50,
+        force_synthesis: bool = False,
+    ) -> AsyncIterator[OSINTReport | None]:
+        """
+        G2: Streaming synthesis — yields reports as findings are processed.
+
+        For M1 8GB memory efficiency: uses bounded buffering instead of
+        loading all findings into memory at once.
+
+        Args:
+            findings_source: Either a list[dict] or AsyncIterator[dict].
+                           AsyncIterator enables backpressure when caller produces
+                           findings incrementally (e.g., from a live crawl).
+            query: Original sprint query string.
+            max_findings: Maximum findings to pass to each synthesis call.
+            max_buffered: Maximum findings to hold in memory before yielding back.
+            force_synthesis: Always run synthesis even if disabled.
+
+        Yields:
+            OSINTReport on each synthesis success, None on failure.
+            Caller iterates to get incremental reports.
+
+        Usage:
+            async for report in runner.synthesize_findings_streaming(findings_iter, query):
+                if report:
+                    process(report)
+        """
+        # Collect findings with bounded memory
+        findings_batch: list[dict] = []
+        total_collected = 0
+
+        async for finding in _collect_findings_bounded(findings_source, max_buffered):
+            findings_batch.append(finding)
+            total_collected += 1
+
+            # When batch is full, run synthesis
+            if len(findings_batch) >= max_buffered:
+                report = await self.synthesize_findings(
+                    query=query,
+                    findings=findings_batch,
+                    max_findings=max_findings,
+                    force_synthesis=force_synthesis,
+                )
+                findings_batch.clear()  # Free memory immediately
+                yield report
+
+        # Process remaining findings
+        if findings_batch:
+            report = await self.synthesize_findings(
+                query=query,
+                findings=findings_batch,
+                max_findings=max_findings,
+                force_synthesis=force_synthesis,
+            )
+            yield report
 
     async def close(self) -> None:
         """Clean close — volá se po syntéze."""

@@ -24,19 +24,19 @@ M1 8GB invariants:
 """
 
 from .resource_coordinator import (
+    # AIMD
+    AIMDController,
+    # Backpressure
+    BackpressureDecision,
+    BackpressureMonitor,
+    # M1 Resource
+    CapacitySnapshot,
+    M1ResourceCoordinator,
     # GC Policy
     gc_collect,
     gc_collect_aggressive,
     gc_collect_async,
     get_gc_stats,
-    # Backpressure
-    BackpressureDecision,
-    BackpressureMonitor,
-    # AIMD
-    AIMDController,
-    # M1 Resource
-    CapacitySnapshot,
-    M1ResourceCoordinator,
 )
 
 __all__ = [

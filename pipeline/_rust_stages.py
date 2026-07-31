@@ -1,5 +1,4 @@
-"""
-Rust pipeline_compose wrappers for CPU-bound batch stages.
+"""Rust pipeline_compose wrappers for CPU-bound batch stages.
 
 These wrappers call into core.rust_backend.pipeline_compose (rayon parallel)
 for MAP/FILTER/FOLD/COUNT operations on string batches.
@@ -32,8 +31,7 @@ _RUST_DOMAIN: Any | None = None
 
 
 def try_get_domain() -> Any | None:
-    """
-    Try to get the Rust pipeline_compose domain.
+    """Try to get the Rust pipeline_compose domain.
 
     Returns None if Rust extension is unavailable (abi3.so not built,
     or pipeline_* symbols not exported). Fail-safe — callers should
@@ -61,8 +59,7 @@ def try_get_domain() -> Any | None:
 
 
 def rust_map(items: list[str], fn_name: str) -> list[Any]:
-    """
-    MAP stage via Rust pipeline_compose.
+    """MAP stage via Rust pipeline_compose.
 
     Args:
         items: list of strings to transform
@@ -70,6 +67,7 @@ def rust_map(items: list[str], fn_name: str) -> list[Any]:
 
     Returns:
         list of transformed values (strings or ints for 'len')
+
     """
     domain = try_get_domain()
     if domain is None:
@@ -82,8 +80,7 @@ def rust_map(items: list[str], fn_name: str) -> list[Any]:
 
 
 def rust_filter(items: list[str], fn_name: str) -> list[str]:
-    """
-    FILTER stage via Rust pipeline_compose.
+    """FILTER stage via Rust pipeline_compose.
 
     Args:
         items: list of strings to filter
@@ -91,6 +88,7 @@ def rust_filter(items: list[str], fn_name: str) -> list[str]:
 
     Returns:
         list of strings that pass the predicate
+
     """
     domain = try_get_domain()
     if domain is None:
@@ -103,8 +101,7 @@ def rust_filter(items: list[str], fn_name: str) -> list[str]:
 
 
 def rust_filter_map(items: list[str], fn_name: str) -> list[Any]:
-    """
-    FILTER-MAP stage via Rust pipeline_compose (single rayon pass).
+    """FILTER-MAP stage via Rust pipeline_compose (single rayon pass).
 
     Args:
         items: list of strings
@@ -112,6 +109,7 @@ def rust_filter_map(items: list[str], fn_name: str) -> list[Any]:
 
     Returns:
         list of transformed values for items that pass the predicate
+
     """
     domain = try_get_domain()
     if domain is None:
@@ -125,8 +123,7 @@ def rust_filter_map(items: list[str], fn_name: str) -> list[Any]:
 
 
 def rust_fold(items: list[str], fn_name: str, initial: str = "0") -> str:
-    """
-    FOLD stage via Rust pipeline_compose.
+    """FOLD stage via Rust pipeline_compose.
 
     Args:
         items: list of strings
@@ -135,6 +132,7 @@ def rust_fold(items: list[str], fn_name: str, initial: str = "0") -> str:
 
     Returns:
         final accumulated string value
+
     """
     domain = try_get_domain()
     if domain is None:
@@ -147,8 +145,7 @@ def rust_fold(items: list[str], fn_name: str, initial: str = "0") -> str:
 
 
 def rust_count(items: list[str], fn_name: str) -> int:
-    """
-    COUNT stage via Rust pipeline_compose.
+    """COUNT stage via Rust pipeline_compose.
 
     Args:
         items: list of strings
@@ -156,6 +153,7 @@ def rust_count(items: list[str], fn_name: str) -> int:
 
     Returns:
         count of items matching the predicate
+
     """
     domain = try_get_domain()
     if domain is None:
@@ -170,14 +168,14 @@ def rust_count(items: list[str], fn_name: str) -> int:
 
 
 def rust_batch_stats(items: list[str]) -> dict[str, Any]:
-    """
-    Batch statistics via Rust pipeline_compose.
+    """Batch statistics via Rust pipeline_compose.
 
     Args:
         items: list of strings
 
     Returns:
         dict with keys: count (int), sum (int), min (int), max (int), unique (int)
+
     """
     domain = try_get_domain()
     if domain is None:

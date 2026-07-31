@@ -1,5 +1,4 @@
-"""
-Feed Pipeline Orchestrator — wires feed/ stages into a StageOrchestrator.
+"""Feed Pipeline Orchestrator — wires feed/ stages into a StageOrchestrator.
 
 This module provides the orchestrated version of the RSS/Atom feed pipeline
 using the StageOrchestrator framework. It composes:
@@ -32,8 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class FeedPipelineOrchestrator:
-    """
-    Orchestrates the RSS/Atom feed pipeline using StageOrchestrator.
+    """Orchestrates the RSS/Atom feed pipeline using StageOrchestrator.
 
     Pipeline stages (in order):
         1. fetch_feed  — Fetch + parse RSS/Atom feed
@@ -62,13 +60,13 @@ class FeedPipelineOrchestrator:
         graph_service: Any | None = None,
         max_batch_size: int = 256,
     ) -> None:
-        """
-        Initialize the feed pipeline orchestrator.
+        """Initialize the feed pipeline orchestrator.
 
         Args:
             store: DuckDBShadowStore for canonical write (optional).
             graph_service: DuckPGQGraph for entity graph (optional).
             max_batch_size: Upper bound on batch sizes (default 256).
+
         """
         self._store = store
         self._graph_service = graph_service
@@ -100,8 +98,7 @@ class FeedPipelineOrchestrator:
         query_context: str = "",
         **kwargs: Any,
     ) -> tuple[StageResult, ...]:
-        """
-        Run the feed pipeline for a feed URL.
+        """Run the feed pipeline for a feed URL.
 
         Args:
             feed_url: The RSS/Atom feed URL.
@@ -110,6 +107,7 @@ class FeedPipelineOrchestrator:
 
         Returns:
             Tuple of StageResult, one per stage.
+
         """
         # Reset dedup state for this run
         self._dedup_stage.reset()
@@ -143,8 +141,7 @@ async def run_feed_pipeline_orchestrated(
     graph_service: Any | None = None,
     query_context: str = "",
 ) -> tuple[StageResult, ...]:
-    """
-    Run the feed pipeline in orchestrated mode.
+    """Run the feed pipeline in orchestrated mode.
 
     Args:
         feed_url: The RSS/Atom feed URL.
@@ -154,6 +151,7 @@ async def run_feed_pipeline_orchestrated(
 
     Returns:
         Tuple of StageResult from each stage.
+
     """
     orch = FeedPipelineOrchestrator(
         store=store,

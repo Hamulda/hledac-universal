@@ -13,12 +13,17 @@ BOUNDED: Session pool limits, timeout guards.
 
 M1 8GB: No native code, minimal RAM footprint.
 """
+from __future__ import annotations
+
 import asyncio
 import logging
 import socket
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
+
 from .base import Transport, TransportConfig, TransportResult
+
 if TYPE_CHECKING:
     import httpx
 logger = logging.getLogger(__name__)
@@ -44,20 +49,13 @@ class I2PTransport(Transport):
     """
     available: bool = True
     transport_mode: str = 'none'
-    __slots__ = tuple(('_httpx', '_httpx_socks', '_ready', '_session_http', '_session_socks', 'available', 'data_dir', 'http_port', 'i2p_address', 'sam_port', 'socks_port', 'transport_mode'))
+    __slots__ = ('_ready', '_session_http', '_session_socks', 'available', 'data_dir', 'http_port', 'i2p_address', 'sam_port', 'socks_port', 'transport_mode')
 
-    def __init__(self, data_dir: str | None=None, socks_port: int=I2P_SOCKS_PORT, sam_port: int=I2P_SAM_PORT, http_port: int=I2P_HTTP_PORT):
+    def __init__(self, data_dir: str | None=None, socks_port: int=I2P_SOCKS_PORT, sam_port: int=I2P_SAM_PORT, http_port: int=I2P_HTTP_PORT) -> None:
         self.available = True
         self.transport_mode = 'none'
-        try:
-            import httpx
-            import httpx_socks
-        except ImportError:
-            logger.critical('I2PTransport unavailable: missing httpx or httpx-socks')
-            self.available = False
-            return
-        self._httpx = httpx
-        self._httpx_socks = httpx_socks
+        self._httpx = None
+        self._httpx_socks = None
         from hledac.universal.paths import I2P_ROOT
         if data_dir is None:
             self.data_dir = I2P_ROOT
@@ -114,10 +112,16 @@ class I2PTransport(Transport):
         try:
             socks_ok = await asyncio.to_thread(_check_socks)
             if socks_ok:
-                transport = self._httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)  # socks5:// + rdns=True = remote DNS
-                limits = self._httpx.Limits(max_connections=10, max_keepalive_connections=5)
-                timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)
-                self._session_socks = self._httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
+                try:
+                    import httpx
+                    import httpx_socks
+                except ImportError:
+                    logger.critical('I2PTransport unavailable: missing httpx or httpx-socks')
+                    return False
+                transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)  # socks5:// + rdns=True = remote DNS
+                limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+                timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)
+                self._session_socks = httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
                 return True
         except Exception as e:
             logger.debug(f'I2P SOCKS mode failed: {e}')
@@ -179,9 +183,14 @@ class I2PTransport(Transport):
         try:
             http_ok = await asyncio.to_thread(_check_http)
             if http_ok:
-                limits = self._httpx.Limits(max_connections=10, max_keepalive_connections=5)
-                timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)
-                self._session_http = self._httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, proxy=f'http://127.0.0.1:{self.http_port}', trust_env=False)
+                try:
+                    import httpx
+                except ImportError:
+                    logger.critical('I2PTransport unavailable: missing httpx')
+                    return False
+                limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+                timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)
+                self._session_http = httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, proxy=f'http://127.0.0.1:{self.http_port}', trust_env=False)
                 return True
         except Exception as e:
             logger.debug(f'I2P HTTP mode failed: {e}')
@@ -207,11 +216,11 @@ class I2PTransport(Transport):
         """Wait for transport to be ready."""
         await self._ready.wait()
 
-    def register_handler(self, msg_type: str, handler):
+    def register_handler(self, msg_type: str, handler: Callable[..., object]) -> None:
         """I2P SAM mode message handler registration."""
         raise NotImplementedError('I2P SAM streaming session not implemented; use SOCKS5 mode (rdns=True) for .i2p hostname resolution')
 
-    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None=None):
+    async def send_message(self, target: str, msg_type: str, payload: dict, signature: str, msg_id: str | None=None) -> str:
         """
         Send message via I2P SAM session.
 
@@ -230,7 +239,6 @@ class I2PTransport(Transport):
         """
         url = f'http://{target}/message'
         data = {'sender': self.i2p_address, 'type': msg_type, 'payload': payload, 'signature': signature, 'msg_id': msg_id}
-        session = None
         if self.transport_mode == 'socks' and self._session_socks:
             session = self._session_socks
         elif self.transport_mode == 'http' and self._session_http:
@@ -240,7 +248,7 @@ class I2PTransport(Transport):
                 session = await self.get_session()
             except I2PUnavailableError:
                 logger.warning(f'No I2P session available for message to {target}')
-                raise I2PUnavailableError(f'No I2P session available (transport_mode={self.transport_mode})')
+                raise I2PUnavailableError(f'No I2P session available (transport_mode={self.transport_mode})') from None
         try:
             resp = await session.post(url, json=data)
             return await resp.text()
@@ -264,16 +272,25 @@ class I2PTransport(Transport):
             return self._session_http
         if self.transport_mode == 'socks':
             if not self._session_socks:
-                transport = self._httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)  # socks5:// + rdns=True = remote DNS
-                limits = self._httpx.Limits(max_connections=10, max_keepalive_connections=5)
-                timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)
-                self._session_socks = self._httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
+                try:
+                    import httpx
+                    import httpx_socks
+                except ImportError:
+                    raise I2PUnavailableError('httpx-socks required for I2P SOCKS mode') from None
+                transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)  # socks5:// + rdns=True = remote DNS
+                limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+                timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)
+                self._session_socks = httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
             return self._session_socks
         if self.transport_mode == 'http':
             if not self._session_http:
-                limits = self._httpx.Limits(max_connections=10, max_keepalive_connections=5)
-                timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)
-                self._session_http = self._httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, proxy=f'http://127.0.0.1:{self.http_port}', trust_env=False)
+                try:
+                    import httpx
+                except ImportError:
+                    raise I2PUnavailableError('httpx required for I2P HTTP mode') from None
+                limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+                timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)
+                self._session_http = httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, proxy=f'http://127.0.0.1:{self.http_port}', trust_env=False)
             return self._session_http
         raise I2PUnavailableError(f'No I2P session available (mode: {self.transport_mode})')
 
@@ -357,7 +374,7 @@ async def get_i2p_session() -> httpx.AsyncClient:
             import httpx
             import httpx_socks
         except ImportError:
-            raise RuntimeError('httpx-socks required for I2P: pip install httpx-socks')
+            raise RuntimeError('httpx-socks required for I2P: pip install httpx-socks') from None
         transport = httpx_socks.AsyncProxyTransport.from_url("socks5://127.0.0.1:7654", rdns=True)  # socks5:// + rdns=True = remote DNS
         limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
         timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)

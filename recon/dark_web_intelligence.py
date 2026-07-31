@@ -48,7 +48,7 @@ TOR_AVAILABLE = _HTTpx_SOCKS_AVAILABLE
 _RUST_URL_SET_AVAILABLE = False
 _UrlSet = None
 try:
-    from hledac.universal.hledac.universal import rust
+    from hledac.universal import rust
     if hasattr(rust, "url_set"):
         _RUST_URL_SET_AVAILABLE = True
         _UrlSet = rust.url_set.MmapUrlSet

@@ -33,6 +33,7 @@ from hledac.universal.utils.import_resolver import lazy, lazy_callable
 from hledac.universal.brain._hermes_cache import hermes_cache
 from hledac.universal.brain._cache.kv_cache_manager import KVCacheManager
 from hledac.universal.brain._batch.batch_processor import BatchProcessor, BatchConfig, BatchItem, BatchStats
+from hledac.universal.brain.model_state import ModelState, ModelLoadState, get_state_observer
 _otel_primary = lazy('otel.instrumented')
 _otel_fallback = lazy('hledac.universal.telemetry.instrumented')
 
@@ -173,28 +174,6 @@ is_emergency_unload_requested = lazy('..model_lifecycle.is_emergency_unload_requ
 sanitize_prompt_injection_patterns = lazy('.prompt_injection_validator.sanitize_prompt_injection_patterns')
 import re as _re_pi
 
-def _get_metal_tier_thresholds() -> tuple[int, int, int]:
-    """
-    Sprint F265-METAL (Issue #4): Adaptive Metal tier thresholds.
-
-    Probes get_metal_limit_bytes_py() from Rust adaptive_scheduler which internally
-    calls Python get_dynamic_metal_cache_limit() — the MEM-2 dynamic ceiling.
-    Computes thresholds as fractions of that dynamic limit:
-      emergency = limit * 1.75  (active > 1.75× limit → emergency)
-      critical = limit * 1.05  (active > 1.05× limit → critical)
-      warn     = limit * 0.70  (active > 0.70× limit → warn)
-      normal   = below warn
-
-    Fallback: uses the static constants below if Rust call fails.
-    """
-    try:
-        from hledac.universal.hledac.universal import rust_extensions as _rust  # type: ignore[attr-defined]
-        limit_bytes = _rust.get_metal_limit_bytes_py()
-        if limit_bytes > 0:
-            return (int(limit_bytes * 1.75), int(limit_bytes * 1.05), int(limit_bytes * 0.7))
-    except Exception:
-        pass
-    return (2684354560, 1610612736, 1073741824)
 _mx_resolver = lazy('mlx.core')
 MLX_AVAILABLE = _mx_resolver() is not None
 mx = _mx_resolver() if MLX_AVAILABLE else None
@@ -405,7 +384,7 @@ class DeepHermes3Engine:
     # Duplicate __slots__ removed - see line 367
     _DEEP_THINKING_PREFIX = 'You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.'
 
-    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_generation_facade', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_mgr', '_batch_adapter', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_metal_device', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
+    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_generation_facade', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_inference_active', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_mgr', '_batch_adapter', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_metal_device', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_state_observer', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
 
     def __init__(self, model_path: str | None=None, sanitize_for_llm: Callable[[str], str] | None=None):
         """
@@ -544,6 +523,60 @@ class DeepHermes3Engine:
             pass
         self._prompt_bandit = None
         self._last_bandit_arm: str | None = None
+        # G2: State observer for ModelManager visibility
+        self._state_observer = get_state_observer()
+        self._inference_active = False
+
+    def _notify_state(self, load_state: ModelLoadState | None = None) -> None:
+        """
+        G2: Publish current state to all subscribed observers.
+
+        Called on model load, unload, inference start/complete.
+        Thread-safe: errors in observers are isolated.
+        """
+        idle_seconds = 0.0
+        if self._last_inference_at is not None:
+            try:
+                idle_seconds = time.monotonic() - self._last_inference_at
+            except Exception:
+                idle_seconds = 0.0
+
+        batch_depth = 0
+        if hasattr(self, '_batch_queue') and self._batch_queue is not None:
+            try:
+                batch_depth = self._batch_queue.qsize()
+            except Exception:
+                pass
+
+        pending = 0
+        if hasattr(self, '_pending_futures') and self._pending_futures:
+            try:
+                pending = len(self._pending_futures)
+            except Exception:
+                pass
+
+        if load_state is None:
+            if self._model is None:
+                load_state = ModelLoadState.UNLOADED
+            elif self._inference_active:
+                load_state = ModelLoadState.BUSY
+            elif idle_seconds > self._idle_unload_timeout_s:
+                load_state = ModelLoadState.IDLE
+            else:
+                load_state = ModelLoadState.LOADED
+
+        state = ModelState(
+            model_id="hermes",
+            load_state=load_state,
+            is_model_loaded=self._model is not None,
+            idle_seconds=idle_seconds,
+            last_inference_at=self._last_inference_at,
+            kv_cache_memory_mb=0.0,  # would need estimation
+            batch_queue_depth=batch_depth,
+            pending_futures=pending,
+            inference_active=self._inference_active,
+        )
+        self._state_observer.notify(state)
 
     def _get_prompt_bandit(self):
         """Lazy init PromptBandit (avoid heavy import at module load)."""
@@ -748,12 +781,32 @@ class DeepHermes3Engine:
         """Collect batch items from queue with schema/prompt/length segregation. Returns (items, schema_key, prompt_hash, length_bin)."""
         flush_interval = self._current_flush_interval()
         self._record_flush_interval_telemetry(flush_interval)
+
+        # G2: Backpressure — check queue depth before collecting
+        queue_depth = self._batch_queue.qsize() if self._batch_queue else 0
+        pressure_tier = "normal"
+        if queue_depth > self._batch_high_pressure_depth:
+            pressure_tier = "critical"
+            self._telemetry_counters['backpressure_critical_cycles'] = self._telemetry_counters.get('backpressure_critical_cycles', 0) + 1
+        elif queue_depth > self._batch_medium_pressure_depth:
+            pressure_tier = "high"
+            self._telemetry_counters['backpressure_high_cycles'] = self._telemetry_counters.get('backpressure_high_cycles', 0) + 1
+
         try:
             async with asyncio.timeout(flush_interval):
                 assert isinstance(self._batch_queue, asyncio.PriorityQueue)
                 first_item = await self._batch_queue.get()
         except TimeoutError:
             return [], None, None, None
+
+        # G2: Backpressure — reject/defer low-priority items under pressure
+        first_priority = first_item[0]
+        if pressure_tier == "critical" and first_priority > 5:
+            # Critical pressure: defer low-priority items (priority > 5)
+            await self._batch_queue.put(first_item)
+            self._telemetry_counters['backpressure_deferred_low_priority'] = self._telemetry_counters.get('backpressure_deferred_low_priority', 0) + 1
+            return [], None, None, None
+
         current_schema_key = first_item[2]
         items = [first_item]
         first_payload = first_item[3]
@@ -765,12 +818,19 @@ class DeepHermes3Engine:
             try:
                 async with asyncio.timeout(0.01):
                     item = await self._batch_queue.get_nowait()
+                item_priority = item[0]
                 item_schema = item[2]
                 item_payload = item[3]
                 item_prompt = item_payload.get('prompt', '')
                 item_system_msg = item_payload.get('system_msg')
                 item_prompt_hash = self._compute_system_prompt_hash(item_system_msg)
                 item_length_bin = self._compute_length_bin(item_prompt)
+
+                # G2: Backpressure — skip low-priority items under high/critical pressure
+                if pressure_tier in ("high", "critical") and item_priority > 5:
+                    self._telemetry_counters['backpressure_skipped_low_priority'] = self._telemetry_counters.get('backpressure_skipped_low_priority', 0) + 1
+                    continue  # Skip this item, don't add to batch
+
                 if item_schema != current_schema_key:
                     await self._batch_queue.put(item)
                     self._telemetry_counters['schema_mismatch_flushes'] += 1
@@ -1214,6 +1274,8 @@ class DeepHermes3Engine:
         try:
             await self._ensure_model_loaded()
             logger.info('✓ Hermes-3 loaded successfully')
+            # G2: Notify observers that model is loaded
+            self._notify_state(ModelLoadState.LOADED)
             if self._model_breaker is not None:
                 self._model_breaker.reset()
                 logger.info('[GAP-3/1] Circuit breaker reset after successful model load')
@@ -1874,31 +1936,10 @@ class DeepHermes3Engine:
 
     def _get_kv_cache_kwargs(self, input_tokens: int | None=None, max_tokens: int | None=None) -> dict:
         """
-        Sprint F214Q + F265C-METAL + O1: Adaptive KV cache sizing for M1 8GB.
+        Sprint G2: Delegates to brain.kv_cache_config.get_kv_cache_config().
 
-        O1 OPTIMIZATION: KV cache size = min(input_tokens + headroom, memory_adjusted_cap).
-        Short prompts (low input_tokens) → small cache is sufficient.
-        Long prompts (high input_tokens) → cache must be large enough to hold the full context.
-
-        Memory-pressure tier thresholds (Metal active memory fraction of 1.5 GiB):
-        - < 0.60  → "normal"  → max_kv_size = min(input+headroom, 8192)
-        - 0.60-0.80 → "warn"   → max_kv_size = min(input+headroom, 4096)
-        - 0.80-0.95 → "critical" → max_kv_size = min(input+headroom, 2048)
-        - > 0.95  → "emergency" → {} (KV off)
-
-        O1 adaptive headroom formula:
-          headroom = min(max_tokens or 512, 1024)
-          min_cache = input_tokens + headroom  (guarantees output space)
-          cap = memory-tier cap (8192/4096/2048/0)
-          max_kv_size = min(min_cache, cap)
-
-        Example: input=512, max_tokens=512, normal tier → min_cache=1536, cap=8192 → 1536
-
-        Args:
-            input_tokens: Počet tokenů vstupního promptu (po tokenizaci).
-                          Pokud None, použije se legacy behavior (ignores input length).
-            max_tokens: Maximální očekávaný počet output tokenů.
-                        Pokud None, použije se 512 jako default.
+        Single source of truth for KV cache sizing on M1 8GB.
+        Replaces inline tier→size logic with canonical implementation.
 
         Returns:
             dict: kwargs pro mlx_lm.generate() — {} (KV off) nebo {"max_kv_size": N}
@@ -1906,101 +1947,88 @@ class DeepHermes3Engine:
         """
         if self._kv_cache_enabled is False:
             return {}
-        # F350M-R: Wire MetalDevice — delegate GPU memory tier detection
-        tier = 'normal'
-        try:
-            if self._metal_device is not None:
+        # G2: Delegate to shared config — single source of truth
+        from brain.kv_cache_config import get_kv_cache_config
+
+        # Probe Metal memory via MetalDevice (or fallback)
+        metal_active_bytes = None
+        if self._metal_device is not None:
+            try:
                 stats = self._metal_device.get_stats()
-                # Map MetalDevice tiers ('low'/'medium'/'high'/'critical') to inference tiers
-                _tier_map = {'low': 'normal', 'medium': 'warn', 'high': 'critical', 'critical': 'emergency'}
-                tier = _tier_map.get(stats.metal_tier, 'normal')
-        except Exception:
-            tier = 'normal'
-        uma_state = 'ok'
+                metal_active_bytes = getattr(stats, "active_bytes", None) or getattr(
+                    stats, "metal_memory_bytes", None
+                )
+            except Exception:
+                pass
+
+        uma_state = "ok"
         try:
             from hledac.universal.core.resource_governor import sample_uma_status
+
             _uma = sample_uma_status()
-            uma_state = getattr(_uma, 'state', 'ok')
+            uma_state = getattr(_uma, "state", "ok")
         except Exception:
             pass
-        _in_tokens = input_tokens if input_tokens is not None else 0
-        _max_tok = max_tokens if max_tokens is not None else 512
-        _headroom = min(_max_tok, 1024)
-        _min_cache = _in_tokens + _headroom
-        base_size = self._compute_base_kv_size_from_tier(tier, uma_state)
-        final_size = max(_min_cache, base_size) if base_size > 0 else 0
-        kv_kwargs = {'max_kv_size': final_size} if final_size > 0 else {}
-        logger.debug('[O1+F265C-METAL+F265H-EXT] KV cache: input_tokens=%d max_tokens=%d min_cache=%d uma_state=%s metal_tier=%s base=%d final=%d', _in_tokens, _max_tok, _min_cache, uma_state, tier, base_size, final_size)
-        return kv_kwargs
 
-    def _compute_base_kv_size_from_tier(self, tier: str, uma_state: str) -> int:
-        """Sprint F360M: Extract tier→base_size logic for reduced complexity in _get_kv_cache_kwargs."""
-        if uma_state == 'emergency':
-            return 0
-        if uma_state == 'critical':
-            return self._get_base_size_critical_state(tier)
-        if uma_state == 'warn':
-            return self._get_base_size_warn_state(tier)
-        return self._get_base_size_from_tier_alone(tier)
+        config = get_kv_cache_config(
+            input_tokens=input_tokens,
+            max_tokens=max_tokens,
+            metal_active_bytes=metal_active_bytes,
+            uma_state=uma_state,
+            kv_bits_override=self._kv_bits,
+        )
 
-    def _get_base_size_critical_state(self, tier: str) -> int:
-        """Critical memory state: aggressive KV reduction."""
-        factor = 0.35 if tier == 'normal' else (0.6 if tier == 'warn' else 0.2)
-        return max(256 if tier == 'critical' else 512, int(self._max_kv_size * factor))
-
-    def _get_base_size_warn_state(self, tier: str) -> int:
-        """Warn memory state: moderate KV reduction."""
-        factor = 0.8 if tier == 'normal' else (0.5 if tier == 'warn' else 0.25)
-        return max(512 if tier == 'critical' else 1024, int(self._max_kv_size * factor))
-
-    def _get_base_size_from_tier_alone(self, tier: str) -> int:
-        """Normal/warn tier with no memory pressure."""
-        if tier == 'normal':
-            return self._max_kv_size
-        if tier == 'warn':
-            return max(1024, self._max_kv_size // 2)
-        if tier == 'critical':
-            return max(512, self._max_kv_size // 4)
-        return 0
+        logger.debug(
+            "[O1+F265C-METAL+F265H-EXT] KV cache: input_tokens=%s max_tokens=%s config=%s",
+            input_tokens, max_tokens, config,
+        )
+        return config.as_kwargs()
 
     def _get_adaptive_kv_bits(self) -> int:
         """
-        Sprint F265C + F265C-METAL: Adaptive KV quantization bits based on Metal memory pressure.
+        Sprint G2: Delegates to brain.kv_cache_config.get_kv_cache_config().
 
-        F265C-METAL FIX: KV cache quantized bits should scale with Metal/GPU memory
-        pressure, not system RAM. Uses mx.get_active_memory() directly.
-
-        Metal memory tier → kv_bits mapping:
-        - < 1.5 GiB active → kv_bits=4  (default, low GPU pressure)
-        - 1.5-2.0 GiB     → kv_bits=6  (medium GPU pressure)
-        - > 2.0 GiB       → kv_bits=8  (high GPU pressure, KV quant compresses more)
-
-        Falls back to env var GHOST_KV_BITS or default 4.
-        B.KV: HLEDAC_KV_QUANTIZE=1 forces quant ON regardless of memory pressure.
+        Single source of truth for KV quantization bits on M1 8GB.
 
         Returns:
             int: kv_bits value (4, 6, or 8) — never below 4 (F265C-METAL invariant)
         """
+        # G2: Delegate to shared config — single source of truth
+        from brain.kv_cache_config import get_kv_cache_config
+
         if self._force_kv_quantize:
-            kv_bits = max(4, self._kv_bits)
-            logger.debug('[B.KV] KV quant forced on: kv_bits=%d', kv_bits)
-            return kv_bits
-        kv_bits = self._kv_bits
-        active_gib = 0.0
+            logger.debug("[B.KV] KV quant forced on: kv_bits=%d", max(4, self._kv_bits))
+            return max(4, self._kv_bits)
+
+        # Probe Metal memory via MetalDevice (or fallback)
+        metal_active_bytes = None
         try:
             import mlx.core as mx
-            active = 0
-            if hasattr(mx, 'get_active_memory'):
-                active = int(mx.get_active_memory())
-            active_gib = active / 1024 ** 3
-            if active_gib > 2.0:
-                kv_bits = 8
-            elif active_gib > 1.5:
-                kv_bits = 6
+
+            if hasattr(mx, "get_active_memory"):
+                metal_active_bytes = int(mx.get_active_memory())
+            elif hasattr(mx.metal, "get_active_memory"):
+                metal_active_bytes = int(mx.metal.get_active_memory())
         except Exception:
             pass
-        logger.debug('[F265C-METAL] Adaptive KV bits: active_GiB=%.2f kv_bits=%d', active_gib, kv_bits)
-        return kv_bits
+
+        uma_state = "ok"
+        try:
+            from hledac.universal.core.resource_governor import sample_uma_status
+
+            _uma = sample_uma_status()
+            uma_state = getattr(_uma, "state", "ok")
+        except Exception:
+            pass
+
+        config = get_kv_cache_config(
+            metal_active_bytes=metal_active_bytes,
+            uma_state=uma_state,
+            kv_bits_override=self._kv_bits,
+        )
+        logger.debug("[F265C-METAL] Adaptive KV bits: active_GiB=%.2f kv_bits=%d",
+                      metal_active_bytes / (1024**3) if metal_active_bytes else 0.0, config.kv_bits)
+        return config.kv_bits
 
     def is_idle(self) -> bool:
         """
@@ -2809,9 +2837,15 @@ class DeepHermes3Engine:
                     self._telemetry_counters['context_truncated'] = self._telemetry_counters.get('context_truncated', 0) + 1
 
         # ---- Inference ----
+        # G2: Notify observers inference is starting
+        self._inference_active = True
+        self._notify_state(ModelLoadState.BUSY)
         response, populated_kv = await self._submit_inference(
             timeout_s, self._run_inference, formatted_prompt, temp, max_tok,
             prefix_cache, adapter_path, gen_prompt_tokens, logits_processors)
+        # G2: Notify observers inference is complete
+        self._inference_active = False
+        self._notify_state()
 
         # ---- Post-inference: cache KV, record success, update bandit ----
         await self._handle_inference_result(
@@ -3663,6 +3697,8 @@ class DeepHermes3Engine:
             get_ane_mlx_mutex().release('llm')
         except Exception:
             pass
+        # G2: Notify observers that model is unloaded
+        self._notify_state(ModelLoadState.UNLOADED)
         logger.info('✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)')
 
     def reset_session(self) -> None:

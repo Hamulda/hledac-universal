@@ -19,11 +19,15 @@ import asyncio
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import field
+from typing import Any
+
 import msgspec
-from typing import Any, Awaitable
-from hledac.universal.utils.async_helpers import parallel, safe_create_task, first_completed  # ISSUE-15
+
+from hledac.universal.utils.async_helpers import first_completed, parallel, safe_create_task  # ISSUE-15
+
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+
 logger = logging.getLogger(__name__)
 
 class ExecutionTask(msgspec.Struct, gc=False):
@@ -90,9 +94,9 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
     - Dynamic task count based on decision.confidence
     - Priority based on confidence threshold
     """
-    __slots__ = tuple(('_action_history', '_completed_tasks', '_ghost_available', '_ghost_director', '_ghost_executions', '_ghost_max_steps', '_load_factor', '_max_completed_history', '_max_history', '_parallel_available', '_parallel_executions', '_parallel_executor', '_parallel_max_tasks', '_pending_tasks', '_ray_available', '_ray_cluster', '_ray_executions', '_ray_max_tasks', '_worker_pool'))
+    __slots__ = ('_action_history', '_completed_tasks', '_ghost_available', '_ghost_director', '_ghost_executions', '_ghost_max_steps', '_load_factor', '_max_completed_history', '_max_history', '_parallel_available', '_parallel_executions', '_parallel_executor', '_parallel_max_tasks', '_pending_tasks', '_ray_available', '_ray_cluster', '_ray_executions', '_ray_max_tasks', '_worker_pool')
 
-    def __init__(self, max_concurrent: int=10):
+    def __init__(self, max_concurrent: int=10) -> None:
         super().__init__(name='universal_execution_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self._ghost_director: Any | None = None
         self._parallel_executor: Any | None = None
@@ -123,7 +127,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         """Initialize execution subsystems with graceful degradation."""
         initialized_any = False
         try:
-            from hledac.universal.hledac.cortex.director import GhostDirector
+            from hledac.universal.cortex.director import GhostDirector
             self._ghost_director = GhostDirector(max_steps=self._ghost_max_steps)
             self._ghost_available = True
             initialized_any = True
@@ -145,7 +149,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         except Exception as e:
             logger.warning(f'ExecutionCoordinator: ParallelExecutor init failed: {e}')
         try:
-            from hledac.universal.hledac.distributed_computing.ray_cluster import RayClusterManager
+            from hledac.universal.distributed_computing.ray_cluster import RayClusterManager
             self._ray_cluster = RayClusterManager()
             if hasattr(self._ray_cluster, 'initialize'):
                 await self._ray_cluster.initialize()
@@ -250,14 +254,14 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                     if t is not winner_task:
                         t.cancel()
                 winner_result = winner_task.result()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ExecutionResult(task_id='none', success=False, summary=f'All backends timed out after {timeout_value}s', executor='none', execution_time=timeout_value, error='Backend race timeout')
         except Exception as e:
             logger.warning(f'Backend race failed: {e}')
         if winner_result is not None:
             return winner_result
         last_error: Exception | None = None
-        for backend_name, coro in backends:
+        for _backend_name, coro in backends:
             try:
                 result = await coro
                 if result.success:
@@ -288,7 +292,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         results = await self._parallel_executor.execute_parallel(tasks)
         execution_time = time.time() - start_time
         self._parallel_executions += 1
-        success_count = sum((1 for r in results if r.get('success', False)))
+        success_count = sum(1 for r in results if r.get('success', False))
         return ExecutionResult(task_id=f'parallel_{decision.decision_id}', success=success_count > 0, summary=f'Parallel execution: {success_count}/{len(results)} tasks succeeded', executor='parallel', execution_time=execution_time, result_data={'task_count': len(results), 'success_count': success_count, 'tasks': results})
 
     async def _execute_ray_cluster(self, decision: DecisionResponse) -> ExecutionResult:
@@ -400,8 +404,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             decision = DecisionResponse(decision_id=task.task_id, chosen_option=task.executor, confidence=0.7 if task.priority == 'high' else 0.5, reasoning=task.description, estimated_duration=task.timeout)
             return await self._execute_decision(decision)
 
-        if concurrency_limit < 1:
-            concurrency_limit = 1
+        concurrency_limit = max(concurrency_limit, 1)
 
         result = await parallel([execute_task(task) for task in tasks], concurrency=concurrency_limit, policy="log", ctx='execution_coordinator.execute_batch')
         return result.ok
@@ -471,7 +474,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
         if not self._ghost_available or not self._ghost_director:
             return {'success': False, 'error': 'GhostDirector not available', 'action': action_type}
         try:
-            from hledac.universal.hledac.cortex.director import DirectorAction
+            from hledac.universal.cortex.director import DirectorAction
             if hasattr(self._ghost_director, 'initialize_drivers'):
                 await self._ghost_director.initialize_drivers()
             action = DirectorAction(action_type.upper())
@@ -507,7 +510,11 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Generation result with text and metrics
         """
         try:
-            from hledac.universal.hledac.speculative_decoding.speculative_engine import DecodingMode, SpeculationConfig, SpeculativeEngine
+            from hledac.universal.speculative_decoding.speculative_engine import (
+                DecodingMode,
+                SpeculationConfig,
+                SpeculativeEngine,
+            )
             mode_map = {'fast': DecodingMode.FAST, 'quality': DecodingMode.QUALITY, 'balanced': DecodingMode.BALANCED}
             decoding_mode = mode_map.get(mode, DecodingMode.BALANCED)
             config = SpeculationConfig()
@@ -532,7 +539,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Statistics about speculative decoding performance
         """
         try:
-            from hledac.universal.hledac.speculative_decoding.speculative_engine import SpeculativeEngine
+            from hledac.universal.speculative_decoding.speculative_engine import SpeculativeEngine
             engine = SpeculativeEngine()
             if hasattr(engine, 'metrics'):
                 metrics = engine.metrics
@@ -563,7 +570,11 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             Generation result with adaptive metrics
         """
         try:
-            from hledac.universal.hledac.speculative_decoding.speculative_engine import DecodingMode, SpeculationConfig, SpeculativeEngine
+            from hledac.universal.speculative_decoding.speculative_engine import (
+                DecodingMode,
+                SpeculationConfig,
+                SpeculativeEngine,
+            )
             config = SpeculationConfig()
             config.adaptive_k = True
             config.min_k = 1
@@ -624,9 +635,9 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
             return {'success': True, 'steps_executed': 0, 'successful_steps': 0, 'failed_steps': 0, 'results': []}
         step_coros = [self.execute_action(s.get('action', 'search'), s.get('payload', {})) for s in plan]
         # F1 FIX: execution steps use SCRAPE_GENERAL for dynamic UMA-aware concurrency
-        from hledac.universal.core.concurrency_registry import concurrency_budget, ConcurrencyCategory
+        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
         exec_concurrency = await concurrency_budget(ConcurrencyCategory.SCRAPE_GENERAL)
         result = await parallel(step_coros, concurrency=exec_concurrency, policy="collect", ctx='execution_coordinator.execute_plan')
         results = result.ok
         self._load_factor = min(1.0, len(results) / 10)
-        return {'success': all((r.get('success', False) for r in results)), 'steps_executed': len(results), 'successful_steps': sum((1 for r in results if r.get('success'))), 'failed_steps': sum((1 for r in results if not r.get('success'))), 'results': results}
+        return {'success': all(r.get('success', False) for r in results), 'steps_executed': len(results), 'successful_steps': sum(1 for r in results if r.get('success')), 'failed_steps': sum(1 for r in results if not r.get('success')), 'results': results}

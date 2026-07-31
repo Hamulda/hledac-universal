@@ -15,11 +15,14 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from enum import Enum
 from typing import Any
+
+import msgspec
+
 from hledac.universal.utils.async_helpers import parallel_ok
+
 logger = logging.getLogger(__name__)
 
 class OptimizationStrategy(Enum):
@@ -79,9 +82,9 @@ class ResearchOptimizer:
         ...     research_func=actual_research
         ... )
     """
-    __slots__ = tuple(('_active_requests', '_cache', '_execution_times', '_in_flight', '_max_history', '_query_metrics', '_request_semaphore', 'config'))
+    __slots__ = ('_active_requests', '_cache', '_execution_times', '_in_flight', '_max_history', '_query_metrics', '_request_semaphore', 'config')
 
-    def __init__(self, config: OptimizationConfig | None=None):
+    def __init__(self, config: OptimizationConfig | None=None) -> None:
         self.config = config or OptimizationConfig()
         self._cache: dict[str, tuple[Any, float]] = {}
         self._query_metrics: dict[str, QueryMetrics] = {}
@@ -182,7 +185,7 @@ class ResearchOptimizer:
         normalized = ' '.join(query.lower().split())
         stop_words = {'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'of', 'and'}
         words = normalized.split()
-        normalized = ' '.join((w for w in words if w not in stop_words))
+        normalized = ' '.join(w for w in words if w not in stop_words)
         return normalized
 
     def _hash_query(self, query: str) -> str:

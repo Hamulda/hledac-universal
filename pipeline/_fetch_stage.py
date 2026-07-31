@@ -1,6 +1,4 @@
-"""
-P2-3: Fetch Stage — URL fetch s AIMD a bounded queue
-=====================================================
+"""P2-3: Fetch Stage — URL fetch s AIMD a bounded queue.
 
 Role: Fetch stage přijímá URLy z DedupStage, fetchuje je s AIMD rate limiting
 a posílá PageResult do MatchStage přes bounded queue.
@@ -27,8 +25,7 @@ DEFAULT_FETCH_QUEUE_OUT = 64  # PageResult čekající na match
 
 
 class FetchStage:
-    """
-    Fetch stage: AsyncIterator[str(url)] → AsyncIterator[PageResult].
+    """Fetch stage: AsyncIterator[str(url)] → AsyncIterator[PageResult].
 
     Používá existující _fetch_and_process_page() z public_fetch module.
     AIMD řídí concurrency oknem — stejný pattern jako FetchCoordinator.
@@ -89,13 +86,13 @@ class FetchStage:
         output_queue: BoundedStageQueue[Any],
         ctx: StageContext,
     ) -> None:
-        """
-        Zpracuje URLy z input_queue, fetchuje je, posílá PageResult do output_queue.
+        """Zpracuje URLy z input_queue, fetchuje je, posílá PageResult do output_queue.
 
         Args:
             input_queue: BoundedStageQueue[str] — URLy k fetchi
             output_queue: BoundedStageQueue[PageResult] — výsledky pro MatchStage
             ctx: StageContext
+
         """
         self._running = True
         metrics = ctx.get_metrics(self.name)

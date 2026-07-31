@@ -13,12 +13,15 @@ Env gates and RAM budgets configured per sidecar.
 
 import collections.abc
 import logging
+import os
 import re
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
 from hledac.universal.runtime.sidecar_protocol import (
     BaseSidecarAdapter,
+    CorrelateBasedSidecarAdapter,
+    GenericSidecarAdapter,
     SidecarContext,
     SidecarRegistry,
 )
@@ -44,14 +47,14 @@ class FediverseSearchEngine(Protocol):
     ) -> list[Any]: ...
 
 
-def _default_fediverse_adapter_factory() -> Any:
+def _default_fediverse_adapter_factory() -> Any:  # noqa: ANN401
     """Lazy factory: imports and instantiates FediverseAdapter only when called."""
     from hledac.universal.discovery.fediverse_adapter import FediverseAdapter
     return FediverseAdapter()
 
 
 @SidecarRegistry.register("fediverse")
-class FediverseSidecarAdapter(BaseSidecarAdapter):
+class FediverseSidecarAdapter(GenericSidecarAdapter):
     """
     Fediverse/Mastodon Intelligence Sidecar.
 
@@ -62,10 +65,10 @@ class FediverseSidecarAdapter(BaseSidecarAdapter):
     RAM: 50MB budget
     Priority: 6 (higher than core sidecars)
 
-    Coupling FIX (F350M-R): FediverseAdapter is injected via factory callable
-    rather than hard-coded import. This enables unit testing without mocking
-    the discovery module and allows alternative implementations (e.g. mock,
-    stub, or different Fediverse protocol variant).
+    F360M: Migrated to GenericSidecarAdapter.
+    Uses extract_terms + search + result_to_finding pattern.
+    result_to_finding returns list[dict] because one search result
+    may contain multiple posts.
     """
 
     sidecar_id: str = "fediverse"
@@ -73,46 +76,7 @@ class FediverseSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 50
     priority: int = 6
 
-    # Injectable factory for FediverseAdapter — defaults to lazy import
-    _adapter_factory: collections.abc.Callable[[], Any] = _default_fediverse_adapter_factory
-
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:
-        """Search Fediverse for OSINT signals based on query and findings."""
-        if not ctx.findings and not ctx.query:
-            return []
-
-        try:
-            adapter = self._adapter_factory()
-        except Exception:
-            logger.debug("FediverseSidecarAdapter: adapter factory failed")
-            return []
-
-        try:
-            # Extract search terms from findings
-            search_terms = self._extract_search_terms(ctx)
-            if not search_terms:
-                search_terms = [ctx.query] if ctx.query else []
-
-            # Limit search terms for M1 safety
-            search_terms = search_terms[:5]
-
-            results = await adapter.search_multiple_instances(search_terms)
-
-            # Convert to findings
-            findings = []
-            for result in results:
-                for post in getattr(result, "posts", []):
-                    finding = self._make_finding(post, ctx)
-                    if finding:
-                        findings.append(finding)
-
-            return findings[:50]  # Cap at 50 findings
-
-        except Exception:
-            logger.warning("FediverseSidecarAdapter.run: fail-soft", exc_info=True)
-            return []
-
-    def _extract_search_terms(self, ctx: SidecarContext) -> list[str]:
+    def extract_terms(self, ctx: SidecarContext) -> list[str]:
         """Extract domain/IOC terms from findings for Fediverse search."""
         terms: list[str] = []
         for finding in ctx.findings[:20]:  # Sample first 20
@@ -121,38 +85,62 @@ class FediverseSidecarAdapter(BaseSidecarAdapter):
                 terms.append(ioc_value)
         return terms[:10]
 
-    def _make_finding(self, post: object, ctx: SidecarContext) -> dict | None:
-        """Construct a CanonicalFinding-compatible dict from a Fediverse post.
+    async def search(self, terms: list[str], ctx: SidecarContext) -> list[Any]:
+        """Search Fediverse instances for each term.
 
-        Accepts a `FediversePost` dataclass (the new contract from
-        `discovery/fediverse_adapter.search_multiple_instances`) or a raw
-        dict (legacy path) — both shapes are normalized via
-        `FediversePost.to_dict()` for downstream `post.get(...)` access.
-        Fail-soft: any conversion error returns `None` and the sidecar
-        logs nothing for the dropped post.
+        Note: ctx is accepted for interface compatibility but not used.
+        """
+        del ctx  # explicitly unused
+        if not terms:
+            return []
+        try:
+            adapter = self._adapter_factory()
+        except Exception:
+            logger.debug("FediverseSidecarAdapter: adapter factory failed")
+            return []
+
+        try:
+            return await adapter.search_multiple_instances(terms[:5])
+        except Exception:
+            logger.warning("FediverseSidecarAdapter.search: fail-soft", exc_info=True)
+            return []
+
+    def result_to_finding(self, result: Any, ctx: SidecarContext) -> dict | list[dict] | None:  # noqa: ANN401
+        """Transform Fediverse search results to finding dicts.
+
+        One search result may contain multiple posts — returns a list of dicts.
         """
         try:
-            # Normalize: dataclass → dict, dict stays, anything else → None.
-            if hasattr(post, "to_dict") and callable(post.to_dict):
-                post_dict = post.to_dict()
-            elif isinstance(post, dict):
-                post_dict = post
-            else:
+            posts = getattr(result, "posts", [result])
+            if not posts:
                 return None
-            return {
-                "source_type": "fediverse",
-                "query": ctx.query,
-                "sprint_id": ctx.sprint_id,
-                "ioc_type": "social_media_post",
-                "ioc_value": post_dict.get("url", post_dict.get("id", "")),
-                "confidence": 0.6,
-                "payload_text": (
-                    f"{post_dict.get('content', '')} | "
-                    f"@{post_dict.get('account', {}).get('username', 'unknown')}"
-                ),
-            }
+            findings = []
+            for post in posts:
+                # Normalize: dataclass → dict, dict stays, anything else → None.
+                if hasattr(post, "to_dict") and callable(post.to_dict):
+                    post_dict = post.to_dict()
+                elif isinstance(post, dict):
+                    post_dict = post
+                else:
+                    continue
+                findings.append({
+                    "source_type": "fediverse",
+                    "query": ctx.query,
+                    "sprint_id": ctx.sprint_id,
+                    "ioc_type": "social_media_post",
+                    "ioc_value": post_dict.get("url", post_dict.get("id", "")),
+                    "confidence": 0.6,
+                    "payload_text": (
+                        f"{post_dict.get('content', '')} | "
+                        f"@{post_dict.get('account', {}).get('username', 'unknown')}"
+                    ),
+                })
+            return findings if findings else None
         except Exception:
             return None
+
+    # Injectable factory for FediverseAdapter — defaults to lazy import
+    _adapter_factory: collections.abc.Callable[[], Any] = _default_fediverse_adapter_factory
 
 
 # ── DHT Sidecar ────────────────────────────────────────────────────────────────
@@ -181,25 +169,24 @@ class DHTSidecarAdapter(BaseSidecarAdapter):
             return []
 
         try:
-            from hledac.universal.discovery.dht_adapter import DHTAdapter
+            from hledac.universal.discovery.dht_adapter import async_search_dht
         except Exception:
             logger.debug("DHTSidecarAdapter: import failed")
             return []
 
         try:
-            adapter = DHTAdapter()
-            results = await adapter.search_dht(ctx.query)
+            result = await async_search_dht(ctx.query, max_results=20, timeout_s=30.0)
 
             findings = []
-            for result in results[:20]:  # Cap at 20
+            for hit in result.hits[:20]:  # Cap at 20
                 finding = {
                     "source_type": "dht",
                     "query": ctx.query,
                     "sprint_id": ctx.sprint_id,
                     "ioc_type": "dht_infohash",
-                    "ioc_value": result.infohash,
+                    "ioc_value": hit.url,  # url contains infohash in DHT context
                     "confidence": 0.5,
-                    "payload_text": result.display_name or "",
+                    "payload_text": hit.title or "",
                 }
                 findings.append(finding)
 
@@ -296,33 +283,32 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 60
     priority: int = 4
 
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:  # noqa: C901
         """Fetch content via alternative protocols based on query."""
         if not ctx.query:
             return []
 
         try:
             from hledac.universal.fetching.alternative_protocol_fetcher import (
-                AlternativeProtocolFetcher,
+                fetch_gemini_only,
+                fetch_ipfs_only,
             )
         except Exception:
             logger.debug("AltProtocolSidecarAdapter: import failed")
             return []
 
         try:
-            fetcher = AlternativeProtocolFetcher()
-
             # Extract CIDs/hashes from findings for IPFS lookup
             cids = self._extract_cids(ctx)
 
             findings = []
 
-            # Fetch via alternative protocols
+            # Fetch via IPFS using the correct API
             if cids:
                 for cid in cids[:5]:  # Limit to 5 CIDs
                     try:
-                        result = await fetcher.fetch_ipfs(cid)
-                        if result.success:
+                        results = await fetch_ipfs_only(cid)
+                        if results:
                             findings.append({
                                 "source_type": "ipfs",
                                 "query": ctx.query,
@@ -330,7 +316,7 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
                                 "ioc_type": "ipfs_cid",
                                 "ioc_value": cid,
                                 "confidence": 0.6,
-                                "payload_text": f"IPFS content: {result.findings_count} items",
+                                "payload_text": f"IPFS content: {len(results)} items",
                             })
                     except Exception:
                         continue
@@ -338,8 +324,8 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
             # Also try Gemini protocol for text queries
             if ctx.query:
                 try:
-                    result = await fetcher.fetch_gemini(ctx.query)
-                    if result.success:
+                    results = await fetch_gemini_only(ctx.query)
+                    if results:
                         findings.append({
                             "source_type": "gemini",
                             "query": ctx.query,
@@ -347,7 +333,7 @@ class AltProtocolSidecarAdapter(BaseSidecarAdapter):
                             "ioc_type": "gemini_content",
                             "ioc_value": ctx.query[:256],
                             "confidence": 0.5,
-                            "payload_text": f"Gemini content: {result.findings_count} items",
+                            "payload_text": f"Gemini content: {len(results)} items",
                         })
                 except Exception:  # noqa: BLE001
                     pass
@@ -395,7 +381,7 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
             return []
 
         try:
-            from hledac.universal.intel.leak_sentinel import (
+            from hledac.universal.recon.leak_sentinel import (
                 LeakSentinelAdapter,
             )
         except Exception:
@@ -405,42 +391,27 @@ class LeakSentinelSidecarAdapter(BaseSidecarAdapter):
         try:
             adapter = LeakSentinelAdapter()
 
-            # Extract domains/identifiers for leak search
-            targets = self._extract_targets(ctx)
-            if not targets:
-                targets = [ctx.query]
+            # scan() takes a single query string, returns list[CanonicalFinding]
+            findings = await adapter.scan(ctx.query)
 
-            results = await adapter.scan_all_sources(targets)
+            # Convert CanonicalFinding objects to dicts
+            result = []
+            for finding in findings[:50]:  # Cap at 50
+                result.append({
+                    "source_type": getattr(finding, "source_type", "leak"),
+                    "query": ctx.query,
+                    "sprint_id": ctx.sprint_id,
+                    "ioc_type": "leak_detection",
+                    "ioc_value": getattr(finding, "ioc_value", "") or getattr(finding, "finding_id", ""),
+                    "confidence": getattr(finding, "confidence", 0.7),
+                    "payload_text": getattr(finding, "payload_text", ""),
+                })
 
-            findings = []
-            for result in results.sources:
-                for finding in result.findings[:10]:  # Cap per source
-                    findings.append({
-                        "source_type": f"leak_{result.source}",
-                        "query": ctx.query,
-                        "sprint_id": ctx.sprint_id,
-                        "ioc_type": "leak_detection",
-                        "ioc_value": finding.get("url", finding.get("id", "")),
-                        "confidence": 0.7,
-                        "payload_text": finding.get("content", ""),
-                    })
-
-            return findings[:50]  # Cap total findings
+            return result
 
         except Exception:
             logger.warning("LeakSentinelSidecarAdapter.run: fail-soft", exc_info=True)
             return []
-
-    def _extract_targets(self, ctx: SidecarContext) -> list[str]:
-        """Extract domains/emails from findings for leak search."""
-        targets: list[str] = []
-        for finding in ctx.findings[:30]:
-            ioc_value = getattr(finding, "ioc_value", "")
-            ioc_type = getattr(finding, "ioc_type", "")
-            if ioc_type in ("domain", "email", "username") and ioc_value:
-                targets.append(ioc_value)
-        return targets[:10]
-
 
 # ── TV News Sidecar ─────────────────────────────────────────────────────────────
 
@@ -559,11 +530,12 @@ class FederatedResearchSidecarAdapter:  # duck-typed SidecarAdapterProtocol
 # ── Passive Fingerprint Sidecar (F350M-R) ───────────────────────────────────────
 
 @SidecarRegistry.register("passive_fingerprint")
-class PassiveFingerprintSidecarAdapter(BaseSidecarAdapter):
+class PassiveFingerprintSidecarAdapter(CorrelateBasedSidecarAdapter):
     """
     F204G: Passive service fingerprinting — deterministic, no active scan.
 
-    Lazy-imports `intelligence.passive_fingerprint.create_passive_fingerprint_adapter`
+    Migrated to CorrelateBasedSidecarAdapter (F360M).
+    Wraps `intelligence.passive_fingerprint.create_passive_fingerprint_adapter`
     factory; invokes `adapter.correlate(findings, query)` and returns the
     derived CanonicalFindings.
 
@@ -577,34 +549,21 @@ class PassiveFingerprintSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 50
     priority: int = 4
 
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:
-        try:
-            from hledac.universal.intel.passive_fingerprint import (
-                create_passive_fingerprint_adapter,
-            )
-        except Exception:
-            logger.debug("PassiveFingerprintSidecarAdapter: import failed")
-            return []
-
-        try:
-            adapter = create_passive_fingerprint_adapter()
-            derived = adapter.correlate(ctx.findings, ctx.query)
-            return list(derived) if derived else []
-        except Exception:
-            logger.warning(
-                "PassiveFingerprintSidecarAdapter.run: fail-soft",
-                exc_info=True,
-            )
-            return []
+    def create_adapter(self) -> Any:  # noqa: ANN401
+        from hledac.universal.recon.passive_fingerprint import (
+            create_passive_fingerprint_adapter,
+        )
+        return create_passive_fingerprint_adapter()
 
 
 # ── Passive Tech-Stack Sidecar (F350M-R / R11) ────────────────────────────────
 
 @SidecarRegistry.register("passive_tech_stack")
-class PassiveTechStackSidecarAdapter(BaseSidecarAdapter):
+class PassiveTechStackSidecarAdapter(CorrelateBasedSidecarAdapter):
     """
     R11: Passive tech-stack extraction — deterministic, no active scan.
 
+    Migrated to CorrelateBasedSidecarAdapter (F360M).
     Wraps `intelligence.passive_fingerprint.create_passive_tech_stack_adapter`
     factory; calls `adapter.correlate(findings, query)`. Derived signal is
     identical to `passive_fingerprint` for tech-stack component, but exposed
@@ -620,25 +579,11 @@ class PassiveTechStackSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 30
     priority: int = 4
 
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:
-        try:
-            from hledac.universal.intel.passive_fingerprint import (
-                create_passive_tech_stack_adapter,
-            )
-        except Exception:
-            logger.debug("PassiveTechStackSidecarAdapter: import failed")
-            return []
-
-        try:
-            adapter = create_passive_tech_stack_adapter()
-            derived = adapter.correlate(ctx.findings, ctx.query)
-            return list(derived) if derived else []
-        except Exception:
-            logger.warning(
-                "PassiveTechStackSidecarAdapter.run: fail-soft",
-                exc_info=True,
-            )
-            return []
+    def create_adapter(self) -> Any:  # noqa: ANN401
+        from hledac.universal.recon.passive_fingerprint import (
+            create_passive_tech_stack_adapter,
+        )
+        return create_passive_tech_stack_adapter()
 
 
 # ── Social Identity Surface Sidecar (F350M-R / F204I) ────────────────────────
@@ -666,10 +611,10 @@ class SocialIdentityMinerSidecarAdapter(BaseSidecarAdapter):
     priority: int = 5
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        # ctx is accepted for SidecarAdapterProtocol compatibility but not used (wiring-only)
+        del ctx  # explicitly unused — wiring-only pattern
         try:
-            from hledac.universal.intel.social_identity_miner import (
-                create_social_identity_miner_adapter,
-            )
+            pass
         except Exception:
             logger.debug("SocialIdentityMinerSidecarAdapter: import failed")
             return []
@@ -705,6 +650,7 @@ class IdentityStitchingSidecarAdapter(BaseSidecarAdapter):
     priority: int = 5
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        del ctx  # explicitly unused — wiring-only pattern
         # builder API mismatch — wiring-only, return empty
         return []
 
@@ -736,6 +682,7 @@ class TemporalArchaeologySidecarAdapter(BaseSidecarAdapter):
     priority: int = 4
 
     async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        del ctx  # explicitly unused — wiring-only pattern
         # Smoke-import the factory to validate module availability.
         try:
             pass
@@ -837,7 +784,7 @@ class LanceDBRAGSidecarAdapter(BaseSidecarAdapter):
 
 
 @SidecarRegistry.register("github_gist")
-class GitHubGistSidecarAdapter(BaseSidecarAdapter):
+class GitHubGistSidecarAdapter(GenericSidecarAdapter):
     """
     GitHub Gist Archive Discovery Sidecar.
 
@@ -848,62 +795,17 @@ class GitHubGistSidecarAdapter(BaseSidecarAdapter):
     Env: HLEDAC_ENABLE_GITHUB_GIST=1
     RAM: 30MB budget
     Priority: 5 (medium)
+
+    F360M: Migrated to GenericSidecarAdapter — reduces ~65 LOC to ~40 LOC.
     """
 
     sidecar_id: str = "github_gist"
     lane_id: str = "github_gist"
     ram_budget_mb: int = 30
     priority: int = 5
+    _max_results: int = 50
 
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:
-        """Search GitHub Gists for OSINT signals based on query and findings."""
-        if not ctx.findings and not ctx.query:
-            return []
-
-        try:
-            from hledac.universal.discovery.ti_feed_adapter import (
-                search_github_gists,
-            )
-        except Exception:
-            logger.debug("GitHubGistSidecarAdapter: import failed")
-            return []
-
-        try:
-            # Extract search terms from findings
-            search_terms = self._extract_search_terms(ctx)
-            if not search_terms:
-                search_terms = [ctx.query] if ctx.query else []
-
-            # Limit for M1 safety
-            search_terms = search_terms[:5]
-
-            findings = []
-            for term in search_terms:
-                try:
-                    results = await search_github_gists(term, max_results=10)
-                    for gist in results:
-                        findings.append({
-                            "source_type": "github_gist",
-                            "query": ctx.query,
-                            "sprint_id": ctx.sprint_id,
-                            "ioc_type": "gist",
-                            "ioc_value": gist.get("url", ""),
-                            "title": gist.get("title", ""),
-                            "confidence": 0.6,
-                            "payload_text": gist.get("snippet", ""),
-                        })
-                except Exception:  # noqa: BLE001 — fail-soft per term
-                    pass
-
-            return findings[:50]  # Cap at 50 findings
-
-        except Exception:
-            logger.warning(
-                "GitHubGistSidecarAdapter.run: fail-soft", exc_info=True
-            )
-            return []
-
-    def _extract_search_terms(self, ctx: SidecarContext) -> list[str]:
+    def extract_terms(self, ctx: SidecarContext) -> list[str]:
         """Extract domain/IOC terms from findings for Gist search."""
         terms: list[str] = []
         for finding in ctx.findings[:20]:
@@ -911,6 +813,36 @@ class GitHubGistSidecarAdapter(BaseSidecarAdapter):
             if ioc_value and len(ioc_value) < 100:
                 terms.append(ioc_value)
         return terms[:10]
+
+    async def search(self, terms: list[str], ctx: SidecarContext) -> list[dict]:
+        """Search GitHub Gists for each term.
+
+        Note: ctx is accepted for interface compatibility but not used.
+        """
+        del ctx  # explicitly unused
+        from hledac.universal.discovery.ti_feed_adapter import search_github_gists
+
+        all_results: list[dict] = []
+        for term in terms[:5]:  # Limit for M1 safety
+            try:
+                results = await search_github_gists(term, max_results=10)
+                all_results.extend(results)
+            except Exception:  # noqa: BLE001 — fail-soft per term
+                pass
+        return all_results
+
+    def result_to_finding(self, result: dict, ctx: SidecarContext) -> dict | None:
+        """Transform a gist result to a finding dict."""
+        return {
+            "source_type": "github_gist",
+            "query": ctx.query,
+            "sprint_id": ctx.sprint_id,
+            "ioc_type": "gist",
+            "ioc_value": result.get("url", ""),
+            "title": result.get("title", ""),
+            "confidence": 0.6,
+            "payload_text": result.get("snippet", ""),
+        }
 
 
 # ── JA4 TLS Fingerprint Collector Sidecar (F350M-R) ────────────────────────────
@@ -1051,7 +983,7 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 30
     priority: int = 5
 
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:  # noqa: C901
         """Perform WHOIS lookups for domain findings."""
         if not ctx.findings and not ctx.query:
             return []
@@ -1066,8 +998,8 @@ class WhoisSidecarAdapter(BaseSidecarAdapter):
 
         try:
             # Configure historical API if env vars present
-            hist_api = _os.environ.get("HLEDAC_WHOIS_API")
-            hist_key = _os.environ.get("HLEDAC_WHOIS_API_KEY")
+            hist_api = os.environ.get("HLEDAC_WHOIS_API")
+            hist_key = os.environ.get("HLEDAC_WHOIS_API_KEY")
             if hist_api and hist_key:
                 from hledac.universal.intel.whois_service import (
                     configure_historical_api,
@@ -1183,7 +1115,7 @@ class ThreatIntelSidecarAdapter(BaseSidecarAdapter):
     ram_budget_mb: int = 40
     priority: int = 7
 
-    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:  # noqa: C901
         """Fetch threat intel IoCs matching the query."""
         if not ctx.query:
             return []

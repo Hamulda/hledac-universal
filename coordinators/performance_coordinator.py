@@ -12,34 +12,35 @@ Key Features:
 - Async-first architecture optimization
 """
 import asyncio
-
-from hledac.universal.utils.executor_decorator import offload_to
 import gc
-from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-import msgspec
+from contextlib import asynccontextmanager, suppress
+from dataclasses import field
 from typing import Any
 from weakref import ref
+
+import msgspec
+
+from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.executor_decorator import offload_to
+
 try:
-    from hledac.universal.hledac.core.resilience import AgentExecutionError, CircuitBreakerOpenError
+    from hledac.universal.core.resilience import AgentExecutionError, CircuitBreakerOpenError
 except ImportError:
 
     class AgentExecutionError(Exception):
         """Fallback for AgentExecutionError"""
-        pass
 
     class CircuitBreakerOpenError(Exception):
         """Raised when circuit breaker is open."""
-        pass
 CircuitBreakerOpen = CircuitBreakerOpenError
 logger = logging.getLogger(__name__)
 from hledac.universal.core.sys_metrics import get_memory_usage_mb
 from hledac.universal.utils.async_helpers import safe_wait_for
+
 
 class AgentMetrics(msgspec.Struct, gc=False):
     """Performance metrics for individual agents."""
@@ -80,9 +81,9 @@ class AgentPool:
     Maintains pools of initialized agents for reuse, reducing initialization
     overhead and memory churn for 8GB constraint systems.
     """
-    __slots__ = tuple(('_cleanup_event', '_cleanup_task', '_metrics', '_pool_locks', '_pools', '_weak_refs', 'config'))
+    __slots__ = ('_cleanup_event', '_cleanup_task', '_metrics', '_pool_locks', '_pools', '_weak_refs', 'config')
 
-    def __init__(self, config: LoadBalancingConfig):
+    def __init__(self, config: LoadBalancingConfig) -> None:
         self.config = config
         self._pools: dict[str, deque] = defaultdict(deque)
         self._pool_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
@@ -101,10 +102,8 @@ class AgentPool:
         """Shutdown the agent pool system."""
         if self._cleanup_task:
             self._cleanup_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
         self._cleanup_event.set()
         for pool in self._pools.values():
             pool.clear()
@@ -214,7 +213,7 @@ class AgentPool:
                 await safe_wait_for(self._cleanup_event.wait(), timeout=cleanup_interval)
                 # Shutdown requested via event
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Timeout elapsed, run cleanup
                 try:
                     for agent_name in list(self._weak_refs.keys()):
@@ -258,9 +257,9 @@ class IntelligentLoadBalancer:
     Supports round-robin, weighted, and least-used load balancing strategies
     with real-time performance adaptation.
     """
-    __slots__ = tuple(('_agent_weights', '_last_weight_update', '_round_robin_counters', '_usage_counters', 'config'))
+    __slots__ = ('_agent_weights', '_last_weight_update', '_round_robin_counters', '_usage_counters', 'config')
 
-    def __init__(self, config: LoadBalancingConfig):
+    def __init__(self, config: LoadBalancingConfig) -> None:
         self.config = config
         self._round_robin_counters: dict[str, int] = defaultdict(int)
         self._agent_weights: dict[str, float] = defaultdict(float)
@@ -351,9 +350,9 @@ class AsyncExecutionOptimizer:
     Implements semaphore-based concurrency control, intelligent task grouping,
     and async timeout management.
     """
-    __slots__ = tuple(('_active_tasks', '_execution_stats', '_semaphore', '_task_timeout_overrides', 'config'))
+    __slots__ = ('_active_tasks', '_execution_stats', '_semaphore', '_task_timeout_overrides', 'config')
 
-    def __init__(self, config: LoadBalancingConfig):
+    def __init__(self, config: LoadBalancingConfig) -> None:
         self.config = config
         self._semaphore = asyncio.Semaphore(config.max_concurrent_agents)
         self._execution_stats: dict[str, list[float]] = defaultdict(list)
@@ -397,10 +396,8 @@ class AsyncExecutionOptimizer:
         recent_executions = self._execution_stats.get(agent_name, [])
         if len(recent_executions) >= self.config.circuit_breaker_threshold:
             recent_times = recent_executions[-self.config.circuit_breaker_threshold:]
-            timeout_count = sum((1 for t in recent_times if t >= self.config.agent_timeout_seconds * 0.9))
-            if timeout_count >= self.config.circuit_breaker_threshold - 1:
-                return True
-            return False
+            timeout_count = sum(1 for t in recent_times if t >= self.config.agent_timeout_seconds * 0.9)
+            return timeout_count >= self.config.circuit_breaker_threshold - 1
 
     def get_active_tasks_count(self) -> int:
         """Get count of currently active tasks."""
@@ -420,9 +417,9 @@ class AgentPerformanceOptimizer:
     Coordinates agent pooling, load balancing, and async optimization
     with real-time performance monitoring and automatic optimization.
     """
-    __slots__ = tuple(('_initialized', '_last_optimization', '_optimization_interval', 'agent_pool', 'async_optimizer', 'config', 'load_balancer'))
+    __slots__ = ('_initialized', '_last_optimization', '_optimization_interval', 'agent_pool', 'async_optimizer', 'config', 'load_balancer')
 
-    def __init__(self, config: LoadBalancingConfig | None=None):
+    def __init__(self, config: LoadBalancingConfig | None=None) -> None:
         self.config = config or LoadBalancingConfig()
         self.agent_pool = AgentPool(self.config)
         self.load_balancer = IntelligentLoadBalancer(self.config)

@@ -1,5 +1,4 @@
-"""
-Extract stage — text extraction + quality scoring for public OSINT pipeline.
+"""Extract stage — text extraction + quality scoring for public OSINT pipeline.
 
 Responsibilities:
 - Compute quality signals from fetched page text
@@ -40,8 +39,7 @@ def _get_rust_batch_quality_score() -> Any | None:
 
 
 class ExtractStage:
-    """
-    Extract stage: FetchedBatch → ScoredBatch.
+    """Extract stage: FetchedBatch → ScoredBatch.
 
     Applies quality scoring to each fetched page.
     """
@@ -55,14 +53,14 @@ class ExtractStage:
     async def process(
         self, input_batch: FetchedBatch | None
     ) -> tuple[ScoredBatch, dict[str, Any]]:
-        """
-        Score fetched pages.
+        """Score fetched pages.
 
         Args:
             input_batch: FetchedBatch with fetched page texts
 
         Returns:
             Tuple of (ScoredBatch, telemetry)
+
         """
         if input_batch is None or not input_batch.urls:
             return self._empty_batch(), {}
@@ -224,8 +222,7 @@ def _score_one(
     fetch_error: str | None,
     failure_stage: str | None,
 ) -> tuple[float, str, str, str, bool, str | None]:
-    """
-    Score a single page.
+    """Score a single page.
 
     Returns: (quality_signal, value_tier, waste_category, structural_quality, discovery_false_positive, skipped_reason)
     """
@@ -267,8 +264,7 @@ def _score_one(
 
 
 def _compute_quality_signal(text: str, text_len: int) -> float:
-    """
-    Compute quality signal from text.
+    """Compute quality signal from text.
 
     Simplified from live_public_pipeline._score_page_quality.
     """

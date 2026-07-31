@@ -87,7 +87,7 @@ class ResearchLayer:
         if self._ghost_director is None:
             try:
                 # GhostDirector adapter exists in hledac.cortex.director
-                from hledac.universal.hledac.cortex.director import GhostDirector
+                from hledac.universal.cortex.director import GhostDirector
                 self._ghost_director = GhostDirector(max_steps=20)
                 await self._ghost_director.initialize_drivers()
                 logger.info('✅ GhostDirector initialized (local)')

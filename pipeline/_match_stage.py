@@ -1,6 +1,4 @@
-"""
-P2-3: Match Stage — Pattern matching s bounded queue
-=================================================
+"""P2-3: Match Stage — Pattern matching s bounded queue.
 
 Role: Match stage přijímá PageResult z FetchStage, provádí pattern matching,
 posílá matches do EnrichStage.
@@ -24,8 +22,7 @@ DEFAULT_MATCH_QUEUE_OUT = 128
 
 
 class MatchStage:
-    """
-    Match stage: AsyncIterator[PageResult] → AsyncIterator[tuple[PageResult, list[PatternHit]]].
+    """Match stage: AsyncIterator[PageResult] → AsyncIterator[tuple[PageResult, list[PatternHit]]].
 
     Provede pattern matching na page text a posílá (page_result, hits) do EnrichStage.
 
@@ -47,13 +44,13 @@ class MatchStage:
         output_queue: BoundedStageQueue[Any],
         ctx: StageContext,
     ) -> None:
-        """
-        Zpracuje PageResult z input_queue, matchuje patterny, posílá do output_queue.
+        """Zpracuje PageResult z input_queue, matchuje patterny, posílá do output_queue.
 
         Args:
             input_queue: BoundedStageQueue[PageResult]
             output_queue: BoundedStageQueue[tuple[PageResult, list[PatternHit]]]
             ctx: StageContext
+
         """
         self._running = True
         metrics = ctx.get_metrics(self.name)

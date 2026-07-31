@@ -15,6 +15,7 @@ Unique Features Integrated:
 5. Research context preservation
 """
 from __future__ import annotations
+
 import asyncio
 import collections.abc
 import hashlib
@@ -22,14 +23,18 @@ import logging
 import os as _os
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
+
 import msgspec
+
+from hledac.universal.utils.async_helpers import ParallelResult, parallel, safe_wait_for
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
-from hledac.universal.utils.async_helpers import safe_wait_for, parallel, ParallelResult
+
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+
 _level_stats_factory: defaultdict[str, dict[str, int]] = defaultdict(lambda: {'explored': 0, 'relevant': 0})
 logger = logging.getLogger(__name__)
 MAX_PAPERS = 1000
@@ -159,9 +164,9 @@ class UniversalResearchCoordinator(UniversalCoordinator):
     - 'rag'/'retrieval' → RAG
     - Default → Unified AI (with fallback chain)
     """
-    __slots__ = tuple(('_active_plans', '_citation_links', '_citation_links_order', '_deep_stats', '_evidence_analyzer', '_evidence_available', '_fallback_chain', '_max_contexts', '_meta_patterns', '_min_confidence_threshold', '_papers', '_rag_available', '_rag_orchestrator', '_research_contexts', '_research_depth', '_theories', '_threads', '_unified_ai_available', '_unified_orchestrator'))
+    __slots__ = ('_active_plans', '_citation_links', '_citation_links_order', '_deep_stats', '_evidence_analyzer', '_evidence_available', '_fallback_chain', '_max_contexts', '_meta_patterns', '_min_confidence_threshold', '_papers', '_rag_available', '_rag_orchestrator', '_research_contexts', '_research_depth', '_theories', '_threads', '_unified_ai_available', '_unified_orchestrator')
 
-    def __init__(self, max_concurrent: int=5, research_depth: ResearchDepth=ResearchDepth.STANDARD):
+    def __init__(self, max_concurrent: int=5, research_depth: ResearchDepth=ResearchDepth.STANDARD) -> None:
         super().__init__(name='universal_research_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self._research_depth = research_depth
         self._unified_orchestrator: Any | None = None
@@ -405,7 +410,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         """
         if not results:
             return {'success': False, 'summary': 'No research results available', 'sources': []}
-        total_confidence = sum((r.confidence for r in results))
+        total_confidence = sum(r.confidence for r in results)
         avg_confidence = total_confidence / len(results) if results else 0
         all_sources = []
         for r in results:
@@ -415,7 +420,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         summary_parts = [f'Multi-source research completed using {len(results)} backends', f'Average confidence: {avg_confidence:.2f}']
         if best_source:
             summary_parts.append(f"Best result from {best_source['source']}: {best_source['summary'][:100]}...")
-        return {'success': True, 'summary': ' | '.join(summary_parts), 'average_confidence': avg_confidence, 'sources': all_sources, 'total_execution_time': sum((r.execution_time for r in results)), 'backends_used': [r.source for r in results]}
+        return {'success': True, 'summary': ' | '.join(summary_parts), 'average_confidence': avg_confidence, 'sources': all_sources, 'total_execution_time': sum(r.execution_time for r in results), 'backends_used': [r.source for r in results]}
 
     def preserve_research_context(self, operation_id: str, context: ResearchContext) -> None:
         """Preserve research context for future reference."""
@@ -463,7 +468,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Academic search results
         """
         try:
-            from hledac.universal.hledac.msqes import MultiSourceQueryExpansionEngine, search_academic
+            from hledac.universal.msqes import MultiSourceQueryExpansionEngine, search_academic  # noqa: F401
             results = await search_academic(query, sources)
             return {'success': True, 'source': 'msqes', 'query': query, 'results': results, 'count': len(results)}
         except ImportError:
@@ -484,7 +489,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             Archive search results
         """
         try:
-            from hledac.universal.intel.archive_discovery import ArchiveDiscovery, search_archives
+            from hledac.universal.intel.archive_discovery import ArchiveDiscovery, search_archives  # noqa: F401
             results = await search_archives(url)
             return {'success': True, 'source': 'archive_discovery', 'url': url, 'results': results, 'count': len(results)}
         except ImportError:
@@ -740,7 +745,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 )
                 scored_papers = [
                     (paper, relevance)
-                    for (paper, _), relevance in zip(pending, relevance_results)
+                    for (paper, _), relevance in zip(pending, relevance_results, strict=True)
                     if relevance >= config.min_relevance_score
                 ]
             else:
@@ -850,8 +855,8 @@ class UniversalResearchCoordinator(UniversalCoordinator):
 
     def _assess_quality(self, patterns: list[MetaPattern], theories: list[ResearchTheory]) -> dict[str, Any]:
         """Assess quality of meta-synthesis."""
-        avg_pattern_confidence = sum((p.confidence for p in patterns)) / len(patterns) if patterns else 0
-        avg_theory_confidence = sum((t.confidence for t in theories)) / len(theories) if theories else 0
+        avg_pattern_confidence = sum(p.confidence for p in patterns) / len(patterns) if patterns else 0
+        avg_theory_confidence = sum(t.confidence for t in theories) / len(theories) if theories else 0
         return {'overall_score': (avg_pattern_confidence + avg_theory_confidence) / 2, 'pattern_coverage': len(patterns), 'theory_coverage': len(theories), 'strengths': ['Multiple patterns detected', 'Theory generation successful'], 'weaknesses': ['Limited empirical validation', 'Pattern overlap unclear'], 'improvements': ['Add more data sources', 'Validate with experiments']}
 
     def _pattern_to_dict(self, pattern: MetaPattern) -> dict[str, Any]:

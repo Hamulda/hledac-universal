@@ -608,7 +608,7 @@ class RAGEngine:
     async def _init_ultra_context(self) -> None:
         """Inicializovat InfiniteContextEngine"""
         try:
-            from hledac.universal.hledac.ultra_context.infinite_context_engine import InfiniteContextEngine
+            from hledac.universal.ultra_context.infinite_context_engine import InfiniteContextEngine
             self._infinite_context = InfiniteContextEngine()
             logger.info('✓ Ultra Context initialized')
         except Exception as e:
@@ -617,7 +617,7 @@ class RAGEngine:
     async def _init_spr_compressor(self) -> None:
         """Inicializovat SPR Compressor"""
         try:
-            from hledac.universal.hledac.ultra_context.spr_compressor import SPRCompressor, SPRConfig
+            from hledac.universal.ultra_context.spr_compressor import SPRCompressor, SPRConfig
             self._spr_compressor = SPRCompressor(SPRConfig(compression_ratio_target=0.5))
             logger.info('✓ SPR Compressor initialized (50% target)')
         except Exception as e:

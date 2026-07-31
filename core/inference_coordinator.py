@@ -536,7 +536,7 @@ class InferenceCoordinator:
         """
         sig = f"{request.prompt!r}|{request.temperature}|{request.max_tokens}|{request.thinking}"
         try:
-            from hledac.universal.hledac.universal import rust_extensions
+            from hledac.universal import rust_extensions
 
             if hasattr(rust_extensions, "batch_xxh3_64_bytes"):
                 h = rust_extensions.batch_xxh3_64_bytes(sig.encode())

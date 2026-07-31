@@ -79,4 +79,12 @@ def __getattr__(name: str):
         from hledac.universal.runtime.scheduler_v2.prelude import LaneResult
 
         return LaneResult
+    if name == "AcquisitionOrchestratorProtocol":
+        from hledac.universal.runtime.scheduler_v2.protocol import AcquisitionOrchestratorProtocol
+
+        return AcquisitionOrchestratorProtocol
+    if name == "SchedulerProtocol":
+        from hledac.universal.runtime.scheduler_v2.protocol import SchedulerProtocol
+
+        return SchedulerProtocol
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

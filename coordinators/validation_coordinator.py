@@ -16,12 +16,16 @@ Unique Features Integrated:
 5. Custom validator support
 """
 import logging
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from enum import Enum
 from typing import Any
-from .base import UniversalCoordinator
+
+import msgspec
+
 from hledac.universal.utils.async_helpers import parallel
+
+from .base import UniversalCoordinator
+
 logger = logging.getLogger(__name__)
 try:
     from hledac.universal.utils.html_text_fast import html_to_text_fast
@@ -73,9 +77,9 @@ class UniversalValidationCoordinator(UniversalCoordinator):
     - 'clean'/'convert'/'extract' → ContentCleaner
     - 'language'/'detect_lang' → LanguageDetector
     """
-    __slots__ = tuple(('_cleaner_available', '_cleanings_performed', '_content_cleaner', '_custom_validators', '_data_validator', '_validations_performed', '_validator_available'))
+    __slots__ = ('_cleaner_available', '_cleanings_performed', '_content_cleaner', '_custom_validators', '_data_validator', '_validations_performed', '_validator_available')
 
-    def __init__(self, max_concurrent: int=10):
+    def __init__(self, max_concurrent: int=10) -> None:
         super().__init__(name='universal_validation_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self._data_validator: Any | None = None
         self._content_cleaner: Any | None = None
@@ -89,7 +93,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         """Initialize validation subsystems."""
         initialized_any = False
         try:
-            from hledac.universal.hledac.tools.preserved_logic.engine_core.data_validator import DataValidator
+            from hledac.universal.tools.preserved_logic.engine_core.data_validator import DataValidator
             self._data_validator = DataValidator()
             self._validator_available = True
             initialized_any = True
@@ -99,7 +103,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         except Exception as e:
             logger.warning(f'ValidationCoordinator: DataValidator init failed: {e}')
         try:
-            from hledac.universal.hledac.tools.preserved_logic.content_cleaner import ContentCleaner
+            from hledac.universal.tools.preserved_logic.content_cleaner import ContentCleaner
             self._content_cleaner = ContentCleaner()
             self._cleaner_available = True
             initialized_any = True
@@ -238,7 +242,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
         if not self._cleaner_available:
             return await self._simple_html_extract(html, output_format)
         try:
-            from hledac.universal.hledac.tools.preserved_logic.content_cleaner import OutputFormat
+            from hledac.universal.tools.preserved_logic.content_cleaner import OutputFormat
             fmt = OutputFormat(output_format.lower())
             result = self._content_cleaner.clean_html(html, fmt)
             self._cleanings_performed += 1

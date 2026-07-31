@@ -29,7 +29,8 @@ Domain Groups:
     - memory: (F320) ContextOptimization, MultiLevelCache (extracted from memory_coordinator)
 """
 import importlib
-from typing import Any, Self
+from typing import Any
+
 _DOMAIN_MODULES: dict[str, dict[str, str]] = {
     'core': {
         'UniversalResearchCoordinator': '.research_coordinator',
@@ -111,7 +112,7 @@ class CoordinatorCatalog:
     all modules at startup. Each domain is a logical grouping of related
     coordinators.
     """
-    __slots__ = tuple(('_cache', '_domains'))
+    __slots__ = ('_cache', '_domains')
 
     def __init__(self) -> None:
         self._cache: dict[str, type] = {}
@@ -147,10 +148,7 @@ class CoordinatorCatalog:
         for _domain, mappings in _DOMAIN_MODULES.items():
             if name in mappings:
                 module_path = mappings[name]
-                if module_path.startswith('.'):
-                    full_module = f'coordinators{module_path}'
-                else:
-                    full_module = module_path
+                full_module = f'coordinators{module_path}' if module_path.startswith('.') else module_path
                 mod = importlib.import_module(full_module)
                 result = getattr(mod, name)
                 self._cache[name] = result
@@ -161,10 +159,7 @@ class CoordinatorCatalog:
                 for _domain, mappings in _DOMAIN_MODULES.items():
                     if _coordinator_name in mappings:
                         module_path = mappings[_coordinator_name]
-                        if module_path.startswith('.'):
-                            full_module = f'coordinators{module_path}'
-                        else:
-                            full_module = module_path
+                        full_module = f'coordinators{module_path}' if module_path.startswith('.') else module_path
                         mod = importlib.import_module(full_module)
                         result = getattr(mod, name)
                         self._cache[name] = result
@@ -203,10 +198,7 @@ class CoordinatorCatalog:
         for mappings in _DOMAIN_MODULES.values():
             if name in mappings:
                 return True
-        for exports in _COORDINATOR_EXPORTS.values():
-            if name in exports:
-                return True
-        return False
+        return any(name in exports for exports in _COORDINATOR_EXPORTS.values())
 
     def search(self, query: str) -> list[str]:
         """

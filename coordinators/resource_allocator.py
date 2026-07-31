@@ -31,14 +31,17 @@ from collections import deque
 # Makes it configurable for larger machines via env var
 _MAX_COMPLETED_ALLOCATIONS_DEFAULT = 500
 _MAX_COMPLETED_ALLOCATIONS_ENV = "HLEDAC_MAX_COMPLETED_ALLOCATIONS"
-import msgspec
 from datetime import UTC, datetime
 from enum import Enum
-from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, dumps_str as _msgspec_dumps_str
 from typing import Any
-from hledac.universal.core.psutil_shim import psutil
+
+import msgspec
 import yaml
+
+from hledac.universal.core.psutil_shim import psutil
 from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
+
 SKLEARN_AVAILABLE = True
 logger = logging.getLogger(__name__)
 MAX_PENDING_RESOURCE_REQUESTS = 1000
@@ -60,7 +63,7 @@ class _ResourceCapacitySampler:
     """
     _CPU_TTL_S = 3.0
     _METAL_TTL_S = 300.0
-    __slots__ = tuple(('_cpu_cache', '_cpu_lock', '_metal_cache', '_metal_cache_time', '_metal_lock'))
+    __slots__ = ('_cpu_cache', '_cpu_lock', '_metal_cache', '_metal_cache_time', '_metal_lock')
 
     def __init__(self) -> None:
         self._cpu_lock = asyncio.Lock()
@@ -180,9 +183,9 @@ class ResourceAllocation(msgspec.Struct, frozen=True, gc=False):
 
 class IntelligentResourceAllocator:
     """Advanced resource allocation and scaling system"""
-    __slots__ = tuple(('_anomaly_detector', '_capacity_sampler', '_pending_requests_dict', '_prediction_model', '_scaler', 'active_allocations', 'completed_allocations', 'config', 'm1_optimizations', 'resource_history', 'scale_down_threshnew', 'scale_up_threshnew'))
+    __slots__ = ('_anomaly_detector', '_capacity_sampler', '_pending_requests_dict', '_prediction_model', '_scaler', 'active_allocations', 'completed_allocations', 'config', 'm1_optimizations', 'resource_history', 'scale_down_threshnew', 'scale_up_threshnew')
 
-    def __init__(self, config_path: str | None=None):
+    def __init__(self, config_path: str | None=None) -> None:
         self.config = self._load_config(config_path or '')
         self._pending_requests_dict: dict[str, ResourceRequest] = {}
         self.active_allocations = {}
@@ -303,10 +306,7 @@ class IntelligentResourceAllocator:
         except ImportError:
             return 10 if task_type == 'io' else 4
         mem = psutil.virtual_memory()
-        if task_type == 'io':
-            base = 10
-        else:
-            base = 4
+        base = 10 if task_type == 'io' else 4
         if mem.percent > 75:
             return max(1, base // 4)
         elif mem.percent > 60:
@@ -362,7 +362,7 @@ class IntelligentResourceAllocator:
             logger.error(f'Error creating allocation: {e}')
             return None
 
-    async def _apply_m1_optimizations(self, allocation: ResourceAllocation):
+    async def _apply_m1_optimizations(self, allocation: ResourceAllocation) -> None:
         """Apply M1-specific optimizations"""
         if self.config['optimization']['mlx_acceleration']:
             os.environ['MLX_ACCELERATION'] = '1'
@@ -383,7 +383,7 @@ class IntelligentResourceAllocator:
                 return True
         return False
 
-    async def release_resources(self, task_id: str):
+    async def release_resources(self, task_id: str) -> None:
         """Release allocated resources"""
         if task_id in self.active_allocations:
             allocation = self.active_allocations[task_id]
@@ -395,7 +395,7 @@ class IntelligentResourceAllocator:
             del self.active_allocations[task_id]
             logger.info(f'Resources released for task {task_id}')
 
-    async def monitor_and_optimize(self):
+    async def monitor_and_optimize(self) -> None:
         """Monitor resource usage and optimize allocations"""
         while True:
             try:
@@ -413,7 +413,7 @@ class IntelligentResourceAllocator:
                 logger.error(f'Error in resource monitoring: {e}')
                 await asyncio.sleep(60)
 
-    async def _detect_and_handle_anomalies(self):
+    async def _detect_and_handle_anomalies(self) -> None:
         """Detect and handle resource usage anomalies"""
         try:
             recent_data = []
@@ -428,7 +428,7 @@ class IntelligentResourceAllocator:
         except Exception as e:
             logger.error(f'Error in anomaly detection: {e}')
 
-    async def _handle_resource_anomaly(self, history_index: int):
+    async def _handle_resource_anomaly(self, history_index: int) -> None:
         """Handle detected resource anomaly"""
         if history_index < len(self.resource_history):
             anomaly_data = self.resource_history[-(50 - history_index)]
@@ -438,7 +438,7 @@ class IntelligentResourceAllocator:
                     logger.warning(f'Preempting task {task_id} due to resource anomaly')
                     await self.release_resources(task_id)
 
-    async def _auto_scale(self):
+    async def _auto_scale(self) -> None:
         """Automatic scaling based on resource usage"""
         capacity = await self.get_current_capacity()
         if capacity.cpu_usage > self.scale_up_threshnew or capacity.memory_usage > self.scale_up_threshnew:
@@ -448,19 +448,19 @@ class IntelligentResourceAllocator:
             logger.info('Low resource utilization detected, considering scale-down')
             await self._scale_down_resources()
 
-    async def _scale_up_resources(self):
+    async def _scale_up_resources(self) -> None:
         """Scale up resource allocation"""
         if self.config['optimization']['m1_specific']:
             os.environ['CPU_PERFORMANCE_MODE'] = '1'
             os.environ['MEMORY_EFFICIENCY_MODE'] = 'performance'
 
-    async def _scale_down_resources(self):
+    async def _scale_down_resources(self) -> None:
         """Scale down resource allocation"""
         if self.config['optimization']['m1_specific']:
             os.environ['CPU_PERFORMANCE_MODE'] = '0'
             os.environ['MEMORY_EFFICIENCY_MODE'] = 'efficiency'
 
-    async def _optimize_active_allocations(self):
+    async def _optimize_active_allocations(self) -> None:
         """Optimize active resource allocations."""
         # ISSUE-2b: get_current_capacity() is expensive (psutil via to_thread) —
         # call ONCE before the loop, not per-allocation.
@@ -476,7 +476,7 @@ class IntelligentResourceAllocator:
         """Get resource allocation statistics"""
         stats = {'total_requests': len(self._pending_requests_dict) + len(self.active_allocations) + len(self.completed_allocations), 'pending_requests': len(self._pending_requests_dict), 'active_allocations': len(self.active_allocations), 'completed_allocations': len(self.completed_allocations), 'average_efficiency': 0.0, 'resource_utilization': {}}
         if self.completed_allocations:
-            total_efficiency = sum((alloc.efficiency_score for alloc in self.completed_allocations))
+            total_efficiency = sum(alloc.efficiency_score for alloc in self.completed_allocations)
             stats['average_efficiency'] = total_efficiency / len(self.completed_allocations)
         stats['completed_allocations_maxlen'] = getattr(self.completed_allocations, 'maxlen', None)
         stats['completed_allocations_current_len'] = len(self.completed_allocations)
@@ -485,7 +485,7 @@ class IntelligentResourceAllocator:
             stats['resource_utilization'] = {'cpu_usage': latest['cpu_usage'], 'memory_usage': latest['memory_usage'], 'gpu_usage': latest['gpu_usage']}
         return stats
 
-    def export_allocation_report(self, filepath: str):
+    def export_allocation_report(self, filepath: str) -> None:
         """Export detailed allocation report"""
         report = {'timestamp': datetime.now(UTC).isoformat(), 'statistics': self.get_allocation_statistics(), 'active_allocations': [{'task_id': alloc.task_id, 'allocated_resources': alloc.allocated_resources, 'start_time': alloc.start_time.isoformat(), 'efficiency_score': alloc.efficiency_score} for alloc in self.active_allocations.values()], 'recent_allocations': [{'task_id': alloc.task_id, 'allocated_resources': alloc.allocated_resources, 'start_time': alloc.start_time.isoformat(), 'end_time': alloc.end_time.isoformat() if alloc.end_time else None, 'efficiency_score': alloc.efficiency_score} for alloc in list(self.completed_allocations)[-20:]]}
         with open(filepath, 'w') as f:
@@ -494,9 +494,9 @@ class IntelligentResourceAllocator:
 
 class ResourceAwareScheduler:
     """Task scheduler with resource awareness"""
-    __slots__ = tuple(('_shutdown_event', '_tasks', 'allocator', 'task_queue'))
+    __slots__ = ('_shutdown_event', '_tasks', 'allocator', 'task_queue')
 
-    def __init__(self, allocator: IntelligentResourceAllocator):
+    def __init__(self, allocator: IntelligentResourceAllocator) -> None:
         self.allocator = allocator
         self.task_queue = []
         self._tasks: dict[str, asyncio.Task] = {}
@@ -528,7 +528,7 @@ class ResourceAwareScheduler:
         self._tasks[task_id] = task
         return True
 
-    async def _execute_task(self, task_id: str, task_func: callable):
+    async def _execute_task(self, task_id: str, task_func: callable) -> None:
         """Execute a task with allocated resources"""
         try:
             logger.info(f'Executing task {task_id}')
@@ -554,7 +554,7 @@ class ResourceAwareScheduler:
         try:
             async with asyncio.timeout(timeout):
                 await asyncio.gather(*self._tasks.values(), return_exceptions=True)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pending = [t for t in self._tasks.values() if not t.done()]
         else:
             pending = []
@@ -565,17 +565,17 @@ class ResourceAwareScheduler:
             try:
                 async with asyncio.timeout(5.0):
                     await asyncio.gather(*pending, return_exceptions=True)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         self._tasks.clear()
 
-async def main():
+async def main() -> None:
     """Main function for resource allocator testing"""
     allocator = IntelligentResourceAllocator()
     ResourceAwareScheduler(allocator)
     monitoring_task = safe_create_task(allocator.monitor_and_optimize(), name='resource_allocator:monitor')
 
-    async def example_task(task_args):
+    async def example_task(task_args) -> str:
         print(f'Executing task with args: {task_args}')
         await asyncio.sleep(2)
         return f'Task completed: {task_args}'

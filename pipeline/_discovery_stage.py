@@ -1,6 +1,4 @@
-"""
-P2-3: Discovery Stage — URL discovery s bounded queue output
-=========================================================
+"""P2-3: Discovery Stage — URL discovery s bounded queue output.
 
 Role: Discovery stage produkuje URLy (str) do output queue pro DedupStage.
 Je to první stage — nemá input queue.
@@ -23,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class DiscoveryStage:
-    """
-    Discovery stage: žádný input → AsyncIterator[str(url)] → output_queue.
+    """Discovery stage: žádný input → AsyncIterator[str(url)] → output_queue.
 
     Produkuje URLy pro DedupStage. Používá existující discovery logiku
     z live_public_pipeline (bootstrap, rescue, duckduckgo search).
@@ -64,8 +61,7 @@ class DiscoveryStage:
         output_queue: BoundedStageQueue[str],
         ctx: StageContext,
     ) -> None:
-        """
-        Spustí discovery a posílá URLy do output_queue streamovaně.
+        """Spustí discovery a posílá URLy do output_queue streamovaně.
 
         Discovery běží v background thread. URLy se yieldují do output_queue
         co nejdříve — bez čekání na celé dokončení discovery.
@@ -74,6 +70,7 @@ class DiscoveryStage:
             _: None (první stage — žádný input)
             output_queue: BoundedStageQueue[str] — URLy pro DedupStage
             ctx: StageContext
+
         """
         self._running = True
         self._output_queue = output_queue
@@ -106,8 +103,7 @@ class DiscoveryStage:
             logger.debug("DiscoveryStage: yielded=%d URLs", yielded)
 
     async def _run_discovery_streaming(self, ctx: StageContext):
-        """
-        Async generator — yields hits as they become available.
+        """Async generator — yields hits as they become available.
 
         Runs sync discovery in background thread and yields hits incrementally.
         """

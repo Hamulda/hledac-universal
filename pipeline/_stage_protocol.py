@@ -1,6 +1,4 @@
-"""
-P2-3: Pipeline Stage Protocol — AsyncIterator-based Stage Chain with TaskGroup Boundaries
-========================================================================================
+"""P2-3: Pipeline Stage Protocol — AsyncIterator-based Stage Chain with TaskGroup Boundaries.
 
 Role: Definuje Stage protokol a StageContext pro řetězec AsyncIterator[Item] s AIMD
 a bounded queues mezi fázemi.
@@ -40,12 +38,12 @@ T_out = TypeVar("T_out")
 
 
 class StageMetrics(msgspec.Struct, gc=False):
-    """
-    Per-stage metrics for observability.
+    """Per-stage metrics for observability.
 
     Sbírá: počet zpracovaných itemů, dropnuté itemy, chyby,
     AIMD window, fronta velikost, latency.
     """
+
     stage_name: str
     processed: int = 0
     dropped: int = 0
@@ -96,12 +94,12 @@ class StageMetrics(msgspec.Struct, gc=False):
 
 
 class StageContext(msgspec.Struct, gc=False):
-    """
-   Sdílený kontext mezi všemi stages.
+    """Sdílený kontext mezi všemi stages.
 
     Předává se při vytvoření pipeline. Obsahuje všechny externí
     závislosti (store, engine, graph, atd.) bez potřeby closure.
     """
+
     query: str
     store: Any | None = None
     graph: Any | None = None
@@ -138,8 +136,7 @@ class StageContext(msgspec.Struct, gc=False):
 
 @dataclass(slots=True)
 class BoundedStageQueue(Generic[T_out]):
-    """
-    asyncio.Queue s bounded maxsize a drop metrikou.
+    """asyncio.Queue s bounded maxsize a drop metrikou.
 
     Rozdíl od plain asyncio.Queue:
     - put_nowait() při full queue vrací False (drop, ne block)
@@ -184,8 +181,7 @@ class BoundedStageQueue(Generic[T_out]):
         object.__setattr__(self, "_queue", asyncio.Queue(maxsize=self.maxsize))
 
     def set_uma_state(self, state: str) -> None:
-        """
-        Adapt queue size to UMA pressure (P1-8).
+        """Adapt queue size to UMA pressure (P1-8).
 
         Voláno z hlavního TaskGroup runneru při změně UMA stavu.
         Synchroní — lock je držen jen během drain+recreate operace,
@@ -194,6 +190,7 @@ class BoundedStageQueue(Generic[T_out]):
 
         Args:
             state: "ok" | "soft_warn" | "warn" | "critical" | "emergency"
+
         """
         if state == self._uma_state:
             return
@@ -246,8 +243,7 @@ class BoundedStageQueue(Generic[T_out]):
             )
 
     async def put(self, item: T_out) -> bool:
-        """
-        Vloží item do fronty.
+        """Vloží item do fronty.
 
         Serializuje concurrent put() volání přes asyncio.Lock — více korutin
         volajících put() současně by mohlo způsobit race condition v put_nowait,
@@ -257,6 +253,7 @@ class BoundedStageQueue(Generic[T_out]):
         Returns:
             True pokud item byl vložen (wasn't dropped).
             False pokud queue full (item dropped).
+
         """
         async with self._lock:
             try:
@@ -299,8 +296,7 @@ class BoundedStageQueue(Generic[T_out]):
 
 
 class Stage(Generic[T_in, T_out], Protocol):
-    """
-    Protokol pro jednu pipeline fázi.
+    """Protokol pro jednu pipeline fázi.
 
     Každá stage:
     1. Je AsyncIterator — produkuje output pro další stage
@@ -319,8 +315,7 @@ class Stage(Generic[T_in, T_out], Protocol):
         output_queue: BoundedStageQueue[T_out],
         ctx: StageContext,
     ) -> None:
-        """
-        Hlavní run method — zpracovává input a produkuje output.
+        """Hlavní run method — zpracovává input a produkuje output.
 
         Args:
             input_queue: BoundedStageQueue pro vstup (None pro první stage)
@@ -329,6 +324,7 @@ class Stage(Generic[T_in, T_out], Protocol):
 
         Returns:
             None (output jde přes output_queue)
+
         """
         ...
 
@@ -344,6 +340,7 @@ class Stage(Generic[T_in, T_out], Protocol):
 
 class StageResult(msgspec.Struct, gc=False):
     """Výsledek běhu jedné stage pro telemetry."""
+
     stage_name: str
     processed: int = 0
     dropped: int = 0

@@ -11,7 +11,7 @@ Canonical import:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import field
 from enum import Enum, auto
 from typing import Any
 
@@ -51,6 +51,20 @@ class OperationResult(msgspec.Struct, frozen=True, gc=False):
     timestamp: float = field(default_factory=time.time)
 
 
+class ExecutionResult(msgspec.Struct, gc=False):
+    """
+    Intermediate result from _do_execute_decision().
+
+    Used by the handle_request template method to construct OperationResult.
+    All fields except 'success' are optional — template fills in the rest.
+    """
+    success: bool
+    status: str = 'completed'
+    result_summary: str = ''
+    error_message: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class CoordinatorCapabilities(msgspec.Struct, frozen=True, gc=False):
     """Capabilities reported by a coordinator."""
     name: str
@@ -66,5 +80,6 @@ __all__ = [
     'OperationType',
     'DecisionResponse',
     'OperationResult',
+    'ExecutionResult',
     'CoordinatorCapabilities',
 ]

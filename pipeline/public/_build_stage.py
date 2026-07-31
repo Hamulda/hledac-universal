@@ -1,5 +1,4 @@
-"""
-Build stage — CanonicalFinding construction for public OSINT pipeline.
+"""Build stage — CanonicalFinding construction for public OSINT pipeline.
 
 Responsibilities:
 - Build CanonicalFinding objects from matched pages
@@ -24,8 +23,7 @@ _DEFAULT_CONFIDENCE: float = 0.8
 
 
 class BuildStage:
-    """
-    Build stage: MatchedBatch → FindingBatch.
+    """Build stage: MatchedBatch → FindingBatch.
 
     Builds CanonicalFinding-ready batch from matched pages.
     """
@@ -47,14 +45,14 @@ class BuildStage:
     async def process(
         self, input_tuple: tuple[MatchedBatch, Any] | MatchedBatch | None
     ) -> tuple[FindingBatch, dict[str, Any]]:
-        """
-        Build findings from matched pages.
+        """Build findings from matched pages.
 
         Args:
             input_tuple: Tuple of (MatchedBatch, query_context) or just MatchedBatch
 
         Returns:
             Tuple of (FindingBatch, telemetry)
+
         """
         # Handle both tuple and single batch input
         if isinstance(input_tuple, tuple):

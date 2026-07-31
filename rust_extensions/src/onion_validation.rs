@@ -32,6 +32,7 @@
 //! - sha3 crate is ~50KB compiled
 
 use pyo3::prelude::*;
+use sha2::Digest;
 use sha3::Sha3_256;
 
 /// Errors for onion address validation.

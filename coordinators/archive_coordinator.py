@@ -12,10 +12,12 @@ archive operations to this coordinator.
 """
 import logging
 from collections import deque
-from dataclasses import dataclass
-import msgspec
 from typing import Any
+
+import msgspec
+
 from .base import UniversalCoordinator
+
 logger = logging.getLogger(__name__)
 MAX_ARCHIVE_RESULTS = 20
 MAX_PENDING_URLS = 2000
@@ -38,9 +40,9 @@ class ArchiveCoordinator(UniversalCoordinator):
     - Run deep probe for seed generation
     - Return bounded outputs (URLs, metrics)
     """
-    __slots__ = tuple(('_config', '_ctx', '_escalations_executed', '_orchestrator', '_pending_urls', '_seen_urls', '_stop_reason', '_urls_emitted'))
+    __slots__ = ('_config', '_ctx', '_escalations_executed', '_orchestrator', '_pending_urls', '_seen_urls', '_stop_reason', '_urls_emitted')
 
-    def __init__(self, config: ArchiveCoordinatorConfig | None=None, max_concurrent: int=2):
+    def __init__(self, config: ArchiveCoordinatorConfig | None=None, max_concurrent: int=2) -> None:
         super().__init__(name='ArchiveCoordinator', max_concurrent=max_concurrent)
         self._config = config or ArchiveCoordinatorConfig()
         self._pending_urls: deque = deque(maxlen=MAX_PENDING_URLS)

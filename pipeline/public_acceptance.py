@@ -1,6 +1,4 @@
-"""
-Public pipeline acceptance — CanonicalFinding construction from pattern hits
-and public-surface pages.
+"""Public pipeline acceptance — CanonicalFinding construction from pattern hits and public-surface pages.
 
 Extracted from live_public_pipeline.py.
 Handles: _build_public_finding(), _extract_live_public_findings_from_page().
@@ -40,8 +38,7 @@ async def _build_public_finding(
     discovery_reason: str | None,
     http_status_code: int = 0,
 ) -> tuple:
-    """
-    F226B: Build a public-surface CanonicalFinding from a non-pattern-matching page.
+    """F226B: Build a public-surface CanonicalFinding from a non-pattern-matching page.
 
     Called when a page fetches successfully, extracts text, but has zero pattern
     matches AND is NOT skipped by quality gate (SKIP_WEAK) — i.e. a "content-only" page
@@ -54,6 +51,7 @@ async def _build_public_finding(
 
     Returns:
         Tuple of (CanonicalFinding,) or () if page provides no actionable signal.
+
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     from .public_patterns import _make_finding_id
@@ -128,8 +126,8 @@ async def _extract_live_public_findings_from_page(
     page_text: str,
     discovery_score: float | None = None,
 ) -> tuple:
-    """
-    Construct CanonicalFinding for a single PatternHit.
+    """Construct CanonicalFinding for a single PatternHit.
+
     All heavy work (context extraction) offloaded to thread executor.
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding

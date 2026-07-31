@@ -15,11 +15,14 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from enum import Enum
 from typing import Any
+
+import msgspec
+
 from hledac.universal.project_types import PrivacyLevel
+
 logger = logging.getLogger(__name__)
 
 class DataRetention(Enum):
@@ -84,9 +87,9 @@ class PrivacyEnhancedResearch:
         ... )
     """
     PII_PATTERNS = [('\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b', '[EMAIL]'), ('\\b\\d{3}-\\d{2}-\\d{4}\\b', '[SSN]'), ('\\b\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b', '[CARD]'), ('\\b\\d{3}-\\d{3}-\\d{4}\\b', '[PHONE]')]
-    __slots__ = tuple(('_active_sessions', '_audit_log', '_operation_counter', 'config'))
+    __slots__ = ('_active_sessions', '_audit_log', '_operation_counter', 'config')
 
-    def __init__(self, config: PrivacyConfig | None=None):
+    def __init__(self, config: PrivacyConfig | None=None) -> None:
         self.config = config or PrivacyConfig()
         self._audit_log: deque[AuditRecord] = deque(maxlen=2048)
         self._active_sessions: dict[str, float] = {}

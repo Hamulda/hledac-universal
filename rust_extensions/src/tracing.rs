@@ -163,7 +163,7 @@ fn get_service_name() -> String {
 
 #[cfg(feature = "otel")]
 fn init_tracing() -> Result<(), String> {
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    use tracing_subscriber::fmt::format::FmtSpan;
 
     if TRACING_INIT.get().is_some() {
         return Ok(());
@@ -177,22 +177,16 @@ fn init_tracing() -> Result<(), String> {
     let service_name = get_service_name();
 
     // TEL-02: Use fmt with JSON output that includes trace_id/span_id fields.
-    let fmt_layer = tracing_subscriber::fmt::fmt()
+    // Use a simpler approach without EnvFilter for now.
+    tracing_subscriber::fmt()
         .with_target(true)
         .with_thread_ids(false)
         .with_file(true)
         .with_line_number(true)
         .with_ansi(false)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE);
-
-    let subscriber = tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(fmt_layer);
-
-    let result = subscriber.try_init();
-    if result.is_err() {
-        eprintln!("[tracing] init note: subscriber may already be initialized");
-    }
+        .with_span_events(FmtSpan::CLOSE)
+        .try_init()
+        .ok(); // Ignore if already initialized
 
     let _ = TRACING_INIT.set(true);
     println!("[tracing] Initialized: service={}", service_name);
@@ -242,9 +236,8 @@ fn generate_span_id_hex() -> String {
 
 /// Encode 16 bytes as 32-char lowercase hex string.
 #[cfg(feature = "otel")]
-const fn hex_encode_16_bytes(bytes: [u8; 16]) -> String {
+fn hex_encode_16_bytes(bytes: [u8; 16]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    // Use array to avoid dynamic allocation in const context
     let mut chars = ['0'; 32];
     let mut i = 0;
     while i < 16 {
@@ -252,13 +245,12 @@ const fn hex_encode_16_bytes(bytes: [u8; 16]) -> String {
         chars[i * 2 + 1] = HEX[(bytes[i] & 0xf) as usize] as char;
         i += 1;
     }
-    // Safety: String::from_iter is const-OK since Rust 1.79
     String::from_iter(chars.iter())
 }
 
 /// Encode 8 bytes as 16-char lowercase hex string.
 #[cfg(feature = "otel")]
-const fn hex_encode_8_bytes(bytes: [u8; 8]) -> String {
+fn hex_encode_8_bytes(bytes: [u8; 8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut chars = ['0'; 16];
     let mut i = 0;

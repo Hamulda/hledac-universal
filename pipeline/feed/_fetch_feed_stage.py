@@ -1,5 +1,4 @@
-"""
-Fetch feed stage — RSS/Atom feed fetch + parse for feed pipeline.
+"""Fetch feed stage — RSS/Atom feed fetch + parse for feed pipeline.
 
 Responsibilities:
 - Fetch RSS/Atom feed via httpx
@@ -24,8 +23,7 @@ DEFAULT_MAX_BYTES: int = 2_000_000
 
 
 class FetchFeedStage:
-    """
-    Fetch feed stage: feed_url → FeedEntryBatch.
+    """Fetch feed stage: feed_url → FeedEntryBatch.
 
     Fetches and parses a single RSS/Atom feed.
     """
@@ -47,14 +45,14 @@ class FetchFeedStage:
     async def process(
         self, input_feed_url: str | None
     ) -> tuple[FeedEntryBatch, dict[str, Any]]:
-        """
-        Fetch and parse a feed.
+        """Fetch and parse a feed.
 
         Args:
             input_feed_url: The feed URL to fetch
 
         Returns:
             Tuple of (FeedEntryBatch, telemetry)
+
         """
         if not input_feed_url:
             return self._empty_batch(), {}

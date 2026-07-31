@@ -11,21 +11,92 @@ This enables the orchestrator to become a thin "spine" that delegates
 fetch logic to this coordinator.
 """
 from __future__ import annotations
+
 import asyncio
+import contextlib
 import ipaddress
-import orjson
 import os
+import platform
 import secrets
 import socket
-import time
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
-from cachetools import TTLCache
 from typing import Any
+
 import httpx
 import msgspec
+import orjson
+from cachetools import TTLCache
+
+from hledac.universal.core.capabilities import (
+    AIOHTTP,
+    CAPS,
+    DARKNET_CONNECTOR,
+    HINTS,
+    LIGHTPANDA,
+    OTEL,
+    PAYWALL_BYPASS,
+    SESSION,
+    STEALTH_MANAGER,
+    ZERO_ATTR,
+    ZSTD,
+)
+from hledac.universal.core.constants import NETWORK
+from hledac.universal.runtime.logging_setup import get_logger
+from hledac.universal.runtime.privacy_budget import PrivacyBudgetAllocator, make_privacy_allocator
+from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache
+from hledac.universal.tools.zstd_compressor import ZstdCompressor
+from hledac.universal.utils.async_helpers import (
+    BoundedPerHostGate,
+    DomainRateLimiter,
+    async_getaddrinfo,
+    parallel,
+    safe_create_task,
+)
+from hledac.universal.utils.batch_dns import get_batch_dns_resolver
+from hledac.universal.utils.flow_trace import (
+    is_enabled,
+    trace_counter,
+    trace_dedup_decision,
+    trace_fetch_end,
+    trace_fetch_start,
+)
+
+from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
+from .base import UniversalCoordinator
+
+# ISSUE 2.2: PyAIMDController — lock-free AIMD in Rust (AtomicU64). Lazy import.
+try:
+    from hledac_rust_extensions import PyAIMDController
+except ImportError:
+    PyAIMDController = None  # type: ignore[misc,assignment]
+
+# CAPS-based availability flags (set after imports)
+_otel_mod = CAPS.require(OTEL)
+_otel_instrumented = _otel_mod if _otel_mod is not None else None
+if _otel_instrumented is None:
+    from hledac.universal.telemetry import instrumented as _otel_instrumented
+
+_zstd_mod = CAPS.require(ZSTD)
+_aiomod = CAPS.require(AIOHTTP)
+_lp_manager_cls = CAPS.require(LIGHTPANDA)
+_session_mgr_cls = CAPS.require(SESSION)
+_hints_extractor_cls = CAPS.require(HINTS)
+_zero_attr_cls = CAPS.require(ZERO_ATTR)
+
+ZSTD_AVAILABLE = CAPS.is_available('zstd')
+AIOHTTP_AVAILABLE = CAPS.is_available('aiohttp')
+LIGHTPANDA_AVAILABLE = CAPS.is_available('lightpanda')
+SESSION_AVAILABLE = CAPS.is_available('session')
+HINTS_AVAILABLE = CAPS.is_available('deep_web_hints')
+
+_ZERO_ATTR_ENGINE = _zero_attr_cls
+
+_COVER_RATE = min(max(float(os.environ.get('HLEDAC_COVER_TRAFFIC_RATE', '0.05')), 0.0), 1.0)
+_COVER_MAX = 2
 
 
 # T2: Fast URL host/path extraction — zero allocation, no httpx.URL parse.
@@ -57,41 +128,9 @@ def _fast_url_path(url: str) -> str:
     if query < 0:
         return url[path_start:] or '/'
     return url[path_start:query] or '/'
-from tenacity import wait_exponential_jitter
-from hledac.universal.core.capabilities import AIOHTTP, CAPS, DARKNET_CONNECTOR, HINTS, LIGHTPANDA, OTEL, PAYWALL_BYPASS, SESSION, STEALTH_MANAGER, ZERO_ATTR, ZSTD
-from hledac.universal.runtime.logging_setup import get_logger
-_otel_mod = CAPS.require(OTEL)
-if _otel_mod is not None:
-    _otel_instrumented = _otel_mod
-else:
-    from hledac.universal.telemetry import instrumented as _otel_instrumented
-_zstd_mod = CAPS.require(ZSTD)
-_aiomod = CAPS.require(AIOHTTP)
-_lp_manager_cls = CAPS.require(LIGHTPANDA)
-_session_mgr_cls = CAPS.require(SESSION)
-_hints_extractor_cls = CAPS.require(HINTS)
-ZSTD_AVAILABLE = CAPS.is_available('zstd')
-AIOHTTP_AVAILABLE = CAPS.is_available('aiohttp')
-LIGHTPANDA_AVAILABLE = CAPS.is_available('lightpanda')
-SESSION_AVAILABLE = CAPS.is_available('session')
-HINTS_AVAILABLE = CAPS.is_available('deep_web_hints')
-from hledac.universal.runtime.privacy_budget import PrivacyBudgetAllocator, make_privacy_allocator
-from hledac.universal.tools.zstd_compressor import ZstdCompressor
-from hledac.universal.utils.async_helpers import parallel, safe_create_task
-from ..tools.url_dedup import DeduplicationStrategy
-# ISSUE 2.2: PyAIMDController — lock-free AIMD in Rust (AtomicU64). Lazy import.
-try:
-    from hledac_rust_extensions import PyAIMDController
-except ImportError:
-    PyAIMDController = None  # type: ignore[misc,assignment]
-from .base import UniversalCoordinator
-_zero_attr_cls = CAPS.require(ZERO_ATTR)
-_ZERO_ATTR_ENGINE = _zero_attr_cls
-_COVER_RATE = float(os.environ.get('HLEDAC_COVER_TRAFFIC_RATE', '0.05'))
-_COVER_RATE = min(max(_COVER_RATE, 0.0), 1.0)
-_COVER_MAX = 2
 
-def _create_dedup_strategy():
+
+def _create_dedup_strategy() -> DeduplicationStrategy:
     """Create the dedup strategy used by FetchCoordinator.
 
     P1-3: Uses create_rotating_bloom_filter() which prefers MmapBloomFilter
@@ -102,11 +141,10 @@ def _create_dedup_strategy():
     """
     from ..tools.url_dedup import create_rotating_bloom_filter
     return create_rotating_bloom_filter(est_elements=200000)
+
+
 _CP_NOT_CALLED = object()
 _CP_RETURNED_NONE = object()
-from ..tools.url_dedup import dedupe_url_list
-from ..utils.async_helpers import BoundedPerHostGate, DomainRateLimiter, async_getaddrinfo
-from ..utils.batch_dns import get_batch_dns_resolver
 
 # F350M-R: DNS via hickory-dns — replaces batch_dns.py triple-path duplication
 # Lazy import to avoid adding hickory-dns to the core build
@@ -135,7 +173,7 @@ def _rust_dns_prefetch(hostnames: list[str]) -> dict[str, list[str]]:
         return _RUST_DNS.prefetch(hostnames)
     except Exception:  # noqa: BLE001 — fail-soft: any error returns empty
         return {}
-from ..utils.flow_trace import is_enabled, trace_counter, trace_dedup_decision, trace_fetch_end, trace_fetch_start
+
 _stealth_tbc = CAPS.require(STEALTH_MANAGER)
 if _stealth_tbc is None:
 
@@ -143,14 +181,14 @@ if _stealth_tbc is None:
         """Token Bucket pro řízení concurrency (inline fallback)."""
         __slots__ = ('_rate', '_capacity', '_tokens', '_last_refill', '_cond')
 
-        def __init__(self, rate: int=5, capacity: int=10):
+        def __init__(self, rate: int=5, capacity: int=10) -> None:
             self._rate = rate
             self._capacity = capacity
             self._tokens = capacity
             self._last_refill = time.time()
             self._cond = asyncio.Condition()
 
-        async def acquire(self):
+        async def acquire(self) -> None:
             async with self._cond:
                 while True:
                     now = time.time()
@@ -164,7 +202,7 @@ if _stealth_tbc is None:
                         return
                     await self._cond.wait()
 
-        async def release(self):
+        async def release(self) -> None:
             pass
 else:
     TokenBucketController = _stealth_tbc
@@ -172,7 +210,6 @@ logger = get_logger(__name__)
 
 # Crypto-safe jitter — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
-from hledac.universal.core.constants import NETWORK
 _nw = NETWORK()
 TIMEOUT_CLEARNET_API = _nw.clearnet_api
 TIMEOUT_CLEARNET_HTML = _nw.clearnet_html
@@ -333,10 +370,8 @@ _PRIORITY_TOR = 30
 _PRIORITY_I2P = 40
 _PRIORITY_OTHER = 50
 MAX_EVIDENCE_IDS_PER_STEP = 10
-import platform
 NOCACHE_THRESHOLD_BYTES = 50 * 1024 * 1024
 F_NOCACHE = 48 if platform.system() == 'Darwin' else None
-from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache
 
 def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     """Wrapper for backward compatibility — delegates to tools/file_cache.py."""
@@ -364,9 +399,9 @@ class FetchCoordinator(UniversalCoordinator):
     A5-02: evidence_sink parameter enables Dependency Inversion —
     FetchCoordinator never imports EvidenceLog directly.
     """
-    __slots__ = tuple(('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd'))
+    __slots__ = ('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_retry_budget_max', '_retry_budget_window', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd')
 
-    def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None, evidence_sink: Any=None):
+    def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None, evidence_sink: object | None=None) -> None:
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
         self._config = config or FetchCoordinatorConfig()
         self._pivot_queue_provider = pivot_queue_provider
@@ -666,7 +701,7 @@ class FetchCoordinator(UniversalCoordinator):
             'captcha': captcha_stats,
         }
 
-    def init_session_manager(self, lmdb_path: str | None=None):
+    def init_session_manager(self, lmdb_path: str | None=None) -> None:
         """Initialize session manager with LMDB persistence (idempotent)."""
         if not SESSION_AVAILABLE:
             return
@@ -710,13 +745,11 @@ class FetchCoordinator(UniversalCoordinator):
                 return False
             if ip.is_unspecified:
                 return False
-            if ip.is_loopback:
-                return False
-            return True
+            return not ip.is_loopback
         except (ValueError, TypeError):  # noqa: BLE001 — best-effort; ip_address parse failure; returns False (private check)
             return False
 
-    async def _validate_fetch_target(self, url: str) -> tuple[bool, dict[str, Any]]:
+    async def _validate_fetch_target(self, url: str) -> tuple[bool, dict[str, Any]]:  # noqa: C901
         """
         Validate fetch target: resolve and check for private IPs.
 
@@ -789,13 +822,13 @@ class FetchCoordinator(UniversalCoordinator):
                 if not self._is_ip_public(ip_str):
                     return (False, {'resolved_ips': ips, 'blocked_reason': 'private_ip_resolved', 'blocked_ip': ip_str})
             return (True, {'resolved_ips': ips})
-        except (httpx.HTTPError, httpx.TimeoutException, OSError, asyncio.TimeoutError) as e:  # noqa: BLE001 — best-effort; httpx client creation failure; non-critical
+        except (TimeoutError, httpx.HTTPError, httpx.TimeoutException, OSError) as e:  # noqa: BLE001 — best-effort; httpx client creation failure; non-critical
             return (False, {'blocked_reason': f'validation_error: {e}'})
 
     def _is_js_heavy(self, url: str, html_preview: str='') -> bool:
         """Detect JS-heavy pages by URL and HTML preview."""
         js_indicators = ['react', 'vue', 'angular', 'next', 'nuxt', 'svelte']
-        if any((ind in url.lower() for ind in js_indicators)):
+        if any(ind in url.lower() for ind in js_indicators):
             return True
         if html_preview:
             if '<script' in html_preview.lower() and len(html_preview) < 5000:
@@ -804,7 +837,7 @@ class FetchCoordinator(UniversalCoordinator):
                 return True
         return False
 
-    async def _aimd_acquire(self) -> tuple[float, None]:
+    async def _aimd_acquire(self) -> tuple[float, None]:  # noqa: C901
         """
         Acquire AIMD slot, returns (concurrency_window, None).
 
@@ -960,7 +993,7 @@ class FetchCoordinator(UniversalCoordinator):
             async with self._privacy_lock:
                 await sem.acquire()
             return (lane, True)
-        except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001 — best-effort; privacy_acquire cancellation/timeout; fail-open to clearnet
+        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001 — best-effort; privacy_acquire cancellation/timeout; fail-open to clearnet
             return ('clearnet', True)
 
     def _privacy_release(self, lane: str) -> None:
@@ -969,12 +1002,10 @@ class FetchCoordinator(UniversalCoordinator):
             return
         sem = self._privacy_allocator.get_semaphore(lane)
         if sem is not None:
-            try:
+            with contextlib.suppress(ValueError):
                 sem.release()
-            except ValueError:
-                pass
 
-    async def _fetch_with_lightpanda(self, url: str, proxy: str | None=None):
+    async def _fetch_with_lightpanda(self, url: str, proxy: str | None=None) -> dict[str, Any] | None:
         """Fetch URL with Lightpanda using pool (JS rendering)."""
         try:
             if not self._lightpanda_pool_started:
@@ -988,7 +1019,7 @@ class FetchCoordinator(UniversalCoordinator):
                 return {'url': url, 'content': content, 'js_rendered': True}
             finally:
                 await self._lightpanda_pool.release(lp)
-        except (httpx.HTTPError, httpx.TimeoutException, asyncio.TimeoutError, OSError, ConnectionError) as e:  # noqa: BLE001 — best-effort; httpx request failure; non-critical fallback
+        except (TimeoutError, httpx.HTTPError, httpx.TimeoutException, OSError, ConnectionError) as e:  # noqa: BLE001 — best-effort; httpx request failure; non-critical fallback
             logger.warning('[LIGHTPANDA] Failed: %s, falling back to curl_cffi', e)
             return None
 
@@ -1007,7 +1038,7 @@ class FetchCoordinator(UniversalCoordinator):
             return {}
         return dict.fromkeys(cookies, '***')
 
-    async def _get_tor_session(self, domain: str) -> Any | None:
+    async def _get_tor_session(self, domain: str) -> object | None:
         """F274: Delegate to darknet_session_provider (transport layer owns sessions)."""
         from ..transport.darknet_session_provider import get_session, mark_used
         session = await get_session('tor', domain)
@@ -1018,7 +1049,7 @@ class FetchCoordinator(UniversalCoordinator):
     # OSINT-02: max_bytes cap for darknet fetches — prevents OOM from unbounded resp.read()
     _DARKNET_MAX_BYTES: int = 10 * 1024 * 1024  # 10 MB hard cap
 
-    async def _fetch_with_tor(self, url: str, session: Any | None=None, *, max_bytes: int | None=None) -> dict[str, Any] | None:
+    async def _fetch_with_tor(self, url: str, session: object | None=None, *, max_bytes: int | None=None) -> dict[str, Any] | None:
         """Fetch .onion URL using Tor connection pool.
 
         Args:
@@ -1056,12 +1087,12 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[TOR] Timeout for %s', url)
             await self._aimd_release_failure()
             return None
-        except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx response body read; non-critical
+        except (httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx response body read; non-critical
             logger.warning('Tor fetch failed: %s', e)
             await self._aimd_release_failure()
             return None
 
-    async def _get_i2p_session(self, domain: str) -> Any | None:
+    async def _get_i2p_session(self, domain: str) -> object | None:
         """F274: Delegate to darknet_session_provider (transport layer owns sessions)."""
         from ..transport.darknet_session_provider import get_session, mark_used
         session = await get_session('i2p', domain)
@@ -1069,7 +1100,7 @@ class FetchCoordinator(UniversalCoordinator):
             await mark_used('i2p', domain)
         return session
 
-    async def _fetch_with_i2p(self, url: str, session: Any | None=None, *, max_bytes: int | None=None) -> dict[str, Any] | None:
+    async def _fetch_with_i2p(self, url: str, session: object | None=None, *, max_bytes: int | None=None) -> dict[str, Any] | None:
         """Fetch .i2p URL using I2P connection pool.
 
         Args:
@@ -1107,12 +1138,12 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[I2P] Timeout for %s', url)
             await self._aimd_release_failure()
             return None
-        except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
+        except (httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx stream read; non-critical
             logger.warning('I2P fetch failed: %s', e)
             await self._aimd_release_failure()
             return None
 
-    async def _fetch_with_curl(self, url: str, proxy: str | None=None, *, resolve: dict[str, str] | None=None):
+    async def _fetch_with_curl(self, url: str, proxy: str | None=None, *, resolve: dict[str, str] | None=None) -> dict[str, Any] | None:
         """Fetch URL via curl_cffi with HTTP/3 Alt-Svc support (F265C).
 
         ISSUE-0.2 FIX: Uses CAPS-based curl_cffi availability check.
@@ -1129,7 +1160,11 @@ class FetchCoordinator(UniversalCoordinator):
         """
         # ISSUE-0.2: CAPS-based availability check — never fall back to httpx without JA3
         try:
-            from hledac.universal.fetching.curl_cffi_fetch import fetch_via_curl_cffi_with_caps_check, is_curl_cffi_capable, next_ja3_profile
+            from hledac.universal.fetching.curl_cffi_fetch import (
+                fetch_via_curl_cffi_with_caps_check,
+                is_curl_cffi_capable,
+                next_ja3_profile,
+            )
             _capable, _cap_reason = is_curl_cffi_capable()
             if not _capable:
                 logger.warning(
@@ -1142,7 +1177,11 @@ class FetchCoordinator(UniversalCoordinator):
             return {'url': url, 'content': b'', 'error': 'curl_cffi_fetch_import_failed'}
 
         try:
-            from hledac.universal.fetching.public_fetcher import _altsvc_extract_host, _altsvc_http_version_for, _altsvc_record_from_result
+            from hledac.universal.fetching.public_fetcher import (
+                _altsvc_extract_host,
+                _altsvc_http_version_for,
+                _altsvc_record_from_result,
+            )
             try:
                 from hledac.universal.transport.http3_lane import probe_altsvc_speculative
                 probe_altsvc_speculative(url)
@@ -1156,16 +1195,13 @@ class FetchCoordinator(UniversalCoordinator):
             _altsvc_record_from_result(url, _curl_result.get('headers'))
             _curl_bytes = _curl_result.get('content', b'')
             _curl_error = _curl_result.get('error', None)
-            if _curl_bytes:
-                _curl_text = _curl_bytes.decode('utf-8', errors='replace')
-            else:
-                _curl_text = None
+            _curl_text = _curl_bytes.decode('utf-8', errors='replace') if _curl_bytes else None
             return {'url': url, 'final_url': _curl_result.get('final_url', url), 'content': _curl_bytes, 'text': _curl_text, 'status_code': _curl_result.get('status_code', 0), 'content_type': _curl_result.get('content_type', ''), 'headers': _curl_result.get('headers', {}), 'js_rendered': False, 'success': _curl_error is None, 'error': _curl_error}
         except TimeoutError:
             logger.debug('[CURL] Timeout for %s', url)
             await self._aimd_release_failure()
             return {'url': url, 'content': b'', 'error': 'timeout'}
-        except (OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — curl_cffi doesn't raise httpx.HTTPError; only network/OS errors expected here
+        except (OSError, asyncio.CancelledError) as e:  # noqa: BLE001 — curl_cffi doesn't raise httpx.HTTPError; only network/OS errors expected here
             logger.warning('[CURL] Failed: %s', e)
             return {'url': url, 'content': b'', 'error': str(e)}
 
@@ -1245,7 +1281,7 @@ class FetchCoordinator(UniversalCoordinator):
         from .base import OperationType
         return [OperationType.RESEARCH]
 
-    async def handle_request(self, operation_ref: str, decision: Any) -> Any:
+    async def handle_request(self, operation_ref: str, decision: object) -> dict[str, Any]:
         """
         Handle a decision request (required by UniversalCoordinator base).
 
@@ -1260,7 +1296,7 @@ class FetchCoordinator(UniversalCoordinator):
         logger.info('FetchCoordinator initialized')
         # F-05: RobotsParser — 15 min TTL, 1024 domain LRU cache (M1 8GB bounded)
         try:
-            from ..utils.robots_parser import RobotsParser, RobotsDocument
+            from ..utils.robots_parser import RobotsParser
             _parser = RobotsParser(cache_ttl=900.0, max_cache_size=1024)
             await _parser.__aenter__()
             self._robots_parser = _parser
@@ -1357,7 +1393,7 @@ class FetchCoordinator(UniversalCoordinator):
         if _delay > 0:
             try:
                 await asyncio.sleep(_delay)
-            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001 — best-effort; crawl-delay sleep interrupted; continue
+            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001 — best-effort; crawl-delay sleep interrupted; continue
                 pass
         return (True, None)
 
@@ -1391,7 +1427,7 @@ class FetchCoordinator(UniversalCoordinator):
         _delay = _rp.get_crawl_delay(user_agent, _doc)
         return (True, None, _delay)
 
-    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:
+    async def _do_step(self, ctx: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         """
         Execute one fetch step with batch parallel fetch.
 
@@ -1440,7 +1476,7 @@ class FetchCoordinator(UniversalCoordinator):
                     host_end = len(url)
                     for i in range(host_start, len(url)):
                         c = url[i]
-                        if c == ':' or c == '/' or c == '?' or c == '#':
+                        if c in {':', '/', '?', '#'}:
                             host_end = i
                             break
                     hostname = url[host_start:host_end]
@@ -1485,7 +1521,7 @@ class FetchCoordinator(UniversalCoordinator):
             try:
                 resolved = await dns_coro
                 self._host_ips_cache = {h: list(ips) for h, ips in resolved.items()}
-            except (asyncio.TimeoutError, asyncio.CancelledError, OSError) as exc:  # noqa: BLE001 — best-effort; batch DNS pre-resolve failure; non-critical
+            except (TimeoutError, asyncio.CancelledError, OSError) as exc:  # noqa: BLE001 — best-effort; batch DNS pre-resolve failure; non-critical
                 logger.debug('[F-A4] batch DNS pre-resolve failed: %s: %s', type(exc).__name__, exc)
         candidates: list[tuple[float, str]] = []
         for url in unique_batch:
@@ -1512,7 +1548,7 @@ class FetchCoordinator(UniversalCoordinator):
                     host_end = len(_url)
                     for i in range(host_start, len(_url)):
                         c = _url[i]
-                        if c == ':' or c == '/' or c == '?' or c == '#':
+                        if c in {':', '/', '?', '#'}:
                             host_end = i
                             break
                     _domain = _url[host_start:host_end]
@@ -1554,7 +1590,7 @@ class FetchCoordinator(UniversalCoordinator):
         # are absent from ok[]. parallel() preserves original coroutine order, so
         # zip naturally skips any trailing (url, result) pair when a coroutine
         # raises — no enumerate index corruption possible.
-        for _url, _result in zip(urls_to_fetch, _robots_results.ok):
+        for _url, _result in zip(urls_to_fetch, _robots_results.ok, strict=True):
             _allowed, _reason, _delay = _result
             _total_crawl_delay += _delay
             if not _allowed:
@@ -1563,10 +1599,8 @@ class FetchCoordinator(UniversalCoordinator):
                 continue
             _robots_filtered.append(_url)
         if _total_crawl_delay > 0:
-            try:
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.sleep(_total_crawl_delay)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
         urls_to_fetch = _robots_filtered
         if not urls_to_fetch:
             return self._get_step_result()
@@ -1585,7 +1619,7 @@ class FetchCoordinator(UniversalCoordinator):
         # TOR circuit establishment is slow but pipelining multiple requests over the
         # same circuit is cheap — concurrency=2 maximizes throughput without
         # overwhelming the circuit pool.
-        from ..transport.transport_resolver import get_transport_for_url, Transport
+        from ..transport.transport_resolver import Transport, get_transport_for_url
         _tor_i2p_urls: list[str] = []
         _clearnet_urls: list[str] = []
         for _url in urls_to_fetch:
@@ -1673,7 +1707,7 @@ class FetchCoordinator(UniversalCoordinator):
                 cb_task = tg.create_task(_circuit_breaker_check(), name='circuit_breaker')
             dns_safe, dns_meta = dns_task.result()
             cb_allowed, cb_reason, cb_retry_after = cb_task.result()
-        except* (Exception, BaseException) as exc:  # noqa: BLE001 — best-effort; TaskGroup ExceptionGroup or single exc; domain_breaker unavailable; non-critical
+        except* (Exception, BaseException):  # noqa: BLE001 — best-effort; TaskGroup ExceptionGroup or single exc; domain_breaker unavailable; non-critical
             dns_safe, dns_meta = (True, {})
             cb_allowed, cb_reason, cb_retry_after = (True, '', 0.0)
         return (dns_safe, dns_meta, cb_allowed, cb_reason, cb_retry_after)
@@ -1684,7 +1718,7 @@ class FetchCoordinator(UniversalCoordinator):
         return {'urls_fetched': len(evidence_ids), 'evidence_ids': evidence_ids, 'total_fetched': self._urls_fetched_count, 'stop_reason': self._stop_reason, 'frontier_remaining': len(self._frontier), 'aimd_window': self._aimd_concurrency, 'active_fetches': self._telemetry['active_fetches'], 'batch_size': batch_size, 'effective_parallelism': effective_parallelism, 'batch_elapsed_ms': batch_elapsed_ms}
 
     @_otel_instrumented('fetch.url', component='network')
-    async def _fetch_url(self, url: str, attempt: int=0) -> dict[str, Any] | None:
+    async def _fetch_url(self, url: str, attempt: int=0) -> dict[str, Any] | None:  # noqa: C901
         """
         Fetch a single URL with AIMD concurrency control and timeout matrix.
 
@@ -1724,7 +1758,7 @@ class FetchCoordinator(UniversalCoordinator):
         _privacy_acquired = False
         try:
             _privacy_lane, _privacy_acquired = await self._privacy_acquire_for_url(url)
-        except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001 — best-effort; privacy_acquire cancellation/timeout; fail-open to clearnet
+        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001 — best-effort; privacy_acquire cancellation/timeout; fail-open to clearnet
             _privacy_lane = 'clearnet'
             _privacy_acquired = True
         _aimd_sem: asyncio.Semaphore | None = None
@@ -1827,7 +1861,7 @@ class FetchCoordinator(UniversalCoordinator):
                                 break
                         else:
                             _resolve = {_retry_host: _retry_ips[0]}
-                except (OSError, asyncio.TimeoutError):  # noqa: BLE001 — best-effort; inline DNS retry failed; fetch will use curl_cffi native resolve
+                except (TimeoutError, OSError):  # noqa: BLE001 — best-effort; inline DNS retry failed; fetch will use curl_cffi native resolve
                     pass
         try:
             while attempt <= max_retries:
@@ -1926,10 +1960,10 @@ class FetchCoordinator(UniversalCoordinator):
                 _curl_result: dict[str, Any] | None = None
                 _js_probe_result: dict[str, Any] | None = None
 
-                async def _curl_task() -> dict[str, Any] | None:
+                async def _curl_task(*, _attempt: int = attempt, _proxy: str | None = proxy) -> dict[str, Any] | None:
                     """Single curl fetch — same semantics as original _fetch_with_curl."""
-                    trace_fetch_start(url, 'curl', {'attempt': attempt, 'timeout': TIMEOUT_CLEARNET_HTML, 'resolve': _resolve})
-                    r: dict[str, Any] | None = await self._fetch_with_curl(url, proxy, resolve=_resolve)
+                    trace_fetch_start(url, 'curl', {'attempt': _attempt, 'timeout': TIMEOUT_CLEARNET_HTML, 'resolve': _resolve})
+                    r: dict[str, Any] | None = await self._fetch_with_curl(url, _proxy, resolve=_resolve)
                     if r and (not r.get('error')):
                         trace_fetch_end(url, 'curl', 'ok', 0.0)
                     else:
@@ -2072,7 +2106,7 @@ class FetchCoordinator(UniversalCoordinator):
                     self._record_transport_failure("tor", is_timeout=is_timeout)
                 elif url_transport is Transport.I2P:
                     self._record_transport_failure("i2p", is_timeout=is_timeout)
-        except (httpx.HTTPError, OSError, asyncio.TimeoutError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx/network request failure; non-critical
+        except (TimeoutError, httpx.HTTPError, OSError, asyncio.CancelledError) as e:  # noqa: BLE001 — best-effort; httpx/network request failure; non-critical
             logger.warning('[_fetch_url] Unexpected error for %s: %s', url, e)
             await self._aimd_release_failure()
             result = {'url': url, 'content': b'', 'error': str(e)}
@@ -2082,10 +2116,9 @@ class FetchCoordinator(UniversalCoordinator):
                 self._privacy_release(_privacy_lane)
             if _host_sem is not None:
                 self._per_host_gate.release(_host_sem)
-        if result and result.get('status_code') in (401, 403):
-            if self._session_manager:
-                await self._session_manager.rotate_credentials(_host_name)
-                logger.info('[SESSION] Rotated credentials for %s', _host_name)
+        if result and result.get('status_code') in (401, 403) and self._session_manager:
+            await self._session_manager.rotate_credentials(_host_name)
+            logger.info('[SESSION] Rotated credentials for %s', _host_name)
         if result and result.get('content'):
             content = result['content']
             if isinstance(content, bytes):
@@ -2248,44 +2281,52 @@ class FetchCoordinator(UniversalCoordinator):
         """
         try:
             await asyncio.sleep(delay)
-        except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001 — best-effort; asyncio.sleep interrupted; non-critical
+        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001 — best-effort; asyncio.sleep interrupted; non-critical
             return
         try:
-            domain = _fast_url_host(url)
+            _ = _fast_url_host(url)
         except (ValueError, TypeError):  # noqa: BLE001 — best-effort; httpx.URL parse failure; non-critical
             return
-        # Circuit breaker check delegated to transport/circuit_breaker.py
+        transport_lower = transport.lower()
+        if transport_lower == 'tor':
+            await self._cover_tor(url)
+        elif transport_lower == 'i2p':
+            await self._cover_i2p(url)
+        else:
+            await self._cover_clearnet(url)
+
+    async def _cover_tor(self, url: str) -> None:
+        """Cover traffic via Tor transport."""
         try:
-            transport_lower = transport.lower()
-            if transport_lower == 'tor':
-                try:
-                    from ..transport.base import TransportConfig
-                    from ..transport.tor_transport import get_tor_transport
-                    tor = get_tor_transport()
-                    if tor and await tor.is_running():
-                        config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
-                        await tor.fetch(config)
-                except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; Tor transport fetch failure; fire-and-forget cover traffic
-                    pass
-            elif transport_lower == 'i2p':
-                try:
-                    from ..transport.base import TransportConfig
-                    from ..transport.i2p_transport import get_i2p_transport
-                    i2p = get_i2p_transport()
-                    if i2p and i2p.is_running():
-                        config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
-                        await i2p.fetch(config)
-                except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; I2P transport fetch failure; fire-and-forget cover traffic
-                    pass
-            else:
-                try:
-                    from hledac.universal.transport.curl_cffi_fetch import async_get_curl_cffi_session_for_host
-                    ok, session, used_profile, host = await async_get_curl_cffi_session_for_host(url, profile='chrome131')
-                    if ok and session is not None:
-                        await session.get(url, timeout=10.0)
-                except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; curl_cffi fetch failure; fire-and-forget cover traffic
-                    pass
-        except* (Exception, BaseException):  # noqa: BLE001 — best-effort; cover traffic transport failure; non-critical
+            from ..transport.base import TransportConfig
+            from ..transport.tor_transport import get_tor_transport
+            tor = get_tor_transport()
+            if tor and await tor.is_running():
+                config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
+                await tor.fetch(config)
+        except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; Tor transport fetch failure; fire-and-forget cover traffic
+            pass
+
+    async def _cover_i2p(self, url: str) -> None:
+        """Cover traffic via I2P transport."""
+        try:
+            from ..transport.base import TransportConfig
+            from ..transport.i2p_transport import get_i2p_transport
+            i2p = get_i2p_transport()
+            if i2p and i2p.is_running():
+                config = TransportConfig(url=url, method='GET', headers=None, body=None, timeout=10.0)
+                await i2p.fetch(config)
+        except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; I2P transport fetch failure; fire-and-forget cover traffic
+            pass
+
+    async def _cover_clearnet(self, url: str) -> None:
+        """Cover traffic via clearnet (curl_cffi)."""
+        try:
+            from hledac.universal.transport.curl_cffi_fetch import async_get_curl_cffi_session_for_host
+            ok, session, used_profile, host = await async_get_curl_cffi_session_for_host(url, profile='chrome131')
+            if ok and session is not None:
+                await session.get(url, timeout=10.0)
+        except* (asyncio.CancelledError, Exception):  # noqa: BLE001 — best-effort; curl_cffi fetch failure; fire-and-forget cover traffic
             pass
 
     async def _fire_cover_traffic(self, url: str, delay: float, transport: str) -> None:
@@ -2390,7 +2431,5 @@ class FetchCoordinator(UniversalCoordinator):
         if task is not None:
             self._session_checkpoint_task = None
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass

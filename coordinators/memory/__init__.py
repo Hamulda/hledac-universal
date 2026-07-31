@@ -17,17 +17,16 @@ Backwards compatibility (deprecated):
 """
 
 from hledac.universal.coordinators.memory.context_optimizer import (
-    ContextPriority,
-    ContextItem,
     CompressedContext,
+    ContextItem,
     ContextOptimizationManager,
+    ContextPriority,
     ResearchPhase,
 )
-
 from hledac.universal.coordinators.memory.multi_level_cache import (
-    CacheType,
-    CacheLocation,
     CacheEntry,
+    CacheLocation,
+    CacheType,
     MultiLevelContextCache,
 )
 

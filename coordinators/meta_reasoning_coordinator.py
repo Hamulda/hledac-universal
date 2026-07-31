@@ -19,12 +19,16 @@ import logging
 import secrets
 import time
 from collections import deque
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from enum import Enum
 from typing import Any
+
+import msgspec
+
 from hledac.universal.utils.async_helpers import parallel_ok
+
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+
 logger = logging.getLogger(__name__)
 _RNG = secrets.SystemRandom()
 _YIELD_EVERY_COT = 4
@@ -75,9 +79,9 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     - Strategy switching during execution
     - Ensemble reasoning
     """
-    __slots__ = tuple(('_stats', 'reasoning_history', 'strategy_configs', 'strategy_keywords'))
+    __slots__ = ('_stats', 'reasoning_history', 'strategy_configs', 'strategy_keywords')
 
-    def __init__(self, max_concurrent: int=3):
+    def __init__(self, max_concurrent: int=3) -> None:
         super().__init__(name='universal_meta_reasoning_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self.strategy_configs: dict[ReasoningStrategy, dict[str, Any]] = {ReasoningStrategy.CHAIN_OF_THOUGHT: {'max_steps': 10, 'min_confidence': 0.7, 'step_description_template': 'Step {i}: {thought}'}, ReasoningStrategy.TREE_OF_THOUGHTS: {'max_depth': 5, 'branching_factor': 3, 'beam_width': 2, 'exploration_strategy': 'beam_search'}, ReasoningStrategy.GRAPH_REASONING: {'max_nodes': 50, 'connection_density': 0.3, 'centrality_metric': 'betweenness'}}
         self.strategy_keywords: dict[ReasoningStrategy, list[str]] = {ReasoningStrategy.CHAIN_OF_THOUGHT: ['step by step', 'explain', 'how', 'why', 'derive', 'calculate', 'sequence', 'process', 'procedure', 'logical'], ReasoningStrategy.TREE_OF_THOUGHTS: ['options', 'alternatives', 'compare', 'decide', 'choose', 'select', 'best', 'optimal', 'trade-off', 'multiple'], ReasoningStrategy.GRAPH_REASONING: ['connections', 'relationships', 'network', 'dependencies', 'interconnected', 'linked', 'graph', 'structure']}
@@ -165,7 +169,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                 steps_since_yield = 0
         chain.steps = steps
         chain.final_conclusion = steps[-1].conclusion if steps else 'No conclusion'
-        chain.overall_confidence = sum((s.confidence for s in steps)) / len(steps) if steps else 0
+        chain.overall_confidence = sum(s.confidence for s in steps) / len(steps) if steps else 0
         return {'type': 'chain_of_thought', 'steps': len(steps), 'reasoning_steps': [{'step': i + 1, 'description': s.description, 'reasoning': s.reasoning, 'conclusion': s.conclusion, 'confidence': s.confidence} for i, s in enumerate(steps)], 'final_conclusion': chain.final_conclusion, 'confidence': chain.overall_confidence, 'summary': f'CoT reasoning: {len(steps)} steps, confidence {chain.overall_confidence:.2f}'}
 
     async def _tree_of_thoughts_reasoning(self, query: str) -> dict[str, Any]:

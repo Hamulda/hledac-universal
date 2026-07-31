@@ -1,5 +1,4 @@
-"""
-Feed pipeline stages — extracted from live_feed_pipeline.py.
+"""Feed pipeline stages — extracted from live_feed_pipeline.py.
 
 This package contains the stage implementations for the RSS/Atom feed pipeline.
 Each stage is a self-contained module with a single responsibility.

@@ -209,7 +209,7 @@ class LayerManager:
         """
         if self._ghost_director is None:
             try:
-                from hledac.universal.hledac.cortex.director import GhostDirector
+                from hledac.universal.cortex.director import GhostDirector
                 self._ghost_director = GhostDirector(max_steps=20)
                 logger.info('✅ GhostDirector singleton created in LayerManager')
             except ImportError as e:

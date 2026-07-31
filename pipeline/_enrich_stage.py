@@ -1,6 +1,4 @@
-"""
-P2-3: Enrich Stage — AIMD-paralelní enrichment s před-předanými hits
-======================================================================
+"""P2-3: Enrich Stage — AIMD-paralelní enrichment s před-předanými hits.
 
 Role: Enrich stage přijímá (PageResult, hits) z MatchStage, provádí text
 enrichment a construction CanonicalFinding, posílá je do StoreStage.
@@ -31,9 +29,7 @@ DEFAULT_ENRICH_QUEUE_OUT = 128
 
 
 class EnrichStage:
-    """
-    Enrich stage: AsyncIterator[tuple[PageResult, list[PatternHit]]]
-                  → AsyncIterator[CanonicalFinding].
+    """AsyncIterator pipeline for CanonicalFinding construction from pattern hits.
 
     MatchStage už matchuje patterny a předává hits. EnrichStage pouze
     staví CanonicalFinding z před-matchovaných hits.
@@ -80,8 +76,7 @@ class EnrichStage:
         output_queue: BoundedStageQueue[Any],
         ctx: StageContext,
     ) -> None:
-        """
-        Zpracuje (PageResult, hits) z input_queue, enrichuje je, posílá do output_queue.
+        """Zpracuje (PageResult, hits) z input_queue, enrichuje je, posílá do output_queue.
 
         AIMD feedback po každém batchy (ne po každé stranice) — stabilnější.
 
@@ -89,6 +84,7 @@ class EnrichStage:
             input_queue: BoundedStageQueue[tuple[PageResult, list[PatternHit]]]
             output_queue: BoundedStageQueue[CanonicalFinding]
             ctx: StageContext
+
         """
         self._running = True
         metrics = ctx.get_metrics(self.name)
@@ -215,8 +211,7 @@ class EnrichStage:
     async def _enrich_one(
         self, page_result: Any, hits: list[Any], ctx: StageContext
     ) -> list[Any]:
-        """
-        Build CanonicalFinding from pre-matched hits.
+        """Build CanonicalFinding from pre-matched hits.
 
         MatchStage uz matchovala patterny — tady uz jen stavime findings.
         ŽÁDNÉ volání match_text() zde (duplikace opravena).

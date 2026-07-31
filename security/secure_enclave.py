@@ -139,7 +139,7 @@ async def create_secure_enclave_backend(enabled: bool=True) -> tuple[SecureEncla
         status = EnclaveStatus(availability=EnclaveAvailability.DISABLED)
         return (NullSecureEnclaveBackend(), status)
     try:
-        from hledac.universal.hledac.ultra_context.secure_enclave_manager import SecureEnclaveManager
+        from hledac.universal.ultra_context.secure_enclave_manager import SecureEnclaveManager
         backend = SecureEnclaveManager()
         status = EnclaveStatus(availability=EnclaveAvailability.AVAILABLE, backend_name='hledac.ultra_context.secure_enclave_manager')
         return (backend, status)

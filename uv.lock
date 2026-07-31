@@ -1220,6 +1220,12 @@ wheels = [
 ]
 
 [[package]]
+name = "greplica"
+version = "1.2.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/ac/02463f071808b49e33ff3fea9ec93c4e2915c4b63e57cbe1689cb6c3361c/greplica-1.2.7.tar.gz", hash = "sha256:9403792a1a91da9da073d9b16e62a8abef8b66f49e0e0119a00b96f4c589bfb0", size = 31224, upload-time = "2023-10-07T03:21:24.836Z" }
+
+[[package]]
 name = "grpcio"
 version = "1.83.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1326,6 +1332,7 @@ dependencies = [
     { name = "duckdb" },
     { name = "fast-langdetect" },
     { name = "gliner2" },
+    { name = "greplica" },
     { name = "hishel" },
     { name = "httpx" },
     { name = "httpx-socks" },
@@ -1490,6 +1497,7 @@ requires-dist = [
     { name = "fast-langdetect", specifier = ">=1.0.1" },
     { name = "flashrank", marker = "extra == 'ml'", specifier = ">=0.2.10" },
     { name = "gliner2", specifier = ">=1.0.1" },
+    { name = "greplica", specifier = ">=1.2.7" },
     { name = "hishel", specifier = ">=0.0.31,<2.0.0" },
     { name = "httpx", specifier = ">=0.28.0,<0.32.0" },
     { name = "httpx-socks", specifier = ">=0.11.0,<0.12.0" },

@@ -168,7 +168,7 @@ class GhostLayer:
             return
         if self._ghost_director is None:
             try:
-                from hledac.universal.hledac.cortex.director import GhostDirector
+                from hledac.universal.cortex.director import GhostDirector
                 self._ghost_director = GhostDirector(max_steps=self.config.max_steps)
                 await self._ghost_director.initialize_drivers()
                 logger.info('✅ GhostDirector initialized (local)')
@@ -192,7 +192,7 @@ class GhostLayer:
         """Lazy initialization of LootManager"""
         if self._loot_manager is None:
             try:
-                from hledac.universal.hledac.supreme.security.loot_manager import LootManager
+                from hledac.universal.supreme.security.loot_manager import LootManager
                 self._loot_manager = LootManager()
                 logger.info('✅ LootManager initialized')
             except ImportError as e:

@@ -19,11 +19,14 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from enum import Enum
 from typing import Any
+
+import msgspec
+
 from hledac.universal.utils.async_helpers import parallel
+
 logger = logging.getLogger(__name__)
 
 class AgentType(Enum):
@@ -121,9 +124,9 @@ class AgentCoordinationEngine:
         ...     agent_preferences=[AgentType.ACADEMIC]
         ... ))
     """
-    __slots__ = tuple(('_active_tasks', '_capabilities', '_executors', '_max_history', '_operation_history', '_performance', '_task_semaphores', 'strategy'))
+    __slots__ = ('_active_tasks', '_capabilities', '_executors', '_max_history', '_operation_history', '_performance', '_task_semaphores', 'strategy')
 
-    def __init__(self, strategy: CoordinationStrategy | None=None):
+    def __init__(self, strategy: CoordinationStrategy | None=None) -> None:
         self.strategy = strategy or CoordinationStrategy()
         self._capabilities: dict[AgentType, AgentCapability] = {}
         self._performance: dict[AgentType, AgentPerformance] = {}

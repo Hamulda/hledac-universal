@@ -1,5 +1,4 @@
-"""
-Public pattern matching and quality scoring.
+"""Public pattern matching and quality scoring.
 
 Extracted from live_public_pipeline.py.
 Handles: IOC extraction (rust backend), pattern context, quality scoring,
@@ -71,9 +70,9 @@ MAX_HTML_INPUT_SIZE: int = 5 * 1024 * 1024
 ### application/xhtml+xml → treated as HTML (XHTML is valid HTML)
 ### Anything else → rejected (prevents JSON/XML being parsed as HTML)
 _HTML_CONTENT_TYPES: frozenset[str] = frozenset({
-    'text/html',
-    'application/xhtml+xml',
-    'text/plain',  # passthrough — no parsing needed
+    "text/html",
+    "application/xhtml+xml",
+    "text/plain",  # passthrough — no parsing needed
 })
 
 ### Normalized content-type → True if HTML/text parser should run.
@@ -84,16 +83,17 @@ def _is_html_content_type(content_type: str) -> bool:
         return False
     ct = content_type.strip().lower()
     # Strip parameters (e.g. "text/html; charset=utf-8" → "text/html")
-    if ';' in ct:
-        ct = ct.split(';')[0].strip()
+    if ";" in ct:
+        ct = ct.split(";")[0].strip()
     return ct in _HTML_CONTENT_TYPES
 
 
 class _HTMLTextExtractor(html.parser.HTMLParser):
-    """
-    Lightweight HTMLParser that collects only text from body-level tags.
+    """Lightweight HTMLParser that collects only text from body-level tags.
+
     Fail-soft: never raises on malformed HTML.
     """
+
     __slots__ = ("_in_body", "_chunks", "_last_end")
 
     def __init__(self) -> None:
@@ -137,8 +137,8 @@ def _html_to_text(
     html_content: str,
     content_type: str | None = None,
 ) -> str:
-    """
-    Convert HTML to plain text using stdlib HTMLParser.
+    """Convert HTML to plain text using stdlib HTMLParser.
+
     Falls back to Rust `extract_html_text` (lol_html) when available — ~2-3×
     faster on large documents. Caller is responsible for asyncio.to_thread.
 
@@ -150,7 +150,7 @@ def _html_to_text(
     # text/plain passthrough: return as-is (already plain text).
     # Unknown/missing content-type: treat as plain text (safe — no HTML parsing).
     if content_type is not None and not _is_html_content_type(content_type):
-        return ''
+        return ""
     # OSINT-03: Bound input size before parsing to prevent OOM on M1 8GB.
     if len(html_content) > MAX_HTML_INPUT_SIZE:
         html_content = html_content[:MAX_HTML_INPUT_SIZE]
@@ -173,8 +173,7 @@ def _html_to_text(
 
 
 def _batch_html_to_text(html_contents: list[str]) -> list[str]:
-    """
-    Batch-convert HTML to plain text using Rust cpu_pool (4 P-cores).
+    """Batch-convert HTML to plain text using Rust cpu_pool (4 P-cores).
 
     Uses `hledac_rust_extensions.batch_extract_html_text` — rayon parallel,
     lol_html streaming, zero-allocation.
@@ -189,6 +188,7 @@ def _batch_html_to_text(html_contents: list[str]) -> list[str]:
 
     OSINT-03: Each item truncated to MAX_HTML_INPUT_SIZE (5 MB) before
     passing to Rust batch to avoid wasted work on oversized items.
+
     """
     if not html_contents:
         return []
@@ -213,8 +213,8 @@ def _batch_html_to_text(html_contents: list[str]) -> list[str]:
 def _make_finding_id(
     query: str, url: str, label: str, pattern: str, value: str
 ) -> str:
-    """
-    Deterministic finding ID via SHA-256 hash of pipeline inputs.
+    """Deterministic finding ID via SHA-256 hash of pipeline inputs.
+
     Uses rust backend xxhash if available (10-20x faster), falls back to sha256.
     """
     key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
@@ -239,8 +239,8 @@ def _pattern_context(
     end: int,
     radius: int = _FINDING_ID_CONTEXT_RADIUS,
 ) -> str:
-    """
-    Extract a context window around a pattern hit.
+    """Extract a context window around a pattern hit.
+
     Runs in calling thread (caller is responsible for asyncio.to_thread).
     """
     lo = max(0, start - radius)
@@ -280,8 +280,7 @@ def _enrich_text_with_metadata(
     snippet: str,
     extracted_text: str,
 ) -> str:
-    """
-    Build a bounded scan text from: [title] [snippet] [extracted_content].
+    """Build a bounded scan text from: [title] [snippet] [extracted_content].
 
     FIX F300: Strip HTML from title and snippet before concatenation.
     """
@@ -291,7 +290,7 @@ def _enrich_text_with_metadata(
         def _strip_html_tags_from_text(text: str) -> str:
             if not text:
                 return ""
-            return re.sub(r'<[^>]+>', ' ', text).strip()
+            return re.sub(r"<[^>]+>", " ", text).strip()
 
     title_clean = _strip_html_tags_from_text(title) if title else ""
     snippet_clean = _strip_html_tags_from_text(snippet) if snippet else ""
@@ -334,8 +333,7 @@ def _score_page_quality(
     discovery_score: float | None = None,
     discovery_reason: str | None = None,
 ) -> str:
-    """
-    Score page quality based on text content and discovery metadata.
+    """Score page quality based on text content and discovery metadata.
 
     Returns: quality tier string (_QUALITY_TIER_*)
     """
@@ -401,8 +399,7 @@ def _compute_page_usable_fields(
     error: str | None,
     extracted_text_len: int = 0,
 ) -> tuple[bool, str, str, bool, str, str]:
-    """
-    Compute usable/quality fields for a page result.
+    """Compute usable/quality fields for a page result.
 
     Returns: (is_usable, quality_tier, quality_reason, is_strong_signal,
               strong_signal_reason, waste_category)
@@ -466,8 +463,7 @@ def _compute_page_usable_fields(
 
 
 def extract_iocs_from_text(text: str) -> list[Any]:
-    """
-    Extract IOCs from text using rust backend regex engine.
+    """Extract IOCs from text using rust backend regex engine.
 
     P3 optimization: Routes to SIMD variant for text > 1KB (bulk content)
     since Teddy/NEON acceleration provides significant speedup for large texts.
@@ -489,8 +485,7 @@ def extract_iocs_from_text(text: str) -> list[Any]:
 def extract_iocs_from_texts(
     texts: list[str],
 ) -> list[list[Any]]:
-    """
-    Batch IOC extraction for multiple texts via Rust rayon pool.
+    """Batch IOC extraction for multiple texts via Rust rayon pool.
 
     Uses batch_extract_iocs_simd_indexed when:
       - batch >= 4 texts OR total >= 16KB (SIMD efficiency threshold)
@@ -507,6 +502,7 @@ def extract_iocs_from_texts(
 
     M1 8GB: rayon uses mixed_pool (adaptive 1-2 threads) for small batches,
     full CPU pool for large batches. Single GIL acquisition for entire batch.
+
     """
     if not texts:
         return []
@@ -582,8 +578,7 @@ _RANSOMWARE_FAMILY_RE = re.compile(
 
 
 def extract_threat_entities(text: str) -> list[tuple[str, str]]:
-    """
-    Extract threat actors and malware families from text.
+    """Extract threat actors and malware families from text.
 
     Returns list of (entity_name, entity_type) tuples.
     entity_type is "threat_actor" or "malware_family".
@@ -625,8 +620,8 @@ def extract_threat_entities(text: str) -> list[tuple[str, str]]:
 
 
 def _get_uma_state() -> tuple[str, bool]:
-    """
-    Read UMA status via resource_governor surface.
+    """Read UMA status via resource_governor surface.
+
     Returns (state_str, io_only_hint).
     """
     from hledac.universal.core.resource_governor import (

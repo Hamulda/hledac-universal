@@ -32,7 +32,6 @@ import logging
 import time
 
 from hledac.universal.utils.locks import LazyAsyncioLock
-from hledac.universal.utils.lru_cache import LRUCache
 from dataclasses import dataclass
 import msgspec
 from enum import Enum, auto
@@ -41,7 +40,7 @@ from urllib.parse import urlparse
 
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.core.env_config import ENV
-from hledac.universal.utils.async_helpers import async_getaddrinfo, safe_create_task, parallel
+from hledac.universal.utils.async_helpers import safe_create_task, parallel
 
 if __name__ == '__main__':
     import sys
@@ -257,119 +256,10 @@ _curl_pool = _CurlCffiPool()
 _initialized = False
 _init_lock = LazyAsyncioLock()
 
-# Issue #010: DNS prefetch cache — LRU-bounded, zero network at import
-class _DnsCache:
-    """
-    LRU DNS cache for transport-layer prefetch.
+# DNS cache — extracted to dns_cache.py (F350M-R refactor)
+from .dns_cache import get_dns_cache
 
-    Bounded: max 256 entries (~128KB RAM for 50-char hostname + 4IP)
-    TTL: 60s (balances freshness vs DNS overhead)
-    """
-    __slots__ = ('_cache', '_inflight', '_order', '_lock', '_max_size', '_ttl_s')
-
-    def __init__(self, max_size: int = 256, ttl_s: float = 60.0) -> None:
-        self._cache: dict[str, tuple[list[str], float]] = {}
-        self._inflight: dict[str, asyncio.Future[list[str] | None]] = {}
-        self._order: LRUCache[str, None] = LRUCache(max_size=max_size)
-        self._lock = asyncio.Lock()
-        self._max_size = max_size
-        self._ttl_s = ttl_s
-
-    async def resolve(self, host: str) -> list[str] | None:
-        """Resolve hostname, returning cached IPs if fresh.
-
-        C3-01 FIX: Single-flight pattern — concurrent misses for the same host
-        wait on a shared Future instead of spawning parallel DNS queries.
-
-        SEC-01 FIX: Darknet addresses (.onion, .i2p) are never resolved via the
-        OS resolver. The Tor/I2P proxy handles DNS internally via socks5h://
-        (remote DNS). Returning None immediately prevents DNS leakage.
-        """
-        # SEC-01: Darknet hosts must never hit the OS resolver.
-        # Proxy (Tor/I2P) performs DNS resolution internally.
-        _host_lower = host.lower()
-        if _host_lower.endswith('.onion') or _host_lower.endswith('.i2p'):
-            return None
-
-        now = time.monotonic()
-        # Fast path: check cache under lock
-        async with self._lock:
-            if host in self._cache:
-                ips, cached_at = self._cache[host]
-                if now - cached_at < self._ttl_s:
-                    self._order.move_to_end(host)
-                    return ips
-                del self._cache[host]
-                self._order.pop(host, None)
-            # Single-flight: if another task is already resolving this host, wait on it
-            if host in self._inflight:
-                return await self._inflight[host]
-            # Reserve slot for new resolution
-            fut: asyncio.Future[list[str] | None] = asyncio.get_event_loop().create_future()
-            self._inflight[host] = fut
-
-        # Resolution outside the lock — only one task per host reaches here
-        try:
-            # Extract port from host:port if present
-            if ':' in host:
-                parts = host.rsplit(':', 1)
-                try:
-                    port = int(parts[1])
-                    real_host = parts[0]
-                except (ValueError, IndexError):
-                    port = 443
-                    real_host = host
-            else:
-                port = 443
-                real_host = host
-            infos = await async_getaddrinfo(real_host, port, timeout=2.0)
-            ips: list[str] | None = None
-            if infos:
-                ips = [info[4][0] for info in infos if len(info) > 4]
-            async with self._lock:
-                if ips:
-                    self._order.pop(host, None)
-                    while len(self._cache) >= self._max_size:
-                        oldest_key, _ = self._order.pop_lru()
-                        self._cache.pop(oldest_key, None)
-                    self._cache[host] = (ips, now)
-                    self._order[host] = None
-                fut.set_result(ips)
-                del self._inflight[host]
-            return ips
-        except (OSError, ValueError) as e:  # getaddrinfo: OSError for network/DNS, ValueError for encoding issues
-            async with self._lock:
-                fut.set_exception(e)
-                del self._inflight[host]
-            return None
-
-    async def prefetch(self, urls: list[str]) -> None:
-        """Prefetch DNS for top-N unique hosts from URL list. Fire-and-forget.
-
-        SEC-01 FIX: Skips .onion/.i2p hosts — darknet DNS must not hit the OS resolver.
-        The proxy handles resolution internally via socks5h://.
-        """
-        hosts = set()
-        for url in urls[:50]:  # Cap at 50 URLs
-            try:
-                parsed = urlparse(url)
-                if parsed.netloc:
-                    clean_host = parsed.netloc.split(':')[0]
-                    # SEC-01: Skip darknet hosts — proxy does DNS internally.
-                    if clean_host.lower().endswith('.onion') or clean_host.lower().endswith('.i2p'):
-                        continue
-                    hosts.add(clean_host)
-            except (ValueError, OSError):  # urlparse: ValueError for malformed URLs, OSError for IDN encoding
-                continue
-        for host in hosts:
-            safe_create_task(self.resolve(host), name=f'dns_prefetch:{host}')
-
-    async def close(self) -> None:
-        async with self._lock:
-            self._cache.clear()
-            self._order.clear()
-
-_dns_cache = _DnsCache()
+_dns_cache = get_dns_cache()
 
 async def close_all_transports() -> None:
     """Close all transport pools. Call at winddown."""
@@ -391,7 +281,7 @@ async def prefetch_dns(urls: list[str]) -> None:
 
 def dns_cache_status() -> dict[str, Any]:
     """Return DNS cache telemetry snapshot."""
-    return {'cached_hosts': len(_dns_cache._cache), 'max_size': _dns_cache._max_size, 'ttl_s': _dns_cache._ttl_s}
+    return _dns_cache.status()
 _TOR_PROXY = 'socks5h://127.0.0.1:9050'
 _I2P_PROXY = 'socks5h://127.0.0.1:4447'
 

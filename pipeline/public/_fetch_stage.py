@@ -1,5 +1,4 @@
-"""
-Fetch stage — per-URL HTTP fetch for public OSINT pipeline.
+"""Fetch stage — per-URL HTTP fetch for public OSINT pipeline.
 
 Responsibilities:
 - Fetch URL content via curl_cffi / httpx
@@ -30,8 +29,7 @@ _DEFAULT_FETCH_MAX_BYTES: int = 2_000_000
 
 
 class FetchStage:
-    """
-    Fetch stage: PageBatch → FetchedBatch.
+    """Fetch stage: PageBatch → FetchedBatch.
 
     Fetches each URL in the PageBatch concurrently (bounded by semaphore).
     Delegates to public_fetch.py _fetch_and_process_page for actual fetch logic.
@@ -56,14 +54,14 @@ class FetchStage:
     async def process(
         self, input_batch: PageBatch | None
     ) -> tuple[FetchedBatch, dict[str, Any]]:
-        """
-        Fetch URLs from a PageBatch.
+        """Fetch URLs from a PageBatch.
 
         Args:
             input_batch: PageBatch with urls to fetch
 
         Returns:
             Tuple of (FetchedBatch, telemetry)
+
         """
         if input_batch is None or not input_batch.urls:
             return self._empty_batch(), {}
@@ -163,8 +161,7 @@ async def _fetch_single_url(
     fetch_timeout_s: float,
     fetch_max_bytes: int,
 ) -> dict[str, Any]:
-    """
-    Fetch a single URL and return result as dict.
+    """Fetch a single URL and return result as dict.
 
     Delegates to public_fetch.py _fetch_and_process_page.
     """

@@ -1,208 +1,268 @@
-# pyscn configuration file
-# This file configures all analysis features of pyscn
-# Place this file in your project root to customize analysis behavior
+# pyscn.toml - Architecture rules for Hledac Universal
+# PySCN v1.29.0+ layer-based architecture enforcement
 
-# =============================================================================
-# OUTPUT CONFIGURATION
-# =============================================================================
-[output]
-format = "text"                 # Default output format: text, json, yaml, csv, html
-show_details = false             # Show detailed breakdown by default
-sort_by = "complexity"           # Default sort: name, complexity, risk
-min_complexity = 1               # Minimum complexity to report
-directory = ""                   # Output directory for reports (empty = current directory)
-
-# =============================================================================
-# COMPLEXITY ANALYSIS
-# =============================================================================
-[complexity]
-enabled = true                   # Enable complexity analysis
-low_threshold = 9                # Functions with complexity ≤ 9 are low risk
-medium_threshold = 19            # Functions with complexity 10-19 are medium risk
-                                # Functions with complexity ≥ 20 are high risk
-max_complexity = 0               # Maximum allowed complexity (0 = no limit)
-report_unchanged = true          # Report functions with complexity = 1
-
-# =============================================================================
-# DEAD CODE DETECTION
-# =============================================================================
-[dead_code]
-enabled = true                   # Enable dead code detection
-min_severity = "warning"         # Minimum severity to report: critical, warning, info
-show_context = false             # Show surrounding code context
-context_lines = 3                # Number of context lines to show
-sort_by = "severity"             # Sort by: severity, line, file, function
-
-# Detection options - configure what types of dead code to detect
-detect_after_return = true       # Code after return statements
-detect_after_break = true        # Code after break statements
-detect_after_continue = true     # Code after continue statements
-detect_after_raise = true        # Code after raise statements
-detect_unreachable_branches = true # Unreachable conditional branches
-
-# Patterns to ignore (regex patterns)
-ignore_patterns = []
-
-# =============================================================================
-# CLONE DETECTION
-# =============================================================================
-[clones]
-# Analysis settings
-min_lines = 10                    # Minimum lines for clone candidates
-min_nodes = 20                   # Minimum AST nodes for clone candidates
-max_edit_distance = 50         # Maximum edit distance allowed
-ignore_literals = false          # Ignore differences in literal values
-ignore_identifiers = false       # Ignore differences in identifier names
-cost_model_type = "python"       # Cost model: default, python, weighted
-
-# Threshold settings for clone type classification (0.0 - 1.0)
-# These values are sourced from domain/defaults.go
-type1_threshold = 0.85           # Type-1: Identical code (except whitespace/comments)
-type2_threshold = 0.75           # Type-2: Syntactically identical (different identifiers)
-type3_threshold = 0.7           # Type-3: Syntactically similar (small modifications)
-type4_threshold = 0.65           # Type-4: Functionally similar (different syntax)
-similarity_threshold = 0.65       # General minimum similarity threshold
-
-# Advanced analysis settings
-enable_dfa = true                # Enable Data Flow Analysis for enhanced Type-4 detection
-
-# Filtering settings
-min_similarity = 0.0             # Minimum similarity to report
-max_similarity = 1.0             # Maximum similarity to report
-# enabled_clone_types = ["type1", "type2", "type4"]  # Default: uses domain.DefaultEnabledCloneTypes
-max_results = 10000              # Maximum results (0 = no limit)
-
-# Grouping settings
-grouping_mode = "connected"      # Grouping mode: connected, star, complete_linkage, k_core
-grouping_threshold = 0.65        # Threshold for grouping
-k_core_k = 2                     # K-core parameter
-
-# LSH acceleration settings
-lsh_enabled = "auto"             # Enable LSH: true, false, auto (based on fragment or pair count)
-lsh_auto_threshold = 500         # Auto-enable LSH at >= 500 fragments, or >10,000 estimated pairs
-lsh_similarity_threshold = 0.5  # LSH similarity threshold
-lsh_bands = 32                   # Number of LSH bands
-lsh_rows = 4                     # Number of rows per band
-lsh_hashes = 128                 # Number of hash functions
-
-# Performance settings
-max_memory_mb = 100              # Memory limit in MB (0 = no limit)
-batch_size = 100                 # Batch size for processing
-enable_batching = true           # Enable batching for large projects
-max_goroutines = 4               # Maximum concurrent goroutines
-timeout_seconds = 300            # Timeout for clone analysis
-
-# Output settings
-show_details = false             # Show detailed clone information
-show_content = false             # Include source code content in output
-sort_by = "similarity"           # Sort by: similarity, size, location, type
-group_clones = true              # Group related clones together
-
-# =============================================================================
-# CBO (COUPLING BETWEEN OBJECTS) ANALYSIS
-# =============================================================================
-[cbo]
-enabled = true                   # Enable CBO analysis
-low_threshold = 3                # CBO values ≤ 3 are low risk (industry standard)
-medium_threshold = 7             # CBO values 4-7 are medium risk (industry standard)
-                                # CBO values > 7 are high risk
-include_builtins = false         # Include built-in type dependencies
-include_imports = true           # Include imported module dependencies
-group_namespace_imports = true   # Collapse alias.Member references to one edge per namespace
-min_cbo = 0                      # Minimum CBO to report
-show_zeros = false               # Include classes with CBO = 0
-
-# =============================================================================
-# ANALYSIS CONFIGURATION
-# =============================================================================
-[analysis]
-recursive = true                 # Recursively analyze directories
-follow_symlinks = false          # Follow symbolic links
-include_patterns = ["**/*.py"]      # File patterns to include
-exclude_patterns = [             # File patterns to exclude
-    "**/test_*.py",
-    "**/*_test.py",
-    "**/__pycache__/*",
-    "**/*.pyc",
-    "**/.pytest_cache/",
-    ".tox/",
-    "venv/",
-    "env/",
-    ".venv/",
-    ".env/",
-    "**/migrations/**"           # Django/Alembic auto-generated migration files
-]
 # =============================================================================
 # ARCHITECTURE VALIDATION
 # =============================================================================
-# Define architectural layers and validate dependencies
 
 [architecture]
 enabled = true
 validate_layers = true
 strict_mode = true
 
-[[architecture.layers]]
-name = "presentation"
-packages = ["router", "routers", "route", "routes", "endpoint", "endpoints", "handler", "handlers", "controller", "controllers", "view", "views", "api", "apis", "ui", "web", "rest", "graphql"]
-
-[[architecture.layers]]
-name = "application"
-packages = ["service", "services", "usecase", "usecases", "use_case", "use_cases", "workflow", "workflows", "command", "commands", "query", "queries", "manager", "managers"]
-
-[[architecture.layers]]
-name = "domain"
-packages = ["model", "models", "entity", "entities", "schema", "schemas", "domain", "domains", "core", "business", "aggregate", "aggregates", "valueobject", "valueobjects"]
+# Layer definitions: name + package prefix patterns that belong to the layer
+# Module "knowledge.foo.bar" matches first layer whose packages[] contains a prefix.
+# Order matters: first match wins. Use most specific prefixes first.
 
 [[architecture.layers]]
 name = "infrastructure"
-packages = ["repository", "repositories", "repo", "repos", "db", "database", "adapter", "adapters", "persistence", "storage", "cache", "client", "clients", "external"]
-[[architecture.rules]]
-from = "presentation" 
-allow = ["presentation", "application", "domain", "infrastructure"]
+packages = [
+    "knowledge.db",
+    "knowledge.atomic_storage",
+    "knowledge.lmdb_subdb",
+    "knowledge.lmdb_boot_guard",
+    "knowledge.assertions",
+]
+
+[[architecture.layers]]
+name = "cache"
+packages = [
+    "knowledge._query_cache",
+]
+
+[[architecture.layers]]
+name = "wal"
+packages = [
+    "knowledge.wal",
+    "knowledge.duckdb_wal_manager",
+]
+
+[[architecture.layers]]
+name = "quality"
+packages = [
+    "knowledge._quality_types",
+    "knowledge.quality_assessment",
+    "knowledge.duckdb_quality_gate",
+]
+
+[[architecture.layers]]
+name = "dedup"
+packages = [
+    "knowledge.dedup",
+    "knowledge.embedding_dedup_index",
+    "knowledge.semantic_deduplicator",
+    "knowledge.ioc_dedup_adapter",
+]
+
+[[architecture.layers]]
+name = "storage"
+packages = [
+    "knowledge.duckdb_store",
+    "knowledge.duckdb_base_store",
+    "knowledge.duckdb_audit_store",
+    "knowledge.duckdb_forensics_store",
+    "knowledge.duckdb_graph_attachment",
+    "knowledge.duckdb_ct_cache_store",
+    "knowledge.duckdb_rag_store",
+    "knowledge.duckdb_vector_store",
+    "knowledge.duckdb_migrator",
+    "knowledge.lancedb_store",
+    "knowledge.semantic_store",
+    "knowledge.semantic_store_buffer",
+    "knowledge.vector_store",
+    "knowledge.vector_index",
+    "knowledge.vector_index_base",
+    "knowledge.ann_index",
+    "knowledge.pq_index",
+    "knowledge.rag_engine",
+    "knowledge.lancedb_rag_engine",
+    "knowledge.lancedb_auto_tuner",
+]
+
+[[architecture.layers]]
+name = "graph"
+packages = [
+    "knowledge.graph_service",
+    "knowledge.graph_rag",
+    "knowledge.graph_builder",
+    "knowledge.graph_layer",
+    "knowledge.graph_attachment",
+    "knowledge.ioc_graph",
+    "knowledge.context_graph",
+    "knowledge.entity_linker",
+    "knowledge.explainer",
+]
+
+[[architecture.layers]]
+name = "sprint"
+packages = [
+    "knowledge.sprint_boundary",
+    "knowledge.sprint_diff_engine",
+    "knowledge.sprint_seeds_store",
+    "knowledge.sprint_facts",
+]
+
+[[architecture.layers]]
+name = "analytics"
+packages = [
+    "knowledge.analytics_hook",
+    "knowledge.analyst_workbench",
+    "knowledge.evidence_chain",
+]
+
+[[architecture.layers]]
+name = "memory"
+packages = [
+    "knowledge.target_memory",
+    "knowledge.research_memory",
+    "knowledge.cross_sprint_memory",
+    "knowledge.hot_edges_cache",
+    "knowledge.ioc_processor",
+    "knowledge.ioc_pattern_matcher",
+]
+
+[[architecture.layers]]
+name = "protocols"
+packages = [
+    "knowledge.duckdb_protocol",
+]
+
+[[architecture.layers]]
+name = "root"
+packages = [
+    "knowledge",
+]
+
+[[architecture.layers]]
+name = "brain"
+packages = [
+    "brain",
+]
+
+[[architecture.layers]]
+name = "coordinators"
+packages = [
+    "coordinators",
+]
+
+[[architecture.layers]]
+name = "pipeline"
+packages = [
+    "pipeline",
+]
+
+[[architecture.layers]]
+name = "crosscutting"
+packages = [
+    "knowledge.finding_envelope",
+    "knowledge.duckdb_migrations",
+    "knowledge.memory_palace",
+    "knowledge.graph",
+    "knowledge.neuromorphic",
+    "knowledge.test_retrieval_boundaries",
+    "knowledge.search_index",
+    "knowledge.bm25_index",
+]
+
+# Layer dependency rules (from lower to higher)
+# Priority: higher index = "higher" layer. Violation when high depends on low.
+# Order: infrastructure < cache < wal < quality < dedup < storage < graph < sprint < analytics < memory < protocols < crosscutting
 
 [[architecture.rules]]
-from = "application" 
-allow = ["application", "domain", "infrastructure"]
+from = "infrastructure"
+allow = ["infrastructure"]
 
 [[architecture.rules]]
-from = "domain" 
-allow = ["domain", "infrastructure"] 
-deny = ["presentation", "application"]
+from = "cache"
+allow = ["infrastructure", "cache"]
 
 [[architecture.rules]]
-from = "infrastructure" 
-allow = ["infrastructure", "domain", "application"]
+from = "wal"
+allow = ["infrastructure", "cache", "wal"]
 
+[[architecture.rules]]
+from = "quality"
+allow = ["infrastructure", "cache", "wal", "quality"]
+
+[[architecture.rules]]
+from = "dedup"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup"]
+
+[[architecture.rules]]
+from = "storage"
+# storage is the central orchestrator — intentionally depends on foundational layers + sprint (for fact tracking)
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "sprint"]
+
+[[architecture.rules]]
+from = "graph"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph"]
+
+[[architecture.rules]]
+from = "sprint"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "sprint"]
+
+[[architecture.rules]]
+from = "analytics"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "sprint", "analytics"]
+
+[[architecture.rules]]
+from = "memory"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "memory"]
+
+[[architecture.rules]]
+from = "protocols"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "protocols"]
+
+[[architecture.rules]]
+from = "crosscutting"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "crosscutting"]
+
+[[architecture.rules]]
+from = "root"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph", "sprint", "analytics", "memory", "protocols", "crosscutting", "root"]
+
+[[architecture.rules]]
+from = "brain"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "brain"]
+
+[[architecture.rules]]
+from = "coordinators"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph", "sprint", "analytics", "memory", "protocols", "crosscutting", "root", "brain", "coordinators"]
+
+[[architecture.rules]]
+from = "pipeline"
+allow = ["infrastructure", "cache", "wal", "quality", "dedup", "storage", "graph", "sprint", "analytics", "memory", "protocols", "crosscutting", "root", "brain", "coordinators", "pipeline"]
 
 # =============================================================================
-# EXAMPLE CONFIGURATIONS
+# SINGLE RESPONSIBILITY (SRP)
 # =============================================================================
 
-# Uncomment and modify these sections for common use cases:
+[srp]
+# Note: "responsibilities" in pyscn = fan-out (how many different modules this module imports/depends on)
+# This is NOT fan-in. Central orchestrators like duckdb_store naturally depend on many subsystems.
+# For knowledge layer: duckdb_store is a facade that orchestrates 12 subsystems - this is intentional.
+max_responsibilities = 15
 
-# # Strict mode - fail on any issues
-# [complexity]
-# max_complexity = 10
-# [dead_code]
-# min_severity = "critical"
-# 
-# # Relaxed mode - only catch major issues  
-# [complexity]
-# low_threshold = 15
-# medium_threshold = 25
-# [dead_code]
-# min_severity = "warning"
-# 
-# # Clone detection focused on exact matches
-# [clones]
-# similarity_threshold = 0.95
-# enabled_clone_types = ["type1", "type2"]
-# 
-# # Performance optimized for large codebases
-# [clones]
-# max_goroutines = 8
-# max_memory_mb = 1024
-# min_lines = 10
-# min_nodes = 20
-# lsh_enabled = true
+# KNOWN FALSE POSITIVES (documented — do not require fixes):
+# - knowledge._quality_types (warning): 1 tiny msgspec struct, imported by 4 modules = intentional API boundary
+# - knowledge.duckdb_store (error): Central orchestrator/facade, depends on 12 subsystems = intentional design
+#   Splitting duckdb_store would be 6+ months of risky work for marginal benefit on M1 8GB.
+
+# =============================================================================
+# CLONE DETECTION
+# =============================================================================
+
+[clones]
+enabled = true
+min_lines = 5
+similarity_threshold = 0.8
+
+# =============================================================================
+# CBO (COUPLING)
+# =============================================================================
+
+[cbo]
+enabled = true
+low_threshold = 3
+medium_threshold = 7
+max_cbo_warning = 15

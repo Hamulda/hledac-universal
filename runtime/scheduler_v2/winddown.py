@@ -453,7 +453,7 @@ class WinddownOrchestrator:
         WeakValueDictionary in rust_backend._lazy_mod_cache auto-releases dead modules.
         """
         try:
-            from hledac.universal.hledac.universal import clear_cache
+            from hledac.universal import clear_cache
             clear_cache()
         except Exception:
             pass

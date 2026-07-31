@@ -10,32 +10,53 @@ ARCHITECTURE:
 RATIONALE:
     Quality assessment is stateful (counts, per-reason rejection ledger).
     Extracting it allows independent testing and memory-pressure-aware init.
+
+F360M-R FIX: QualityAssessmentState is now IMPORTED from quality_assessment
+(shared canonical definition). DuckDBQualityGate accepts an optional external
+state via __init__ (dependency injection) to share state with duckdb_store
+and avoid duplicate counters that can diverge.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time as _time
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    pass
+    from ._quality_types import FindingQualityDecision
+
+    # hledac_rust_extensions is a C extension — type checker can't resolve it
+    # but runtime import works fine via try/except below
+    hledac_rust_extensions: Any
+
+# F360M-R: Keep local QualityAssessmentState dataclass for DuckDBQualityGate
+# (separate from quality_assessment.QualityAssessmentState which has different API).
+# duckdb_store holds the canonical _quality_state from quality_assessment.
+# duckdb_quality_gate holds its own lightweight state for per-finding gate logic.
+from dataclasses import dataclass, field
+
 
 _logger = logging.getLogger(__name__)
 
 
-# ─── Quality Assessment State ─────────────────────────────────────────────────
+# ─── Quality Assessment State (local to duckdb_quality_gate) ───────────────────
 
 
 @dataclass
 class QualityAssessmentState:
     """
-    Stateful quality counters — tracks assessment outcomes across a sprint.
+    Lightweight state for DuckDBQualityGate — per-finding gate logic.
 
-    Lives on DuckDBQualityGate._state.
-    Reset between sprints or on demand via reset_ingest_reason_counters().
+    DIFFERENT from quality_assessment.QualityAssessmentState:
+      - duckdb_quality_gate.QualityAssessmentState: lightweight dataclass with methods
+        (record_accepted, record_rejected, etc.) for the per-finding gate.
+      - quality_assessment.QualityAssessmentState: richer state with dedup hot cache,
+        fingerprint tracking, and QualityRejectionRecord ledger — owned by duckdb_store.
+
+    F360M-R: These two states are intentionally separate to keep concerns split:
+      - Gate state: counters only (accepted/rejected/duplicate counts)
+      - Store state: counters + dedup fingerprints + rejection ledger
     """
 
     _accepted_count: int = 0
@@ -44,16 +65,15 @@ class QualityAssessmentState:
     _persistent_duplicate_count: int = 0
     _fail_open_count: int = 0
     _last_reset_ts: float = field(default_factory=_time.time)
-
-    # Rejection ledger: reason → count
-    _rejection_ledger: dict[str, int] = field(default_factory=dict)
+    _rejection_ledger: dict[str, int] | None = field(default_factory=dict)
 
     def record_accepted(self) -> None:
         self._accepted_count += 1
 
     def record_rejected(self, reason: str) -> None:
         self._rejected_count += 1
-        self._rejection_ledger[reason] = self._rejection_ledger.get(reason, 0) + 1
+        if self._rejection_ledger is not None:
+            self._rejection_ledger[reason] = self._rejection_ledger.get(reason, 0) + 1
 
     def record_duplicate(self, persistent: bool = False) -> None:
         if persistent:
@@ -88,6 +108,9 @@ class DuckDBQualityGate:
       - classify_ingest_outcome() — outcome classification
 
     M1 8GB: No special constraints — stateless per-finding assessment.
+
+    F360M-R: __init__ accepts optional state to enable state sharing with
+    duckdb_store when needed. Default creates own lightweight state.
     """
 
     __slots__ = (
@@ -96,8 +119,8 @@ class DuckDBQualityGate:
         "_quality_gate_available",
     )
 
-    def __init__(self) -> None:
-        self._state = QualityAssessmentState()
+    def __init__(self, state: QualityAssessmentState | None = None) -> None:
+        self._state = state if state is not None else QualityAssessmentState()
         self._rust_assess_quality_batch: Any = None  # Lazy, set by caller
         self._quality_gate_available = False
 
@@ -125,16 +148,16 @@ class DuckDBQualityGate:
         """Return True if Rust quality batch assessor is available."""
         if self._rust_assess_quality_batch is None:
             try:
-                from hledac.universal.knowledge.quality_assessment import (
-                    rust_assess_quality_batch as _rust_fn,
-                )
-                self._rust_assess_quality_batch = _rust_fn
+                # F360M-R: hledac_rust_extensions is a compiled C extension (PyO3).
+                # Type checker cannot resolve it; use __import__ for runtime-only import.
+                _mod = __import__("hledac_rust_extensions", fromlist=["assess_findings_quality_batch"])
+                self._rust_assess_quality_batch = _mod.assess_findings_quality_batch
                 self._quality_gate_available = True
             except ImportError:
                 self._quality_gate_available = False
         return self._quality_gate_available
 
-    def _assess_finding_quality(self, finding: Any) -> FindingQualityDecision:
+    def _assess_finding_quality(self, finding: Any) -> "FindingQualityDecision":
         """
         Apply quality rules to a single finding.
 
@@ -214,7 +237,7 @@ class DuckDBQualityGate:
                 # Rust path: returns list of True/False
                 result = self._rust_assess_quality_batch(findings)
                 verdicts: list[bool] = []
-                for i, r in enumerate(result):
+                for r in result:
                     if r:
                         self._state.record_accepted()
                         verdicts.append(True)
@@ -228,10 +251,12 @@ class DuckDBQualityGate:
         # Python fallback: per-finding assessment
         verdicts = []
         for finding in findings:
-            if self._assess_finding_quality(finding):
+            decision = self._assess_finding_quality(finding)
+            if decision.accepted:
                 self._state.record_accepted()
                 verdicts.append(True)
             else:
+                self._state.record_rejected(decision.reason or "quality_rejected")
                 verdicts.append(False)
         return verdicts
 
@@ -280,7 +305,8 @@ class DuckDBQualityGate:
 
     def get_quality_rejection_ledger(self) -> dict[str, int]:
         """Return rejection counts by reason code."""
-        return dict(self._state._rejection_ledger)
+        ledger = self._state._rejection_ledger
+        return dict(ledger) if ledger is not None else {}
 
     def reset_ingest_reason_counters(self) -> None:
         """Reset all quality counters and rejection ledger."""
@@ -298,7 +324,7 @@ class DuckDBQualityGate:
     # ── Hypothesis tracking ─────────────────────────────────────────────────
 
     async def async_record_hypothesis_tracking(
-        self, hypothesis: dict[str, Any]
+        self, _hypothesis: dict[str, Any]
     ) -> bool:
         """
         Record hypothesis tracking row (F350M).

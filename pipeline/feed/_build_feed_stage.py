@@ -1,5 +1,4 @@
-"""
-Build feed stage — CanonicalFinding construction for feed pipeline.
+"""Build feed stage — CanonicalFinding construction for feed pipeline.
 
 Responsibilities:
 - Build CanonicalFinding objects from matched feed entries
@@ -25,8 +24,7 @@ _SOURCE_TYPE: str = "rss_atom_pipeline"
 
 
 class BuildFeedStage:
-    """
-    Build feed stage: FeedMatchedBatch → FindingBatch.
+    """Build feed stage: FeedMatchedBatch → FindingBatch.
 
     Builds CanonicalFinding-ready batch from matched feed entries.
     """
@@ -48,14 +46,14 @@ class BuildFeedStage:
     async def process(
         self, input_tuple: tuple[FeedMatchedBatch, Any] | FeedMatchedBatch | None
     ) -> tuple[FindingBatch, dict[str, Any]]:
-        """
-        Build findings from matched feed entries.
+        """Build findings from matched feed entries.
 
         Args:
             input_tuple: Tuple of (FeedMatchedBatch, query_context) or just FeedMatchedBatch
 
         Returns:
             Tuple of (FindingBatch, telemetry)
+
         """
         # Handle both tuple and single batch input
         if isinstance(input_tuple, tuple):

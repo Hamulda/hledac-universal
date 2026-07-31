@@ -1,5 +1,4 @@
-"""
-Public pipeline stages — extracted from live_public_pipeline.py.
+"""Public pipeline stages — extracted from live_public_pipeline.py.
 
 This package contains the stage implementations for the public OSINT pipeline.
 Each stage is a self-contained module with a single responsibility.

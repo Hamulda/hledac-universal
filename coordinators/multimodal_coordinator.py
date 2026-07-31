@@ -15,10 +15,12 @@ Features:
 import hashlib
 import logging
 import time
-from dataclasses import dataclass, field
-import msgspec
+from dataclasses import field
 from enum import Enum
 from typing import Any
+
+import msgspec
+
 try:
     import numpy as np
     from numpy.typing import NDArray
@@ -28,9 +30,10 @@ except ImportError:
     NDArray = 'NDArray'
     HAS_NUMPY = False
 from .base import DecisionResponse, OperationResult, OperationType, UniversalCoordinator
+
 try:
     import mlx.core as mx
-    import mlx.nn as nn
+    from mlx import nn
     MLX_AVAILABLE = True
 except ImportError:
     MLX_AVAILABLE = False
@@ -82,21 +85,21 @@ class MLXMultimodalEncoder:
     MLX-based multimodal encoder for M1 optimization.
     Implements vision, audio, and text encoders using MLX.
     """
-    __slots__ = tuple(('embedding_dim', 'mlx_available'))
+    __slots__ = ('embedding_dim', 'mlx_available')
 
-    def __init__(self, embedding_dim: int=768):
+    def __init__(self, embedding_dim: int=768) -> None:
         self.embedding_dim = embedding_dim
         self.mlx_available = MLX_AVAILABLE
         if self.mlx_available:
             self._init_encoders()
 
-    def _init_encoders(self):
+    def _init_encoders(self) -> None:
         """Initialize MLX encoder models."""
 
         class VisionEncoder:
-            __slots__ = tuple(('conv1', 'conv2', 'fc'))
+            __slots__ = ('conv1', 'conv2', 'fc')
 
-            def __init__(self, embed_dim: int):
+            def __init__(self, embed_dim: int) -> None:
                 self.conv1 = lambda x: mx.conv2d(x, weight=mx.random.normal((32, 3, 3, 3)))
                 self.conv2 = lambda x: mx.conv2d(x, weight=mx.random.normal((64, 32, 3, 3)))
                 self.fc = lambda x: mx.matmul(x, mx.random.normal((64 * 56 * 56, embed_dim)))
@@ -109,9 +112,9 @@ class MLXMultimodalEncoder:
                 return mx.l2_normalize(x, axis=-1)
 
         class AudioEncoder:
-            __slots__ = tuple(('conv1', 'conv2', 'fc'))
+            __slots__ = ('conv1', 'conv2', 'fc')
 
-            def __init__(self, embed_dim: int):
+            def __init__(self, embed_dim: int) -> None:
                 self.conv1 = lambda x: mx.conv1d(x, weight=mx.random.normal((64, 1, 3)))
                 self.conv2 = lambda x: mx.conv1d(x, weight=mx.random.normal((128, 64, 3)))
                 self.fc = lambda x: mx.matmul(x, mx.random.normal((128 * 124, embed_dim)))
@@ -124,9 +127,9 @@ class MLXMultimodalEncoder:
                 return mx.l2_normalize(x, axis=-1)
 
         class TextEncoder:
-            __slots__ = tuple(('embedding', 'fc'))
+            __slots__ = ('embedding', 'fc')
 
-            def __init__(self, embed_dim: int, vocab_size: int=30000):
+            def __init__(self, embed_dim: int, vocab_size: int=30000) -> None:
                 self.embedding = lambda x: mx.take(mx.random.normal((vocab_size, 256)), x, axis=0)
                 self.fc = lambda x: mx.matmul(x, mx.random.normal((256, embed_dim)))
 
@@ -240,9 +243,9 @@ class ContrastiveLearning:
     CLIP-style contrastive learning for multimodal alignment.
     Aligns vision and text embeddings in shared space.
     """
-    __slots__ = tuple(('embedding_dim', 'image_projection', 'temperature', 'text_projection'))
+    __slots__ = ('embedding_dim', 'image_projection', 'temperature', 'text_projection')
 
-    def __init__(self, embedding_dim: int=768, temperature: float=0.07):
+    def __init__(self, embedding_dim: int=768, temperature: float=0.07) -> None:
         self.embedding_dim = embedding_dim
         self.temperature = temperature
         self.text_projection = self._init_projection()
@@ -318,9 +321,9 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
     - Memory-efficient batching
     - Unified embeddings
     """
-    __slots__ = tuple(('_stats', 'contrastive_learner', 'embedding_dim', 'fusion_weights', 'mlx_encoder', 'modality_processors', 'use_mlx'))
+    __slots__ = ('_stats', 'contrastive_learner', 'embedding_dim', 'fusion_weights', 'mlx_encoder', 'modality_processors', 'use_mlx')
 
-    def __init__(self, max_concurrent: int=5, embedding_dim: int=768, use_mlx: bool=True):
+    def __init__(self, max_concurrent: int=5, embedding_dim: int=768, use_mlx: bool=True) -> None:
         super().__init__(name='universal_multimodal_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self.embedding_dim = embedding_dim
         self.use_mlx = use_mlx and MLX_AVAILABLE
@@ -338,7 +341,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
     def get_supported_operations(self) -> list[OperationType]:
         return [OperationType.RESEARCH, OperationType.SYNTHESIS]
 
-    def _initialize_processors(self):
+    def _initialize_processors(self) -> None:
         """Initialize modality-specific processors."""
         self.modality_processors[ModalityType.TEXT] = self._process_text
         self.modality_processors[ModalityType.IMAGE] = self._process_image
@@ -375,17 +378,17 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         """
         if isinstance(content, str):
             content.lower()
-            if any((ext in content for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp'])):
+            if any(ext in content for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
                 return ModalityType.IMAGE
-            if any((ext in content for ext in ['.mp3', '.wav', '.ogg', '.flac'])):
+            if any(ext in content for ext in ['.mp3', '.wav', '.ogg', '.flac']):
                 return ModalityType.AUDIO
-            if any((ext in content for ext in ['.mp4', '.avi', '.mov', '.mkv'])):
+            if any(ext in content for ext in ['.mp4', '.avi', '.mov', '.mkv']):
                 return ModalityType.VIDEO
-            if any((ext in content for ext in ['.pdf', '.doc', '.docx', '.txt'])):
+            if any(ext in content for ext in ['.pdf', '.doc', '.docx', '.txt']):
                 return ModalityType.DOCUMENT
             return ModalityType.TEXT
         if isinstance(content, np.ndarray):
-            if content.ndim == 2 or content.ndim == 3:
+            if content.ndim in {2, 3}:
                 return ModalityType.IMAGE
             elif content.ndim == 1:
                 return ModalityType.AUDIO
@@ -456,7 +459,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
     async def _process_text(self, content: str) -> ModalityOutput:
         """Process text content."""
         words = content.split()
-        features = {'word_count': len(words), 'char_count': len(content), 'avg_word_length': sum((len(w) for w in words)) / max(len(words), 1)}
+        features = {'word_count': len(words), 'char_count': len(content), 'avg_word_length': sum(len(w) for w in words) / max(len(words), 1)}
         embedding = self._generate_text_embedding(content)
         return ModalityOutput(modality=ModalityType.TEXT, embedding=embedding, features=features, confidence=0.95)
 

@@ -1075,7 +1075,7 @@ class LanceDBIdentityStore:
             return candidates
         num_bytes = self._mlx_embeddings.shape[1]
         try:
-            from hledac.universal.hledac.compat.core_simd_similarity import batch_hamming_scores as _bhs
+            from hledac.universal.compat.core_simd_similarity import batch_hamming_scores as _bhs
             query_packed = self._pack_query_to_binary(query_emb)
             candidates_flat = self._mlx_embeddings[cand_indices].tolist()
             all_bytes = b''.join((bytes((int(x) for x in row)) for row in candidates_flat))

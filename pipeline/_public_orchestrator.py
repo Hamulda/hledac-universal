@@ -1,5 +1,4 @@
-"""
-Public Pipeline Orchestrator — wires public/ stages into a StageOrchestrator.
+"""Public Pipeline Orchestrator — wires public/ stages into a StageOrchestrator.
 
 This module provides the orchestrated version of the public OSINT pipeline
 using the StageOrchestrator framework. It composes:
@@ -40,8 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class PublicPipelineOrchestrator:
-    """
-    Orchestrates the public OSINT pipeline using StageOrchestrator.
+    """Orchestrates the public OSINT pipeline using StageOrchestrator.
 
     Pipeline stages (in order):
         1. discovery  — URL generation (bootstrap, rescue, keyword, live)
@@ -73,14 +71,14 @@ class PublicPipelineOrchestrator:
         export_dir: str | None = None,
         max_batch_size: int = 256,
     ) -> None:
-        """
-        Initialize the public pipeline orchestrator.
+        """Initialize the public pipeline orchestrator.
 
         Args:
             store: DuckDBShadowStore for canonical write (optional).
             graph_service: DuckPGQGraph for entity graph (optional).
             export_dir: Directory for Markdown/HTML export (optional).
             max_batch_size: Upper bound on batch sizes (default 256).
+
         """
         self._store = store
         self._graph_service = graph_service
@@ -112,8 +110,7 @@ class PublicPipelineOrchestrator:
         query: str,
         **kwargs: Any,
     ) -> tuple[StageResult, ...]:
-        """
-        Run the public pipeline for a query.
+        """Run the public pipeline for a query.
 
         Args:
             query: The OSINT query string.
@@ -121,6 +118,7 @@ class PublicPipelineOrchestrator:
 
         Returns:
             Tuple of StageResult, one per stage.
+
         """
         self._query = query
 
@@ -153,8 +151,7 @@ async def run_public_pipeline_orchestrated(
     graph_service: Any | None = None,
     export_dir: str | None = None,
 ) -> tuple[StageResult, ...]:
-    """
-    Run the public pipeline in orchestrated mode.
+    """Run the public pipeline in orchestrated mode.
 
     Args:
         query: The OSINT query string.
@@ -164,6 +161,7 @@ async def run_public_pipeline_orchestrated(
 
     Returns:
         Tuple of StageResult from each stage.
+
     """
     orch = PublicPipelineOrchestrator(
         store=store,

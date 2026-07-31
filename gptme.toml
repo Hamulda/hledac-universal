@@ -1,21 +1,16 @@
-[user]
-name = "Developer"
-about = "Senior software engineer working with hybrid Python and Rust codebases, PyO3 bindings, and terminal automation."
-response_preference = "Be concise, skip basic concepts and greetings. Write clean, idiomatic code. Always check compiler stderr when builds fail."
-
 [env]
-MODEL = "anthropic/MiniMax-M2.7"
-ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic"
-ANTHROPIC_API_KEY = "sk-cp-ybYBmEmwQ_H-VZwhQPXSGGfXc6OiAIvwUyuNTx3z351d9xHaDGwXWmbmLVh9-FUi-S8caXWEscgmvIoxqBUAG8bb3-9MyVpqjPf7JR-nQ6YEsl5WNjI1vuQ"
+MODEL = "local/MiniMax-M2.7"
+OPENAI_BASE_URL = "https://api.minimax.io/v1"
+OPENAI_API_KEY = "sk-cp-ybYBmEmwQ_H-VZwhQPXSGGfXc6OiAIvwUyuNTx3z351d9xHaDGwXWmbmLVh9-FUi-S8caXWEscgmvIoxqBUAG8bb3-9MyVpqjPf7JR-nQ6YEsl5WNjI1vuQ"
 
-GPTME_MEMORIES_MODEL = "anthropic/MiniMax-M2.7"
+GPTME_MEMORIES_MODEL = "local/MiniMax-M2.7"
 GPTME_LESSONS_HYBRID = "true"
 GPTME_TOOLS = "shell,read,save,append,patch,patch_anchored,view_anchored,ipython,rag,tmux,subagent,chats,gh,mcp,precommit,lsp,codegraph_parse,codegraph_index,codegraph_map,codegraph_def,codegraph_callers,codegraph_callees,codegraph_refs,codegraph_blast,codegraph_impact"
 GPTME_TOOL_SOUNDS = "false"
 GPTME_STREAM = "true"
 
 [prompt]
-files = ["~/.config/gptme/user-memories/facts.md"]
+files = ["README.md"]
 
 [plugins]
 paths = ["/Users/vojtechhamada/.config/gptme/contrib/plugins"]

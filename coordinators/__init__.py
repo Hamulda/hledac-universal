@@ -38,7 +38,6 @@ from ._catalog import catalog
 
 # Benchmark coordinator — DEPRECATED 2026-07-05, archived to archive/coordinators_deprecated_2026_07_05/
 # Direct imports: use benchmarks/ scripts (benchmarks/live_measurement_kpi.py, etc.)
-
 # Multi-agent coordination
 from .agent_coordination_engine import (
     AgentCapability,
@@ -76,6 +75,7 @@ from .meta_reasoning_coordinator import (
     UniversalMetaReasoningCoordinator,
 )
 from .monitoring_coordinator import UniversalMonitoringCoordinator
+from .opsec_coordinator import OpsECCoordinator
 
 # Performance optimization
 from .performance_coordinator import (
@@ -131,17 +131,15 @@ from .resource_allocator import (
     ResourceRequest,
     ResourceType,
 )
-from .opsec_coordinator import OpsECCoordinator
 from .security_coordinator import (
+    SecurityContext,
     SecurityCoordinator,
     SecurityLevel,
-    SecurityContext,
     SecurityResult,
     UniversalSecurityCoordinator,
 )
 
 # swarm_coordinator: deprecated - use lazy import via __getattr__
-
 # Validation coordinator
 from .validation_coordinator import (
     CleaningResult,

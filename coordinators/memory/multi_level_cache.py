@@ -20,20 +20,19 @@ Canonical import:
 """
 
 import asyncio
-import gc
 import hashlib
 import logging
 import sys
 import time
-from hledac.universal.utils.lru_cache import LRUCache
-from dataclasses import dataclass
-import msgspec
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
+import msgspec
+
+from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
+from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +92,7 @@ class MultiLevelContextCache:
     - Configurable similarity threshold
     - LFU eviction policy
     """
-    __slots__ = tuple((
+    __slots__ = (
         '_embedding_cache', '_embedding_cache_lock', '_hnsw_ef_construction',
         '_hnsw_ef_search', '_hnsw_index', '_hnsw_m', '_hnsw_max_elements',
         '_l1_freq', '_l2_freq', '_lock',
@@ -101,7 +100,7 @@ class MultiLevelContextCache:
         'faiss_available', 'l1_cache', 'l1_max_size_bytes', 'l2_cache',
         'l2_storage_path', 'max_entries', 'semantic_index', 'similarity_threshold',
         'stats',
-    ))
+    )
 
     # F320-Issue2: NFC-normalized text embedding cache — now per-instance
     _embedding_cache: dict[str, Any]
@@ -315,8 +314,9 @@ class MultiLevelContextCache:
         C7-FIX: Uses run_sync_async() from sync_bridge for M1 safety.
         Prefer async _get_embedding_async() when called from async context.
         """
-        from hledac.universal.utils.sync_bridge import run_sync_async
         import unicodedata
+
+        from hledac.universal.utils.sync_bridge import run_sync_async
         normalized = unicodedata.normalize('NFC', text)
         cached = self._embedding_cache.get(normalized)
         if cached is not None:
@@ -457,7 +457,7 @@ class MultiLevelContextCache:
 
     def _get_l1_size_bytes(self) -> int:
         """Get total size of L1 cache."""
-        return sum((entry.size_bytes for entry in self.l1_cache.values()))
+        return sum(entry.size_bytes for entry in self.l1_cache.values())
 
     def _update_access(self, cache_id: str) -> None:
         """Update access statistics and LFU frequency counter for cache entry.

@@ -739,6 +739,7 @@ fn __apple_target__() -> String {
 ///   enabled_symbols = [s for s in manifest["all_lib_rs"]
 ///                     if _module_for_symbol(s, manifest["lib_rs_symbols"]) in features
 ///                     or _is_core_symbol(s)]
+#[pyfunction]
 fn __features__() -> Vec<String> {
     // CARGO_FEATURES_LIST is set by build.rs — format: "feature1,feature2,feature3"
     let env_val = option_env!("CARGO_FEATURES_LIST")
@@ -1129,9 +1130,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     tracing::register(m)?;
 
     // GRAPH-03: .onion v3 address validation — Ed25519 checksum verification
-    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3, m))?;
-    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3_detailed, m))?;
-    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_batch, m))?;
+    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3, m)?)?;
+    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3_detailed, m)?)?;
+    m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_batch, m)?)?;
 
 Ok(())
 }

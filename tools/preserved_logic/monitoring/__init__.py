@@ -1,0 +1,3 @@
+"""
+monitoring — system diagnostics stubs.
+"""

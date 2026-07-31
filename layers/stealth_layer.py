@@ -952,7 +952,7 @@ class StealthLayer:
         """Lazy initialization of StealthBrowser"""
         if self._stealth_browser is None:
             try:
-                from hledac.universal.hledac.advanced_web.stealth_browser import BrowserConfig, StealthBrowser
+                from hledac.universal.advanced_web.stealth_browser import BrowserConfig, StealthBrowser
                 browser_config = BrowserConfig(browser_type=self.config.browser_type, headless=self.config.headless, pool_size=self.config.pool_size, m1_optimized=True)
                 self._stealth_browser = StealthBrowser(browser_config)
                 await self._stealth_browser.initialize()
@@ -966,7 +966,7 @@ class StealthLayer:
         """Lazy initialization of DetectionEvader"""
         if self._detection_evader is None:
             try:
-                from hledac.universal.hledac.advanced_web.detection_evader import DetectionEvader
+                from hledac.universal.advanced_web.detection_evader import DetectionEvader
                 self._detection_evader = DetectionEvader(detection_threshnew=self.config.detection_threshold, adaptive_mode=self.config.adaptive_mode)
                 logger.info('✅ DetectionEvader initialized')
             except ImportError as e:

@@ -1,5 +1,4 @@
-"""
-SoA (Structure of Arrays) batch types for pipeline stage data flow.
+"""SoA (Structure of Arrays) batch types for pipeline stage data flow.
 
 These msgspec Structs represent batched data passed between pipeline stages.
 Using SoA (not AoS) enables:
@@ -21,8 +20,7 @@ if TYPE_CHECKING:
 
 
 class PageBatch(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structure of Arrays for batch page processing.
+    """Structure of Arrays for batch page processing.
 
     Represents a batch of discovered pages awaiting fetch, extract, and match.
     All lists are index-aligned: urls[i], titles[i], etc. describe page i.
@@ -41,8 +39,7 @@ class PageBatch(msgspec.Struct, frozen=True, gc=False):
 
 
 class FetchedBatch(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structure of Arrays for batch after fetch stage.
+    """Structure of Arrays for batch after fetch stage.
 
     index-aligned with PageBatch: fetched_batch.urls[i] == page_batch.urls[i]
     """
@@ -58,8 +55,7 @@ class FetchedBatch(msgspec.Struct, frozen=True, gc=False):
 
 
 class ScoredBatch(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structure of Arrays after quality scoring stage.
+    """Structure of Arrays after quality scoring stage.
 
     index-aligned with FetchedBatch.
     """
@@ -76,8 +72,7 @@ class ScoredBatch(msgspec.Struct, frozen=True, gc=False):
 
 
 class MatchedBatch(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structure of Arrays after pattern matching stage.
+    """Structure of Arrays after pattern matching stage.
 
     index-aligned with ScoredBatch.
     """
@@ -89,8 +84,7 @@ class MatchedBatch(msgspec.Struct, frozen=True, gc=False):
 
 
 class FindingBatch(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structure of Arrays for CanonicalFinding-ready batch.
+    """Structure of Arrays for CanonicalFinding-ready batch.
 
     This is the output of the build stage and input to FindingPipeline.
     Converted to individual CanonicalFinding objects by the store stage.
@@ -110,8 +104,7 @@ class FindingBatch(msgspec.Struct, frozen=True, gc=False):
 
 
 class FeedEntryBatch(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structure of Arrays for feed pipeline entry batch.
+    """Structure of Arrays for feed pipeline entry batch.
 
     index-aligned arrays for RSS/Atom feed processing.
     """
@@ -125,9 +118,7 @@ class FeedEntryBatch(msgspec.Struct, frozen=True, gc=False):
 
 
 class FeedAssembledBatch(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structure of Arrays after feed text assembly stage.
-    """
+    """Structure of Arrays after feed text assembly stage."""
 
     entry_urls: list[str]
     assembled_texts: list[str]  # clean text for pattern scan
@@ -136,9 +127,7 @@ class FeedAssembledBatch(msgspec.Struct, frozen=True, gc=False):
 
 
 class FeedMatchedBatch(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structure of Arrays after feed pattern scan stage.
-    """
+    """Structure of Arrays after feed pattern scan stage."""
 
     entry_urls: list[str]
     matched_pattern_counts: list[int]

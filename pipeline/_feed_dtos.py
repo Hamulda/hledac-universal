@@ -428,46 +428,37 @@ except Exception:
     _HAS_RUST_FEED_DECISION = False
 
 
-def classify_fallback_decision(*args: Any, **kwargs: Any) -> tuple[str, bool, bool, bool, bool, str]:
-    """Wrapper: use Rust if available, Python fallback otherwise."""
-    if _HAS_RUST_FEED_DECISION:
-        return _rust.feed_decision_classify(*args, **kwargs)
-    return classify_fallback_decision_python(*args, **kwargs)
+import sys as _sys
 
 
-def diagnose_signal_stage(*args: Any, **kwargs: Any) -> str:
-    """Wrapper: use Rust if available, Python fallback otherwise."""
-    if _HAS_RUST_FEED_DECISION:
-        return _rust.feed_stage_diagnose(*args, **kwargs)
-    return diagnose_signal_stage_python(*args, **kwargs)
+def _make_rust_wrapper(rust_fn_name: str) -> Any:
+    """Create a Rust/Python wrapper for feed decision functions.
+
+    Reduces 5 identical wrapper functions to one factory call.
+    """
+    python_fn_name = f"{rust_fn_name}_python"
+
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if _HAS_RUST_FEED_DECISION:
+            return getattr(_rust, rust_fn_name)(*args, **kwargs)
+        return getattr(_sys.modules[__name__], python_fn_name)(*args, **kwargs)
+
+    wrapper.__name__ = rust_fn_name
+    wrapper.__doc__ = "Wrapper: use Rust if available, Python fallback otherwise."
+    return wrapper
 
 
-def compute_feed_branch_hint(*args: Any, **kwargs: Any) -> str:
-    """Wrapper: use Rust if available, Python fallback otherwise."""
-    if _HAS_RUST_FEED_DECISION:
-        return _rust.feed_branch_hint(*args, **kwargs)
-    return compute_feed_branch_hint_python(*args, **kwargs)
-
-
-def compute_feed_economics_verdict(*args: Any, **kwargs: Any) -> tuple[str, int, int, int, int]:
-    """Wrapper: use Rust if available, Python fallback otherwise."""
-    if _HAS_RUST_FEED_DECISION:
-        return _rust.feed_economics_verdict(*args, **kwargs)
-    return compute_feed_economics_verdict_python(*args, **kwargs)
-
-
-def compute_feed_branch_verdict(*args: Any, **kwargs: Any) -> dict[str, Any]:
-    """Wrapper: use Rust if available, Python fallback otherwise."""
-    if _HAS_RUST_FEED_DECISION:
-        return _rust.feed_branch_verdict(*args, **kwargs)
-    return compute_feed_branch_verdict_python(*args, **kwargs)
+classify_fallback_decision = _make_rust_wrapper("feed_decision_classify")
+diagnose_signal_stage = _make_rust_wrapper("feed_stage_diagnose")
+compute_feed_branch_hint = _make_rust_wrapper("feed_branch_hint")
+compute_feed_economics_verdict = _make_rust_wrapper("feed_economics_verdict")
+compute_feed_branch_verdict = _make_rust_wrapper("feed_branch_verdict")
 
 
 # === Fallback Decision (moved from live_feed_pipeline.py) ===
 
 class FallbackDecision(msgspec.Struct, frozen=True, gc=False):
-    """
-    Structured fallback decision output.
+    """Structured fallback decision output.
 
     reason: canonical reason tag for the decision
     should_fetch: True if article fetch should be attempted

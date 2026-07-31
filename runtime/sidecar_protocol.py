@@ -375,6 +375,240 @@ class BaseSidecarAdapter:
         return []
 
 
+# ── GenericSidecarAdapter ─────────────────────────────────────────────────────────
+# F360M: Consolidates 13 near-identical sidecar adapters into 1 parametrizable class.
+
+
+from typing import Any, Callable, TypeVar
+
+T = TypeVar("T")
+R = TypeVar("R")
+
+
+# Callable types for from_config() factory — avoids Protocol assignment issues
+TermExtractorFn = Callable[[SidecarContext], list[str]]
+SearchFn = Callable[..., Any]
+ResultToFindingFn = Callable[..., dict | None]
+
+
+class GenericSidecarAdapter(BaseSidecarAdapter):
+    """
+    F360M: Generic sidecar adapter template.
+
+    Consolidates the common sidecar pattern:
+        1. Extract terms from ctx
+        2. Call async search function
+        3. Transform results to findings
+        4. Return capped results
+
+    Reduces 13 near-identical adapters (~2000 LOC) into one configurable class.
+    Inherits from BaseSidecarAdapter for is_available() and run() wrapper.
+
+    Usage (subclass):
+        @SidecarRegistry.register("my_adapter")
+        class MyAdapter(GenericSidecarAdapter):
+            sidecar_id: str = "my_adapter"
+            lane_id: str = "my_lane"
+            ram_budget_mb: int = 50
+            priority: int = 5
+
+            def extract_terms(self, ctx: SidecarContext) -> list[str]:
+                ...
+
+            async def search(self, terms: list[str], ctx: SidecarContext) -> list[Any]:
+                ...
+
+            def result_to_finding(self, result: Any, ctx: SidecarContext) -> dict | None:
+                ...
+
+    Usage (functional from_config()):
+        adapter = GenericSidecarAdapter.from_config(
+            sidecar_id="my_adapter",
+            lane_id="my_lane",
+            ram_budget_mb=50,
+            priority=5,
+            extract_terms=lambda ctx: [ctx.query] if ctx.query else [],
+            search=lambda terms, ctx: my_search(terms),
+            result_to_finding=lambda r, ctx: {"source_type": "x", ...},
+            max_results=50,
+        )
+    """
+
+    sidecar_id: str = "generic"
+    lane_id: str = "generic"
+    ram_budget_mb: int = 50
+    priority: int = 5
+    _max_results: int = 50
+
+    # Hooks for subclass override
+    def extract_terms(self, ctx: SidecarContext) -> list[str]:
+        """Extract search terms. Override in subclass."""
+        if ctx.query:
+            return [ctx.query]
+        terms: list[str] = []
+        for f in ctx.findings[:20]:
+            val = getattr(f, "ioc_value", None)
+            if val and len(val) < 100:
+                terms.append(val)
+        return terms[:10]
+
+    async def search(self, terms: list[str], ctx: SidecarContext) -> list[Any]:
+        """Perform async search. Override in subclass."""
+        return []
+
+    def result_to_finding(self, result: Any, ctx: SidecarContext) -> dict | list[dict] | None:
+        """
+        Transform result to finding dict(s).
+
+        Override in subclass.
+        Returns a single dict, a list of dicts (Fediverse pattern), or None to skip.
+        """
+        return None
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """Template method: extract → search → transform → return."""
+        if not ctx.query and not ctx.findings:
+            return []
+
+        try:
+            terms = self.extract_terms(ctx)
+            if not terms:
+                return []
+            terms = terms[:20]  # Cap terms for M1 safety
+
+            results = await self.search(terms, ctx)
+
+            findings: list[Any] = []
+            for result in results:
+                try:
+                    finding = self.result_to_finding(result, ctx)
+                    if finding:
+                        findings.append(finding)
+                except Exception:  # noqa: BLE001
+                    continue
+
+            return findings[: self._max_results]
+
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "GenericSidecarAdapter.%s.run_async: fail-soft",
+                self.sidecar_id, exc_info=True,
+            )
+            return []
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        sidecar_id: str,
+        lane_id: str,
+        ram_budget_mb: int,
+        priority: int,
+        extract_terms: TermExtractorFn | None = None,
+        search: SearchFn | None = None,
+        result_to_finding: ResultToFindingFn | None = None,
+        max_results: int = 50,
+        env_gate: str | None = None,  # reserved for future use
+    ) -> "GenericSidecarAdapter":
+        """
+        Factory: create a configured GenericSidecarAdapter instance.
+
+        For cases where a full class definition is overkill:
+            adapter = GenericSidecarAdapter.from_config(
+                sidecar_id="my_adapter",
+                lane_id="my_lane",
+                ram_budget_mb=50,
+                priority=5,
+                extract_terms=lambda ctx: [ctx.query] if ctx.query else [],
+                search=lambda terms, ctx: my_search(terms),
+                result_to_finding=lambda r, ctx: {"source_type": "x", ...},
+                max_results=50,
+            )
+        """
+        instance = cls()
+        instance.sidecar_id = sidecar_id
+        instance.lane_id = lane_id
+        instance.ram_budget_mb = ram_budget_mb
+        instance.priority = priority
+        instance._max_results = max_results
+
+        # Store as private callable attributes (composition over method assignment)
+        if extract_terms is not None:
+            instance._extract_terms_fn = extract_terms
+        if search is not None:
+            instance._search_fn = search
+        if result_to_finding is not None:
+            instance._result_to_finding_fn = result_to_finding
+
+        return instance
+
+    # Private callable storage for from_config() factory
+    _extract_terms_fn: TermExtractorFn | None = None
+    _search_fn: SearchFn | None = None
+    _result_to_finding_fn: ResultToFindingFn | None = None
+
+
+# ── CorrelateBasedSidecarAdapter ─────────────────────────────────────────────────
+# F360M: For adapters that use correlate(findings, query) pattern
+
+
+class CorrelateBasedSidecarAdapter(BaseSidecarAdapter):
+    """
+    F360M: Sidecar adapter for correlate-based sidecars.
+
+    Pattern: adapter.correlate(findings, query) → list[Finding]
+
+    This handles sidecars like PassiveFingerprint and PassiveTechStack that:
+    1. Take existing findings as input
+    2. Call a correlate() method that derives new findings
+    3. Return the derived findings
+
+    Reduces ~100 LOC across PassiveFingerprint + PassiveTechStack.
+
+    Usage:
+        @SidecarRegistry.register("my_correlate")
+        class MyCorrelateAdapter(CorrelateBasedSidecarAdapter):
+            sidecar_id: str = "my_correlate"
+            lane_id: str = "my_correlate"
+            ram_budget_mb: int = 50
+            priority: int = 5
+
+            def create_adapter(self) -> Any:
+                from somewhere import create_my_adapter
+                return create_my_adapter()
+    """
+
+    sidecar_id: str = "correlate"
+    lane_id: str = "correlate"
+    ram_budget_mb: int = 50
+    priority: int = 5
+
+    def create_adapter(self) -> Any:
+        """
+        Factory method to create the correlate adapter.
+
+        Override in subclass to return the appropriate adapter instance.
+        Default raises NotImplementedError.
+        """
+        raise NotImplementedError("Subclass must implement create_adapter()")
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """Template: create adapter → correlate → return findings."""
+        if not ctx.findings and not ctx.query:
+            return []
+
+        try:
+            adapter = self.create_adapter()
+            derived = adapter.correlate(ctx.findings, ctx.query)
+            return list(derived) if derived else []
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "CorrelateBasedSidecarAdapter.%s.run_async: fail-soft",
+                self.sidecar_id, exc_info=True,
+            )
+            return []
+
+
 # ── Auto-Registration ─────────────────────────────────────────────────────────
 
 # ISSUE #22: Lazy import — sidecar modules loaded only when first accessed.

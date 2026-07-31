@@ -1,5 +1,4 @@
-"""
-Scan stage — pattern scan on assembled feed text.
+"""Scan stage — pattern scan on assembled feed text.
 
 Responsibilities:
 - Apply Rust Aho-Corasick pattern matching to assembled text
@@ -22,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class ScanStage:
-    """
-    Scan stage: FeedAssembledBatch → FeedMatchedBatch.
+    """Scan stage: FeedAssembledBatch → FeedMatchedBatch.
 
     Applies pattern matching to assembled feed texts.
     Uses Rust feed_pipeline if available.
@@ -38,14 +36,14 @@ class ScanStage:
     async def process(
         self, input_batch: FeedAssembledBatch | None
     ) -> tuple[FeedMatchedBatch, dict[str, Any]]:
-        """
-        Scan assembled texts for patterns.
+        """Scan assembled texts for patterns.
 
         Args:
             input_batch: FeedAssembledBatch with assembled texts
 
         Returns:
             Tuple of (FeedMatchedBatch, telemetry)
+
         """
         if input_batch is None or not input_batch.entry_urls:
             return self._empty_batch(), {}

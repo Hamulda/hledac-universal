@@ -1,5 +1,4 @@
-"""
-Discovery stage — URL generation for public OSINT pipeline.
+"""Discovery stage — URL generation for public OSINT pipeline.
 
 Responsibilities:
 - Generate bootstrap URLs for domain/URL queries
@@ -32,8 +31,7 @@ _MAX_RESCUE_URLS: int = 8
 
 
 class DiscoveryStage:
-    """
-    Discovery stage: query → list of candidate URLs.
+    """Discovery stage: query → list of candidate URLs.
 
     Generates candidate URLs via:
     1. Bootstrap (domain → well-known URLs)
@@ -51,14 +49,14 @@ class DiscoveryStage:
     async def process(
         self, input_batch: str | None = None
     ) -> tuple[PageBatch, dict[str, Any]]:
-        """
-        Process a query string into a PageBatch.
+        """Process a query string into a PageBatch.
 
         Args:
             input_batch: The OSINT query string (or None for initialization)
 
         Returns:
             Tuple of (PageBatch, telemetry_dict)
+
         """
         # This stage is special — it takes a query string, not a batch
         query = input_batch if isinstance(input_batch, str) else ""
@@ -71,8 +69,7 @@ class DiscoveryStage:
         public_bootstrap_enabled: bool = True,
         max_results: int = 10,
     ) -> tuple[PageBatch, dict[str, Any]]:
-        """
-        Run discovery for a query.
+        """Run discovery for a query.
 
         Args:
             query: The OSINT query string.
@@ -81,6 +78,7 @@ class DiscoveryStage:
 
         Returns:
             Tuple of (PageBatch, telemetry)
+
         """
         telemetry: dict[str, Any] = {
             "discovery_attempted": False,

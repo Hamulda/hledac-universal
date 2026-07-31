@@ -99,6 +99,90 @@ class WinddownPhase(Protocol):
     async def run(self, ctx: SprintContext, lifecycle: Any, query: str) -> None:
         """Run winddown (flush, export, synthesis, teardown)."""
         ...
+
+
+class AcquisitionOrchestratorProtocol(Protocol):
+    """Protocol for AcquisitionOrchestrator — main acquisition cycle orchestrator.
+
+    F360M-R / Issue #4: Formal protocol to reduce CBO coupling (CBO=12) by defining
+    a clear interface that any acquisition orchestrator must implement.
+
+    This protocol captures the public API of AcquisitionOrchestrator without
+    coupling callers to the concrete implementation. Phases depend on this protocol
+    rather than the concrete class.
+
+    Public API:
+    - run() — main entry point, runs the acquisition cycle loop
+    - fetch_one() — fetch a single URL
+    - run_feed_branch() — run feed acquisition branch
+    - run_public_branch() — run public acquisition branch
+    """
+
+    async def run(
+        self,
+        ctx: SprintContext,
+        ordered_sources: list[Any],
+        duckdb_store: Any,
+        now_monotonic: float | None,
+    ) -> AcquisitionPhaseResult:
+        """Run the main acquisition cycle loop until terminal state."""
+        ...
+
+    async def fetch_one(self, work: Any) -> tuple[str, Any]:
+        """Fetch a single URL/work item. Returns (source_type, result)."""
+        ...
+
+    async def run_feed_branch(self) -> dict[str, Any]:
+        """Run feed acquisition branch. Returns dict with results."""
+        ...
+
+    async def run_public_branch(self) -> dict[str, Any]:
+        """Run public acquisition branch. Returns dict with results."""
+        ...
+
+
+class SchedulerProtocol(Protocol):
+    """Protocol for SprintSchedulerV2 — top-level sprint orchestration.
+
+    F360M-R / Issue #4: Formal protocol to reduce CBO coupling (CBO=12) by defining
+    a clear interface that any sprint scheduler must implement.
+
+    This protocol captures the public API of SprintSchedulerV2 without coupling
+    callers to the concrete implementation. The CLI and entry points depend on
+    this protocol rather than the concrete class.
+
+    Public API:
+    - run() — main entry point, runs a complete sprint
+    - inject_evidence_log() — inject EvidenceLog instance
+    - inject_cancel_event() — inject cancellation event
+    - record_hypothesis_feedback() — record hypothesis feedback
+    - health_check() — return health status dict
+    - aclose() — async close/shutdown
+    """
+
+    async def run(self, query: str) -> Any:
+        """Run a complete sprint. Returns SprintSchedulerResult."""
+        ...
+
+    def inject_evidence_log(self, elog: Any) -> None:
+        """Inject EvidenceLog instance."""
+        ...
+
+    def inject_cancel_event(self, cancel_event: asyncio.Event) -> None:
+        """Inject cancellation event."""
+        ...
+
+    async def record_hypothesis_feedback(self, record: Any) -> bool:
+        """Record hypothesis feedback. Returns True on success."""
+        ...
+
+    def health_check(self) -> dict[str, Any]:
+        """Return health status dict."""
+        ...
+
+    async def aclose(self) -> None:
+        """Async close/shutdown."""
+        ...
 T = TypeVar('T', default=object)
 
 @dataclass(frozen=True, slots=True)

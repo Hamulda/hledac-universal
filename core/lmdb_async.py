@@ -53,7 +53,7 @@ def _get_rust_backend() -> Any:
     global _lmdb_async_rust
     if _lmdb_async_rust is None:
         try:
-            from hledac.universal.hledac.universal import hledac_rust_extensions as ext
+            from hledac.universal import hledac_rust_extensions as ext
 
             _lmdb_async_rust = ext
         except ImportError:

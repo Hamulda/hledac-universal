@@ -1,5 +1,4 @@
-"""
-Export stage — Markdown/HTML graph export for public OSINT pipeline.
+"""Export stage — Markdown/HTML graph export for public OSINT pipeline.
 
 Responsibilities:
 - Export findings as Markdown report
@@ -21,8 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExportStage:
-    """
-    Export stage: FindingBatch → FindingBatch (passthrough).
+    """Export stage: FindingBatch → FindingBatch (passthrough).
 
     Exports findings to Markdown and HTML graph.
     This is a terminal stage — it passes findings through unchanged.
@@ -40,14 +38,14 @@ class ExportStage:
     async def process(
         self, input_tuple: tuple[FindingBatch, dict[str, Any]] | FindingBatch | None
     ) -> tuple[FindingBatch, dict[str, Any]]:
-        """
-        Export findings (passthrough).
+        """Export findings (passthrough).
 
         Args:
             input_tuple: Tuple of (FindingBatch, extra_context) or just FindingBatch
 
         Returns:
             Tuple of (FindingBatch passthrough, export telemetry)
+
         """
         # Handle both tuple and single batch input
         if isinstance(input_tuple, tuple):

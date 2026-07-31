@@ -1,6 +1,4 @@
-"""
-P2-3: Store Stage — CanonicalFinding storage s bounded queue
-=========================================================
+"""P2-3: Store Stage — CanonicalFinding storage s bounded queue.
 
 Role: Store stage přijímá CanonicalFinding z EnrichStage,
 odesílá je do DuckDB přes store.submit_findings() s bounded queue.
@@ -23,8 +21,7 @@ DEFAULT_STORE_QUEUE_IN = 128  # CanonicalFinding čekající na store
 
 
 class StoreStage:
-    """
-    Store stage: AsyncIterator[CanonicalFinding] → (stored to DuckDB).
+    """Store stage: AsyncIterator[CanonicalFinding] → (stored to DuckDB).
 
     Poslední stage — přijímá CanonicalFinding, odesílá je do DuckDBShadowStore.
     Bounded queue: maxsize=128, drop na overflow (fail-safe, neblokuje).

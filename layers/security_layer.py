@@ -134,7 +134,7 @@ class SecurityLayer:
         """Lazy initialization of StringObfuscator"""
         if self._string_obfuscator is None:
             try:
-                from hledac.universal.hledac.crypto.string_obfuscator import StringObfuscator
+                from hledac.universal.crypto.string_obfuscator import StringObfuscator
                 self._string_obfuscator = StringObfuscator()
                 logger.info('✅ StringObfuscator initialized')
             except ImportError as e:
@@ -145,7 +145,7 @@ class SecurityLayer:
         """Lazy initialization of ResearchObfuscator"""
         if self._research_obfuscator is None:
             try:
-                from hledac.universal.hledac.research_security.research_obfuscation import ResearchObfuscator
+                from hledac.universal.research_security.research_obfuscation import ResearchObfuscator
                 self._research_obfuscator = ResearchObfuscator()
                 logger.info('✅ ResearchObfuscator initialized')
             except ImportError as e:
@@ -156,7 +156,7 @@ class SecurityLayer:
         """Lazy initialization of SecureDestructor"""
         if self._secure_destructor is None:
             try:
-                from hledac.universal.hledac.research_security.secure_destruction import DestructionConfig, SecureDestructor
+                from hledac.universal.research_security.secure_destruction import DestructionConfig, SecureDestructor
                 destructor_config = DestructionConfig(standard=self.config.wipe_standard, verify=self.config.verification_enabled)
                 self._secure_destructor = SecureDestructor(destructor_config)
                 logger.info('✅ SecureDestructor initialized')

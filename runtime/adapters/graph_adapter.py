@@ -11,6 +11,7 @@ GHOST_INVARIANTS:
 - Always-on: no feature flags
 """
 
+from collections.abc import Iterable
 from typing import Any, Iterator
 
 from hledac.universal.runtime.protocols.graph_protocol import GraphProtocol
@@ -111,8 +112,7 @@ class DuckPGQGraphAdapter(GraphProtocol):
     def stats(self) -> dict[str, Any]:
         """Delegate to DuckPGQGraph.stats()."""
         try:
-
-            return {}
+            return self._graph.stats()
         except Exception:
             return {}
 
@@ -286,7 +286,7 @@ class IOCGraphAdapter(GraphProtocol):
         """IOCGraph does not support this — returns []. Use graph_stats()."""
         return []
 
-    def export_edge_list(self) -> list[tuple[str, str, str, float]]:
+    def export_edge_list(self) -> Iterable[tuple[str, str, str, float]]:
         """IOCGraph does not export edge lists — returns []. Use export_stix_bundle()."""
         return []
 

@@ -34,16 +34,18 @@ PYTHON = str(VENV_PY) if VENV_PY.exists() else sys.executable
 def _cli_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Build subprocess env for testing hledac.universal exit codes.
 
-    NOTE: Does NOT set PYTHONPATH — the package is installed as editable
-    (via uv) and sys.path resolution via __editable__ hook is reliable.
-    Adding REPO_ROOT/HLEDAC_PARENT to PYTHONPATH creates dual-path import
-    conflicts (same logical module via two physical paths) that cause
-    spurious LockRegistration errors in subprocess tests.
+    NOTE: The editable install (uv) produces an empty MAPPING in the
+    __editable__ finder, so the subprocess cannot resolve hledac.universal
+    without explicit PYTHONPATH. We add HLEDAC_PARENT so the namespace
+    package hledac/ is found — the actual package path (universal/) is
+    then discovered via hledac/__init__.py namespace arrangement.
     """
     env = os.environ.copy()
-    # Remove PYTHONPATH to avoid dual-path import conflicts with editable install.
-    # The venv Python resolves hledac.universal correctly without explicit path.
+    # Remove stale PYTHONPATH to avoid dual-path import conflicts.
     env.pop("PYTHONPATH", None)
+    # Add HLEDAC_PARENT so 'hledac' namespace package is found.
+    # universal/ is a sibling under hledac/, found via namespace __init__.
+    env["PYTHONPATH"] = HLEDAC_PARENT
     # Force default profile so the F221-ABORT windup guard path is exercised.
     env["HLEDAC_ACQUISITION_PROFILE"] = "default"
     # Silence mlx/duckdb warmup chatter — exit code is what we test.
@@ -95,7 +97,7 @@ def test_nameerror_in_run_sprint_exits_3() -> None:
             raise NameError("exit_code_probe: mocked regression")
         _core_main.run_sprint = _boom
         from hledac.universal.__main__ import main
-        main()
+        sys.exit(main())
         """
     )
     proc = _run(patch_script, [])
@@ -124,7 +126,7 @@ def test_importerror_in_run_sprint_exits_3() -> None:
             raise ImportError("exit_code_probe: missing optional dep")
         _core_main.run_sprint = _boom
         from hledac.universal.__main__ import main
-        main()
+        sys.exit(main())
         """
     )
     proc = _run(patch_script, [])
@@ -212,7 +214,7 @@ def test_keyboardinterrupt_exits_130() -> None:
             raise KeyboardInterrupt()
         _core_main.run_sprint = _boom
         from hledac.universal.__main__ import main
-        main()
+        sys.exit(main())
         """
     )
     proc = _run(patch_script, [])
@@ -240,7 +242,7 @@ def test_systemexit_not_swallowed_by_catchall() -> None:
             sys.exit(2)
         _core_main.run_sprint = _boom
         from hledac.universal.__main__ import main
-        main()
+        sys.exit(main())
         """
     )
     proc = _run(patch_script, [])

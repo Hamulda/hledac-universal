@@ -1,5 +1,4 @@
-"""
-Public pipeline constants, patterns, and helper functions.
+"""Public pipeline constants, patterns, and helper functions.
 
 Extracted from live_public_pipeline.py (originally Sprint 8AE).
 Covers: quality tiers, fetch budgets, shopping noise filters, threat patterns,
@@ -193,8 +192,7 @@ _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
 
 
 def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
-    """
-    Detect if a URL is shopping/e-commerce noise.
+    """Detect if a URL is shopping/e-commerce noise.
 
     For threat queries: blocks obvious shopping/ecommerce/category pages.
     For non-threat queries: less strict, only blocks domain-level matches.
@@ -204,6 +202,7 @@ def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
         - "public_noise_shopping" — blocked shopping domain
         - "public_noise_unrelated_marketplace" — blocked marketplace
         - "public_relevance_pass" — URL is relevant
+
     """
     if not url:
         return False, "public_relevance_pass"
@@ -231,12 +230,12 @@ def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
 def _filter_public_noise(
     hits: list | tuple, is_threat_query: bool
 ) -> tuple[list, list[tuple[str, str]]]:
-    """
-    Filter shopping/e-commerce noise from public discovery hits.
+    """Filter shopping/e-commerce noise from public discovery hits.
 
     Returns:
         Tuple of (filtered_hits, rejected_reasons) where rejected_reasons
         is list of (url, reason) for each rejected hit.
+
     """
     filtered: list = []
     rejected: list[tuple[str, str]] = []
@@ -310,8 +309,7 @@ _OSINT_MULTI_PAT = re.compile(
 
 
 def _is_threat_query(query: str) -> bool:
-    """
-    Detect if query is a non-domain threat/malware/ransomware/entity query.
+    """Detect if query is a non-domain threat/malware/ransomware/entity query.
 
     Returns True for queries that look like OSINT entity searches where
     bootstrap would return no URLs but a rescue search URL may help.

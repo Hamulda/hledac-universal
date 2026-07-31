@@ -37,16 +37,15 @@ from __future__ import annotations
 import asyncio
 import gc as _gc
 import logging
-import os
 import subprocess
 import sys
 import threading
 import time as _time_module
 from collections import deque
-from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+
 import msgspec
 from msgspec import field
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from hledac.universal.core.resource_governor import GovernorDecision
@@ -56,7 +55,7 @@ if TYPE_CHECKING:
 class GovernorProtocol(Protocol):
     """Duck-typed seam: GovernorDecision provider for BackpressureMonitor."""
 
-    async def evaluate(self) -> "GovernorDecision": ...
+    async def evaluate(self) -> GovernorDecision: ...
 
 logger = logging.getLogger(__name__)
 
@@ -362,17 +361,17 @@ class BackpressureMonitor:
     Lives in the scheduler; called by FetchCoordinator on every _aimd_acquire().
     The provider callable is the seam — FetchCoordinator never imports this module directly.
     """
-    __slots__ = tuple((
+    __slots__ = (
         "_decision", "_governor", "_last_evaluate", "_last_state",
         "_lock", "_max_clearnet", "_min_clearnet", "_state_changes",
-    ))
+    )
 
     def __init__(
         self,
-        governor: "GovernorProtocol",
+        governor: GovernorProtocol,
         min_clearnet: int = _MIN_CLEARNET,
         max_clearnet: int = _DEFAULT_CLEARNET_MAX,
-    ):
+    ) -> None:
         self._governor = governor
         self._min_clearnet = min_clearnet
         self._max_clearnet = max_clearnet
@@ -518,10 +517,10 @@ class _CapacitySampler:
     _CPU_TTL_S = 3.0
     _METAL_TTL_S = 300.0
 
-    __slots__ = tuple((
+    __slots__ = (
         "_cpu_cache", "_cpu_lock",
         "_metal_cache", "_metal_cache_time", "_metal_lock",
-    ))
+    )
 
     def __init__(self) -> None:
         self._cpu_lock = asyncio.Lock()
@@ -620,12 +619,12 @@ class M1ResourceCoordinator:
         - MAX_ENRICHMENT_WORKERS = 16
         - MAX_EXTRACTION_WORKERS = 8
     """
-    __slots__ = tuple((
+    __slots__ = (
         "_capacity_sampler",
         "completed_allocations",
         "active_allocations",
         "m1_optimizations",
-    ))
+    )
 
     def __init__(self) -> None:
         self._capacity_sampler = _CapacitySampler()
@@ -679,10 +678,7 @@ class M1ResourceCoordinator:
             return 10 if task_type == "io" else 4
 
         mem = psutil.virtual_memory()
-        if task_type == "io":
-            base = 10
-        else:
-            base = 4
+        base = 10 if task_type == "io" else 4
 
         if mem.percent > 75:
             return max(1, base // 4)

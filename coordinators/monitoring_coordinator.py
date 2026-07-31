@@ -20,22 +20,24 @@ Unique Features Integrated:
 import asyncio
 import logging
 import os
-import resource
 import time
 from collections import deque
-from dataclasses import dataclass
-import msgspec
 from enum import StrEnum
 from typing import Any
+
+import msgspec
+
 from hledac.universal.core.system_metrics import get_system_snapshot
 from hledac.universal.utils.async_helpers import safe_create_task
+
 from .base import DecisionResponse, MemoryPressureLevel, OperationResult, OperationType, UniversalCoordinator
+
 logger = logging.getLogger(__name__)
 
 class _SecurityAuditorStub:
     """Minimal stub — prevents type-checker errors when SecurityAuditor is absent."""
     project_root: str | None
-    __slots__ = tuple(('project_root',))
+    __slots__ = ('project_root',)
 
     def __init__(self, project_root: str | None=None, **_: Any) -> None:
         self.project_root = project_root
@@ -45,7 +47,7 @@ class _SecurityAuditorStub:
 
 class _SyntaxVerifierStub:
     """Minimal stub — prevents type-checker errors when SyntaxVerifier is absent."""
-    __slots__ = tuple(('config',))
+    __slots__ = ('config',)
 
     def __init__(self, config: Any | None=None, **_: Any) -> None:
         self.config = config
@@ -63,7 +65,7 @@ class _SyntaxVerifierStub:
 
 class _CodebaseIntegrityValidatorStub:
     """Minimal stub — prevents type-checker errors when validator is absent."""
-    __slots__ = tuple(('config',))
+    __slots__ = ('config',)
 
     def __init__(self, config: Any | None=None, **_: Any) -> None:
         self.config = config
@@ -132,9 +134,9 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     - Maintains history of last 100 entries
     - Memory-aware (reduces frequency under pressure)
     """
-    __slots__ = tuple(('_advanced_available', '_advanced_monitoring', '_alert_thresholds', '_alerts_enabled', '_alerts_triggered', '_benchmark_history', '_collection_interval', '_collection_task', '_collections_count', '_current_metrics', '_health_checks_performed', '_metrics_history', '_operation_stats', '_stop_collection', '_watchdog', '_watchdog_available'))
+    __slots__ = ('_advanced_available', '_advanced_monitoring', '_alert_thresholds', '_alerts_enabled', '_alerts_triggered', '_benchmark_history', '_collection_interval', '_collection_task', '_collections_count', '_current_metrics', '_health_checks_performed', '_metrics_history', '_operation_stats', '_stop_collection', '_watchdog', '_watchdog_available')
 
-    def __init__(self, max_concurrent: int=10, collection_interval: float=30.0, max_history: int=100):
+    def __init__(self, max_concurrent: int=10, collection_interval: float=30.0, max_history: int=100) -> None:
         super().__init__(name='universal_monitoring_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self._advanced_monitoring: Any | None = None
         self._watchdog: Any | None = None
@@ -157,7 +159,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         """Initialize monitoring subsystems with graceful degradation."""
         _AdvancedMonitoringImpl: type | None = None
         try:
-            from hledac.universal.hledac.monitoring.advanced_monitoring import AdvancedMonitoring as _AM
+            from hledac.universal.monitoring.advanced_monitoring import AdvancedMonitoring as _AM
             _AdvancedMonitoringImpl = _AM
         except ImportError:
             logger.warning('MonitoringCoordinator: AdvancedMonitoring not available')
@@ -317,7 +319,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         operations = 0
         if benchmark_type.lower().startswith('cpu'):
             while time.time() - start_time < duration:
-                _ = sum((i * i for i in range(1000)))
+                _ = sum(i * i for i in range(1000))
                 operations += 1
         elif benchmark_type.lower().startswith('memory'):
             data = deque()
@@ -404,14 +406,14 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         entries = list(self._metrics_history)[-last_n:]
         if not entries:
             return {}
-        return {'avg_cpu_percent': sum((m.cpu_percent for m in entries)) / len(entries), 'avg_memory_percent': sum((m.memory_percent for m in entries)) / len(entries), 'avg_disk_percent': sum((m.disk_percent for m in entries)) / len(entries), 'avg_network_connections': sum((m.network_connections for m in entries)) / len(entries)}
+        return {'avg_cpu_percent': sum(m.cpu_percent for m in entries) / len(entries), 'avg_memory_percent': sum(m.memory_percent for m in entries) / len(entries), 'avg_disk_percent': sum(m.disk_percent for m in entries) / len(entries), 'avg_network_connections': sum(m.network_connections for m in entries) / len(entries)}
 
     def get_peak_metrics(self, last_n: int=10) -> dict[str, float]:
         """Get peak metrics over last N samples."""
         entries = list(self._metrics_history)[-last_n:]
         if not entries:
             return {}
-        return {'peak_cpu_percent': max((m.cpu_percent for m in entries)), 'peak_memory_percent': max((m.memory_percent for m in entries)), 'peak_disk_percent': max((m.disk_percent for m in entries)), 'peak_network_connections': max((m.network_connections for m in entries))}
+        return {'peak_cpu_percent': max(m.cpu_percent for m in entries), 'peak_memory_percent': max(m.memory_percent for m in entries), 'peak_disk_percent': max(m.disk_percent for m in entries), 'peak_network_connections': max(m.network_connections for m in entries)}
 
     def get_benchmark_history(self, limit: int=10) -> list[dict[str, Any]]:
         """Get recent benchmark results."""
@@ -422,7 +424,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         entries = [b for b in self._benchmark_history if b.get('benchmark_type') == benchmark_type]
         if not entries:
             return None
-        return {'benchmark_type': benchmark_type, 'avg_operations_per_second': sum((b.get('operations_per_second', 0) for b in entries)) / len(entries), 'total_runs': len(entries)}
+        return {'benchmark_type': benchmark_type, 'avg_operations_per_second': sum(b.get('operations_per_second', 0) for b in entries) / len(entries), 'total_runs': len(entries)}
 
     async def perform_health_check(self, detailed: bool=False) -> dict[str, Any]:
         """Perform comprehensive health check."""
@@ -462,7 +464,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Security audit report
         """
         try:
-            from hledac.universal.hledac.tools.audit.security_auditor import SecurityAuditor
+            from hledac.universal.tools.audit.security_auditor import SecurityAuditor
             auditor = SecurityAuditor()
             target = target_path or os.getcwd()
             report = await auditor.audit_directory(path=target, include_patterns=include_patterns or ['*.py', '*.js', '*.ts'], exclude_patterns=exclude_patterns or ['**/node_modules/**', '**/.venv/**', '**/__pycache__/**', '**/dist/**', '**/build/**', '**/tests/**'])
@@ -496,7 +498,10 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Integrity validation report
         """
         try:
-            from hledac.universal.hledac.tools.diagnostics.codebase_integrity_validator import CodebaseIntegrityValidator, ValidationConfig
+            from hledac.universal.tools.diagnostics.codebase_integrity_validator import (
+                CodebaseIntegrityValidator,
+                ValidationConfig,
+            )
             config = ValidationConfig(min_lines_of_code=min_lines_of_code, strict_mode=strict_mode)
             validator = CodebaseIntegrityValidator(config)
             target = target_path or os.getcwd()
@@ -524,7 +529,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Syntax verification report
         """
         try:
-            from hledac.universal.hledac.tools.audit.syntax_verifier import SyntaxVerifier, VerificationConfig
+            from hledac.universal.tools.audit.syntax_verifier import SyntaxVerifier, VerificationConfig
             config = VerificationConfig(auto_fix=auto_fix, parallel=parallel, max_workers=4)
             verifier = SyntaxVerifier(config)
             target = target_path or os.getcwd()
@@ -636,7 +641,10 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Diagnostics report with issues and recommendations
         """
         try:
-            from hledac.universal.hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticResult, DiagnosticsEngine
+            from hledac.universal.tools.preserved_logic.monitoring.diagnostics_engine import (  # noqa: F401
+                DiagnosticResult,
+                DiagnosticsEngine,
+            )
             engine = DiagnosticsEngine(enable_auto_diagnostics=False, m1_optimization=True)
             issues = []
             if component:
@@ -649,7 +657,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 for comp_issues in results:
                     issues.extend(comp_issues)
             issues_dict = [{'issue_id': issue.issue_id, 'component': issue.component, 'severity': issue.severity.value, 'description': issue.description, 'recommendations': issue.recommendations, 'resolved': issue.resolved, 'timestamp': issue.timestamp} for issue in issues]
-            critical_count = sum((1 for i in issues if i.severity.value in ['critical', 'error']))
+            critical_count = sum(1 for i in issues if i.severity.value in ['critical', 'error'])
             return {'success': True, 'component': component or 'all', 'issues_found': len(issues), 'critical_issues': critical_count, 'issues': issues_dict, 'auto_fix_enabled': auto_fix, 'recommendations': [rec for issue in issues for rec in issue.recommendations]}
         except ImportError:
             logger.warning('DiagnosticsEngine not available')
@@ -670,7 +678,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             Start confirmation
         """
         try:
-            from hledac.universal.hledac.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticsEngine
+            from hledac.universal.tools.preserved_logic.monitoring.diagnostics_engine import DiagnosticsEngine
             if not hasattr(self, '_diagnostics_engine'):
                 self._diagnostics_engine = DiagnosticsEngine(enable_auto_diagnostics=True, diagnostic_interval=interval_seconds, m1_optimization=True)
             success = await self._diagnostics_engine.start_diagnostics()

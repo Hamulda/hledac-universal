@@ -7,9 +7,11 @@ M1-safe: no model loading, HLEDAC_ENABLE_DHT gate, bounded concurrency.
 import asyncio
 import os
 from typing import Any
+
 from hledac.universal.dht.kademlia_node import DHT_REAL_UDP, crawl_dht_for_keyword
 from hledac.universal.discovery.discovery_planner import get_discovery_planner
 from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
+
 DHT = 'dht'
 DDG = 'ddg'
 WAYBACK = 'wayback'
@@ -30,7 +32,7 @@ class QueryRouter:
     timeout_s:
         Per-source timeout (default 30s).
     """
-    __slots__ = tuple(('_mask', '_max', '_planner', '_timeout'))
+    __slots__ = ('_mask', '_max', '_planner', '_timeout')
 
     def __init__(self, source_mask: SourceMask | None=None, max_results_per_source: int=5, timeout_s: float=30.0) -> None:
         self._mask = source_mask or ALL_SOURCES
@@ -86,7 +88,7 @@ class QueryRouter:
         body = f"info_hash={info_hash} peers={r.get('peers', 0)} size={r.get('size_bytes', 0)}"
         files = r.get('files', [])
         if files:
-            file_names = ', '.join((f.get('name', '') for f in files[:10]))
+            file_names = ', '.join(f.get('name', '') for f in files[:10])
             body += f'\nfiles: {file_names}'
         payload = f'{name}\n{magnet}\n{body[:3000]}'
         peers = r.get('peers', 0)

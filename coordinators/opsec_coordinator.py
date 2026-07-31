@@ -16,11 +16,11 @@ Integrates:
 Shared DTOs (also used by SecurityCoordinator):
 - SecurityLevel, SecurityContext, SecurityResult
 """
+import contextlib
 import importlib
 import logging
-import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import field
 from enum import Enum
 from typing import Any
 
@@ -83,12 +83,12 @@ class OpsECCoordinator(UniversalCoordinator):
     - 'leak'/'breach'/'monitoring' → DataLeakHunter
     - 'pgp'/'encrypt'/'identity' → PGPManager
     """
-    __slots__ = tuple((
+    __slots__ = (
         '_stealth_engine', '_stealth_available', '_stealth_mode_active',
         '_stealth_activations',
-    ))
+    )
 
-    def __init__(self, max_concurrent: int = 5):
+    def __init__(self, max_concurrent: int = 5) -> None:
         super().__init__(
             name='opsec_coordinator',
             max_concurrent=max_concurrent,
@@ -207,7 +207,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> dict[str, Any]:
         """Establish VPN connection via PersonalPrivacyManager."""
         try:
-            from hledac.universal.hledac.privacy_protection.personal_privacy_manager import (
+            from hledac.universal.privacy_protection.personal_privacy_manager import (  # noqa: F401
                 PersonalPrivacyManager,
                 PrivacyLevel,
                 VPNConfig,
@@ -245,7 +245,7 @@ class OpsECCoordinator(UniversalCoordinator):
     async def disconnect_vpn(self) -> dict[str, Any]:
         """Disconnect active VPN connection."""
         try:
-            from hledac.universal.hledac.privacy_protection.personal_privacy_manager import VPNDriver
+            from hledac.universal.privacy_protection.personal_privacy_manager import VPNDriver  # noqa: F401
             return {
                 'success': True,
                 'message': 'VPN disconnect initiated',
@@ -279,7 +279,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> dict[str, Any]:
         """Send anonymous email through secure providers with optional Tor."""
         try:
-            from hledac.universal.hledac.privacy_protection.anonymous_communication import (
+            from hledac.universal.privacy_protection.anonymous_communication import (
                 EmailConfig,
                 TorMailer,
             )
@@ -317,7 +317,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> dict[str, Any]:
         """Create PGP identity for secure communication."""
         try:
-            from hledac.universal.hledac.privacy_protection.anonymous_communication import PGPManager
+            from hledac.universal.privacy_protection.anonymous_communication import PGPManager
             manager = PGPManager()
             key = manager.generate_key(name, email, key_type, key_length)
             if key:
@@ -342,7 +342,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> dict[str, Any]:
         """Create secure encrypted communication channel."""
         try:
-            from hledac.universal.hledac.privacy_protection.anonymous_communication import (
+            from hledac.universal.privacy_protection.anonymous_communication import (
                 SecureChannelManager,
             )
             manager = SecureChannelManager()
@@ -409,7 +409,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> dict[str, Any]:
         """Manage continuous data leak monitoring."""
         try:
-            from hledac.universal.hledac.stealth_osint.data_leak_hunter import DataLeakHunter
+            from hledac.universal.stealth_osint.data_leak_hunter import DataLeakHunter
             if not hasattr(self, '_leak_hunter'):
                 self._leak_hunter = DataLeakHunter(check_interval=check_interval)
                 await self._leak_hunter.initialize()
@@ -531,8 +531,8 @@ class OpsECCoordinator(UniversalCoordinator):
                         'method': 'curl_cffi',
                     }
             except ImportError:
+
                 from hledac.universal.network.session_runtime import async_get_httpx_session
-                import httpx
                 session = await async_get_httpx_session()
                 async with session.request(method, url, headers=headers, **kwargs) as resp:
                     content = resp.text
@@ -561,6 +561,7 @@ class OpsECCoordinator(UniversalCoordinator):
     ) -> list[dict[str, Any]]:
         """Execute multiple stealth requests with controlled concurrency."""
         from asyncio import Semaphore
+
         from hledac.universal.utils.async_helpers import parallel
 
         semaphore = Semaphore(concurrency)
@@ -623,10 +624,8 @@ class OpsECCoordinator(UniversalCoordinator):
             parsed_date = None
             if target_date:
                 from datetime import datetime
-                try:
+                with contextlib.suppress(ValueError):
                     parsed_date = datetime.fromisoformat(target_date)
-                except ValueError:
-                    pass
             result = await resurrector.resurrect(url=url, target_date=parsed_date, min_quality=None)
             return {
                 'success': result.success,

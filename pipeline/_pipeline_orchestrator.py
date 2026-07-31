@@ -1,6 +1,4 @@
-"""
-P2-3: Pipeline Orchestrator — TaskGroup-based Stage Chain
-=========================================================
+"""P2-3: Pipeline Orchestrator — TaskGroup-based Stage Chain.
 
 Role: Orchestruje všechny stages v AsyncIterator[Stage] řetězci s TaskGroup
 na stage boundaries a bounded queues mezi nimi.
@@ -45,8 +43,7 @@ QUEUE_STORE_IN = 256
 
 
 class PipelineOrchestrator:
-    """
-    TaskGroup-based pipeline orchestrator.
+    """TaskGroup-based pipeline orchestrator.
 
     Wires stages: Discovery → Dedup → Fetch → Match → Enrich → Store
 
@@ -167,11 +164,11 @@ class PipelineOrchestrator:
         self._stages = [discovery, dedup, fetch, match, enrich, store]
 
     async def run(self) -> dict[str, StageMetrics]:
-        """
-        Spustí celý pipeline s TaskGroup na stage boundaries.
+        """Spustí celý pipeline s TaskGroup na stage boundaries.
 
         Returns:
             dict[str, StageMetrics] — metrics per stage
+
         """
         self._running = True
         start_time = time.monotonic()
@@ -327,8 +324,7 @@ async def run_public_pipeline(
     uma_state: str = "ok",
     **kwargs: Any,  # noqa: ARG002
 ) -> dict[str, StageMetrics]:
-    """
-    Convenience function — run public pipeline with TaskGroup stages.
+    """Run the public pipeline with TaskGroup stages.
 
     Args:
         query: Research query string
@@ -342,6 +338,7 @@ async def run_public_pipeline(
 
     Returns:
         dict[str, StageMetrics] — per-stage metrics
+
     """
     ctx = StageContext(
         query=query,

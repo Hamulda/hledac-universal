@@ -12,8 +12,6 @@ Extracted from memory_coordinator.py (F320 refactor).
 from dataclasses import dataclass
 from enum import Enum
 
-import msgspec
-
 
 class CacheLevel(Enum):
     """Cache levels for three-tier storage."""

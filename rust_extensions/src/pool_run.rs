@@ -278,7 +278,7 @@ where
     //   1. Python called rayon_join_channel and its local Arc was dropped at function return
     //   2. Worker hasn't started yet (channel backed up) or is still running
     // If None → the task was already collected and we should exit silently.
-    let Ok(shared) = work.shared.upgrade() else {
+    let Some(shared) = work.shared.upgrade() else {
         // SharedTask was already dropped by Python-side join — silent exit is correct.
         return;
     };

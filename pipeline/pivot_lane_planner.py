@@ -1,5 +1,4 @@
-"""
-F220B: Pivot Lane Planner for DOH/CT/Wayback/Nonfeed Lanes
+"""F220B: Pivot Lane Planner for DOH/CT/Wayback/Nonfeed Lanes.
 
 Determines which nonfeed lanes should run for each pivot seed type.
 Pure, no network — returns a plan only.
@@ -76,16 +75,20 @@ def plan_lanes_for_pivot_seeds(
     enable_passive_dns: bool = True,
     enable_bgp: bool = True,
 ) -> PivotLanePlan:
-    """
-    Plan which nonfeed lanes to run for each pivot seed.
+    """Plan which nonfeed lanes to run for each pivot seed.
 
     Args:
         seeds: PivotSeed objects (or duck-typed objects with value, seed_type).
         max_items: Hard cap on total plan items (default 128).
-        enable_*: Feature flags per lane family.
+        enable_doh: Enable DNS-over-HTTPS lane.
+        enable_ct: Enable certificate transparency lane.
+        enable_wayback: Enable Wayback archive lane.
+        enable_passive_dns: Enable passive DNS lane.
+        enable_bgp: Enable BGP enrichment lane.
 
     Returns:
         PivotLanePlan with items, skipped list, and reason string.
+
     """
     if not seeds:
         return PivotLanePlan(
@@ -166,6 +169,34 @@ def plan_lanes_for_pivot_seeds(
 # ----------------------------------------------------------------------
 
 
+def _add_lane_item(
+    items: list[LanePlanItem],
+    seen_pairs: set[tuple[str, str]],
+    lane: str,
+    seed_value: str,
+    seed_type: str,
+    priority: int | float,
+    reason: str,
+    enabled: bool = True,
+) -> None:
+    """Add a lane item if not already seen and enabled.
+
+    Reduces repetitive pattern: check → add to seen → append LanePlanItem.
+    """
+    pair = (lane, seed_value)
+    if enabled and pair not in seen_pairs:
+        seen_pairs.add(pair)
+        items.append(
+            LanePlanItem(
+                lane=lane,
+                seed_value=seed_value,
+                seed_type=seed_type,
+                priority=priority,
+                reason=reason,
+            )
+        )
+
+
 def _plan_domain(
     seed_value: str,
     seed_type: str,
@@ -177,58 +208,15 @@ def _plan_domain(
     enable_wayback: bool,
     enable_passive_dns: bool,
 ) -> None:
-    """domain → DOH + CT + WAYBACK + PASSIVE_DNS"""
-    pair = ("DOH", seed_value)
-    if enable_doh and pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="DOH",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_DOMAIN_DOH,
-                reason="domain_doh_lookup",
-            )
-        )
-
-    pair = ("CT", seed_value)
-    if enable_ct and pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="CT",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_DOMAIN_CT,
-                reason="domain_ct_lookup",
-            )
-        )
-
-    pair = ("WAYBACK", seed_value)
-    if enable_wayback and pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="WAYBACK",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_DOMAIN_WAYBACK,
-                reason="domain_wayback_archive",
-            )
-        )
-
-    pair = ("PASSIVE_DNS", seed_value)
-    if enable_passive_dns and pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="PASSIVE_DNS",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_DOMAIN_PASSIVE_DNS,
-                reason="domain_passive_dns",
-            )
-        )
+    """Domain → DOH + CT + WAYBACK + PASSIVE_DNS."""
+    _add_lane_item(items, seen_pairs, "DOH", seed_value, seed_type,
+                    _PRIORITY_DOMAIN_DOH, "domain_doh_lookup", enabled=enable_doh)
+    _add_lane_item(items, seen_pairs, "CT", seed_value, seed_type,
+                    _PRIORITY_DOMAIN_CT, "domain_ct_lookup", enabled=enable_ct)
+    _add_lane_item(items, seen_pairs, "WAYBACK", seed_value, seed_type,
+                    _PRIORITY_DOMAIN_WAYBACK, "domain_wayback_archive", enabled=enable_wayback)
+    _add_lane_item(items, seen_pairs, "PASSIVE_DNS", seed_value, seed_type,
+                    _PRIORITY_DOMAIN_PASSIVE_DNS, "domain_passive_dns", enabled=enable_passive_dns)
 
 
 def _plan_url(
@@ -239,32 +227,11 @@ def _plan_url(
     *,
     enable_wayback: bool,
 ) -> None:
-    """url → WAYBACK + PUBLIC"""
-    pair = ("WAYBACK", seed_value)
-    if enable_wayback and pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="WAYBACK",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_URL_WAYBACK,
-                reason="url_wayback_archive",
-            )
-        )
-
-    pair = ("PUBLIC", seed_value)
-    if pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="PUBLIC",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_URL_PUBLIC,
-                reason="url_public_fetch",
-            )
-        )
+    """Url → WAYBACK + PUBLIC."""
+    _add_lane_item(items, seen_pairs, "WAYBACK", seed_value, seed_type,
+                    _PRIORITY_URL_WAYBACK, "url_wayback_archive", enabled=enable_wayback)
+    _add_lane_item(items, seen_pairs, "PUBLIC", seed_value, seed_type,
+                    _PRIORITY_URL_PUBLIC, "url_public_fetch")
 
 
 def _plan_ip(
@@ -277,46 +244,13 @@ def _plan_ip(
     enable_passive_dns: bool,
     enable_bgp: bool,
 ) -> None:
-    """ip → BGP + PASSIVE_DNS + DOH reverse (lower priority)"""
-    pair = ("BGP", seed_value)
-    if enable_bgp and pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="BGP",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_IP_BGP,
-                reason="ip_bgp_lookup",
-            )
-        )
-
-    pair = ("PASSIVE_DNS", seed_value)
-    if enable_passive_dns and pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="PASSIVE_DNS",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_IP_PASSIVE_DNS,
-                reason="ip_passive_dns",
-            )
-        )
-
-    # DOH reverse lookup for IPs (lower priority — conditional)
-    pair = ("DOH", seed_value)
-    if enable_doh and pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="DOH",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_IP_DOH_REVERSE,
-                reason="ip_doh_reverse",
-            )
-        )
+    """Ip → BGP + PASSIVE_DNS + DOH reverse (lower priority)."""
+    _add_lane_item(items, seen_pairs, "BGP", seed_value, seed_type,
+                    _PRIORITY_IP_BGP, "ip_bgp_lookup", enabled=enable_bgp)
+    _add_lane_item(items, seen_pairs, "PASSIVE_DNS", seed_value, seed_type,
+                    _PRIORITY_IP_PASSIVE_DNS, "ip_passive_dns", enabled=enable_passive_dns)
+    _add_lane_item(items, seen_pairs, "DOH", seed_value, seed_type,
+                    _PRIORITY_IP_DOH_REVERSE, "ip_doh_reverse", enabled=enable_doh)
 
 
 def _plan_entity(
@@ -325,19 +259,9 @@ def _plan_entity(
     items: list[LanePlanItem],
     seen_pairs: set[tuple[str, str]],
 ) -> None:
-    """entity → PUBLIC (public provider rescue)"""
-    pair = ("PUBLIC", seed_value)
-    if pair not in seen_pairs:
-        seen_pairs.add(pair)
-        items.append(
-            LanePlanItem(
-                lane="PUBLIC",
-                seed_value=seed_value,
-                seed_type=seed_type,
-                priority=_PRIORITY_ENTITY_PUBLIC,
-                reason="entity_public_rescue",
-            )
-        )
+    """Entity → PUBLIC (public provider rescue)."""
+    _add_lane_item(items, seen_pairs, "PUBLIC", seed_value, seed_type,
+                    _PRIORITY_ENTITY_PUBLIC, "entity_public_rescue")
 
 
 def _plan_dark_surface_pivot(
@@ -347,8 +271,7 @@ def _plan_dark_surface_pivot(
     tor_available: bool = False,
     i2p_available: bool = False,
 ) -> None:
-    """
-    F214K: Add dark surface queries to pivot plan.
+    """F214K: Add dark surface queries to pivot plan.
 
     Args:
         dark_queries: List of DarkQuery from HypothesisEngine
@@ -358,6 +281,7 @@ def _plan_dark_surface_pivot(
         i2p_available: I2P transport is active
 
     Invariant: Dark pivots MUST go via Tor/I2P only — never clearnet.
+
     """
     if not dark_queries:
         return

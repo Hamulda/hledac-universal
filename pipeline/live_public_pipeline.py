@@ -1,5 +1,4 @@
-"""
-Sprint 8AE: First live public OSINT pipeline wiring.
+"""Sprint 8AE: First live public OSINT pipeline wiring.
 
 query -> discovery (8AC duckduckgo) -> fetch (8AD public_fetcher) ->
 lightweight HTML extraction -> PatternMatcher (8X) -> quality gate (8W) ->
@@ -48,6 +47,7 @@ from hledac.universal.fetching.public_fetcher import (  # noqa: E402
 )
 from hledac.universal.utils.async_helpers import parallel, safe_create_task  # noqa: E402, safe_wait_for
 from hledac.universal.utils.config_introspection import safe_attr_get  # noqa: E402
+from hledac.universal.pipeline.public_patterns import _make_finding_id  # noqa: E402, F401
 
 # -----------------------------------------------------------------------------
 # Constants
@@ -248,8 +248,7 @@ _CTI_NEWS_ALLOWED_DOMAINS: tuple[str, ...] = (
 
 
 def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
-    """
-    Detect if a URL is shopping/e-commerce noise.
+    """Detect if a URL is shopping/e-commerce noise.
 
     For threat queries: blocks obvious shopping/ecommerce/category pages.
     For non-threat queries: less strict, only blocks domain-level matches.
@@ -259,6 +258,7 @@ def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
         - "public_noise_shopping" — blocked shopping domain
         - "public_noise_unrelated_marketplace" — blocked marketplace
         - "public_relevance_pass" — URL is relevant
+
     """
     if not url:
         return False, "public_relevance_pass"
@@ -291,8 +291,7 @@ def _is_shopping_noise_url(url: str, is_threat_query: bool) -> tuple[bool, str]:
 def _filter_public_noise(
     hits: list | tuple, is_threat_query: bool
 ) -> tuple[list, list[tuple[str, str]]]:
-    """
-    Filter shopping/e-commerce noise from public discovery hits.
+    """Filter shopping/e-commerce noise from public discovery hits.
 
     For threat queries: blocks shopping domains AND path patterns.
     For non-threat queries: only blocks known shopping domains.
@@ -300,6 +299,7 @@ def _filter_public_noise(
     Returns:
         Tuple of (filtered_hits, rejected_reasons) where rejected_reasons
         is list of (url, reason) for each rejected hit.
+
     """
     filtered: list = []
     rejected: list[tuple[str, str]] = []
@@ -320,8 +320,7 @@ def _filter_public_noise(
 
 
 def _is_threat_query(query: str) -> bool:
-    """
-    Detect if query is a non-domain threat/malware/ransomware/entity query.
+    """Detect if query is a non-domain threat/malware/ransomware/entity query.
 
     Returns True for queries that look like OSINT entity searches where
     bootstrap would return no URLs but a rescue search URL may help.
@@ -456,8 +455,7 @@ def _is_threat_query(query: str) -> bool:
 
 
 def generate_rescue_urls(query: str, max_urls: int = 8) -> list[DiscoveryHit]:
-    """
-    Generate lightweight rescue DiscoveryHits for non-domain threat queries.
+    """Generate lightweight rescue DiscoveryHits for non-domain threat queries.
 
     Sprint F220C: When bootstrap generates zero URLs (non-domain query),
     and the query appears to be a threat/malware/ransomware/entity search,
@@ -476,6 +474,7 @@ def generate_rescue_urls(query: str, max_urls: int = 8) -> list[DiscoveryHit]:
     Returns:
         List of DiscoveryHit objects from rescue sources. Empty if
         query looks like a domain or rescue sources exhausted.
+
     """
     if not query or max_urls < 1:
         return []
@@ -502,8 +501,7 @@ def generate_rescue_urls(query: str, max_urls: int = 8) -> list[DiscoveryHit]:
 
 
 def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> list[str]:
-    """
-    Generate deterministic bootstrap URLs for domain/URL queries.
+    """Generate deterministic bootstrap URLs for domain/URL queries.
 
     Bounded: at most max_urls URLs returned.
     Fail-safe: returns empty list for non-domain queries or parse errors.
@@ -523,6 +521,7 @@ def generate_bootstrap_urls(query: str, max_urls: int = _MAX_BOOTSTRAP_URLS) -> 
     Returns:
         List of absolute URL strings (max max_urls). Empty list if query
         is not a domain or URL cannot be parsed.
+
     """
     if not query or max_urls < 1:
         return []
@@ -555,8 +554,7 @@ _MAX_SEED_CONTEXT_BOOTSTRAP: int = 10  # hard cap
 
 
 def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int = _MAX_SEED_CONTEXT_BOOTSTRAP) -> list[str]:  # noqa: E501
-    """
-    Generate deterministic bootstrap URLs from NonfeedSeedContext.
+    """Generate deterministic bootstrap URLs from NonfeedSeedContext.
 
     Bounded: at most max_candidates URLs returned.
     Fail-safe: returns empty list for None seed_context or parse errors.
@@ -574,13 +572,14 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int 
     Returns:
         List of absolute URL strings (max max_candidates). Empty list if
         seed_context is None or has no domains/urls.
+
     """
     if not seed_context or max_candidates < 1:
         return []
 
     urls: list[str] = []
-    _has_domains = bool(getattr(seed_context, 'domains', ()))
-    _has_urls = bool(getattr(seed_context, 'urls', ()))
+    _has_domains = bool(getattr(seed_context, "domains", ()))
+    _has_urls = bool(getattr(seed_context, "urls", ()))
     _both_sources = _has_domains and _has_urls
 
     # Split budget: if both sources present, split evenly (5+5 for max=10)
@@ -592,7 +591,7 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int 
 
     # Domains: construct root URL for each domain (top N)
     if _has_domains:
-        for domain in list(getattr(seed_context, 'domains', ()))[:_max_per_source]:
+        for domain in list(getattr(seed_context, "domains", ()))[:_max_per_source]:
             if len(urls) >= max_candidates:
                 break
             # Basic domain validation — skip IPs and obvious noise
@@ -610,7 +609,7 @@ def generate_seed_context_bootstrap_urls(seed_context: Any, max_candidates: int 
 
     # URLs: use as-is (top N)
     if _has_urls:
-        for url in list(getattr(seed_context, 'urls', ()))[:_max_per_source]:
+        for url in list(getattr(seed_context, "urls", ()))[:_max_per_source]:
             if len(urls) >= max_candidates:
                 break
             if not url:
@@ -641,8 +640,7 @@ async def generate_keyword_bootstrap_urls(
     query: str,
     max_urls: int = _MAX_KEYWORD_BOOTSTRAP_URLS,
 ) -> list[DiscoveryHit]:
-    """
-    Keyword-based search engine bootstrap — falls back through multiple engines.
+    """Keyword-based search engine bootstrap — falls back through multiple engines.
 
     3.3 Public Discovery Bootstrap:
       Triggered when bootstrap + rescue + seed_context all returned zero URLs.
@@ -660,6 +658,7 @@ async def generate_keyword_bootstrap_urls(
     Returns:
         List of DiscoveryHit objects from first responding search engine.
         Empty list if all engines fail or return no hits.
+
     """
     if not query or not query.strip():
         return []
@@ -703,18 +702,10 @@ async def generate_keyword_bootstrap_urls(
 
 
 def _extract_domain_from_query(query: str) -> str | None:
-    """
-    Handles:
-      - Plain domains: example.com, www.example.com, *.example.com
-      - URLs: https://example.com/path, https://www.example.com/path
-      - IP addresses: ignored (no domain bootstrap for IPs)
-      - Mixed OSINT queries with domain as first token: "mozilla.org certificate transparency"
-        (F233E: split on whitespace, try first token as domain)
-      - Non-domain strings: returns None
+    """Extract domain from OSINT query string.
 
-    Returns:
-        Lower-case domain string suitable for bootstrap URL construction,
-        or None if no domain pattern found.
+    Handles plain domains, URLs, IP addresses (ignored), and mixed queries.
+    Returns lower-case domain string or None if no domain found.
     """
     if not query:
         return None
@@ -797,21 +788,24 @@ def _extract_domain_from_query(query: str) -> str | None:
 
 class FetchPolicy(msgspec.Struct, frozen=True, gc=False):
     """Bounded fetch policy for canonical public sprint."""
+
     use_js: bool = False
     use_doh: bool = False
     use_stealth: bool = False
 
     @classmethod
     def default(cls) -> FetchPolicy:
+        """Return default fetch policy with no special options."""
         return cls()
-
 
     @classmethod
     def js_capable(cls) -> FetchPolicy:
+        """Return fetch policy with JavaScript rendering enabled."""
         return cls(use_js=True)
 
     @classmethod
     def tor_like(cls) -> FetchPolicy:
+        """Return stealth-like fetch policy with DoH and stealth enabled."""
         return cls(use_doh=True, use_stealth=True)
 
 
@@ -823,9 +817,7 @@ def _compute_fetch_policy(
     discovery_reason: str | None,
     strong_signal: bool,
 ) -> FetchPolicy:
-    """
-    Sprint F193B: Policy-driven fetch policy — JS/DoH/stealth driven by signal
-    strength and URL class, not just dormant defaults.
+    """Sprint F193B: Policy-driven fetch policy — JS/DoH/stealth driven by signal strength and URL class, not just dormant defaults.
 
     Policy rules:
     - discovery_score >= 0.7 OR strong_signal → use_js (JS-heavy page likely)
@@ -865,8 +857,7 @@ def _extract_provider_surface(
     import_error_count_out: list,
     empty_reason_out: list,
 ) -> None:
-    """
-    Extract provider surface telemetry from a DiscoveryBatchResult (or mock).
+    """Extract provider surface telemetry from a DiscoveryBatchResult (or mock).
 
     Writes into the provided mutable list arguments to avoid nonlocal issues
     in the enclosing pipeline function.
@@ -1237,8 +1228,8 @@ class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
 
 
 async def _get_uma_state() -> tuple[str, bool]:
-    """
-    Read UMA status via 8AB surface.
+    """Read UMA status via 8AB surface.
+
     Returns (state_str, io_only_hint).
     Raises: propagates any exception from resource_governor.
 
@@ -1265,8 +1256,8 @@ async def _get_uma_state() -> tuple[str, bool]:
 def _make_finding_id(
     query: str, url: str, label: str, pattern: str, value: str
 ) -> str:
-    """
-    Deterministic finding ID via SHA-256 hash of pipeline inputs.
+    """Deterministic finding ID via SHA-256 hash of pipeline inputs.
+
     hash() is forbidden (non-deterministic across processes).
     """
     key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
@@ -1295,8 +1286,8 @@ def _pattern_context(
     end: int,
     radius: int = _FINDING_ID_CONTEXT_RADIUS,
 ) -> str:
-    """
-    Extract a context window around a pattern hit.
+    """Extract a context window around a pattern hit.
+
     Runs in calling thread (caller is responsible for asyncio.to_thread).
     """
     if start is _NO_HIT_START or end is _NO_HIT_START:
@@ -1335,8 +1326,7 @@ def _enrich_text_with_metadata(
     snippet: str,
     extracted_text: str,
 ) -> str:
-    """
-    Build a bounded scan text from: [title] [snippet] [extracted_content].
+    """Build a bounded scan text from: [title] [snippet] [extracted_content].
 
     Rationale: title + snippet contain query-aware signal that raw HTML→text
     loses (e.g. search engine bolded terms). Prepending them gives pattern
@@ -1359,7 +1349,7 @@ def _enrich_text_with_metadata(
             if not text:
                 return ""
             import re as _re
-            return _re.sub(r'<[^>]+>', ' ', text).strip()
+            return _re.sub(r"<[^>]+>", " ", text).strip()
     title_clean = _strip_html_tags_from_text(title) if title else ""
     snippet_clean = _strip_html_tags_from_text(snippet) if snippet else ""
 
@@ -1408,8 +1398,7 @@ def _score_page_quality(
     discovery_score: float | None = None,
     discovery_reason: str | None = None,
 ) -> str:
-    """
-    Return a short quality tier string for a discovered page.
+    """Return a short quality tier string for a discovered page.
 
     Signals (compositional, no ML):
     - query-term density in title/snippet
@@ -1539,9 +1528,7 @@ def _compute_page_usable_fields(
     error: str | None,
     extracted_text_len: int = 0,
 ) -> tuple[bool, str, str, bool, str, str]:
-    """
-    Derive usable_signal, value_tier, resolution_reason, discovery_false_positive,
-    waste_category, structural_quality from existing page data.
+    """Derive usable_signal, value_tier, resolution_reason, discovery_false_positive, waste_category, structural_quality from existing page data.
 
     usable_signal: page contributed to real output (stored findings or strong signal).
     value_tier: conversion quality — high/medium/low/waste.
@@ -1657,8 +1644,7 @@ async def _build_public_finding(
     discovery_reason: str | None,
     http_status_code: int = 0,
 ) -> tuple:
-    """
-    F226B: Build a public-surface CanonicalFinding from a non-pattern-maching page.
+    """F226B: Build a public-surface CanonicalFinding from a non-pattern-maching page.
 
     Called when a page fetches successfully, extracts text, but has zero pattern
     matches AND is NOT skipped by quality gate (SKIP_WEAK) — i.e. a "content-only" page
@@ -1671,6 +1657,7 @@ async def _build_public_finding(
 
     Returns:
         Tuple of (CanonicalFinding,) or () if page provides no actionable signal.
+
     """
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 
@@ -1750,8 +1737,8 @@ async def _extract_live_public_findings_from_page(
     page_text: str,
     discovery_score: float | None = None,
 ) -> tuple:  # CanonicalFinding — imported lazily to satisfy runtime
-    """
-    Construct CanonicalFinding for a single PatternHit.
+    """Construct CanonicalFinding for a single PatternHit.
+
     All heavy work (context extraction) offloaded to thread executor.
     """
     # Lazy import to avoid TYPE_CHECKING-only circular issues at runtime
@@ -1856,26 +1843,6 @@ def _ensure_patched() -> None:
 # -----------------------------------------------------------------------------
 
 
-def _make_finding_id(
-    query: str, url: str, label: str, pattern: str, value: str
-) -> str:
-    """
-    Deterministic finding ID via SHA-256 hash of pipeline inputs.
-    hash() is forbidden (non-deterministic across processes).
-    """
-    key = f"{query}\x00{url}\x00{label}\x00{pattern}\x00{value}"
-    # xxhash — non-cryptographic, 10-20× faster than sha256 for dedup keys
-    # F265C: Use centralized rust backend
-    try:
-        from hledac.universal.core.rust_backend import rust as _rust_backend
-
-        if _rust_backend.is_available and _rust_backend.hash is not None:
-            return _rust_backend.hash.content_hash_hex(key)
-        raise ImportError("Rust hash not available")
-    except Exception:
-        return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
-
-
 async def _generate_and_store_report(
     query: str,
     pages: tuple,
@@ -1883,9 +1850,7 @@ async def _generate_and_store_report(
     hermes_engine: Any | None,
     vector_store: Any | None = None,
 ) -> str:
-    """
-    P6: Generate OSINT report from top findings and store in DuckDB.
-    P13: Integrate vector search, MMR reranking, and RRF fusion for RAG context.
+    """P6: Generate OSINT report from top findings and store in DuckDB. P13: Integrate vector search, MMR reranking, and RRF fusion for RAG context.
 
     Collects top 5 pages by matched_patterns count, generates report via Hermes
     (if available), and stores with source_type='report'.
@@ -1901,6 +1866,7 @@ async def _generate_and_store_report(
 
     Returns:
         Generated report text, or empty string if skipped/failed
+
     """
     if hermes_engine is None:
         return ""  # No Hermes, skip report generation
@@ -1943,7 +1909,7 @@ async def _generate_and_store_report(
     # P13: Build pattern_matcher ranked list for RRF fusion
     pattern_ranked: list[tuple[str, float]] = []
     for p in top_pages:
-        url = getattr(p, 'url', '') or ''
+        url = getattr(p, "url", "") or ""
         score = (p.matched_patterns or 0) + (p.accepted_findings or 0) * 0.5
         if url:
             pattern_ranked.append((url, score))
@@ -1963,7 +1929,7 @@ async def _generate_and_store_report(
 
     # Build context from fused/ranked pages
     context_items: list[str] = []
-    url_to_page = {getattr(p, 'url', ''): p for p in pages}
+    url_to_page = {getattr(p, "url", ""): p for p in pages}
 
     for url in fused_url_order:
         page = url_to_page.get(url)
@@ -1972,7 +1938,7 @@ async def _generate_and_store_report(
         # Format page info as context item
         ioc_count = page.matched_patterns or 0
         accepted = page.accepted_findings or 0
-        title = getattr(page, 'discovery_reason', '') or getattr(page, 'quality_reason', '') or url
+        title = getattr(page, "discovery_reason", "") or getattr(page, "quality_reason", "") or url
 
         context_items.append(
             f"URL: {url}\n"
@@ -1985,8 +1951,8 @@ async def _generate_and_store_report(
         for p in top_pages:
             ioc_count = p.matched_patterns or 0
             accepted = p.accepted_findings or 0
-            url = getattr(p, 'url', '') or ''
-            title = getattr(p, 'discovery_reason', '') or getattr(p, 'quality_reason', '') or url
+            url = getattr(p, "url", "") or ""
+            title = getattr(p, "discovery_reason", "") or getattr(p, "quality_reason", "") or url
 
             context_items.append(
                 f"URL: {url}\n"
@@ -1996,13 +1962,13 @@ async def _generate_and_store_report(
 
     # FÁZE P14: Build routing context and determine best model
     route_context: dict = {
-        "urls": [safe_attr_get(p, 'url', '') for p in top_pages],
+        "urls": [safe_attr_get(p, "url", "") for p in top_pages],
         "content_type": "html",  # Default content type
     }
 
     # Check for images in page data (vision routing)
     has_images = any(
-        getattr(p, 'redirected', False) and 'image' in (getattr(p, 'redirect_target', '') or '').lower()
+        getattr(p, "redirected", False) and "image" in (getattr(p, "redirect_target", "") or "").lower()
         for p in top_pages
     )
     if has_images:
@@ -2098,7 +2064,7 @@ async def _generate_and_store_report(
                 key_iocs: list[str] = []
                 key_entities: list[str] = []
 
-                ioc_json_block = re.search(r'<IOC_JSON>\s*(\{.*?\})\s*</IOC_JSON>', report_text, re.DOTALL)
+                ioc_json_block = re.search(r"<IOC_JSON>\s*(\{.*?\})\s*</IOC_JSON>", report_text, re.DOTALL)
                 if ioc_json_block:
                     try:
                         ioc_data = _json.decode(ioc_json_block.group(1))
@@ -2164,8 +2130,7 @@ async def _generate_and_store_report(
 
 
 def _query_looks_like_domain(query: str) -> bool:
-    """
-    Sprint F188B: Detect if query is a domain name suitable for CT subdomain lookup.
+    """Sprint F188B: Detect if query is a domain name suitable for CT subdomain lookup.
 
     Returns True for "example.com", "api.example.com", "*.example.com".
     Returns False for "apple inc", "what is DNS", "site:example.com".
@@ -2187,8 +2152,7 @@ def _query_looks_like_domain(query: str) -> bool:
 
 
 def _extract_base_domain(domain: str) -> str:
-    """
-    Sprint F188B: Extract base domain from a domain string for CT scanner input.
+    """Sprint F188B: Extract base domain from a domain string for CT scanner input.
 
     "www.example.com" -> "example.com"
     "api.example.com" -> "example.com"
@@ -2211,8 +2175,7 @@ async def _inject_ct_subdomain_hits(
     hits: tuple,
     query: str,
 ) -> tuple:
-    """
-    Sprint F188B: Thin CT winner-slice adapter.
+    """Sprint F188B: Thin CT winner-slice adapter.
 
     If query looks like a domain, call the CT scanner to get subdomains,
     synthesize them as high-confidence discovery hits, and prepend to the
@@ -2280,8 +2243,7 @@ _CC_SCANNER_LOOKUP: Any = None
 
 
 def _query_looks_like_domain_for_cc(query: str) -> bool:
-    """
-    F192E: Detect if query is a domain name suitable for CommonCrawl CDX lookup.
+    """F192E: Detect if query is a domain name suitable for CommonCrawl CDX lookup.
 
     Returns True for "example.com", "*.example.com", "site:example.com".
     Returns False for "apple inc", "what is DNS", etc.
@@ -2303,8 +2265,7 @@ async def _inject_commoncrawl_hits(
     hits: tuple,
     query: str,
 ) -> tuple:
-    """
-    F192E: Thin CommonCrawl CDX injection as discovery augmentation.
+    """F192E: Thin CommonCrawl CDX injection as discovery augmentation.
 
     CommonCrawl CDX API is a domain index (historical URL archive), not a
     general search engine. It only activates for domain-like queries.
@@ -2424,8 +2385,7 @@ async def _inject_onion_hits(
     query: str,
     store: DuckDBShadowStore,
 ) -> int:
-    """
-    Sprint F193A: Onion discovery + scraping via Tor.
+    """Sprint F193A: Onion discovery + scraping via Tor.
 
     Discovers .onion URLs via Ahmia search and scrapes them using
     Tor-capable async_fetch_public_text(). Converts results to CanonicalFinding
@@ -2548,8 +2508,7 @@ async def async_run_live_public_pipeline(
     export_dir: str | None = None,
     _sprint_id: str = "",  # noqa: F841  # F268: reserved for graph accumulation context
 ) -> PipelineRunResult:
-    """
-    Sprint 8AE: Live public OSINT pipeline.
+    """Sprint 8AE: Live public OSINT pipeline.
 
     Orchestration-only: wires existing 8AC/8AD/8X/8W/8S components.
     P6: Optional Hermes3Engine for OSINT report generation.
@@ -2595,10 +2554,23 @@ async def async_run_live_public_pipeline(
     clear_query_cache_fn:
         DI F226: explicit _clear_query_cache replacement. If None,
         imports and calls duckduckgo_adapter._clear_query_cache.
+    export_dir:
+        Optional export directory for markdown/graph output.
+    graph:
+        Optional DuckPGQGraph instance for entity graph persistence.
+    hermes_engine:
+        Optional Hermes3Engine instance for OSINT report generation.
+    rl_steps:
+        Number of RL steps (0 = use time limit).
+    run_loop:
+        If True, run ResearchLoop after pipeline.
+    vector_store:
+        Optional VectorStore instance for semantic search.
 
     Returns
     -------
     PipelineRunResult with typed counts and per-page error breakdown.
+
     """
     # Sprint F206P: Reset temporal signal layer at run start
     from hledac.universal.layers import reset_temporal_signal_layer
@@ -2676,12 +2648,12 @@ async def async_run_live_public_pipeline(
     # logical phase of the pipeline. Backward compatible — same inputs/outputs.
 
     class _DiscoveryEngine(msgspec.Struct, gc=False):
-        """
-        Engine 1: Handles all discovery-related logic.
+        """Engine 1: Handles all discovery-related logic.
 
         Input state: query, store, max_results, public_bootstrap_enabled, seed_context
         Output state: enriched hits tuple + all discovery telemetry accumulators
         """
+
         query: str
         store: Any
         max_results: int
@@ -2956,53 +2928,53 @@ async def async_run_live_public_pipeline(
             # Final check after keyword bootstrap fallback
             if not hits:
                 discovery_telemetry = {
-                    'discovery_result': None,
-                    'public_stage_failure': 'discovery_empty',
-                    'public_stage_failure_reason': discovery_error if discovery_error else 'no URLs returned from discovery',  # noqa: E501
-                    'public_discovery_raw_count': 0,
-                    'public_discovery_deduped_count': 0,
-                    'public_discovery_attempted': discovery_attempted,
-                    'public_discovery_cache_hit': public_discovery_cache_hit,
-                    'public_discovery_query_count': public_discovery_query_count,
-                    'public_bootstrap_order': _pub_bootstrap_order if _pub_bootstrap_order else 'disabled',
-                    'public_bootstrap_prevented_discovery_timeout': _pub_bootstrap_prevented_discovery_timeout,
-                    'public_bootstrap_first_fetch_attempted': _pub_bootstrap_first_fetch_attempted,
-                    'public_bootstrap_candidates_count': _pub_bootstrap_candidates_count,
-                    'public_bootstrap_fetch_attempted': _pub_bootstrap_fetch_attempted,
+                    "discovery_result": None,
+                    "public_stage_failure": "discovery_empty",
+                    "public_stage_failure_reason": discovery_error if discovery_error else "no URLs returned from discovery",  # noqa: E501
+                    "public_discovery_raw_count": 0,
+                    "public_discovery_deduped_count": 0,
+                    "public_discovery_attempted": discovery_attempted,
+                    "public_discovery_cache_hit": public_discovery_cache_hit,
+                    "public_discovery_query_count": public_discovery_query_count,
+                    "public_bootstrap_order": _pub_bootstrap_order if _pub_bootstrap_order else "disabled",
+                    "public_bootstrap_prevented_discovery_timeout": _pub_bootstrap_prevented_discovery_timeout,
+                    "public_bootstrap_first_fetch_attempted": _pub_bootstrap_first_fetch_attempted,
+                    "public_bootstrap_candidates_count": _pub_bootstrap_candidates_count,
+                    "public_bootstrap_fetch_attempted": _pub_bootstrap_fetch_attempted,
                     # Sprint F220C: Rescue telemetry
-                    'public_rescue_candidates_count': _pub_rescue_candidates_count,
-                    'public_rescue_fetch_attempted': _pub_rescue_fetch_attempted,
-                    'public_rescue_order': _pub_rescue_order,
+                    "public_rescue_candidates_count": _pub_rescue_candidates_count,
+                    "public_rescue_fetch_attempted": _pub_rescue_fetch_attempted,
+                    "public_rescue_order": _pub_rescue_order,
                     # F1-3: keyword_seed_fallback telemetry
-                    'keyword_seed_fallback_triggered': _keyword_seed_fallback_triggered,
+                    "keyword_seed_fallback_triggered": _keyword_seed_fallback_triggered,
                     # 3.3: Keyword-based search engine bootstrap telemetry
-                    'public_keyword_bootstrap_candidates_count': _pub_keyword_bootstrap_candidates_count,
-                    'public_keyword_bootstrap_fetch_attempted': _pub_keyword_bootstrap_fetch_attempted,
-                    'public_keyword_bootstrap_fetch_success': _pub_keyword_bootstrap_fetch_success,
-                    'public_keyword_bootstrap_order': _pub_keyword_bootstrap_order,
-                    'public_keyword_bootstrap_errors': _pub_keyword_bootstrap_errors,
-                    'public_build_success_count': 0,
-                    'public_build_failure_count': 0,
-                    'public_duplicate_count': 0,
-                    'public_provider_selected': list(_pub_provider_selected),
-                    'public_provider_skipped': list(_pub_provider_skipped),
-                    'public_provider_stub': list(_pub_provider_stub),
-                    'public_provider_errors': list(_pub_provider_errors),
-                    'public_query_variants': list(_pub_query_variants),
-                    'public_provider_timeout_count': _pub_provider_timeout_count[0],
-                    'public_provider_import_error_count': _pub_provider_import_error_count[0],
-                    'public_discovery_empty_reason': _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else '',  # noqa: E501
-                    'discovery_error_type': discovery_error_type or '',
-                    'discovery_elapsed_s': round(discovery_elapsed_s, 3) if discovery_elapsed_s else None,
-                    'public_candidates_discovered': 0,
-                    'public_candidates_fetch_attempted': 0,
-                    'public_candidates_fetch_success': 0,
-                    'public_candidates_parse_success': 0,
-                    'public_candidates_pattern_matched': 0,
-                    'public_candidates_built': 0,
-                    'public_candidates_store_attempted': 0,
-                    'public_candidates_stored': 0,
-                    'public_candidates_rejected': 0,
+                    "public_keyword_bootstrap_candidates_count": _pub_keyword_bootstrap_candidates_count,
+                    "public_keyword_bootstrap_fetch_attempted": _pub_keyword_bootstrap_fetch_attempted,
+                    "public_keyword_bootstrap_fetch_success": _pub_keyword_bootstrap_fetch_success,
+                    "public_keyword_bootstrap_order": _pub_keyword_bootstrap_order,
+                    "public_keyword_bootstrap_errors": _pub_keyword_bootstrap_errors,
+                    "public_build_success_count": 0,
+                    "public_build_failure_count": 0,
+                    "public_duplicate_count": 0,
+                    "public_provider_selected": list(_pub_provider_selected),
+                    "public_provider_skipped": list(_pub_provider_skipped),
+                    "public_provider_stub": list(_pub_provider_stub),
+                    "public_provider_errors": list(_pub_provider_errors),
+                    "public_query_variants": list(_pub_query_variants),
+                    "public_provider_timeout_count": _pub_provider_timeout_count[0],
+                    "public_provider_import_error_count": _pub_provider_import_error_count[0],
+                    "public_discovery_empty_reason": _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else "",  # noqa: E501
+                    "discovery_error_type": discovery_error_type or "",
+                    "discovery_elapsed_s": round(discovery_elapsed_s, 3) if discovery_elapsed_s else None,
+                    "public_candidates_discovered": 0,
+                    "public_candidates_fetch_attempted": 0,
+                    "public_candidates_fetch_success": 0,
+                    "public_candidates_parse_success": 0,
+                    "public_candidates_pattern_matched": 0,
+                    "public_candidates_built": 0,
+                    "public_candidates_store_attempted": 0,
+                    "public_candidates_stored": 0,
+                    "public_candidates_rejected": 0,
                 }
                 return (
                     (), None, discovery_error, discovery_error_type, discovery_elapsed_s, discovery_attempted,
@@ -3209,51 +3181,51 @@ async def async_run_live_public_pipeline(
                 onion_findings_count = 0
 
             discovery_telemetry = {
-                'discovery_result': discovery_result,
-                'public_stage_failure': public_stage_failure,
-                'public_stage_failure_reason': public_stage_failure_reason,
-                'public_discovery_raw_count': len(hits),
-                'public_discovery_deduped_count': public_discovery_deduped_count,
-                'public_discovery_attempted': discovery_attempted,
-                'public_discovery_cache_hit': public_discovery_cache_hit,
-                'public_discovery_query_count': public_discovery_query_count,
-                'public_bootstrap_order': _pub_bootstrap_order,
-                'public_bootstrap_prevented_discovery_timeout': _pub_bootstrap_prevented_discovery_timeout,
-                'public_bootstrap_first_fetch_attempted': _pub_bootstrap_first_fetch_attempted,
-                'public_bootstrap_candidates_count': _pub_bootstrap_candidates_count,
-                'public_bootstrap_fetch_attempted': _pub_bootstrap_fetch_attempted,
-                'public_bootstrap_fetch_success': _pub_bootstrap_fetch_success,
-                'public_bootstrap_accepted_findings': _pub_bootstrap_accepted_findings,
-                'public_bootstrap_errors': _pub_bootstrap_errors,
+                "discovery_result": discovery_result,
+                "public_stage_failure": public_stage_failure,
+                "public_stage_failure_reason": public_stage_failure_reason,
+                "public_discovery_raw_count": len(hits),
+                "public_discovery_deduped_count": public_discovery_deduped_count,
+                "public_discovery_attempted": discovery_attempted,
+                "public_discovery_cache_hit": public_discovery_cache_hit,
+                "public_discovery_query_count": public_discovery_query_count,
+                "public_bootstrap_order": _pub_bootstrap_order,
+                "public_bootstrap_prevented_discovery_timeout": _pub_bootstrap_prevented_discovery_timeout,
+                "public_bootstrap_first_fetch_attempted": _pub_bootstrap_first_fetch_attempted,
+                "public_bootstrap_candidates_count": _pub_bootstrap_candidates_count,
+                "public_bootstrap_fetch_attempted": _pub_bootstrap_fetch_attempted,
+                "public_bootstrap_fetch_success": _pub_bootstrap_fetch_success,
+                "public_bootstrap_accepted_findings": _pub_bootstrap_accepted_findings,
+                "public_bootstrap_errors": _pub_bootstrap_errors,
                 # Sprint F220C: Rescue telemetry
-                'public_rescue_candidates_count': _pub_rescue_candidates_count,
-                'public_rescue_fetch_attempted': _pub_rescue_fetch_attempted,
-                'public_rescue_fetch_success': _pub_rescue_fetch_success,
-                'public_rescue_accepted_findings': _pub_rescue_accepted_findings,
-                'public_rescue_errors': _pub_rescue_errors,
-                'public_rescue_order': _pub_rescue_order,
+                "public_rescue_candidates_count": _pub_rescue_candidates_count,
+                "public_rescue_fetch_attempted": _pub_rescue_fetch_attempted,
+                "public_rescue_fetch_success": _pub_rescue_fetch_success,
+                "public_rescue_accepted_findings": _pub_rescue_accepted_findings,
+                "public_rescue_errors": _pub_rescue_errors,
+                "public_rescue_order": _pub_rescue_order,
                 # F1-3: keyword_seed_fallback telemetry
-                'keyword_seed_fallback_triggered': _keyword_seed_fallback_triggered,
-                'public_build_success_count': _pub_build_success_count,
-                'public_build_failure_count': _pub_build_failure_count,
-                'public_duplicate_count': _pub_duplicate_count,
-                'public_provider_selected': list(_pub_provider_selected),
-                'public_provider_skipped': list(_pub_provider_skipped),
-                'public_provider_stub': list(_pub_provider_stub),
-                'public_provider_errors': list(_pub_provider_errors),
-                'public_query_variants': list(_pub_query_variants),
-                'public_provider_timeout_count': _pub_provider_timeout_count[0],
-                'public_provider_import_error_count': _pub_provider_import_error_count[0],
-                'public_discovery_empty_reason': _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else '',
-                'public_candidates_discovered': _public_candidates_discovered,
-                'public_candidates_fetch_attempted': _public_candidates_fetch_attempted,
-                'public_candidates_fetch_success': _public_candidates_fetch_success,
-                'public_candidates_parse_success': _public_candidates_parse_success,
-                'public_candidates_pattern_matched': _public_candidates_pattern_matched,
-                'public_candidates_built': _public_candidates_built,
-                'public_candidates_store_attempted': _public_candidates_store_attempted,
-                'public_candidates_stored': _public_candidates_stored,
-                'public_candidates_rejected': _public_candidates_rejected,
+                "keyword_seed_fallback_triggered": _keyword_seed_fallback_triggered,
+                "public_build_success_count": _pub_build_success_count,
+                "public_build_failure_count": _pub_build_failure_count,
+                "public_duplicate_count": _pub_duplicate_count,
+                "public_provider_selected": list(_pub_provider_selected),
+                "public_provider_skipped": list(_pub_provider_skipped),
+                "public_provider_stub": list(_pub_provider_stub),
+                "public_provider_errors": list(_pub_provider_errors),
+                "public_query_variants": list(_pub_query_variants),
+                "public_provider_timeout_count": _pub_provider_timeout_count[0],
+                "public_provider_import_error_count": _pub_provider_import_error_count[0],
+                "public_discovery_empty_reason": _pub_discovery_empty_reason[0] if _pub_discovery_empty_reason else "",
+                "public_candidates_discovered": _public_candidates_discovered,
+                "public_candidates_fetch_attempted": _public_candidates_fetch_attempted,
+                "public_candidates_fetch_success": _public_candidates_fetch_success,
+                "public_candidates_parse_success": _public_candidates_parse_success,
+                "public_candidates_pattern_matched": _public_candidates_pattern_matched,
+                "public_candidates_built": _public_candidates_built,
+                "public_candidates_store_attempted": _public_candidates_store_attempted,
+                "public_candidates_stored": _public_candidates_stored,
+                "public_candidates_rejected": _public_candidates_rejected,
             }
 
             return (
@@ -3391,49 +3363,49 @@ async def async_run_live_public_pipeline(
     ).run(uma_state=uma_state)
 
     # Unpack discovery telemetry into main-line state
-    public_stage_failure = discovery_telemetry.get('public_stage_failure')
-    public_stage_failure_reason = discovery_telemetry.get('public_stage_failure_reason')
-    public_discovery_deduped_count = discovery_telemetry.get('public_discovery_deduped_count', 0)
-    public_discovery_cache_hit = discovery_telemetry.get('public_discovery_cache_hit', 0)
-    public_discovery_query_count = discovery_telemetry.get('public_discovery_query_count', 0)
-    _pub_bootstrap_candidates_count = discovery_telemetry.get('public_bootstrap_candidates_count', 0)
-    _pub_bootstrap_fetch_attempted = discovery_telemetry.get('public_bootstrap_fetch_attempted', 0)
-    _pub_bootstrap_fetch_success = discovery_telemetry.get('public_bootstrap_fetch_success', 0)
-    _pub_bootstrap_accepted_findings = discovery_telemetry.get('public_bootstrap_accepted_findings', 0)
-    _pub_bootstrap_errors = discovery_telemetry.get('public_bootstrap_errors', 0)
-    _pub_bootstrap_order = discovery_telemetry.get('public_bootstrap_order', 'disabled')
-    _pub_bootstrap_prevented_discovery_timeout = discovery_telemetry.get('public_bootstrap_prevented_discovery_timeout', False)  # noqa: E501
-    _pub_bootstrap_first_fetch_attempted = discovery_telemetry.get('public_bootstrap_first_fetch_attempted', False)
-    _pub_build_success_count = discovery_telemetry.get('public_build_success_count', 0)
-    _pub_build_failure_count = discovery_telemetry.get('public_build_failure_count', 0)
-    _pub_duplicate_count = discovery_telemetry.get('public_duplicate_count', 0)
-    _pub_provider_selected = discovery_telemetry.get('public_provider_selected', [])
-    _pub_provider_skipped = discovery_telemetry.get('public_provider_skipped', [])
-    _pub_provider_stub = discovery_telemetry.get('public_provider_stub', [])
-    _pub_provider_errors = discovery_telemetry.get('public_provider_errors', [])
-    _pub_query_variants = discovery_telemetry.get('public_query_variants', [])
-    _pub_provider_timeout_count = [discovery_telemetry.get('public_provider_timeout_count', 0)]
-    _pub_provider_import_error_count = [discovery_telemetry.get('public_provider_import_error_count', 0)]
-    _pub_discovery_empty_reason = [discovery_telemetry.get('public_discovery_empty_reason', '')]
-    _public_candidates_discovered = discovery_telemetry.get('public_candidates_discovered', 0)
-    _public_candidates_fetch_attempted = discovery_telemetry.get('public_candidates_fetch_attempted', 0)
-    _public_candidates_fetch_success = discovery_telemetry.get('public_candidates_fetch_success', 0)
-    _public_candidates_parse_success = discovery_telemetry.get('public_candidates_parse_success', 0)
-    _public_candidates_pattern_matched = discovery_telemetry.get('public_candidates_pattern_matched', 0)
-    _public_candidates_built = discovery_telemetry.get('public_candidates_built', 0)
-    _public_candidates_store_attempted = discovery_telemetry.get('public_candidates_store_attempted', 0)
-    _public_candidates_stored = discovery_telemetry.get('public_candidates_stored', 0)
-    _public_candidates_rejected = discovery_telemetry.get('public_candidates_rejected', 0)
+    public_stage_failure = discovery_telemetry.get("public_stage_failure")
+    public_stage_failure_reason = discovery_telemetry.get("public_stage_failure_reason")
+    public_discovery_deduped_count = discovery_telemetry.get("public_discovery_deduped_count", 0)
+    public_discovery_cache_hit = discovery_telemetry.get("public_discovery_cache_hit", 0)
+    public_discovery_query_count = discovery_telemetry.get("public_discovery_query_count", 0)
+    _pub_bootstrap_candidates_count = discovery_telemetry.get("public_bootstrap_candidates_count", 0)
+    _pub_bootstrap_fetch_attempted = discovery_telemetry.get("public_bootstrap_fetch_attempted", 0)
+    _pub_bootstrap_fetch_success = discovery_telemetry.get("public_bootstrap_fetch_success", 0)
+    _pub_bootstrap_accepted_findings = discovery_telemetry.get("public_bootstrap_accepted_findings", 0)
+    _pub_bootstrap_errors = discovery_telemetry.get("public_bootstrap_errors", 0)
+    _pub_bootstrap_order = discovery_telemetry.get("public_bootstrap_order", "disabled")
+    _pub_bootstrap_prevented_discovery_timeout = discovery_telemetry.get("public_bootstrap_prevented_discovery_timeout", False)  # noqa: E501
+    _pub_bootstrap_first_fetch_attempted = discovery_telemetry.get("public_bootstrap_first_fetch_attempted", False)
+    _pub_build_success_count = discovery_telemetry.get("public_build_success_count", 0)
+    _pub_build_failure_count = discovery_telemetry.get("public_build_failure_count", 0)
+    _pub_duplicate_count = discovery_telemetry.get("public_duplicate_count", 0)
+    _pub_provider_selected = discovery_telemetry.get("public_provider_selected", [])
+    _pub_provider_skipped = discovery_telemetry.get("public_provider_skipped", [])
+    _pub_provider_stub = discovery_telemetry.get("public_provider_stub", [])
+    _pub_provider_errors = discovery_telemetry.get("public_provider_errors", [])
+    _pub_query_variants = discovery_telemetry.get("public_query_variants", [])
+    _pub_provider_timeout_count = [discovery_telemetry.get("public_provider_timeout_count", 0)]
+    _pub_provider_import_error_count = [discovery_telemetry.get("public_provider_import_error_count", 0)]
+    _pub_discovery_empty_reason = [discovery_telemetry.get("public_discovery_empty_reason", "")]
+    _public_candidates_discovered = discovery_telemetry.get("public_candidates_discovered", 0)
+    _public_candidates_fetch_attempted = discovery_telemetry.get("public_candidates_fetch_attempted", 0)
+    _public_candidates_fetch_success = discovery_telemetry.get("public_candidates_fetch_success", 0)
+    _public_candidates_parse_success = discovery_telemetry.get("public_candidates_parse_success", 0)
+    _public_candidates_pattern_matched = discovery_telemetry.get("public_candidates_pattern_matched", 0)
+    _public_candidates_built = discovery_telemetry.get("public_candidates_built", 0)
+    _public_candidates_store_attempted = discovery_telemetry.get("public_candidates_store_attempted", 0)
+    _public_candidates_stored = discovery_telemetry.get("public_candidates_stored", 0)
+    _public_candidates_rejected = discovery_telemetry.get("public_candidates_rejected", 0)
     # Sprint F220C: Rescue telemetry unpacking
-    _pub_rescue_candidates_count = discovery_telemetry.get('public_rescue_candidates_count', 0)
-    _pub_rescue_fetch_attempted = discovery_telemetry.get('public_rescue_fetch_attempted', 0)
-    _pub_rescue_fetch_success = discovery_telemetry.get('public_rescue_fetch_success', 0)
-    _pub_rescue_accepted_findings = discovery_telemetry.get('public_rescue_accepted_findings', 0)
-    _pub_rescue_errors = discovery_telemetry.get('public_rescue_errors', 0)
-    _pub_rescue_order = discovery_telemetry.get('public_rescue_order', 'disabled')
+    _pub_rescue_candidates_count = discovery_telemetry.get("public_rescue_candidates_count", 0)
+    _pub_rescue_fetch_attempted = discovery_telemetry.get("public_rescue_fetch_attempted", 0)
+    _pub_rescue_fetch_success = discovery_telemetry.get("public_rescue_fetch_success", 0)
+    _pub_rescue_accepted_findings = discovery_telemetry.get("public_rescue_accepted_findings", 0)
+    _pub_rescue_errors = discovery_telemetry.get("public_rescue_errors", 0)
+    _pub_rescue_order = discovery_telemetry.get("public_rescue_order", "disabled")
 
     # F1-3: keyword_seed_fallback — unpack from discovery telemetry into outer scope
-    keyword_seed_fallback_triggered = discovery_telemetry.get('keyword_seed_fallback_triggered', False)
+    keyword_seed_fallback_triggered = discovery_telemetry.get("keyword_seed_fallback_triggered", False)
 
     # F207J-C: PUBLIC Acceptance — local accumulator for rejection reasons
     public_acceptance_reject_reasons: dict[str, int] = {}
@@ -4389,7 +4361,7 @@ async def async_run_live_public_pipeline(
             # Build sources list from pages
             sources = [
                 p.url for p in all_page_results
-                if hasattr(p, 'url') and p.url
+                if hasattr(p, "url") and p.url
             ][:20]
 
             # Get findings from memory manager
@@ -4641,10 +4613,10 @@ async def async_run_live_public_pipeline(
                                 finding_id=report_id,
                                 query=query,
                                 source_type="llm_synthesis",
-                                confidence=getattr(report, 'confidence', 0.7) or 0.7,
+                                confidence=getattr(report, "confidence", 0.7) or 0.7,
                                 ts=time.time(),
                                 payload_text=f"Threat actors: {', '.join(getattr(report, 'threat_actors', []) or [])} | {getattr(report, 'threat_summary', '')[:500]}",
-                                provenance=("synthesis", getattr(report, 'query', query)[:50]),
+                                provenance=("synthesis", getattr(report, "query", query)[:50]),
                             )
                             logger.info("[SYNTHESIS] Report produced: confidence=%.3f", synthesis_finding.confidence)
 
