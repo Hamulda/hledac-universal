@@ -2943,7 +2943,7 @@ class DeepHermes3Engine:
         try:
             thermal_params_fn = _get_thermal_generation_params()
             if thermal_params_fn is not None:
-                thermal_params = thermal_params_fn()
+                thermal_params = await thermal_params_fn()
                 if thermal_params is not None:
                     if thermal_params.max_tokens_override is not None:
                         max_tok = min(max_tok, thermal_params.max_tokens_override)

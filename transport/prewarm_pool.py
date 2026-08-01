@@ -171,6 +171,10 @@ async def _create_session(profile: str) -> Any | None:
     Mirrors ``_get_or_create_session`` in curl_cffi_runtime but without
     the LRU machinery — prewarm owns its own 2-slot ring buffer.
 
+    ISSUE-P6-001: TCP keep-alive is injected via curl_options so that
+    prewarmed sessions (which hold TCP connections open) detect dead
+    peers proactively and avoid holding slots in TIME_WAIT indefinitely.
+
     Note: the import runs while holding ``_lock`` (from ``_fill_slot`` ->
     ``acquire_session``). On M1 8GB with single-threaded asyncio, this
     is safe: no other coroutine runs during the import, and after the
@@ -181,12 +185,24 @@ async def _create_session(profile: str) -> Any | None:
     except Exception as e:  # noqa: BLE001
         logger.debug("prewarm_pool: curl_cffi import failed: %s", e)
         return None
+
+    # ISSUE-P6-001: TCP keep-alive options — imported lazily to avoid
+    # circular import. Both constants are module-level in curl_cffi_fetch.
+    try:
+        from hledac.universal.transport.curl_cffi_fetch import (
+            _TCP_KEEPALIVE_CURL_OPTIONS,
+        )
+        _tcp_opts = _TCP_KEEPALIVE_CURL_OPTIONS
+    except Exception:  # noqa: BLE001
+        _tcp_opts = {}
+
     try:
         max_clients = ENV.get_int("HLEDAC_CURL_CFFI_MAX_CLIENTS", default=5)
         sess = AsyncSession(
             impersonate=profile,
             timeout=10.0,
             max_clients=max_clients,
+            curl_options=_tcp_opts,  # ISSUE-P6-001: TCP keep-alive on prewarmed sockets
         )
         stats = _stats_var.get()
         stats["sessions_created"] += 1

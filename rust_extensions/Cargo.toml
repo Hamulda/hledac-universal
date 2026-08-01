@@ -9,9 +9,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-# R6: PyO3 0.29 — Python::attach + py.detach API (abi3-py312).
+# R6: PyO3 0.29 — Python::attach + py.detach API (abi3-py314).
+# P6-004 FIX: abi3-py314 unlocks full Python 3.14 C API (tp_subclass, tp_new,
+# memory-view C API changes) instead of being capped at Python 3.12 stable ABI.
 # CI ban: with_gil / allow_threads removed from all code (only comments remain).
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py312", "buffer"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py314", "buffer"] }
 rayon = "1.10"
 # GRAPH-01: petgraph for graph algorithms (PageRank, Louvain community detection)
 # Provides: GraphMap, UnGraph, DiGraph, NodeIndex, algo::kosaraju_scc
@@ -286,6 +288,24 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
+# ISSUE-P6-003 FIX: build-override vynucuje +neon,+crypto na ÚROVNI PROFILU.
+#
+# PROBLÉM: [target.aarch64-apple-darwin] rustflags v Cargo.toml jsou IGNOROVÁNY
+# maturinem (maturin filtruje CARGO_* env vars). build.rs sice emituje
+# cargo:rustc-cfg=neon_available, ale bez +neon v target-features compiler
+# emituje skalární fallback místo skutečných NEON instrukcí.
+#
+# ŘEŠENÍ: [profile.release.build-override] přepisuje rustflags pro release
+# profil bez ohledu na [target.*] nebo RUSTFLAGS prostředí. Toto je ZÁLOHA
+# pro [tool.maturin.env] RUSTFLAGS v pyproject.toml — obě vrstvy dávají
+# +neon,+crypto. Pokud maturin env selže, build-override zachrání situaci.
+#
+# NOTE: build-override je správné řešení na úrovni profilu, NE
+# [profile.release.package.hledac-rust-extensions].build-override, protože
+# ten by vyžadoval publikaci crate na crates.io (a my nepublikujeme).
+[profile.release.build-override]
+rustflags = ["-C", "target-feature=+neon,+crypto"]
+
 [build-dependencies]
 pyo3-build-config = "0.29"
 
@@ -310,7 +330,12 @@ unexpected_cfgs = "allow"
 # falling back to scalar code even when #[cfg(target_arch = "aarch64")]
 # guards are present.
 #
-# NOTE: Use explicit target triple [target.aarch64-apple-darwin] rather than
+# NOTE: [target.aarch64-apple-darwin] rustflags fungují POUZE pro PŘÍMÉ
+# cargo build mimo maturin. Maturin filtruje CARGO_* env vars, takže
+# PRO MATURIN BUUDY je primární [tool.maturin.env] RUSTFLAGS v pyproject.toml
+# a [profile.release.build-override] v tomto souboru. Tato sekce je záloha.
+#
+# Use explicit target triple [target.aarch64-apple-darwin] rather than
 # [target.'cfg(target_arch = "aarch64")'] — the latter's rustflags key
 # is silently ignored by Cargo (confirmed by "unused manifest key" warning).
 [target.aarch64-apple-darwin]

@@ -1270,14 +1270,65 @@ class LanceDBIdentityStore:
             logger.warning(f'FlashRank load failed: {e}')
             return None
 
+    def _validate_table_schema(self, expected_dim: int) -> bool:
+        """Validate existing LanceDB table schema matches expected embedding dimension.
+
+        ISSUE-P6-008: exist_ok=True silently ignores schema drift (dimension mismatch).
+        This method explicitly validates that the existing table's embedding field
+        matches self._embedding_dim before we open it. If dimensions don't match,
+        we raise instead of silently corrupting ANN search results.
+
+        Args:
+            expected_dim: Expected embedding dimension (from self._embedding_dim).
+
+        Returns:
+            True if schema is valid or table doesn't exist yet.
+            Raises RuntimeError if schema drift is detected.
+        """
+        try:
+            existing_table = self.db.open_table('entities')
+            lance_schema = existing_table.schema
+            emb_field = next(
+                (f for f in lance_schema.fields if f.name == 'embedding'),
+                None
+            )
+            if emb_field is None:
+                logger.warning('[LANCEDB] embedding field not found in existing table schema')
+                return True
+            actual_list_size = getattr(emb_field.type, 'list_size', None)
+            if actual_list_size != expected_dim:
+                logger.error(
+                    f'[LANCEDB] Schema mismatch: expected dim={expected_dim}, '
+                    f'existing table has dim={actual_list_size}. '
+                    f'Run reembed_at_new_dimension() or delete the table at {self.uri}'
+                )
+                raise RuntimeError(
+                    f'LanceDB schema drift detected: expected embedding dim={expected_dim}, '
+                    f'existing table has dim={actual_list_size}. '
+                    f'Delete the table or call reembed_at_new_dimension().'
+                )
+            return True
+        except Exception as e:
+            if 'TableNotFound' in type(e).__name__ or 'not exist' in str(e).lower():
+                return True
+            raise
+
     def _initialize(self) -> None:
-        """Initialize database and table (lazy — lancedb is opt-in via [ml] extra)."""
+        """Initialize database and table (lazy — lancedb is opt-in via [ml] extra).
+
+        ISSUE-P6-008 FIX: Replaced create_table(..., exist_ok=True) with
+        open_table + _validate_table_schema() to detect schema drift before
+        dimension mismatch corrupts ANN search results.
+        """
         try:
             import lancedb
             import pyarrow as pa
             Path(self.uri).parent.mkdir(parents=True, exist_ok=True)
             self.db = lancedb.connect(self.uri)
-            self._table = self.db.create_table('entities', schema=pa.schema([pa.field('id', pa.string()), pa.field('embedding', pa.list_(pa.float32(), list_size=256)), pa.field('aliases', pa.list_(pa.string())), pa.field('first_seen', pa.timestamp('s')), pa.field('last_seen', pa.timestamp('s'))]), exist_ok=True)
+            # ISSUE-P6-008: validate schema — raises RuntimeError on dimension mismatch
+            self._validate_table_schema(self._embedding_dim)
+            # Table validated, safe to open (no redundant create_table API call)
+            self._table = self.db.open_table('entities')
             try:
                 list_indices_fn = getattr(self._table, 'list_indices', None)
                 existing_indices = list_indices_fn() if callable(list_indices_fn) else []
@@ -1914,7 +1965,7 @@ async def get_identity_store() -> LanceDBIdentityStore | SqliteVecIdentityStore:
 class AcademicPaper:
     """Academic paper with metadata for LanceDB storage."""
     TABLE_NAME = 'academic_papers'
-    __slots__ = tuple(('abstract', 'authors', 'citation_count', 'doi', 'embedding', 'paper_id', 'source', 'title', 'url', 'year'))
+    __slots__ = ('abstract', 'authors', 'citation_count', 'doi', 'embedding', 'paper_id', 'source', 'title', 'url', 'year')
 
     def __init__(self, paper_id: str, title: str, abstract: str='', authors: list[str] | None=None, year: int | None=None, source: str='', doi: str='', url: str='', citation_count: int=0, embedding: list[float] | None=None) -> None:
         self.paper_id = paper_id
@@ -1976,12 +2027,54 @@ class LanceDBAcademicStore:
         # M1 8GB IVF-PQ nprobes (same heuristic as LanceDBIdentityStore)
         self._ivfpq_nprobes: int = max(1, min(64, int(os.environ.get('HLEDAC_LANCEDB_IVFPQ_NPROBES', '8'))))
 
+    def _validate_table_schema(self, expected_dim: int) -> bool:
+        """Validate existing LanceDB table schema matches expected embedding dimension.
+
+        ISSUE-P6-008: exist_ok=True silently ignores schema drift (dimension mismatch).
+        Validates that the existing table's embedding field matches self._dim.
+        Raises RuntimeError if schema drift is detected.
+        """
+        try:
+            existing_table = self._db.open_table(AcademicPaper.TABLE_NAME)
+            lance_schema = existing_table.schema
+            emb_field = next(
+                (f for f in lance_schema.fields if f.name == 'embedding'),
+                None
+            )
+            if emb_field is None:
+                logger.warning('[LANCEDB] embedding field not found in existing table schema')
+                return True
+            actual_list_size = getattr(emb_field.type, 'list_size', None)
+            if actual_list_size != expected_dim:
+                logger.error(
+                    f'[LANCEDB] Schema mismatch: expected dim={expected_dim}, '
+                    f'existing table has dim={actual_list_size}. '
+                    f'Delete the table or re-embed at new dimension.'
+                )
+                raise RuntimeError(
+                    f'AcademicPaper schema drift detected: expected embedding dim={expected_dim}, '
+                    f'existing table has dim={actual_list_size}. '
+                    f'Delete the table.'
+                )
+            return True
+        except Exception as e:
+            if 'TableNotFound' in type(e).__name__ or 'not exist' in str(e).lower():
+                return True
+            raise
+
     async def initialize(self) -> None:
-        """Initialize table and embedder."""
+        """Initialize table and embedder.
+
+        ISSUE-P6-008 FIX: Added _validate_table_schema() before create_table
+        to detect schema drift and prevent silent ANN corruption.
+        """
         if self._initialized:
             return
         import pyarrow as pa
-        self._table = self._db.create_table(AcademicPaper.TABLE_NAME, schema=pa.schema([pa.field('paper_id', pa.string()), pa.field('title', pa.string()), pa.field('abstract', pa.string()), pa.field('authors', pa.list_(pa.string())), pa.field('year', pa.int32()), pa.field('source', pa.string()), pa.field('doi', pa.string()), pa.field('url', pa.string()), pa.field('citation_count', pa.int32()), pa.field('embedding', pa.list_(pa.float32(), list_size=self._dim))]), exist_ok=True)
+        # ISSUE-P6-008: validate schema — raises RuntimeError on dimension mismatch
+        self._validate_table_schema(self._dim)
+        # Table validated, safe to open (no redundant create_table API call)
+        self._table = self._db.open_table(AcademicPaper.TABLE_NAME)
         try:
             list_indices_fn = getattr(self._table, 'list_indices', None)
             existing = list_indices_fn() if callable(list_indices_fn) else []

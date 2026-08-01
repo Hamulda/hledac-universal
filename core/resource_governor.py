@@ -2447,3 +2447,21 @@ def get_lane_ram_budget(lane_id: str) -> int:
         return _get(lane_id)
     except Exception:
         return 30
+
+
+# ── Singleton accessor ───────────────────────────────────────────────────────────
+
+_governor: M1ResourceGovernor | None = None
+
+
+def get_governor() -> M1ResourceGovernor:
+    """
+    Get or create the singleton M1ResourceGovernor.
+
+    This is the canonical way to access the governor from outside core/.
+    Lazily creates the instance on first call.
+    """
+    global _governor
+    if _governor is None:
+        _governor = M1ResourceGovernor()
+    return _governor

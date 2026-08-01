@@ -217,7 +217,7 @@ class ThermalGenerationParams:
     temperature_reduction: float = 0.0  # 0.0-0.5, subtracted from temperature when throttled
 
 
-def get_thermal_generation_params() -> ThermalGenerationParams:
+async def get_thermal_generation_params() -> ThermalGenerationParams:
     """
     ISSUE-015: Probe M1ResourceGovernor for current thermal generation parameters.
 
@@ -228,7 +228,7 @@ def get_thermal_generation_params() -> ThermalGenerationParams:
     try:
         from hledac.universal.core.protocols import get_governor
         gov = get_governor()
-        decision = gov.evaluate()
+        decision = await gov.evaluate()
         return ThermalGenerationParams(
             max_tokens_override=decision.max_tokens_override,
             temperature_reduction=decision.temperature_reduction,

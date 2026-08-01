@@ -874,7 +874,7 @@ class FetchCoordinator(UniversalCoordinator):
             from hledac.universal.core.protocols import get_governor
             _gov = get_governor()
             if _gov is not None:
-                _gov_decision = _gov.evaluate()
+                _gov_decision = await _gov.evaluate()
                 _governor_fetch_limit = _gov_decision.fetch_limit
                 if _bp_clearing is None or _governor_fetch_limit < _bp_clearing:
                     _bp_clearing = float(_governor_fetch_limit)

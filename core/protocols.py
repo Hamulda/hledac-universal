@@ -296,7 +296,7 @@ def get_governor() -> Any:
 
     Replaces: resource_governor_provider callable pattern in coordinators.
     """
-    from hledac.universal.runtime.resource_governor import get_governor as _gg
+    from hledac.universal.core.resource_governor import get_governor as _gg
 
     return _gg()
 

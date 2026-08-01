@@ -6,10 +6,10 @@ build-backend = "maturin"
 # UNderscore: Python packages use underscores, NOT hyphens
 name = "hledac_rust_extensions"
 version = "0.1.0"
-# R6: PyO3 0.29 with abi3-py312: stable ABI wheel compatible with Python 3.12+
-# (abi3 guarantees cross-version compatibility: 3.12, 3.13, 3.14).
+# R6: PyO3 0.29 with abi3-py314: stable ABI wheel compatible with Python 3.14+
+# P6-004 FIX: abi3-py314 unlocks full Python 3.14 C API. Project requires 3.14+.
 # Free-threaded Python (3.13+) support: py.detach() is no-op when GIL disabled.
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 
 [tool.maturin]
 # PyO3 extension-module: cdylib for Python import
@@ -17,7 +17,7 @@ requires-python = ">=3.12"
 # Must include all project features (core, data, bloom, graph, advanced) otherwise
 # #[cfg(feature)] gated modules are compiled out but still referenced by other code.
 features = ["pyo3/extension-module", "core", "data", "bloom", "graph", "advanced"]
-# Module name matching the PyO3 #[pymodule] in src/lib.rs
+# Module name matching the PyO3 #[pymodule] in lib.rs
 module-name = "hledac_rust_extensions"
 # Python package source (./hledac_rust_extensions/ subdirectory)
 python-source = "."
@@ -27,3 +27,18 @@ strip = true
 build-args = ["--release", "--strip"]
 # Cargo target-dir for incremental builds (cached between runs)
 target-dir = "target/maturin"
+
+# ISSUE-P6-003 FIX: Předej RUSTFLAGS do cargo přes maturin env sekci.
+#
+# PROBLÉM: maturin filtruje CARGO_* env vars při volání cargo build.
+# [target.aarch64-apple-darwin] rustflags = ["-C", "target-feature=+neon,+crypto"]
+# v Cargo.toml je IGNOROVÁN maturinem — cargo nikdy nevidí CARGO_TARGET_* rustflags.
+#
+# ŘEŠENÍ: [tool.maturin] env sekce POSIX-friendly format:
+#   RUSTFLAGS = "-C target-feature=+neon,+crypto"
+# Toto maturin PŘEDÁ dál, protože jde přímo do cargo env (ne CARGO_ prefix).
+#
+# VŠECHNY buildy přes maturin (develop i build) nyní dostanou +neon,+crypto.
+# Redundantní s [profile.release.build-override] v Cargo.toml jako záloha.
+[tool.maturin.env]
+RUSTFLAGS = "-C target-feature=+neon,+crypto"

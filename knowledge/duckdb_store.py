@@ -8556,6 +8556,34 @@ class DuckDBShadowStore:
         """
         import time as _time
 
+        # ISSUE-P6-009: Disk-space preflight check before WAL scan
+        # WAL replay scans LMDB via lmdb.begin() — on a full disk this raises
+        # an LMDBError and prevents _startup_ready from ever being set,
+        # deadlocking all activation writes. Fail-open to match fail-safe
+        # invariants: if the check itself breaks, proceed and let WAL fail
+        # naturally rather than block the sprint.
+        _logger = logging.getLogger(__name__)
+        try:
+            # _wal_root is the private attribute on DuckDBWALManager; wal_root is
+            # only a constructor parameter, not stored as a public attribute.
+            _wal_root = getattr(self._wal_manager, "_wal_root", None) if self._wal_manager else None
+            if _wal_root is not None:
+                stat = os.statvfs(str(_wal_root))
+                free_mb = (stat.f_bavail * stat.f_frsize) / (1024 * 1024)
+                total_mb = (stat.f_blocks * stat.f_frsize) / (1024 * 1024)
+                if free_mb < 50:
+                    _logger.warning(
+                        f"[ISSUE-P6-009] WAL disk space critically low: {free_mb:.1f}MB free "
+                        f"of {total_mb:.1f}MB total — proceeding with WAL replay anyway (fail-open)"
+                    )
+                elif free_mb < 200:
+                    _logger.info(
+                        f"[ISSUE-P6-009] WAL disk space low: {free_mb:.1f}MB free "
+                        f"of {total_mb:.1f}MB total"
+                    )
+        except Exception:  # noqa: BLE001 — fail-open; let WAL scan fail naturally
+            pass
+
         lock = self._ensure_replay_lock()
         deadline = _time.monotonic() + replay_timeout_s
         all_markers = self._wal_scan_pending_sync_markers()

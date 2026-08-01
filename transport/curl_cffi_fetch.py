@@ -13,10 +13,12 @@ Architecture (Issue 3.5 consolidation):
 """
 
 import asyncio
+import errno
 import functools
 import hashlib
 import itertools
 import logging
+import os
 import threading
 import time
 import urllib.parse
@@ -49,6 +51,22 @@ _MAX_JA3_RETRIES: int = 3
 _JA3_BACKOFF_MAX_S: float = 8.0
 _JITTER_RNG_RANGE: float = 0.5  # ±25% jitter relative to backoff
 
+# ISSUE-P6-001: EADDRINUSE (Errno 48) resilience — TIME_WAIT / port exhaustion.
+# macOS: EADDRINUSE = 48. Linux: EADDRINUSE = 98 (or 48 on some configs).
+# Max retries for EADDRINUSE: 3 attempts with exponential backoff (0.1s, 0.2s, 0.4s).
+_EADDRINUSE_ERRNO: int = errno.EADDRINUSE if hasattr(errno, "EADDRINUSE") else 48
+_MAX_EADDRINUSE_RETRIES: int = 3
+_EADDRINUSE_BACKOFF_BASE_S: float = 0.1  # start at 100ms
+_EADDRINUSE_BACKOFF_MAX_S: float = 2.0  # cap at 2s
+
+
+def _eaddrinese_backoff(attempt: int) -> float:
+    """Compute exponential backoff in seconds for EADDRINUSE retry attempt.
+
+    Exponential: 0.1s, 0.2s, 0.4s (capped at _EADDRINUSE_BACKOFF_MAX_S).
+    """
+    return min(_EADDRINUSE_BACKOFF_MAX_S, _EADDRINUSE_BACKOFF_BASE_S * (2 ** attempt))
+
 
 def _ja3_ban_backoff(attempt: int) -> float:
     """Compute jittered backoff in seconds for JA3 ban retry attempt.
@@ -71,6 +89,35 @@ _I2P_CURL_PROXY: str = ENV.get_str("I2P_SOCKS_PROXY_URL", "socks5h://127.0.0.1:4
 
 # Tor-specific circuit tracking for curl_cffi Tor fetcher
 _tor_curl_request_count: int = 0
+
+# --- TCP keep-alive constants (macOS/Linux BSD-compatible) --------------------------
+# macOS: TCP_KEEPIDLE = 0x10 (16), TCP_KEEPINTVL = 0x101 (257), TCP_KEEPCNT = 0x102 (258)
+# Linux: TCP_KEEPIDLE = 4, TCP_KEEPINTVL = 5, TCP_KEEPCNT = 6
+# Using raw values for cross-platform compatibility.
+_TCP_KEEPALIVE_ENABLE: int = 1  # SOL_SOCKET / SO_KEEPALIVE
+_TCP_KEEPIDLE: int = 0x10  # 16 — seconds before first probe (macOS Darwin)
+_TCP_KEEPINTVL: int = 0x101  # 257 — seconds between probes
+_TCP_KEEPCNT: int = 0x102  # 258 — max probe count before giving up
+# curl_easy_setopt constants for TCP keep-alive
+_CURLOPT_TCP_KEEPALIVE: int = 288  # 0x120 — enable TCP keep-alive
+_CURLOPT_TCP_KEEPIDLE: int = 256  # 0x100 — idle time before first probe
+_CURLOPT_TCP_KEEPINTVL: int = 257  # 0x101 — interval between probes
+_CURLOPT_TCP_KEEPCNT: int = 258  # 0x102 — number of probes
+# Keep-alive timings (seconds): first probe after 60s idle, then every 30s, give up after 3 probes
+_KEEPALIVE_IDLE_S: int = 60  # TCP_KEEPIDLE — start probing after 60s idle
+_KEEPALIVE_INTERVAL_S: int = 30  # TCP_KEEPINTVL — probe interval
+_KEEPALIVE_MAX_PROBES: int = 3  # TCP_KEEPCNT — give up after 3 missed probes
+
+# ISSUE-P6-001: TCP keep-alive curl_options injected into every AsyncSession.
+# Defeats TIME_WAIT pool exhaustion by detecting dead connections proactively.
+# macOS kernel default TIME_WAIT = 60s; keep-alive probes detect dead peers at 60+30+30=120s.
+_TCP_KEEPALIVE_CURL_OPTIONS: dict[int, int] = {
+    _CURLOPT_TCP_KEEPALIVE: _TCP_KEEPALIVE_ENABLE,
+    _CURLOPT_TCP_KEEPIDLE: _KEEPALIVE_IDLE_S,
+    _CURLOPT_TCP_KEEPINTVL: _KEEPALIVE_INTERVAL_S,
+    _CURLOPT_TCP_KEEPCNT: _KEEPALIVE_MAX_PROBES,
+}
+
 
 # --- JA3 / TLS fingerprint rotation pool (Sprint F265A) ---------------------------
 # Cycle through distinct browser-family TLS profiles so the JA3 fingerprint
@@ -525,6 +572,7 @@ async def _get_or_create_session(profile: str) -> Any | None:
                 timeout=10.0,
                 max_clients=25,  # connection pool size (keepalive connections)
                 http2=True,  # P3-04: HTTP/2 for multiplexing and connection reuse
+                curl_options=_TCP_KEEPALIVE_CURL_OPTIONS,  # ISSUE-P6-001: TCP keep-alive on sockets
             )
             _curl_cffi_sessions[profile] = new_session
             _curl_cffi_profiles_order.append(profile)
@@ -970,7 +1018,39 @@ async def fetch_via_curl_cffi(
                 _merged_headers["User-Agent"] = get_ua_for_profile(used_profile)
             # ISSUE-8.1: DNS Rebinding Protection — resolve is now bound to session via curl_options
             # No need to pass resolve per-request; it's already set on the session
-            response = await session.get(url, headers=_merged_headers, timeout=timeout_s)
+
+            # ISSUE-P6-001: EADDRINUSE retry envelope — resilience against TIME_WAIT / port exhaustion.
+            # On Errno 48 (EADDRINUSE), retry with exponential backoff instead of failing immediately.
+            response = None
+            for _eadrinuse_attempt in range(_MAX_EADDRINUSE_RETRIES):
+                try:
+                    response = await session.get(url, headers=_merged_headers, timeout=timeout_s)
+                    break  # success — exit retry loop
+                except OSError as _e:
+                    _eadrinuse_errno = getattr(_e, "errno", None)
+                    if _eadrinuse_errno == _EADDRINUSE_ERRNO and _eadrinuse_attempt < _MAX_EADDRINUSE_RETRIES - 1:
+                        _backoff_s = _eaddrinese_backoff(_eadrinuse_attempt)
+                        logger.debug(
+                            f"[ISSUE-P6-001] EADDRINUSE (Errno {_EADDRINUSE_ERRNO}) for {url} — "
+                            f"retrying after {_backoff_s:.2f}s (attempt {_eadrinuse_attempt + 1}/{_MAX_EADDRINUSE_RETRIES})"
+                        )
+                        try:
+                            await asyncio.sleep(_backoff_s)
+                        except asyncio.CancelledError:
+                            raise
+                        continue  # retry
+                    raise  # not EADDRINUSE, or last attempt — propagate
+
+            # Guard: response is always set when loop exits normally (break on success)
+            if response is None:
+                return _make_error_result(
+                    url,
+                    error="eaddrinese_exhausted",
+                    failure_stage="connect",
+                    network_error_kind="other",
+                    selected_transport="curl_cffi",
+                    tls_impersonate=used_profile,
+                )
 
             # curl_cffi iter_content() returns a sync generator, not async iterator.
             # Use response.content directly (already bytes) and truncate manually if needed.
