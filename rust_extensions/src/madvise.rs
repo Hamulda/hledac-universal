@@ -1,11 +1,19 @@
-//! F273F + P3-2: Darwin madvise syscalls for M1 8GB page cache management.
+//! F273F + P3-2 + ISSUE-P7-001: Darwin madvise syscalls for M1 8GB page cache management.
 //!
 //! Provides:
 //!   - MADV_FREE_REUSABLE — tells kernel pages are clean/reusable
 //!   - MADV_NOCACHE — prevents page cache pollution of Metal memory
 //!   - MADV_HUGEPAGE — enables transparent huge pages (2MB) for large allocations
+//!   - mlock_key_region() — lock pages in RAM (no swap, no core dump)
+//!   - munlock_key_region() — unlock previously locked pages
+//!   - madvise_dontdump_region() — exclude pages from core dumps
 //!   - mmap_alloc_with_hugepage() — direct huge page allocation for Rust data
 //!   - mmap_hugepage() — memory-map with huge page hint for embedding index
+//!
+//! ISSUE-P7-001: Derived bucket keys in Python heap (key_manager.py) are not
+//! mlock'd — they reside in Python bytes objects on the GC-managed heap and are
+//! eligible for swap under memory pressure. The mlock() syscall pins pages in
+//! RAM so they never reach swap or core dumps.
 //!
 //! Transparent Huge Pages (THP): madvise(MADV_HUGEPAGE) tells the kernel to
 //! use 2MB pages instead of 4KB for the given range. Reduces TLB pressure for
@@ -527,6 +535,111 @@ pub fn madvise_free_reusable(addr: usize, length: usize, advice: i32) -> i32 {
     }
 }
 
+/// ISSUE-P7-001: Lock a memory region in RAM — prevents swapping and core dump inclusion.
+///
+/// On macOS/Darwin: mlock() automatically excludes pages from core dumps.
+/// This is the primary defense for derived bucket keys in key_manager.py —
+/// the bytearray is pinned in RAM, never reaches swap or the crash dump.
+///
+/// # Arguments
+/// * `addr` - Memory address as Python int
+/// * `length` - Length of the region in bytes
+///
+/// # Returns
+/// 0 on success, -1 on failure (errno set)
+#[pyfunction]
+pub fn mlock_key_region(addr: usize, length: usize) -> i32 {
+    // FFI-01: catch_unwind guards the unsafe mlock call.
+    match ffi_safe!({
+        if length == 0 || addr == 0 {
+            return 0i32;
+        }
+        let ptr = addr as *const libc::c_void;
+        let ret = unsafe { libc::mlock(ptr, length) };
+        if ret != 0 {
+            let err = std::io::Error::last_os_error();
+            eprintln!("mlock_key_region: mlock failed: {} (addr={}, len={})", err, addr, length);
+        }
+        ret
+    }) {
+        Ok(r) => r,
+        Err(_) => -1,
+    }
+}
+
+/// ISSUE-P7-001: Unlock a previously mlock'd memory region.
+///
+/// # Arguments
+/// * `addr` - Memory address as Python int
+/// * `length` - Length of the region in bytes
+///
+/// # Returns
+/// 0 on success, -1 on failure (errno set)
+#[pyfunction]
+pub fn munlock_key_region(addr: usize, length: usize) -> i32 {
+    // FFI-01: catch_unwind guards the unsafe munlock call.
+    match ffi_safe!({
+        if length == 0 || addr == 0 {
+            return 0i32;
+        }
+        let ptr = addr as *const libc::c_void;
+        unsafe { libc::munlock(ptr, length) }
+    }) {
+        Ok(r) => r,
+        Err(_) => -1,
+    }
+}
+
+/// ISSUE-P7-001: Exclude a memory region from core dumps (MADV_DONTDUMP).
+///
+/// On Linux: MADV_DONTDUMP = 12 (defined in kernel).
+/// On Darwin/macOS: core dumps are automatically excluded for mlock'd regions,
+/// but for non-mlock'd regions this provides explicit exclusion.
+///
+/// # Arguments
+/// * `addr` - Memory address as Python int
+/// * `length` - Length of the region in bytes
+///
+/// # Returns
+/// 0 on success, -1 on failure (errno set)
+#[pyfunction]
+pub fn madvise_dontdump_region(addr: usize, length: usize) -> i32 {
+    // FFI-01: catch_unwind guards the unsafe madvise call.
+    match ffi_safe!({
+        if length == 0 || addr == 0 {
+            return 0i32;
+        }
+        let ptr = addr as *mut libc::c_void;
+
+        #[cfg(target_os = "darwin")]
+        {
+            // On Darwin, MADV_DONTDUMP does not exist as a distinct constant.
+            // Pages that are mlock'd are automatically excluded from core dumps.
+            // For non-mlock'd pages, we return 0 (no-op) — the caller should
+            // use mlock_key_region() instead for proper protection.
+            let _ = ptr;
+            0i32
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // MADV_DONTDUMP = 12 on Linux — excludes pages from core dump
+            const MADV_DONTDUMP: i32 = 12;
+            unsafe { libc::madvise(ptr, length, MADV_DONTDUMP) }
+        }
+
+        #[cfg(not(any(target_os = "darwin", target_os = "linux")))]
+        {
+            // Other platforms: no-op, return success
+            let _ = ptr;
+            0i32
+        }
+    }) {
+        Ok(r) => r,
+        Err(_) => -1,
+    }
+}
+
 /// Get system huge page size in bytes.
 ///
 /// Returns the configured huge page size (2MB on Apple Silicon M1).
@@ -562,5 +675,9 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(munmap_hugepage, m)?)?;
     m.add_function(wrap_pyfunction!(get_hugepage_size, m)?)?;
     m.add_function(wrap_pyfunction!(madvise_free_reusable, m)?)?;
+    // ISSUE-P7-001: mlock — lock key material in RAM (no swap, no core dump)
+    m.add_function(wrap_pyfunction!(mlock_key_region, m)?)?;
+    m.add_function(wrap_pyfunction!(munlock_key_region, m)?)?;
+    m.add_function(wrap_pyfunction!(madvise_dontdump_region, m)?)?;
     Ok(())
 }

@@ -263,14 +263,36 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         return MonitoringResult(monitoring_type='advanced', success=monitoring_result.get('success', False), summary=f"Advanced monitoring: {monitoring_result.get('metrics_collected', 0)} metrics", metrics=monitoring_result, execution_time=execution_time)
 
     async def _execute_watchdog_monitoring(self, decision: DecisionResponse) -> MonitoringResult:
-        """Execute watchdog health monitoring."""
+        """Execute watchdog health monitoring (P7-006: RuntimeError → degraded status)."""
         start_time = time.time()
+        # P7-006 FIX: surface degraded status instead of raising RuntimeError
         if not self._watchdog:
-            raise RuntimeError('Watchdog not available')
-        health_result = await self._watchdog.perform_health_check(check_type=decision.chosen_option, detailed=decision.confidence > 0.7)
+            execution_time = time.time() - start_time
+            return MonitoringResult(
+                monitoring_type='watchdog',
+                success=False,
+                summary='Watchdog not available (degraded)',
+                metrics={'watchdog_available': False, 'status': 'degraded'},
+                execution_time=execution_time,
+            )
+        # P7-006 FIX: UmaWatchdog has no perform_health_check() — synthesize from state
+        watchdog_state = getattr(self._watchdog, 'last_fired_level', 'unknown')
+        is_running = getattr(self._watchdog, 'is_running', False)
+        health_result = {
+            'healthy': is_running and watchdog_state in ('normal', 'unknown'),
+            'status': watchdog_state,
+            'is_running': is_running,
+            'watchdog_available': True,
+        }
         execution_time = time.time() - start_time
         self._health_checks_performed += 1
-        return MonitoringResult(monitoring_type='watchdog', success=health_result.get('healthy', False), summary=f"Health check: {health_result.get('status', 'unknown')} status", metrics=health_result, execution_time=execution_time)
+        return MonitoringResult(
+            monitoring_type='watchdog',
+            success=health_result['healthy'],
+            summary=f"Health check: {health_result['status']} status (running={is_running})",
+            metrics=health_result,
+            execution_time=execution_time,
+        )
 
     async def _execute_system_monitoring(self) -> MonitoringResult:
         """Execute system-level monitoring via cached mach/getrusage (no psutil syscalls in hot path).

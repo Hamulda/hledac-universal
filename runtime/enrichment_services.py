@@ -216,15 +216,17 @@ class EnrichmentServices:
                                                 all_to_ingest.extend(ioc_children_trimmed)
                                                 if result is not None and hasattr(result, 'ioc_findings_total'):
                                                     result.ioc_findings_total += len(ioc_children_trimmed)
+                                            # NOTE: async_ingest_findings_batch is a native async coroutine.
+                                            # asyncio.shield guards the awaitable directly — no to_thread wrapper.
                                             await asyncio.shield(store.async_ingest_findings_batch(all_to_ingest))
                                     except Exception:
                                         pass
                                 # Evidence log attach (forensics only)
-                                # A5-07: shield — evidence ledger append must not be cancelled mid-write.
+                                # attach_forensic_analysis is pure-Python sync (orjson + in-memory list + Rust MPSC).
+                                # No C-extension I/O, no to_thread needed.
+                                # asyncio.shield kept to survive TaskGroup cancellation — forensic data is high-value.
                                 if self._evidence_log is not None:
                                     res_for_evidence = {k: v for k, v in res.items() if k != '_ioc_canonical_findings'}
-                                    # attach_forensic_analysis is sync but may do I/O;
-                                    # run in thread pool with shield to survive TaskGroup cancellation.
                                     await asyncio.shield(
                                         asyncio.to_thread(
                                             self._evidence_log.attach_forensic_analysis,
@@ -244,55 +246,6 @@ class EnrichmentServices:
                     log.debug('%s LMDB bulk-write: %d/%d', lmdb_label, written, len(enriched_pairs))
                 except Exception as exc:
                     log.warning('%s LMDB bulk-write failed: %s', lmdb_label, exc)
-        except Exception:
-            pass
-
-    async def enrich_findings_multimodal(self, findings: list, result: Any=None) -> None:
-        """
-        Enrich PDF/image findings with multimodal analysis before storage.
-
-        Fail-safe: enrichment errors are silent — never crash or abort the sprint.
-        Enrichment is best-effort: absence of multimodal data is not an error.
-        """
-        if not findings:
-            return
-        enricher = self._multimodal_enricher
-        lmdb_env = self._multimodal_lmdb_env
-        if enricher is None or lmdb_env is None:
-            return
-        enriched_pairs: list[tuple[bytes, bytes]] = []
-        try:
-            semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
-
-            async def enrich_one(finding) -> None:
-                nonlocal enriched_pairs
-                async with semaphore:
-                    try:
-                        res = await enricher.enrich(finding)
-                        if res is not None:
-                            fid = getattr(finding, 'finding_id', None)
-                            if fid:
-                                res_for_lmdb = {k: v for k, v in res.items() if k != '_ioc_canonical_findings'}
-                                try:
-                                    import orjson
-                                    from hledac.universal.evidence_log import _normalize_payload
-                                    payload = orjson.dumps(_normalize_payload(res_for_lmdb))
-                                except ImportError:
-                                    import msgspec.json as _msgspec_json
-                                    payload = _msgspec_json.encode(res_for_lmdb)
-                                enriched_pairs.append((fid.encode(), payload))
-                                if result is not None:
-                                    result.multimodal_enriched_findings += 1
-                    except Exception:
-                        pass
-            # E2-FIX: bounded_parallel_map replaces safe_gather — concurrency capped at 3
-            await bounded_parallel_map(findings, enrich_one, concurrency=3, ordered=False, ctx='multimodal_enrichment', logger_instance=log)
-            if enriched_pairs:
-                try:
-                    written = putmulti_bounded(lmdb_env, enriched_pairs, overwrite=True)
-                    log.debug('multimodal LMDB bulk-write: %d/%d', written, len(enriched_pairs))
-                except Exception as exc:
-                    log.warning('multimodal LMDB bulk-write failed: %s', exc)
         except Exception:
             pass
 

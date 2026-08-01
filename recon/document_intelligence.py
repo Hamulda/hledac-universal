@@ -36,13 +36,32 @@ import msgspec
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 logger = logging.getLogger(__name__)
 
 # M1 8GB: ProcessPoolExecutor for CPU-bound forensics (max 2 workers to avoid RAM pressure)
 # Shared across all DeepForensicsAnalyzer instances via module-level singleton
 _forensics_pool: concurrent.futures.Executor | None = None
 _forensics_pool_lock = LazyAsyncioLock()
+
+# M1 8GB: Document-level size guard — refuse to read files above this threshold
+# before loading them into RAM. Contrast with embedded-image/zip-entry guards
+# (which protect against decompression bombs AFTER the outer document is loaded).
+_MAX_DOCUMENT_SIZE = 100 * 1024 * 1024  # 100 MB per document
+
+
+def _guard_file_size(file_path: str) -> None:
+    """Refuse documents above size threshold before reading into RAM.
+
+    Raises ValueError if the file is larger than _MAX_DOCUMENT_SIZE.
+    Call at the top of every analyze() entry that accepts a file path.
+    """
+    stat = os.stat(file_path)
+    if stat.st_size > _MAX_DOCUMENT_SIZE:
+        raise ValueError(
+            f"Document too large: {stat.st_size / 1024 / 1024:.1f}MB "
+            f"(limit {_MAX_DOCUMENT_SIZE / 1024 / 1024:.0f}MB)"
+        )
 
 
 def _get_forensics_pool() -> concurrent.futures.Executor:
@@ -66,6 +85,13 @@ def _get_forensics_pool() -> concurrent.futures.Executor:
                 thread_name_prefix='forensics_cpu_fallback',
             )
     return _forensics_pool
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    np = None
+    NUMPY_AVAILABLE = False
+
 try:
     import piexif
     from PIL import ExifTags, Image, ImageChops
@@ -119,6 +145,73 @@ def _check_mps_available():
         pass
     return False
 MAX_IMAGE_SIZE = 2048
+
+# M1 8GB: Per-image and per-stream size caps to prevent OOM from decoded content.
+# PyMuPDF's extract_image() returns FULLY DECODED image bytes — a 1KB JPEG
+# compressed in a page stream can expand to 500MB decoded.
+_MAX_EMBEDDED_IMAGE_BYTES = 50 * 1024 * 1024   # 50 MB per decoded image
+_MAX_EMBEDDED_STREAM_BYTES = 10 * 1024 * 1024  # 10 MB per OOXML media entry
+
+def _safe_extract_image(doc: Any, xref: int) -> dict | None:
+    """Extract image from PDF with size cap on decoded content.
+
+    PyMuPDF's extract_image() decompresses the image fully into memory.
+    A malicious PDF can contain a small compressed stream that expands to
+    hundreds of MB when decoded. This guard prevents OOM on M1 8GB.
+
+    Returns the base_image dict from extract_image(), or None if over limit.
+    """
+    try:
+        base_image = doc.extract_image(xref)
+    except Exception:
+        return None
+    if not base_image:
+        return None
+    image_bytes = base_image.get('image', b'')
+    if len(image_bytes) > _MAX_EMBEDDED_IMAGE_BYTES:
+        logger.warning(
+            f"[DOC] Refused image xref={xref} at {len(image_bytes) / 1024 / 1024:.1f}MB "
+            f"(limit {_MAX_EMBEDDED_IMAGE_BYTES // 1024 // 1024:.0f}MB)"
+        )
+        return None
+    return base_image
+
+def _safe_read_zip_entry(z: zipfile.ZipFile, name: str) -> bytes | None:
+    """Read a zip entry with size cap to prevent zip bomb attacks."""
+    try:
+        info = z.getinfo(name)
+        if info.file_size > _MAX_EMBEDDED_STREAM_BYTES:
+            logger.warning(
+                f"[DOC] Refused zip entry '{name}' at {info.file_size / 1024 / 1024:.1f}MB "
+                f"(limit {_MAX_EMBEDDED_STREAM_BYTES // 1024 // 1024:.0f}MB)"
+            )
+            return None
+        return z.read(name)
+    except Exception:
+        return None
+
+def _safe_xref_stream(doc: Any, xref: int) -> bytes | None:
+    """Read PDF xref stream with size cap to prevent decompression bombs.
+
+    PyMuPDF's xref_stream() returns raw decompressed stream bytes.
+    A malicious PDF can embed a small compressed stream that expands to
+    hundreds of MB when decompressed. This guard prevents OOM on M1 8GB.
+
+    Returns the stream bytes, or None if over limit or on error.
+    """
+    try:
+        stream = doc.xref_stream(xref)
+        if stream is None:
+            return None
+        if len(stream) > _MAX_EMBEDDED_IMAGE_BYTES:
+            logger.warning(
+                f"[DOC] Refused xref_stream xref={xref} at {len(stream) / 1024 / 1024:.1f}MB "
+                f"(limit {_MAX_EMBEDDED_IMAGE_BYTES // 1024 // 1024:.0f}MB)"
+            )
+            return None
+        return stream
+    except Exception:
+        return None
 
 class DocumentType(Enum):
     """Supported document types."""
@@ -366,6 +459,7 @@ class PDFAnalyzer:
         """Extract PDF metadata."""
         pdf_metadata = doc.metadata
         if isinstance(file_path, str):
+            _guard_file_size(file_path)
             with open(file_path, 'rb') as f:
                 content = f.read()
         elif isinstance(file_path, bytes):
@@ -404,11 +498,11 @@ class PDFAnalyzer:
                 doc.xref_get_key(xref, 'Type')
                 subtype = doc.xref_get_key(xref, 'Subtype')
                 if subtype[1] == 'Image':
-                    base_image = doc.extract_image(xref)
+                    base_image = _safe_extract_image(doc, xref)
                     if base_image:
                         objects.append(EmbeddedObject(object_type='image', object_name=f'image_{xref}', content_type=base_image.get('ext'), size_bytes=len(base_image.get('image', b'')), extracted_content=base_image.get('image'), metadata={'width': base_image.get('width'), 'height': base_image.get('height'), 'colorspace': base_image.get('colorspace')}))
                 elif subtype[1] in ['FileAttachment', 'EmbeddedFile']:
-                    stream = doc.xref_stream(xref)
+                    stream = _safe_xref_stream(doc, xref)
                     if stream:
                         name = doc.xref_get_key(xref, 'F')
                         objects.append(EmbeddedObject(object_type='file_attachment', object_name=name[1] if name else f'attachment_{xref}', content_type=None, size_bytes=len(stream), extracted_content=stream))
@@ -432,6 +526,7 @@ class PDFAnalyzer:
     def _basic_pdf_analysis(self, file_path) -> DocumentAnalysis:
         """Fallback basic analysis without PyMuPDF."""
         if isinstance(file_path, str):
+            _guard_file_size(file_path)
             with open(file_path, 'rb') as f:
                 content = f.read()
         elif isinstance(file_path, bytes):
@@ -482,6 +577,7 @@ class OfficeDocumentAnalyzer:
     def analyze(self, file_path: str | bytes) -> DocumentAnalysis:
         """Analyze Office document (sync)."""
         if isinstance(file_path, str):
+            _guard_file_size(file_path)
             with open(file_path, 'rb') as f:
                 content = f.read()
         else:
@@ -494,6 +590,7 @@ class OfficeDocumentAnalyzer:
     async def analyze_async(self, file_path: str | bytes) -> DocumentAnalysis:
         """Analyze Office document with FOCA enrichment (async, M1-safe)."""
         if isinstance(file_path, str):
+            _guard_file_size(file_path)
             content = await asyncio.to_thread(Path(file_path).read_bytes)
         else:
             content = file_path
@@ -547,8 +644,9 @@ class OfficeDocumentAnalyzer:
                     hyperlinks = PDFAnalyzer.URL_PATTERN.findall(doc_xml)
                 for name in z.namelist():
                     if name.startswith('word/media/'):
-                        data = z.read(name)
-                        embedded_objects.append(EmbeddedObject(object_type='media', object_name=name.split('/')[-1], content_type=None, size_bytes=len(data), extracted_content=data))
+                        data = _safe_read_zip_entry(z, name)
+                        if data is not None:
+                            embedded_objects.append(EmbeddedObject(object_type='media', object_name=name.split('/')[-1], content_type=None, size_bytes=len(data), extracted_content=data))
         except Exception as e:
             logger.error(f'OOXML analysis error: {e}')
         return DocumentAnalysis(metadata=metadata, embedded_objects=embedded_objects, hyperlinks=hyperlinks, comments=comments)
@@ -627,6 +725,7 @@ class ImageAnalyzer:
             return self._basic_image_analysis(file_path)
         try:
             if isinstance(file_path, str):
+                _guard_file_size(file_path)
                 with open(file_path, 'rb') as f:
                     content = f.read()
                 with Image.open(file_path) as img:
@@ -742,6 +841,7 @@ class ImageAnalyzer:
     def _basic_image_analysis(self, file_path) -> DocumentAnalysis:
         """Basic analysis without PIL."""
         if isinstance(file_path, str):
+            _guard_file_size(file_path)
             with open(file_path, 'rb') as f:
                 content = f.read()
         else:
@@ -917,7 +1017,6 @@ class DeepForensicsAnalyzer:
 
     def _ela_analysis_cpu_sync(self, content: bytes) -> float:
         """Synchronous CPU implementation of ELA."""
-        import numpy as np
         from PIL import Image, ImageChops
         with Image.open(io.BytesIO(content)) as img:
             tmp = io.BytesIO()
@@ -1052,10 +1151,10 @@ class DocumentIntelligenceEngine:
         """Run an async coroutine in a separate thread with its own event loop.
 
         This avoids asyncio.run() crash on M1 and prevents blocking MLX workers.
+        No asyncio.set_event_loop() here — loop is already current in its own thread.
         """
         try:
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             try:
                 return loop.run_until_complete(coro)
             finally:
@@ -1086,6 +1185,7 @@ class DocumentIntelligenceEngine:
         elif extension in ['jpg', 'jpeg', 'png', 'tiff', 'tif', 'gif', 'bmp', 'webp']:
             analysis = self.image_analyzer.analyze(file_path)
             try:
+                _guard_file_size(file_path)
                 with open(file_path, 'rb') as f:
                     content = f.read()
                 if hasattr(self, '_forensics'):
@@ -1113,6 +1213,7 @@ class DocumentIntelligenceEngine:
 
     def _create_unknown_analysis(self, file_path: str) -> DocumentAnalysis:
         """Create analysis for unknown file type."""
+        _guard_file_size(file_path)
         with open(file_path, 'rb') as f:
             content = f.read()
         md5_hash = hashlib.md5(content).hexdigest()
@@ -1160,7 +1261,7 @@ class DocumentIntelligenceEngine:
     def close(self) -> None:
         """Clean up resources: forensics thread pool and stegdetect server."""
         if hasattr(self, '_forensics_thread_pool') and self._forensics_thread_pool:
-            self._forensics_thread_pool.shutdown(wait=False)
+            self._forensics_thread_pool.shutdown(wait=True)
             self._forensics_thread_pool = None
         if hasattr(self, '_forensics') and self._forensics:
             steg_server = getattr(self._forensics, '_stegdetect_server', None)

@@ -4,6 +4,7 @@ import logging
 import os
 import tempfile
 import zipfile
+from os import fspath, PathLike
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -97,6 +98,101 @@ def _check_cryptokit() -> bool:
 CRYPTOKIT_AVAILABLE = _check_cryptokit()
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# P7-003: Ratio-limited zip openers (defense-in-depth)
+#
+# _safe_extractall() performs a pre-flight ratio check on zf.infolist() before
+# calling extractall().  These module-level openers add a second layer: they
+# open a standard ZipFile/AESZipFile and validate the ratio BEFORE the caller
+# gets the object, so any caller (not just _safe_extractall) benefits.
+#
+# ratio_limited_open() — standard zipfile.ZipFile with pre-open ratio guard
+# ratio_limited_aes_open() — pyzipper.AESZipFile with pre-open ratio guard
+# ---------------------------------------------------------------------------
+
+_MAX_RATIO = 100
+_MAX_EXTRACT_MB = 100
+
+
+def _check_zip_ratio(info: zipfile.ZipInfo, max_ratio: int, max_extract_mb: int) -> None:
+    """Raise BadZipFile if a member exceeds decompression ratio or size cap."""
+    fs = info.file_size
+    cs = info.compress_size
+    max_bytes = max_extract_mb * 1024 * 1024
+
+    if fs > max_bytes:
+        raise zipfile.BadZipFile(
+            f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
+            f"(limit {max_extract_mb:.0f}MB per member)"
+        )
+    if cs > 0 and fs > 0:
+        ratio = fs / cs
+        if ratio > max_ratio:
+            raise zipfile.BadZipFile(
+                f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
+                f"from {cs / 1024:.1f}KB (ratio {ratio:.0f}x, limit {max_ratio}x)"
+            )
+
+
+def ratio_limited_open(
+    src: str | Path,
+    mode: str = "r",
+    max_ratio: int = _MAX_RATIO,
+    max_extract_mb: int = _MAX_EXTRACT_MB,
+) -> zipfile.ZipFile:
+    """
+    Open a ZIP file with P7-003 decompression ratio validation.
+
+    Before returning, iterates ``infolist()`` (read-only, no decompression)
+    and raises ``BadZipFile`` if any member exceeds ``max_ratio`` (default 100:1)
+    or ``max_extract_mb`` (default 100 MB).
+
+    Returns a standard ``zipfile.ZipFile`` — all subsequent operations are
+    unchanged for the caller.
+    """
+    # NOTE: ty (Python 3.14 stdlib stub) does not correctly resolve PathLike[str]
+    # via pathlib.Path in ZipFile.__init__ overloads.  Using positional str arg
+    # bypasses the overload mismatch.  Valid at runtime: Path implements PathLike[str].
+    src_str: str = fspath(src)
+    zf = zipfile.ZipFile(open(src_str, 'rb'), mode)  # type: ignore
+    try:
+        for info in zf.infolist():
+            _check_zip_ratio(info, max_ratio, max_extract_mb)
+        return zf
+    except Exception:
+        zf.close()
+        raise
+
+
+if PYZIPPER_AVAILABLE:
+    def ratio_limited_aes_open(
+        src: str | Path,
+        mode: str = "r",
+        *,
+        password: bytes | None = None,
+        max_ratio: int = _MAX_RATIO,
+        max_extract_mb: int = _MAX_EXTRACT_MB,
+    ) -> pyzipper.AESZipFile:
+        """
+        Open an AES-encrypted ZIP with P7-003 decompression ratio validation.
+
+        Same guard as ``ratio_limited_open`` but for pyzipper.AESZipFile.
+        The password is passed directly to ``AESZipFile.setpassword()`` after
+        opening, because pyzipper requires password set *after* construction.
+        """
+        zf = pyzipper.AESZipFile(open(fspath(src), 'rb'), mode)
+        try:
+            if password is not None:
+                zf.setpassword(password)
+            for info in zf.infolist():
+                _check_zip_ratio(info, max_ratio, max_extract_mb)
+            return zf
+        except Exception:
+            zf.close()
+            raise
+
+
 class LootManager:
     """
     Encrypted vault export manager.
@@ -128,6 +224,14 @@ class LootManager:
         - Sprint report export (see export/sprint_exporter.py)
     """
     __slots__ = tuple(('vault_path',))
+
+    # P7-003: Decompression ratio limits to prevent zip-bomb OOM on M1 8GB.
+    # - MAX_DECOMPRESS_RATIO: hard cap on compression ratio (file_size/compress_size).
+    #   A 1KB DEFLATE stream that would expand to 10GB = 10,000,000:1 ratio → blocked.
+    # - MAX_EXTRACT_PER_MEMBER: absolute per-member decompressed size cap (100MB).
+    #   Blocks zip bombs even if their ratio is within limit but absolute size is excessive.
+    MAX_DECOMPRESS_RATIO: int = 100  # 100:1 — industry-standard threshold
+    MAX_EXTRACT_PER_MEMBER: int = 100 * 1024 * 1024  # 100 MB per member hard cap
 
     def __init__(self, vault_path: str):
         self.vault_path = Path(vault_path)
@@ -376,7 +480,7 @@ class LootManager:
     @staticmethod
     def _safe_extractall(zf, extract_to: Path) -> None:
         """
-        Extract ZIP with zip-slip and path-traversal protection.
+        Extract ZIP with zip-slip, path-traversal, AND decompression ratio protection.
 
         Works with zipfile.ZipFile and pyzipper.AESZipFile (both share namelist/extractall).
 
@@ -385,8 +489,37 @@ class LootManager:
         - Absolute paths
         - Any ".." path segment
         - Resolved paths outside extract_to
+        - Decompression ratio > MAX_DECOMPRESS_RATIO (P7-003 zip-bomb guard)
+        - Per-member decompressed size > MAX_EXTRACT_PER_MEMBER (100MB hard cap)
         """
         extract_to = extract_to.resolve()
+
+        # P7-003: First pass — enumerate all members and validate BEFORE extracting anything.
+        # Using infolist() instead of namelist() to get compress_size for ratio check.
+        # This is safe: no decompression happens during infolist() traversal.
+        for info in zf.infolist():
+            cs = info.compress_size
+            fs = info.file_size
+
+            # Check 1: per-member absolute size cap (100MB hard cap).
+            # Protects against zip bombs with ratio < 100 but decompressed size >> 100MB.
+            if fs > LootManager.MAX_EXTRACT_PER_MEMBER:
+                raise zipfile.BadZipFile(
+                    f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
+                    f"(limit {LootManager.MAX_EXTRACT_PER_MEMBER / 1024 / 1024:.0f}MB)"
+                )
+
+            # Check 2: compression ratio cap.
+            # compress_size=0 is a valid empty file; treat as ratio=0.
+            if cs > 0 and fs > 0:
+                ratio = fs / cs
+                if ratio > LootManager.MAX_DECOMPRESS_RATIO:
+                    raise zipfile.BadZipFile(
+                        f"Zip bomb: {info.filename} → {fs / 1024 / 1024:.1f}MB "
+                        f"from {cs / 1024:.1f}KB (ratio {ratio:.0f}x, limit {LootManager.MAX_DECOMPRESS_RATIO}x)"
+                    )
+
+        # Second pass: path-traversal and zip-slip checks (still before extractall).
         for member in zf.namelist():
             if '\x00' in member:
                 raise zipfile.BadZipFile(f'NUL byte in member name: {member!r}')
@@ -398,6 +531,7 @@ class LootManager:
             member_path = (extract_to / member).resolve()
             if not member_path.is_relative_to(extract_to):
                 raise zipfile.BadZipFile(f'Path traversal attempt: {member}')
+
         zf.extractall(extract_to)
 
     def _decrypt_fernet(self, encrypted_data: bytes, password: str, output_path: Path) -> str | None:

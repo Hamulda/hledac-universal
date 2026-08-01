@@ -34,6 +34,9 @@ import threading
 import typing
 from typing import Any
 
+from hledac.universal.runtime.watchdog import StuckTaskDetector
+from hledac.universal.utils.async_helpers import parallel
+
 _CancelledError: type = asyncio.CancelledError  # type: ignore[misc,assignment] — Python 3.14+: builtin
 
 __all__ = ["TaskRegistry", "get_task_registry", "safe_create_task_tracked", "TaskScope"]
@@ -52,6 +55,9 @@ def get_task_registry() -> "TaskRegistry":
     with _registry_lock:
         if _registry is None:
             _registry = TaskRegistry()
+            # P7-006: wire StuckTaskDetector for C-extension I/O hang detection
+            _detector = StuckTaskDetector(timeout_s=60.0)
+            _registry.set_stuck_detector(_detector)
     return _registry
 
 
@@ -129,6 +135,7 @@ class TaskRegistry:
             "_registered_count",
             "_cancelled_count",
             "_eviction_count",
+            "_stuck_detector",
         )
     )
 
@@ -142,12 +149,22 @@ class TaskRegistry:
         self._registered_count = 0
         self._cancelled_count = 0
         self._eviction_count = 0
+        self._stuck_detector: StuckTaskDetector | None = None
 
     # ── Event loop wiring ──────────────────────────────────────────────────
 
     def inject_cancel_event(self, cancel_event: asyncio.Event) -> None:
         """Wire the sprint cancel_event so cancel_scope can set it."""
         self._cancel_event = cancel_event
+
+    def set_stuck_detector(self, detector: StuckTaskDetector) -> None:
+        """Inject a StuckTaskDetector for post-cancellation hang detection.
+
+        The detector is checked after cancel_all() + wait period in
+        cleanup_after_cancel() to identify tasks still running after
+        the cancellation timeout — indicative of C-extension I/O hangs.
+        """
+        self._stuck_detector = detector
 
     # ── Core API ───────────────────────────────────────────────────────────
 
@@ -183,6 +200,13 @@ class TaskRegistry:
             self._scope_index.setdefault(scope, set()).add(task_id)
             self._registered_count += 1
 
+        # P7-006: track wall-clock time for hang detection
+        if self._stuck_detector is not None:
+            try:
+                self._stuck_detector.track(task)
+            except Exception:
+                pass
+
         return task
 
     def _evict_oldest(self) -> None:
@@ -214,6 +238,12 @@ class TaskRegistry:
                     scope_set.discard(task_id)
                 if not scope_set:
                     self._scope_index.pop(scope, None)
+        # P7-006: remove from stuck detector
+        if self._stuck_detector is not None:
+            try:
+                self._stuck_detector.forget(task)
+            except Exception:
+                pass
 
     # ── Cancellation API ───────────────────────────────────────────────────
 
@@ -439,6 +469,10 @@ class TaskRegistry:
         Called by WinddownOrchestrator after cancel_all() to reclaim MLX Metal
         allocations on M1 8GB.
 
+        P7-006: After cancel_all() + 5s grace period, runs StuckTaskDetector
+        to identify tasks still running — indicative of C-extension I/O hangs
+        (DNS resolver, TLS handshake, curl_cffi non-cancellable syscalls).
+
         HARD INVARIANTS (CLAUDE.md):
           - mx.eval([]) pred mx.metal.clear_cache() — jinak clear_cache no-op
           - Fail-safe: kazdy krok v try/except
@@ -455,7 +489,34 @@ class TaskRegistry:
         except Exception:
             pass
 
-        # 3. metal_reclaim() — M5: canonical gc+eval+clear+dynamic_limit (MEM-2 pattern)
+        # 3. P7-006: Wait 5s, then check for stuck tasks
+        # Any task still running after the cancellation timeout is a confirmed
+        # C-extension hang — log it for diagnostics but do NOT block cleanup.
+        if self._stuck_detector is not None:
+            try:
+                await asyncio.sleep(5.0)
+                stuck = await self._stuck_detector.run()
+                if stuck:
+                    import logging as _log
+                    _logger = _log.getLogger(__name__)
+                    _logger.warning(
+                        f"[P7-006] StuckTaskDetector: {len(stuck)} task(s) still "
+                        f"running after cancellation grace period: {stuck}"
+                    )
+                # Also get elapsed times for stuck tasks
+                if stuck:
+                    with_tasks = await self._stuck_detector.get_stuck_with_tasks()
+                    for tid, elapsed in with_tasks:
+                        import logging as _log2
+                        _logger2 = _log2.getLogger(__name__)
+                        _logger2.warning(
+                            f"[P7-006] Stuck task id={tid} elapsed={elapsed:.1f}s "
+                            f"(likely C-extension I/O hang)"
+                        )
+            except Exception:
+                pass
+
+        # 4. metal_reclaim() — M5: canonical gc+eval+clear+dynamic_limit (MEM-2 pattern)
         # Replaces inline gc+eval+clear sequence with single canonical entry point.
         # Called here because winddown is one of the 3 designated call sites.
         try:
