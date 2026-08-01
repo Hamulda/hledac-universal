@@ -203,3 +203,35 @@ def truncate_prompt_simple(prompt: str, max_chars: int, preserve_end_fraction: f
     front = prompt[:keep_front]
     back = prompt[-keep_back:]
     return front + '\n\n[... truncated ...]\n\n' + back
+
+
+@dataclass
+class ThermalGenerationParams:
+    """
+    ISSUE-015: Thermal generation parameters for LLM inference.
+
+    Under thermal pressure, shorter generations (reduced max_tokens) complete faster
+    and allow thermal recovery on fanless M1 devices.
+    """
+    max_tokens_override: int | None = None  # None = use model default
+    temperature_reduction: float = 0.0  # 0.0-0.5, subtracted from temperature when throttled
+
+
+def get_thermal_generation_params() -> ThermalGenerationParams:
+    """
+    ISSUE-015: Probe M1ResourceGovernor for current thermal generation parameters.
+
+    Returns:
+        ThermalGenerationParams with max_tokens_override and temperature_reduction.
+        Returns defaults (None, 0.0) when Governor unavailable or not throttled.
+    """
+    try:
+        from hledac.universal.core.protocols import get_governor
+        gov = get_governor()
+        decision = gov.evaluate()
+        return ThermalGenerationParams(
+            max_tokens_override=decision.max_tokens_override,
+            temperature_reduction=decision.temperature_reduction,
+        )
+    except Exception:
+        return ThermalGenerationParams()

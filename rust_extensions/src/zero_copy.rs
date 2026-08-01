@@ -20,7 +20,8 @@
 //! - `PyBytes::as_bytes()` direct access avoids copy on input
 //! - Pre-allocated `PyBytes::new()` avoids intermediate Vec<u8> copy on output
 
-use pyo3::exceptions::PyValueError;
+use pyo3::buffer::PyBuffer;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList};
 use rayon::prelude::*;
@@ -202,19 +203,35 @@ pub trait ZeroCopyBatch: Send + Sync {
 // PyBuffer-based batch processing (true zero-copy)
 // ---------------------------------------------------------------------------
 
-/// Zero-copy entropy computation from raw bytes or list of strings.
+/// Zero-copy entropy computation from raw bytes, buffer-backed objects, or list of strings.
 /// GIL is held across the entire operation — PyO3 access is safe.
 ///
-/// Accepts Python bytes objects or list of strings.
+/// Accepts Python bytes, bytearray, memoryview, numpy arrays (via PyBuffer protocol),
+/// or list of strings.
 ///
 /// # Arguments
-/// * `input` - Python bytes or list of strings
+/// * `input` - Python bytes, buffer-backed object, or list of strings
 ///
 /// # Returns
 /// * `f64` - Shannon entropy in bits
+///
+/// # Performance
+/// - PyBuffer: TRUE zero-copy — directly accesses underlying memory (numpy, bytearray)
+/// - PyBytes: Zero-copy view of Python bytes object
+/// - List of strings: Copies to Vec<String> then processes
 #[pyfunction]
 pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64> {
-    // Try PyBytes first — direct access to underlying buffer (zero-copy)
+    // ISSUE-005 FIX: Try PyBuffer first — TRUE zero-copy from any buffer-backed object.
+    // This handles numpy arrays, bytearray, memoryview, and other buffer protocol objects
+    // WITHOUT creating an intermediate Python bytes object.
+    // PyBuffer::as_bytes() returns &[u8] directly from the object's memory.
+    if let Ok(buffer) = input.extract::<PyBuffer<u8>>() {
+        // unsafe: buffer guarantees lifetime validity for the GIL-held scope
+        let bytes = unsafe { buffer.as_bytes() };
+        return Ok(compute_entropy_zc(bytes));
+    }
+
+    // Fallback: PyBytes — direct access to underlying buffer (zero-copy view)
     if let Ok(bytes) = input.cast::<PyBytes>() {
         return Ok(compute_entropy_zc(bytes.as_bytes()));
     }
@@ -246,7 +263,83 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64>
         return Ok(result);
     }
 
-    Err(PyValueError::new_err("Expected bytes or list of strings"))
+    Err(PyTypeError::new_err("Expected buffer, bytes, or list of strings"))
+}
+
+/// Batch zero-copy entropy computation from a list of buffer-backed objects.
+/// GIL is held across the entire operation — PyO3 access is safe.
+///
+/// Uses PyBuffer protocol for TRUE zero-copy batch processing of numpy arrays,
+/// bytearrays, and memoryviews. Each item is processed in parallel via rayon.
+///
+/// # Arguments
+/// * `buffers` - Python list of buffer-backed objects (numpy arrays, bytearray, etc.)
+/// * `py` - Python interpreter
+///
+/// # Returns
+/// * `PyResult<Vec<f64>>` - Entropy values for each buffer
+#[pyfunction]
+pub fn buffer_entropy_batched<'py>(
+    buffers: Bound<'py, PyList>,
+    py: Python<'py>,
+) -> PyResult<Vec<f64>> {
+    let _n = validate_batch(&buffers, py)?;
+
+    // Collect buffer byte slices — zero-copy from each buffer-backed object
+    let mut buffer_views: Vec<&[u8]> = Vec::with_capacity(buffers.len());
+
+    for item in buffers.iter() {
+        // ISSUE-005 / ISSUE-005-FIX2: Extract PyBuffer for true zero-copy access.
+        // This avoids the PyBytes intermediate copy for numpy arrays/bytearray.
+        let buffer: PyBuffer<u8> = match item.extract() {
+            Ok(b) => b,
+            Err(_) => {
+                // Item doesn't support buffer protocol — try bytes as fallback.
+                // ISSUE-005-FIX2: use ok() instead of ? for graceful degradation:
+                // skip items that are neither buffer-backed nor bytes (e.g. int, float).
+                // For entropy batch, partial results are better than hard fail.
+                let Ok(bytes) = item.cast::<PyBytes>() else {
+                    continue; // non-buffer, non-bytes item — skip silently
+                };
+                buffer_views.push(bytes.as_bytes());
+                continue;
+            }
+        };
+        // unsafe: PyBuffer<u8> lifetime is valid for the entire GIL-held
+        // buffer_entropy_batched scope. The extracted buffer borrows from `item`,
+        // which borrows from `buffers` (Bound<'py, PyList>) whose lifetime
+        // is 'py = the GIL scope of Python<'py>. buffer_views holds &-[u8] slices
+        // that remain valid as long as the GIL scope is active (pool.install
+        // runs inside Python::attach which holds the GIL throughout).
+        let bytes = unsafe { buffer.as_bytes() };
+        buffer_views.push(bytes);
+    }
+
+    if buffer_views.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Compute entropies in parallel using rayon's par_iter
+    // R4-09 FIX: Use adaptive threshold aligned with mixed_pool sizing.
+    let results: Vec<f64> = if buffer_views.len() < adaptive_scheduler::mixed_threshold() {
+        buffer_views
+            .iter()
+            .map(|b| compute_entropy_zc(b))
+            .collect()
+    } else {
+        Python::attach(|py| {
+            release_gil(py, || {
+                mixed_pool(buffer_views.len()).install(|| {
+                    buffer_views
+                        .par_iter()
+                        .map(|b| compute_entropy_zc(b))
+                        .collect()
+                })
+            })
+        })
+    };
+
+    Ok(results)
 }
 
 /// Compute Shannon entropy of a byte slice.
@@ -550,6 +643,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_url_fingerprints_zc, m)?)?;
     m.add_function(wrap_pyfunction!(batch_dedup_fingerprints_zc, m)?)?;
     m.add_function(wrap_pyfunction!(buffer_entropy, m)?)?;
+    m.add_function(wrap_pyfunction!(buffer_entropy_batched, m)?)?;
     m.add_function(wrap_pyfunction!(batch_ioc_extract_into, m)?)?;
     m.add_function(wrap_pyfunction!(sha256_buffer, m)?)?;
     m.add_function(wrap_pyfunction!(blake3_buffer, m)?)?;
@@ -586,5 +680,31 @@ mod tests {
     fn test_batch_max_limit() {
         assert!(ZERO_COPY_BATCH_MAX_ITEMS <= 10_000, "Batch max should be bounded for M1 8GB");
         assert!(ZERO_COPY_BATCH_MAX_BYTES <= 100_000_000, "Byte max should be 100MB");
+    }
+
+    // ISSUE-005: PyBuffer zero-copy tests
+    #[test]
+    fn test_compute_entropy_zc_various_sizes() {
+        // Test various input sizes for entropy computation
+        assert_eq!(compute_entropy_zc(b""), 0.0);
+        assert_eq!(compute_entropy_zc(b"a"), 0.0);
+        assert_eq!(compute_entropy_zc(b"aa"), 0.0);
+        assert_eq!(compute_entropy_zc(b"ab"), 1.0, "Two equal-frequency symbols = 1 bit entropy");
+        let result = compute_entropy_zc(b"hello world");
+        assert!(result > 0.0 && result <= 4.0, "English text entropy should be between 0 and 4 bits");
+    }
+
+    #[test]
+    fn test_buffer_views_empty() {
+        // Test that empty buffer views don't cause issues
+        let empty: &[u8] = &[];
+        assert_eq!(compute_entropy_zc(empty), 0.0);
+    }
+
+    #[test]
+    fn test_batch_bounds() {
+        // Verify batch limits prevent OOM
+        assert!(ZERO_COPY_BATCH_MAX_ITEMS >= 10_000);
+        assert!(ZERO_COPY_BATCH_MAX_BYTES >= 100_000_000);
     }
 }

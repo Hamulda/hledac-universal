@@ -1,0 +1,19 @@
+{
+  "scores": {
+    "README.md": 0.9
+  },
+  "keywords": {
+    "README.md": [
+      "test",
+      "readme"
+    ]
+  },
+  "coactivation": {},
+  "decay_rates": {},
+  "pinned": [
+    "README.md"
+  ],
+  "turn_count": 0,
+  "pending_turns": 0,
+  "pending_keyword_matches": []
+}

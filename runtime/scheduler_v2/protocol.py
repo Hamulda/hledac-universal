@@ -185,8 +185,7 @@ class SchedulerProtocol(Protocol):
         ...
 T = TypeVar('T', default=object)
 
-@dataclass(frozen=True, slots=True)
-class InitResult(Generic[T]):
+class InitResult(msgspec.Struct, Generic[T], frozen=True, gc=False):
     """Result of a fail-soft init — captures success/failure with reason.
 
     Replaces ``try/except → return None`` antipattern across all SprintSchedulerV2
@@ -201,12 +200,16 @@ class InitResult(Generic[T]):
         else:
             logger.warning("DuckDB init failed after %.1fms: %s",
                           result.elapsed_ms, result.error)
+
+    NOTE: msgspec.Struct provides __slots__ automatically (no explicit slots needed).
+    Generic[T] supported in msgspec >= 0.21.
     """
-    value: T | None
+
+    value: T | None = None
     'The initialized object, or None if init failed.'
-    error: str | None
+    error: str | None = None
     'Human-readable error message. None on success.'
-    elapsed_ms: float
+    elapsed_ms: float = 0.0
     'How long the init took in milliseconds.'
 
     @property

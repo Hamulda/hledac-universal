@@ -1264,6 +1264,13 @@ def create_telemetry_aggregator() -> TelemetryAggregator:
 # F275-3: Arrow batch builder — CanonicalFinding list → Arrow IPC bytes (rayon-parallel)
 def build_arrow_batch_from_findings(findings: list[dict[str, Any]]) -> bytes | None: ...
 
+# ISSUE-001: Single-pass CanonicalFinding list → Arrow IPC (no Python list comprehensions)
+def build_record_batch_from_findings(
+    findings: list[Any],
+    provenance_jsons: list[str | None],
+    payload_texts: list[str],
+) -> bytes | None: ...
+
 # ISSUE-27: Claims extraction — CPU-bound sentence splitting, polarity, confidence (Rust)
 def extract_claims(
     text: str,

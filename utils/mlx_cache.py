@@ -256,7 +256,10 @@ def _format_limit_mib(value: int | None) -> str:
 #   model(2GB) + KV(0.75GB) + cache(1.5GB) = 4.25GB MLX footprint
 #   leaving ~3.75GB for macOS baseline (~2.5GB) + apps + GPUComputationSlice
 #   At 5.5 GiB available: cache_limit = min(1.1, 1.5) = 1.1 GiB (not capped at 1 GiB)
-def get_dynamic_metal_cache_limit(uma_state: str | None = None) -> int:
+def get_dynamic_metal_cache_limit(
+    uma_state: str | None = None,
+    thermal_headroom: float = 1.0,
+) -> int:
     """
     Compute Metal cache limit dynamically based on available system memory.
 
@@ -270,9 +273,21 @@ def get_dynamic_metal_cache_limit(uma_state: str | None = None) -> int:
     the draft model more Metal memory headroom during EMERGENCY state, trading
     cache for model workspace.
 
+    HW-01 / ISSUE-013: Under thermal pressure, Metal cache is reduced to free
+    up memory bandwidth. On M1 MacBook Air (fanless), Metal and CPU share the
+    same heatsink — sustained inference at >70°C throttles both. Thermal headroom
+    scales the cache ceiling:
+      - thermal_headroom >= 0.5: no reduction (nominal operation)
+      - 0.3 <= thermal_headroom < 0.5: cache *= 0.5 (mild throttle)
+      - thermal_headroom < 0.3: cache *= 0.25 (severe throttle)
+    Floor: 256 MiB (never drop below this even in emergency+thermal).
+
     Args:
         uma_state: Optional UMA state string ("ok"|"soft_warn"|"warn"|"critical"|"emergency").
                    When "emergency", uses 256 MiB floor instead of 512 MiB.
+        thermal_headroom: Float 0.0-1.0, where 1.0 = no throttling.
+                          On M1 MacBook Air fanless: >0.5 nominal, 0.3-0.5 mild,
+                          <0.3 severe.
 
     Called inside _ensure_metal_memory_limits() so it reflects memory state
     at init time (~5.5 GiB available on 8GB M1 at boot), not at module import.
@@ -289,7 +304,16 @@ def get_dynamic_metal_cache_limit(uma_state: str | None = None) -> int:
         limit = available * 0.2
         limit = max(limit, emergency_floor)  # floor: 256 MiB EMERGENCY / 512 MiB normal
         limit = min(limit, dynamic_ceiling)  # ceiling: 1.5 GiB (M1 8GB safe)
-        return int(limit)
+
+        # HW-01 / ISSUE-013: Thermal headroom feedback — MacBook Air M1 fanless
+        # Metal and CPU share heatsink; under throttling, reduce cache to free
+        # memory bandwidth for CPU compute rather than GPU caching.
+        if thermal_headroom < 0.3:  # Severe throttle (>85°C or worse)
+            limit *= 0.25
+        elif thermal_headroom < 0.5:  # Mild throttle (>70°C)
+            limit *= 0.5
+
+        return int(max(limit, _METAL_CACHE_EMERGENCY_FLOOR_BYTES))  # never below 256 MiB
     except Exception:
         return dynamic_ceiling  # fallback: 1.5 GiB
 
@@ -421,7 +445,10 @@ def get_metal_limits_status() -> dict:
     }
 
 
-def reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
+def reconfigure_metal_cache_limit(
+    uma_state: str | None = None,
+    thermal_headroom: float = 1.0,
+) -> bool:
     """
     F265H: Runtime reconfigure of Metal cache limit — called on UMA state transitions.
 
@@ -429,12 +456,19 @@ def reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
     UMA state, allowing the cache to shrink at EMERGENCY (256 MiB floor) and
     restore to normal floors when pressure subsides.
 
-    Called by the EMERGENCY/CRITICAL callbacks in __main__.py to dynamically
-    adjust the Metal cache ceiling based on memory pressure.
+    HW-01 / ISSUE-013: Also applies thermal_headroom feedback to reduce the Metal
+    cache ceiling under thermal throttling (MacBook Air M1 fanless).
+
+    Called by the EMERGENCY/CRITICAL callbacks in __main__.py and by the
+    resource governor's thermal feedback loop to dynamically adjust the Metal
+    cache ceiling based on memory and/or thermal pressure.
 
     Args:
         uma_state: Current UMA state string ("ok"|"soft_warn"|"warn"|"critical"|"emergency").
                    When None, uses normal 512 MiB floor.
+        thermal_headroom: Float 0.0-1.0, where 1.0 = no throttling.
+                          On M1 MacBook Air fanless: >0.5 nominal, 0.3-0.5 mild,
+                          <0.3 severe.
 
     Returns:
         True if reconfiguration succeeded, False otherwise.
@@ -451,15 +485,20 @@ def reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
         logger.warning(f"[F265H] reconfigure_metal_cache_limit: {_last_setter_error}")
         return False
 
-    if not hasattr(mx, 'metal') and not hasattr(mx, 'set_cache_limit'):
-        _last_setter_error = "mx.metal namespace or set_cache_limit missing"
-        logger.warning(f"[F265H] reconfigure_metal_cache_limit: {_last_setter_error}")
-        return False
-
-    # Compute new limit with current UMA state
-    new_limit = get_dynamic_metal_cache_limit(uma_state)
+    # Compute new limit with current UMA state + thermal headroom
+    new_limit = get_dynamic_metal_cache_limit(uma_state, thermal_headroom)
 
     try:
+        # Try mx.set_cache_limit first; fall back to mx.metal.set_cache_limit.
+        # The hasattr guards are safety nets — the try/except below is the
+        # canonical error handler. Guard uses `or` semantics: fail only if
+        # NEITHER mx.set_cache_limit NOR mx.metal.set_cache_limit exists.
+        if not hasattr(mx, 'set_cache_limit') and not (
+            hasattr(mx, 'metal') and hasattr(mx.metal, 'set_cache_limit')
+        ):
+            _last_setter_error = "neither mx.set_cache_limit nor mx.metal.set_cache_limit available"
+            logger.warning(f"[F265H] reconfigure_metal_cache_limit: {_last_setter_error}")
+            return False
         if hasattr(mx, 'set_cache_limit'):
             mx.set_cache_limit(new_limit)
         elif hasattr(mx.metal, 'set_cache_limit'):
@@ -468,7 +507,8 @@ def reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
         _last_setter_error = None
         logger.info(
             f"[F265H] Metal cache reconfigured: {new_limit // 1024**2} MiB "
-            f"(state={uma_state}, emergency_floor={_METAL_CACHE_EMERGENCY_FLOOR_BYTES // 1024**2} MiB)"
+            f"(state={uma_state}, thermal_headroom={thermal_headroom:.2f}, "
+            f"floor={_METAL_CACHE_EMERGENCY_FLOOR_BYTES // 1024**2} MiB)"
         )
         return True
     except Exception as e:
@@ -477,7 +517,10 @@ def reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
         return False
 
 
-async def async_reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
+async def async_reconfigure_metal_cache_limit(
+    uma_state: str | None = None,
+    thermal_headroom: float = 1.0,
+) -> bool:
     """
     U2-07 FIX: Async wrapper for reconfigure_metal_cache_limit.
 
@@ -485,15 +528,22 @@ async def async_reconfigure_metal_cache_limit(uma_state: str | None = None) -> b
     to avoid blocking the event loop. Call this from async contexts instead
     of the sync version when adjusting cache limits during runtime.
 
+    HW-01 / ISSUE-013: Applies thermal_headroom feedback in addition to uma_state.
+
     Args:
         uma_state: Current UMA state string ("ok"|"soft_warn"|"warn"|"critical"|"emergency").
                    When None, uses normal 512 MiB floor.
+        thermal_headroom: Float 0.0-1.0, where 1.0 = no throttling.
+                          On M1 MacBook Air fanless: >0.5 nominal, 0.3-0.5 mild,
+                          <0.3 severe.
 
     Returns:
         True if reconfiguration succeeded, False otherwise.
     """
     try:
-        return await asyncio.to_thread(reconfigure_metal_cache_limit, uma_state)
+        return await asyncio.to_thread(
+            reconfigure_metal_cache_limit, uma_state, thermal_headroom
+        )
     except Exception:
         return False
 

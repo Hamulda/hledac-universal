@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 aho-corasick = "1.1"
 # R6: PyO3 0.29 — Python::attach + py.detach API (abi3-py312).
 # CI ban: with_gil / allow_threads removed from all code (only comments remain).
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py312"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py312", "buffer"] }
 rayon = "1.10"
 # GRAPH-01: petgraph for graph algorithms (PageRank, Louvain community detection)
 # Provides: GraphMap, UnGraph, DiGraph, NodeIndex, algo::kosaraju_scc

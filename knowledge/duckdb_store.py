@@ -330,18 +330,25 @@ def _get_rust_assess_quality_batch():
 # Rust build_arrow_batch_from_findings — strict import
 try:
     from hledac_rust_extensions import build_arrow_batch_from_findings as _rust_arrow_func
+    from hledac_rust_extensions import build_record_batch_from_findings as _rust_record_batch_findings_func
     from hledac_rust_extensions import build_record_batch_from_structs as _rust_record_batch_cols_func
 except ImportError:
     _rust_arrow_func = None
+    _rust_record_batch_findings_func = None
     _rust_record_batch_cols_func = None
 
 _RUST_ARROW_AVAILABLE = _rust_arrow_func is not None
+_RUST_RECORD_BATCH_FINDINGS_AVAILABLE = _rust_record_batch_findings_func is not None
 _RUST_RECORD_BATCH_COLS_AVAILABLE = _rust_record_batch_cols_func is not None
 
 
 def _get_rust_build_arrow_batch():
     """Lazy getter for Rust Arrow batch builder."""
     return _rust_arrow_func
+
+
+def _get_rust_record_batch_findings_func():
+    return _rust_record_batch_findings_func
 
 
 def _get_rust_record_batch_from_structs():
@@ -7961,9 +7968,16 @@ class DuckDBShadowStore:
             )
 
         # --- Sequential dispatch: best-available Arrow path ---
-        # Path 1: Rust zero-copy columns (fastest; skips dict roundtrip).
+        # Path 0: Rust single-pass CanonicalFinding list (fastest; ISSUE-001 fix).
+        # Iterates list[CanonicalFinding] directly — zero Python list copies.
         # Skip if enrichment produced claims_json (Rust path doesn't support it).
         _has_claims = findings_dicts is not None and any(d.get("claims_json") for d in findings_dicts)
+        if not _has_claims and _RUST_RECORD_BATCH_FINDINGS_AVAILABLE and _rust_record_batch_findings_func is not None:
+            _result = self._arrow_insert_rust_findings(findings)
+            if _result[0] > 0 or _result[1] is None:
+                return _result
+
+        # Path 1: Rust zero-copy columns (pre-separated Python list columns).
         if not _has_claims and _RUST_RECORD_BATCH_COLS_AVAILABLE and _rust_record_batch_cols_func is not None:
             _result = self._arrow_insert_rust_cols(findings)
             if _result[0] > 0 or _result[1] is None:
@@ -7982,6 +7996,88 @@ class DuckDBShadowStore:
     # F360M-R: Extracted Arrow insert paths — one per concern, no nesting.
     # Each helper returns (count, error_type) matching the parent contract.
     # ------------------------------------------------------------------
+
+    def _arrow_insert_rust_findings(self, findings: list[CanonicalFinding]) -> tuple[int, str | None]:
+        """
+        Path 0: Rust single-pass CanonicalFinding list via build_record_batch_from_findings.
+
+        ISSUE-001 fix: Replaces 7× Python list comprehensions (8n Python object
+        allocations) with a single-pass Rust iterator over list[CanonicalFinding].
+        PyO3 Bound API extracts fields directly from msgspec.Struct in one Rust loop.
+
+        Two single passes remain in Python (unavoidable without native Rust scrubbing):
+          1. provenance_bytes_list — msgspec.encode per finding (tuple → bytes)
+          2. payload_list — SEC-01 scrub per finding
+
+        These replace the original 7 field extractions. Rust handles all other
+        field access (finding_id, query, source_type, confidence, ts).
+
+        Returns (count, None) on success, (0, None) on empty batch,
+        (0, error_type) on failure.
+        """
+        import io as _io
+        import pyarrow as _pa
+
+        n = len(findings)
+        if n == 0:
+            return (0, None)
+
+        # Pass 1: Pre-encode provenance (tuple[str,...] → Arrow-native bytes).
+        # _provenance_to_arrow_native returns bytes|None (Arrow-compatible).
+        # We decode to str for Rust (.str() on bytes gives repr, not content).
+        provenance_native_list: list[str | None] = []
+        for f in findings:
+            b = _provenance_to_arrow_native(f.provenance)
+            provenance_native_list.append(b.decode("utf-8", errors="replace") if b is not None else None)
+
+        # Pass 2: SEC-01 scrub payload_text (single pass).
+        try:
+            from hledac.universal.security.secrets_scrubber import scrub_secrets
+
+            _scrub = scrub_secrets
+        except Exception:  # noqa: BLE001 — fail-safe
+            _scrub = lambda t: t  # type: ignore[assignment,misc]
+
+        payload_list: list[str] = []
+        for f in findings:
+            raw = f.payload_text or ""
+            payload_list.append(_scrub(raw) if raw else "")
+
+        # Call Rust single-pass builder: passes findings list + pre-processed columns.
+        # Rust accesses finding_id, query, source_type, confidence, ts via msgspec
+        # get_item(). Provenance and payload_text are pre-encoded/scrubbed by Python.
+        try:
+            ipc_bytes = _rust_record_batch_findings_func(findings, provenance_native_list, payload_list)
+        except Exception as _e:  # noqa: BLE001 — best-effort; non-critical fallback
+            _logger.debug(
+                "[Arrow-Rust-findings] build_record_batch_from_findings failed: %s", _e
+            )
+            return (0, "rust_failed")
+
+        if not ipc_bytes or len(ipc_bytes) <= 8:
+            # Empty batch vs Rust failure are both (0, error_code) here to allow
+            # the dispatcher to distinguish "nothing to insert" (return) from
+            # "Rust failed, try next path" (fall through via non-None error).
+            return (0, "rust_failed")
+
+        try:
+            reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+            record_batch = reader.read_record_batch()
+        except Exception as _e:  # noqa: BLE001 — best-effort; DB build failure
+            _logging.getLogger(__name__).error(
+                "[Arrow] RecordBatch from Rust findings stream failed: %s: %s",
+                type(_e).__name__,
+                _e,
+            )
+            return (0, None)
+
+        try:
+            duckdb_count, duckdb_err = self._qe().insert_findings_bulk_arrow(record_batch)
+            if duckdb_err is not None:
+                return (0, "duckdb_insert_failed")
+            return (duckdb_count, None)
+        except StopIteration:  # noqa: TRY200 — pre-existing; insert_findings_bulk_arrow is generator-based
+            return (0, None)
 
     def _arrow_insert_rust_cols(self, findings: list[CanonicalFinding]) -> tuple[int, str | None]:
         """
@@ -8020,10 +8116,13 @@ class DuckDBShadowStore:
             )
         except Exception as _e:  # noqa: BLE001 — best-effort; non-critical fallback path
             _logger.debug("[Arrow-Rust] record_batch_cols failed: %s", _e)
-            return (0, None)  # fall through to next path
+            return (0, "rust_cols_failed")  # fall through to next path (error != None)
 
         if not ipc_bytes or len(ipc_bytes) <= 8:
-            return (0, None)  # empty batch — success, zero records
+            # Distinguish empty batch (return) from Rust failure (fall through).
+            # Empty batch should return, not fall through — but since Path 0 and
+            # Path 1 both receive non-empty findings, this is a safety net.
+            return (0, "rust_cols_failed")  # fall through
 
         reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
         try:
@@ -8083,10 +8182,10 @@ class DuckDBShadowStore:
             ipc_bytes = _rust_arrow_func(findings_dicts)
         except Exception as _e:  # noqa: BLE001 — best-effort; non-critical fallback path
             _logger.debug("[Arrow-Rust] build_arrow_batch_from_findings failed: %s", _e)
-            return (0, None)  # fall through to next path
+            return (0, "rust_arrow_failed")  # fall through to next path (error != None)
 
         if not ipc_bytes or len(ipc_bytes) <= 8:
-            return (0, None)  # empty batch — success, zero records
+            return (0, None)  # empty batch — success, zero records (genuine end)
 
         reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
         try:

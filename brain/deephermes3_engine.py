@@ -197,6 +197,7 @@ classify_failure_kind = lazy('hledac.universal.brain.model_inference_guard.class
 record_model_failure = lazy('hledac.universal.brain.model_inference_guard.record_model_failure')
 record_model_success = lazy('hledac.universal.brain.model_inference_guard.record_model_success')
 _lane_priority_resolver = lazy('hledac.universal.core.mlx_unified_scheduler.LanePriority')
+_get_thermal_generation_params = lazy('hledac.universal.brain.adaptive_context_policy.get_thermal_generation_params')
 logger = logging.getLogger(__name__)
 _outlines_resolver = lazy('outlines')
 _outlines_module = _outlines_resolver()
@@ -2936,6 +2937,20 @@ class DeepHermes3Engine:
         """Direct MLX inference path (called after scheduler/batcher failures)."""
         temp = temperature or self.config.temperature
         max_tok = max_tokens or self.config.max_tokens
+
+        # ISSUE-015: Apply thermal generation parameters if under thermal pressure
+        # Shorter generations complete faster and allow thermal recovery on fanless M1
+        try:
+            thermal_params_fn = _get_thermal_generation_params()
+            if thermal_params_fn is not None:
+                thermal_params = thermal_params_fn()
+                if thermal_params is not None:
+                    if thermal_params.max_tokens_override is not None:
+                        max_tok = min(max_tok, thermal_params.max_tokens_override)
+                    if thermal_params.temperature_reduction > 0:
+                        temp = max(0.0, temp - thermal_params.temperature_reduction)
+        except Exception:
+            pass  # Fail-soft: ignore thermal params errors
 
         # ---- Context budget decision ----
         if decide_context_budget is not None and apply_context_budget is not None:

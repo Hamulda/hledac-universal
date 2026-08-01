@@ -1084,10 +1084,10 @@ class RAGEngine:
             with open(doc_map_path, 'w') as f:
                 f.write(_msgspec_dumps_str(self._document_map))
         except ImportError:
-            import json
+            import orjson
             doc_map_path = Path(save_path) / 'document_map.json'
-            with open(doc_map_path, 'w') as f:
-                json.dump(self._document_map, f)
+            with open(doc_map_path, 'wb') as f:
+                f.write(orjson.dumps(self._document_map))
         logger.info(f'HNSW index and document map saved to {save_path}')
 
     def load_hnsw_index(self, path: str | None=None) -> None:
@@ -1106,13 +1106,12 @@ class RAGEngine:
         doc_map_path = Path(load_path) / 'document_map.json'
         if doc_map_path.exists():
             try:
-                import orjson
                 with open(doc_map_path, 'rb') as f:
                     self._document_map = _msgspec_loads(f.read())
             except ImportError:
-                import json
-                with open(doc_map_path) as f:
-                    self._document_map = json.load(f)
+                import orjson
+                with open(doc_map_path, 'rb') as f:
+                    self._document_map = orjson.loads(f.read())
         logger.info(f'HNSW index loaded from {load_path}')
 
     def get_hnsw_stats(self) -> dict[str, Any] | None:

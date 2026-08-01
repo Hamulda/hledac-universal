@@ -8,9 +8,15 @@ Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector 
 """
 from __future__ import annotations
 import asyncio
+import ctypes
+import errno
+import fcntl
 import itertools
 import inspect
 import logging
+import os
+import shutil
+import stat
 import threading
 import warnings
 from collections.abc import Awaitable, Callable
@@ -284,6 +290,160 @@ except ImportError:
     _mlx_embeddings_load = None
 MODELS_DIR = Path.home() / '.hledac' / 'models'
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ─── ISSUE-012: APFS clonefile helper ─────────────────────────────────────────
+# APFS COW (Copy-on-Write): clonefile(src, dst, flags) je O(1) na stejném svazku.
+# Elimuje read/write cykly — pouze metadata copy, data jsou sdílené do prvního write.
+# Fallback na shutil.copytree když clonefile není dostupný (non-APFS, cross-volume).
+# ─────────────────────────────────────────────────────────────────────────────
+_CLONEFILE_available: bool | None = None  # cached check result
+_LIBC: ctypes.CDLL | None = None  # cached libc handle
+
+
+class _StatFs(ctypes.Structure):
+    """APFS statfs structure — defined once at module level."""
+    _fields_ = [
+        ("f_bsize", ctypes.c_uint32),
+        ("f_iosize", ctypes.c_int32),
+        ("f_blocks", ctypes.c_uint64),
+        ("f_bfree", ctypes.c_uint64),
+        ("f_bavail", ctypes.c_uint64),
+        ("f_files", ctypes.c_uint64),
+        ("f_ffree", ctypes.c_uint64),
+        ("f_fsid", ctypes.c_uint64),
+        ("f_owner", ctypes.c_uint32),
+        ("f_flags", ctypes.c_uint32),
+        ("f_fsubtype", ctypes.c_uint32),
+        ("f_fstypename", ctypes.c_char * 16),
+    ]
+
+
+def _get_libc() -> ctypes.CDLL | None:
+    """Lazily cache libc handle to avoid repeated find_library calls."""
+    global _LIBC
+    if _LIBC is not None:
+        return _LIBC
+    try:
+        import ctypes.util
+        lib_c = ctypes.util.find_library("c")
+        if lib_c:
+            _LIBC = ctypes.CDLL(lib_c, use_errno=True)
+            return _LIBC
+    except Exception:
+        pass
+    return None
+
+
+def _is_apfs_volume(path: str | Path) -> bool:
+    """Detect if path is on APFS via statfs.f fstypename."""
+    libc = _get_libc()
+    if libc is None:
+        return False
+    try:
+        stfs = _StatFs()
+        path_bytes = os.fsencode(str(path))
+        if libc.statfs(path_bytes, ctypes.byref(stfs)) == 0:
+            fstype = stfs.f_fstypename.decode("utf-8", errors="replace")
+            return fstype == "apfs"
+    except OSError:
+        pass
+    return False
+
+
+def _clonefile_single(src: Path, dst: Path) -> bool:
+    """
+    Clone a single file via APFS clonefile(2).
+    Returns True on success, False if clonefile not available or failed.
+    On success dst has identical content as src but is a COW copy.
+    """
+    global _CLONEFILE_available
+    if _CLONEFILE_available is False:
+        return False
+
+    libc = _get_libc()
+    if libc is None:
+        _CLONEFILE_available = False
+        return False
+
+    src_bytes = os.fsencode(str(src))
+    dst_bytes = os.fsencode(str(dst))
+
+    # clonefile(src, dst, flags) — flags=0 for default semantics
+    try:
+        clonefile_fn = libc.clonefile
+        clonefile_fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32]
+        clonefile_fn.restype = ctypes.c_int
+
+        result = clonefile_fn(src_bytes, dst_bytes, 0)
+        if result == 0:
+            return True
+        # EPERM can mean: cross-volume, immutable file, or snapshot
+        err = ctypes.get_errno()
+        if err in (errno.EPERM, errno.EXDEV, errno.EINVAL):
+            _CLONEFILE_available = False
+            return False
+        # Other error — log and fall back
+        logger.debug("[ANE] clonefile(%s, %s) errno=%d", src, dst, err)
+    except OSError as e:
+        logger.debug("[ANE] clonefile unavailable: %s", e)
+        _CLONEFILE_available = False
+
+    return False
+
+
+def _copy_dir_recursive(src: Path, dst: Path) -> None:
+    """
+    Copy directory tree using APFS clonefile per file where possible.
+    Falls back to shutil.copytree for files that can't be cloned.
+    """
+    dst.mkdir(parents=True, exist_ok=True)
+
+    # Fast path: scandir to enumerate entries
+    try:
+        entries = list(os.scandir(src))
+    except OSError as e:
+        logger.warning("[ANE] scandir failed: %s, falling back to shutil", e)
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+        return
+
+    # Sequential fallback is fine — this is 100MB once per model lifecycle
+    for entry in entries:
+        src_path = Path(entry.path)
+        dst_path = dst / entry.name
+
+        if entry.is_dir(follow_symlinks=False):
+            _copy_dir_recursive(src_path, dst_path)
+        else:
+            # Try clonefile first
+            if not _clonefile_single(src_path, dst_path):
+                # Fallback: copy file + permissions
+                try:
+                    # Preserve file mode (executable, etc.)
+                    src_stat = entry.stat(follow_symlinks=False)
+                    shutil.copy2(src_path, dst_path)
+                    # Restore mode if copy2 didn't preserve it correctly
+                    os.chmod(dst_path, stat.S_IMODE(src_stat.st_mode))
+                except OSError as e:
+                    logger.warning("[ANE] file copy failed: %s -> %s: %s", src_path, dst_path, e)
+                    shutil.copy2(src_path, dst_path)
+
+
+def _clone_dir(src: Path, dst: Path) -> None:
+    """
+    ISSUE-012: Clone directory tree using APFS clonefile for O(1) copies.
+    Falls back to shutil.copytree on failure (cross-volume, non-APFS, etc.).
+    """
+    # Log APFS detection only when we haven't already proven clonefile unavailable
+    if _CLONEFILE_available is not False:
+        is_apfs = _is_apfs_volume(src)
+        logger.debug("[ANE] _clone_dir: %s (APFS=%s) -> %s", src, is_apfs, dst)
+
+    try:
+        _copy_dir_recursive(src, dst)
+    except OSError as e:
+        logger.warning("[ANE] clone-based copy failed: %s, falling back to shutil", e)
+        shutil.copytree(src, dst, dirs_exist_ok=True)
 # E-34: itertools.count() is atomic in CPython — GIL protects += operation.
 # Using dict values with += from concurrent asyncio + ThreadPoolExecutor caused
 # undercounting (non-atomic read-modify-write). count() objects are thread-safe.
@@ -498,9 +658,8 @@ class ANEEmbedder:
                 compiled_url, err = _CoreML.MLModel.compileModelAtURL_error_(url, None)
                 if err:
                     raise RuntimeError(f'Compile failed: {err}')
-                import shutil
                 compiled_str = str(compiled_url).replace('file://', '')
-                shutil.copytree(compiled_str, str(compiled_path), dirs_exist_ok=True)
+                _clone_dir(Path(compiled_str), compiled_path)
                 return compiled_path
             self.coreml_path = await asyncio.to_thread(_compile)
             logger.info('[ANE] Compiled to %s', self.coreml_path)

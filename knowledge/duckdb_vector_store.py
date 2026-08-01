@@ -30,18 +30,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-# orjson — strict import with stdlib fallback (fail-safe, always-on)
-try:
-    import orjson as _orjson_mod
-
-    _HAS_ORJSON: bool = True
-except ImportError:
-    _orjson_mod = None  # type: ignore[assignment]
-    _HAS_ORJSON = False
-    import json as _stdlib_json  # noqa: F401
-
-if TYPE_CHECKING:
-    pass
+import orjson
 
 _logger = logging.getLogger(__name__)
 
@@ -163,7 +152,7 @@ class DuckDBVectorStore:
 
                 # Validation passed — proceed with upsert
                 embedding_list: list[float] = chunk.get("embedding", [])
-                metadata_json = _orjson_mod.dumps(chunk.get("metadata", {}))
+                metadata_json = orjson.dumps(chunk.get("metadata", {}))
                 self._duckdb_conn.execute(
                     """
                     INSERT OR REPLACE INTO rag_embeddings
@@ -261,7 +250,7 @@ class DuckDBVectorStore:
                     "chunk_id": str(r[0]),
                     "document_id": str(r[1]),
                     "content": r[2] or "",
-                    "metadata": _orjson_mod.loads(r[3]) if r[3] else {},
+                    "metadata": orjson.loads(r[3]) if r[3] else {},
                     "distance": float(r[4]) if r[4] is not None else 1.0,
                 }
                 for r in rows
@@ -388,7 +377,7 @@ class DuckDBVectorStore:
 
                 # Validation passed — proceed with upsert
                 embedding_list: list[float] = entity.get("embedding", [])
-                metadata_json = _orjson_mod.dumps(entity.get("metadata", {}))
+                metadata_json = orjson.dumps(entity.get("metadata", {}))
                 self._duckdb_conn.execute(
                     """
                     INSERT OR REPLACE INTO entity_embeddings
@@ -486,7 +475,7 @@ class DuckDBVectorStore:
                     "entity_id": str(r[0]),
                     "entity_value": str(r[1]),
                     "entity_type": r[2],
-                    "metadata": _orjson_mod.loads(r[3]) if r[3] else {},
+                    "metadata": orjson.loads(r[3]) if r[3] else {},
                     "distance": float(r[4]) if r[4] is not None else 1.0,
                 }
                 for r in rows

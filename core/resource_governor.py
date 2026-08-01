@@ -861,6 +861,10 @@ class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     # HW-03: Thermal scaling factors derived from thermal_headroom
     worker_scale_factor: float = 1.0  # 0.0-1.0, scales max_workers
     batch_scale_factor: float = 1.0  # 0.0-1.0, scales MLX batch size
+    # ISSUE-015: Thermal generation parameters — shorter outputs under thermal pressure
+    # reduce heat emission and allow thermal recovery on fanless M1 devices
+    max_tokens_override: int | None = None  # None = use model default, otherwise cap max_tokens
+    temperature_reduction: float = 0.0  # 0.0-0.5, subtracted from temperature when throttled
     power_status: dict[str, bool | int | float | None] = {}  # HW-02: battery state info
 
 
@@ -871,6 +875,9 @@ class M1ThermalStatus(msgspec.Struct, frozen=True, gc=False):
     sleduje CPU teplotu, GPU teplotu, CPU frekvenci a detekuje termální throttling.
     M1 čipy mají limity: CPU ~60-70°C, GPU ~85°C. Při překročení dochází
     k automatickému throttlingu s 2-3x zpomalením ML inferencí.
+
+    ISSUE-014: Přidány smc_zones (AppleSMC IOKit thermal zones) a
+    thermal_level (hw.thermal.thermal_level diskrétní level).
     """
 
     cpu_temperature_c: float | None = None
@@ -879,6 +886,10 @@ class M1ThermalStatus(msgspec.Struct, frozen=True, gc=False):
     cpu_core_count: int = 0
     is_throttled: bool = False
     thermal_headroom: float = 1.0  # 0.0-1.0, 1.0 = žádný throttling
+    # ISSUE-014: AppleSMC thermal zones (TC0P, TG0P, …) přes IOKit
+    smc_zones: dict[str, float | None] = {}
+    # ISSUE-014: Diskrétní macOS thermal level (0=nominal, vyšší=teplejší)
+    thermal_level: int | None = None
 
 
 class M1ThermalMonitor:
@@ -892,12 +903,19 @@ class M1ThermalMonitor:
         - CPU: >70°C začíná throttling, >85°C plný throttling
         - GPU: >80°C varování, >85°C throttling
 
+    ISSUE-014 fix: Přidán hw.thermal.thermal_level sysctl (diskrétní thermal level
+    macOS kernel agreguje přes duration sustained teploty — spolehlivější než
+    raw teplota z hw.sensors). Navíc AppleSMC thermal zone klíče (TC0P, TG0P…)
+    přes IOKit pro skutečné hardware sensor teploty.
+
     Vždy fail-soft: při jakékoli chybě vrací None hodnoty.
     """
 
     _CPU_TEMP_PATHS: tuple[str, ...] = ("hw.sensors.cpu_temperature", "hw.cputemperature")
     _GPU_TEMP_PATHS: tuple[str, ...] = ("hw.sensors.gpu_temperature", "hw.sensors.gpu_0_temperature")
     _CPU_FREQ_PATHS: tuple[str, ...] = ("hw.cpufrequency", "hw.cpufrequency_max")
+    # ISSUE-014: Diskrétní thermal level — system-level agregace přes duration
+    _THERMAL_LEVEL_PATHS: tuple[str, ...] = ("hw.thermal.thermal_level",)
     _READ_INTERVAL_S: float = 0.5
     _CPU_THROTTLE_TEMP: float = 70.0  # °C, začátek CPU throttlingu
     _CPU_CRITICAL_TEMP: float = 85.0  # °C, plný throttling
@@ -984,13 +1002,55 @@ class M1ThermalMonitor:
         return None
 
     @staticmethod
+    def _read_thermal_level() -> int | None:
+        """
+        ISSUE-014: Čte diskrétní macOS thermal level.
+
+        hw.thermal.thermal_level je system-level agregace přes duration
+        sustained teploty — spolehlivější než raw hw.sensors teplota.
+
+        Returns:
+            Thermal level jako int (0=nominal, vyšší = teplejší),
+            nebo None pokud недоступен.
+        """
+        for path in M1ThermalMonitor._THERMAL_LEVEL_PATHS:
+            value = M1ThermalMonitor._read_sysctl_float(path)
+            if value is not None:
+                return int(value)
+        return None
+
+    @staticmethod
+    def _read_smc_zones() -> dict[str, float | None]:
+        """
+        ISSUE-014: Čte AppleSMC thermal zone klíče přes IOKit.
+
+        TC0P = CPU proximity (hlavní CPU package teplota — nejdůležitější pro throttling)
+        TG0P = GPU proximity
+        TA0P = Ambient
+
+        Returns:
+            Dict {"TC0P": 45.5, "TG0P": 41.2, ...} nebo prázdný dict při chybě.
+        """
+        try:
+            from hledac.universal.utils.thermal import read_smc_thermal_zones
+
+            return read_smc_thermal_zones()
+        except Exception:
+            return {}
+
+    @staticmethod
     def _detect_throttling(
         cpu_temp: float | None,
         gpu_temp: float | None,
         cpu_freq: float | None,
+        thermal_level: int | None = None,
     ) -> tuple[bool, float]:
         """
         Detekuje termální throttling a počítá thermal headroom.
+
+        ISSUE-014: thermal_level (hw.thermal.thermal_level) je primární signál.
+        Je to system-level agregace přes duration sustained teploty —
+        spolehlivější než jediná raw teplota. CPU/GPU temp je fallback.
 
         Vrací: (is_throttled, thermal_headroom)
             - is_throttled: True pokud probíhá throttling
@@ -999,7 +1059,21 @@ class M1ThermalMonitor:
         headroom = 1.0
         is_throttled = False
 
-        # CPU throttling detekce
+        # ISSUE-014: thermal_level je PRIMÁRNÍ signál — přebíjí raw teplotu
+        # macOS thermal level: 0=nominal, 1=fair, 2=serious, 3=critical
+        if thermal_level is not None:
+            if thermal_level >= 3:
+                # Critical — plný throttling
+                return True, 0.0
+            elif thermal_level == 2:
+                # Serious — těžký throttling
+                return True, 0.2
+            elif thermal_level == 1:
+                # Fair — mírný throttling
+                return True, 0.6
+            # level == 0: nominal, pokračujeme na raw teplotu pro granularitu
+
+        # CPU throttling detekce (fallback když nemáme thermal_level)
         if cpu_temp is not None:
             if cpu_temp >= M1ThermalMonitor._CPU_CRITICAL_TEMP:
                 is_throttled = True
@@ -1031,6 +1105,9 @@ class M1ThermalMonitor:
     def read_thermal_status(self, emergency: bool = False) -> M1ThermalStatus:
         """Čte aktuální termální stav (rate-limited, emergency bypass).
 
+        ISSUE-014: Nyní čte AppleSMC thermal zones (TC0P, TG0P…) přes IOKit
+        a hw.thermal.thermal_level diskrétní sysctl level.
+
         Args:
             emergency: Pokud True, vynutí fresh čtení i když je v rate limit okně.
                        Použít při detekci throttlingu nebo vysokých teplot.
@@ -1051,7 +1128,12 @@ class M1ThermalMonitor:
         cpu_temp = self._read_cpu_temperature()
         gpu_temp = self._read_gpu_temperature()
         cpu_freq = self._read_cpu_frequency()
-        is_throttled, headroom = self._detect_throttling(cpu_temp, gpu_temp, cpu_freq)
+        # ISSUE-014: Přidány thermal_level a smc_zones
+        thermal_level = self._read_thermal_level()
+        smc_zones = self._read_smc_zones()
+        is_throttled, headroom = self._detect_throttling(
+            cpu_temp, gpu_temp, cpu_freq, thermal_level
+        )
 
         status = M1ThermalStatus(
             cpu_temperature_c=cpu_temp,
@@ -1060,6 +1142,9 @@ class M1ThermalMonitor:
             cpu_core_count=self._get_cpu_core_count(),
             is_throttled=is_throttled,
             thermal_headroom=headroom,
+            # ISSUE-014: Nová pole
+            smc_zones=smc_zones,
+            thermal_level=thermal_level,
         )
 
         self._last_reading = status
@@ -1124,28 +1209,48 @@ class M1ResourceGovernor:
     _THERMAL_SEVERE_THRESHOLD: float = 0.3  # headroom < 0.3 = severe throttling
     _WORKER_SCALE_FACTOR: float = 0.7  # mild throttle → 70% workers
     _BATCH_SCALE_FACTOR: float = 0.5  # mild throttle → 50% batch size
+    # ISSUE-015: Generation length caps under thermal pressure
+    _MAX_TOKENS_MILD: float = 0.75  # mild throttle → 75% of max_tokens
+    _MAX_TOKENS_SEVERE: float = 0.5  # severe throttle → 50% of max_tokens
+    _TEMP_REDUCTION_MILD: float = 0.05  # mild throttle → subtract 0.05 from temperature
+    _TEMP_REDUCTION_SEVERE: float = 0.1  # severe throttle → subtract 0.1 from temperature
+    _DEFAULT_MAX_TOKENS: int = 2048  # reference max_tokens for DeepHermes3
 
-    def _compute_thermal_scales(self, headroom: float) -> tuple[float, float]:
+    def _compute_thermal_scales(self, headroom: float) -> tuple[float, float, int | None, float]:
         """
-        HW-03: Compute worker and batch scaling factors from thermal headroom.
+        HW-03: Compute worker, batch, and generation scaling factors from thermal headroom.
+
+        ISSUE-015: Under thermal pressure, shorter generations (reduced max_tokens) complete
+        faster and allow thermal recovery on fanless M1 devices.
 
         Args:
             headroom: 0.0-1.0, where 1.0 = no throttling
 
         Returns:
-            tuple of (worker_scale_factor, batch_scale_factor), both 0.0-1.0
+            tuple of (worker_scale_factor, batch_scale_factor, max_tokens_override, temperature_reduction)
+            - worker_scale_factor: 0.0-1.0, scales max_workers
+            - batch_scale_factor: 0.0-1.0, scales MLX batch size
+            - max_tokens_override: None = use model default, int = cap max_tokens
+            - temperature_reduction: 0.0-0.5, subtracted from temperature when throttled
         """
         if headroom >= self._THERMAL_THROTTLE_THRESHOLD:
             # No throttling
-            return (1.0, 1.0)
+            return (1.0, 1.0, None, 0.0)
         elif headroom >= self._THERMAL_SEVERE_THRESHOLD:
             # Mild throttling — apply standard factors
-            return (self._WORKER_SCALE_FACTOR, self._BATCH_SCALE_FACTOR)
+            return (
+                self._WORKER_SCALE_FACTOR,
+                self._BATCH_SCALE_FACTOR,
+                int(self._DEFAULT_MAX_TOKENS * self._MAX_TOKENS_MILD),
+                self._TEMP_REDUCTION_MILD,
+            )
         else:
-            # Severe throttling — quadratic reduction
+            # Severe throttling — quadratic reduction + aggressive generation caps
             return (
                 self._WORKER_SCALE_FACTOR ** 2,
                 self._BATCH_SCALE_FACTOR ** 2,
+                int(self._DEFAULT_MAX_TOKENS * self._MAX_TOKENS_SEVERE),
+                self._TEMP_REDUCTION_SEVERE,
             )
 
     @classmethod
@@ -1224,6 +1329,8 @@ class M1ResourceGovernor:
             uma = await sample_uma_status_async()
         except Exception:
             preset = ConcurrencyPreset.from_state(UMAState.OK)
+            # ISSUE-015: Include thermal generation params even on fallback path
+            _worker, _batch, max_tok_override, temp_reduction = self._compute_thermal_scales(thermal_status.thermal_headroom)
             return GovernorDecision(
                 uma_state=UMAState.OK,
                 io_only=False,
@@ -1232,6 +1339,8 @@ class M1ResourceGovernor:
                 swap_detected=False,
                 thermal_throttled=thermal_status.is_throttled,
                 thermal_headroom=thermal_status.thermal_headroom,
+                max_tokens_override=max_tok_override,
+                temperature_reduction=temp_reduction,
             )
         preset = ConcurrencyPreset.from_state(uma.state)
         now = time.monotonic()
@@ -1265,7 +1374,8 @@ class M1ResourceGovernor:
             pass
 
         # HW-03: Compute thermal scaling factors from headroom
-        worker_scale, batch_scale = self._compute_thermal_scales(thermal_status.thermal_headroom)
+        # ISSUE-015: Also compute max_tokens_override and temperature_reduction
+        worker_scale, batch_scale, max_tokens_override, temp_reduction = self._compute_thermal_scales(thermal_status.thermal_headroom)
 
         base_decision = GovernorDecision(
             uma_state=gated_state,
@@ -1277,6 +1387,8 @@ class M1ResourceGovernor:
             thermal_headroom=thermal_status.thermal_headroom,
             worker_scale_factor=worker_scale,
             batch_scale_factor=batch_scale,
+            max_tokens_override=max_tokens_override,
+            temperature_reduction=temp_reduction,
         )
         return self._adjust_for_power(uma, base_decision)
 
@@ -1318,6 +1430,8 @@ class M1ResourceGovernor:
             thermal_headroom=base_decision.thermal_headroom,
             worker_scale_factor=base_decision.worker_scale_factor * power_factor,
             batch_scale_factor=base_decision.batch_scale_factor * power_factor,
+            max_tokens_override=base_decision.max_tokens_override,
+            temperature_reduction=base_decision.temperature_reduction,
             power_status={
                 "on_battery": uma.on_battery,
                 "battery_level": uma.battery_level,
@@ -1357,6 +1471,21 @@ class M1ResourceGovernor:
         # F350M-R: Apply madvise to all mmap handles at CRITICAL/EMERGENCY
         if decision.uma_state in (UMAState.CRITICAL, UMAState.EMERGENCY):
             self.apply_madvise_critical()
+        # HW-01 / ISSUE-013: Feed thermal_headroom into MLX Metal cache sizing.
+        # On M1 MacBook Air (fanless), Metal + CPU share heatsink — under
+        # throttling, reduce Metal cache to free memory bandwidth for compute.
+        if decision.thermal_headroom < 1.0:
+            try:
+                from hledac.universal.utils.mlx_cache import async_reconfigure_metal_cache_limit
+
+                asyncio.create_task(
+                    async_reconfigure_metal_cache_limit(
+                        uma_state=decision.uma_state,
+                        thermal_headroom=decision.thermal_headroom,
+                    )
+                )
+            except Exception:
+                pass
 
     def apply_madvise_critical(self) -> None:
         """

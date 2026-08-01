@@ -41,10 +41,52 @@ from hledac.universal.core.dlq_manager import dlq_catch  # DLQ-02
 
 # Precompiled regex patterns — compile once, use repeatedly
 _MML_TAG_RE = re.compile(r"<\|system\|>(.*?)<\|user\|>(.*?)<\|assistant\|>", re.DOTALL)
-_JSON_OBJ_RE = re.compile(r'\{[^{}]{20,}"title"[^{}]*\}', re.DOTALL)
-_JSON_FINAL_RE = re.compile(r'\{.*\}', re.DOTALL)
 _BRACKET_RE = re.compile(r'\[.*?\]', re.DOTALL)
 _SLUGIFY_RE = re.compile(r"[^a-z0-9]+")
+
+# ISSUE-009: Speculative URL/IP detection for streaming token accumulation
+# — scan last 512 chars of accumulated text per token, O(1) memory per token
+try:
+    import regex as _re_speculative
+
+    _URL_SPEC_RE = _re_speculative.compile(r"https?://[^\s\"'<>]{10,}", _re_speculative.UNICODE)
+    _IP_SPEC_RE = _re_speculative.compile(
+        r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+        r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
+    )
+except ImportError:
+    import re as _re_speculative  # type: ignore
+
+    _URL_SPEC_RE = _re_speculative.compile(r"https?://[^\s\"'<>]{10,}")
+    _IP_SPEC_RE = _re_speculative.compile(
+        r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}"
+        r"(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b",
+    )
+_SPEC_WINDOW = 512  # sliding window size for speculative detection
+
+
+def _try_parse_json_incremental(accumulated: str) -> tuple[dict | None, bool]:
+    """
+    ISSUE-010: Incremental JSON parse using orjson with error position checking.
+
+    orjson raises JSONDecodeError with exact byte position on parse failure.
+    If e.pos == len(data), JSON is incomplete (keep accumulating).
+    If e.pos < len(data), it's a real parse error (re-raise).
+
+    Faster than ijson. Handles nested structures that regex cannot.
+
+    Returns:
+        (parsed_dict, is_complete) — is_complete=True means valid JSON found.
+        (None, False) means incomplete, keep accumulating.
+    """
+    import orjson
+
+    try:
+        return orjson.loads(accumulated), True
+    except orjson.JSONDecodeError as e:
+        if e.pos == len(accumulated):
+            return None, False  # Incomplete, keep accumulating
+        raise  # Real parse error
 
 
 def _mlx_cleanup() -> None:
@@ -904,6 +946,19 @@ class SynthesisRunner:
 
         # P2-1b: Optional InferencePipeliner for non-blocking submit + prompt overlap
         self._inference_pipeliner: Any | None = None
+
+        # ISSUE-009: Speculative URL/IP detection results from streaming generation
+        self._speculative_urls: list[str] = []
+        self._speculative_ips: list[str] = []
+
+    # ISSUE-009: Public accessors for speculative detection results
+    def get_speculative_urls(self) -> list[str]:
+        """Return URLs detected during streaming generation."""
+        return self._speculative_urls
+
+    def get_speculative_ips(self) -> list[str]:
+        """Return IP addresses detected during streaming generation."""
+        return self._speculative_ips
 
     def inject_graph(self, graph: Any) -> None:
         """Inject IOCGraph instance from 8QA for STIX context injection."""
@@ -2052,6 +2107,12 @@ class SynthesisRunner:
 
             _mlx_lock = _get_mlx_inference_lock()
             accumulated = ""
+            # ISSUE-009: Track speculative URLs/IPs detected during streaming
+            # Use sets for O(1) dedup lookup, convert to list for compatibility
+            _spec_urls_set: set[str] = set()
+            _spec_ips_set: set[str] = set()
+            spec_urls: list[str] = []
+            spec_ips: list[str] = []
             if hasattr(mlx_lm, "stream_generate"):
                 try:
                     with _mlx_lock:
@@ -2066,23 +2127,41 @@ class SynthesisRunner:
                         ):
                             tok = chunk.text if hasattr(chunk, "text") else str(chunk)
                             accumulated += tok
-                            # Early-exit: hledáme kompletní JSON objekt s "title"
-                            m_match = _JSON_OBJ_RE.search(accumulated)
-                            if m_match:
+                            # ISSUE-009: Speculative URL/IP detection — scan sliding window
+                            # O(1) memory per token, avoids O(n²) full-string concat for detection
+                            window = accumulated[-_SPEC_WINDOW:]
+                            for url_match in _URL_SPEC_RE.finditer(window):
+                                if url_match.group() not in _spec_urls_set:
+                                    _spec_urls_set.add(url_match.group())
+                                    spec_urls.append(url_match.group())
+                            for ip_match in _IP_SPEC_RE.finditer(window):
+                                if ip_match.group() not in _spec_ips_set:
+                                    _spec_ips_set.add(ip_match.group())
+                                    spec_ips.append(ip_match.group())
+                            # ISSUE-010: orjson incremental parse — handles nested JSON that regex cannot
+                            parsed, is_complete = _try_parse_json_incremental(accumulated)
+                            if is_complete and parsed is not None:
                                 try:
-                                    return _msgspec_decode(m_match.group()), True
+                                    # ISSUE-009: Attach detected URLs/IPs to self for caller access
+                                    self._speculative_urls = spec_urls
+                                    self._speculative_ips = spec_ips
+                                    return _msgspec_decode(_msgspec_encode(parsed)), True
                                 except Exception:
-                                    pass  # neúplný — pokračuj
+                                    pass  # Decode failed, keep accumulating
                 except Exception as e:
                     logger.warning("[SYNTHESIS] stream_generate failed: %s — fallback", e)
-                    accumulated = ""
+                    # ISSUE-009 fix: Keep accumulated text for final parse attempt
+                    # accumulated = "" would lose partial JSON that may still be parseable
 
-            # Fallback: regex JSON extract z akumulovaného textu
+            # Final attempt on accumulated text
             if accumulated:
-                m_final = _JSON_FINAL_RE.search(accumulated)
-                if m_final:
+                parsed, is_complete = _try_parse_json_incremental(accumulated)
+                if is_complete and parsed is not None:
                     try:
-                        return _msgspec_decode(m_final.group()), True
+                        # ISSUE-009: Attach detected URLs/IPs even on final fallback
+                        self._speculative_urls = spec_urls
+                        self._speculative_ips = spec_ips
+                        return _msgspec_decode(_msgspec_encode(parsed)), True
                     except Exception:  # noqa: BLE001
                         pass
 

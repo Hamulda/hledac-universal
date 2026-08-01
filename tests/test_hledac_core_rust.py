@@ -49,6 +49,12 @@ try:
     from hledac_rust_extensions import (
         batch_nfc_normalize as _rust_batch_nfc_normalize,
     )
+    from hledac_rust_extensions import (
+        buffer_entropy as _rust_buffer_entropy,
+    )
+    from hledac_rust_extensions import (
+        buffer_entropy_batched as _rust_buffer_entropy_batched,
+    )
     _RUST_AVAILABLE = True
 except ImportError:
     _RUST_AVAILABLE = False
@@ -65,6 +71,8 @@ except ImportError:
     url_normalize = None
     batch_dedup_urls = None
     _rust_batch_nfc_normalize = None
+    _rust_buffer_entropy = None
+    _rust_buffer_entropy_batched = None
 
 
 # --- Pure-Python ref implementations (fallbacks when Rust unavailable) ---
@@ -763,4 +771,174 @@ class TestBatchNfcNormalize:
         # Re-applying should give the same result
         result2 = _rust_batch_nfc_normalize(result)
         assert result == result2
+
+
+# =============================================================================
+# Tests: buffer_entropy — ISSUE-005 PyBuffer zero-copy integration tests
+# =============================================================================
+
+import sys
+
+
+class TestBufferEntropy:
+    """Integration tests for buffer_entropy (PyBuffer zero-copy path).
+
+    ISSUE-005: Tests that numpy arrays, bytearray, memoryview, and bytes
+    all go through the TRUE zero-copy PyBuffer path without intermediate
+    Python bytes copy.
+    """
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy is None, reason="Rust not available"
+    )
+    def test_buffer_entropy_bytes(self):
+        """bytes input — goes through PyBytes zero-copy path."""
+        data = b"hello world"
+        result = _rust_buffer_entropy(data)
+        assert isinstance(result, float)
+        assert 0.0 <= result <= 4.0  # English text entropy range
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy is None, reason="Rust not available"
+    )
+    def test_buffer_entropy_bytearray(self):
+        """bytearray input — goes through TRUE PyBuffer zero-copy path."""
+        data = bytearray(b"hello world")
+        result = _rust_buffer_entropy(data)
+        assert isinstance(result, float)
+        assert result > 0.0
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy is None, reason="Rust not available"
+    )
+    def test_buffer_entropy_memoryview(self):
+        """memoryview input — goes through TRUE PyBuffer zero-copy path."""
+        data = memoryview(b"hello world")
+        result = _rust_buffer_entropy(data)
+        assert isinstance(result, float)
+        assert result > 0.0
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy is None or "numpy" not in sys.modules,
+        reason="Rust not available or numpy not installed",
+    )
+    def test_buffer_entropy_numpy_array(self):
+        """numpy array input — goes through TRUE PyBuffer zero-copy path.
+
+        This is the PRIMARY issue that ISSUE-005 fixed: numpy arrays
+        were previously copied to an intermediate Python bytes object.
+        """
+        import numpy as np
+
+        arr = np.array([104, 101, 108, 108, 111], dtype=np.uint8)
+        result = _rust_buffer_entropy(arr)
+        assert isinstance(result, float)
+        # Same bytes as b"hello" should give same entropy as bytes path
+        result_bytes = _rust_buffer_entropy(b"hello")
+        assert abs(result - result_bytes) < 1e-6
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy is None, reason="Rust not available"
+    )
+    def test_buffer_entropy_empty(self):
+        """Empty input returns 0.0 entropy."""
+        assert _rust_buffer_entropy(b"") == 0.0
+        assert _rust_buffer_entropy(bytearray()) == 0.0
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy is None, reason="Rust not available"
+    )
+    def test_buffer_entropy_single_char(self):
+        """Single repeated char has 0 entropy."""
+        assert _rust_buffer_entropy(b"aaaa") == 0.0
+        assert _rust_buffer_entropy(bytearray(b"aaaa")) == 0.0
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy is None, reason="Rust not available"
+    )
+    def test_buffer_entropy_type_error(self):
+        """Non-buffer, non-bytes input raises TypeError."""
+        import pytest
+
+        with pytest.raises(TypeError):
+            _rust_buffer_entropy(12345)  # int — not buffer-backed
+
+        with pytest.raises(TypeError):
+            _rust_buffer_entropy("hello")  # str — not buffer-backed
+
+
+class TestBufferEntropyBatched:
+    """Integration tests for buffer_entropy_batched.
+
+    ISSUE-005 / ISSUE-005-FIX2: batched PyBuffer processing with graceful
+    degradation for non-buffer items in the list.
+    """
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy_batched is None, reason="Rust not available"
+    )
+    def test_batched_bytes_list(self):
+        """List of bytes — all go through PyBytes fallback path."""
+        data = [b"hello", b"world", b"test"]
+        results = _rust_buffer_entropy_batched(data)
+        assert len(results) == 3
+        assert all(isinstance(r, float) for r in results)
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy_batched is None, reason="Rust not available"
+    )
+    def test_batched_mixed_buffers(self):
+        """List of mixed buffer types — bytes, bytearray, memoryview.
+
+        ISSUE-005-FIX2: graceful degradation — non-buffer items (int, float)
+        are silently skipped rather than causing hard failure.
+        """
+        data = [
+            b"hello",
+            bytearray(b"world"),
+            memoryview(b"test"),
+        ]
+        results = _rust_buffer_entropy_batched(data)
+        assert len(results) == 3
+        assert all(isinstance(r, float) for r in results)
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy_batched is None
+        or "numpy" not in sys.modules,
+        reason="Rust not available or numpy not installed",
+    )
+    def test_batched_with_numpy(self):
+        """List containing numpy array — PyBuffer zero-copy path."""
+        import numpy as np
+
+        data = [
+            b"hello",
+            np.array([119, 111, 114, 108, 100], dtype=np.uint8),  # "world"
+            bytearray(b"test"),
+        ]
+        results = _rust_buffer_entropy_batched(data)
+        assert len(results) == 3
+        assert all(isinstance(r, float) for r in results)
+        # numpy "world" should match bytes "world" entropy
+        results_bytes = _rust_buffer_entropy_batched([b"hello", b"world", b"test"])
+        for a, b_val in zip(results, results_bytes):
+            assert abs(a - b_val) < 1e-6
+
+    @pytest.mark.skipif(
+        _rust_buffer_entropy_batched is None, reason="Rust not available"
+    )
+    def test_batched_graceful_degradation(self):
+        """Non-buffer items (int) are silently skipped.
+
+        ISSUE-005-FIX2: ensures partial results are returned instead of
+        hard failure when some items in the list don't support the buffer protocol.
+        """
+        import pytest
+
+        # Mixed list with int — int is silently skipped, only 2 results
+        data: list = [b"hello", 12345, bytearray(b"world")]
+        results = _rust_buffer_entropy_batched(data)
+        # 12345 (int) should be skipped — only 2 valid buffer items
+        assert len(results) == 2
+        assert all(isinstance(r, float) for r in results)
 
