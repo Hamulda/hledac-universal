@@ -376,9 +376,30 @@ class V2Init:
         _t0 = _t.monotonic()
         try:
             from hledac.universal._lazy_imports import get_DuckDBShadowStore
+            from hledac.universal.paths import RAMDISK_ROOT
+
             DuckDBShadowStore = get_DuckDBShadowStore()
             store = DuckDBShadowStore()
             await store.async_init()
+
+            # ARCH-STR-001: Inject SemanticStore for LanceDB-backed embedding buffering.
+            # SemanticStore is created and initialized here so that buffer_findings()
+            # in DuckDBWriteCoordinator actually persists embeddings to LanceDB.
+            try:
+                from hledac.universal.knowledge.semantic_store import SemanticStore
+
+                lancedb_path = RAMDISK_ROOT / "lancedb"
+                semantic_store = SemanticStore(db_path=lancedb_path)
+                await semantic_store.initialize()
+                store.inject_semantic_store(semantic_store)
+            except Exception as sem_exc:
+                # Fail-soft: SemanticStore injection failure must not block DuckDB init.
+                # buffer_findings() is already fail-open (no-op when store is None).
+                _logging.getLogger(__name__).warning(
+                    "[V2Init] SemanticStore injection failed (non-critical): %s",
+                    sem_exc,
+                )
+
             return InitResult.success(store, (_t.monotonic() - _t0) * 1000)
         except Exception as e:
             return InitResult.failure(str(e), (_t.monotonic() - _t0) * 1000)

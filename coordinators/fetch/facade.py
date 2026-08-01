@@ -26,6 +26,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
 
+from msgspec import Struct
+
+from hledac.universal.utils.async_helpers import parallel
+
 from .services import (
     FetchOptions,
     FetchResult,
@@ -237,10 +241,17 @@ class FetchCoordinatorFacade:
         async def fetch_one(url: str) -> FetchResult:
             return await self.fetch(url)
 
-        results = await asyncio.gather(
+        # ISSUE ASYNC-001: asyncio.gather → parallel() with bounded concurrency
+        # Fetches are I/O-bound HTTP requests, bounded to prevent overwhelming the system
+        from hledac.universal.utils.async_helpers import ParallelResult
+
+        _result = await parallel(
             *[fetch_one(url) for url in urls_to_fetch],
-            return_exceptions=True
+            policy="log",
+            concurrency=16,
         )
+        # Type checker limitation: cast to resolve ParallelResult overload correctly
+        results: list[FetchResult] = cast(ParallelResult, _result).ok
 
         # Process results
         evidence_ids = []

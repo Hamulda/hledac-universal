@@ -81,7 +81,8 @@ async def search_shodan(
     # Build proxy URL (Tor if requested)
     proxy_url: str | None = None
     if use_tor:
-        proxy_url = "socks5://127.0.0.1:9050"
+        # OPSEC-001: socks5h:// forces remote DNS resolution by Tor proxy.
+        proxy_url = "socks5h://127.0.0.1:9050"
 
     # Determine API endpoint and auth
     if api_key:

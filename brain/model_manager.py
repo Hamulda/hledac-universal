@@ -28,6 +28,7 @@ from hledac.universal.utils.async_helpers import safe_create_task
 from hledac.universal.utils.concurrency import adjust_fetch_workers
 from hledac.universal.utils.exceptions import MemoryPressureError
 from hledac.universal.utils.executor_decorator import offload_to
+from hledac.universal.utils.import_resolver import lazy
 
 T = TypeVar('T')
 MLX_AVAILABLE = False
@@ -79,6 +80,9 @@ def _load_unload_timeout() -> float:
         logger.warning('[P1E-B] HLEDAC_MODEL_UNLOAD_TIMEOUT_S=%r invalid, using default 5.0s', os.environ.get('HLEDAC_MODEL_UNLOAD_TIMEOUT_S'))
         return 5.0
 logger = logging.getLogger(__name__)
+
+# ISSUE [LLM-SEC-001]: Lazy import for LLM input sanitization
+sanitize_for_llm = lazy('.prompt_injection_validator.sanitize_for_llm')
 
 def set_model_memory_limit(max_rss_gb: float) -> None:
     """P19: Set max RSS GB threshold for model memory guard."""
@@ -133,7 +137,7 @@ def _verify_rss_after_unload(model_key: str, rss_before: float) -> None:
     else:
         logger.info(f'[MODEL MEMORY] Model unloaded (RSS dropped={dropped:.2f}GB, model={model_key})')
 
-def _get_mlx_safe():
+def _get_mlx_safe() -> Any:
     """Get mlx.core module via mlx_memory lazy init. Returns mx or None."""
     global MLX_AVAILABLE
     if MLX_AVAILABLE:
@@ -918,18 +922,23 @@ class ModelManager:
         max_context = 4000
         max_hypotheses = 10
         max_findings = 20
+        # ISSUE [LLM-SEC-001]: Sanitize all user-controlled inputs before LLM consumption
+        _sanitize = sanitize_for_llm()
         hypo_lines = []
         for i, h in enumerate(hypotheses[:max_hypotheses], 1):
-            hypo_lines.append(f'{i}. {str(h)[:200]}')
+            sanitized_h = _sanitize(str(h)[:200]) if _sanitize else str(h)[:200]
+            hypo_lines.append(f'{i}. {sanitized_h}')
         hypo_text = '\n'.join(hypo_lines)
         finding_lines = []
         for f in (findings or [])[:max_findings]:
-            finding_str = str(f)[:300]
-            finding_lines.append(f'- {finding_str}')
+            sanitized_f = _sanitize(str(f)[:300]) if _sanitize else str(f)[:300]
+            finding_lines.append(f'- {sanitized_f}')
         finding_text = '\n'.join(finding_lines)
+        # Sanitize graph_summary (may contain raw web content)
+        sanitized_graph = _sanitize(graph_summary[:max_context]) if _sanitize else graph_summary[:max_context]
         prompt = (
             f"Vytvoř strukturovaný OSINT report v Markdown formátu.\n\n"
-            f"Grafový souhrn:\n{graph_summary[:max_context]}\n\n"
+            f"Grafový souhrn:\n{sanitized_graph}\n\n"
             f"Hypotézy:\n{hypo_text}\n\n"
             f"Zjištění (findings):\n{finding_text if finding_text else 'Žádná zjištění'}\n\n"
             f"Report musí obsahovat:\n"
@@ -1042,7 +1051,7 @@ class ModelManager:
             logger.debug(f'[EMBED] Failed to unload embedding model: {e}')
 
     @asynccontextmanager
-    async def embedding_lifecycle(self):
+    async def embedding_lifecycle(self) -> Any:  # type: ignore[return-value]
         """
         Context manager for embedding model lifecycle.
 

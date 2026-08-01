@@ -570,6 +570,17 @@ def mlx_cleanup_sync() -> None:
         # F269: Release slab pool memory back to system
         if _release_slab_pool is not None:
             _release_slab_pool()
+
+        # Krok 5: macOS malloc zone pressure relief — uvolní fragmented malloc zones
+        # MEM-SYS-001: mx.metal.clear_cache() uvolní Metal cache, ale ne system malloc zone.
+        # Dlouhodobé používání může akumulovat fragmentaci v malloc zone, což postupně
+        # zvyšuje RAM pressure. malloc_zone_pressure_relief(NULL) releasuje všechny zóny.
+        try:
+            import ctypes
+            libc = ctypes.CDLL(None)
+            libc.malloc_zone_pressure_relief(None)
+        except Exception as _e:
+            logger.debug(f"[MLX] malloc_zone_pressure_relief not available: {_e}")
     except Exception as e:
         logger.debug(f"MLX cleanup non-critical: {e}")
 
@@ -604,6 +615,19 @@ def mlx_cleanup_aggressive() -> None:
             logger.debug(f"[MLX] mx.eval([]) barrier skipped: {e}")
         if hasattr(mx, 'clear_cache'):
             mx.clear_cache()
+
+        # F269: Release slab pool memory back to system
+        if _release_slab_pool is not None:
+            _release_slab_pool()
+
+        # MEM-SYS-001: macOS malloc zone pressure relief — uvolní fragmented malloc zones
+        # (synchronizováno s mlx_cleanup_sync pro konzistentní chování)
+        try:
+            import ctypes
+            libc = ctypes.CDLL(None)
+            libc.malloc_zone_pressure_relief(None)
+        except Exception as _e:
+            logger.debug(f"[MLX] malloc_zone_pressure_relief not available: {_e}")
 
         # Obnovit starý limit
         if old_limit is not None:

@@ -91,6 +91,175 @@ assert SYNTHESIS_STRATEGY in ("sequential_preferred", "race_first_wins"), (
 
 
 # ---------------------------------------------------------------------------
+# L-05: Race task helpers — extracted from _race_inference_first_wins
+# Reduces CC of _race_inference_first_wins from 22 → ~8
+# ---------------------------------------------------------------------------
+
+async def _race_try_xgrammar(
+    lifecycle: Any, prompt: str,
+) -> tuple[dict | None, str]:
+    """Race task: try xgrammar generation. Extracted from _race_inference_first_wins."""
+    try:
+        result = await lifecycle._run_xgrammar_generation(prompt)
+        if result is not None:
+            raw_dict, ok = result
+            if ok and raw_dict is not None:
+                return raw_dict, "xgrammar"
+    except Exception as e:
+        logger.debug("[SYNTHESIS] xgrammar failed in race: %s", e)
+    return None, "none"
+
+
+async def _race_try_streaming(
+    lifecycle: Any, prompt: str,
+) -> tuple[dict | None, str]:
+    """Race task: try streaming generation. Extracted from _race_inference_first_wins."""
+    try:
+        result = await lifecycle._run_streaming_generation(prompt, json_schema=OSINT_JSON_SCHEMA)
+        if result is not None:
+            raw_dict, ok = result
+            if ok and raw_dict is not None:
+                return raw_dict, "streaming"
+    except Exception as e:
+        logger.debug("[SYNTHESIS] streaming failed in race: %s", e)
+    return None, "none"
+
+
+async def _race_try_structured(
+    lifecycle: Any, prompt: str,
+) -> tuple[dict | None, str]:
+    """Race task: try structured Outlines generation. Extracted from _race_inference_first_wins."""
+    try:
+        result = await lifecycle.structured_generate(prompt, OSINT_JSON_SCHEMA)
+        if result is not None:
+            raw_dict, ok = result
+            if ok and raw_dict is not None:
+                return raw_dict, "constrained"
+    except Exception as e:
+        logger.debug("[SYNTHESIS] structured failed in race: %s", e)
+    return None, "none"
+
+
+# ---------------------------------------------------------------------------
+# L-05: Sequential cascade helpers — extracted from _race_inference_sequential
+# Reduces CC of _race_inference_sequential from 13 → ~6
+# ---------------------------------------------------------------------------
+
+async def _cascade_xgrammar(
+    lifecycle: Any, prompt: str,
+) -> dict | None:
+    """Step 1: xgrammar cascade. Returns dict on success, None on failure."""
+    try:
+        result = await lifecycle._run_xgrammar_generation(prompt)
+        if result is not None:
+            raw_dict, ok = result
+            if ok and raw_dict is not None:
+                logger.debug("[SYNTHESIS] xgrammar won (confidence guarantee)")
+                return raw_dict
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.debug("[SYNTHESIS] xgrammar failed: %s", e)
+    return None
+
+
+async def _cascade_streaming(
+    lifecycle: Any, prompt: str,
+) -> dict | None:
+    """Step 2: streaming cascade. Returns dict on success, None on failure."""
+    try:
+        result = await lifecycle._run_streaming_generation(prompt, json_schema=OSINT_JSON_SCHEMA)
+        if result is not None:
+            raw_dict, ok = result
+            if ok and raw_dict is not None:
+                logger.debug("[SYNTHESIS] streaming won (early-exit)")
+                return raw_dict
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.debug("[SYNTHESIS] streaming failed: %s", e)
+    return None
+
+
+async def _cascade_structured(
+    lifecycle: Any, prompt: str,
+) -> dict | None:
+    """Step 3: structured Outlines cascade. Returns dict on success, None on failure."""
+    try:
+        result = await lifecycle.structured_generate(prompt, OSINT_JSON_SCHEMA)
+        if result is not None:
+            raw_dict, ok = result
+            if ok and raw_dict is not None:
+                logger.debug("[SYNTHESIS] structured (Outlines) won")
+                return raw_dict
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.debug("[SYNTHESIS] structured failed: %s", e)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Sprint 8SB: Model discovery helpers — extracted from _ensure_model
+# Reduces CC of _ensure_model from 19 → ~10
+# ---------------------------------------------------------------------------
+
+async def _extract_stix_nodes(
+    graph: Any, graph_label: str,
+) -> tuple[list[str], str, str]:
+    """
+    Sprint 8TH: Extract 'value' fields from graph.export_stix_bundle().
+
+    Returns (values, backend_name, error_reason).
+    On error returns ([], backend_name, error_reason).
+    """
+    backend_name = type(graph).__name__
+    try:
+        export_fn = getattr(graph, "export_stix_bundle", None)
+        if export_fn is None:
+            return ([], backend_name, f"'{graph_label}' lacks export_stix_bundle")
+        nodes = await export_fn()
+        if not nodes:
+            return ([], backend_name, "empty — graph has no IOC nodes")
+        values = [n.get("value", "") for n in nodes[:20] if isinstance(n, dict)]
+        return (values, backend_name, "")
+    except Exception as e:
+        return ([], backend_name, f"raised {type(e).__name__}: {e}")
+
+
+async def _check_model_size(model_id: str, max_gb: float) -> tuple[str, float] | None:
+    """Check model size from HuggingFace API. Returns (model_id, size_bytes) or None."""
+    try:
+        api_url = f"https://huggingface.co/api/models/{model_id}"
+        r = await asyncio.to_thread(urllib.request.urlopen, api_url, timeout=15)
+        with r:
+            data = _msgspec_decode(r.read())
+            total = sum(f.get("size", 0) for f in data.get("siblings", []))
+        if total / 1e9 > max_gb:
+            return None
+        return (model_id, total)
+    except Exception:
+        return None
+
+
+async def _download_model(model_id: str) -> bool:
+    """Download a single model via centralized cache. Returns True on success."""
+    from hledac.universal.brain.model_cache import get_or_download_model
+
+    try:
+        logger.info("[SYNTHESIS] Downloading %s ...", model_id)
+        result = await get_or_download_model(model_id)
+        if result is not None:
+            logger.info("[SYNTHESIS] Download complete: %s", model_id)
+            return True
+        logger.warning("[SYNTHESIS] Model download failed for %s", model_id)
+        return False
+    except Exception as e:
+        logger.warning("[SYNTHESIS] Model download failed for %s: %s", model_id, e)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Issue #20 improvement: Adaptive KV cache for M1 8GB Metal memory
 # ---------------------------------------------------------------------------
 # Sprint 8UF B.1: xgrammar grammar cache — compile ONCE per schema lifetime
@@ -1704,46 +1873,22 @@ class SynthesisRunner:
         Each step runs with the global MLX inference lock = strict serialization.
         First-success wins. Lowest latency overhead.
         """
-        # Krok 1: xgrammar (nejvyšší JSON guarantee)
-        try:
-            result = await self._run_xgrammar_generation(prompt)
-            if result is not None:
-                raw_dict, ok = result
-                if ok and raw_dict is not None:
-                    logger.debug("[SYNTHESIS] xgrammar won (confidence guarantee)")
-                    return raw_dict, "xgrammar"
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug("[SYNTHESIS] xgrammar failed: %s", e)
+        # Step 1: xgrammar (highest JSON guarantee)
+        result = await _cascade_xgrammar(self._lifecycle, prompt)
+        if result is not None:
+            return result, "xgrammar"
 
-        # Krok 2: streaming s early-exit
-        try:
-            result = await self._run_streaming_generation(prompt, json_schema=OSINT_JSON_SCHEMA)
-            if result is not None:
-                raw_dict, ok = result
-                if ok and raw_dict is not None:
-                    logger.debug("[SYNTHESIS] streaming won (early-exit)")
-                    return raw_dict, "streaming"
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug("[SYNTHESIS] streaming failed: %s", e)
+        # Step 2: streaming with early-exit
+        result = await _cascade_streaming(self._lifecycle, prompt)
+        if result is not None:
+            return result, "streaming"
 
-        # Krok 3: structured (Outlines fallback)
-        try:
-            result = await self._lifecycle.structured_generate(prompt, OSINT_JSON_SCHEMA)
-            if result is not None:
-                raw_dict, ok = result
-                if ok and raw_dict is not None:
-                    logger.debug("[SYNTHESIS] structured (Outlines) won")
-                    return raw_dict, "constrained"
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.debug("[SYNTHESIS] structured failed: %s", e)
+        # Step 3: structured (Outlines fallback)
+        result = await _cascade_structured(self._lifecycle, prompt)
+        if result is not None:
+            return result, "constrained"
 
-        # Všechny selhaly
+        # All engines failed
         logger.debug("[SYNTHESIS] All synthesis engines failed")
         return None, "none"
 
@@ -1763,43 +1908,10 @@ class SynthesisRunner:
         winner: dict | None = None
         winner_name: str = "none"
 
-        async def try_xgrammar() -> tuple[dict | None, str]:
-            try:
-                result = await self._run_xgrammar_generation(prompt)
-                if result is not None:
-                    raw_dict, ok = result
-                    if ok and raw_dict is not None:
-                        return raw_dict, "xgrammar"
-            except Exception as e:
-                logger.debug("[SYNTHESIS] xgrammar failed in race: %s", e)
-            return None, "none"
-
-        async def try_streaming() -> tuple[dict | None, str]:
-            try:
-                result = await self._run_streaming_generation(prompt, json_schema=OSINT_JSON_SCHEMA)
-                if result is not None:
-                    raw_dict, ok = result
-                    if ok and raw_dict is not None:
-                        return raw_dict, "streaming"
-            except Exception as e:
-                logger.debug("[SYNTHESIS] streaming failed in race: %s", e)
-            return None, "none"
-
-        async def try_structured() -> tuple[dict | None, str]:
-            try:
-                result = await self._lifecycle.structured_generate(prompt, OSINT_JSON_SCHEMA)
-                if result is not None:
-                    raw_dict, ok = result
-                    if ok and raw_dict is not None:
-                        return raw_dict, "constrained"
-            except Exception as e:
-                logger.debug("[SYNTHESIS] structured failed in race: %s", e)
-            return None, "none"
-
         tasks = {
-            asyncio.create_task(try_xgrammar(), name="xgrammar"): "xgrammar",
-            asyncio.create_task(try_streaming(), name="streaming"): "streaming",
-            asyncio.create_task(try_structured(), name="structured"): "structured",
+            asyncio.create_task(_race_try_xgrammar(self._lifecycle, prompt), name="xgrammar"): "xgrammar",
+            asyncio.create_task(_race_try_streaming(self._lifecycle, prompt), name="streaming"): "streaming",
+            asyncio.create_task(_race_try_structured(self._lifecycle, prompt), name="structured"): "structured",
         }
 
         pending = set(tasks.keys())
@@ -1850,7 +1962,7 @@ class SynthesisRunner:
     # Sprint 8TC B.3: Streaming synthesis s early-exit
     # ------------------------------------------------------------------
 
-    async def _run_streaming_generation(
+    async def _run_streaming_generation(  # noqa: C901
         self,
         prompt: str,
         json_schema: str | None = None,  # unused — regex early-exit path
@@ -1984,7 +2096,7 @@ class SynthesisRunner:
     # Sprint 8UC B.1: xgrammar guaranteed-JSON synthesis
     # ------------------------------------------------------------------
 
-    async def _run_xgrammar_generation(
+    async def _run_xgrammar_generation(  # noqa: C901
         self,
         prompt: str,
     ) -> tuple[dict | None, bool]:
@@ -2047,7 +2159,7 @@ class SynthesisRunner:
             _input_tokens_list = []
             _input_tokens = 0
 
-        def _xgrammar_sync() -> tuple[dict | None, bool]:
+        def _xgrammar_sync() -> tuple[dict | None, bool]:  # noqa: C901
             try:
                 from contextlib import nullcontext
 
@@ -2162,7 +2274,7 @@ class SynthesisRunner:
     # Helpers
     # ------------------------------------------------------------------
 
-    async def _ensure_model(self) -> Path | None:
+    async def _ensure_model(self) -> Path | None:  # noqa: C901
         """
         Sprint 8SB: 3-tier model discovery with conditional download.
 
@@ -2200,36 +2312,6 @@ class SynthesisRunner:
             ("mlx-community/Qwen2.5-0.5B-Instruct-4bit", 1.0),
             ("mlx-community/SmolLM2-135M-Instruct-4bit", 0.2),
         ]
-
-        async def _check_model_size(model_id: str, max_gb: float) -> tuple[str, float] | None:
-            """Check model size from HuggingFace API. Returns (model_id, size_bytes) or None."""
-            try:
-                api_url = f"https://huggingface.co/api/models/{model_id}"
-                r = await asyncio.to_thread(urllib.request.urlopen, api_url, timeout=15)
-                with r:
-                    data = _msgspec_decode(r.read())
-                    total = sum(f.get("size", 0) for f in data.get("siblings", []))
-                if total / 1e9 > max_gb:
-                    return None
-                return (model_id, total)
-            except Exception:
-                return None
-
-        async def _download_model(model_id: str) -> bool:
-            """Download a single model via centralized cache. Returns True on success."""
-            from hledac.universal.brain.model_cache import get_or_download_model
-
-            try:
-                logger.info("[SYNTHESIS] Downloading %s ...", model_id)
-                result = await get_or_download_model(model_id)
-                if result is not None:
-                    logger.info("[SYNTHESIS] Download complete: %s", model_id)
-                    return True
-                logger.warning("[SYNTHESIS] Model download failed for %s", model_id)
-                return False
-            except Exception as e:
-                logger.warning("[SYNTHESIS] Model download failed for %s: %s", model_id, e)
-                return False
 
         # Phase 1: Check all model sizes in parallel
         # F314-4: migrated asyncio.gather -> parallel_ok (fail-soft, preserves order)
@@ -2564,38 +2646,24 @@ class SynthesisRunner:
         Donor backend (DuckPGQGraph/DuckDB) DOES NOT.
         """
         # Sprint 8VQ: Priority 1 — dedicated truth-store STIX graph
-        stix_graph = self._stix_graph
-        if stix_graph is not None:
-            try:
-                export_fn = getattr(stix_graph, "export_stix_bundle", None)
-                if export_fn is None:
-                    backend_name = type(stix_graph).__name__
-                    self._stix_status = "unavailable"
-                    self._stix_reason = f"stix_graph '{backend_name}' lacks export_stix_bundle"
-                    self._stix_backend = backend_name
-                    return ""
-                nodes = await export_fn()
-                if not nodes:
-                    self._stix_status = "available"
-                    self._stix_reason = "stix_graph export_stix_bundle returned empty — graph has no IOC nodes"
-                    self._stix_backend = type(stix_graph).__name__
-                    return ""
-                values = [n.get("value", "") for n in nodes[:20] if isinstance(n, dict)]
-                if values:
-                    self._stix_status = "available"
-                    self._stix_reason = f"stix_graph exported {len(nodes)} nodes, truncated to {len(values)} for prompt"
-                    self._stix_backend = type(stix_graph).__name__
-                    return f"\nKnown IOCs from graph ({len(values)} entities): {', '.join(values)}"
-                else:
-                    self._stix_status = "available"
-                    self._stix_reason = "stix_graph export_stix_bundle returned nodes but none had extractable 'value' field"  # noqa: E501
-                    self._stix_backend = type(stix_graph).__name__
-                    return ""
-            except Exception as e:
-                self._stix_status = "error"
-                self._stix_reason = f"stix_graph STIX export raised {type(e).__name__}: {e}"
-                self._stix_backend = type(stix_graph).__name__
+        if self._stix_graph is not None:
+            values, backend_name, error = await _extract_stix_nodes(
+                self._stix_graph, f"stix_graph '{type(self._stix_graph).__name__}'"
+            )
+            if error:
+                self._stix_status = "unavailable" if "lacks" in error else "error"
+                self._stix_reason = f"stix_graph {error}"
+                self._stix_backend = backend_name
                 return ""
+            if values:
+                self._stix_status = "available"
+                self._stix_reason = f"stix_graph exported {len(values)} values"
+                self._stix_backend = backend_name
+                return f"\nKnown IOCs from graph ({len(values)} entities): {', '.join(values)}"
+            self._stix_status = "available"
+            self._stix_reason = "stix_graph had no extractable IOC values"
+            self._stix_backend = backend_name
+            return ""
 
         # Sprint 8VQ: Priority 2 — analytics/donor graph (DuckPGQGraph — no STIX)
         if self._ioc_graph is None:
@@ -2603,37 +2671,24 @@ class SynthesisRunner:
             self._stix_reason = "no graph injected — both _stix_graph and _ioc_graph are None"
             self._stix_backend = ""
             return ""
-        try:
-            export_fn = getattr(self._ioc_graph, "export_stix_bundle", None)
-            if export_fn is None:
-                backend_name = type(self._ioc_graph).__name__
-                self._stix_status = "unavailable"
-                self._stix_reason = f"backend '{backend_name}' lacks export_stix_bundle — DuckPGQGraph donor cannot serve STIX"  # noqa: E501
-                self._stix_backend = backend_name
-                return ""
-            # IOCGraph.export_stix_bundle is async; DuckPGQGraph lacks it entirely
-            nodes = await export_fn()
-            if not nodes:
-                self._stix_status = "available"
-                self._stix_reason = "export_stix_bundle returned empty — graph has no IOC nodes"
-                self._stix_backend = type(self._ioc_graph).__name__
-                return ""
-            values = [n.get("value", "") for n in nodes[:20] if isinstance(n, dict)]
-            if values:
-                self._stix_status = "available"
-                self._stix_reason = f"exported {len(nodes)} nodes, truncated to {len(values)} for prompt"
-                self._stix_backend = type(self._ioc_graph).__name__
-                return f"\nKnown IOCs from graph ({len(values)} entities): {', '.join(values)}"
-            else:
-                self._stix_status = "available"
-                self._stix_reason = "export_stix_bundle returned nodes but none had extractable 'value' field"
-                self._stix_backend = type(self._ioc_graph).__name__
-                return ""
-        except Exception as e:
-            self._stix_status = "error"
-            self._stix_reason = f"STIX export raised {type(e).__name__}: {e}"
-            self._stix_backend = type(self._ioc_graph).__name__
+
+        values, backend_name, error = await _extract_stix_nodes(
+            self._ioc_graph, f"backend '{type(self._ioc_graph).__name__}'"
+        )
+        if error:
+            self._stix_status = "unavailable" if "lacks" in error else "error"
+            self._stix_reason = f"STIX {error}"
+            self._stix_backend = backend_name
             return ""
+        if values:
+            self._stix_status = "available"
+            self._stix_reason = f"exported {len(values)} values"
+            self._stix_backend = backend_name
+            return f"\nKnown IOCs from graph ({len(values)} entities): {', '.join(values)}"
+        self._stix_status = "available"
+        self._stix_reason = "graph had no extractable IOC values"
+        self._stix_backend = backend_name
+        return ""
 
 
 # ---------------------------------------------------------------------------

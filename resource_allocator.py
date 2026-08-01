@@ -26,7 +26,8 @@ import time
 from dataclasses import dataclass
 import msgspec
 from typing import Any, Self
-from hledac.universal.core.psutil_shim import virtual_memory as _virtual_memory, PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
+from hledac.universal.core.psutil_shim import PSUTIL_AVAILABLE as _PSUTIL_AVAILABLE
+from hledac.universal.core.psutil_shim import process as _process
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
 from hledac.universal.utils.config_introspection import safe_attr_get
 logger = logging.getLogger(__name__)
@@ -73,12 +74,19 @@ class ResourceAllocator:
     - SOFT_PREEMPT_RAM_GIB: Request-level soft-preemption threshold (default 6.5 GB)
     - Warm-up: First 5 queries use fixed allocation
     - MLX-based linear regression for prediction after warm-up
+
+    MEM-UMA-002: Reactive RSS throttling at two levels:
+    - SOFT_LIMIT (6.5 GiB): reduce concurrency by 50%
+    - HARD_LIMIT (7.2 GiB): emergency heap flush + MemoryError
     """
     MAX_CONCURRENT: int = 3
     MAX_RAM_GB: float = M1_FETCH_SOFT_CEILING_GB
     SOFT_PREEMPT_RAM_GIB: float = 6.5
+    # MEM-UMA-002: Explicit RSS limits for reactive throttling
+    RSS_SOFT_LIMIT_GIB: float = 6.5   # 500MB buffer before hard limit
+    RSS_HARD_LIMIT_GIB: float = 7.2    # M1 8GB SWAP limit — abort if reached
     WARMUP_QUERIES: int = 5
-    __slots__ = tuple(('active_requests', 'coeffs', 'history', 'total_ram_mb', 'warmup_counter'))
+    __slots__ = tuple(('active_requests', 'coeffs', 'history', 'total_ram_mb', 'warmup_counter', '_throttle_level', '_saved_max_concurrent'))
 
     def __init__(self):
         self.active_requests: dict[str, ResourceBudget] = {}
@@ -86,6 +94,7 @@ class ResourceAllocator:
         self.history: list[tuple[list[float], float]] = []
         self.coeffs: Any | None = None
         self.warmup_counter: int = 0
+        self._throttle_level: int = 0  # MEM-UMA-002: 0=normal, 1=soft_throttled, 2=hard_throttled (set on HARD before raising)
 
     def _extract_features(self, ctx: Any) -> list[float]:
         """Extract feature vector for RAM prediction."""
@@ -127,6 +136,11 @@ class ResourceAllocator:
 
     def can_accept(self, ctx: Any) -> bool:
         """Check if a new request can be accepted."""
+        # MEM-UMA-002: Check RSS before accepting new request
+        try:
+            self._check_rss_and_throttle()
+        except MemoryError:
+            return False
         if len(self.active_requests) >= self.MAX_CONCURRENT:
             return False
         predicted = self.predict_ram(ctx)
@@ -159,28 +173,145 @@ class ResourceAllocator:
             self._update_model()
             logger.debug(f'Released request {request_id}, actual RAM: {actual_ram_mb:.0f} MB')
 
-    def emergency_brake(self) -> str | None:
+    def _check_rss_and_throttle(self) -> None:
         """
-        Emergency brake: cancel lowest priority task if RSS > SOFT_PREEMPT_RAM_GIB.
-        Returns cancelled request_id or None.
+        MEM-UMA-002: Synchronous RSS check + throttle.
+        Called from can_accept() and acquire() to fail fast before resource use.
+
+        Two-tier response:
+        - SOFT (>= 6.5 GiB): reduce concurrency by 50%, save original for recovery
+        - HARD (>= 7.2 GiB): raises MemoryError (caller should abort)
         """
         try:
             if not _PSUTIL_AVAILABLE:
-                return None
-            mem = _virtual_memory()
-            if mem is None:
-                return None
-            if mem.used < self.SOFT_PREEMPT_RAM_GIB * 1024 ** 3:
-                return None
-            if not self.active_requests:
-                return None
-            lowest = max(self.active_requests.values(), key=lambda b: b.priority)
-            self.cancel(lowest.request_id)
-            logger.warning(f'Emergency brake: cancelled {lowest.request_id} (RSS: {mem.used / 1024 ** 3:.2f} GB)')
-            return lowest.request_id
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            logger.error(f'Emergency brake failed: {e}')
-            return None
+                return
+            proc = _process()
+            if proc is None:
+                return
+            current_rss = proc.memory_info().rss / (1024 ** 3)
+
+            # HARD LIMIT: 7.2 GiB — M1 8GB SWAP limit exceeded
+            if current_rss >= self.RSS_HARD_LIMIT_GIB:
+                logger.critical(
+                    f"[MEM-UMA-002-HARD] RSS {current_rss:.2f} GiB >= HARD limit "
+                    f"({self.RSS_HARD_LIMIT_GIB} GiB)"
+                )
+                raise MemoryError(
+                    f"M1 8GB SWAP limit: RSS={current_rss:.2f}GiB >= "
+                    f"{self.RSS_HARD_LIMIT_GIB}GiB"
+                )
+
+            # SOFT LIMIT: >= 6.5 GiB — reduce concurrency by 50%
+            if current_rss >= self.RSS_SOFT_LIMIT_GIB:
+                if self._throttle_level < 1:
+                    old_limit = self.MAX_CONCURRENT
+                    new_limit = max(1, old_limit // 2)
+                    # Save original for hysteresis-based recovery
+                    self._saved_max_concurrent = old_limit
+                    self.MAX_CONCURRENT = new_limit
+                    self._throttle_level = 1
+                    logger.warning(
+                        f"[MEM-UMA-002-SOFT] RSS {current_rss:.2f} GiB >= SOFT limit "
+                        f"({self.RSS_SOFT_LIMIT_GIB} GiB) — reduced concurrency "
+                        f"{old_limit} -> {new_limit}"
+                    )
+                # Cancel lowest priority task to free memory immediately
+                if self.active_requests:
+                    lowest = max(
+                        self.active_requests.values(), key=lambda b: b.priority
+                    )
+                    self.cancel(lowest.request_id)
+                    logger.info(
+                        f"[MEM-UMA-002-SOFT] Cancelled {lowest.request_id} "
+                        f"to free memory (RSS: {current_rss:.2f} GiB)"
+                    )
+        except MemoryError:
+            raise
+        except Exception:  # noqa: BLE001 — best-effort; throttling failure is non-fatal
+            pass
+
+    async def _reactive_throttle(self) -> None:
+        """
+        MEM-UMA-002: Async background monitoring with hysteresis.
+        Runs _emergency_heap_flush() on HARD breach, then raises MemoryError.
+        On SOFT breach: throttles once. When RSS drops below SOFT - hysteresis_gap,
+        restores concurrency to original level.
+        """
+        try:
+            if not _PSUTIL_AVAILABLE:
+                return
+            proc = _process()
+            if proc is None:
+                return
+            current_rss = proc.memory_info().rss / (1024 ** 3)
+
+            # HARD LIMIT: emergency flush + abort
+            if current_rss >= self.RSS_HARD_LIMIT_GIB:
+                logger.critical(
+                    f"[MEM-UMA-002-HARD] RSS {current_rss:.2f} GiB >= HARD limit "
+                    f"({self.RSS_HARD_LIMIT_GIB} GiB) — emergency heap flush"
+                )
+                await self._emergency_heap_flush()
+                raise MemoryError(
+                    f"M1 8GB SWAP limit exceeded: RSS={current_rss:.2f}GiB >= "
+                    f"{self.RSS_HARD_LIMIT_GIB}GiB. Sprint abort required."
+                )
+
+            # SOFT LIMIT: throttle with hysteresis-based recovery
+            if current_rss >= self.RSS_SOFT_LIMIT_GIB:
+                if self._throttle_level < 1:
+                    self._check_rss_and_throttle()
+                # else: already throttled, keep monitoring
+
+            # HYSTERESIS: restore concurrency when RSS drops below (SOFT - hysteresis_gap)
+            elif self._throttle_level > 0:
+                hysteresis_gap = 0.3  # GiB below SOFT limit
+                if current_rss < self.RSS_SOFT_LIMIT_GIB - hysteresis_gap:
+                    old_level = self._throttle_level
+                    self._throttle_level = 0
+                    # Restore original concurrency (stored at throttle onset)
+                    if self._saved_max_concurrent is not None:
+                        self.MAX_CONCURRENT = self._saved_max_concurrent
+                        self._saved_max_concurrent = None
+                    logger.info(
+                        f"[MEM-UMA-002-RECOVER] RSS {current_rss:.2f} GiB < "
+                        f"{self.RSS_SOFT_LIMIT_GIB - hysteresis_gap:.1f} GiB "
+                        f"(hysteresis). Restored concurrency (was level={old_level})"
+                    )
+        except MemoryError:
+            raise
+        except Exception:  # noqa: BLE001 — best-effort; throttling failure is non-fatal
+            pass
+
+    async def _emergency_heap_flush(self) -> None:
+        """
+        MEM-UMA-002: Emergency heap flush — clear MLX cache + gc.collect().
+
+        Called when RSS >= 7.2 GiB (HARD limit). This is the last line of
+        defense before OOM kill. Clears Metal cache and triggers full gc.
+        """
+        try:
+            # 1. Clear MLX cache (mx.eval([]) before clear_cache is mandatory)
+            cleared = clear_mlx_cache_if_needed(threshold_mb=0.0)
+            if cleared:
+                logger.info("[MEM-UMA-002] MLX cache cleared during emergency flush")
+            else:
+                logger.info("[MEM-UMA-002] MLX cache was already clean")
+
+            # 2. Aggressive garbage collection
+            import gc
+            gc.collect()
+
+            # 3. Log final RSS
+            if _PSUTIL_AVAILABLE:
+                proc = _process()
+                if proc is not None:
+                    final_rss = proc.memory_info().rss / (1024 ** 3)
+                    logger.info(
+                        f"[MEM-UMA-002] Emergency flush done. RSS: {final_rss:.2f} GiB"
+                    )
+        except Exception as e:  # noqa: BLE001 — best-effort; flush failure is non-fatal
+            logger.error(f"[MEM-UMA-002] Emergency heap flush failed: {e}")
 
     def cancel(self, request_id: str):
         """Cancel a specific request. C-9 fix: volá task.cancel() pokud je task known."""
@@ -211,8 +342,6 @@ def get_memory_pressure_level() -> str:
     Returns: "normal" | "warn" | "critical"  (mapped from UMA state)
     """
     try:
-        import asyncio
-        loop = asyncio.get_running_loop()
         from hledac.universal.utils.concurrency import AdaptiveWorkerPool
         pool = AdaptiveWorkerPool._instance
         if pool is not None:
@@ -346,7 +475,7 @@ class AdaptiveSemaphore:
             raise
         return self
 
-    async def __aexit__(self, *args) -> None:
+    async def __aexit__(self, *_: object) -> None:
         async with self._lock:
             # __aexit__ must NOT decrement below 0 — defensive guard
             if self._active_holders > 0:

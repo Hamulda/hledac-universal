@@ -27,7 +27,9 @@ from .base import Transport, TransportConfig, TransportResult
 if TYPE_CHECKING:
     import httpx
 logger = logging.getLogger(__name__)
-I2P_SOCKS_PORT = 7654
+# OPSEC-001: I2P SOCKS proxy port is 4444 (standard), NOT 7654 (I2P console).
+# Port 7654 is the I2P HTTP console, not the SOCKS proxy.
+I2P_SOCKS_PORT = 4444
 I2P_SAM_PORT = 7656
 I2P_HTTP_PORT = 8888
 SAM_VERSION = '1.0'
@@ -118,7 +120,8 @@ class I2PTransport(Transport):
                 except ImportError:
                     logger.critical('I2PTransport unavailable: missing httpx or httpx-socks')
                     return False
-                transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)  # socks5:// + rdns=True = remote DNS
+                # OPSEC-001: socks5h:// forces remote DNS resolution by I2P proxy.
+                transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5h://127.0.0.1:{self.socks_port}', rdns=True)
                 limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
                 timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)
                 self._session_socks = httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
@@ -277,7 +280,8 @@ class I2PTransport(Transport):
                     import httpx_socks
                 except ImportError:
                     raise I2PUnavailableError('httpx-socks required for I2P SOCKS mode') from None
-                transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)  # socks5:// + rdns=True = remote DNS
+                # OPSEC-001: socks5h:// forces remote DNS resolution by I2P proxy.
+                transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5h://127.0.0.1:{self.socks_port}', rdns=True)
                 limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
                 timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)
                 self._session_socks = httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
@@ -375,7 +379,8 @@ async def get_i2p_session() -> httpx.AsyncClient:
             import httpx_socks
         except ImportError:
             raise RuntimeError('httpx-socks required for I2P: pip install httpx-socks') from None
-        transport = httpx_socks.AsyncProxyTransport.from_url("socks5://127.0.0.1:7654", rdns=True)  # socks5:// + rdns=True = remote DNS
+        # OPSEC-001: socks5h:// forces remote DNS resolution by I2P proxy.
+        transport = httpx_socks.AsyncProxyTransport.from_url("socks5h://127.0.0.1:4444", rdns=True)
         limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
         timeout = httpx.Timeout(connect=5.0, read=20.0, write=10.0)
         _i2p_session = httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN

@@ -15,6 +15,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.utils.async_helpers import parallel
+
 from hledac.universal.recon.lane import (
     BaseIntelligenceLane,
     FetchResult,
@@ -155,18 +157,27 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
                         return await ssl.analyze_certificate(resolved.resolved)
 
                     # Parallel execution: DNS + WHOIS + SSL run concurrently
-                    dns_result, whois_result, ssl_result = await asyncio.gather(
+                    # ISSUE ASYNC-001: asyncio.gather → parallel() with bounded concurrency (3 concurrent ops)
+                    _net_result = await parallel(
                         _fetch_dns(),
                         _fetch_whois(),
                         _fetch_ssl(),
-                        return_exceptions=True,
+                        policy="log",
+                        concurrency=3,
+                    )
+                    dns_result, whois_result, ssl_result = (
+                        _net_result.ok[0] if len(_net_result.ok) > 0 else None,
+                        _net_result.ok[1] if len(_net_result.ok) > 1 else None,
+                        _net_result.ok[2] if len(_net_result.ok) > 2 else None,
                     )
 
                     # Combine results into a unified dict for parse() phase
+                    # Note: exceptions are filtered by parallel(policy="log") → stored in result.errors
+                    # therefore .ok values are always the raw return type (DNS records, WHOIS data, or None)
                     combined = {
-                        "dns": dns_result if not isinstance(dns_result, Exception) else None,
-                        "whois": whois_result if not isinstance(whois_result, Exception) else None,
-                        "ssl": ssl_result if not isinstance(ssl_result, Exception) else None,
+                        "dns": dns_result,
+                        "whois": whois_result,
+                        "ssl": ssl_result,
                     }
 
                     elapsed_ms = (time.monotonic() - start) * 1000

@@ -189,6 +189,29 @@ class ModernBertEngine:
             logger.debug('[ModernBertEngine] score_pivots_by_similarity failed: %s', e)
             return []
 
+    def _strip_html_for_embedding(self, text: str) -> str:
+        """
+        Strip HTML tags and normalize whitespace for embedding.
+
+        Uses selectolax (M1 RAM-friendly, pure Python). Falls back to naive regex.
+        Control characters are also stripped to prevent poisoning.
+        """
+        import re
+        try:
+            from selectolax.parser import HTMLParser
+            tree = HTMLParser(text)
+            for tag in ('script', 'style', 'noscript', 'embed', 'object', 'iframe', 'svg', 'math'):
+                for node in tree.css(tag):
+                    node.decompose()
+            text = tree.text()
+        except Exception:
+            text = re.sub(r'<[^>]+>', '', text)
+        # Remove C0/C1 control chars (prompt injection vector)
+        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)
+        # Normalize whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+
     def _extractive_summary(self, items: list[str]) -> str:
         """
         Select top-k centroid items and concatenate as summary.
@@ -200,7 +223,10 @@ class ModernBertEngine:
         """
         top_k = self.config.summary_top_k
         max_chars = self.config.summary_max_chars
-        truncated = [str(item)[:500] for item in items]
+        # ISSUE [LLM-SEC-001]: Strip HTML tags before embedding — malicious markup
+        # could poison embedding space. selectolax is M1-RAM-friendly (no lxml).
+        cleaned = [self._strip_html_for_embedding(str(item)) for item in items]
+        truncated = [item[:500] for item in cleaned]
         truncated = [t for t in truncated if t]
         if len(truncated) <= top_k:
             selected = truncated

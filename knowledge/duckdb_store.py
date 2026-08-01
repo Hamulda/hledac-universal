@@ -1892,6 +1892,7 @@ class DuckDBShadowStore:
         "_quality_gate",  # F360: DuckDBQualityGate (extracted from _assess_finding_quality)
         "_graph_attachment",  # F360: DuckDBGraphAttachment (replaces _graph_store lazy-init)
         "_vector_store",  # F360M: DuckDBVectorStore composition (eliminates duplicate RAG/vector methods)
+        "_dlq_manager",  # OPS-DLQ-001: DLQ for per-item batch failure isolation
         "_stmt_insert_finding",
         "_stmt_insert_finding_conn_id",
         "DEAD_LETTER_PREFIX",
@@ -2049,6 +2050,9 @@ class DuckDBShadowStore:
         self._write_coordinator: Any | None = None
         # F360M: DuckDBVectorStore composition (lazy init in _ensure_vector_store)
         self._vector_store: Any | None = None
+        # OPS-DLQ-001: Lazy DLQ manager for per-item validation errors in batch ingest.
+        # Individual malformed findings are captured here instead of failing the entire batch.
+        self._dlq_manager: Any | None = None
 
     def _adjust_executor_pool(self) -> None:
         """
@@ -2188,6 +2192,24 @@ class DuckDBShadowStore:
 
             self._graph_attachment = DuckDBGraphAttachment()
         return self._graph_attachment
+
+    def _get_dlq_manager(self) -> Any:
+        """
+        OPS-DLQ-001: Lazy DLQ manager initialization for per-item batch failure isolation.
+
+        Returns DLQ manager singleton for capturing malformed findings that fail
+        validation. Individual item failures are logged to DLQ instead of
+        causing entire batch rollback.
+
+        Returns:
+            DLQManager instance or None if DLQ subsystem unavailable.
+        """
+        try:
+            from hledac.universal.core.dlq_manager import get_dlq_manager
+
+            return get_dlq_manager()
+        except Exception:  # noqa: BLE001 — best-effort; DLQ unavailable; non-critical
+            return None
 
     def inject_graph(self, graph: Any) -> None:
         """Inject DuckPGQGraph or IOCGraph for entity enrichment."""
@@ -3750,6 +3772,8 @@ class DuckDBShadowStore:
             self._startup_ready.set()
             # F360M Phase 2: Early binding of DuckDBVectorStore for faster first RAG operation
             await self._ensure_vector_store()
+            # OPS-DLQ-001: Lazy DLQ manager init — captures per-item validation errors in batch ingest
+            self._dlq_manager = self._dlq_manager or self._get_dlq_manager()
             return True
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             return False
@@ -5854,10 +5878,12 @@ class DuckDBShadowStore:
                 self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
                 self._wal_manager.initialize()
             # B2-FIX: pre-allocate items list — avoids O(n) list reallocation.
+            from hledac.universal.knowledge.storage_contracts import validate_finding_dict
+
             n = len(findings)
             items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
             for i, f in enumerate(findings):
-                items[i] = (f"finding:{f.finding_id}", {
+                raw_dict = {
                     "id": f.finding_id,
                     "query": f.query,
                     "source_type": f.source_type,
@@ -5865,7 +5891,15 @@ class DuckDBShadowStore:
                     "ts": f.ts,
                     "provenance": f.provenance,
                     "payload_text": f.payload_text,
-                })
+                }
+                # ARCH-DB-001: Validate against CanonicalFindingContract before WAL write.
+                validated = validate_finding_dict(raw_dict)
+                if validated is None:
+                    _logger.debug(
+                        "[ARCH-DB-001] WAL validation failed for finding_id=%s",
+                        f.finding_id,
+                    )
+                items[i] = (f"finding:{f.finding_id}", raw_dict)
             if items:
                 loop = asyncio.get_running_loop()
                 lmdb_ok = await loop.run_in_executor(
@@ -7652,17 +7686,43 @@ class DuckDBShadowStore:
             for (chunk_indices, task), task_result in zip(pending_tasks, storage_results_all, strict=True):
                 if isinstance(task_result, Exception):
                     logger.warning("[A8HIGH] storage task failed: %s", task_result)
+                    # OPS-DLQ-001: Store failed chunk findings to DLQ for later inspection/retry.
+                    # This prevents a single malformed batch from causing total data loss.
+                    _dlq = getattr(self, "_dlq_manager", None)
+                    if _dlq is None:
+                        _dlq = self._get_dlq_manager()
                     for idx in chunk_indices:
                         if results[idx] is None:
+                            _finding = findings[idx]
                             results[idx] = ActivationResult(
-                                finding_id=str(findings[idx].finding_id),
+                                finding_id=str(_finding.finding_id),
                                 lmdb_success=False,
                                 duckdb_success=None,
-                                lmdb_key=f"finding:{findings[idx].finding_id}",
+                                lmdb_key=f"finding:{_finding.finding_id}",
                                 desync=False,
                                 error="pipeline_storage_failed",
                                 accepted=False,
                             )
+                            # OPS-DLQ-001: Capture failed finding to DLQ with full payload.
+                            try:
+                                if _dlq is not None:
+                                    _dlq.store_payload(
+                                        payload_data=msgspec.json.encode({
+                                            "finding_id": _finding.finding_id,
+                                            "query": _finding.query,
+                                            "source_type": _finding.source_type,
+                                            "confidence": _finding.confidence,
+                                            "ts": _finding.ts,
+                                            "provenance": _finding.provenance,
+                                            "payload_text": _finding.payload_text,
+                                        }),
+                                        sprint_id="duckdb_store",
+                                        source="duckdb_store.storage_pipeline",
+                                        error=RuntimeError(f"storage_pipeline_failed: {task_result}"),
+                                        metadata={"finding_id": _finding.finding_id},
+                                    )
+                            except Exception:  # noqa: BLE001 — fail-safe; DLQ store error; non-critical
+                                pass
                     continue
                 for idx, sr in zip(chunk_indices, task_result, strict=False):
                     results[idx] = sr
@@ -8213,6 +8273,8 @@ class DuckDBShadowStore:
                 self._wal_manager = DuckDBWALManager(wal_root=_wal_root)
                 self._wal_manager.initialize()
             # B2-FIX: pre-allocate items list — avoids O(n) list reallocation.
+            from hledac.universal.knowledge.storage_contracts import validate_finding_dict
+
             items: list[tuple[str, dict]] = [None] * n  # type: ignore[assignment]
             for i, f in enumerate(findings):
                 # SEC-01: Scrub secrets from payload_text before LMDB WAL storage.
@@ -8226,7 +8288,7 @@ class DuckDBShadowStore:
                         payload_text = raw_payload_text
                 else:
                     payload_text = raw_payload_text
-                items[i] = (f"finding:{f.finding_id}", {
+                raw_dict = {
                     "id": f.finding_id,
                     "query": f.query,
                     "source_type": f.source_type,
@@ -8234,7 +8296,33 @@ class DuckDBShadowStore:
                     "ts": f.ts,
                     "provenance": f.provenance,
                     "payload_text": payload_text,
-                })
+                }
+                # ARCH-DB-001: Validate against CanonicalFindingContract before WAL write.
+                # Fail-safe: validation errors are logged but do NOT block WAL write.
+                # This ensures msgspec.Struct contract is enforced at LMDB boundary.
+                validated = validate_finding_dict(raw_dict)
+                if validated is None:
+                    _logger.debug(
+                        "[ARCH-DB-001] WAL validation failed for finding_id=%s",
+                        f.finding_id,
+                    )
+                    # OPS-DLQ-001: Capture malformed finding to DLQ for later inspection/retry.
+                    # DLQ is lazy-init'd; failures are silent to preserve existing fail-safe behavior.
+                    try:
+                        dlq = getattr(self, "_dlq_manager", None) or self._get_dlq_manager()
+                        if dlq is not None:
+                            import msgspec as _msgspec
+
+                            dlq.store_payload(
+                                payload_data=_msgspec.json.encode(raw_dict),
+                                sprint_id="duckdb_store",
+                                source="duckdb_store.ingest_batch",
+                                error=RuntimeError("CanonicalFindingContract validation failed"),
+                                metadata={"finding_id": f.finding_id},
+                            )
+                    except Exception:  # noqa: BLE001 — fail-safe; DLQ store error; non-critical
+                        pass
+                items[i] = (f"finding:{f.finding_id}", raw_dict)
             if items:
                 lmdb_ok = self._wal_manager.wal_put_many(items) if hasattr(self._wal_manager, "wal_put_many") else False
                 if not lmdb_ok:

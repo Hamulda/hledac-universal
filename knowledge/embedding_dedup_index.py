@@ -35,6 +35,10 @@ Usage:
 import asyncio
 import logging
 from dataclasses import dataclass
+
+from typing import cast
+
+from hledac.universal.utils.async_helpers import parallel
 import msgspec
 from typing import TYPE_CHECKING, Any, Final
 
@@ -376,10 +380,14 @@ class EmbeddingDedupIndex:
             return []
         # P2-07: Parallel přes gather — lock uvnitř check_duplicate serializuje
         # writes, ale embedding requesty jdou přes async batching frontu
-        results: list[DedupResult] = await asyncio.gather(
+        # ISSUE ASYNC-001: asyncio.gather → parallel() with bounded concurrency
+        # Embedding deduplication is I/O-bound (async batching fronta), bounded for M1 8GB
+        _raw = await parallel(
             *[self.check_duplicate(finding_id, text, metadata) for finding_id, text, metadata in items],
-            return_exceptions=False,
+            policy="log",
+            concurrency=8,
         )
+        results: list[DedupResult] = cast(list[DedupResult], _raw)
         return list(results)
 
     def get_stats(self) -> dict[str, int]:

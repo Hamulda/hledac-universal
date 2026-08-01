@@ -300,6 +300,14 @@ def _load_engine(name: str, module_spec: str, exported: tuple[str, ...], brain_k
 # Cold import cost drops from ~9.7s to ~150ms (enum + flag defs only).
 # Refactored: 14 if-blocks (complexity 44) → single loop over _ENGINE_REGISTRY (complexity 6).
 def __getattr__(name: str) -> object:
+    # ARCH-SRP-001: BrainCoordinator — composition layer (lightweight, no heavy deps)
+    if name == "BrainCoordinator":
+        from .brain_coordinator import BrainCoordinator
+        return BrainCoordinator
+    # ARCH-SRP-001: LLMEngine Protocol — inference contract
+    if name == "LLMEngine":
+        from ._inference import LLMEngine
+        return LLMEngine
     for module_spec, _ret_attr, exported, brain_key in _ENGINE_REGISTRY:
         if name in exported:
             return _load_engine(name, module_spec, exported, brain_key)
@@ -467,6 +475,9 @@ __all__ = [
     "load_embedding_model",
     "unload_embedding_model",
     "EMBEDDING_AVAILABLE",
+    # ARCH-SRP-001: Brain Coordinator + LLMEngine Protocol
+    "BrainCoordinator",
+    "LLMEngine",
     # Capability Catalog API
     "AVAILABLE_BRAIN_ENGINES",
     "is_brain_engine_available",

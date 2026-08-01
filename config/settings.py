@@ -211,9 +211,11 @@ class TransportSettings(msgspec.Struct, frozen=True, gc=False):
     tor_enabled: bool = False
     i2p_enabled: bool = False
     nym_enabled: bool = False
-    tor_proxy: str = "socks5://127.0.0.1:9050"
-    i2p_proxy: str = "socks5://127.0.0.1:9050"
-    nym_proxy: str = "socks5://127.0.0.1:1080"
+    # OPSEC-001: socks5h:// forces remote DNS resolution by proxy.
+    tor_proxy: str = "socks5h://127.0.0.1:9050"
+    i2p_proxy: str = "socks5h://127.0.0.1:4444"
+    # OPSEC-001: socks5h:// forces remote DNS resolution by Nym mixnet proxy.
+    nym_proxy: str = "socks5h://127.0.0.1:1080"
 
     # DHT
     dht_enabled: bool = False
@@ -226,9 +228,12 @@ class TransportSettings(msgspec.Struct, frozen=True, gc=False):
             tor_enabled=ENV.get_bool("HLEDAC_ENABLE_TOR", False),
             i2p_enabled=ENV.get_bool("HLEDAC_ENABLE_I2P", False),
             nym_enabled=ENV.get_bool("HLEDAC_ENABLE_NYM", False),
-            tor_proxy=ENV.get_str("HLEDAC_TOR_PROXY", "socks5://127.0.0.1:9050"),
-            i2p_proxy=ENV.get_str("HLEDAC_I2P_PROXY", "socks5://127.0.0.1:9050"),
-            nym_proxy=ENV.get_str("HLEDAC_NYM_PROXY", "socks5://127.0.0.1:1080"),
+            # OPSEC-001: socks5h:// forces remote DNS resolution by Tor proxy. Port 9050 is standard Tor SOCKS.
+            tor_proxy=ENV.get_str("HLEDAC_TOR_PROXY", "socks5h://127.0.0.1:9050"),
+            # OPSEC-001: socks5h:// forces remote DNS resolution by I2P proxy. Port 4444 is standard I2P SOCKS, NOT 9050.
+            i2p_proxy=ENV.get_str("HLEDAC_I2P_PROXY", "socks5h://127.0.0.1:4444"),
+            # OPSEC-001: socks5h:// forces remote DNS resolution by Nym mixnet proxy.
+            nym_proxy=ENV.get_str("HLEDAC_NYM_PROXY", "socks5h://127.0.0.1:1080"),
             dht_enabled=ENV.get_bool("HLEDAC_ENABLE_DHT", False),
             dht_max_peers=ENV.get_int("HLEDAC_DHT_MAX_PEERS", 100),
             dht_rpc_timeout_s=ENV.get_float("HLEDAC_DHT_RPC_TIMEOUT_S", 10.0),

@@ -49,6 +49,8 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
 import asyncio
 import logging
 
+from hledac.universal.utils.async_helpers import parallel
+
 from hledac.universal.utils.executor_decorator import offload_to
 import os
 import pathlib
@@ -371,14 +373,22 @@ class JSONFormatter:
                     return None
 
             # Run all post-processing in parallel (JSON must complete first for PQ/Vault to read it)
-            json_result, pq_result, vault_result = await asyncio.gather(
+            # ISSUE ASYNC-001: asyncio.gather → parallel() with bounded concurrency
+            _export_result = await parallel(
                 _write_json(),
                 _write_pq_encrypted(),
                 _write_vault_encrypted(),
-                return_exceptions=True,
+                policy="log",
+                concurrency=3,
             )
-            # Handle any exceptions from gather
-            if isinstance(json_result, Exception):
+            # Handle any exceptions from parallel result
+            json_result, pq_result, vault_result = (
+                _export_result.ok[0] if len(_export_result.ok) > 0 else None,
+                _export_result.ok[1] if len(_export_result.ok) > 1 else None,
+                _export_result.ok[2] if len(_export_result.ok) > 2 else None,
+            )
+            # Check for exceptions in the result
+            if json_result is None or isinstance(json_result, Exception):
                 logger.warning(f"[EXPORT] JSON write exception: {json_result}")
                 report_path = None
             else:

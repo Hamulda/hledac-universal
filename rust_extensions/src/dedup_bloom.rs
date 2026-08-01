@@ -25,6 +25,9 @@ use pyo3::types::PyDict;
 use lz4_flex::block::{compress as lz4_compress, decompress as lz4_decompress};
 use xxhash_rust::xxh3::{xxh3_64, xxh3_64_with_seed};
 
+// RUST-PANIC-001 FIX: use release_gil_py for panic-safe GIL release
+use crate::gil::release_gil_py;
+
 // ---------------------------------------------------------------------------
 // Global counters for health endpoint (no synchronization needed — atomics)
 // ---------------------------------------------------------------------------
@@ -731,9 +734,10 @@ impl PyDistributedBloomFilter {
     }
 
     /// R4-03: GIL released via Python::attach + py.detach for file I/O + LZ4 compression.
+    /// RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind.
     fn save(&self) -> PyResult<String> {
         Python::attach(|py| {
-            py.detach(|| {
+            release_gil_py(py, || {
                 self.filter.save(&self.cache_dir)?;
                 Ok(self.cache_dir.join("dedup_bloom.bin").to_string_lossy().to_string())
             })
@@ -741,11 +745,12 @@ impl PyDistributedBloomFilter {
     }
 
     /// R4-03: GIL released via Python::attach + py.detach for file I/O + LZ4 decompression.
+    /// RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind.
     #[staticmethod]
     fn load(cache_dir: String) -> PyResult<Self> {
         let cache_dir_path = PathBuf::from(cache_dir);
         let filter = Python::attach(|py| {
-            py.detach(|| DistributedBloomFilter::load(&cache_dir_path))
+            release_gil_py(py, || DistributedBloomFilter::load(&cache_dir_path))
         })?;
         Ok(Self { filter, cache_dir: cache_dir_path })
     }
@@ -755,15 +760,17 @@ impl PyDistributedBloomFilter {
     }
 
     /// R4-03: GIL released for LZ4 compression (CPU-intensive).
+    /// RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind.
     fn save_to_lmdb_bytes(&self) -> PyResult<Vec<u8>> {
         Python::attach(|py| {
-            py.detach(|| self.filter.to_bytes_compressed())
+            release_gil_py(py, || self.filter.to_bytes_compressed())
         })
     }
 
     /// R4-03 + R4-08 FIX: GIL released for LZ4 decompression (CPU-intensive).
     /// R4-08: data must be copied to owned Vec<u8> before py.detach() —
     /// Python bytes object could be GC'd while the detached thread runs.
+    /// RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind.
     #[staticmethod]
     fn load_from_lmdb_bytes(data: &[u8]) -> PyResult<Self> {
         // R4-08 FIX: copy to owned buffer BEFORE releasing GIL.
@@ -771,7 +778,7 @@ impl PyDistributedBloomFilter {
         // if we don't hold them explicitly.
         let owned_data: Vec<u8> = data.to_vec();
         let filter = Python::attach(|py| {
-            py.detach(|| DistributedBloomFilter::from_bytes_compressed(&owned_data))
+            release_gil_py(py, || DistributedBloomFilter::from_bytes_compressed(&owned_data))
         })?;
         Ok(Self { filter, cache_dir: PathBuf::new() })
     }

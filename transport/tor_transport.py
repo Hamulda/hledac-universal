@@ -186,7 +186,8 @@ class TorTransport(Transport):
         timeout = self._httpx.Timeout(connect=5.0, read=20.0, write=10.0)
         self._session_direct = self._httpx.AsyncClient(limits=limits, http2=True, timeout=timeout, follow_redirects=True, trust_env=False)
         if self.security_level == 'tor':
-            transport = self._httpx_socks.AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self.socks_port}', rdns=True)
+            # OPSEC-001: socks5h:// forces remote DNS resolution by Tor proxy.
+            transport = self._httpx_socks.AsyncProxyTransport.from_url(f'socks5h://127.0.0.1:{self.socks_port}', rdns=True)
             self._session_tor = self._httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, follow_redirects=True, transport=transport, trust_env=False)  # SOCKS5 tunnel doesn't support HTTP/2 ALPN
         else:
             self._session_tor = self._session_direct

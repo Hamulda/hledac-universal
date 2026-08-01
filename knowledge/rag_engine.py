@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
 from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.core.lazy_imports import lazy
 if TYPE_CHECKING:
     pass
 _dd_int: defaultdict[str, int] = defaultdict(int)
@@ -1261,6 +1262,10 @@ class RAGEngine:
 
     async def _summarize_cluster(self, text: str, max_tokens: int=200) -> str:
         """Summarize cluster text via Hermes3 generate_structured(). Truncates on failure."""
+        # ISSUE [LLM-SEC-001]: Sanitize cluster text before LLM consumption
+        sanitize = lazy('.prompt_injection_validator.sanitize_for_llm')()
+        text = sanitize(text[:3000]) if sanitize else text[:3000]
+
         hermes = getattr(self, '_model_manager', None) or getattr(self, '_llm', None) or getattr(self, '_hermes_engine', None)
         if hermes is None:
             return text[:500]

@@ -31,8 +31,8 @@ Usage:
     client = await session_pool.httpx()
     resp = await client.get(url)
 
-    # httpx with SOCKS5 proxy (Tor/I2P)
-    client = await session_pool.httpx_socks(proxy_url="socks5://127.0.0.1:9050")
+    # httpx with SOCKS5H proxy (Tor/I2P) — OPSEC-001: remote DNS resolution
+    client = await session_pool.httpx_socks(proxy_url="socks5h://127.0.0.1:9050")
     resp = await client.get(url)
 
     # curl_cffi (JA3 stealth)
@@ -285,7 +285,8 @@ async def httpx_socks_client(
     (bounded by 8 SOCKS proxies max on M1 8GB).
 
     Args:
-        proxy_url: SOCKS5 proxy URL (e.g., "socks5://127.0.0.1:9050")
+        proxy_url: SOCKS5 proxy URL (e.g., "socks5h://127.0.0.1:9050")
+            OPSEC-001: Use "socks5h://" prefix for SOCKS5H (hostname-only, remote DNS by proxy).
             Use "socks5h://" prefix for SOCKS5H (hostname-only, no DNS leak).
         rdns: Remote DNS resolution (default True for Tor anonymity).
             When True, DNS resolution happens on the proxy side.
@@ -422,8 +423,8 @@ class SessionPool:
         client = await pool.httpx()
         resp = await client.get("https://api.example.com")
 
-        # httpx-socks (SOCKS5 for Tor/I2P)
-        client = await pool.httpx_socks("socks5://127.0.0.1:9050")
+        # httpx-socks (SOCKS5H for Tor/I2P) — OPSEC-001: remote DNS resolution
+        client = await pool.httpx_socks("socks5h://127.0.0.1:9050")
         resp = await client.get("http://example.onion")
 
         # curl_cffi (JA3 stealth)
@@ -538,14 +539,15 @@ async def get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool, Any, 
 
 
 # Backward-compat: Tor/I2P pool factory functions
+# OPSEC-001: socks5h:// forces remote DNS resolution by proxy.
 async def get_tor_pool() -> httpx.AsyncClient:
-    """Backward-compat: get httpx client via SOCKS5 proxy for Tor. Use httpx_socks_client() directly."""
-    return await httpx_socks_client("socks5://127.0.0.1:9050")
+    """Backward-compat: get httpx client via SOCKS5H proxy for Tor. Use httpx_socks_client() directly."""
+    return await httpx_socks_client("socks5h://127.0.0.1:9050")
 
 
 async def get_i2p_pool() -> httpx.AsyncClient:
-    """Backward-compat: get httpx client via SOCKS5 proxy for I2P. Use httpx_socks_client() directly."""
-    return await httpx_socks_client("socks5://127.0.0.1:4447")
+    """Backward-compat: get httpx client via SOCKS5H proxy for I2P. Use httpx_socks_client() directly."""
+    return await httpx_socks_client("socks5h://127.0.0.1:4444")
 
 
 __all__ = [

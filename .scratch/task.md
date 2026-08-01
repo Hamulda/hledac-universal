@@ -1,5 +1,5 @@
 ================================================================================
-gptme: STRATEGIC DEEP ARCHITECTURE & CODEBASE AUDIT (READ-ONLY)
+CLAUDE CODE TASK: STRATEGIC DEEP ARCHITECTURE & CODEBASE AUDIT (READ-ONLY)
 ================================================================================
 
 PROJEKT: ~/PycharmProjects/Hledac/hledac/universal

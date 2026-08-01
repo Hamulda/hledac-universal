@@ -64,7 +64,7 @@ class SemanticStoreBuffer:
                 if pm:
                     for item in pm:
                         if isinstance(item, tuple) and len(item) >= 2:
-                            ioc_types.append(str(item[1]))
+                            ioc_types.append(str(item[0]))  # item[0] = label, item[1] = value
                         elif isinstance(item, dict):
                             lbl = item.get("label") or ""
                             if lbl:

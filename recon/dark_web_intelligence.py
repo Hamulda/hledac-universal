@@ -172,7 +172,9 @@ class TorProxyManager:
                 reader, writer = await asyncio.open_connection(self.proxy_host, self.proxy_port)
             writer.close()
             await writer.wait_closed()
-            transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5://{self.proxy_host}:{self.proxy_port}', rdns=True)
+            # OPSEC-001: socks5h:// forces remote DNS resolution by Tor.
+            # Never use socks5:// — it allows local DNS resolution which can leak .onion queries.
+            transport = httpx_socks.AsyncProxyTransport.from_url(f'socks5h://{self.proxy_host}:{self.proxy_port}', rdns=True)
             limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
             timeout = httpx.Timeout(connect=60.0, read=120.0, write=20.0, pool=30.0)
             self._session = httpx.AsyncClient(limits=limits, http2=False, timeout=timeout, transport=transport, trust_env=False, headers={'User-Agent': self._get_tor_browser_ua()})  # SOCKS5 tunnel doesn't support HTTP/2 ALPN

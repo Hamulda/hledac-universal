@@ -40,6 +40,9 @@ use crate::url_engine;
 // Shared entropy helpers — broken out to break circular dep with zero_copy.rs
 use crate::_entropy::{compute_histogram_neon, entropy_from_histogram, ENTROPY_NEON_THRESHOLD};
 
+// RUST-PANIC-001 FIX: GIL release with panic boundary wrapper
+use crate::gil::{release_gil, release_gil_caught_panic};
+
 /// BLAKE2b-128 output size (bytes). Used to truncate the default 64-byte
 /// BLAKE2b finalization — per the BLAKE2 spec, shorter output is just a
 /// prefix of the longer one, so this is bit-identical to
@@ -466,11 +469,17 @@ pub fn assess_findings_quality_batch(
     // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
     // cpu_pool: 4 threads for BLAKE2b SIMD-bound work — all Rust compute,
     // no Python objects accessed inside the closure.
-    let results: Vec<PyQualityDecision> = py.detach(|| {
+    // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
+    let results: Vec<PyQualityDecision> = release_gil(py, || {
         crate::cpu_pool().install(|| {
             findings.par_iter().map(assess_single_finding).collect()
         })
     });
+    if release_gil_caught_panic() {
+        return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "Rust panic in assess_findings_quality_batch",
+        ));
+    }
     let list = PyList::new(py, results)?;
     Ok(list)
 }
@@ -512,7 +521,8 @@ pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> Vec<f64> {
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
         // cpu_pool: 4 threads for BLAKE2b SIMD-bound work — pure Rust compute.
-        py.detach(|| {
+        // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
+        let result: Vec<f64> = release_gil(py, || {
             crate::cpu_pool().install(|| {
                 slice
                     .par_iter()
@@ -520,7 +530,11 @@ pub fn batch_entropy(py: Python<'_>, texts: Vec<String>) -> Vec<f64> {
                     .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                     .collect()
             })
-        })
+        });
+        if release_gil_caught_panic() {
+            return vec![];
+        }
+        return result;
     }
 }
 
@@ -538,7 +552,8 @@ pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> Vec<Strin
         slice.iter().map(|t| dedup_fingerprint(t)).collect()
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        py.detach(|| {
+        // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
+        let result: Vec<String> = release_gil(py, || {
             crate::cpu_pool().install(|| {
                 slice
                     .par_iter()
@@ -546,7 +561,11 @@ pub fn batch_dedup_fingerprints(py: Python<'_>, texts: Vec<String>) -> Vec<Strin
                     .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                     .collect()
             })
-        })
+        });
+        if release_gil_caught_panic() {
+            return vec![];
+        }
+        return result;
     }
 }
 
@@ -564,7 +583,8 @@ pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> Vec<String> 
         slice.iter().map(|u| url_fingerprint(u)).collect()
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        py.detach(|| {
+        // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
+        let result: Vec<String> = release_gil(py, || {
             crate::cpu_pool().install(|| {
                 slice
                     .par_iter()
@@ -572,7 +592,11 @@ pub fn batch_url_fingerprints(py: Python<'_>, urls: Vec<String>) -> Vec<String> 
                     .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                     .collect()
             })
-        })
+        });
+        if release_gil_caught_panic() {
+            return vec![];
+        }
+        return result;
     }
 }
 
@@ -590,7 +614,8 @@ pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> Vec<S
         slice.iter().map(|t| normalize_quality_text(t)).collect()
     } else {
         // R-16.3 FIX: Release GIL during rayon work so asyncio event loop can run.
-        py.detach(|| {
+        // RUST-PANIC-001 FIX: release_gil wraps py.detach in catch_unwind.
+        let result: Vec<String> = release_gil(py, || {
             crate::cpu_pool().install(|| {
                 slice
                     .par_iter()
@@ -598,7 +623,11 @@ pub fn batch_normalize_quality_text(py: Python<'_>, texts: Vec<String>) -> Vec<S
                     .with_min_len(BATCH_PARALLEL_MIN_CHUNK)
                     .collect()
             })
-        })
+        });
+        if release_gil_caught_panic() {
+            return vec![];
+        }
+        return result;
     }
 }
 

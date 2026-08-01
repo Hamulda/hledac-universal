@@ -225,11 +225,24 @@ class PassiveDNSResolver:
       - resolve(name, rdtype)       → list of str (A/AAAA/CNAME/TXT)
       - resolve_https_rr(name)       → list of str (HTTPS RR values, RFC 9460)
       - compare_resolvers(name, rdtype) → dict resolver→answers (censorship comparison)
+
+    GHOST_INVARIANTS:
+      - Single-flight pattern prevents thundering herd on cache miss (NET-001)
+      - asyncio.sleep() only, no time.sleep()
+      - Fail-soft: resolver error returns empty list, never raises
     """
-    __slots__ = tuple(('_session',))
+    __slots__ = tuple(('_session', '_inflight', '_inflight_lock'))
 
     def __init__(self):
         self._session: httpx.AsyncClient | None = None
+        self._inflight: dict[str, asyncio.Future[list[str]]] = {}
+        self._inflight_lock: asyncio.Lock | None = None
+
+    async def _get_inflight_lock(self) -> asyncio.Lock:
+        """Lazily create inflight lock — ISSUE-014 pattern: asyncio.Lock() at __init__ crashes on macOS."""
+        if self._inflight_lock is None:
+            self._inflight_lock = asyncio.Lock()
+        return self._inflight_lock
 
     async def _ensure_session(self) -> httpx.AsyncClient:
         if self._session is None or self._session.is_closed:
@@ -295,22 +308,74 @@ class PassiveDNSResolver:
         """
         Resolve name via DoH fallback chain — F300.
 
+        NET-001: Single-flight pattern — concurrent misses for the same (name, rdtype)
+        wait on a shared Future instead of spawning parallel DNS queries.
+
         Tries resolvers in order (cloudflare → google → opendns → quad9 → adguard → nextdns).
         Early exit on first successful resolution with results.
         Records success/failure per resolver for circuit breaker health tracking.
         """
-        healthy_resolvers = await _resolver_health.get_healthy_resolvers()
-        if not healthy_resolvers:
-            logger.warning('[DoH] All resolvers unhealthy, attempting recovery')
-            healthy_resolvers = DOH_FALLBACK_CHAIN
-        for resolver, url in healthy_resolvers:
-            result = await self._do_query(name, rdtype, resolver, url)
-            if result:
-                await _resolver_health.record_success(resolver)
-                return result
+        cache_key = f'{name}:{rdtype}'
+        lock = await self._get_inflight_lock()
+
+        # NET-001: check-and-set under lock, then IMMEDIATELY release lock.
+        # Waiting task must NOT hold lock while awaiting — else deadlock:
+        #   Task B holds lock → awaits future → Task A needs lock to set result → DEADLOCK
+        async with lock:
+            if cache_key in self._inflight:
+                # Another task is already resolving — copy reference and release lock ASAP
+                existing_fut = self._inflight[cache_key]
             else:
-                await _resolver_health.record_failure(resolver)
-        return []
+                existing_fut = None
+                fut = asyncio.get_event_loop().create_future()
+                self._inflight[cache_key] = fut
+
+        # Lock is now released — safe to await even if we're the only task (won't deadlock)
+        if existing_fut is not None:
+            return await existing_fut
+
+        try:
+            # Actual resolution — outside the lock so only one task per host does the work
+            try:
+                healthy_resolvers = await _resolver_health.get_healthy_resolvers()
+            except Exception as e:
+                # NET-001 fix: get_healthy_resolvers() can fail (e.g. lock contention).
+                # Must clean up inflight slot before re-raising, else waiters hang forever.
+                async with lock:
+                    fut.set_exception(e)
+                    self._inflight.pop(cache_key, None)
+                logger.debug(f'[DoH] get_healthy_resolvers({name}) error: {e}')
+                return []
+            if not healthy_resolvers:
+                logger.warning('[DoH] All resolvers unhealthy, attempting recovery')
+                healthy_resolvers = DOH_FALLBACK_CHAIN
+            result: list[str] = []
+            for resolver, url in healthy_resolvers:
+                result = await self._do_query(name, rdtype, resolver, url)
+                if result:
+                    await _resolver_health.record_success(resolver)
+                    break
+                else:
+                    await _resolver_health.record_failure(resolver)
+
+            async with lock:
+                fut.set_result(result)
+                self._inflight.pop(cache_key, None)
+            return result
+
+        except (OSError, asyncio.CancelledError) as e:
+            async with lock:
+                fut.set_exception(e)
+                self._inflight.pop(cache_key, None)
+            if isinstance(e, asyncio.CancelledError):
+                raise
+            return []
+        except Exception as e:
+            async with lock:
+                fut.set_exception(e)
+                self._inflight.pop(cache_key, None)
+            logger.debug(f'[DoH] resolve({name}) error: {e}')
+            return []
 
     async def resolve_https_rr(self, name: str) -> list[str]:
         """Query HTTPS RR (Type 65) via DoH."""

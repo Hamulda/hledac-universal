@@ -69,7 +69,8 @@ class DarknetConnector:
             return None
         if self._tor_client is None or self._tor_client.is_closed:
             import httpx
-            transport = AsyncProxyTransport.from_url('socks5://127.0.0.1:9050', rdns=True)
+            # OPSEC-001: socks5h:// forces remote DNS resolution by Tor proxy.
+            transport = AsyncProxyTransport.from_url('socks5h://127.0.0.1:9050', rdns=True)
             limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
             self._tor_client = httpx.AsyncClient(
                 transport=transport,
@@ -100,7 +101,8 @@ class DarknetConnector:
             return None
         if self._i2p_client is None or self._i2p_client.is_closed:
             import httpx
-            transport = AsyncProxyTransport.from_url(f'socks5://127.0.0.1:{self._i2p_port}', rdns=True)
+            # OPSEC-001: socks5h:// forces remote DNS resolution by I2P proxy.
+            transport = AsyncProxyTransport.from_url(f'socks5h://127.0.0.1:{self._i2p_port}', rdns=True)
             limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
             self._i2p_client = httpx.AsyncClient(
                 transport=transport,

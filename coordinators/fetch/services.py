@@ -36,6 +36,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from cachetools import TTLCache
 
+from hledac.universal.utils.async_helpers import parallel
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -205,7 +207,13 @@ class DNSCacheService:
         """Prefetch multiple hosts concurrently."""
         if not hosts:
             return
-        await asyncio.gather(*[self.resolve(h) for h in hosts], return_exceptions=True)
+        # ISSUE ASYNC-001: asyncio.gather → parallel() with bounded concurrency
+        # Bounded concurrency (concurrency=10) prevents DNS storm on large host lists
+        await parallel(
+            *[self.resolve(h) for h in hosts],
+            policy="log",
+            concurrency=10,
+        )
 
 
 # =============================================================================

@@ -9,7 +9,7 @@ regardless of actual usage. With 7+ separate envs across the codebase, M1 8GB lo
 
 Solution:
     Single LMDB env with max_dbs=16 sub-DBs, each sub-DB is a logical namespace.
-    Total map_size: 512 MB (shared, bounded, pressure-responsive).
+    Total map_size: 256 MB ceiling on M1 8GB (pressure-responsive, ceiling-capped).
     Dynamic set_mapsize() reduction when M1ResourceGovernor reports ELEVATED pressure.
 
 Sub-DB allocation (max_dbs=16):
@@ -37,13 +37,14 @@ Benefits vs separate envs:
     - Lazy init avoids 200-400ms at sprint boot
 
 M1 8GB budget:
-    Total map_size: 512 MB
+    Total map_size: 256 MB (ceiling-capped, StorageConfig default)
     Wired: 1.5 GiB (fixed, never shrinks)
-    VM budget available: ~6.5 GiB total → 512 MB unified is <8% of VM
+    VM budget available: ~6.5 GiB total → 256 MB unified is <4% of VM
 
 Invariant (S-01):
     - Single LMDB env with max_dbs=16
-    - map_size=512 MB default, reducible via set_mapsize() on ELEVATED pressure
+    - map_size=256 MB default (ceiling-capped; StorageConfig can raise ceiling to max 512 MB)
+    - NORMAL→256 MB, ELEVATED→256 MB (no further shrink at ceiling), CRITICAL→128 MB
     - All original APIs (put, get, cursor) preserved via sub-db delegation
     - Lazy init — env opened on first access, not on import
 """
@@ -112,8 +113,31 @@ class SubDB:
 # --------------------------------------------------------------------------- #
 # Pressure-responsive mapsize management
 # --------------------------------------------------------------------------- #
-_UNIFIED_MAP_SIZE_DEFAULT = 512 * 1024 * 1024  # 512 MB
-_UNIFIED_MAP_SIZE_LOW = 128 * 1024 * 1024     # 128 MB under pressure
+# M1 8GB ceiling: LMDB map ismmap'd — unbounded growth hits MDB_MAP_FULL
+# at ~map_size bytes written. 256 MB is the safe default (StorageConfig default).
+# Wired limit for M1 8GB is ~1.5 GiB (CLAUDE.md); per-env ceiling = 256 MB.
+_UNIFIED_MAP_SIZE_CEILING = 256 * 1024 * 1024  # 256 MB hard ceiling for M1 8GB
+_UNIFIED_MAP_SIZE_DEFAULT = 512 * 1024 * 1024  # 512 MB (used only when StorageConfig unavailable)
+_UNIFIED_MAP_SIZE_LOW = 128 * 1024 * 1024     # 128 MB under CRITICAL pressure
+
+
+def _get_default_map_size() -> int:
+    """
+    Get the default map_size respecting the M1 8GB ceiling.
+
+    Reads from StorageConfig (via paths.lmdb_map_size()) to stay in sync
+    with the GHOST_LMDB_MAX_SIZE_MB env var. Falls back to CEILING if
+    StorageConfig returns a value that would exceed it.
+
+    Bootstrap-safe: can be called before StorageConfig is fully initialized.
+    """
+    try:
+        from hledac.universal.paths import lmdb_map_size
+
+        size = lmdb_map_size()
+        return min(size, _UNIFIED_MAP_SIZE_CEILING)
+    except Exception:
+        return _UNIFIED_MAP_SIZE_CEILING
 
 # --------------------------------------------------------------------------- #
 # Singleton state
@@ -130,8 +154,8 @@ class UnifiedLMDB:
     Single LMDB environment with sub-DB isolation for all KV stores.
 
     Issues addressed:
-        1. VM reservation: 1× 512 MB mmap vs 7+ × 256 MB = ~1 GB VM saved
-        2. Pressure response: set_mapsize() shrinks to 128 MB under ELEVATED memory
+        1. VM reservation: 1× 256 MB mmap vs 7+ × 256 MB = ~1 GB VM saved
+        2. Pressure response: set_mapsize() shrinks to 128 MB under CRITICAL memory
         3. Lazy init: no LMDB open on import (saves 200-400ms at boot)
 
     Usage:
@@ -160,6 +184,7 @@ class UnifiedLMDB:
         "_shrink_count",
         "_shrink_failures",
         "_reopen_in_progress",
+        "_map_full_count",
     )
 
     def __init__(
@@ -171,8 +196,10 @@ class UnifiedLMDB:
         lazy: bool = True,
     ) -> None:
         self._path = pathlib.Path(path)
-        self._map_size_default = map_size or _UNIFIED_MAP_SIZE_DEFAULT
-        self._map_size_current = self._map_size_default
+        effective = map_size or _get_default_map_size()
+        # Enforce ceiling even if caller passed an explicit value
+        self._map_size_default: int = min(effective, _UNIFIED_MAP_SIZE_CEILING)
+        self._map_size_current: int = self._map_size_default
         self._max_dbs = max_dbs
         self._closed = False
         self._initialized = False
@@ -184,6 +211,8 @@ class UnifiedLMDB:
         self._shrink_count: int = 0
         self._shrink_failures: int = 0
         self._reopen_in_progress: bool = False  # guards against concurrent reopens
+        # MEM-UMA-001: MDB_MAP_FULL event counter
+        self._map_full_count: int = 0
 
         if not lazy:
             self._ensure_init()
@@ -254,6 +283,16 @@ class UnifiedLMDB:
     def is_closed(self) -> bool:
         return self._closed
 
+    @property
+    def map_full_count(self) -> int:
+        """MDB_MAP_FULL event counter — incremented each time a write is dropped."""
+        return self._map_full_count
+
+    @property
+    def map_size_current_mb(self) -> int:
+        """Current map_size in MB (read-only, respects ceiling)."""
+        return self._map_size_current // (1024 * 1024)
+
     def path(self) -> pathlib.Path:
         return self._path
 
@@ -319,7 +358,26 @@ class UnifiedLMDB:
                 txn.put(key, value)
             return True
         except Exception as exc:
-            logger.debug("[LMDB-UNIFIED] put failed sub=%s key=%s: %s", sub_idx, key[:20], exc)
+            import lmdb
+
+            # MEM-UMA-001: MDB_MAP_FULL — map_size ceiling hit.
+            # Caller should call compact_subdb(sub_idx) to reclaim space,
+            # or degrade by dropping this sub-db's writes.
+            if isinstance(exc, lmdb.MapFullError):
+                self._map_full_count += 1
+                logger.warning(
+                    "[LMDB-UNIFIED] MDB_MAP_FULL on put sub=%s (%s) key=%s — "
+                    "map_size at ceiling (%d MB). Write dropped. "
+                    "Caller should compact_subdb(%d) or reduce write volume. (map_full_count=%d)",
+                    sub_idx,
+                    SubDB.name(sub_idx),
+                    key[:20],
+                    self.map_size_current_mb,
+                    sub_idx,
+                    self._map_full_count,
+                )
+            else:
+                logger.debug("[LMDB-UNIFIED] put failed sub=%s key=%s: %s", sub_idx, key[:20], exc)
             return False
 
     def get(self, sub_idx: int, key: bytes) -> bytes | None:
@@ -348,6 +406,10 @@ class UnifiedLMDB:
         Batch put into a sub-DB using cursor.putmulti.
 
         Items: list of (key, value) tuples.
+
+        MEM-UMA-001: On MDB_MAP_FULL, returns False so callers can attempt
+        compaction (compact_subdb) or degrade gracefully. The write is NOT
+        retried automatically — caller decides based on sub-db priority.
         """
         try:
             with self.env_begin(sub_idx, write=True) as txn:
@@ -355,7 +417,26 @@ class UnifiedLMDB:
                 cursor.putmulti(items)
             return True
         except Exception as exc:
-            logger.debug("[LMDB-UNIFIED] put_batch failed sub=%s: %s", sub_idx, exc)
+            import lmdb
+
+            # MEM-UMA-001: MDB_MAP_FULL — map_size ceiling hit.
+            # Caller should call compact_subdb(sub_idx) to reclaim space,
+            # or degrade by dropping this sub-db's writes.
+            if isinstance(exc, lmdb.MapFullError):
+                self._map_full_count += 1
+                logger.warning(
+                    "[LMDB-UNIFIED] MDB_MAP_FULL on put_batch sub=%s (%s) items=%d — "
+                    "map_size at ceiling (%d MB). Batch dropped. "
+                    "Caller should compact_subdb(%d) or reduce write volume. (map_full_count=%d)",
+                    sub_idx,
+                    SubDB.name(sub_idx),
+                    len(items),
+                    self.map_size_current_mb,
+                    sub_idx,
+                    self._map_full_count,
+                )
+            else:
+                logger.debug("[LMDB-UNIFIED] put_batch failed sub=%s: %s", sub_idx, exc)
             return False
 
     def scan_prefix(self, sub_idx: int, prefix: bytes) -> list[tuple[bytes, bytes]]:
@@ -392,9 +473,12 @@ class UnifiedLMDB:
         Adjust mapsize based on memory pressure state.
 
         Called by M1ResourceGovernor when memory pressure changes.
-        NORMAL   → map_size = 512 MB (default)
-        ELEVATED → map_size = 256 MB
+        NORMAL   → map_size = _map_size_default (ceiling-capped, max 256 MB on M1 8GB)
+        ELEVATED → map_size = max(256 MB, _map_size_default // 2)
         CRITICAL → map_size = 128 MB (survival mode)
+
+        Note: When _map_size_default is already at the 256 MB ceiling,
+        ELEVATED provides no further shrink — only CRITICAL reduces to 128 MB.
 
         LMDB's set_mapsize() grows the region; shrinking requires env close+reopen.
         On CRITICAL, we shrink by closing and reopening with smaller mapsize.

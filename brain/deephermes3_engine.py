@@ -172,6 +172,7 @@ def fallback_sanitize(text: str, max_length: int=8192) -> str:
     return text[:max_length] if text else ''
 is_emergency_unload_requested = lazy('..model_lifecycle.is_emergency_unload_requested')
 sanitize_prompt_injection_patterns = lazy('.prompt_injection_validator.sanitize_prompt_injection_patterns')
+sanitize_for_llm = lazy('.prompt_injection_validator.sanitize_for_llm')
 import re as _re_pi
 
 _mx_resolver = lazy('mlx.core')
@@ -3241,10 +3242,17 @@ class DeepHermes3Engine:
             logger.warning('[GENERATE_REPORT] Model not loaded, skipping report generation')
             return ''
         bounded_query = str(query)[:self._SYNTH_MAX_QUERY_CHARS]
+        # ISSUE [LLM-SEC-001]: Sanitize each context item before LLM consumption
+        _sanitize_fn = sanitize_for_llm()
         truncated_contexts: list[str] = []
         total_len = 0
         for item in context[:self._REPORT_MAX_ITEMS]:
-            truncated = str(item)[:self._REPORT_MAX_ITEM_CHARS]
+            # Sanitize web content: HTML strip + control chars + token limit
+            if _sanitize_fn is not None:
+                sanitized_item = _sanitize_fn(str(item))
+            else:
+                sanitized_item = str(item)
+            truncated = sanitized_item[:self._REPORT_MAX_ITEM_CHARS]
             if total_len + len(truncated) > self._REPORT_MAX_CONTEXT_CHARS:
                 remaining = self._REPORT_MAX_CONTEXT_CHARS - total_len
                 if remaining > 100:

@@ -22,10 +22,12 @@ import msgspec.json as _json
 from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 I2P_PROXY_HOST: str = '127.0.0.1'
+# OPSEC-001: I2P SOCKS proxy port is 4444 (standard), NOT 7654 (console).
 I2P_PROXY_PORT: int = 4444
-I2P_SOCKS_PORT: int = 7654
+I2P_SOCKS_PORT: int = 4444
 I2P_PROXY_URL: str = f'http://{I2P_PROXY_HOST}:{I2P_PROXY_PORT}'
-I2P_SOCKS_URL: str = f'socks5://{I2P_PROXY_HOST}:{I2P_SOCKS_PORT}'
+# OPSEC-001: socks5h:// forces remote DNS resolution by I2P proxy.
+I2P_SOCKS_URL: str = f'socks5h://{I2P_PROXY_HOST}:{I2P_SOCKS_PORT}'
 I2P_TIMEOUT: int = 30
 I2P_MAX_SIZE: int = 2 * 1024 * 1024
 KNOWN_EEPSITES: list[dict] = [{'name': 'I2P Wiki', 'url': 'http://i2pwiki.i2p', 'description': 'I2P documentation'}, {'name': 'NotBob', 'url': 'http://notbob.i2p', 'description': 'I2P community forum'}, {'name': 'I2P Stats', 'url': 'http://stats.i2p', 'description': 'Network statistics'}, {'name': 'Zeronet', 'url': 'http://127.0.0.1:43110', 'description': 'Decentralized websites'}, {'name': 'I2P Forum', 'url': 'http://forum.i2p', 'description': 'I2P discussion'}]

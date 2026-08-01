@@ -445,8 +445,12 @@ def _try_decode_with_charset(body: bytes, *, http_charset: str | None=None, max_
     except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
         logger.debug('decode_response_bytes failed, falling back to _try_decode: %s', e)
         return _try_decode(body)
+# OPSEC-001: socks5h:// forces remote DNS resolution by proxy (Tor/I2P).
+# Never use socks5:// — it allows local DNS resolution which can leak .onion/.i2p queries.
+# I2P SOCKS proxy default port is 4444 (I2P SAM) or 7654 (I2P console, proxy mode).
+# Port 7654 is the I2P HTTP console; 4444 is the standard SOCKS proxy port.
 TOR_SOCKS_PROXY: Final[str] = os.environ.get('TOR_SOCKS_PROXY_URL', 'socks5h://127.0.0.1:9050')
-I2P_SOCKS_PROXY: Final[str] = os.environ.get('I2P_PROXY_URL', 'socks5://127.0.0.1:7654')
+I2P_SOCKS_PROXY: Final[str] = os.environ.get('I2P_PROXY_URL', 'socks5h://127.0.0.1:4444')
 TOR_CIRCUIT_RENEWAL_REQUEST_COUNT: Final[int] = 10
 TOR_STEALTH_TIMEOUT_SCALE: Final[float] = 2.0
 JITTER_MIN_S: Final[float] = 0.1

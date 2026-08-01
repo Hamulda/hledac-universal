@@ -79,7 +79,8 @@ class PrivacyConfig(msgspec.Struct, frozen=True):
     enable_vpn: bool = False
     vpn_config_path: str | None = None
     enable_tor: bool = False
-    tor_proxy: str = os.environ.get('TOR_PROXY_URL', 'socks5://127.0.0.1:9050')
+    # OPSEC-001: socks5h:// forces remote DNS resolution by Tor proxy.
+    tor_proxy: str = os.environ.get('TOR_PROXY_URL', 'socks5h://127.0.0.1:9050')
     enable_dns_encryption: bool = True
     dns_servers: list[str] = field(default_factory=lambda: ['1.1.1.1', '9.9.9.9'])
     use_doh: bool = False

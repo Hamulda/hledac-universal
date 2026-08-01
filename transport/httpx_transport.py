@@ -422,16 +422,48 @@ async def fetch_via_httpx_h2(
         "Upgrade-Insecure-Requests": "1",
     }
 
-    # SSRF pre-check for initial URL (redirects handled natively by httpx)
+    # OPSEC-002: SSRF pre-check for initial URL
     await _validate_redirect_url(url)
 
-    response = await client.get(
-        url,
-        headers=headers,
-        timeout=timeout_s,
-        follow_redirects=True,
-    )
-    return response
+    # OPSEC-002: Manual redirect handling with SSRF validation for each redirect
+    # (follow_redirects=True doesn't validate redirect targets)
+    current_url = url
+    last_response: httpx.Response | None = None
+
+    for _redirect_count in range(_max_redirects):
+        response = await client.get(
+            current_url,
+            headers=headers,
+            timeout=timeout_s,
+            follow_redirects=False,  # Manual handling required for SSRF validation
+        )
+        last_response = response
+
+        # Check for redirect status codes
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("location")
+            if not location:
+                break  # Redirect without location header
+
+            # Resolve relative URLs
+            if not location.startswith(("http://", "https://")):
+                parsed = urllib.parse.urlparse(current_url)
+                if location.startswith("/"):
+                    location = f"{parsed.scheme}://{parsed.netloc}{location}"
+                else:
+                    location = f"{parsed.scheme}://{parsed.netloc}/{location}"
+
+            # OPSEC-002: Validate redirect target BEFORE following
+            await _validate_redirect_url(location)
+            current_url = location
+        else:
+            break  # Not a redirect, return response
+
+    if last_response is None:
+        # Should never happen, but satisfies type checker
+        raise RuntimeError("No response received during fetch")
+
+    return last_response
 
 
 class _SSRFBlockError(Exception):
@@ -439,28 +471,61 @@ class _SSRFBlockError(Exception):
     pass
 
 
+# OPSEC-002: SSRF protection — comprehensive private network ranges
+# IPv4: RFC 1918 + link-local + loopback + benchmark + reserved
+# IPv6: RFC 4193 (ULA) + RFC 4291 link-local + loopback + Teredo
+_PRIVATE_NETS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (  # noqa: N806
+    ipaddress.ip_network("10.0.0.0/8"),       # RFC 1918: private
+    ipaddress.ip_network("172.16.0.0/12"),    # RFC 1918: private
+    ipaddress.ip_network("192.168.0.0/16"),   # RFC 1918: private
+    ipaddress.ip_network("127.0.0.0/8"),      # RFC 1122: loopback
+    ipaddress.ip_network("169.254.0.0/16"),   # RFC 3927: link-local
+    ipaddress.ip_network("100.64.0.0/10"),    # RFC 6598: CG-NAT
+    ipaddress.ip_network("0.0.0.0/8"),        # RFC 1122: "this" network
+    ipaddress.ip_network("224.0.0.0/4"),     # RFC 1112: multicast
+    ipaddress.ip_network("240.0.0.0/4"),     # RFC 1112: reserved
+    # IPv6
+    ipaddress.ip_network("::1/128"),          # RFC 4291: loopback
+    ipaddress.ip_network("fc00::/7"),         # RFC 4193: unique local (fc00::/8 + fd00::/8)
+    ipaddress.ip_network("fe80::/10"),        # RFC 4291: link-local unicast
+    ipaddress.ip_network("2001::/32"),        # RFC 4380: Teredo tunnel
+    ipaddress.ip_network("ff00::/8"),         # RFC 4291: multicast
+)
+
+
+def _is_ssrf_safe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """
+    Check if IP is safe (not private/reserved/loopback).
+
+    Returns True if IP is public and safe to connect to.
+    """
+    # Fast path: check built-in flags first
+    if ip.is_loopback:
+        return False
+    if ip.is_multicast:
+        return False
+    if ip.is_unspecified:
+        return False
+    # Check against private network ranges
+    for net in _PRIVATE_NETS:
+        if ip in net:
+            return False
+    return True
+
+
 async def _validate_redirect_url(redirect_url: str) -> None:
     """
     Validate redirect URL is safe (no private IPs, no data: URIs, etc.).
 
     Performs DNS resolution for domain names to detect DNS rebinding attacks.
+    Comprehensive: covers IPv4, IPv6, DNS rebinding, and unsafe schemes.
 
     Raises:
         _SSRFBlockError: if redirect target is unsafe
     """
-    # Private network ranges to block
-    _PRIVATE_NETS = [  # noqa: N806
-        ipaddress.ip_network("10.0.0.0/8"),
-        ipaddress.ip_network("172.16.0.0/12"),
-        ipaddress.ip_network("192.168.0.0/16"),
-        ipaddress.ip_network("127.0.0.0/8"),
-        ipaddress.ip_network("169.254.0.0/16"),
-        ipaddress.ip_network("100.64.0.0/10"),
-    ]
-
     parsed = urllib.parse.urlparse(redirect_url)
 
-    # Block data: and javascript: URIs
+    # Block data: and javascript: URIs (no network access)
     if parsed.scheme.lower() in ("data", "javascript", "vbscript"):
         raise _SSRFBlockError(f"Unsafe redirect scheme blocked: {redirect_url}")
 
@@ -468,20 +533,15 @@ async def _validate_redirect_url(redirect_url: str) -> None:
     if not hostname:
         raise _SSRFBlockError(f"No hostname in redirect URL: {redirect_url}")
 
-    # Check if hostname is private IP (literal)
+    # Check if hostname is a literal IP (IPv4 or IPv6)
     try:
         ip = ipaddress.ip_address(hostname)
-        for net in _PRIVATE_NETS:
-            if ip in net:
-                raise _SSRFBlockError(f"Redirect to private IP blocked: {redirect_url}")
-        if ip.is_multicast or ip.is_unspecified or (hasattr(ip, 'is_loopback') and ip.is_loopback):
-            raise _SSRFBlockError(f"Redirect to reserved IP blocked: {redirect_url}")
+        if not _is_ssrf_safe_ip(ip):
+            raise _SSRFBlockError(f"Redirect to private/reserved IP blocked: {redirect_url}")
         # Literal IP is valid and safe — no DNS resolution needed
         return
-    except _SSRFBlockError:
-        raise  # Re-raise SSRF blocks
     except ValueError:
-        pass  # Not an IP, must be domain — resolve DNS below
+        pass  # Not a literal IP, must be domain — resolve DNS below
 
     # Resolve DNS and check all resolved IPs for private ranges
     # This prevents DNS rebinding attacks where a domain initially resolves
@@ -495,16 +555,13 @@ async def _validate_redirect_url(redirect_url: str) -> None:
         for ip_str in resolved_ips:
             try:
                 ip_obj = ipaddress.ip_address(ip_str)
-                for net in _PRIVATE_NETS:
-                    if ip_obj in net:
-                        raise _SSRFBlockError(
-                            f"Redirect to private IP via DNS rebinding blocked: {redirect_url} "
-                            f"(resolved to {ip_str})"
-                        )
-                if ip_obj.is_multicast or ip_obj.is_unspecified:
-                    raise _SSRFBlockError(f"Redirect to reserved IP blocked: {redirect_url}")
+                if not _is_ssrf_safe_ip(ip_obj):
+                    raise _SSRFBlockError(
+                        f"Redirect to private/reserved IP via DNS rebinding blocked: {redirect_url} "
+                        f"(resolved to {ip_str})"
+                    )
             except ValueError:
-                pass  # Not an IP format, skip
+                pass  # Not an IP format, skip (shouldn't happen from getaddrinfo)
     except _SSRFBlockError:
         raise
     except Exception as exc:

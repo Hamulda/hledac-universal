@@ -41,6 +41,9 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use pyo3::prelude::*;
 
+// RUST-PANIC-001 FIX: use release_gil_py (panic→PyErr) for all LMDB FFI closures
+use crate::gil::release_gil_py;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LMDB helpers — direct Python lmdb calls without caching
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,7 +177,8 @@ pub fn lmdb_dht_put_node<'py>(
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     // B-14: all owned data (path, key, value, neighbors_json) moved into closure
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -211,7 +215,8 @@ pub fn lmdb_dht_get_node<'py>(
         k.extend_from_slice(&key);
         k
     };
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -248,7 +253,8 @@ pub fn lmdb_dht_put_dht_node<'py>(
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let mut key = b"dht_node:".to_vec();
     key.extend_from_slice(&node_id);
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -272,7 +278,8 @@ pub fn lmdb_dht_get_dht_node<'py>(
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let mut key = b"dht_node:".to_vec();
     key.extend_from_slice(&node_id);
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -296,7 +303,8 @@ pub fn lmdb_dht_get_all_dht_nodes<'py>(
     let limit = limit.min(100_000);
     let prefix = b"dht_node:".to_vec();
 
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -342,7 +350,8 @@ pub fn lmdb_dht_count_dht_nodes<'py>(
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let prefix = b"dht_node:".to_vec();
 
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -385,7 +394,8 @@ pub fn lmdb_dht_clear_dht_nodes<'py>(
 
     // B-14: all LMDB I/O runs in py.detach() — GIL released during cursor
     // iteration and write transaction.
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -442,7 +452,8 @@ pub fn lmdb_dht_save_routing_snapshot<'py>(
 ) -> PyResult<()> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -462,7 +473,8 @@ pub fn lmdb_dht_load_routing_snapshot<'py>(
 ) -> PyResult<Option<Vec<u8>>> {
     let env = get_lmdb_env(py, &path)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -496,7 +508,8 @@ pub fn lmdb_dht_scan_all_nodes<'py>(
     let limit = limit.min(100_000);
     let neigh_prefix = b"neighbors:".to_vec();
 
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -563,7 +576,8 @@ pub fn lmdb_dht_bfs_traverse<'py>(
 
     // B-14: entire BFS traversal runs in detached closure — GIL released
     // during all LMDB reads and JSON parsing.
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -642,7 +656,8 @@ pub fn lmdb_async_put<'py>(
 ) -> PyResult<bool> {
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -677,7 +692,8 @@ pub fn lmdb_async_get<'py>(
     let env = _resolve_env(py, path_or_env)?;
     // Clone to get owned refcount - env_owned is Send+Sync and keeps Python object alive
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.detach(|| {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         // Move env_owned into this closure - Py is Send+Sync
         let env_owned = env_owned;
         Python::attach(|py| {
@@ -716,7 +732,8 @@ pub fn lmdb_async_put_batch<'py>(
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let max_batch = max_batch.min(10_000);
-    py.detach(|| {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -763,7 +780,8 @@ pub fn lmdb_async_get_many<'py>(
 ) -> PyResult<Vec<Option<Vec<u8>>>> {
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.detach(|| {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -805,7 +823,8 @@ pub fn lmdb_async_scan_prefix<'py>(
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
     let limit = limit.min(100_000);
-    py.detach(|| {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };
@@ -868,7 +887,8 @@ pub fn lmdb_async_delete<'py>(
 ) -> PyResult<bool> {
     let env = _resolve_env(py, path_or_env)?;
     let env_owned: Py<PyAny> = Py::clone_ref(&env.unbind(), py);
-    py.detach(move || {
+    // RUST-PANIC-001 FIX: release_gil_py wraps py.detach in catch_unwind
+    release_gil_py(py, move || {
         let env_owned = env_owned;
         Python::attach(|py| {
             let env = unsafe { Bound::from_borrowed_ptr(py, env_owned.as_ptr()) };

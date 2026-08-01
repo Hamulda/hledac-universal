@@ -38,6 +38,7 @@ import msgspec
 __all__ = [
     'PromptInjectionValidationResult',
     'sanitize_prompt_injection_patterns',
+    'sanitize_for_llm',
     'PromptInjectionValidator',
 ]
 
@@ -604,3 +605,238 @@ def sanitize_prompt_injection_patterns(
     """
     validator = _get_validator()
     return validator.validate(text, max_chars=max_chars)
+
+
+# ---------------------------------------------------------------------------
+# ISSUE [LLM-SEC-001]: sanitize_for_llm — HTML strip + control char + token limit
+# Centralized LLM input sanitization for web content
+# ---------------------------------------------------------------------------
+
+_LLM_MAX_TOKENS: int = 3500  # Leave buffer for system prompt (Hermes3 context: 4096)
+_LLM_TOKENIZER: Any = None  # Lazy-loaded tokenizer instance
+
+
+def _get_tokenizer() -> Any:
+    """
+    Lazy-load the tokenizer for token counting (M1 8GB: load on demand).
+
+    Tries to reuse an existing tokenizer from the model manager cache first.
+    Falls back to loading a fresh model + tokenizer only if needed.
+    Returns None if loading fails (caller uses char-based fallback).
+    """
+    global _LLM_TOKENIZER  # noqa: PLW0603
+    if _LLM_TOKENIZER is None:
+        try:
+            # Try to get tokenizer from model manager (existing loaded model)
+            from hledac.universal.brain.model_manager import get_model_manager
+
+            mm = get_model_manager()
+            # model_manager may have a tokenizer cached
+            if hasattr(mm, '_tokenizer') and mm._tokenizer is not None:
+                _LLM_TOKENIZER = mm._tokenizer
+                return _LLM_TOKENIZER
+        except Exception:
+            pass
+
+        try:
+            # Fallback: load model + tokenizer (expensive, ~2GB RAM)
+            from mlx_lm import load
+            from hledac.universal.core.constants import MLX
+
+            cfg = MLX()
+            result = load(cfg.model_path)
+            # mlx_lm.load may return (model, tokenizer) or (model, tokenizer, cache)
+            if isinstance(result, tuple):
+                _LLM_TOKENIZER = result[1] if len(result) > 1 else None
+            else:
+                _LLM_TOKENIZER = None
+        except Exception:
+            _LLM_TOKENIZER = None
+    return _LLM_TOKENIZER
+
+
+def sanitize_for_llm(raw_content: str, *, max_tokens: int = _LLM_MAX_TOKENS) -> str:
+    """
+    ISSUE [LLM-SEC-001]: Sanitize web content for LLM consumption.
+
+    3-layer sanitization (cutting-edge, M1 8GB bounded):
+    1. HTML removal — selectolax (M1 RAM friendly, pure Python)
+    2. Control character removal — prompt injection via \\x00-\\x1f, \\x7f-\\x9f
+    3. Token limit — truncate to max_tokens for Hermes3 context window
+
+    Fail-open: on any error, returns stripped+truncated original.
+    Always-on, bounded, fail-safe.
+
+    Args:
+        raw_content: Raw web content (HTML or plain text).
+        max_tokens: Maximum tokens (default: 3500, leaves 596 buffer for Hermes3 4096).
+
+    Returns:
+        Sanitized text safe for LLM consumption.
+    """
+    if not isinstance(raw_content, str):
+        return ""
+
+    try:
+        # ---- Layer 1: HTML removal via selectolax (M1 RAM friendly) ----
+        text = _strip_html_sanitize(raw_content)
+
+        # ---- Layer 2: Control character removal ----
+        # Removes prompt injection via \\x00-\\x1f (C0 controls) and \\x7f-\\x9f (DEL + C1)
+        # Also removes zero-width joiners, BOM, directional override chars
+        text = _remove_control_and_hidden_chars(text)
+
+        # ---- Layer 3: Token limit ----
+        text = _truncate_by_token_count(text, max_tokens)
+
+        return text
+
+    except Exception:
+        # Fail-open: return safely stripped original
+        try:
+            text = _strip_html_sanitize(raw_content)
+            return text[: max_tokens * 4]  # rough 4 chars/token
+        except Exception:
+            return raw_content[: _LLM_MAX_TOKENS * 4]
+
+
+def _strip_html_sanitize(text: str) -> str:
+    """
+    Strip HTML tags and special HTML content from web content.
+
+    Uses selectolax (primary) with graceful fallback to naive regex.
+    Steps:
+    1. Remove <script>, <style>, <noscript>, <embed>, <object> blocks
+    2. Remove HTML comments (including conditional IE comments)
+    3. Strip remaining HTML tags
+    4. Collapse whitespace
+    5. Unescape HTML entities
+    """
+    if not text:
+        return ""
+
+    # Try selectolax first (fast, CSS selectors, M1 RAM friendly)
+    try:
+        from selectolax.parser import HTMLParser
+
+        tree = HTMLParser(text)
+        # Remove dangerous/script blocks first
+        for tag in ('script', 'style', 'noscript', 'embed', 'object', 'iframe', 'svg', 'math'):
+            for node in tree.css(tag):
+                node.decompose()
+        # Remove comments
+        for comment in tree.css('!--'):
+            comment.decompose()
+        # Get text content (selectolax strips tags automatically)
+        text = tree.text()
+        # Collapse whitespace
+        text = re.sub(r'[ \t\r\n]+', ' ', text).strip()
+        return text
+    except Exception:
+        # Fallback: naive regex strip (still better than raw HTML)
+        return _strip_html_naive(text)
+
+
+def _strip_html_naive(text: str) -> str:
+    """
+    Fallback HTML strip using only stdlib (no selectolax dependency).
+
+    Steps:
+    1. Remove script/style/embed blocks
+    2. Remove HTML comments
+    3. Strip tags
+    4. Normalize whitespace
+    5. Unescape entities
+    """
+    import html
+
+    result = text
+    # Remove script and style blocks completely
+    result = re.sub(r'<script[^>]*>[\s\S]*?</script>', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'<style[^>]*>[\s\S]*?</style>', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'<noscript[^>]*>[\s\S]*?</noscript>', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'<embed[^>]*>[\s\S]*?</embed>', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'<object[^>]*>[\s\S]*?</object>', '', result, flags=re.IGNORECASE)
+    result = re.sub(r'<iframe[^>]*>[\s\S]*?</iframe>', '', result, flags=re.IGNORECASE)
+    # Remove HTML comments (including conditional IE comments)
+    result = re.sub(r'<!--[\s\S]*?-->', '', result)
+    result = re.sub(r'<!\[if[^\]]*\]>[\s\S]*?<!\[endif\]>', '', result)
+    # Strip remaining HTML tags
+    result = re.sub(r'<[^>]+>', ' ', result)
+    # Remove extra whitespace
+    result = re.sub(r'[ \t\r\n]+', ' ', result).strip()
+    # Unescape HTML entities
+    try:
+        result = html.unescape(result)
+    except Exception:
+        pass
+    return result
+
+
+def _remove_control_and_hidden_chars(text: str) -> str:
+    """
+    Remove control characters and hidden Unicode that can be used for injection.
+
+    Removes:
+    - C0 controls (\\x00-\\x1f) except TAB (\\x09), LF (\\x0a), CR (\\x0d)
+    - DEL (\\x7f)
+    - C1 controls (\\x80-\\x9f) — often used in UTF-8 injection
+    - Zero-width characters (U+200B-ZWJ, U+200C-ZWNJ, U+200D-ZWJ, U+FEFF-BOM)
+    - Directional override characters (LRE, RLE, LRO, RLO, PDF, LRM, RLM)
+    - Inline HTML/Unicode whitespace that normalizes to space
+    """
+    # Remove zero-width and directional characters
+    zw_chars = [
+        '​',  # Zero-width space
+        '‌',  # Zero-width non-joiner
+        '‍',  # Zero-width joiner
+        '﻿',  # BOM / Zero-width no-break space
+        '‎',  # Left-to-right mark
+        '‏',  # Right-to-left mark
+        '‪',  # Left-to-right embedding
+        '‫',  # Right-to-left embedding
+        '‬',  # Pop directional formatting
+        '‭',  # Left-to-right override
+        '‮',  # Right-to-left override
+        '⁦',  # Left-to-right isolate
+        '⁧',  # Right-to-left isolate
+        '⁨',  # First strong isolate
+        '⁩',  # Pop directional isolate
+    ]
+    for zw in zw_chars:
+        text = text.replace(zw, '')
+
+    # Remove control characters (keep TAB=9, LF=10, CR=13)
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+
+    # Remove C1 controls (\\x80-\\x9f in Windows-1252 encodings used in injections)
+    text = re.sub(r'[\x80-\x9f]', '', text)
+
+    # Collapse multiple spaces (including Unicode spaces that passed through)
+    text = re.sub(r'[ \xa0 ᠎ -   　]{2,}', ' ', text)
+
+    return text
+
+
+def _truncate_by_token_count(text: str, max_tokens: int) -> str:
+    """
+    Truncate text to max_tokens using the tokenizer.
+
+    Falls back to simple char count if tokenizer unavailable.
+    M1 8GB: tokenizer loaded lazily on first use.
+    """
+    tok = _get_tokenizer()
+    if tok is not None:
+        try:
+            tokens = tok.encode(text)
+            if len(tokens) > max_tokens:
+                text = tok.decode(tokens[:max_tokens])
+            return text
+        except Exception:
+            pass
+
+    # Fallback: rough estimate (4 chars per token)
+    char_limit = max_tokens * 4
+    if len(text) > char_limit:
+        text = text[:char_limit]
+    return text

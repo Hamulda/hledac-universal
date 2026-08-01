@@ -19,6 +19,15 @@ import numpy as np
 logger = logging.getLogger(__name__)
 MLX_EMBEDDINGS_AVAILABLE = False
 _mlx_available = False
+
+# MEM-UMA-003: M1 8GB memory bounds for embedding batches
+# Per-document char limit: 50k chars ≈ ~12.5k tokens (well under ModernBERT 8192 max_seq_len safety margin)
+MAX_EMBED_DOCUMENT_CHARS = 50_000
+# Maximum documents per embed_batch call — prevents OOM on adversarial input
+MAX_EMBED_BATCH_SIZE = 256
+# Maximum total chars per batch — enforces sub-batch chunking for huge inputs
+MAX_EMBED_BATCH_TOTAL_CHARS = 5_000_000
+
 try:
     import mlx.core as mx
     _mlx_available = mx.metal.is_available() if hasattr(mx, 'metal') else False
@@ -166,6 +175,10 @@ class ModernBERTEmbedder:
         """
         if not self._is_loaded:
             self._load_model()
+        # MEM-UMA-003: bound single-doc input BEFORE tokenizer processes it (prevents memory spike on huge strings)
+        if len(text) > MAX_EMBED_DOCUMENT_CHARS:
+            text = text[:MAX_EMBED_DOCUMENT_CHARS]
+            logger.warning(f'[MODERNBERT] Single text truncated to {MAX_EMBED_DOCUMENT_CHARS} chars')
         prefixed = self._apply_prefix(text, task)
         inputs = self._tokenizer([prefixed], padding=True, truncation=True, max_length=self.config.max_seq_len, return_tensors='mlx')
         with self._metal_context():
@@ -198,6 +211,43 @@ class ModernBERTEmbedder:
             self._load_model()
         if not texts:
             return np.array([])
+
+        # MEM-UMA-003: OOM guard — validate batch size, per-doc length, total chars
+        if len(texts) > MAX_EMBED_BATCH_SIZE:
+            logger.warning(f'[MODERNBERT] Batch size {len(texts)} > {MAX_EMBED_BATCH_SIZE}, truncating')
+            texts = texts[:MAX_EMBED_BATCH_SIZE]
+
+        # Truncate individual docs BEFORE tokenization (prevents memory spike during tokenizer() call)
+        truncated = False
+        for idx, t in enumerate(texts):
+            if len(t) > MAX_EMBED_DOCUMENT_CHARS:
+                texts[idx] = t[:MAX_EMBED_DOCUMENT_CHARS]
+                truncated = True
+        if truncated:
+            logger.warning(f'[MODERNBERT] Some texts truncated to {MAX_EMBED_DOCUMENT_CHARS} chars')
+
+        total_chars = sum(len(t) for t in texts)
+        if total_chars > MAX_EMBED_BATCH_TOTAL_CHARS:
+            # Chunk into sub-batches by total char budget
+            sub_batches: list[list[str]] = []
+            current_chars = 0
+            current_batch: list[str] = []
+            for t in texts:
+                if current_chars + len(t) >= MAX_EMBED_BATCH_TOTAL_CHARS and current_batch:
+                    sub_batches.append(current_batch)
+                    current_batch = []
+                    current_chars = 0
+                current_batch.append(t)
+                current_chars += len(t)
+            if current_batch:
+                sub_batches.append(current_batch)
+            # Recursively embed sub-batches and stack
+            all_embs: list[np.ndarray] = []
+            for sub in sub_batches:
+                sub_emb = self.embed_batch(sub, task=task)
+                all_embs.append(sub_emb)
+            return np.vstack(all_embs) if all_embs else np.array([])
+
         effective_batch_size = self._get_adaptive_batch_size()
         prefixed = [self._apply_prefix(t, task) for t in texts]
         all_embeddings = []

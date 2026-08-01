@@ -19,7 +19,8 @@ Architecture authority split (Sprint 8VX):
 Usage:
     # RECOMMENDED (Sprint F320+):
     from hledac.universal.transport.session_pool import httpx_socks_client, session_pool
-    client = await httpx_socks_client("socks5://127.0.0.1:9050")
+    # OPSEC-001: socks5h:// forces remote DNS resolution by Tor proxy.
+    client = await httpx_socks_client("socks5h://127.0.0.1:9050")
 
     # LEGACY (backward compat via this module):
     from hledac.universal.transport.connection_pool_manager import TorConnectionPool, get_tor_pool

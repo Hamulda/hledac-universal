@@ -150,6 +150,18 @@ class DuckDBVectorStore:
         async def _upsert_chunk(chunk: dict[str, Any]) -> bool:
             """Upsert single chunk, returns True on success."""
             try:
+                # ARCH-DB-001: Validate chunk against RAGChunkContract
+                from hledac.universal.knowledge.storage_contracts import validate_rag_chunk
+
+                validated = validate_rag_chunk(chunk)
+                if validated is None:
+                    _logger.debug(
+                        "[ARCH-DB-001] RAG chunk validation failed for chunk_id=%s",
+                        chunk.get("chunk_id", "?"),
+                    )
+                    return False  # Skip write — validation failed
+
+                # Validation passed — proceed with upsert
                 embedding_list: list[float] = chunk.get("embedding", [])
                 metadata_json = _orjson_mod.dumps(chunk.get("metadata", {}))
                 self._duckdb_conn.execute(
@@ -355,9 +367,26 @@ class DuckDBVectorStore:
         if self._duckdb_conn is None:
             return 0
 
-        rows_inserted = 0
-        for entity in entities:
+        # Parallel entity upsert via asyncio.gather() — consistent with RAG path
+        _ENTITY_PARALLEL_BATCH = 32  # M1 8GB: bounded concurrency
+
+        async def _upsert_entity(entity: dict[str, Any]) -> bool:
+            """Upsert single entity, returns True on success."""
             try:
+                # ARCH-DB-001: Validate entity against EntityEmbeddingContract
+                # before upsert. Fail-safe: validation errors are logged but
+                # do NOT block storage — invalid data is skipped, not written.
+                from hledac.universal.knowledge.storage_contracts import validate_entity_embedding
+
+                validated = validate_entity_embedding(entity)
+                if validated is None:
+                    _logger.debug(
+                        "[ARCH-DB-001] Entity embedding validation failed for entity_id=%s",
+                        entity.get("entity_id", "?"),
+                    )
+                    return False  # Skip write — validation failed
+
+                # Validation passed — proceed with upsert
                 embedding_list: list[float] = entity.get("embedding", [])
                 metadata_json = _orjson_mod.dumps(entity.get("metadata", {}))
                 self._duckdb_conn.execute(
@@ -376,13 +405,21 @@ class DuckDBVectorStore:
                         float(entity.get("updated_at", 0.0)),
                     ],
                 )
-                rows_inserted += 1
+                return True
             except Exception as e:  # noqa: BLE001
                 _logger.debug(
                     "[DUCKDB:VEC] upsert_entity_embeddings failed for %s: %s",
                     entity.get("entity_id", "?"),
                     e,
                 )
+                return False
+
+        # Process entities in parallel batches to avoid unbounded concurrency
+        rows_inserted = 0
+        for batch_start in range(0, len(entities), _ENTITY_PARALLEL_BATCH):
+            batch = entities[batch_start : batch_start + _ENTITY_PARALLEL_BATCH]
+            results = await asyncio.gather(*[_upsert_entity(e) for e in batch], return_exceptions=True)
+            rows_inserted += sum(1 for r in results if r is True)
 
         return rows_inserted
 
