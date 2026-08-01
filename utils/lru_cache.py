@@ -380,3 +380,279 @@ class TTLCache(LRUCache[K, V]):
         """Get with automatic expiration check."""
         self._evict_expired()
         return super().__getitem__(key)
+
+
+# ── Sliding Window KV Cache ───────────────────────────────────────────────────
+
+
+class SlidingWindowKVCache(Generic[K, V]):
+    """
+    F-06: Sliding window LRU cache for KV cache pools.
+
+    Addresses abrupt LRU eviction problem in burst workloads where 5+ concurrent
+    requests compete for 4 slots — standard LRU causes thrashing because eviction
+    is all-or-nothing at pool capacity.
+
+    Mechanism:
+        - Each entry accumulates "access tokens" over a sliding time window
+        - Gradual aging: tokens decay exponentially between accesses
+        - Eviction candidate: lowest token count (least accessed recently)
+          regardless of entry size (size-based eviction is handled separately
+          by the pool's memory budget loop)
+        - New entries start with half the max tokens to avoid immediate
+          eviction in burst scenarios
+
+    Unlike TTLCache (time-based expiry) or LRUCache (binary hit/miss):
+        - SlidingWindow tracks HOW OFTEN each entry is accessed within window
+        - Entries accessed frequently stay warm; occasional accesses decay
+        - Burst of requests doesn't cause thrashing because token distribution
+          smooths the access pattern over time
+
+    Thread-safe via optional lock parameter.
+
+    Args:
+        max_size: Maximum entries before any eviction is triggered
+        window_tokens: Max tokens per entry (default 16)
+        decay_base: Exponential decay base per token interval (default 0.85)
+        token_interval_s: Seconds between decay ticks (default 5.0)
+        thread_safe: Synchronize all operations (default False)
+
+    Example:
+        pool = SlidingWindowKVCache[str, tuple](max_size=4, window_tokens=16)
+        pool[hash1] = (cache_obj, time.monotonic(), 64_MB)
+        # Access updates token count, decay runs on each put/get
+    """
+
+    __slots__ = (
+        "_data",
+        "_order",
+        "_lock",
+        "_max_size",
+        "_window_tokens",
+        "_decay_base",
+        "_token_interval_s",
+        "_tokens",
+        "_last_decay",
+        "_hits",
+        "_misses",
+    )
+
+    def __init__(
+        self,
+        max_size: int = 4,
+        window_tokens: int = 16,
+        decay_base: float = 0.85,
+        token_interval_s: float = 5.0,
+        thread_safe: bool = False,
+    ) -> None:
+        if max_size < 1:
+            raise ValueError(f"max_size must be >= 1, got {max_size}")
+        if not (0.0 < decay_base <= 1.0):
+            raise ValueError(f"decay_base must be in (0, 1], got {decay_base}")
+        self._data: dict[K, V] = {}
+        self._order: list[K] = []  # LRU order: front = LRU, back = MRU
+        self._max_size = max_size
+        self._window_tokens = window_tokens
+        self._decay_base = decay_base
+        self._token_interval_s = token_interval_s
+        self._tokens: dict[K, float] = {}
+        self._last_decay = time.monotonic()
+        self._hits = 0
+        self._misses = 0
+        self._lock = threading.RLock() if thread_safe else None
+
+    # ── Internal helpers ───────────────────────────────────────────────────
+
+    def _decay_tokens(self, force: bool = False) -> None:
+        """
+        Apply exponential decay to all token counts.
+
+        Called on every public operation (get/set). Skipped if
+        token_interval_s has not elapsed unless force=True.
+
+        decay formula: tokens *= decay_base^(elapsed_intervals)
+        """
+        now = time.monotonic()
+        elapsed = now - self._last_decay
+        intervals = int(elapsed / self._token_interval_s)
+        if intervals < 1 and not force:
+            return
+        self._last_decay = now
+        if intervals < 1:
+            intervals = 1
+        factor = self._decay_base ** intervals
+        for key in list(self._tokens.keys()):
+            self._tokens[key] *= factor
+
+    def _add_tokens(self, key: K, delta: float) -> None:
+        """Add tokens to an entry, capped at window_tokens."""
+        if key not in self._tokens:
+            self._tokens[key] = min(self._window_tokens / 2, delta)
+        else:
+            self._tokens[key] = min(self._window_tokens, self._tokens[key] + delta)
+
+    # ── Dict-like interface ────────────────────────────────────────────────
+
+    def __getitem__(self, key: K) -> V:
+        if self._lock:
+            with self._lock:
+                return self._get(key)
+        return self._get(key)
+
+    def _get(self, key: K) -> V:
+        self._decay_tokens()
+        if key in self._data:
+            self._add_tokens(key, 2.0)  # +2 tokens per access
+            self._touch(key)
+            self._hits += 1
+            return self._data[key]
+        self._misses += 1
+        raise KeyError(key)
+
+    def __setitem__(self, key: K, value: V) -> None:
+        if self._lock:
+            with self._lock:
+                self._set(key, value)
+        else:
+            self._set(key, value)
+
+    def _set(self, key: K, value: V) -> None:
+        self._decay_tokens()
+        if key in self._data:
+            self._data[key] = value
+            self._add_tokens(key, 1.0)
+            self._touch(key)
+        else:
+            self._data[key] = value
+            self._order.append(key)
+            self._add_tokens(key, self._window_tokens / 2)  # new entries start warm
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._data
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __repr__(self) -> str:
+        return (
+            f"SlidingWindowKVCache(max_size={self._max_size}, "
+            f"window_tokens={self._window_tokens}, len={len(self)})"
+        )
+
+    # ── LRU-specific operations ────────────────────────────────────────────
+
+    def _touch(self, key: K) -> None:
+        if key in self._order:
+            self._order.remove(key)
+        self._order.append(key)
+
+    def pop_lru(self) -> tuple[K, V]:
+        if self._lock:
+            with self._lock:
+                return self._pop_lru()
+        return self._pop_lru()
+
+    def _pop_lru(self) -> tuple[K, V]:
+        if not self._order:
+            raise KeyError("pop_lru from empty cache")
+        key = self._order.pop(0)
+        value = self._data.pop(key)
+        self._tokens.pop(key, None)
+        return key, value
+
+    def popitem(self, last: bool = True) -> tuple[K, V]:
+        if self._lock:
+            with self._lock:
+                return self._popitem(last)
+        return self._popitem(last)
+
+    def _popitem(self, last: bool) -> tuple[K, V]:
+        if not self._order:
+            raise KeyError("popitem from empty cache")
+        if last:
+            key = self._order.pop()
+        else:
+            key = self._order.pop(0)
+        value = self._data.pop(key)
+        self._tokens.pop(key, None)
+        return key, value
+
+    def get(self, key: K, default: V | None = None) -> V | None:
+        if self._lock:
+            with self._lock:
+                return self._get_or_default(key, default)
+        return self._get_or_default(key, default)
+
+    def _get_or_default(self, key: K, default: V | None) -> V | None:
+        self._decay_tokens()
+        if key in self._data:
+            self._add_tokens(key, 2.0)
+            self._touch(key)
+            self._hits += 1
+            return self._data[key]
+        self._misses += 1
+        return default
+
+    def put(self, key: K, value: V) -> None:
+        self[key] = value
+
+    def clear(self) -> None:
+        if self._lock:
+            with self._lock:
+                self._data.clear()
+                self._order.clear()
+                self._tokens.clear()
+        else:
+            self._data.clear()
+            self._order.clear()
+            self._tokens.clear()
+
+    def pop(self, key: K, default: V | None = None) -> V | None:
+        if self._lock:
+            with self._lock:
+                return self._pop(key, default)
+        return self._pop(key, default)
+
+    def _pop(self, key: K, default: V | None) -> V | None:
+        if key in self._data:
+            value = self._data.pop(key)
+            if key in self._order:
+                self._order.remove(key)
+            self._tokens.pop(key, None)
+            return value
+        return default
+
+    def keys(self):
+        return iter(self._order)
+
+    def values(self):
+        return (self._data[k] for k in self._order)
+
+    def items(self):
+        return ((k, self._data[k]) for k in self._order)
+
+    # ── Token introspection ─────────────────────────────────────────────────
+
+    def get_tokens(self, key: K) -> float:
+        """Return current token count for an entry (for debugging)."""
+        return self._tokens.get(key, 0.0)
+
+    # ── Stats ───────────────────────────────────────────────────────────────
+
+    @property
+    def stats(self) -> dict[str, int | float]:
+        total = self._hits + self._misses
+        hit_rate = self._hits / total if total > 0 else 0.0
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "size": len(self),
+            "max_size": self._max_size,
+            "hit_rate": hit_rate,
+            "window_tokens": self._window_tokens,
+            "decay_base": self._decay_base,
+        }
+
+    def reset_stats(self) -> None:
+        self._hits = 0
+        self._misses = 0

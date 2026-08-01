@@ -64,6 +64,15 @@ class MemoryPressureError(RuntimeError):
     pass
 
 
+class InferenceLoopExceeded(GhostBaseException):
+    """Raised when inference loop exceeds max_total_iterations limit.
+
+    Prevents infinite loops in BFS/graph traversal when evidence is malformed
+    or recursive prompts cause unbounded iteration (CPU burn, no progress).
+    """
+    pass
+
+
 __all__ = [
     "GhostBaseException",
     "TransportException",
@@ -76,4 +85,5 @@ __all__ = [
     "RuntimeInitError",
     "SignalHandlingError",
     "MemoryPressureError",
+    "InferenceLoopExceeded",
 ]

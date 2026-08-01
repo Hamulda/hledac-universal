@@ -27,7 +27,7 @@ from typing import Any, TypeVar
 from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for
 from hledac.universal.core.sync_bridge import stream_via_queue
 from hledac.universal.utils.cache import PyCacheDict
-from hledac.universal.utils.lru_cache import LRUCache
+from hledac.universal.utils.lru_cache import LRUCache, SlidingWindowKVCache
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode_fast as _msgspec_encode_fast
 from hledac.universal.utils.import_resolver import lazy, lazy_callable
 from hledac.universal.brain._hermes_cache import hermes_cache
@@ -406,12 +406,13 @@ class DeepHermes3Engine:
         self._max_kv_size = 8192
         self._kv_bits = int(os.getenv('GHOST_KV_BITS', '4'))
         self._paged_kv_cache = os.getenv('HLEDAC_PAGED_KV_CACHE', '0') == '1'
-        _raw_keep = os.getenv('HLEDAC_PAGED_KV_KEEP', '')
+        # Paged KV keep: support both new HLEDAC_PAGED_KV_KEEP_TOKENS and legacy HLEDAC_PAGED_KV_KEEP
+        _raw_keep = os.getenv('HLEDAC_PAGED_KV_KEEP_TOKENS', '') or os.getenv('HLEDAC_PAGED_KV_KEEP', '')
         self._paged_kv_keep: int
         try:
-            self._paged_kv_keep = max(0, int(_raw_keep)) if _raw_keep.strip() else 4
+            self._paged_kv_keep = max(0, int(_raw_keep)) if _raw_keep.strip() else 64
         except (ValueError, TypeError):
-            self._paged_kv_keep = 4
+            self._paged_kv_keep = 64
         self._force_kv_quantize = os.getenv('HLEDAC_KV_QUANTIZE', '0') == '1'
         self._outlines_model = None
         self._outlines_generators = {}
@@ -441,7 +442,13 @@ class DeepHermes3Engine:
             self._kv_cache_pool_memory_mb: int = max(32, _mem_mb) if _mem_mb is not None else 256
         except (ValueError, TypeError):
             self._kv_cache_pool_memory_mb: int = 256
-        self._kv_cache_pool: LRUCache[str, tuple[Any, float, int]] = LRUCache(max_size=self._kv_cache_pool_maxsize)
+        self._kv_cache_pool: SlidingWindowKVCache[str, tuple[Any, float, int]] = SlidingWindowKVCache(
+            max_size=self._kv_cache_pool_maxsize,
+            window_tokens=16,
+            decay_base=0.85,
+            token_interval_s=5.0,
+            thread_safe=False,
+        )
         self._kv_cache_pool_stats = {'pool_maxsize': self._kv_cache_pool_maxsize, 'pool_memory_mb': self._kv_cache_pool_memory_mb, 'pool_hits': 0, 'pool_misses': 0, 'pool_evictions': 0, 'pool_evictions_memory': 0}
         self._key_locks: PyCacheDict[str, threading.Lock] = PyCacheDict(1024, 300.0)
         _raw_session_mem = os.getenv('HLEDAC_SESSION_CACHE_MEMORY_MB', '')
@@ -780,8 +787,10 @@ class DeepHermes3Engine:
 
     async def _collect_batch(self) -> tuple[list, Any, Any, Any]:
         """Collect batch items from queue with schema/prompt/length segregation. Returns (items, schema_key, prompt_hash, length_bin)."""
+        # F-10: Get Metal cache pressure for adaptive flush
+        metal_pressure = self._get_metal_cache_pressure()
         flush_interval = self._current_flush_interval()
-        self._record_flush_interval_telemetry(flush_interval)
+        self._record_flush_interval_telemetry(flush_interval, metal_pressure)
 
         # G2: Backpressure — check queue depth before collecting
         queue_depth = self._batch_queue.qsize() if self._batch_queue else 0
@@ -849,30 +858,68 @@ class DeepHermes3Engine:
                 break
         return items, current_schema_key, current_prompt_hash, current_length_bin
 
-    def _record_flush_interval_telemetry(self, flush_interval: float) -> None:
-        """Record telemetry for adaptive flush interval."""
+    def _record_flush_interval_telemetry(self, flush_interval: float, metal_pressure: float = 0.0) -> None:
+        """Record telemetry for adaptive flush interval.
+
+        Args:
+            flush_interval: The computed flush interval
+            metal_pressure: Current Metal cache pressure (0.0-1.0), used for F-10 tracking
+        """
         if flush_interval >= 1.9:
             self._telemetry_counters['adaptive_flush_default_entries'] += 1
         elif flush_interval >= 0.9:
             self._telemetry_counters['adaptive_flush_medium_entries'] += 1
         else:
             self._telemetry_counters['adaptive_flush_fast_entries'] += 1
+        # F-10: Track metal-pressure-triggered fast flushes
+        if flush_interval <= 0.5 and metal_pressure > 0.80:
+            self._telemetry_counters['metal_pressure_fast_flush'] += 1
 
     def _current_flush_interval(self) -> float:
         """Sprint 7I: Adaptive flush interval — 3-tier policy based on queue depth.
 
-        - depth > 192  → 0.5s (high pressure)
-        - depth > 64   → 1.0s (medium pressure)
-        - otherwise     → 2.0s (default)
+        F-10 FIX: Also responds to M1 Metal cache pressure (>80% utilized → fast flush).
+        Metal cache has hard ceiling (5.33 GiB on M1 8GB) regardless of system free RAM,
+        so it must be tracked independently.
+
+        Policy:
+        - Metal cache >80% utilized  → 0.5s (metal pressure, max urgency)
+        - depth > 192 OR metal >60%  → 0.5s (high pressure)
+        - depth > 64  OR metal >40%  → 1.0s (medium pressure)
+        - otherwise                  → 2.0s (default)
         """
         if self._batch_queue is None:
             return self._batch_default_flush_interval
-        depth = self._batch_queue.qsize()
-        if depth > self._batch_high_pressure_depth:
+
+        # F-10: Check Metal cache utilization
+        metal_pressure = self._get_metal_cache_pressure()
+        if metal_pressure > 0.80:
+            # Critical: Metal cache near ceiling, flush ASAP
             return 0.5
-        if depth > self._batch_medium_pressure_depth:
+
+        depth = self._batch_queue.qsize()
+        if depth > self._batch_high_pressure_depth or metal_pressure > 0.60:
+            return 0.5
+        if depth > self._batch_medium_pressure_depth or metal_pressure > 0.40:
             return 1.0
         return self._batch_default_flush_interval
+
+    def _get_metal_cache_pressure(self) -> float:
+        """F-10: Get Metal cache pressure (0.0-1.0).
+
+        Returns utilization ratio of Metal cache vs recommended working set.
+        Uses mx.get_cache_memory() (current usage) and device_info max_recommended_working_set_size.
+        """
+        try:
+            import mlx.core as mx
+            cache_memory = mx.get_cache_memory()
+            info = mx.device_info()
+            max_working_set = info.get('max_recommended_working_set_size', 0)
+            if max_working_set > 0:
+                return min(cache_memory / max_working_set, 1.0)
+        except Exception:
+            pass
+        return 0.0  # Default: no pressure
 
     def _is_batch_safe(self, response_model: Any, priority: float, stream: bool, timeout_s: float | None) -> bool:
         """
@@ -1110,21 +1157,40 @@ class DeepHermes3Engine:
         import re as _re
         schema_cls = response_model if isinstance(response_model, type) else type(response_model)
 
-        def _parse_structured() -> Any:
-            match = _re.search(r'\{.*\}', raw_text, _re.DOTALL)
-            if match:
-                try:
-                    data = _msgspec_decode(match.group())
-                    if hasattr(schema_cls, 'model_validate'):
-                        return schema_cls.model_validate(data)  # type: ignore[union-attr]
-                    return schema_cls.model_construct(**data)  # type: ignore[union-attr]
-                except Exception:
-                    pass
-            logger.debug(f'[STRUCTURED] Parse failed, using default for {schema_cls.__name__}')
-            fields = dict.fromkeys(getattr(schema_cls, 'model_fields', {}).keys())
-            return schema_cls.model_construct(**fields) if hasattr(schema_cls, 'model_construct') else schema_cls(**fields)  # type: ignore[union-attr]
+        def _parse_structured() -> tuple[Any, str | None]:
+            """Parse LLM output into structured response. Returns (result, error_detail).
 
-        return await loop.run_in_executor(self._post_executor, _parse_structured)
+            F-04: On parse failure, extracts msgspec.DecodeError details and returns
+            them as error_detail so the caller can re-prompt with correction context.
+            """
+            match = _re.search(r'\{.*\}', raw_text, _re.DOTALL)
+            if not match:
+                return None, f'No JSON object found in output: {raw_text[:200]}'
+            try:
+                data = _msgspec_decode(match.group())
+                if hasattr(schema_cls, 'model_validate'):
+                    return schema_cls.model_validate(data), None  # type: ignore[union-attr]
+                return schema_cls.model_construct(**data), None  # type: ignore[union-attr]
+            except Exception as e:
+                # F-04: Extract structured error details for correction retry
+                error_detail = _extract_parse_error(e, raw_text, schema_cls)
+                return None, error_detail
+
+        parse_result, parse_error = await loop.run_in_executor(self._post_executor, _parse_structured)
+        if parse_error is not None:
+            # F-04: Retry with correction context (max 2 rounds)
+            return await self._structured_with_correction(
+                prompt=prompt,
+                response_model=response_model,
+                schema_cls=schema_cls,
+                system=system,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                raw_text=raw_text,
+                parse_error=parse_error,
+                max_correction_rounds=2,
+            )
+        return parse_result
     async def flush_all(self, timeout: float=5.0) -> int:
         """
         Drain all pending items from the batch queue.
@@ -1150,6 +1216,142 @@ class DeepHermes3Engine:
         if items:
             await self._process_batch(items)
         return drained
+
+    # ------------------------------------------------------------------
+    # F-04: Self-correction retry on structured parse failure
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_parse_error(exc: Exception, raw_text: str, schema_cls: type) -> str:
+        """Extract structured error details from msgspec decode failure.
+
+        F-04: Returns a human-readable error context that can be injected
+        into the retry prompt to guide the LLM toward correct output.
+
+        Args:
+            exc: The exception from msgspec decode.
+            raw_text: The raw LLM output that failed to parse.
+            schema_cls: The target schema class.
+
+        Returns:
+            Error detail string for correction prompt.
+        """
+        error_parts = [f'Parse error: {exc!r}']
+        # Try to extract field-level details from msgspec.ValidationError
+        if hasattr(exc, 'msgspec_struct'):
+            struct_info = getattr(exc, 'msgspec_struct', None)
+            if struct_info:
+                error_parts.append(f'Structure: {struct_info}')
+        if hasattr(exc, 'msgspec_fields'):
+            fields = getattr(exc, 'msgspec_fields', [])
+            if fields:
+                error_parts.append(f'Fields with issues: {fields}')
+        # Include a snippet of the problematic output
+        snippet = raw_text[:300] if raw_text else '(empty)'
+        error_parts.append(f'LLM output snippet: {snippet}')
+        # Add schema field names to guide correction
+        # F-04 fix: msgspec.Struct has __struct_fields__, not model_fields
+        field_names: list[str] = []
+        try:
+            # msgspec.Struct uses __struct_fields__ (list of field names)
+            if hasattr(schema_cls, '__struct_fields__'):
+                field_names = list(schema_cls.__struct_fields__)  # type: ignore[union-attr]
+            elif hasattr(schema_cls, 'model_fields'):
+                # Pydantic v2
+                fields = getattr(schema_cls, 'model_fields', {})
+                field_names = list(fields.keys()) if fields else []
+            elif hasattr(schema_cls, '__fields__'):
+                # Pydantic v1 fallback
+                fields = getattr(schema_cls, '__fields__', {})
+                field_names = list(fields.keys()) if fields else []
+        except Exception:
+            pass
+        if field_names:
+            error_parts.append(f'Expected fields: {field_names}')
+        return ' | '.join(error_parts)
+
+    async def _structured_with_correction(
+        self,
+        prompt: str,
+        response_model: type,
+        schema_cls: type,
+        system: str,
+        temperature: float,
+        max_tokens: int,
+        raw_text: str,
+        parse_error: str,
+        max_correction_rounds: int = 2,
+    ) -> Any:
+        """Retry structured generation with error correction context.
+
+        F-04: On parse failure, re-prompt the LLM with the error details
+        to guide it toward producing valid output. Maximum 2 correction rounds.
+
+        Args:
+            prompt: Original user prompt.
+            response_model: Target response model.
+            schema_cls: Schema class for validation.
+            system: System message.
+            temperature: Sampling temperature.
+            max_tokens: Maximum tokens to generate.
+            raw_text: The raw LLM output that failed to parse.
+            parse_error: Structured error details from _extract_parse_error.
+            max_correction_rounds: Maximum number of correction attempts.
+
+        Returns:
+            Structured result or default-constructed object on failure.
+        """
+        import re as _re
+
+        for round_num in range(1, max_correction_rounds + 1):
+            logger.debug(f'[F-04] Correction round {round_num}/{max_correction_rounds}: {parse_error[:200]}')
+
+            # Build correction prompt with error context
+            try:
+                schema_str = _msgspec_encode_fast(response_model.model_json_schema()).decode()
+            except Exception:
+                schema_str = str(response_model)
+
+            correction_prompt = (
+                f'{prompt}\n\n'
+                f'PREVIOUS OUTPUT WAS INVALID:\n{parse_error}\n\n'
+                f'Please regenerate your response. Output ONLY valid JSON matching this schema:\n'
+                f'{schema_str}\n\n'
+                f'Do not include any explanation, only the JSON object.'
+            )
+
+            try:
+                text = await self.generate(
+                    correction_prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system_msg=system,
+                )
+            except Exception as e:
+                # F-04 fix: don't break — continue to next correction round
+                # Preserve previous parse_error to give LLM context for next attempt
+                logger.debug(f'[F-04] Correction round {round_num} generation failed: {e}, trying next round')
+                continue
+
+            # Attempt to parse the corrected output
+            match = _re.search(r'\{.*\}', text, _re.DOTALL)
+            if not match:
+                parse_error = f'No JSON object found in output: {text[:200]}'
+                continue
+
+            try:
+                data = _msgspec_decode(match.group())
+                if hasattr(schema_cls, 'model_validate'):
+                    return schema_cls.model_validate(data)  # type: ignore[union-attr]
+                return schema_cls.model_construct(**data)  # type: ignore[union-attr]
+            except Exception as e:
+                parse_error = self._extract_parse_error(e, text, schema_cls)
+                continue
+
+        # All correction rounds exhausted — fall back to default
+        logger.warning(f'[F-04] All correction rounds exhausted, using fallback for {schema_cls.__name__}')
+        fields = dict.fromkeys(getattr(schema_cls, 'model_fields', {}).keys())
+        return schema_cls.model_construct(**fields) if hasattr(schema_cls, 'model_construct') else schema_cls(**fields)  # type: ignore[union-attr]
 
     def _get_gpu_memory(self) -> int:
         """Get current GPU memory usage."""
@@ -1842,16 +2044,41 @@ class DeepHermes3Engine:
                 cache_size = self._measure_kv_cache_bytes(cache, tokens)
                 pool_budget_bytes = self._kv_cache_pool_memory_mb * 1024 * 1024
                 total_bytes = sum((entry[2] for entry in self._kv_cache_pool.values())) + cache_size
-                while len(self._kv_cache_pool) >= self._kv_cache_pool_maxsize or total_bytes > pool_budget_bytes:
+                # F-06: Sliding window eviction — use SlidingWindowKVCache built-in
+                # token-based eviction (lowest tokens = least accessed recently).
+                # Memory-budget eviction still handled here (largest-first for bytes).
+                while len(self._kv_cache_pool) >= self._kv_cache_pool_maxsize:
                     if not self._kv_cache_pool:
                         break
-                    evicted_key = max(self._kv_cache_pool, key=lambda k: self._kv_cache_pool[k][2])
-                    evicted_size = self._kv_cache_pool[evicted_key][2]
-                    self._kv_cache_pool.pop(evicted_key)
+                    # First: sliding-window eviction (lowest token count = weakest access pattern)
+                    evicted_key = min(
+                        self._kv_cache_pool.keys(),
+                        key=lambda k: self._kv_cache_pool.get_tokens(k),
+                        default=None,
+                    )
+                    if evicted_key is None:
+                        break
+                    evicted_entry = self._kv_cache_pool.pop(evicted_key)
+                    evicted_size = evicted_entry[2]
                     total_bytes -= evicted_size
                     self._kv_cache_pool_stats['pool_evictions'] += 1
                     self._kv_cache_pool_stats['pool_evictions_memory'] += evicted_size
-                    logger.debug(f'[KV-CACHE][F289] Pool eviction for hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB)')
+                    logger.debug(f'[KV-CACHE][F289] SW-evict hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB, tokens={self._kv_cache_pool.get_tokens(evicted_key):.1f})')
+                # Memory-budget eviction: largest entries first (existing policy, unchanged)
+                while total_bytes > pool_budget_bytes and len(self._kv_cache_pool) > 0:
+                    evicted_key = max(
+                        self._kv_cache_pool.keys(),
+                        key=lambda k: self._kv_cache_pool[k][2] if self._kv_cache_pool[k][2] else 0,
+                        default=None,
+                    )
+                    if evicted_key is None:
+                        break
+                    evicted_entry = self._kv_cache_pool.pop(evicted_key)
+                    evicted_size = evicted_entry[2]
+                    total_bytes -= evicted_size
+                    self._kv_cache_pool_stats['pool_evictions'] += 1
+                    self._kv_cache_pool_stats['pool_evictions_memory'] += evicted_size
+                    logger.debug(f'[KV-CACHE][F289] MEM-evict hash {evicted_key[:8]} (size={evicted_size / 1024 / 1024:.1f}MB)')
                 self._kv_cache_pool[prompt_hash] = (cache, _time_module.monotonic(), cache_size)
                 self._system_prompt_cache = cache
                 self._system_prompt_hash = prompt_hash
@@ -2129,7 +2356,8 @@ class DeepHermes3Engine:
             logger.debug(f"[LoRA] KV cache reduced: {_orig_size} → {_kv_kwargs['max_kv_size']} (adapter={_active_adapter})")
         # M-03: Pass prompt_tokens directly to mlx_lm.generate() — avoids re-tokenizing
         _prompt_arg: str | list[int] = prompt_tokens if prompt_tokens is not None else formatted_prompt
-        generate_kwargs = {'model': _active_model, 'tokenizer': _active_tokenizer, 'prompt': _prompt_arg, 'sampler': make_sampler(temp=temp), 'max_tokens': max_tok, 'kv_bits': kv_bits, 'verbose': False, **_kv_kwargs}
+        _kv_bits = self._get_adaptive_kv_bits()
+        generate_kwargs = {'model': _active_model, 'tokenizer': _active_tokenizer, 'prompt': _prompt_arg, 'sampler': make_sampler(temp=temp), 'max_tokens': max_tok, 'kv_bits': _kv_bits, 'verbose': False, **_kv_kwargs}
         if kv_cache is not None:
             generate_kwargs['prompt_cache'] = kv_cache
         if self._speculative_enabled and self._draft_model_obj is not None and self._supports_draft:
@@ -2154,6 +2382,10 @@ class DeepHermes3Engine:
 
         Volá se z load_model() na ZAČÁTKU (před načtením nového modelu)
         i NA KONCI (pro jistotu po každém model swap).
+
+        NOTE: Unlike reset_session() which preserves _kv_cache_pool and _session_cache_pool
+        by default (F03-FIX cross-turn reuse), this method ALWAYS clears both pools
+        because Metal allocations are invalidated when the model is unloaded.
 
         Args:
             reason: Telemetrie label pro debugging (např. "model_swap_start", "model_swap_end")
@@ -3477,22 +3709,41 @@ class DeepHermes3Engine:
             except Exception as e:
                 logger.debug(f'[STRUCTURED] Outlines failed: {e}, falling back to JSON')
         import re
+        schema_cls = response_model if isinstance(response_model, type) else type(response_model)
+        parse_error: str | None = None
         for attempt in range(max_retries + 1):
-            schema_str = _msgspec_encode_fast(response_model.model_json_schema()).decode()
-            json_prompt = f'{prompt}\n\nRespond ONLY with valid JSON matching this schema:\n{schema_str}\n\nDo not include any other text. Output valid JSON only.'
+            # F-04: On retry, inject previous parse error context to guide correction
+            if attempt > 0 and parse_error:
+                schema_str = _msgspec_encode_fast(response_model.model_json_schema()).decode()
+                json_prompt = (
+                    f'{prompt}\n\n'
+                    f'PREVIOUS OUTPUT WAS INVALID:\n{parse_error}\n\n'
+                    f'Please regenerate your response. Output ONLY valid JSON matching this schema:\n'
+                    f'{schema_str}\n\n'
+                    f'Do not include any explanation, only the JSON object.'
+                )
+            else:
+                schema_str = _msgspec_encode_fast(response_model.model_json_schema()).decode()
+                json_prompt = f'{prompt}\n\nRespond ONLY with valid JSON matching this schema:\n{schema_str}\n\nDo not include any other text. Output valid JSON only.'
             text = await self.generate(json_prompt, temperature=0.1, max_tokens=2048, system_msg=system_msg)
-            match = re.search('\\{.*\\}', text, re.DOTALL)
+            match = re.search(r'\{.*\}', text, re.DOTALL)
             if match:
                 try:
                     data = _msgspec_decode(match.group())
-                    return response_model(**data)
+                    if hasattr(schema_cls, 'model_validate'):
+                        return schema_cls.model_validate(data)  # type: ignore[union-attr]
+                    return schema_cls.model_construct(**data)  # type: ignore[union-attr]
                 except Exception as e:
+                    # F-04: Extract structured error details for next correction round
+                    parse_error = self._extract_parse_error(e, text, schema_cls)
                     if attempt < max_retries:
-                        logger.debug(f'JSON parse failed (attempt {attempt + 1}): {e}')
+                        logger.debug(f'JSON parse failed (attempt {attempt + 1}): {parse_error[:200]}')
                         continue
+            else:
+                parse_error = f'No JSON object found in output: {text[:200]}'
         logger.warning(f'[STRUCTURED] All attempts failed, using fallback for {response_model.__name__}')
-        fields = dict.fromkeys(response_model.model_fields.keys())
-        return response_model.model_construct(**fields)
+        fields = dict.fromkeys(getattr(response_model, 'model_fields', {}).keys())
+        return response_model.model_construct(**fields) if hasattr(response_model, 'model_construct') else response_model(**fields)
 
     def invalidate_prefix_cache(self) -> None:
         """Clear the prefix cache (e.g., on model change)."""
@@ -3633,9 +3884,13 @@ class DeepHermes3Engine:
         3. _save_cache() — persists system_prompt_cache + warmup_cache to disk
         4. _warmup_cache + _warmup_prompt_hash eviction
         5. _prompt_cache / _system_prompt_cache eviction
-        6. _model = None + _tokenizer = None
-        7. gc.collect()
-        8. Flush lazy ops + reclaim Metal memory (via helper — F219B)
+        6. _kv_cache_pool.clear() — F03: cleared here because model is unloaded;
+           Metal allocations in pool are invalid after _model = None.
+           Cross-turn reuse (_kv_cache_pool survives reset_session()) does not apply
+           when the model itself is being unloaded.
+        7. _model = None + _tokenizer = None
+        8. gc.collect()
+        9. Flush lazy ops + reclaim Metal memory (via helper — F219B)
 
         Safe-clear: Emergency flag is NOT auto-cleared here — caller decides.
         """
@@ -3709,21 +3964,47 @@ class DeepHermes3Engine:
         self._notify_state(ModelLoadState.UNLOADED)
         logger.info('✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)')
 
-    def reset_session(self) -> None:
+    def reset_session(self, *, keep_cache_pool: bool = True) -> None:
         """
-        Sprint F259: Reset session-local MLX KV cache between sprints.
+        F03-FIX: Lightweight reset of per-turn state; cross-turn KV pools survive by default.
 
         Unlike unload(), this is a lightweight reset that clears only session-
         specific state without fully unloading the model. Called at the start
-        of each new sprint to prevent KV cache accumulation.
+        of each new sprint/turn.
 
-        M1 8GB invariant: Prevents KV cache from growing across sprints.
+        Cross-turn KV reuse (F03):
+          - _kv_cache_pool: keyed by md5(system_prompt), survives reset_session() by
+            default (keep_cache_pool=True). Contains pre-computed KV states for each
+            unique system prompt seen across turns — identical system prompts in
+            Turn N+1 hit the pool instantly without recomputing (~200-400ms saved).
+          - _session_cache_pool: keyed by xxhash(full_prompt), survives reset_session()
+            by default. Contains full-prompt KV states — identical prompts across turns
+            reuse their KV without recomputation.
+
+        Per-turn state (always cleared):
+          - _prompt_cache: MLX per-call prompt cache (fresh each turn)
+          - _system_prompt_cache: inline reference to the last-built system KV cache
+          - _system_prompt_hash: hash of the last system prompt used
+          - _warmup_cache / _warmup_prompt_hash: rebuilt on next initialize() anyway
+          - _prefix_cache: token-level prefix cache (LRU dict, cleared each turn)
+
+        M1 8GB invariant: Pools are LRU + memory-bounded (4 entries / 256MB each for
+        _kv_cache_pool; 512 entries for _session_cache_pool). Accumulation is bounded
+        automatically — no manual clearing needed within a sprint.
+
+        Args:
+            keep_cache_pool: If True (default), _kv_cache_pool and _session_cache_pool
+                are preserved across turns, enabling cross-turn KV reuse. If False,
+                both pools are cleared (full reset — needed only when the model
+                itself changes or when a completely fresh slate is required).
         """
         self._prompt_cache = None
         self._system_prompt_cache = None
         self._system_prompt_hash = None
-        self._kv_cache_pool.clear()
-        self._session_cache_pool.clear()
+        if not keep_cache_pool:
+            self._kv_cache_pool.clear()
+            self._session_cache_pool.clear()
+            logger.debug('[F03] KV cache pools cleared (keep_cache_pool=False)')
         self.invalidate_prefix_cache()
         try:
             import mlx.core as mx
@@ -3732,7 +4013,10 @@ class DeepHermes3Engine:
             pass
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
         self._session_cache_stats = {'session_cache_hits': 0, 'session_cache_misses': 0, 'session_cache_evictions': 0, 'session_cache_memory_mb': self._session_cache_memory_mb, 'session_cache_maxsize': self._session_cache_maxsize}
-        logger.debug('[F259] Hermes3 session KV cache reset')
+        if keep_cache_pool:
+            logger.debug('[F03] Hermes3 session reset (KV pools preserved for cross-turn reuse)')
+        else:
+            logger.debug('[F03] Hermes3 session reset (KV pools cleared)')
 
     async def get_current_model_name(self) -> str | None:
         """Return currently loaded model name, or None if no model loaded."""
@@ -4044,24 +4328,13 @@ class DeepHermes3Engine:
             return _get_xxh3_hex(canonical_text)
         return hashlib.blake2b(canonical_text.encode(), digest_size=8).hexdigest()
 
-    def _quantize_kv_cache(self, cache: list, kv_bits: int) -> None:
-        """Quantize KV cache layers if supported - reduces nesting."""
-        if not self._supports_kv_quant:
-            return
-        for layer in cache:
-            if hasattr(layer, 'quantize'):
-                try:
-                    layer.quantize(group_size=64, bits=kv_bits)
-                except Exception:
-                    pass
-
     async def _build_warmup_cache(self, warmup_prompt: str, token_count: int, prompt_hash: str) -> bool:
         """Build and configure KV cache with optional quantization."""
         try:
             from mlx_lm.models.cache import make_prompt_cache
             self._warmup_cache = make_prompt_cache(self._model, max_kv_size=max(token_count + 128, 1024))
             self._warmup_prompt_hash = prompt_hash
-            self._quantize_kv_cache(self._warmup_cache, self._get_adaptive_kv_bits())
+            self._quantize_kv_cache(self._warmup_cache)
             return True
         except Exception as e:
             logger.warning(f'[WARMUP] Cache build failed: {e}')

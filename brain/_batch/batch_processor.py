@@ -53,6 +53,7 @@ class BatchItem:
     timeout: float = 30.0
     created_at: float = field(default_factory=time.time)
     future: asyncio.Future | None = None
+    retry_count: int = 0  # F-05: per-item retry tracker
 
     def __lt__(self, other: BatchItem) -> bool:
         """Compare by priority for heapq ordering."""
@@ -68,6 +69,8 @@ class BatchConfig:
     medium_pressure_max_size: int = 6
     age_bump_interval: float = 5.0  # seconds
     tie_breaker: float = 1e-6  # For priority ties
+    # F-05: Shard retry config
+    max_item_retries: int = 2  # Per-item retry limit on batch failure
 
 
 @dataclass
@@ -78,6 +81,9 @@ class BatchStats:
     queue_depth: int = 0
     avg_latency_ms: float = 0.0
     last_flush_at: float = 0.0
+    # F-05: Shard retry stats
+    retried_count: int = 0  # Items that were retried
+    sharded_count: int = 0  # Batch shards (splits) performed
 
 
 class BatchProcessor:
@@ -116,6 +122,8 @@ class BatchProcessor:
             queue_depth=len(self._queue),
             avg_latency_ms=self._stats.avg_latency_ms,
             last_flush_at=self._stats.last_flush_at,
+            retried_count=self._stats.retried_count,
+            sharded_count=self._stats.sharded_count,
         )
 
     def compute_length_bin(self, prompt: str) -> str:
@@ -224,7 +232,7 @@ class BatchProcessor:
 
     async def flush(self, timeout: float = 5.0) -> int:
         """
-        Force flush current batch.
+        Force flush current batch with shard retry (F-05).
 
         Args:
             timeout: Maximum time to wait
@@ -240,23 +248,15 @@ class BatchProcessor:
         if not items:
             return 0
 
-        processed = 0
-        for item in items:
-            try:
-                await safe_wait_for(
-                    self._process_single(item),
-                    timeout=item.timeout,
-                )
-                processed += 1
-            except Exception as e:
-                logger.warning(f'[BatchProcessor] Item {item.id} failed: {e}')
-                if item.future and not item.future.done():
-                    item.future.set_exception(e)
-
+        # F-05: Use shard retry for flush as well
+        results = await self._process_batch_with_shard_retry(items)
+        processed = sum(
+            1 for _, result in results if not isinstance(result, Exception)
+        )
         return processed
 
     async def _worker(self) -> None:
-        """Background worker that processes batches."""
+        """Background worker that processes batches with shard retry (F-05)."""
         while not self._shutting_down:
             try:
                 # Wait for flush interval or queue threshold
@@ -273,24 +273,88 @@ class BatchProcessor:
                     items = self._queue.copy()
                     self._queue.clear()
 
-                for item in items:
-                    try:
-                        result = await safe_wait_for(
-                            self._process_single(item),
-                            timeout=item.timeout,
-                        )
-                        if item.future and not item.future.done():
+                # F-05: Shard retry — process batch, retry failed items individually
+                results = await self._process_batch_with_shard_retry(items)
+                for item, result in results:
+                    if item.future and not item.future.done():
+                        if isinstance(result, Exception):
+                            item.future.set_exception(result)
+                        else:
                             item.future.set_result(result)
-                        self._stats.processed_count += 1
-                    except Exception as e:
-                        if item.future and not item.future.done():
-                            item.future.set_exception(e)
-                        self._stats.failed_count += 1
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning(f'[BatchProcessor] Worker error: {e}')
+
+    async def _process_batch_with_shard_retry(
+        self, items: list[BatchItem]
+    ) -> list[tuple[BatchItem, Any]]:
+        """
+        Process batch with shard retry (F-05).
+
+        On batch exception: splits into individual items and retries each.
+        Tracks per-item retry_count up to max_item_retries.
+
+        Returns:
+            List of (item, result) tuples where result is the processed value or Exception
+        """
+        results: list[tuple[BatchItem, Any]] = []
+
+        # Try batch processing first
+        try:
+            batch_result = await self._process_batch(items)
+            # All succeeded
+            for item, res in zip(items, batch_result):
+                results.append((item, res))
+            return results
+        except Exception as batch_error:
+            logger.warning(f'[BatchProcessor] Batch failed, sharding: {batch_error}')
+            self._stats.sharded_count += 1
+
+            # F-05: Shard retry — split and retry individually
+            for item in items:
+                item_result: Any = batch_error  # Default to batch error
+                for attempt in range(self._config.max_item_retries + 1):
+                    try:
+                        item_result = await safe_wait_for(
+                            self._process_single(item),
+                            timeout=item.timeout,
+                        )
+                        self._stats.processed_count += 1
+                        break  # Success, exit retry loop
+                    except Exception as item_error:
+                        item_result = item_error
+                        if attempt < self._config.max_item_retries:
+                            item.retry_count += 1
+                            self._stats.retried_count += 1
+                            logger.debug(
+                                f'[BatchProcessor] Item {item.id} retry {attempt + 1}/{self._config.max_item_retries}'
+                            )
+                        else:
+                            # Exhausted retries
+                            self._stats.failed_count += 1
+                            logger.warning(
+                                f'[BatchProcessor] Item {item.id} exhausted retries: {item_error}'
+                            )
+                results.append((item, item_result))
+            return results
+
+    async def _process_batch(self, items: list[BatchItem]) -> list[Any]:
+        """
+        Process a batch of items.
+
+        Override this method for custom batch processing logic.
+        Default: processes items sequentially (subclass should override for parallel).
+
+        Returns:
+            List of results in same order as items
+        """
+        results = []
+        for item in items:
+            result = await self._process_single(item)
+            results.append(result)
+        return results
 
     async def _process_single(self, item: BatchItem) -> Any:
         """

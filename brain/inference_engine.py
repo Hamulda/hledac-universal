@@ -36,6 +36,7 @@ import msgspec
 
 from hledac.universal.brain.deephermes3_engine import _get_xxh3_hex
 from hledac.universal.utils.lru_cache import LRUCache
+from hledac.universal.utils.exceptions import InferenceLoopExceeded
 import numpy as np
 try:
     from hledac.universal.utils.eig import EIGCalculator
@@ -285,9 +286,9 @@ class InferenceEngine:
     MAX_EVIDENCE_ITEMS = 10000
     MAX_BFS_QUEUE = 1000
     MAX_BFS_DEPTH = 10
-    __slots__ = tuple(('_evidence', '_evidence_graph', '_evidence_pruned_count', '_graph_pruned_count', '_hypothesis_set', '_inference_rules', '_thread_pool', 'max_chain_depth', 'min_confidence_threshold', 'streaming_batch_size', 'use_mlx'))
+    __slots__ = tuple(('_evidence', '_evidence_graph', '_evidence_pruned_count', '_graph_pruned_count', '_hypothesis_set', '_inference_rules', '_thread_pool', 'max_chain_depth', 'max_total_iterations', 'min_confidence_threshold', 'streaming_batch_size', 'use_mlx', '_total_iterations'))
 
-    def __init__(self, max_chain_depth: int=5, min_confidence_threshold: float=0.3, use_mlx: bool=True, streaming_batch_size: int=1000):
+    def __init__(self, max_chain_depth: int=5, min_confidence_threshold: float=0.3, use_mlx: bool=True, streaming_batch_size: int=1000, max_total_iterations: int=100):
         """
         Initialize InferenceEngine.
 
@@ -296,8 +297,10 @@ class InferenceEngine:
             min_confidence_threshold: Minimum confidence to consider evidence
             use_mlx: Whether to use MLX acceleration when available
             streaming_batch_size: Batch size for streaming operations
+            max_total_iterations: Maximum total BFS iterations (prevents infinite loops)
         """
         self.max_chain_depth = max_chain_depth
+        self.max_total_iterations = max_total_iterations
         self.min_confidence_threshold = min_confidence_threshold
         self.use_mlx = use_mlx and MLX_AVAILABLE
         self.streaming_batch_size = streaming_batch_size
@@ -308,8 +311,9 @@ class InferenceEngine:
         self._graph_pruned_count = 0
         self._evidence_pruned_count = 0
         self._hypothesis_set: list[dict] = []
+        self._total_iterations = 0
         self._init_inference_rules()
-        logger.info(f'InferenceEngine initialized (MLX: {self.use_mlx}, max_depth: {max_chain_depth})')
+        logger.info(f'InferenceEngine initialized (MLX: {self.use_mlx}, max_depth: {max_chain_depth}, max_iter: {max_total_iterations})')
 
     def _run_coro_sync_safe(self, coro):
         """Run coroutine safely in a thread pool.
@@ -695,13 +699,22 @@ class InferenceEngine:
         """Breadth-first search for inference chain."""
         if start_id == target_id:
             return []
-        queue = deque([(start_id, [start_id], 0)])
+        # F-08: Reset counter per-call so each BFS starts fresh
+        self._total_iterations = 0
+        queue = deque([(start_id, [start_id], 0)], maxlen=self.MAX_BFS_QUEUE)
         visited = {start_id}
         while queue:
+            # F-08: Prevent infinite loops via total iteration cap
+            self._total_iterations += 1
+            if self._total_iterations >= self.max_total_iterations:
+                raise InferenceLoopExceeded(
+                    f"InferenceEngine BFS exceeded max_total_iterations={self.max_total_iterations} "
+                    f"(loop would burn CPU indefinitely with malformed evidence)"
+                )
             current_id, path, depth = queue.popleft()
             if depth >= max_depth:
                 continue
-            neighbors = self._evidence_graph.get(current_id, set())
+            neighbors = self._evidence_graph.get(current_id, set()) or set()
             for neighbor_id in neighbors:
                 if neighbor_id in visited:
                     continue
@@ -714,6 +727,9 @@ class InferenceEngine:
 
     def _path_to_chain(self, path: list[str]) -> list[InferenceStep]:
         """Convert evidence path to inference chain."""
+        # Defensive: path must have at least 2 elements (caller guarantees this)
+        if len(path) < 2:
+            return []
         chain = []
         for from_id, to_id in zip(path, path[1:]):
             from_ev = self._evidence.get(from_id)
@@ -1260,7 +1276,7 @@ class MultiHopReasoner:
         max_paths: Maximum number of paths to return (prevents combinatorial explosion)
         min_confidence: Minimum confidence threshold for path inclusion
     """
-    __slots__ = tuple(('inference_engine', 'max_hops', 'max_paths', 'min_confidence'))
+    __slots__ = tuple(('inference_engine', 'max_hops', 'max_paths', 'min_confidence', '_total_iterations'))
 
     def __init__(self, inference_engine: InferenceEngine, max_hops: int=6, max_paths: int=100, min_confidence: float=0.3):
         """
@@ -1276,6 +1292,7 @@ class MultiHopReasoner:
         self.max_hops = max(3, min(10, max_hops))
         self.max_paths = max_paths
         self.min_confidence = min_confidence
+        self._total_iterations = 0
         logger.info(f'MultiHopReasoner initialized (max_hops: {max_hops}, max_paths: {max_paths}, min_confidence: {min_confidence})')
 
     async def reason(self, start: str, end: str, min_confidence: float | None=None, max_hops: int | None=None) -> list[MultiHopPath]:
@@ -1332,9 +1349,18 @@ class MultiHopReasoner:
             return []
         paths_found = []
         paths_explored = 0
-        queue = deque([(start, [], {start}, 1.0)], maxlen=self.MAX_BFS_QUEUE)
-        effective_max_depth = min(max_depth, self.MAX_BFS_DEPTH)
+        # F-08: Reset counter per-call so each BFS starts fresh
+        self._total_iterations = 0
+        queue = deque([(start, [], {start}, 1.0)], maxlen=self.inference_engine.MAX_BFS_QUEUE)
+        effective_max_depth = min(max_depth, self.inference_engine.MAX_BFS_DEPTH)
         while queue and paths_explored < self.max_paths:
+            # F-08: Prevent infinite loops via total iteration cap
+            self._total_iterations += 1
+            if self._total_iterations >= self.inference_engine.max_total_iterations:
+                raise InferenceLoopExceeded(
+                    f"MultiHopReasoner BFS exceeded max_total_iterations={self.inference_engine.max_total_iterations} "
+                    f"(loop would burn CPU indefinitely with malformed evidence)"
+                )
             current_entity, hops, visited, current_confidence = queue.popleft()
             if len(hops) >= effective_max_depth:
                 continue

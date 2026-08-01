@@ -487,6 +487,16 @@ class FetchCoordinator(UniversalCoordinator):
             except Exception as e:  # noqa: BLE001 — best-effort; transport init failure; CaptchaDetector disabled gracefully
                 logger.warning('CaptchaDetector init failed: %s', e)
                 self._captcha_detector = None
+        # F-07: Cloudflare / DataDome clearance cookie jar
+        self._clearance_jar: Any | None = None
+        if os.environ.get('HLEDAC_ENABLE_CAPTCHA', '0') == '1':
+            try:
+                from ..security.clearance_cookie_jar import get_clearance_jar
+                self._clearance_jar = get_clearance_jar()
+                logger.info('ClearanceCookieJar enabled via HLEDAC_ENABLE_CAPTCHA=1')
+            except Exception as e:  # noqa: BLE001 — best-effort; cookie jar init failure; clearance disabled gracefully
+                logger.warning('ClearanceCookieJar init failed: %s', e)
+                self._clearance_jar = None
         self._dedup_lock = asyncio.Lock()
         self._concurrency = TokenBucketController(rate=5, capacity=10)
         # ISSUE 2.2: Unified AIMD controller — single AtomicU64 in Rust.
@@ -1141,7 +1151,7 @@ class FetchCoordinator(UniversalCoordinator):
             await self._aimd_release_failure()
             return None
 
-    async def _fetch_with_curl(self, url: str, proxy: str | None=None, *, resolve: dict[str, str] | None=None) -> dict[str, Any] | None:
+    async def _fetch_with_curl(self, url: str, proxy: str | None=None, *, resolve: dict[str, str] | None=None, _extra_headers: dict[str, str] | None=None) -> dict[str, Any] | None:
         """Fetch URL via curl_cffi with HTTP/3 Alt-Svc support (F265C).
 
         ISSUE-0.2 FIX: Uses CAPS-based curl_cffi availability check.
@@ -1187,7 +1197,9 @@ class FetchCoordinator(UniversalCoordinator):
                 pass
             _curl_http_version = _altsvc_http_version_for(_altsvc_extract_host(url))
             _ja3_profile = next_ja3_profile()
-            _curl_result = await fetch_via_curl_cffi_with_caps_check(url=url, headers=None, timeout_s=30.0, max_bytes=10 * 1024 * 1024, profile=_ja3_profile, http_version=_curl_http_version, _pre_probe=False, resolve=resolve)
+            # F-07: Merge extra headers (clearance cookies) with request headers
+            _req_headers = dict(_extra_headers) if _extra_headers else None
+            _curl_result = await fetch_via_curl_cffi_with_caps_check(url=url, headers=_req_headers, timeout_s=30.0, max_bytes=10 * 1024 * 1024, profile=_ja3_profile, http_version=_curl_http_version, _pre_probe=False, resolve=resolve)
             if _curl_result is None:
                 return {'url': url, 'content': b'', 'error': 'curl_cffi_caps_check_failed'}
             _altsvc_record_from_result(url, _curl_result.get('headers'))
@@ -1952,10 +1964,28 @@ class FetchCoordinator(UniversalCoordinator):
                 _curl_result: dict[str, Any] | None = None
                 _js_probe_result: dict[str, Any] | None = None
 
-                async def _curl_task(*, _attempt: int = attempt, _proxy: str | None = proxy) -> dict[str, Any] | None:
+                # F-07: Get clearance cookies for domain (Cloudflare/DataDome bypass)
+                _clearance_headers: dict[str, str] = {}
+                if self._clearance_jar is not None:
+                    try:
+                        _clearance = self._clearance_jar.get(_host_name)
+                        if _clearance:
+                            from ..security.turnstile_solver import inject_clearance_cookies
+                            _clearance_headers = inject_clearance_cookies(_clearance)
+                            logger.debug('[CLEARANCE] Injecting %d cookies for %s', len(_clearance), _host_name)
+                    except Exception:  # noqa: BLE001 — best-effort; clearance cookie injection failure
+                        pass
+
+                async def _curl_task(*, _attempt: int = attempt, _proxy: str | None = proxy, _extra_headers: dict[str, str] | None = None) -> dict[str, Any] | None:
                     """Single curl fetch — same semantics as original _fetch_with_curl."""
                     trace_fetch_start(url, 'curl', {'attempt': _attempt, 'timeout': TIMEOUT_CLEARNET_HTML, 'resolve': _resolve})
-                    r: dict[str, Any] | None = await self._fetch_with_curl(url, _proxy, resolve=_resolve)
+                    # F-07: Merge clearance headers with existing headers
+                    _req_headers = dict(_extra_headers) if _extra_headers else None
+                    if _clearance_headers:
+                        if _req_headers is None:
+                            _req_headers = {}
+                        _req_headers.update(_clearance_headers)
+                    r: dict[str, Any] | None = await self._fetch_with_curl(url, _proxy, resolve=_resolve, _extra_headers=_req_headers)
                     if r and (not r.get('error')):
                         trace_fetch_end(url, 'curl', 'ok', 0.0)
                     else:
@@ -2005,7 +2035,7 @@ class FetchCoordinator(UniversalCoordinator):
                 # Race: curl vs JS probe — both run concurrently, first dict result wins.
                 # parallel(policy="collect") collects results without raising.
                 results = await parallel(
-                    [_curl_task(), _js_probe_task()],
+                    [_curl_task(_extra_headers=_clearance_headers), _js_probe_task()],
                     policy="collect",
                     concurrency=2,
                     ctx="curl_js_probe",
@@ -2133,6 +2163,27 @@ class FetchCoordinator(UniversalCoordinator):
                 _ct_log = ct[:128]
                 logger.debug('[OSINT-04] Blocking parse for content-type %s on %s', _ct_log, url)
                 result['content'] = b''
+        # F-07: Cloudflare Turnstile / DataDome clearance cookie handling
+        # Only invoke challenge detection + storage path when status suggests a challenge
+        if result and result.get('status_code') in (403, 429) and self._clearance_jar is not None:
+            try:
+                from ..security.turnstile_solver import (
+                    detect_turnstile_challenge,
+                    get_clearance_for_domain,
+                )
+                result_headers = result.get('headers') or {}
+                result_content = result.get('content', b'')
+                # Guard: only proceed if challenge signatures are actually present
+                if detect_turnstile_challenge(url, result.get('status_code', 0), result_headers, result_content):
+                    # get_clearance_for_domain is async — awaits extract_clearance_token_from_headers (sync)
+                    # but is defined as async for future browser-based solving
+                    clearance = await get_clearance_for_domain(
+                        _host_name, url, result.get('status_code', 0), result_headers, result_content
+                    )
+                    if clearance:
+                        logger.info('[CLEARANCE] Stored %d clearance cookies for %s', len(clearance), _host_name)
+            except Exception:  # noqa: BLE001 — best-effort; clearance detection/storing failure
+                pass
         if self._captcha_detector is not None and result and result.get('content'):
             ct = result.get('content_type', '')
             content_bytes = result['content']

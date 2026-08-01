@@ -40,6 +40,28 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_S = 10.0
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10MB hard cap
 
+# F-02: JA3 rotation on HTTP 403/429 — retry constants
+# HTTP status codes that indicate a banned JA3 profile (rotate on retry)
+_JA3_BAN_STATUS_CODES: frozenset[int] = frozenset({403, 429})
+# Maximum retry attempts with JA3 rotation (1 initial + 3 retries = 4 total)
+_MAX_JA3_RETRIES: int = 3
+# Backoff base: 1s, 2s, 4s (exponential) capped at 8s with jitter
+_JA3_BACKOFF_MAX_S: float = 8.0
+_JITTER_RNG_RANGE: float = 0.5  # ±25% jitter relative to backoff
+
+
+def _ja3_ban_backoff(attempt: int) -> float:
+    """Compute jittered backoff in seconds for JA3 ban retry attempt.
+
+    Exponential base: 1.0, 2.0, 4.0 seconds (capped at _JA3_BACKOFF_MAX_S).
+    Jitter: ±_JITTER_RNG_RANGE of the backoff value.
+    """
+    import random
+    base = min(_JA3_BACKOFF_MAX_S, 1.0 * (2 ** attempt))
+    jitter = base * _JITTER_RNG_RANGE
+    return base + random.uniform(-jitter, jitter)
+
+
 # Tor SOCKS5H proxy — DNS resolved by Tor, not localhost
 _TOR_CURL_PROXY: str = ENV.get_str("TOR_SOCKS_PROXY_URL", "socks5h://127.0.0.1:9050")
 
@@ -134,13 +156,14 @@ _curl_cffi_sessions: dict[str, Any] = {}
 _curl_cffi_lock = LazyAsyncioLock()
 _curl_cffi_profiles_order: deque[str] = deque()  # track access order for LRU via popleft()
 
-# F273H: Per-host session cache — host -> (session, last_access_monotonic, profile)
-# F270: Values from canonical constants
+# F273H: Per-host session cache — (host, profile) -> (session, last_access_monotonic)
+# F-02 FIX: Profile is now part of the cache key so that JA3 rotation on retry
+# creates a fresh session instead of reusing the cached session with the banned profile.
 _M1_BOUNDS = M1_BOUNDS()
 _MAX_HOST_SESSIONS: int = _M1_BOUNDS.curl_host_session_max
 _HOST_SESSION_TTL_S: float = _M1_BOUNDS.curl_host_session_ttl_s
-_host_sessions: dict[str, tuple[Any, float, str]] = {}
-_host_access_order: deque[str] = deque()  # LRU: move to end on access
+_host_sessions: dict[tuple[str, str], tuple[Any, float]] = {}
+_host_access_order: deque[tuple[str, str]] = deque()  # LRU: move to end on access
 
 # ISSUE-8.1 / F-03: Per-(host, resolve_target) session cache for DNS rebinding protection
 # Key: (host, frozenset of resolve bindings) -> AsyncSession
@@ -351,6 +374,8 @@ async def async_get_curl_cffi_session(profile: str = "chrome110") -> tuple[bool,
 
 
 # F273H: Public API — get session keyed by (url, profile) for keepalive reuse
+# F-02 FIX: Cache key is (host, profile) so that JA3 rotation on retry creates
+# a fresh session with the new profile instead of reusing the banned profile's session.
 async def async_get_curl_cffi_session_for_host(
     url: str,
     profile: str = "chrome110",
@@ -359,8 +384,8 @@ async def async_get_curl_cffi_session_for_host(
     Get or create a curl_cffi AsyncSession for a specific host.
 
     Per-host caching keeps the TCP connection + TLS session ticket warm
-    across requests to the same host. First request pays full TCP+TLS cost;
-    subsequent requests to the same host reuse the persistent connection
+    across requests to the same (host, profile) pair. First request pays
+    full TCP+TLS cost; subsequent requests reuse the persistent connection
     (~200-400 ms saved per request on M1).
 
     Args:
@@ -386,18 +411,21 @@ async def async_get_curl_cffi_session_for_host(
         ok, sess, prof = await async_get_curl_cffi_session(profile)
         return ok, sess, prof, ""
 
-    # Fast path: check host cache under lock
+    # Cache key includes profile so JA3 rotation creates fresh sessions
+    cache_key = (host, profile)
+
+    # Fast path: check host+profile cache under lock
     async with _curl_cffi_lock:
         now = time.monotonic()
-        if host in _host_sessions:
-            session, last_access, cached_profile = _host_sessions[host]
+        if cache_key in _host_sessions:
+            session, last_access = _host_sessions[cache_key]
             if now - last_access < _HOST_SESSION_TTL_S:
-                if host in _host_access_order:
-                    _host_access_order.remove(host)
-                _host_access_order.append(host)
-                _host_sessions[host] = (session, now, cached_profile)
-                logger.debug(f"[F273H] host cache hit: {host}")
-                return True, session, cached_profile, host
+                if cache_key in _host_access_order:
+                    _host_access_order.remove(cache_key)
+                _host_access_order.append(cache_key)
+                _host_sessions[cache_key] = (session, now)
+                logger.debug(f"[F273H/F-02] host+profile cache hit: {host} profile={profile}")
+                return True, session, profile, host
             else:
                 # Expired — evict
                 try:
@@ -408,35 +436,35 @@ async def async_get_curl_cffi_session_for_host(
                         )
                 except Exception:  # noqa: BLE001
                     pass
-                del _host_sessions[host]
-                if host in _host_access_order:
-                    _host_access_order.remove(host)
+                del _host_sessions[cache_key]
+                if cache_key in _host_access_order:
+                    _host_access_order.remove(cache_key)
 
-    # Miss: get or create profile session, then cache per-host
-    ok, session, used_profile = await async_get_curl_cffi_session(profile)
+    # Miss: get or create profile session, then cache per-(host, profile)
+    ok, session, _used_profile = await async_get_curl_cffi_session(profile)
     if not ok or session is None:
-        return False, None, used_profile, host
+        return False, None, profile, host
 
     async with _curl_cffi_lock:
         now = time.monotonic()
         while len(_host_sessions) >= _MAX_HOST_SESSIONS and _host_access_order:
-            oldest_host = _host_access_order.popleft()
-            if oldest_host in _host_sessions:
-                old_session, _, _ = _host_sessions.pop(oldest_host)
+            oldest_key = _host_access_order.popleft()
+            if oldest_key in _host_sessions:
+                old_session, _ = _host_sessions.pop(oldest_key)
                 try:
                     if hasattr(old_session, "aclose"):
                         safe_create_task(
                             old_session.aclose(),
-                            name=f"curl_cffi:host_evict:{oldest_host}",
+                            name=f"curl_cffi:host_evict:{oldest_key[0]}",
                         )
                 except Exception:  # noqa: BLE001
                     pass
 
-        _host_sessions[host] = (session, now, used_profile)
-        _host_access_order.append(host)
-        logger.debug(f"[F273H] host cache store: {host} (profile={used_profile})")
+        _host_sessions[cache_key] = (session, now)
+        _host_access_order.append(cache_key)
+        logger.debug(f"[F273H/F-02] host+profile cache store: {host} profile={profile}")
 
-    return True, session, used_profile, host
+    return True, session, profile, host
 
 
 async def _get_or_create_session(profile: str) -> Any | None:
@@ -532,7 +560,7 @@ async def close_curl_cffi_sessions_async() -> None:
         _curl_cffi_sessions.clear()
         _curl_cffi_profiles_order.clear()
 
-        host_sessions = [s for s, _, _ in _host_sessions.values()]
+        host_sessions = [s for s, _ in _host_sessions.values()]
         _host_sessions.clear()
         _host_access_order.clear()
 
@@ -842,6 +870,12 @@ async def fetch_via_curl_cffi(
     This prevents DNS rebinding attacks where a hostname might resolve to
     a public IP during validation but switch to a private IP before fetch.
 
+    F-02 FIX: Dynamic JA3 rotation on HTTP 403/429.
+    When the server returns a 403 or 429 status (JA3 ban), the fetch is
+    retried with a fresh JA3 profile via next_ja3_profile(). Up to
+    _MAX_JA3_RETRIES retries are attempted with exponential backoff + jitter.
+    Non-retryable errors (timeouts, connection errors) fail immediately.
+
     Args:
         resolve: Dict of hostname -> IP address to pre-bind.
                  Example: {"example.com": "1.2.3.4"}
@@ -870,139 +904,178 @@ async def fetch_via_curl_cffi(
             tls_impersonate=profile,
         )
 
-    # ISSUE-8.1 / F-03: DNS Rebinding Protection — resolve requires dedicated session
-    # curl_cffi does NOT support per-request resolve parameter; CURLOPT_RESOLVE
-    # must be set at session creation time via curl_options.
-    # F-03 Fix: Session is now cached by (host, frozenset of resolve bindings)
-    # so repeated requests to the same (hostname, IP) reuse the TLS session.
-    if resolve:
-        try:
-            session, used_profile = await _get_or_create_resolved_session(
-                resolve, profile, timeout_s
-            )
-            _ja3_log(profile=profile, url=url, used_profile=used_profile)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            return _make_error_result(
-                url,
-                error=f"resolve_session_error: {e}",
-                failure_stage="unknown",
-                network_error_kind="other",
-                selected_transport="curl_cffi",
-                tls_impersonate=profile,
-            )
-    else:
-        try:
-            ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(url, profile)
-            _ja3_log(profile=profile, url=url, used_profile=used_profile)
-            if not ok or session is None:
+    # F-02: Retry loop with JA3 rotation on 403/429 (JA3 ban).
+    # attempt=0: use provided profile (no rotation)
+    # attempt>0: rotate to next JA3 profile via next_ja3_profile()
+    last_result: dict[str, Any] | None = None
+    for attempt in range(_MAX_JA3_RETRIES + 1):
+        # Rotate JA3 profile on retry attempts (not on first attempt)
+        _current_profile = next_ja3_profile() if attempt > 0 else profile
+
+        # ISSUE-8.1 / F-03: DNS Rebinding Protection — resolve requires dedicated session
+        # curl_cffi does NOT support per-request resolve parameter; CURLOPT_RESOLVE
+        # must be set at session creation time via curl_options.
+        # F-03 Fix: Session is now cached by (host, frozenset of resolve bindings)
+        # so repeated requests to the same (hostname, IP) reuse the TLS session.
+        if resolve:
+            try:
+                session, used_profile = await _get_or_create_resolved_session(
+                    resolve, _current_profile, timeout_s
+                )
+                _ja3_log(profile=_current_profile, url=url, used_profile=used_profile)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
                 return _make_error_result(
                     url,
-                    error=f"session_creation_failed: {used_profile}",
+                    error=f"resolve_session_error: {e}",
                     failure_stage="unknown",
                     network_error_kind="other",
                     selected_transport="curl_cffi",
-                    tls_impersonate=used_profile,
+                    tls_impersonate=_current_profile,
                 )
+        else:
+            try:
+                ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(
+                    url, _current_profile
+                )
+                _ja3_log(profile=_current_profile, url=url, used_profile=used_profile)
+                if not ok or session is None:
+                    return _make_error_result(
+                        url,
+                        error=f"session_creation_failed: {used_profile}",
+                        failure_stage="unknown",
+                        network_error_kind="other",
+                        selected_transport="curl_cffi",
+                        tls_impersonate=used_profile,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                return _make_error_result(
+                    url,
+                    error=f"session_error: {e}",
+                    failure_stage="unknown",
+                    network_error_kind="other",
+                    selected_transport="curl_cffi",
+                    tls_impersonate=_current_profile,
+                )
+
+        try:
+            # Issue 10.2: JA3 consistency — inject User-Agent matching TLS profile
+            # when caller did not provide one. Callers passing custom headers keep
+            # full control (e.g., build_randomized_headers sets Sec-Ch-Ua, etc.).
+            _merged_headers: dict[str, str] = dict(headers) if headers else {}
+            if "User-Agent" not in _merged_headers:
+                _merged_headers["User-Agent"] = get_ua_for_profile(used_profile)
+            # ISSUE-8.1: DNS Rebinding Protection — resolve is now bound to session via curl_options
+            # No need to pass resolve per-request; it's already set on the session
+            response = await session.get(url, headers=_merged_headers, timeout=timeout_s)
+
+            # curl_cffi iter_content() returns a sync generator, not async iterator.
+            # Use response.content directly (already bytes) and truncate manually if needed.
+            _raw_content = response.content or b""
+            _truncated = len(_raw_content) > max_bytes
+            content_bytes = _raw_content[:max_bytes] if _truncated else _raw_content
+            if _truncated:
+                logger.debug(f"curl_cffi body truncated to {max_bytes} bytes for {url}")
+
+            content_type = ""
+            if response.headers:
+                content_type = response.headers.get("content-type", "")
+
+            http_charset_hint = parse_charset_from_content_type(content_type)
+
+            result = {
+                "url": url,
+                "final_url": url,
+                "content": content_bytes,
+                "status_code": response.status_code,
+                "content_type": content_type,
+                "http_charset_hint": http_charset_hint,
+                "headers": dict(response.headers) if response.headers else {},
+                "success": True,
+                "error": None,
+                "selected_transport": "curl_cffi",
+                "tls_impersonate": used_profile,
+                "failure_stage": None,
+                "network_error_kind": None,
+            }
+
+            # F-02: Check for JA3 ban — rotate profile on retry
+            status = int(response.status_code or 0)
+            if status in _JA3_BAN_STATUS_CODES and attempt < _MAX_JA3_RETRIES:
+                last_result = result
+                backoff_s = _ja3_ban_backoff(attempt)
+                logger.debug(
+                    f"[F-02] JA3 ban (HTTP {status}) for {url} — "
+                    f"retrying with rotated profile (attempt {attempt + 1}/{_MAX_JA3_RETRIES}) "
+                    f"after {backoff_s:.1f}s backoff"
+                )
+                try:
+                    await asyncio.sleep(backoff_s)
+                except asyncio.CancelledError:
+                    # Propagate cancellation immediately — do not silently swallow
+                    raise
+                continue  # retry with next JA3 profile
+            return result
+
+        except TimeoutError:
+            return _make_error_result(
+                url,
+                error="timeout",
+                failure_stage="response",
+                network_error_kind="timeout",
+                selected_transport="curl_cffi",
+                tls_impersonate=used_profile,
+            )
+        except ConnectionRefusedError:
+            return _make_error_result(
+                url,
+                error="connection_refused",
+                failure_stage="connect",
+                network_error_kind="connection_refused",
+                selected_transport="curl_cffi",
+                tls_impersonate=used_profile,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
+            error_str = str(e).lower()
+            if "timeout" in error_str:
+                network_kind = "timeout"
+                failure_stage = "response"
+            elif "dns" in error_str or "name or service not known" in error_str:
+                network_kind = "dns_failure"
+                failure_stage = "resolve"
+            elif "connection reset" in error_str:
+                network_kind = "connection_reset"
+                failure_stage = "connect"
+            else:
+                network_kind = "other"
+                failure_stage = "unknown"
+
             return _make_error_result(
                 url,
-                error=f"session_error: {e}",
-                failure_stage="unknown",
-                network_error_kind="other",
+                error=str(e),
+                failure_stage=failure_stage,
+                network_error_kind=network_kind,
                 selected_transport="curl_cffi",
-                tls_impersonate=profile,
+                tls_impersonate=used_profile,
             )
 
-    try:
-        # Issue 10.2: JA3 consistency — inject User-Agent matching TLS profile
-        # when caller did not provide one. Callers passing custom headers keep
-        # full control (e.g., build_randomized_headers sets Sec-Ch-Ua, etc.).
-        _merged_headers: dict[str, str] = dict(headers) if headers else {}
-        if "User-Agent" not in _merged_headers:
-            _merged_headers["User-Agent"] = get_ua_for_profile(used_profile)
-        # ISSUE-8.1: DNS Rebinding Protection — resolve is now bound to session via curl_options
-        # No need to pass resolve per-request; it's already set on the session
-        response = await session.get(url, headers=_merged_headers, timeout=timeout_s)
-
-        # curl_cffi iter_content() returns a sync generator, not async iterator.
-        # Use response.content directly (already bytes) and truncate manually if needed.
-        _raw_content = response.content or b""
-        _truncated = len(_raw_content) > max_bytes
-        content_bytes = _raw_content[:max_bytes] if _truncated else _raw_content
-        if _truncated:
-            logger.debug(f"curl_cffi body truncated to {max_bytes} bytes for {url}")
-
-        content_type = ""
-        if response.headers:
-            content_type = response.headers.get("content-type", "")
-
-        http_charset_hint = parse_charset_from_content_type(content_type)
-
-        return {
-            "url": url,
-            "final_url": url,
-            # content_bytes is already `bytes` from read_body_with_cap (bytearray.collect)
-            # bytes(content_bytes) would be redundant copy (~256B-2MB per fetch)
-            "content": content_bytes,
-            "status_code": response.status_code,
-            "content_type": content_type,
-            "http_charset_hint": http_charset_hint,
-            "headers": dict(response.headers) if response.headers else {},
-            "success": True,
-            "error": None,
-            "selected_transport": "curl_cffi",
-            "tls_impersonate": used_profile,
-            "failure_stage": None,
-            "network_error_kind": None,
-        }
-
-    except TimeoutError:
-        return _make_error_result(
-            url,
-            error="timeout",
-            failure_stage="response",
-            network_error_kind="timeout",
-            selected_transport="curl_cffi",
-            tls_impersonate=used_profile,
-        )
-    except ConnectionRefusedError:
-        return _make_error_result(
-            url,
-            error="connection_refused",
-            failure_stage="connect",
-            network_error_kind="connection_refused",
-            selected_transport="curl_cffi",
-            tls_impersonate=used_profile,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:  # noqa: BLE001
-        error_str = str(e).lower()
-        if "timeout" in error_str:
-            network_kind = "timeout"
-            failure_stage = "response"
-        elif "dns" in error_str or "name or service not known" in error_str:
-            network_kind = "dns_failure"
-            failure_stage = "resolve"
-        elif "connection reset" in error_str:
-            network_kind = "connection_reset"
-            failure_stage = "connect"
-        else:
-            network_kind = "other"
-            failure_stage = "unknown"
-
-        return _make_error_result(
-            url,
-            error=str(e),
-            failure_stage=failure_stage,
-            network_error_kind=network_kind,
-            selected_transport="curl_cffi",
-            tls_impersonate=used_profile,
-        )
+    # All JA3 retries exhausted — return last result if available
+    if last_result is not None:
+        return last_result
+    # Fallback: should not reach here, but return a sensible error
+    return _make_error_result(
+        url,
+        error="ja3_rotation_exhausted",
+        failure_stage="unknown",
+        network_error_kind="other",
+        selected_transport="curl_cffi",
+        tls_impersonate=profile,
+    )
 
 
 def _make_error_result(

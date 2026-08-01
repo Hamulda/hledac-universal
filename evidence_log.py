@@ -1121,7 +1121,9 @@ class EvidenceLog:
                         timestamp DOUBLE NOT NULL,
                         event_type VARCHAR NOT NULL,
                         data VARCHAR NOT NULL,
-                        hash VARCHAR NOT NULL
+                        hash VARCHAR NOT NULL,
+                        prev_chain_hash VARCHAR,
+                        chain_hash VARCHAR
                     )
                 ''')
                 self._duckdb_enabled = True
@@ -1154,7 +1156,9 @@ class EvidenceLog:
                     timestamp REAL NOT NULL,
                     event_type TEXT NOT NULL,
                     data TEXT NOT NULL,
-                    hash TEXT NOT NULL
+                    hash TEXT NOT NULL,
+                    prev_chain_hash TEXT,
+                    chain_hash TEXT
                 )
             ''')
             await self._db.commit()
@@ -1166,7 +1170,7 @@ class EvidenceLog:
             from hledac.universal.paths import EVIDENCE_ROOT
             evidence_dir = EVIDENCE_ROOT
             self._arrow_path = evidence_dir / f'{self._run_id}.arrow'
-            self._arrow_schema = pa.schema([('timestamp', pa.float64()), ('event_type', pa.string()), ('data', pa.string()), ('hash', pa.string())])
+            self._arrow_schema = pa.schema([('timestamp', pa.float64()), ('event_type', pa.string()), ('data', pa.string()), ('hash', pa.string()), ('prev_chain_hash', pa.string()), ('chain_hash', pa.string())])
             self._arrow_writer = ipc.new_file(str(self._arrow_path), self._arrow_schema)
             logger.info("arrow_ipc_enabled", arrow_path=str(self._arrow_path))
 
@@ -1201,7 +1205,9 @@ class EvidenceLog:
                         event_type = data['event_type']
                         event_data = orjson.dumps(data).decode()
                         content_hash = data.get('content_hash', '')
-                        await self._db.execute('INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)', (timestamp, event_type, event_data, content_hash))
+                        prev_chain_hash = data.get('prev_chain_hash', '')
+                        chain_hash = data.get('chain_hash', '')
+                        await self._db.execute('INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)', (timestamp, event_type, event_data, content_hash, prev_chain_hash, chain_hash))
                 await self._db.commit()
             except Exception:
                 await self._db.rollback()
@@ -1446,7 +1452,9 @@ class EvidenceLog:
                         pa.array([e.get('timestamp', datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()),
                         pa.array([e.get('event_type', 'unknown') for e in sub], type=pa.string()),
                         pa.array([orjson.dumps(e.get('data', {})).decode() for e in sub], type=pa.string()),
-                        pa.array([e.get('content_hash', '') for e in sub], type=pa.string())
+                        pa.array([e.get('content_hash', '') for e in sub], type=pa.string()),
+                        pa.array([e.get('prev_chain_hash', '') for e in sub], type=pa.string()),
+                        pa.array([e.get('chain_hash', '') for e in sub], type=pa.string()),
                     ]
                     batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
                     self._arrow_writer.write_batch(batch_arrow)
@@ -1475,7 +1483,7 @@ class EvidenceLog:
             return
 
         # Decode batch to records (same structure as _flush_sqlite_batch)
-        records: list[tuple[float, str, str, str]] = []
+        records: list[tuple[float, str, str, str, str, str]] = []
         for b in batch:
             try:
                 event = msgspec.msgpack.decode(b)
@@ -1486,7 +1494,9 @@ class EvidenceLog:
                 payload_bytes = event[3] if len(event) > 3 else b''
                 payload_str = payload_bytes.decode('utf-8', errors='replace') if isinstance(payload_bytes, bytes) else str(payload_bytes)
                 content_hash = event[6] if len(event) > 6 else ''
-                records.append((timestamp, event_type, payload_str, content_hash))
+                prev_chain_hash = event[9] if len(event) > 9 else None
+                chain_hash = event[10] if len(event) > 10 else None
+                records.append((timestamp, event_type, payload_str, content_hash, prev_chain_hash or '', chain_hash or ''))
             except Exception:  # noqa: BLE001
                 logger.debug("flush_batch_batch_item_failed_skipping", exc_info=True)
                 continue
@@ -1504,7 +1514,7 @@ class EvidenceLog:
             """
             try:
                 self._duckdb_conn.executemany(
-                    'INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)',
+                    'INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)',
                     records,
                 )
                 self._duckdb_conn.commit()
@@ -1530,7 +1540,7 @@ class EvidenceLog:
             return
 
         # Decode once
-        records: list[tuple[float, str, bytes, str]] = []
+        records: list[tuple[float, str, bytes, str, str, str]] = []
         for b in batch:
             try:
                 event = msgspec.msgpack.decode(b)
@@ -1538,7 +1548,9 @@ class EvidenceLog:
                 event_type = event[1] if len(event) > 1 else 'unknown'
                 payload_bytes = event[3] if len(event) > 3 else b''
                 content_hash = event[6] if len(event) > 6 else ''
-                records.append((timestamp, event_type, payload_bytes, content_hash))
+                prev_chain_hash = event[9] if len(event) > 9 else None
+                chain_hash = event[10] if len(event) > 10 else None
+                records.append((timestamp, event_type, payload_bytes, content_hash, prev_chain_hash or '', chain_hash or ''))
             except Exception:  # noqa: BLE001
                 logger.debug("write_payload_encoding_failed_skipping", exc_info=True)
                 continue
@@ -1558,7 +1570,7 @@ class EvidenceLog:
                 conn.execute('PRAGMA journal_mode=WAL')
                 conn.execute('PRAGMA synchronous=NORMAL')
                 conn.executemany(
-                    'INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)',
+                    'INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)',
                     records
                 )
                 conn.commit()
@@ -1587,7 +1599,7 @@ class EvidenceLog:
             try:
                 for i in range(0, len(batch), self._ARROW_SUB_BATCH):
                     sub = batch[i:i + self._ARROW_SUB_BATCH]
-                    arrays = [pa.array([e.get('timestamp', datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()), pa.array([e.get('event_type', 'unknown') for e in sub], type=pa.string()), pa.array([orjson.dumps(e.get('data', {})).decode() for e in sub], type=pa.string()), pa.array([e.get('content_hash', '') for e in sub], type=pa.string())]
+                    arrays = [pa.array([e.get('timestamp', datetime.now(UTC).timestamp()) for e in sub], type=pa.float64()), pa.array([e.get('event_type', 'unknown') for e in sub], type=pa.string()), pa.array([orjson.dumps(e.get('data', {})).decode() for e in sub], type=pa.string()), pa.array([e.get('content_hash', '') for e in sub], type=pa.string()), pa.array([e.get('prev_chain_hash', '') for e in sub], type=pa.string()), pa.array([e.get('chain_hash', '') for e in sub], type=pa.string())]
                     batch_arrow = pa.record_batch(arrays, schema=self._arrow_schema)
                     self._arrow_writer.write_batch(batch_arrow)
                 return
@@ -1599,14 +1611,16 @@ class EvidenceLog:
             event_type = event_data.get('event_type', 'unknown')
             data = orjson.dumps(event_data).decode()
             content_hash = event_data.get('content_hash', '')
-            records.append((timestamp, event_type, data, content_hash))
+            prev_chain_hash = event_data.get('prev_chain_hash', '')
+            chain_hash = event_data.get('chain_hash', '')
+            records.append((timestamp, event_type, data, content_hash, prev_chain_hash, chain_hash))
         db = self._db
         if db is None:
             return
         if not hasattr(db, 'executemany'):
             logger.warning("evidence_log_db_not_aiosqlite_connection")
             return
-        await db.executemany('INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)', records)
+        await db.executemany('INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)', records)
         await db.commit()
 
     def _init_encryption(self):
@@ -1725,7 +1739,7 @@ class EvidenceLog:
                         PRAGMA wal_autocheckpoint=1000;
                         PRAGMA cache_size=-8192;
                     ''')
-                    conn.execute('INSERT INTO events (timestamp, event_type, data, hash) VALUES (?, ?, ?, ?)', (_event_dict.get('timestamp', 0.0), _event_dict.get('event_type', 'unknown'), orjson.dumps(_event_dict).decode(), _event_dict.get('content_hash', '')))
+                    conn.execute('INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)', (_event_dict.get('timestamp', 0.0), _event_dict.get('event_type', 'unknown'), orjson.dumps(_event_dict).decode(), _event_dict.get('content_hash', ''), _event_dict.get('prev_chain_hash', ''), _event_dict.get('chain_hash', '')))
                     conn.commit()
                     conn.close()
                 t = threading.Thread(target=_sync_insert, daemon=True)

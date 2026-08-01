@@ -1,75 +1,61 @@
 ================================================================================
-CLAUDE CODE TASK: STRATEGIC DEEP ARCHITECTURE & CODEBASE AUDIT (READ-ONLY)
+CLAUDE CODE TASK: NEXT-GEN OSINT, AGENTIC SAFETY & FORENSIC AUDIT (READ-ONLY)
 ================================================================================
 
 PROJEKT: ~/PycharmProjects/Hledac/hledac/universal
-TARGET ENVIRONMENT: macOS M1 (8GB UMA RAM), Python 3.14.6 Standard GIL (NE-free-threaded), MLX Engine, PyO3 Rust Extensions.
+TARGET ENVIRONMENT: macOS M1 (8GB UMA RAM), Python 3.14.6 Standard GIL, MLX Engine.
 
 MÓD PROVEDENÍ: STRICT READ-ONLY AUDIT.
-NEUPRAVUJ, NEMĚŇ ANI NEVYTVÁŘEJ ŽÁDNÉ KÓDOVÉ SOUBORY. VÝSTUPEM JE POUZE STRUKTUROVANÁ MASTER ROADMAPA.
+NEUPRAVUJ, NEMĚŇ ANI NEVYTVÁŘEJ ŽÁDNÉ KÓDOVÉ SOUBORY. VÝSTUPEM JE POUZE STRUKTUROVANÁ ROADMAPA PRO FÁZI 5 (NEXT-GEN CAPABILITIES).
+
+Základní stabilita (Memory leaks, FFI panics, Async TaskGroups, DNS leaks) JE JIŽ VYŘEŠENA. Nyní se soustřeď výhradně na pokročilou autonomii, evasive OSINT a MLX optimalizace.
 
 --------------------------------------------------------------------------------
-1. NOISE FILTER (CO BLESKOVĚ IGNOROVAT - NEZTRÁCEJ NA TOM ČAS)
+1. NOISE FILTER (CO BLESKOVĚ IGNOROVAT)
 --------------------------------------------------------------------------------
-- IGNORUJ: Chybějící docstringy, drobné chyby ve formátování (PEP8), překlepy v proměnných.
-- IGNORUJ: Nepodstatná linter varování, chybějící type-hinty u interních pomocných funkcí.
-- IGNORUJ: .md soubory, složky auditů, staré reporty a dokumentaci (ověřuj VÝHRADNĚ živý kód v .py a .rs).
+- IGNORUJ: Linter varování, type-hinty, PEP8, docstringy, chybějící testy, základní memory/async leaky (již opraveno).
 
 --------------------------------------------------------------------------------
-2. CÍLOVÉ OBLASTI ANALÝZY (HLEDEJ TYTO 5 STRATEGICKÝCH ÚHLŮ)
+2. CÍLOVÉ OBLASTI ANALÝZY (ANGLE 6: THE OFENSIVE & AUTONOMOUS EDGE)
 --------------------------------------------------------------------------------
 
-[ÚHEL 1: ARCHITEKTURA, PROPOJENOST & DATOVÉ KONTRAKTY]
-- Zkontroluj správnost importů, názvů funkcí a celkovou topologii modulů.
-- Hledej SRP (Single Responsibility) porušení (God Objects jako ModelManager).
-- Ověř konzistenci datových kontraktů (msgspec.Struct vs list/dict) na hranicích LMDB <-> LanceDB <-> DuckDB.
-- Najdi osiřelé datové toky (zápis do jedné DB bez synchronizace s druhou).
+[ÚHEL 6.1: ADVANCED ANTI-BOT EVASION & FINGERPRINTING]
+- Zkontroluj `fetching/curl_cffi_fetch.py` a headless browser implementace.
+- Hledej statické TLS/JA3 otisky (např. hardcoded `impersonate="chrome120"`). Existuje dynamická rotace prohlížečů, verzí a hlaviček při HTTP 403 / 429?
+- Ověř, zda systém umí detekovat Cloudflare Turnstile / DataDome challenge a má strategii pro backoff/bypass (nejen tupý retry).
 
-[ÚHEL 2: MEMORY SAFETY, M1 HARDWARE & UMA PRESSURE]
-- Hledej MLX GPU stalls: Volání mx.eval([]) / clear_cache() v hlavním async threadu.
-- Ověř povinné pořadí: mx.eval([]) MUSÍ předcházet mx.clear_cache().
-- Identifikuj místa chybějícího reaktivního throttlingu při dosažení 7.2 GiB RSS (macOS SWAP limit).
-- Zkontroluj limity velikostí vstupních dat (unbounded HTML, neomezená délka textu pro embeddingy).
-- Ověř uvolňování systémových zdrojů: macOS File Descriptors limit (ulimit -n) a libc malloc_zone_pressure_relief.
+[ÚHEL 6.2: AGENTIC LOOP SAFETY & TOOL CALLING RECOVERY]
+- Zkontroluj `brain/` modul (orchestraci LLM, prompt generation, tool calling).
+- Hledej "Agentic Circuit Breakers": Co se stane, když LLM neustále vrací špatně formátovaný JSON nebo volá neexistující tool? Existuje hard-limit (max_iterations) pro LLM reasoning loop?
+- Ověř mechanismus "Self-Correction" - dostává LLM při selhání zpětnou vazbu o chybě parseru, aby se opravilo, nebo se jen opakuje stejný prompt?
 
-[ÚHEL 3: ASYNC CONCURRENCY, RUST FFI & GIL ISOLATION]
-- Hledej CPU-intensive operace v Rustu (Aho-Corasick, Bloom Filter, hashing), které NEVOLAJÍ py.detach() / release_gil().
-- Zkontroluj Rust FFI panic boundaries: Každá #[pyfunction] v Rustu MUSÍ mít std::panic::catch_unwind, aby panic neshodil celý Python proces (SIGABRT).
-- Vyhledej zastaralé asyncio.gather() vhodné pro migrace na Python 3.14.6 asyncio.TaskGroup.
-- Ověř přítomnost backpressuru a maxsize na VŠECH asyncio.Queue v projektu (hledej put_nowait bez drop-policy).
-- Najdi chybějící Single-Flight vzory (thundering herd při expiraci DNS nebo IOC cache).
+[ÚHEL 6.3: FORENSIC PROVENANCE & CHAIN OF CUSTODY]
+- Zkontroluj `evidence_log.py` a persistence vrstvu.
+- Hledej kryptografické ověřování integrity: Jsou jednotlivé záznamy v logu řetězeny pomocí hashů (jako Merkle Tree nebo blockchain-lite struktura), aby bylo možné prokázat, že log nebyl zpětně zmanipulován (Tamper-Evident)?
+- Podepisují se stažená OSINT data časovým razítkem a hashem původní URL+odpovědi dříve, než projdou LLM transformací?
 
-[ÚHEL 4: OSINT CAPABILITIES, OPSEC & NETWORK ISOLATION]
-- Hledej DNS úniky: Volání systémového OS resolveru pro .onion a .i2p domény dříve než dotaz projde přes proxy.
-- Ověř SSRF ochrany před cURL/HTTP požadavky (blokace 127.0.0.1, 169.254.169.254 AWS metadata).
-- Zkontroluj fallbacky: Zda selhání Tor/I2P proxy nemůže ticho přesměrovat požadavek na clearnet rozhraní.
-- Ověř přítomnost max_bytes streamovacích limitů u všech HTTP odpovědí.
-
-[ÚHEL 5: PROVOZNÍ ODOLNOST, LLM SECURITY & SELF-HEALING]
-- Ošetření LMDB MDB_MAP_FULL (lmdb.MapFullError) a dynamické zvětšování map_size.
-- Automatický plánovač VACUUM a CHECKPOINT pro DuckDB WAL logy.
-- Nepřímý Prompt Injection: Sanitizace staženého webového obsahu před vložením do promptu pro LLM (Hermes3).
-- Secrets Scrubbing: Anonymizace API klíčů, tokenů a hesel před zápisem do EvidenceLogu/databází.
-- Dead-Letter Queue (DLQ): Zda selhání jediného payloadu nezpůsobí pád celé dávky.
+[ÚHEL 6.4: DEEP MLX KV-CACHE & INFERENCE OPTIMIZATION]
+- Zkontroluj `brain/deephermes3_engine.py` a `utils/mlx_memory/`.
+- Hledej pokročilou správu KV Cache pro dlouhé konverzace/sprinty. Používá se "Sliding Window" pro uvolňování starých tokenů z paměti?
+- Podporuje systém "Prompt Caching" (ukládání pre-computovaných prefixů systémových promptů), aby se nepočítaly při každém generování znovu?
 
 --------------------------------------------------------------------------------
 3. STRATEGIE PROVEDENÍ ANALÝZY PRO CLAUDE CODE
 --------------------------------------------------------------------------------
-1. Neprocházej soubory slepě po jednom. Použij `grep` / `ripgrep` pro nalezení klíčových vzorů (např. `asyncio.gather`, `mx.clear_cache`, `unsafe`, `Queue(`, `py.detach`, `catch_unwind`).
-2. Křížově porovnej Rust FFI rozhraní v `rust_extensions/src/lib.rs` s jejich voláním v Pythonu.
-3. Pro každý nalezený problém zjisti jeho SKUTEČNOU kořenovou příčinu (Root Cause) v širším kontextu systému.
+1. Křížově porovnej mechanismy ve `fetching/` s chybovým zpracováním v `coordinators/` (rotují se proxy/profily při waf_block?).
+2. Hledej `while` cykly nebo rekurzi v `brain/` orchestrátorech – tam číhají nekonečné agentic smyčky.
+3. Analyzuj kryptografickou strukturu `EvidenceEvent`.
 
 --------------------------------------------------------------------------------
-4. POŽADOVANÝ STRUKTUROVANÝ VÝSTUP (MASTER ROADMAP)
+4. POŽADOVANÝ STRUKTUROVANÝ VÝSTUP (NEXT-GEN ROADMAP)
 --------------------------------------------------------------------------------
-Výstup formuluj výhradně jako strukturovanou MASTER ROADMAPU rozdělenou do fází (Phase 0 až Phase 4). Každé zjištění MUSÍ mít tento přesný formát:
+Výstup formuluj jako strukturovanou NEXT-GEN ROADMAPU (Phase 5). Každé zjištění MUSÍ mít tento přesný formát:
 
-ISSUE [KÓD_KATEGORIE]-[ČÍSLO]: [Stručný název problému]
+ISSUE [NEXTGEN]-[ČÍSLO]: [Stručný název problému]
 - Soubor a řádky: [přesná cesta:řádky]
-- Úhel analýzy: [Angle 1 až 5]
-- Závažnost: [🔴 Critical | 🟡 High | 🟢 Medium]
-- Root Cause: [Komplexní vysvětlení kořenové příčiny]
-- Impact: [Reálný dopad na systém, paměť M1 nebo chování při běhu]
-- Cutting-edge Solution: [Přesné, robustní technické řešení kompatibilní s Python 3.14.6 GIL a macOS M1]
+- Oblast: [Evasion | Agentic Safety | Forensics | MLX Tuning]
+- Závažnost: [🔴 Strategic | 🟡 Tactical | 🟢 Enhancement]
+- Root Cause: [Proč současný stav nestačí na produkci v roce 2026]
+- Cutting-edge Solution: [Přesné, vizionářské technické řešení aplikovatelné na aktuální architekturu]
 
-Na závěr připoj tabulku IMPLEMENTAČNÍ PRIORITNÍ MATICE (Issue ID | Fáze | Závažnost | Náročnost S/M/L) a příkazy pro ověření (pytest).
+Zakonči analýzu sekcí "THE AUTONOMOUS HORIZON", kde shrneš, co chybí k dosažení plné L4 autonomie (kde systém sám píše OSINT reporty bez zásahu člověka i při 90% selhání sítě).
