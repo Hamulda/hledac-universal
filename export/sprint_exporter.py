@@ -295,7 +295,10 @@ class JSONFormatter:
             # Sprint F320+: Parallel export formats — JSON + PQ + Vault run concurrently
             async def _write_json() -> str | None:
                 try:
-                    _json_bytes = orjson.dumps(sanitized_obj, option=orjson.OPT_INDENT_2)
+                    # SOVEREIGN-009: Sign forensic JSON report before writing
+                    from hledac.universal.brain.report_signer import sign_forensic_json
+                    signed_obj = sign_forensic_json(sanitized_obj)
+                    _json_bytes = orjson.dumps(signed_obj, option=orjson.OPT_INDENT_2)
                     _CHUNK_SIZE = 64 * 1024
                     with open(report_path, "wb") as f:
                         for _chunk_start in range(0, len(_json_bytes), _CHUNK_SIZE):
@@ -539,11 +542,27 @@ class JSONFormatter:
         except Exception as _ane_err:
             logger.debug("[ANE:export] dedup skipped: %s", _ane_err)
 
+        # ISSUE [APEX]-1010: Create .hledac-sprint bundle
+        bundle_path = None
+        try:
+            from hledac.universal.export.sprint_bundler import bundle_sprint
+            bundle_path = await bundle_sprint(
+                sprint_id=_sprint_id,
+                report_path=report_path,
+                seeds_path=seeds_path,
+                evidence_path=None,  # Auto-detect from EVIDENCE_ROOT
+            )
+            if bundle_path:
+                logger.info(f"[EXPORT] Sprint bundle created: {bundle_path}")
+        except Exception as _bundle_err:
+            logger.warning(f"[EXPORT] Bundle creation failed (non-fatal): {_bundle_err}")
+
         return {
             "report_json": str(report_path) if report_path else "",
             "report_pq_encrypted": str(_pq_encrypted_path) if _pq_encrypted_path else "",
             "report_vault_encrypted": str(_vault_encrypted_path) if _vault_encrypted_path else "",
             "seeds_json": str(seeds_path),
+            "bundle_path": str(bundle_path) if bundle_path else None,
             "product_value_summary": pvs,
             "sprint_summary": sprint_summary,
             "operator_brief": operator_brief,

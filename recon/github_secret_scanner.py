@@ -21,13 +21,13 @@ import httpx
 from hledac.universal.transport.circuit_breaker import checked_httpx_get as checked_aiohttp_get
 from hledac.universal.utils.async_helpers import parallel
 logger = logging.getLogger(__name__)
+from hledac.universal.brain.output_dlp_filter import mask_secret as _mask_secret_impl
+
 _SECRET_REDACT_LEN = 4
 
 def _mask_secret(value: str) -> str:
-    """Mask secrets: nahraď poslední 4 znaky hvězdičkami."""
-    if len(value) <= _SECRET_REDACT_LEN:
-        return '*' * len(value)
-    return value[:-_SECRET_REDACT_LEN] + '*' * _SECRET_REDACT_LEN
+    """Mask secrets via centralized DLP filter (SOVEREIGN-010)."""
+    return _mask_secret_impl(value)
 
 class SecretFinding(msgspec.Struct):
     pattern: str

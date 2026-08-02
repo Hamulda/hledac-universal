@@ -123,11 +123,14 @@ class ReportEngine(msgspec.Struct, frozen=True):
         return ReportOutput(path=path, format='svg', success=True)
 
     def _render_pdf(self, data: dict[str, Any], output_dir: Path, sprint_id: str) -> ReportOutput:
-        """Render to PDF."""
+        """Render to PDF with DLP filtering (SOVEREIGN-010)."""
         path = output_dir / f'{sprint_id}.pdf'
         import time
         context = {'sprint_id': sprint_id, 'generated': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()), 'summary': data.get('summary', '_No summary_'), 'metrics': data.get('metrics', {}), 'findings': data.get('findings', []), 'scorecard': data.get('scorecard', {})}
         md_content = self.md_renderer.render('sprint_report', context)
+        # SOVEREIGN-010: Apply DLP filter before HTML conversion
+        from hledac.universal.brain.output_dlp_filter import get_dlp_filter
+        md_content = get_dlp_filter().sanitize(md_content)
         html_content = self.html_renderer.render(md_content)
         self.pdf_renderer.render_to_file(html_content, path)
         return ReportOutput(path=path, format='pdf', success=True)

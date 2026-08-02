@@ -817,7 +817,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(pdf::extract_iocs_from_bytes, m)?)?;
         m.add_function(wrap_pyfunction!(pdf::extract_metadata, m)?)?;
         m.add_function(wrap_pyfunction!(pdf::extract_metadata_from_bytes, m)?)?;
+        // ISSUE-016: PDF forensics — OCG layers, redaction failures, suppressed annotations
+        m.add_function(wrap_pyfunction!(pdf::extract_pdf_forensics, m)?)?;
+        m.add_function(wrap_pyfunction!(pdf::extract_pdf_forensics_from_bytes, m)?)?;
         m.add_class::<pdf::PdfMetadata>()?;
+        m.add_class::<pdf::PdfForensics>()?;
     }
 
     // Office document extraction via docx-rs + calamine — pure Rust (~5-10× vs Python)

@@ -401,6 +401,68 @@ def _read_memory_pressure_sync() -> dict[str, Any]:
         return {"status": "UNKNOWN", "free_pct": 0, "compressor_pages": None}
 
 
+def _read_thermal_state_sync() -> dict[str, Any]:
+    """
+    APEX-1002: Read M1 thermal state from hw.thermal.thermal_level sysctl.
+
+    On MacBook Air M1 (fanless), sustained workloads cause thermal throttling.
+    The kernel aggregates thermal state into hw.thermal.thermal_level:
+        0 = nominal (no throttling)
+        1-2 = mild (beginning throttle)
+        3-4 = moderate (significant throttle, 2-5x slowdown)
+        5 = critical (severe throttle, 10x slowdown)
+
+    This is more reliable than raw CPU temperature because:
+    - It's kernel-aggregated (accounts for duration, not just instant temp)
+    - It directly reflects actual frequency scaling
+    - It's the same signal macOS uses for thermal management
+
+    Returns:
+        dict with keys:
+            thermal_level: int | None (0-5 or None if unavailable)
+            is_throttled: bool (True if level >= 3)
+            error: str | None (error message if read failed)
+    """
+    if sys.platform != "darwin":
+        return {"thermal_level": None, "is_throttled": False, "error": "not_macos"}
+
+    try:
+        import subprocess
+
+        # Read hw.thermal.thermal_level
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.thermal.thermal_level"],
+            capture_output=True,
+            text=True,
+            timeout=0.5,  # Fast timeout — thermal read should be instant
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            thermal_level = int(result.stdout.strip())
+            # Level 3+ = significant throttling
+            is_throttled = thermal_level >= 3
+            return {
+                "thermal_level": thermal_level,
+                "is_throttled": is_throttled,
+                "error": None,
+            }
+        else:
+            # Sysctl exists but returned no value — unusual
+            return {"thermal_level": None, "is_throttled": False, "error": "no_value"}
+
+    except subprocess.TimeoutExpired:
+        return {"thermal_level": None, "is_throttled": False, "error": "timeout"}
+    except FileNotFoundError:
+        # Sysctl binary not found — very unusual on macOS
+        return {"thermal_level": None, "is_throttled": False, "error": "sysctl_not_found"}
+    except ValueError as e:
+        # Sysctl returned non-integer value
+        return {"thermal_level": None, "is_throttled": False, "error": f"parse_error: {e}"}
+    except Exception as e:
+        # Any other error — fail-soft
+        return {"thermal_level": None, "is_throttled": False, "error": str(e)}
+
+
 def _get_cached_psutil(key: str, reader_fn: Callable[[], Any]) -> Any:
     """
     Thread-safe TTL cache for blocking psutil reads.
@@ -694,6 +756,10 @@ class UMAStatus(msgspec.Struct, frozen=True, gc=False):
     Note: swap tiered policy (CLEAN/DIAGNOSTIC/HARD_BLOCK) and swap_detected
     are independent signals — tiered policy applies to prelive/cockpit,
     swap_detected applies to io_only acceleration and governor decisions.
+
+    APEX-1002: Thermal fields added for M1 throttling detection.
+    On MacBook Air M1 (fanless), thermal throttling can reduce CPU frequency
+    from 3.2GHz to 600MHz, causing 10x slowdown in MLX inference.
     """
 
     rss_gib: float
@@ -712,6 +778,9 @@ class UMAStatus(msgspec.Struct, frozen=True, gc=False):
     on_battery: bool = False
     battery_level: int | None = None
     ac_attached: bool = True
+    # APEX-1002: Thermal state for M1 throttling detection
+    thermal_level: int | None = None  # hw.thermal.thermal_level (0=nominal, 5=critical)
+    is_thermally_throttled: bool = False  # True if thermal_level >= 3
 
 
 class MemoryPressureHysteresis:
@@ -2029,6 +2098,12 @@ def sample_uma_status() -> UMAStatus:
 
     _power = get_power_monitor().get_power_status()
 
+    # APEX-1002: Read thermal state for M1 throttling detection
+    # Uses cached psutil pattern with 2s TTL to avoid excessive sysctl calls
+    _thermal_result = _get_cached_psutil("thermal_state", _read_thermal_state_sync)
+    _thermal_level = _thermal_result.get("thermal_level") if _thermal_result else None
+    _is_thermally_throttled = _thermal_result.get("is_throttled", False) if _thermal_result else False
+
     return UMAStatus(
         rss_gib=rss_gib,
         system_used_gib=system_used_gib,
@@ -2045,6 +2120,8 @@ def sample_uma_status() -> UMAStatus:
         on_battery=bool(_power.get("on_battery", False)),
         battery_level=_power.get("battery_level"),
         ac_attached=bool(_power.get("ac_attached", True)),
+        thermal_level=_thermal_level,
+        is_thermally_throttled=_is_thermally_throttled,
     )
 
 

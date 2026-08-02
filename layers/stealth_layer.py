@@ -339,18 +339,33 @@ class JavaScriptEvasion:
     - Minimal runtime overhead
     - Memory-efficient execution
 
+    Profile-Aware (APEX-1005, APEX-1006):
+    - Accepts BrowserProfile from FingerprintRandomizer
+    - Canvas noise uses CSPRNG (crypto.getRandomValues) + Gaussian distribution
+    - WebGL spoof uses platform-consistent vendor/renderer from profile
+
     Example:
-        >>> evasion = JavaScriptEvasion(config)
+        >>> evasion = JavaScriptEvasion(config, profile=browser_profile)
         >>> scripts = evasion.get_all_evasion_scripts()
         >>> for script in scripts:
         ...     await page.add_init_script(script)
     """
     DETECTION_LIBS = ['botd', 'botguard', 'datadome', 'akamai', 'perimeterx', 'cloudflare', 'hcaptcha', 'recaptcha']
-    __slots__ = tuple(('_script_cache', 'config'))
+    __slots__ = tuple(('_script_cache', 'config', '_profile'))
 
-    def __init__(self, config: JavaScriptEvasionConfig | None=None):
+    def __init__(self, config: JavaScriptEvasionConfig | None=None, profile: BrowserProfile | None=None):
         self.config = config or JavaScriptEvasionConfig()
+        self._profile = profile
         self._script_cache: dict[str, str] = {}
+
+    def set_profile(self, profile: BrowserProfile) -> None:
+        """Update the browser profile used for fingerprint-aware evasion scripts.
+
+        Clears the script cache so next call to get_all_evasion_scripts()
+        regenerates scripts with the new profile values.
+        """
+        self._profile = profile
+        self._script_cache.clear()
 
     def get_all_evasion_scripts(self) -> list[str]:
         """Get all enabled evasion scripts."""
@@ -404,16 +419,215 @@ class JavaScriptEvasion:
         return '\n        // Disable WebRTC\n        if (window.RTCPeerConnection) {\n            const noop = function() {};\n            window.RTCPeerConnection = noop;\n            window.RTCPeerConnection.prototype = {};\n        }\n\n        if (window.webkitRTCPeerConnection) {\n            const noop = function() {};\n            window.webkitRTCPeerConnection = noop;\n        }\n\n        if (window.mozRTCPeerConnection) {\n            const noop = function() {};\n            window.mozRTCPeerConnection = noop;\n        }\n        '
 
     def _get_canvas_override(self) -> str:
-        """Override canvas fingerprinting."""
-        return "\n        // Canvas fingerprint protection\n        const getImageData = CanvasRenderingContext2D.prototype.getImageData;\n        const toDataURL = HTMLCanvasElement.prototype.toDataURL;\n        const toBlob = HTMLCanvasElement.prototype.toBlob;\n\n        // Add subtle noise to canvas operations\n        CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {\n            const imageData = getImageData.call(this, sx, sy, sw, sh);\n            const data = imageData.data;\n\n            // Add imperceptible noise\n            for (let i = 0; i < data.length; i += 4) {\n                data[i] = (data[i] + (Math.random() > 0.5 ? 1 : 0)) % 256;\n                data[i + 1] = (data[i + 1] + (Math.random() > 0.5 ? 1 : 0)) % 256;\n                data[i + 2] = (data[i + 2] + (Math.random() > 0.5 ? 1 : 0)) % 256;\n            }\n\n            return imageData;\n        };\n\n        // Override toDataURL with noise\n        HTMLCanvasElement.prototype.toDataURL = function(type, quality) {\n            const ctx = this.getContext('2d');\n            if (ctx) {\n                const imageData = ctx.getImageData(0, 0, this.width, this.height);\n                const data = imageData.data;\n                for (let i = 0; i < data.length; i += 4) {\n                    data[i] = (data[i] + (Math.random() > 0.5 ? 1 : 0)) % 256;\n                }\n                ctx.putImageData(imageData, 0, 0);\n            }\n            return toDataURL.call(this, type, quality);\n        };\n        "
+        """Override canvas fingerprinting with CSPRNG + Gaussian noise.
+
+        APEX-1005 fix: Replaces Math.random() (xorshift128+, reconstructable)
+        with crypto.getRandomValues() (CSPRNG) and Box-Muller Gaussian noise
+        (μ from profile, σ=0.8) for hardware-variance realism.
+        """
+        # Get canvas noise seed from profile if available, else default (0,0,0)
+        noise_seed = (0, 0, 0)
+        if self._profile is not None:
+            noise_seed = self._profile.canvas_noise
+
+        return f"""
+        // Canvas fingerprint protection (APEX-1005: CSPRNG + Gaussian noise)
+        (function() {{
+            'use strict';
+
+            // Per-session noise seed from Python profile
+            const NOISE_SEED = {list(noise_seed)};
+
+            // Box-Muller transform for Gaussian noise using CSPRNG
+            function gaussianRandom(mean, stddev) {{
+                const buffer = new Uint32Array(2);
+                crypto.getRandomValues(buffer);
+
+                // Convert to [0, 1) range
+                const u1 = buffer[0] / 0x100000000;
+                const u2 = buffer[1] / 0x100000000;
+
+                // Box-Muller transform
+                const z0 = Math.sqrt(-2.0 * Math.log(u1 + 1e-10)) * Math.cos(2.0 * Math.PI * u2);
+                return mean + stddev * z0;
+            }}
+
+            // Add subtle Gaussian noise to ImageData
+            function addCanvasNoise(imageData) {{
+                const data = imageData.data;
+                const width = imageData.width;
+                const height = imageData.height;
+
+                // Apply Gaussian noise (μ=seed, σ=0.8) per channel
+                for (let i = 0; i < data.length; i += 4) {{
+                    // Red channel
+                    const noiseR = gaussianRandom(NOISE_SEED[0], 0.8);
+                    data[i] = Math.max(0, Math.min(255, Math.round(data[i] + noiseR)));
+
+                    // Green channel
+                    const noiseG = gaussianRandom(NOISE_SEED[1], 0.8);
+                    data[i + 1] = Math.max(0, Math.min(255, Math.round(data[i + 1] + noiseG)));
+
+                    // Blue channel
+                    const noiseB = gaussianRandom(NOISE_SEED[2], 0.8);
+                    data[i + 2] = Math.max(0, Math.min(255, Math.round(data[i + 2] + noiseB)));
+
+                    // Alpha unchanged
+                }}
+
+                return imageData;
+            }}
+
+            // Override getImageData
+            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+            CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {{
+                const imageData = originalGetImageData.call(this, sx, sy, sw, sh);
+                return addCanvasNoise(imageData);
+            }};
+
+            // Override toDataURL
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            HTMLCanvasElement.prototype.toDataURL = function(type, quality) {{
+                const ctx = this.getContext('2d');
+                if (ctx) {{
+                    const imageData = ctx.getImageData(0, 0, this.width, this.height);
+                    addCanvasNoise(imageData);
+                    ctx.putImageData(imageData, 0, 0);
+                }}
+                return originalToDataURL.call(this, type, quality);
+            }};
+
+            // Override toBlob
+            const originalToBlob = HTMLCanvasElement.prototype.toBlob;
+            HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {{
+                const ctx = this.getContext('2d');
+                if (ctx) {{
+                    const imageData = ctx.getImageData(0, 0, this.width, this.height);
+                    addCanvasNoise(imageData);
+                    ctx.putImageData(imageData, 0, 0);
+                }}
+                return originalToBlob.call(this, callback, type, quality);
+            }};
+        }})();
+        """
 
     def _get_webgl_override(self) -> str:
-        """Override WebGL fingerprinting."""
-        return "\n        // WebGL fingerprint protection\n        const getParameter = WebGLRenderingContext.prototype.getParameter;\n        const getExtension = WebGLRenderingContext.prototype.getExtension;\n\n        WebGLRenderingContext.prototype.getParameter = function(parameter) {\n            // Spoof common parameters\n            const spoofs = {\n                37445: 'Intel Inc.', // UNMASKED_VENDOR_WEBGL\n                37446: 'Intel Iris OpenGL Engine', // UNMASKED_RENDERER_WEBGL\n                7937: 'WebKit', // VERSION\n                7936: 'WebKit WebGL', // VENDOR\n                7938: 'WebGL 1.0 (OpenGL ES 2.0 Chromium)' // RENDERER\n            };\n\n            if (parameter in spoofs) {\n                return spoofs[parameter];\n            }\n\n            return getParameter.call(this, parameter);\n        };\n\n        // Randomize precision formats slightly\n        WebGLRenderingContext.prototype.getShaderPrecisionFormat = function() {\n            return {\n                precision: 23,\n                rangeMin: 127,\n                rangeMax: 127\n            };\n        };\n        "
+        """Override WebGL fingerprinting with profile-aware vendor/renderer.
+
+        APEX-1006 fix: Uses vendor/renderer from BrowserProfile (generated by
+        FingerprintRandomizer) instead of hardcoded Intel values. Ensures
+        platform consistency (e.g., Apple M1 on macOS, not Intel Iris).
+        """
+        # Get WebGL vendor/renderer from profile if available
+        vendor = 'Intel Inc.'
+        renderer = 'Intel Iris OpenGL Engine'
+
+        if self._profile is not None:
+            vendor = self._profile.webgl_vendor or vendor
+            renderer = self._profile.webgl_renderer or renderer
+
+        return f"""
+        // WebGL fingerprint protection (APEX-1006: profile-aware spoof)
+        (function() {{
+            'use strict';
+
+            const WEBGL_VENDOR = '{vendor}';
+            const WEBGL_RENDERER = '{renderer}';
+
+            // Override WebGLRenderingContext.prototype.getParameter
+            const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
+            WebGLRenderingContext.prototype.getParameter = function(parameter) {{
+                // UNMASKED_VENDOR_WEBGL = 37445
+                if (parameter === 37445) {{
+                    return WEBGL_VENDOR;
+                }}
+                // UNMASKED_RENDERER_WEBGL = 37446
+                if (parameter === 37446) {{
+                    return WEBGL_RENDERER;
+                }}
+                return originalGetParameter.call(this, parameter);
+            }};
+
+            // Override getExtension to return consistent vendor info
+            const originalGetExtension = WebGLRenderingContext.prototype.getExtension;
+            WebGLRenderingContext.prototype.getExtension = function(name) {{
+                const ext = originalGetExtension.call(this, name);
+                if (name === 'WEBGL_debug_renderer_info' && ext) {{
+                    // Ensure the extension returns our spoofed values
+                    const origGetParam = ext.getParameter;
+                    if (origGetParam) {{
+                        ext.getParameter = function(p) {{
+                            if (p === 37445) return WEBGL_VENDOR;
+                            if (p === 37446) return WEBGL_RENDERER;
+                            return origGetParam.call(this, p);
+                        }};
+                    }}
+                }}
+                return ext;
+            }};
+
+            // Override getShaderPrecisionFormat to add subtle variance
+            const originalGetShaderPrecisionFormat = WebGLRenderingContext.prototype.getShaderPrecisionFormat;
+            WebGLRenderingContext.prototype.getShaderPrecisionFormat = function(formatType) {{
+                const result = originalGetShaderPrecisionFormat.call(this, formatType);
+                if (result) {{
+                    // CSPRNG for precision variance
+                    const buf = new Uint32Array(1);
+                    crypto.getRandomValues(buf);
+                    const r = buf[0] / 0x100000000;
+                    const variance = r > 0.5 ? 1 : 0;
+
+                    // Add tiny variance to precision values (±1)
+                    return {{
+                        rangeMin: result.rangeMin + variance,
+                        rangeMax: result.rangeMax + variance,
+                        precision: result.precision
+                    }};
+                }}
+                return result;
+            }};
+        }})();
+        """
 
     def _get_font_spoof(self) -> str:
         """Spoof font enumeration."""
-        return "\n        // Font enumeration protection\n        const originalMeasureText = CanvasRenderingContext2D.prototype.measureText;\n        const commonFonts = [\n            'Arial', 'Courier New', 'Georgia', 'Times New Roman',\n            'Verdana', 'Helvetica', 'Trebuchet MS', 'Tahoma'\n        ];\n\n        CanvasRenderingContext2D.prototype.measureText = function(text) {\n            // Randomize measurements slightly\n            const result = originalMeasureText.call(this, text);\n            const originalWidth = result.width;\n\n            // Add tiny random variation\n            Object.defineProperty(result, 'width', {\n                get: () => originalWidth + (Math.random() * 0.02 - 0.01)\n            });\n\n            return result;\n        };\n\n        // Override font property to limit enumeration\n        const originalFont = Object.getOwnPropertyDescriptor(\n            CanvasRenderingContext2D.prototype, 'font'\n        );\n        "
+        return """
+        // Font enumeration protection
+        (function() {
+            'use strict';
+
+            // CSPRNG helper for font measurement noise
+            function cryptoRandom() {
+                const buffer = new Uint32Array(1);
+                crypto.getRandomValues(buffer);
+                return buffer[0] / 0x100000000;
+            }
+
+            const originalMeasureText = CanvasRenderingContext2D.prototype.measureText;
+            const commonFonts = [
+                'Arial', 'Courier New', 'Georgia', 'Times New Roman',
+                'Verdana', 'Helvetica', 'Trebuchet MS', 'Tahoma'
+            ];
+
+            CanvasRenderingContext2D.prototype.measureText = function(text) {
+                // Randomize measurements slightly using CSPRNG
+                const result = originalMeasureText.call(this, text);
+                const originalWidth = result.width;
+
+                // Add tiny random variation (CSPRNG)
+                Object.defineProperty(result, 'width', {
+                    get: () => originalWidth + (cryptoRandom() * 0.02 - 0.01)
+                });
+
+                return result;
+            };
+
+            // Override font property to limit enumeration
+            const originalFont = Object.getOwnPropertyDescriptor(
+                CanvasRenderingContext2D.prototype, 'font'
+            );
+        })();
+        """
 
     def _get_event_emulator(self) -> str:
         """Emulate human-like events."""
@@ -425,7 +639,42 @@ class JavaScriptEvasion:
 
     def _get_global_randomizer(self) -> str:
         """Randomize global properties."""
-        return "\n        // Randomize global properties to prevent fingerprinting\n        (function() {\n            // Random screen offset (within reasonable bounds)\n            const screenOffset = Math.floor(Math.random() * 50);\n\n            Object.defineProperty(window.screen, 'availLeft', {\n                get: () => screenOffset\n            });\n\n            Object.defineProperty(window.screen, 'availTop', {\n                get: () => screenOffset\n            });\n\n            // Memory pressure simulation\n            if (navigator.deviceMemory) {\n                Object.defineProperty(navigator, 'deviceMemory', {\n                    get: () => 8\n                });\n            }\n\n            // Hardware concurrency\n            Object.defineProperty(navigator, 'hardwareConcurrency', {\n                get: () => 8\n            });\n        })();\n        "
+        return """
+        // Randomize global properties to prevent fingerprinting
+        (function() {
+            'use strict';
+
+            // CSPRNG helper
+            function cryptoRandom() {
+                const buffer = new Uint32Array(1);
+                crypto.getRandomValues(buffer);
+                return buffer[0] / 0x100000000;
+            }
+
+            // Random screen offset (within reasonable bounds) using CSPRNG
+            const screenOffset = Math.floor(cryptoRandom() * 50);
+
+            Object.defineProperty(window.screen, 'availLeft', {
+                get: () => screenOffset
+            });
+
+            Object.defineProperty(window.screen, 'availTop', {
+                get: () => screenOffset
+            });
+
+            // Memory pressure simulation
+            if (navigator.deviceMemory) {
+                Object.defineProperty(navigator, 'deviceMemory', {
+                    get: () => 8
+                });
+            }
+
+            // Hardware concurrency
+            Object.defineProperty(navigator, 'hardwareConcurrency', {
+                get: () => 8
+            });
+        })();
+        """
 
     def _get_chrome_runtime_spoof(self) -> str:
         """Spoof Chrome runtime environment."""
@@ -827,8 +1076,228 @@ class FingerprintRandomizer:
         """Generate JavaScript to apply fingerprint protection"""
         profile = self.get_profile()
         import msgspec.json as _json
-        script = f"\n        // Fingerprint Protection Script\n        (function() {{\n            'use strict';\n\n            const profile = {_json.encode({'screen': {{'width': profile.screen_width, 'height': profile.screen_height, 'colorDepth': profile.screen_color_depth, 'pixelRatio': profile.screen_pixel_ratio}}, 'timezone': profile.timezone, 'timezoneOffset': profile.timezone_offset, 'hardwareConcurrency': profile.hardware_concurrency, 'deviceMemory': profile.device_memory, 'maxTouchPoints': profile.max_touch_points, 'canvasNoise': profile.canvas_noise}).decode('utf-8')};\n\n            // Override screen properties\n            Object.defineProperty(screen, 'width', {{ get: () => profile.screen.width }});\n            Object.defineProperty(screen, 'height', {{ get: () => profile.screen.height }});\n            Object.defineProperty(screen, 'colorDepth', {{ get: () => profile.screen.colorDepth }});\n            Object.defineProperty(screen, 'pixelDepth', {{ get: () => profile.screen.colorDepth }});\n\n            // Override window.devicePixelRatio\n            Object.defineProperty(window, 'devicePixelRatio', {{\n                get: () => profile.screen.pixelRatio\n            }});\n\n            // Override hardware specs\n            Object.defineProperty(navigator, 'hardwareConcurrency', {{\n                get: () => profile.hardwareConcurrency\n            }});\n            Object.defineProperty(navigator, 'deviceMemory', {{\n                get: () => profile.deviceMemory\n            }});\n            Object.defineProperty(navigator, 'maxTouchPoints', {{\n                get: () => profile.maxTouchPoints\n            }});\n\n            // AudioContext fingerprint protection - override to return fake values\n            // Prevents advanced servers from detecting headless browser via AudioContext\n            const _origAudioContext = window.AudioContext || window.webkitAudioContext;\n            if (_origAudioContext) {{\n                const _fakeAudioCtx = _origAudioContext;\n                window.AudioContext = function() {{\n                    const ctx = new _fakeAudioCtx();\n                    // Override analyser methods that expose headless fingerprint\n                    const _origCreateAnalyser = ctx.createAnalyser;\n                    if (_origCreateAnalyser) {{\n                        ctx.createAnalyser = function() {{\n                            const analyser = _origCreateAnalyser.call(this);\n                            // Fake the frequency data to look like real browser\n                            const _origGetByteFrequencyData = analyser.getByteFrequencyData;\n                            analyser.getByteFrequencyData = function(array) {{\n                                const result = _origGetByteFrequencyData.call(this, array);\n                                // Add slight random variation to simulate real browser\n                                for (let i = 0; i < array.length; i++) {{\n                                    array[i] = Math.max(0, Math.min(255, array[i] + Math.floor(Math.random() * 8 - 4)));\n                                }}\n                                return array;\n                            }};\n                            return analyser;\n                        }};\n                    }}\n                    return ctx;\n                }};\n                window.AudioContext.prototype = _origAudioContext.prototype;\n                window.webkitAudioContext = window.AudioContext;\n            }}\n\n            // Canvas fingerprint protection\n            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;\n            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;\n\n            HTMLCanvasElement.prototype.toDataURL = function(...args) {{\n                const ctx = this.getContext('2d');\n                if (ctx) {{\n                    const imageData = ctx.getImageData(0, 0, this.width, this.height);\n                    const data = imageData.data;\n                    // Add imperceptible noise\n                    for (let i = 0; i < data.length; i += 4) {{\n                        data[i] = Math.min(255, data[i] + {profile.canvas_noise[0]});\n                        data[i+1] = Math.min(255, data[i+1] + {profile.canvas_noise[1]});\n                        data[i+2] = Math.min(255, data[i+2] + {profile.canvas_noise[2]});\n                    }}\n                    ctx.putImageData(imageData, 0, 0);\n                }}\n                return originalToDataURL.apply(this, args);\n            }};\n\n            // Timezone protection\n            const originalDate = Date;\n            Date = class extends originalDate {{\n                constructor(...args) {{\n                    super(...args);\n                }}\n                getTimezoneOffset() {{\n                    return profile.timezoneOffset * 60;\n                }}\n            }};\n\n        }})();\n        "
-        return script
+        
+        # Serialize profile data once
+        profile_json = _json.encode({
+            'screen': {
+                'width': profile.screen_width,
+                'height': profile.screen_height,
+                'colorDepth': profile.screen_color_depth,
+                'pixelRatio': profile.screen_pixel_ratio
+            },
+            'timezone': profile.timezone,
+            'timezoneOffset': profile.timezone_offset,
+            'hardwareConcurrency': profile.hardware_concurrency,
+            'deviceMemory': profile.device_memory,
+            'maxTouchPoints': profile.max_touch_points,
+            'canvasNoise': profile.canvas_noise
+        }).decode('utf-8')
+        
+        # Build script from components
+        parts = [
+            self._js_header(profile_json),
+            self._js_screen_override(),
+            self._js_hardware_override(),
+            self._js_audio_protection(),
+            self._js_canvas_protection(profile),
+            self._js_timezone_protection(),
+            self._js_footer()
+        ]
+        
+        return ''.join(parts)
+    
+    def _js_header(self, profile_json: str) -> str:
+        """JavaScript header with profile data injection"""
+        return f"""
+        // Fingerprint Protection Script
+        (function() {{
+            'use strict';
+            const profile = {profile_json};
+"""
+    
+    def _js_screen_override(self) -> str:
+        """Screen property overrides"""
+        return """
+            // Override screen properties
+            Object.defineProperty(screen, 'width', { get: () => profile.screen.width });
+            Object.defineProperty(screen, 'height', { get: () => profile.screen.height });
+            Object.defineProperty(screen, 'colorDepth', { get: () => profile.screen.colorDepth });
+            Object.defineProperty(screen, 'pixelDepth', { get: () => profile.screen.colorDepth });
+            
+            // Override window.devicePixelRatio
+            Object.defineProperty(window, 'devicePixelRatio', {
+                get: () => profile.screen.pixelRatio
+            });
+"""
+    
+    def _js_hardware_override(self) -> str:
+        """Hardware property overrides"""
+        return """
+            // Override hardware specs
+            Object.defineProperty(navigator, 'hardwareConcurrency', {
+                get: () => profile.hardwareConcurrency
+            });
+            Object.defineProperty(navigator, 'deviceMemory', {
+                get: () => profile.deviceMemory
+            });
+            Object.defineProperty(navigator, 'maxTouchPoints', {
+                get: () => profile.maxTouchPoints
+            });
+"""
+    
+    def _js_audio_protection(self) -> str:
+        """Comprehensive AudioContext fingerprint protection (APEX-1007)"""
+        return """
+            // AudioContext fingerprint protection - comprehensive (APEX-1007: CSPRNG + Gaussian + OfflineAudioContext)
+            // Prevents advanced servers from detecting headless browser via AudioContext/OfflineAudioContext
+            // Fixes: OfflineAudioContext.startRendering(), AudioBuffer.getChannelData(), DynamicsCompressorNode.reduction
+            // Uses CSPRNG (crypto.getRandomValues) + Box-Muller Gaussian noise (σ=0.0001 for Float32, σ=0.8 for Uint8)
+            
+            // CSPRNG-based Gaussian noise generator (Box-Muller transform)
+            function _audioGaussianNoise(mean, stddev) {
+                const buffer = new Uint32Array(2);
+                crypto.getRandomValues(buffer);
+                const u1 = buffer[0] / 0x100000000;
+                const u2 = buffer[1] / 0x100000000;
+                const z0 = Math.sqrt(-2.0 * Math.log(u1 + 1e-10)) * Math.cos(2.0 * Math.PI * u2);
+                return mean + stddev * z0;
+            }
+            
+            const _origAudioContext = window.AudioContext || window.webkitAudioContext;
+            if (_origAudioContext) {
+                const _fakeAudioCtx = _origAudioContext;
+                window.AudioContext = function() {
+                    const ctx = new _fakeAudioCtx();
+                    
+                    // Override createAnalyser to protect getByteFrequencyData with CSPRNG Gaussian noise
+                    const _origCreateAnalyser = ctx.createAnalyser;
+                    if (_origCreateAnalyser) {
+                        ctx.createAnalyser = function() {
+                            const analyser = _origCreateAnalyser.call(this);
+                            const _origGetByteFrequencyData = analyser.getByteFrequencyData;
+                            analyser.getByteFrequencyData = function(array) {
+                                const result = _origGetByteFrequencyData.call(this, array);
+                                // Gaussian noise (σ=0.8) using CSPRNG - more natural than uniform ±4
+                                for (let i = 0; i < array.length; i++) {
+                                    const noise = _audioGaussianNoise(0, 0.8);
+                                    array[i] = Math.max(0, Math.min(255, Math.round(array[i] + noise)));
+                                }
+                                return array;
+                            };
+                            return analyser;
+                        };
+                    }
+                    
+                    // Override createDynamicsCompressor to protect reduction value
+                    const _origCreateDynamicsCompressor = ctx.createDynamicsCompressor;
+                    if (_origCreateDynamicsCompressor) {
+                        ctx.createDynamicsCompressor = function() {
+                            const compressor = _origCreateDynamicsCompressor.call(this);
+                            // Override reduction getter to add micro-noise
+                            const _origReductionDescriptor = Object.getOwnPropertyDescriptor(
+                                Object.getPrototypeOf(compressor), 'reduction'
+                            );
+                            if (_origReductionDescriptor && _origReductionDescriptor.get) {
+                                Object.defineProperty(compressor, 'reduction', {
+                                    get: function() {
+                                        const realValue = _origReductionDescriptor.get.call(this);
+                                        // Add tiny Gaussian noise (σ=0.001) to reduction value
+                                        return realValue + _audioGaussianNoise(0, 0.001);
+                                    },
+                                    configurable: true
+                                });
+                            }
+                            return compressor;
+                        };
+                    }
+                    
+                    return ctx;
+                };
+                window.AudioContext.prototype = _origAudioContext.prototype;
+                window.webkitAudioContext = window.AudioContext;
+            }
+            
+            // OfflineAudioContext protection - prevents deterministic fingerprint via startRendering()
+            const _origOfflineAudioContext = window.OfflineAudioContext;
+            if (_origOfflineAudioContext) {
+                window.OfflineAudioContext = function() {
+                    const ctx = new _origOfflineAudioContext(...arguments);
+                    const _origStartRendering = ctx.startRendering;
+                    ctx.startRendering = function() {
+                        return _origStartRendering.call(this).then(function(buffer) {
+                            // Inject entropy into rendered buffer to prevent deterministic hash
+                            for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+                                const channelData = buffer.getChannelData(channel);
+                                // Add micro-noise (σ=0.0001) to Float32Array - imperceptible but breaks fingerprint
+                                for (let i = 0; i < channelData.length; i++) {
+                                    channelData[i] += _audioGaussianNoise(0, 0.0001);
+                                }
+                            }
+                            return buffer;
+                        });
+                    };
+                    return ctx;
+                };
+                window.OfflineAudioContext.prototype = _origOfflineAudioContext.prototype;
+            }
+            
+            // AudioBuffer.prototype.getChannelData protection - injects micro-noise into Float32Array
+            const _origGetChannelData = AudioBuffer.prototype.getChannelData;
+            AudioBuffer.prototype.getChannelData = function(channel) {
+                const channelData = _origGetChannelData.call(this, channel);
+                // Create a copy with micro-noise to avoid modifying original buffer
+                const noisyData = new Float32Array(channelData.length);
+                for (let i = 0; i < channelData.length; i++) {
+                    noisyData[i] = channelData[i] + _audioGaussianNoise(0, 0.0001);
+                }
+                return noisyData;
+            };
+"""
+    
+    def _js_canvas_protection(self, profile) -> str:
+        """Canvas fingerprint protection with profile noise"""
+        return f"""
+            // Canvas fingerprint protection
+            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+            
+            HTMLCanvasElement.prototype.toDataURL = function(...args) {{
+                const ctx = this.getContext('2d');
+                if (ctx) {{
+                    const imageData = ctx.getImageData(0, 0, this.width, this.height);
+                    const data = imageData.data;
+                    // Add imperceptible noise
+                    for (let i = 0; i < data.length; i += 4) {{
+                        data[i] = Math.min(255, data[i] + {profile.canvas_noise[0]});
+                        data[i+1] = Math.min(255, data[i+1] + {profile.canvas_noise[1]});
+                        data[i+2] = Math.min(255, data[i+2] + {profile.canvas_noise[2]});
+                    }}
+                    ctx.putImageData(imageData, 0, 0);
+                }}
+                return originalToDataURL.apply(this, args);
+            }};
+"""
+    
+    def _js_timezone_protection(self) -> str:
+        """Timezone override"""
+        return """
+            // Timezone protection
+            const originalDate = Date;
+            Date = class extends originalDate {
+                constructor(...args) {
+                    super(...args);
+                }
+                getTimezoneOffset() {
+                    return profile.timezoneOffset * 60;
+                }
+            };
+"""
+    
+    def _js_footer(self) -> str:
+        """JavaScript footer"""
+        return """
+        })();
+"""
 
     def get_fingerprint_hash(self) -> str:
         """Get hash of current fingerprint (for tracking detection)"""
@@ -939,9 +1408,9 @@ class StealthLayer:
                 await self._init_detection_evader()
             if self.config.enable_captcha_solving:
                 await self._init_captcha_solver()
-            await self._init_js_evasion()
             await self._init_chameleon()
             await self._init_fingerprint_randomizer()
+            await self._init_js_evasion()
             logger.info('✅ StealthLayer initialized successfully')
             return True
         except Exception as e:
@@ -1000,8 +1469,14 @@ class StealthLayer:
         if self._js_evasion is None:
             try:
                 config = JavaScriptEvasionConfig(hide_webdriver=True, hide_automation=True, spoof_plugins=True, spoof_permissions=True, disable_webrtc=True, override_canvas=True, override_webgl=True, spoof_fonts=True, emulate_human_events=True, patch_detection_libs=True, randomize_globals=True, spoof_chrome_runtime=True, add_chrome_plugins=True)
-                self._js_evasion = JavaScriptEvasion(config)
-                logger.info('✅ JavaScriptEvasion initialized (15+ evasion scripts)')
+
+                # Get profile from FingerprintRandomizer if available
+                profile = None
+                if self._fingerprint_randomizer is not None:
+                    profile = self._fingerprint_randomizer.get_profile()
+
+                self._js_evasion = JavaScriptEvasion(config, profile=profile)
+                logger.info('✅ JavaScriptEvasion initialized (15+ evasion scripts, profile-aware)')
             except Exception as e:
                 logger.warning(f'⚠️ JavaScriptEvasion initialization failed: {e}')
                 self._js_evasion = None

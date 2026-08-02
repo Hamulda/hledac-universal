@@ -155,6 +155,11 @@ _LAZY_SPECS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
         "StitchedIdentity", "UsernameEntry",
         "create_identity_stitching_engine",
     ), ()),
+    # SOVEREIGN-007: Certstream WebSocket real-time CT monitoring
+    (".certstream_client", "CERTSTREAM_AVAILABLE", (
+        "CertstreamWebSocketClient", "CertstreamCertificate", "CertstreamStats",
+        "create_certstream_client",
+    ), ()),
     # ISSUE-007: Multi-dimensional stylometry analyzer
     (".stylometry_analyzer", "STYLOMETRY_ANALYZER_AVAILABLE", (
         "StylometryAnalyzer", "StylometryProfile",

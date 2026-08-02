@@ -139,48 +139,47 @@ assert SYNTHESIS_STRATEGY in ("sequential_preferred", "race_first_wins"), (
 
 async def _race_try_xgrammar(
     lifecycle: Any, prompt: str,
-) -> tuple[dict | None, str]:
+) -> tuple[dict | None, str, list[float]]:
     """Race task: try xgrammar generation. Extracted from _race_inference_first_wins."""
     try:
         result = await lifecycle._run_xgrammar_generation(prompt)
         if result is not None:
             raw_dict, ok = result
             if ok and raw_dict is not None:
-                return raw_dict, "xgrammar"
+                return raw_dict, "xgrammar", []
     except Exception as e:
         logger.debug("[SYNTHESIS] xgrammar failed in race: %s", e)
-    return None, "none"
+    return None, "none", []
 
 
 async def _race_try_streaming(
     lifecycle: Any, prompt: str,
-) -> tuple[dict | None, str]:
+) -> tuple[dict | None, str, list[float]]:
     """Race task: try streaming generation. Extracted from _race_inference_first_wins."""
     try:
         result = await lifecycle._run_streaming_generation(prompt, json_schema=OSINT_JSON_SCHEMA)
         if result is not None:
-            raw_dict, ok = result
+            raw_dict, ok, token_logprobs = result
             if ok and raw_dict is not None:
-                return raw_dict, "streaming"
+                return raw_dict, "streaming", token_logprobs
     except Exception as e:
         logger.debug("[SYNTHESIS] streaming failed in race: %s", e)
-    return None, "none"
+    return None, "none", []
 
 
 async def _race_try_structured(
     lifecycle: Any, prompt: str,
-) -> tuple[dict | None, str]:
-    """Race task: try structured Outlines generation. Extracted from _race_inference_first_wins."""
+) -> tuple[dict | None, str, list[float]]:
+    """Race task: try structured generation. Extracted from _race_inference_first_wins."""
     try:
-        result = await lifecycle.structured_generate(prompt, OSINT_JSON_SCHEMA)
+        result = await lifecycle._run_structured_generation(prompt, json_schema=OSINT_JSON_SCHEMA)
         if result is not None:
             raw_dict, ok = result
             if ok and raw_dict is not None:
-                return raw_dict, "constrained"
+                return raw_dict, "structured", []
     except Exception as e:
         logger.debug("[SYNTHESIS] structured failed in race: %s", e)
-    return None, "none"
-
+    return None, "none", []
 
 # ---------------------------------------------------------------------------
 # L-05: Sequential cascade helpers — extracted from _race_inference_sequential
@@ -189,56 +188,56 @@ async def _race_try_structured(
 
 async def _cascade_xgrammar(
     lifecycle: Any, prompt: str,
-) -> dict | None:
-    """Step 1: xgrammar cascade. Returns dict on success, None on failure."""
+) -> tuple[dict | None, list[float]]:
+    """Step 1: xgrammar cascade. Returns (dict, []) on success, (None, []) on failure."""
     try:
         result = await lifecycle._run_xgrammar_generation(prompt)
         if result is not None:
             raw_dict, ok = result
             if ok and raw_dict is not None:
                 logger.debug("[SYNTHESIS] xgrammar won (confidence guarantee)")
-                return raw_dict
+                return raw_dict, []
     except asyncio.CancelledError:
         raise
     except Exception as e:
         logger.debug("[SYNTHESIS] xgrammar failed: %s", e)
-    return None
+    return None, []
 
 
 async def _cascade_streaming(
     lifecycle: Any, prompt: str,
-) -> dict | None:
-    """Step 2: streaming cascade. Returns dict on success, None on failure."""
+) -> tuple[dict | None, list[float]]:
+    """Step 2: streaming cascade. Returns (dict, token_logprobs) on success, (None, []) on failure."""
     try:
         result = await lifecycle._run_streaming_generation(prompt, json_schema=OSINT_JSON_SCHEMA)
         if result is not None:
-            raw_dict, ok = result
+            raw_dict, ok, token_logprobs = result
             if ok and raw_dict is not None:
                 logger.debug("[SYNTHESIS] streaming won (early-exit)")
-                return raw_dict
+                return raw_dict, token_logprobs
     except asyncio.CancelledError:
         raise
     except Exception as e:
         logger.debug("[SYNTHESIS] streaming failed: %s", e)
-    return None
+    return None, []
 
 
 async def _cascade_structured(
     lifecycle: Any, prompt: str,
-) -> dict | None:
-    """Step 3: structured Outlines cascade. Returns dict on success, None on failure."""
+) -> tuple[dict | None, list[float]]:
+    """Step 3: structured Outlines cascade. Returns (dict, []) on success, (None, []) on failure."""
     try:
         result = await lifecycle.structured_generate(prompt, OSINT_JSON_SCHEMA)
         if result is not None:
             raw_dict, ok = result
             if ok and raw_dict is not None:
                 logger.debug("[SYNTHESIS] structured (Outlines) won")
-                return raw_dict
+                return raw_dict, []
     except asyncio.CancelledError:
         raise
     except Exception as e:
         logger.debug("[SYNTHESIS] structured failed: %s", e)
-    return None
+    return None, []
 
 
 # ---------------------------------------------------------------------------
@@ -693,12 +692,125 @@ def synthesis_outcome_to_dict(outcome: SynthesisOutcome | None) -> dict:
         return {"status": "unknown", "primary_reason": "attr_error", "operator_note": ""}
 
 
+class UncertaintyFlags(msgspec.Struct, gc=False):
+    """
+    APEX-1009: Measured uncertainty metadata for hallucination detection.
+
+    Captures token-level entropy from generation and compares with
+    LLM-self-reported confidence to detect potential hallucinations.
+
+    Fields:
+        measured_entropy: Average token entropy in bits (0.0-4.0 typical range)
+        entropy_stability: 1.0 - (std/mean) of per-token entropy (0.0-1.0)
+        confidence_divergence: |self_reported_confidence - entropy_implied_confidence|
+        hallucination_risk: True if divergence > threshold (>0.3)
+        risk_level: "low" | "medium" | "high" based on divergence magnitude
+        token_count: Number of tokens analyzed for entropy
+    """
+    measured_entropy: float = 0.0
+    entropy_stability: float = 1.0
+    confidence_divergence: float = 0.0
+    hallucination_risk: bool = False
+    risk_level: str = "low"
+    token_count: int = 0
+
+
+def uncertainty_gate(
+    self_reported_confidence: float,
+    token_logprobs: list[float],
+    threshold: float = 0.3,
+) -> UncertaintyFlags:
+    """
+    APEX-1009: Compute uncertainty flags from token-level logprobs.
+
+    Compares LLM-self-reported confidence with measured token entropy
+    to detect potential hallucinations.
+
+    Args:
+        self_reported_confidence: LLM's self-reported confidence (0.0-1.0)
+        token_logprobs: List of log probabilities for each generated token
+        threshold: Divergence threshold for hallucination_risk flag (default 0.3)
+
+    Returns:
+        UncertaintyFlags with measured entropy, stability, divergence, and risk level
+
+    Algorithm:
+        1. Compute mean entropy from logprobs: H = -mean(logprobs) / ln(2) (convert to bits)
+        2. Compute entropy stability: 1.0 - (std(logprobs) / |mean(logprobs)|)
+        3. Convert entropy to implied confidence: 1.0 - (H / max_entropy) where max_entropy=4.0 bits
+        4. Compute divergence: |self_reported - entropy_implied|
+        5. Flag hallucination_risk if divergence > threshold
+        6. Assign risk_level: "low" (<0.2), "medium" (0.2-0.4), "high" (>0.4)
+
+    Fail-soft: Returns default UncertaintyFlags on any error.
+    """
+    try:
+        if not token_logprobs:
+            return UncertaintyFlags()
+
+        import math
+
+        # Convert logprobs to entropy (bits)
+        # logprob is ln(p), so -logprob is -ln(p) = ln(1/p)
+        # Entropy H = -Σ p*log(p), but for token-level we use -mean(logprobs) / ln(2)
+        logprobs_array = [lp for lp in token_logprobs if math.isfinite(lp)]
+        if not logprobs_array:
+            return UncertaintyFlags()
+
+        mean_logprob = sum(logprobs_array) / len(logprobs_array)
+        measured_entropy = -mean_logprob / math.log(2)  # Convert to bits
+
+        # Compute stability: 1.0 - coefficient_of_variation
+        if len(logprobs_array) > 1:
+            variance = sum((lp - mean_logprob) ** 2 for lp in logprobs_array) / (len(logprobs_array) - 1)
+            std_logprob = math.sqrt(variance)
+            cv = std_logprob / abs(mean_logprob) if mean_logprob != 0 else 0.0
+            entropy_stability = max(0.0, min(1.0, 1.0 - cv))
+        else:
+            entropy_stability = 1.0
+
+        # Convert entropy to implied confidence
+        # Max entropy for typical vocab is ~4.0 bits (16-way choice)
+        # Higher entropy = lower confidence
+        max_entropy = 4.0
+        entropy_implied_confidence = max(0.0, min(1.0, 1.0 - (measured_entropy / max_entropy)))
+
+        # Compute divergence
+        confidence_divergence = abs(self_reported_confidence - entropy_implied_confidence)
+
+        # Flag hallucination risk
+        hallucination_risk = confidence_divergence > threshold
+
+        # Assign risk level
+        if confidence_divergence < 0.2:
+            risk_level = "low"
+        elif confidence_divergence < 0.4:
+            risk_level = "medium"
+        else:
+            risk_level = "high"
+
+        return UncertaintyFlags(
+            measured_entropy=round(measured_entropy, 3),
+            entropy_stability=round(entropy_stability, 3),
+            confidence_divergence=round(confidence_divergence, 3),
+            hallucination_risk=hallucination_risk,
+            risk_level=risk_level,
+            token_count=len(logprobs_array),
+        )
+    except Exception as e:
+        logger.debug(f"uncertainty_gate failed (fail-soft): {e}")
+        return UncertaintyFlags()
+
+
 class IOCEntity(msgspec.Struct, gc=False):
     """Jedna IOC entita extrahovaná z findingu."""
     value: str
     ioc_type: str  # "cve","ip","hash","onion","domain","apt","malware","btc"
     severity: str   # "critical","high","medium","low"
     context: str    # 1 věta
+    # APEX-1008: Token-level uncertainty from logprobs extraction
+    confidence: float = 1.0  # 0.0-1.0, derived from token entropy
+    uncertainty_flag: str = "normal"  # "normal", "elevated", "high_entropy"
 
 
 class OSINTReport(msgspec.Struct, gc=False):
@@ -715,6 +827,7 @@ class OSINTReport(msgspec.Struct, gc=False):
     confidence: float            # 0.0-1.0
     sources_count: int
     timestamp: float            # Unix epoch
+    uncertainty_flags: UncertaintyFlags | None = None  # APEX-1009
 
 
 # ---------------------------------------------------------------------------
@@ -1455,11 +1568,11 @@ class SynthesisRunner:
     async def _synth_phase6_inference(
         self,
         prompt: str,
-    ) -> tuple[dict | None, str]:
+    ) -> tuple[dict | None, str, list[float]]:
         """
         Phase 6: Context compression → model load → race inference → unload on fallback.
 
-        Returns (raw_dict, used_engine).
+        Returns (raw_dict, used_engine, token_logprobs).
         unload() + gc.collect() is called only when ALL engines failed (raw_dict is None).
         Fail-soft: compression errors use original prompt.
         """
@@ -1482,20 +1595,21 @@ class SynthesisRunner:
         # Pre-load model once, then race all three engines. Take first successful result.
         raw_dict: dict | None = None
         used_engine = "none"
+        token_logprobs: list[float] = []
         try:
             model, tokenizer, _model_path = await self._lifecycle._ensure_loaded()
         except RuntimeError as e:
             logger.warning("[SYNTHESIS] Model load failed for race: %s", e)
-            raw_dict, used_engine = None, "none"
+            raw_dict, used_engine, token_logprobs = None, "none", []
         else:
-            raw_dict, used_engine = await self._race_inference(prompt)
+            raw_dict, used_engine, token_logprobs = await self._race_inference(prompt)
 
         # Issue #12.4: unload() only when ALL engines failed (real fallback happened)
         if raw_dict is None:
             await self._lifecycle.unload()
             gc.collect()
 
-        return raw_dict, used_engine
+        return raw_dict, used_engine, token_logprobs
 
     async def _synth_phase7_parse_and_validate(
         self,
@@ -1506,19 +1620,48 @@ class SynthesisRunner:
         arm_used: str,
         query: str,
         findings_count: int,
+        token_logprobs: list[float] | None = None,
     ) -> OSINTReport | None:
         """
         Phase 7: Parse raw_dict → OSINTReport → validate → confidence → bandit reward → hypothesis.
 
         Returns OSINTReport on success, None on parse failure.
         All validations are fail-soft — never block report production.
+
+        APEX-1008: token_logprobs propagated to _parse_raw_to_osintreport for
+        per-entity uncertainty measurement.
         """
         used_outlines = used_engine in ("streaming", "constrained")
-        report = self._parse_raw_to_osintreport(raw_dict)
+        report = self._parse_raw_to_osintreport(raw_dict, token_logprobs=token_logprobs)
         if report is None:
             return None
-
         report.confidence = self._compute_confidence(report, used_outlines)
+
+        # APEX-1009: Run uncertainty gate — compare self-reported confidence with measured entropy
+        if token_logprobs:
+            uncertainty_flags = uncertainty_gate(report.confidence, token_logprobs)
+            report.uncertainty_flags = uncertainty_flags
+            if uncertainty_flags.hallucination_risk:
+                logger.warning(
+                    "[SYNTHESIS] APEX-1009 hallucination_risk: "
+                    "self_reported=%.3f, measured_entropy=%.3f bits, divergence=%.3f, risk=%s",
+                    report.confidence,
+                    uncertainty_flags.measured_entropy,
+                    uncertainty_flags.confidence_divergence,
+                    uncertainty_flags.risk_level,
+                )
+            else:
+                logger.debug(
+                    "[SYNTHESIS] APEX-1009 uncertainty_gate passed: "
+                    "divergence=%.3f, risk=%s, tokens=%d",
+                    uncertainty_flags.confidence_divergence,
+                    uncertainty_flags.risk_level,
+                    uncertainty_flags.token_count,
+                )
+        else:
+            # No logprobs available (xgrammar/structured engines) — default flags
+            report.uncertainty_flags = UncertaintyFlags()
+            logger.debug("[SYNTHESIS] APEX-1009: no token_logprobs — uncertainty gate skipped")
 
         # GAP-8: Evidence grounding validation (fail-soft)
         _, grounding_warnings = validate_evidence_grounding(report, findings)
@@ -1648,8 +1791,9 @@ class SynthesisRunner:
         # ── Phase 6: Inference ──────────────────────────────────────────
         raw_dict: dict | None = None
         used_engine = "none"
+        token_logprobs: list[float] = []
         try:
-            raw_dict, used_engine = await self._synth_phase6_inference(prompt)
+            raw_dict, used_engine, token_logprobs = await self._synth_phase6_inference(prompt)
         except Exception as e:
             logger.error("Synthesis error: %s", e)
             self._last_synthesis_outcome = SynthesisOutcome(
@@ -1680,6 +1824,7 @@ class SynthesisRunner:
             report = await self._synth_phase7_parse_and_validate(
                 raw_dict, used_engine, findings,
                 bandit, arm_used, query, findings_count,
+                token_logprobs=token_logprobs,
             )
             if report is not None:
                 self._last_synthesis_outcome = SynthesisOutcome(
@@ -1828,12 +1973,27 @@ class SynthesisRunner:
         return ""
 
     async def _graphrag_safe(self, query: str, top_iocs: list) -> str:
-        """GraphRAG IOC relationships — fail-soft wrapper for parallel discovery."""
+        """GraphRAG IOC relationships — fail-soft wrapper for parallel discovery.
+
+        SOVEREIGN-002: Uses build_graph_chatml_context() for token-budgeted
+        ChatML context injection when multi_hop_search results are available.
+        """
         try:
             from hledac.universal.legacy.persistent_layer import PersistentKnowledgeLayer
             from hledac.universal.knowledge.graph_rag import GraphRAGOrchestrator
             kl = PersistentKnowledgeLayer()
             _grag = GraphRAGOrchestrator(kl)
+
+            # SOVEREIGN-002: Try multi_hop_search for rich graph context
+            try:
+                graph_result = await _grag.multi_hop_search(query=query, hops=2, max_nodes=15)
+                if graph_result and graph_result.get("insights"):
+                    from hledac.universal.brain.graph_prompt_builder import build_graph_chatml_context
+                    return build_graph_chatml_context(graph_result, query, token_budget=1500)
+            except Exception:
+                pass
+
+            # Fallback: find_connections for IOC relationships
             if not hasattr(_grag, "find_connections"):
                 return ""
             conn_texts = []
@@ -1891,7 +2051,7 @@ class SynthesisRunner:
     async def _race_inference(
         self,
         prompt: str,
-    ) -> tuple[dict | None, str]:
+    ) -> tuple[dict | None, str, list[float]]:
         """
         L-05: Dispatch between two synthesis strategies.
 
@@ -1910,7 +2070,7 @@ class SynthesisRunner:
             is still serialized at the Metal level — but I/O overlap across
             engines can still reduce effective latency vs sequential cascade.
 
-        Returns (raw_dict, engine_name). On all failure: (None, "none").
+        Returns (raw_dict, engine_name, token_logprobs). On all failure: (None, "none", []).
         """
         strategy = self._synthesis_strategy
         if strategy == "race_first_wins":
@@ -1922,35 +2082,35 @@ class SynthesisRunner:
     async def _race_inference_sequential(
         self,
         prompt: str,
-    ) -> tuple[dict | None, str]:
+    ) -> tuple[dict | None, str, list[float]]:
         """
         L-05: Sequential cascade — xgrammar → streaming → structured.
         Each step runs with the global MLX inference lock = strict serialization.
         First-success wins. Lowest latency overhead.
         """
         # Step 1: xgrammar (highest JSON guarantee)
-        result = await _cascade_xgrammar(self._lifecycle, prompt)
+        result, xgram_logprobs = await _cascade_xgrammar(self._lifecycle, prompt)
         if result is not None:
-            return result, "xgrammar"
+            return result, "xgrammar", xgram_logprobs
 
         # Step 2: streaming with early-exit
-        result = await _cascade_streaming(self._lifecycle, prompt)
+        result, stream_logprobs = await _cascade_streaming(self._lifecycle, prompt)
         if result is not None:
-            return result, "streaming"
+            return result, "streaming", stream_logprobs
 
         # Step 3: structured (Outlines fallback)
-        result = await _cascade_structured(self._lifecycle, prompt)
+        result, struct_logprobs = await _cascade_structured(self._lifecycle, prompt)
         if result is not None:
-            return result, "constrained"
+            return result, "constrained", struct_logprobs
 
         # All engines failed
         logger.debug("[SYNTHESIS] All synthesis engines failed")
-        return None, "none"
+        return None, "none", []
 
     async def _race_inference_first_wins(
         self,
         prompt: str,
-    ) -> tuple[dict | None, str]:
+    ) -> tuple[dict | None, str, list[float]]:
         """
         L-05: Race-first-wins — all 3 engines run in parallel via asyncio.wait.
         First successful result wins; remaining tasks are cancelled via
@@ -1962,6 +2122,7 @@ class SynthesisRunner:
         """
         winner: dict | None = None
         winner_name: str = "none"
+        winner_logprobs: list[float] = []
 
         tasks = {
             asyncio.create_task(_race_try_xgrammar(self._lifecycle, prompt), name="xgrammar"): "xgrammar",
@@ -1984,10 +2145,11 @@ class SynthesisRunner:
                 pending.discard(winner_task)
 
                 try:
-                    result_dict, result_name = result
+                    result_dict, result_name, result_logprobs = result
                     if result_dict is not None and result_name != "none":
                         winner = result_dict
                         winner_name = result_name
+                        winner_logprobs = result_logprobs
                         # Cancel remaining tasks — first-success
                         for remaining_task in pending:
                             remaining_task.cancel()
@@ -1996,7 +2158,7 @@ class SynthesisRunner:
                             except asyncio.CancelledError:
                                 pass
                         logger.debug("[SYNTHESIS] race_first_wins: %s won", winner_name)
-                        return winner, winner_name
+                        return winner, winner_name, winner_logprobs
                 except Exception as e:
                     logger.debug("[SYNTHESIS] race task exception: %s", e)
                     # Continue waiting for other tasks
@@ -2011,7 +2173,7 @@ class SynthesisRunner:
             raise
 
         logger.debug("[SYNTHESIS] race_first_wins: all engines failed")
-        return None, "none"
+        return None, "none", []
 
     # ------------------------------------------------------------------
     # Sprint 8TC B.3: Streaming synthesis s early-exit
@@ -2021,7 +2183,7 @@ class SynthesisRunner:
         self,
         prompt: str,
         json_schema: str | None = None,  # unused — regex early-exit path
-    ) -> tuple[dict | None, bool] | None:
+    ) -> tuple[dict | None, bool, list[float]] | None:
         """
         Sprint 8TC B.3: mlx_lm stream_generate s early-exit při kompletním JSON.
 
@@ -2029,7 +2191,8 @@ class SynthesisRunner:
         M1: vše sync v CPU_EXECUTOR — NIKDY přímo v event loop.
 
         Returns:
-            (dict | None, outlines_used: bool) — stejný formát jako structured_generate
+            (dict | None, outlines_used: bool, token_logprobs: list[float]) — stejný formát jako structured_generate
+            APEX-1009: token_logprobs contains per-token log probabilities for uncertainty measurement
         """
         # LLM-01: ALWAYS sanitize prompt before LLM inference (fail-safe, always-on)
         try:
@@ -2113,6 +2276,8 @@ class SynthesisRunner:
             _spec_ips_set: set[str] = set()
             spec_urls: list[str] = []
             spec_ips: list[str] = []
+            # APEX-1009: Collect token logprobs for uncertainty measurement
+            token_logprobs: list[float] = []
             if hasattr(mlx_lm, "stream_generate"):
                 try:
                     with _mlx_lock:
@@ -2127,6 +2292,15 @@ class SynthesisRunner:
                         ):
                             tok = chunk.text if hasattr(chunk, "text") else str(chunk)
                             accumulated += tok
+                            # APEX-1009: Extract token logprob for uncertainty measurement
+                            # chunk.logprobs is a list of (token_id, logprob) tuples
+                            if hasattr(chunk, "logprobs") and chunk.logprobs:
+                                # Take the logprob of the generated token (last entry)
+                                try:
+                                    logprob_val = chunk.logprobs[-1][1] if isinstance(chunk.logprobs[-1], tuple) else chunk.logprobs[-1]
+                                    token_logprobs.append(float(logprob_val))
+                                except (IndexError, TypeError, ValueError):
+                                    pass  # Fail-soft: skip if logprob extraction fails
                             # ISSUE-009: Speculative URL/IP detection — scan sliding window
                             # O(1) memory per token, avoids O(n²) full-string concat for detection
                             window = accumulated[-_SPEC_WINDOW:]
@@ -2145,7 +2319,8 @@ class SynthesisRunner:
                                     # ISSUE-009: Attach detected URLs/IPs to self for caller access
                                     self._speculative_urls = spec_urls
                                     self._speculative_ips = spec_ips
-                                    return _msgspec_decode(_msgspec_encode(parsed)), True
+                                    # APEX-1009: Return token_logprobs for uncertainty measurement
+                                    return _msgspec_decode(_msgspec_encode(parsed)), True, token_logprobs
                                 except Exception:
                                     pass  # Decode failed, keep accumulating
                 except Exception as e:
@@ -2161,13 +2336,14 @@ class SynthesisRunner:
                         # ISSUE-009: Attach detected URLs/IPs even on final fallback
                         self._speculative_urls = spec_urls
                         self._speculative_ips = spec_ips
-                        return _msgspec_decode(_msgspec_encode(parsed)), True
+                        # APEX-1009: Return token_logprobs for uncertainty measurement
+                        return _msgspec_decode(_msgspec_encode(parsed)), True, token_logprobs
                     except Exception:  # noqa: BLE001
                         pass
 
             # Issue #20-C: mx.eval() + gc.collect() cleanup — Sprint 3 dedup via _mlx_cleanup()
             _mlx_cleanup()
-            return (None, False)
+            return (None, False, [])
 
         return await asyncio.to_thread(_stream_sync)
 
@@ -2560,13 +2736,20 @@ class SynthesisRunner:
         except Exception:
             return True  # fail-open
 
-    def _parse_raw_to_osintreport(self, raw: dict) -> OSINTReport | None:
+    def _parse_raw_to_osintreport(
+        self,
+        raw: dict,
+        token_logprobs: list[float] | None = None,
+    ) -> OSINTReport | None:
         """
         Sprint 8TA B.1: Safe parsing of raw dict into OSINTReport.
 
         Uses raw.get() for every field with defaults for missing values.
         Maps json_schema fields (title/summary/findings) to OSINTReport fields
         (threat_summary/ioc_entities/sources_count).
+
+        APEX-1008: If token_logprobs provided, computes uncertainty flags and
+        propagates per-entity confidence/uncertainty_flag to IOCEntity objects.
         """
         try:
             title = raw.get("title", "OSINT Synthesis")
@@ -2576,15 +2759,39 @@ class SynthesisRunner:
             confidence = raw.get("confidence", 0.0)
             timestamp = raw.get("timestamp", time.time())
 
+            # APEX-1008: Compute uncertainty flags if token_logprobs available
+            uncertainty_flags = None
+            if token_logprobs:
+                uncertainty_flags = uncertainty_gate(confidence, token_logprobs)
+
             # Map findings list to IOCEntity list
             ioc_entities: list[IOCEntity] = []
             for f in findings[:20]:  # max 20
                 if isinstance(f, str):
+                    # APEX-1008: Apply uncertainty to entity if available
+                    entity_confidence = 1.0
+                    entity_uncertainty_flag = "normal"
+
+                    if uncertainty_flags and token_logprobs:
+                        # Use measured entropy to set entity confidence
+                        # Higher entropy = lower confidence
+                        if uncertainty_flags.measured_entropy > 1.5:
+                            entity_confidence = 0.5
+                            entity_uncertainty_flag = "high_entropy"
+                        elif uncertainty_flags.measured_entropy > 0.8:
+                            entity_confidence = 0.7
+                            entity_uncertainty_flag = "elevated"
+                        else:
+                            entity_confidence = 0.95
+                            entity_uncertainty_flag = "normal"
+
                     ioc_entities.append(IOCEntity(
                         value=f[:100],
                         ioc_type=_infer_ioc_type(f),
                         severity="medium",
                         context=f[:200],
+                        confidence=entity_confidence,
+                        uncertainty_flag=entity_uncertainty_flag,
                     ))
 
             return OSINTReport(
@@ -2595,6 +2802,7 @@ class SynthesisRunner:
                 confidence=float(confidence) if confidence else 0.0,
                 sources_count=len(findings),
                 timestamp=float(timestamp) if timestamp else time.time(),
+                uncertainty_flags=uncertainty_flags,
             )
         except Exception as e:
             logger.warning("[SYNTHESIS] _parse_raw_to_osintreport failed: %s", e)

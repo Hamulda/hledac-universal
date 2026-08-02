@@ -49,6 +49,16 @@ from hledac.universal.export.sprint_exporter import (
     export_sprint,
 )
 
+# ISSUE [APEX]-1010: Sprint bundle format
+from hledac.universal.export.sprint_bundler import (
+    bundle_sprint,
+    verify_bundle,
+    BUNDLE_FORMAT_VERSION,
+)
+from hledac.universal.export.sprint_viewer import (
+    view_bundle,
+)
+
 __all__ = [
     # New unified engine (Issue 12.1)
     "ReportEngine",
@@ -78,4 +88,9 @@ __all__ = [
     "ParquetExporter",
     "export_findings_parquet",
     "export_parquet_to_path",
+    # Sprint bundle format [APEX]-1010
+    "bundle_sprint",
+    "verify_bundle",
+    "BUNDLE_FORMAT_VERSION",
+    "view_bundle",
 ]

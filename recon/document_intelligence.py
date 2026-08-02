@@ -593,6 +593,11 @@ class DocumentAnalysis(msgspec.Struct, frozen=True):
     suspicious_indicators: list[str] = field(default_factory=list)
     exif_data: EXIFData | None = None
     ocr_text: str = ''  # Vision Framework ANE OCR for scanned images/PDFs
+    canary_tokens: list[str] = field(default_factory=list)  # ISSUE-015: detected canary tokens / tracking beacons
+    # ISSUE-016: PDF forensics - OCG layers, redaction failures, suppressed annotations
+    ocg_layers: list[dict[str, Any]] = field(default_factory=list)  # Optional Content Groups (hidden layers)
+    redaction_failures: list[str] = field(default_factory=list)  # Text visible under black rectangles
+    suppressed_annotations: list[dict[str, Any]] = field(default_factory=list)  # Hidden annotations (/F 6 flag)
 
 class PDFAnalyzer:
     """
@@ -639,8 +644,30 @@ class PDFAnalyzer:
             emails = self.EMAIL_PATTERN.findall(full_text)
             ip_addresses = self.IP_PATTERN.findall(full_text)
             suspicious = self._detect_suspicious_content(full_text)
+
+            # ISSUE-015: Canary token detection (pre-flight OPSEC check)
+            from forensics.canary_detector import scan_for_canary_tokens
+            canary_detection = scan_for_canary_tokens(full_text)
+            canary_tokens = canary_detection.tokens if canary_detection.detected else []
+
+            # ISSUE-016: PDF forensics - OCG layers, redaction failures, suppressed annotations
+            ocg_layers = self._extract_ocg_layers(doc)
+            redaction_failures = self._detect_redaction_failures(doc)
+            suppressed_annotations = self._extract_suppressed_annotations(doc)
+
             doc.close()
-            return DocumentAnalysis(metadata=metadata, embedded_objects=embedded_objects, hyperlinks=hyperlinks, email_addresses=emails, ip_addresses=ip_addresses, suspicious_indicators=suspicious)
+            return DocumentAnalysis(
+                metadata=metadata,
+                embedded_objects=embedded_objects,
+                hyperlinks=hyperlinks,
+                email_addresses=emails,
+                ip_addresses=ip_addresses,
+                suspicious_indicators=suspicious,
+                canary_tokens=canary_tokens,
+                ocg_layers=ocg_layers,
+                redaction_failures=redaction_failures,
+                suppressed_annotations=suppressed_annotations,
+            )
         except Exception as e:
             logger.warning(f'PDF analysis failed: {e}')
             return DocumentAnalysis(metadata=DocumentMetadata(), embedded_objects=[], hyperlinks=[], email_addresses=[], ip_addresses=[], suspicious_indicators=[])
@@ -823,6 +850,201 @@ class PDFAnalyzer:
 
         return objects
 
+    def _extract_ocg_layers(self, doc: fitz.Document) -> list[dict]:
+        """Extract Optional Content Groups (OCG) from PDF - ISSUE-016.
+
+        OCGs are PDF layers that can be toggled on/off. Hidden layers may contain
+        sensitive information like redacted text, watermarks, or alternate content.
+
+        M1 8GB safe: Bounded to max 10 OCGs to prevent memory exhaustion.
+
+        Returns:
+            List of dicts with keys:
+            - name: OCG layer name
+            - intent: Usage intent (e.g., 'View', 'Design')
+            - on: Whether layer is currently visible
+            - text_samples: Sample text extracted from this layer (first 200 chars)
+        """
+        MAX_OCG_LAYERS = 10
+        ocg_layers = []
+
+        try:
+            ocg_dict = doc.get_ocgs()
+            if not ocg_dict:
+                return []
+
+            for xref, ocg_info in list(ocg_dict.items())[:MAX_OCG_LAYERS]:
+                try:
+                    layer_data = {
+                        'xref': xref,
+                        'name': ocg_info.get('name', 'Unnamed'),
+                        'intent': ocg_info.get('intent', 'View'),
+                        'on': ocg_info.get('on', True),
+                        'text_samples': [],
+                    }
+
+                    for page_num in range(min(len(doc), 20)):
+                        page = doc[page_num]
+                        try:
+                            page_ocgs = page.get_ocgs()
+                            if xref in page_ocgs:
+                                text = page.get_text()[:200]
+                                if text.strip():
+                                    layer_data['text_samples'].append({
+                                        'page': page_num,
+                                        'text': text,
+                                    })
+                        except Exception:
+                            continue
+
+                    ocg_layers.append(layer_data)
+                except Exception as e:
+                    logger.debug(f'Failed to extract OCG xref={xref}: {e}')
+                    continue
+
+        except Exception as e:
+            logger.debug(f'OCG extraction failed: {e}')
+
+        return ocg_layers
+
+    def _detect_redaction_failures(self, doc: fitz.Document) -> list[str]:
+        """Detect redaction failures - text visible under black rectangles - ISSUE-016.
+
+        Redaction failures occur when:
+        1. Black rectangles are drawn over text (visual redaction)
+        2. But the underlying text is still selectable/searchable
+
+        This is a critical security issue - the redacted content is still accessible.
+
+        M1 8GB safe: Limits checks to first 50 pages and max 100 failures.
+
+        Returns:
+            List of strings describing each redaction failure found.
+        """
+        MAX_PAGES_TO_CHECK = 50
+        MAX_FAILURES = 100
+        redaction_failures = []
+
+        try:
+            pages_to_check = min(len(doc), MAX_PAGES_TO_CHECK)
+
+            for page_num in range(pages_to_check):
+                if len(redaction_failures) >= MAX_FAILURES:
+                    break
+
+                page = doc[page_num]
+
+                annots = page.annots()
+                if not annots:
+                    continue
+
+                for annot in annots:
+                    try:
+                        annot_type = annot.type[0]
+                        if annot_type != 14:
+                            continue
+
+                        rect = annot.rect
+                        if not rect:
+                            continue
+
+                        text_dict = page.get_text('dict', clip=rect)
+                        hidden_texts = []
+                        for block in text_dict.get('blocks', []):
+                            if block.get('type') == 0:
+                                for line in block.get('lines', []):
+                                    for span in line.get('spans', []):
+                                        span_text = span.get('text', '').strip()
+                                        if span_text:
+                                            hidden_texts.append(span_text)
+
+                        if hidden_texts:
+                            combined = ' '.join(hidden_texts)
+                            redaction_failures.append(
+                                f'Page {page_num + 1}: Redaction failure at '
+                                f'({rect.x0:.1f},{rect.y0:.1f})-({rect.x1:.1f},{rect.y1:.1f}) '
+                                f'- hidden text: "{combined[:100]}"'
+                            )
+                            if len(redaction_failures) >= MAX_FAILURES:
+                                break
+                    except Exception:
+                        continue
+
+        except Exception as e:
+            logger.debug(f'Redaction failure detection failed: {e}')
+
+        return redaction_failures
+
+    def _extract_suppressed_annotations(self, doc: fitz.Document) -> list[dict]:
+        """Extract suppressed/hidden annotations from PDF - ISSUE-016.
+
+        PDF annotations can have a /F (flags) field. Flag value 6 means:
+        - Bit 1 (1): Invisible - annotation not displayed/printed
+        - Bit 2 (2): Hidden - annotation cannot be interacted with
+
+        These hidden annotations may contain IOCs, comments, or sensitive data
+        that was deliberately hidden from viewers.
+
+        M1 8GB safe: Limits to first 50 pages and max 200 annotations.
+
+        Returns:
+            List of dicts with keys:
+            - page: Page number
+            - type: Annotation type (e.g., 'Text', 'FreeText', 'Stamp')
+            - content: Annotation content/text
+            - flags: Raw flag value
+            - rect: Bounding rectangle
+        """
+        MAX_PAGES_TO_CHECK = 50
+        MAX_ANNOTATIONS = 200
+        SUPPRESSED_FLAG_VALUES = {2, 6}
+        suppressed = []
+
+        try:
+            pages_to_check = min(len(doc), MAX_PAGES_TO_CHECK)
+
+            for page_num in range(pages_to_check):
+                if len(suppressed) >= MAX_ANNOTATIONS:
+                    break
+
+                page = doc[page_num]
+                annots = page.annots()
+                if not annots:
+                    continue
+
+                for annot in annots:
+                    try:
+                        flags = annot.flags
+                        if flags not in SUPPRESSED_FLAG_VALUES:
+                            continue
+
+                        annot_type = annot.type[1] if annot.type else 'Unknown'
+                        content = annot.info.get('content', '') if annot.info else ''
+                        rect = annot.rect
+
+                        suppressed.append({
+                            'page': page_num + 1,
+                            'type': annot_type,
+                            'content': content[:500] if content else '',
+                            'flags': flags,
+                            'rect': {
+                                'x0': rect.x0,
+                                'y0': rect.y0,
+                                'x1': rect.x1,
+                                'y1': rect.y1,
+                            } if rect else None,
+                        })
+
+                        if len(suppressed) >= MAX_ANNOTATIONS:
+                            break
+                    except Exception:
+                        continue
+
+        except Exception as e:
+            logger.debug(f'Suppressed annotation extraction failed: {e}')
+
+        return suppressed
+
     def _detect_suspicious_content(self, text: str) -> list[str]:
         """Detect suspicious keywords in text using Aho-Corasick if available.
 
@@ -946,6 +1168,7 @@ class OfficeDocumentAnalyzer:
         embedded_objects = []
         hyperlinks = []
         comments = []
+        canary_tokens = []
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as z:
                 metadata = self._extract_ooxml_core_props(z, content)
@@ -955,6 +1178,13 @@ class OfficeDocumentAnalyzer:
                 if 'word/document.xml' in z.namelist():
                     doc_xml = z.read('word/document.xml').decode('utf-8', errors='ignore')
                     hyperlinks = PDFAnalyzer.URL_PATTERN.findall(doc_xml)
+
+                    # ISSUE-015: Canary token detection (pre-flight OPSEC check)
+                    from forensics.canary_detector import scan_for_canary_tokens
+                    canary_detection = scan_for_canary_tokens(doc_xml)
+                    if canary_detection.detected:
+                        canary_tokens = canary_detection.tokens
+
                 for name in z.namelist():
                     if name.startswith('word/media/'):
                         data = _safe_read_zip_entry(z, name)
@@ -962,7 +1192,7 @@ class OfficeDocumentAnalyzer:
                             embedded_objects.append(EmbeddedObject(object_type='media', object_name=name.split('/')[-1], content_type=None, size_bytes=len(data), extracted_content=data))
         except Exception as e:
             logger.error(f'OOXML analysis error: {e}')
-        return DocumentAnalysis(metadata=metadata, embedded_objects=embedded_objects, hyperlinks=hyperlinks, comments=comments)
+        return DocumentAnalysis(metadata=metadata, embedded_objects=embedded_objects, hyperlinks=hyperlinks, comments=comments, canary_tokens=canary_tokens)
 
     def _extract_ooxml_core_props(self, z: zipfile.ZipFile, content: bytes) -> DocumentMetadata:
         """Extract core properties from OOXML."""
@@ -1061,7 +1291,24 @@ class ImageAnalyzer:
             metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.IMAGE, file_extension=f'.{img_format.lower()}' if img_format else '.unknown', image_width=img_width, image_height=img_height, gps_coordinates=exif_data.gps_location if exif_data else None, raw_metadata={'format': img_format, 'mode': img_mode})
             # Vision Framework ANE OCR — hardware-accelerated text extraction from image bytes
             ocr_text, _ = _ocr_embedded_image(content) if PYMUPDF_AVAILABLE else ('', 0.0)
-            return DocumentAnalysis(metadata=metadata, exif_data=exif_data, ocr_text=ocr_text)
+
+            # ISSUE-015: Canary token detection in OCR text and EXIF metadata
+            canary_tokens: list[str] = []
+            scan_targets = [ocr_text]
+            if exif_data and exif_data.raw_exif:
+                # Scan EXIF text fields that can embed canary tokens
+                for tag_name in ('UserComment', 'ImageDescription', 'Software', 'Make', 'Model'):
+                    exif_val = exif_data.raw_exif.get(tag_name)
+                    if isinstance(exif_val, str) and exif_val.strip():
+                        scan_targets.append(exif_val)
+            combined_scan = ' '.join(scan_targets)
+            if combined_scan.strip():
+                from forensics.canary_detector import scan_for_canary_tokens
+                canary_result = scan_for_canary_tokens(combined_scan)
+                if canary_result.detected:
+                    canary_tokens = canary_result.tokens
+
+            return DocumentAnalysis(metadata=metadata, exif_data=exif_data, ocr_text=ocr_text, canary_tokens=canary_tokens)
         except Exception as e:
             logger.error(f'Image analysis error: {e}')
             return self._basic_image_analysis(file_path)

@@ -1535,20 +1535,168 @@ class DeepHermes3Engine:
 
     async def _init_draft_model(self) -> None:
         """
-        F290-EXT: DISABLED — speculative decoding is always-off on M1 8GB.
+        SOVEREIGN-004: Safe draft model initialization with UMA-aware eviction.
 
-        The draft model (~400-700MB) caused 30s blocking Metal calls that
-        triggered 178 branch timeouts and exhausted GPU memory on 8GB UMA.
+        Previous implementation (F290-EXT) used SmolLM-0.5B (~700MB) which caused
+        30s blocking Metal calls and 178 branch timeouts on M1 8GB.
 
-        The entire body below is no-op because _load_model() sets
-        _skip_draft=True when HLEDAC_DISABLE_SPEC_DECODE != "0" (default "1").
-        This method is kept as a no-op stub for future opt-in re-enabling.
+        New implementation:
+        - Uses SmolLM-360M (~200MB) — 3.5× smaller, fits in 8GB UMA
+        - UMA eviction: if system usage > 85% (6.8GB), draft model is evicted
+        - Lazy loading: draft model only loaded when explicitly enabled via env var
+        - Default: DISABLED (safe mode) — opt-in via HLEDAC_ENABLE_SPEC_DECODE=1
+
+        Memory budget: 200MB draft model + 500MB KV cache = 700MB total overhead
         """
-        self._speculative_enabled = False
-        self._draft_model_name = None
-        self._draft_model_obj = None
-        self._supports_draft = False
-        logger.info('[SPEC] Draft model disabled (M1 8GB always-on safe mode)')
+        import os
+
+        # Check if speculative decoding is explicitly enabled
+        enable_spec = os.environ.get('HLEDAC_ENABLE_SPEC_DECODE', '0')
+        if enable_spec != '1':
+            self._speculative_enabled = False
+            self._draft_model_name = None
+            self._draft_model_obj = None
+            self._supports_draft = False
+            logger.info('[SPEC] Draft model disabled (M1 8GB safe mode, set HLEDAC_ENABLE_SPEC_DECODE=1 to enable)')
+            return
+
+        # SOVEREIGN-004: Check UMA before loading draft model
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
+            uma_snap = get_uma_snapshot()
+            uma_usage_pct = uma_snap.get('uma_usage_pct', 0)
+
+            # 85% threshold = 6.8GB on 8GB M1
+            if uma_usage_pct > 85:
+                logger.warning(f'[SPEC] UMA usage {uma_usage_pct}% > 85% threshold — skipping draft model init')
+                self._speculative_enabled = False
+                self._draft_model_name = None
+                self._draft_model_obj = None
+                self._supports_draft = False
+                return
+        except Exception as e:
+            logger.debug(f'[SPEC] UMA check failed, proceeding with caution: {e}')
+
+        # SOVEREIGN-004: Use SmolLM-360M (200MB) instead of SmolLM-0.5B (700MB)
+        # SmolLM-360M is 3.5× smaller, reducing Metal pressure significantly
+        DRAFT_MODEL = 'mlx-community/SmolLM-360M-Instruct-4bit'
+        DRAFT_MODEL_SIZE_MB = 200  # Expected size after 4-bit quantization
+
+        try:
+            from mlx_lm import load
+
+            logger.info(f'[SPEC] Loading draft model {DRAFT_MODEL} (~{DRAFT_MODEL_SIZE_MB}MB)')
+
+            def _load_draft():
+                return load(DRAFT_MODEL)
+
+            draft_result = await asyncio.to_thread(_load_draft)
+
+            # mlx_lm.load returns (model, tokenizer) or (model, tokenizer, cache)
+            if isinstance(draft_result, tuple):
+                self._draft_model_obj = draft_result[0]
+                self._draft_tokenizer = draft_result[1]
+            else:
+                self._draft_model_obj = draft_result
+                self._draft_tokenizer = None
+
+            self._draft_model_name = DRAFT_MODEL
+            self._speculative_enabled = True
+            self._supports_draft = True
+
+            logger.info(f'[SPEC] Draft model loaded: {DRAFT_MODEL} (SOVEREIGN-004 safe mode)')
+
+            # Register UMA watchdog callback for draft model eviction
+            self._register_draft_eviction_callback()
+
+        except Exception as e:
+            logger.warning(f'[SPEC] Draft model load failed: {e}')
+            self._speculative_enabled = False
+            self._draft_model_name = None
+            self._draft_model_obj = None
+            self._supports_draft = False
+
+    def _register_draft_eviction_callback(self) -> None:
+        """
+        SOVEREIGN-004: Register UMA watchdog callback for draft model eviction.
+
+        If UMA usage exceeds 85% (6.8GB on 8GB), the draft model is automatically
+        evicted to free ~200MB of unified memory.
+
+        Uses the existing UmaWatchdog system with a custom callback class.
+        """
+        try:
+            from hledac.universal.utils.uma_budget import UmaWatchdogCallbacks, UmaWatchdog
+
+            class DraftEvictionCallbacks(UmaWatchdogCallbacks):
+                """UMA watchdog callbacks that evict draft model on memory pressure."""
+
+                def __init__(self, engine_ref):
+                    self._engine = engine_ref
+
+                def on_warn(self, snapshot: dict) -> None:
+                    """Evict draft model on WARN (>= 6.0GB) to prevent cascade."""
+                    uma_usage_pct = snapshot.get('uma_usage_pct', 0)
+                    if uma_usage_pct > 85 and self._engine._draft_model_obj is not None:
+                        logger.warning(f'[SPEC] UMA {uma_usage_pct}% > 85% — evicting draft model')
+                        self._engine._evict_draft_model()
+
+                def on_critical(self, snapshot: dict) -> None:
+                    """Evict draft model on CRITICAL (>= 6.5GB)."""
+                    if self._engine._draft_model_obj is not None:
+                        logger.warning('[SPEC] UMA CRITICAL — evicting draft model')
+                        self._engine._evict_draft_model()
+
+                def on_emergency(self, snapshot: dict) -> None:
+                    """Evict draft model on EMERGENCY (>= 7.0GB)."""
+                    if self._engine._draft_model_obj is not None:
+                        logger.warning('[SPEC] UMA EMERGENCY — evicting draft model')
+                        self._engine._evict_draft_model()
+
+            # Create and start watchdog with draft eviction callbacks
+            callbacks = DraftEvictionCallbacks(self)
+            self._draft_watchdog = UmaWatchdog(callbacks=callbacks, interval=1.0)
+            self._draft_watchdog.start()
+            logger.debug('[SPEC] Registered draft model eviction watchdog')
+
+        except Exception as e:
+            logger.debug(f'[SPEC] Failed to register draft eviction watchdog: {e}')
+
+    def _evict_draft_model(self) -> None:
+        """
+        SOVEREIGN-004: Evict draft model to free unified memory.
+
+        Called automatically by UMA watchdog when pressure > 85%.
+        Can also be called manually via force=True parameter.
+        """
+        if self._draft_model_obj is None:
+            return
+
+        try:
+            logger.info('[SPEC] Evicting draft model to free unified memory')
+
+            # Clear draft model references
+            self._draft_model_obj = None
+            self._draft_tokenizer = None
+            self._draft_model_name = None
+            self._speculative_enabled = False
+            self._supports_draft = False
+
+            # Force garbage collection to release Metal buffers
+            import gc
+            gc.collect()
+
+            # Clear MLX cache to release GPU memory
+            try:
+                import mlx.core as mx
+                mx.metal.clear_cache()
+            except Exception:
+                pass
+
+            logger.info('[SPEC] Draft model evicted successfully (~200MB freed)')
+
+        except Exception as e:
+            logger.warning(f'[SPEC] Draft model eviction failed: {e}')
 
     async def _init_system_prompt_cache(self) -> None:
         """Initialize persistent system-prompt cache (Sprint 75 + Sprint M4)."""

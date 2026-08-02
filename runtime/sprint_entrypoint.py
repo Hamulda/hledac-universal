@@ -79,6 +79,7 @@ from hledac.universal.core.resource_governor import (
     sample_uma_status,
 )
 from hledac.universal.paths import TOR_ROOT, get_sprint_json_report_path
+from hledac.universal.runtime.power_assertion import PowerAssertion  # APEX-1001
 from hledac.universal.runtime.acquisition_strategy import (
     ACQUISITION_REPORT_SCHEMA_VERSION,
     SourceFamilyOutcome,
@@ -2189,6 +2190,17 @@ async def run_sprint(
     sprint_id = _make_sprint_id()
     _phase_times["WARMUP"] = time.monotonic()
 
+    # APEX-1001: Acquire power assertion to prevent macOS sleep during sprint.
+    # MacBook Air M1 with closed lid enters sleep after ~30s, killing the sprint.
+    # PowerAssertion uses IOPMAssertion (PyObjC) or caffeinate fallback.
+    # ALWAYS-ON: no ENV toggle, sprints need uninterrupted execution.
+    # Released in finally block at TEARDOWN.
+    _power_assertion = PowerAssertion.acquire(reason=f"sprint_{sprint_id}")
+    logger.info(
+        "[PRE-LOOP] Power assertion acquired (method=%s) — sleep prevented",
+        _power_assertion.method,
+    )
+
     # F266-LOCK: Sprint-level lock — prevent two sprints with the same query from
     # running simultaneously. Uses GraphLockManager (fcntl.flock + PID header).
     # Lock is released in the finally block at the bottom of this function.
@@ -3316,6 +3328,13 @@ async def run_sprint(
             logger.warning(f"[EXPORT] sprint_exporter seam failed (non-fatal): {ex}")
 
     finally:
+        # APEX-1001: Release power assertion FIRST (before any other cleanup).
+        # This ensures macOS can sleep again after sprint completes.
+        # Idempotent and thread-safe.
+        if '_power_assertion' in locals():
+            _power_assertion.release()
+            logger.info("[TEARDOWN] Power assertion released")
+
         # F4.4: Graceful task cancellation via trio-style cancel_scope_drain.
         # Prevents "Task was destroyed but it is pending" warnings.
         # SIGTERM during finally = CancelledError propagates through aclose calls;

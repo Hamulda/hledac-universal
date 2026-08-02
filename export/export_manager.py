@@ -452,7 +452,11 @@ class ExportManager:
                 if key not in ('query', 'sprint_id', 'tags', 'sources'):
                     lines.append(f'- **{key}**: {value}\n')
         try:
-            target.write_text('\n'.join(lines), encoding='utf-8')
+            # SOVEREIGN-009: Sign forensic report before writing
+            report_content = '\n'.join(lines)
+            from hledac.universal.brain.report_signer import sign_forensic_report
+            signed_content = sign_forensic_report(report_content)
+            target.write_text(signed_content, encoding='utf-8')
             return target
         except Exception:
             return None

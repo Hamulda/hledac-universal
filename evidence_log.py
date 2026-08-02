@@ -2800,9 +2800,11 @@ class EvidenceLog:
                 import shutil
                 shutil.copy2(self._persist_path, export_path)
             return
-        # Batch write: single syscall for all events
-        with open(export_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(e.to_jsonl_line() for e in self._log) + '\n')
+        # Streaming write: O(1) memory instead of materializing entire log
+        # For 100K events × 500 bytes = 50MB → ~0 memory overhead
+        with open(export_path, 'w', encoding='utf-8', buffering=65536) as f:
+            for event in self._log:
+                f.write(event.to_jsonl_line() + '\n')
 
     @classmethod
     def from_jsonl(cls, path: Path, run_id: str | None=None, load_to_ram: bool=False, max_ram_events: int=100) -> EvidenceLog:

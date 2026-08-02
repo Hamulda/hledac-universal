@@ -137,12 +137,12 @@ _RE_AWS_KEY = re.compile('\\bAKIA[0-9A-Z]{16}\\b')
 _RE_BEARER = re.compile('\\bBearer\\s+[A-Za-z0-9_\\.\\-]{20,}\\b', re.IGNORECASE)
 _RE_PKEY = re.compile('-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----', re.IGNORECASE)
 _RE_TOKEN = re.compile('\\b(?:token|key|secret|password|passwd|pwd|auth|credential)[\'\\"]?[:=]?\\s*[\'\\"]?([A-Za-z0-9_\\-]{16,64})[\'\\"]?\\b', re.IGNORECASE)
+from hledac.universal.brain.output_dlp_filter import mask_secret as _mask_secret_impl
+_SECRET_REDACT_LEN = 4
 
 def _mask_secret(value: str) -> str:
-    if len(value) <= _SECRET_REDACT_LEN:
-        return '*' * len(value)
-    return value[:-_SECRET_REDACT_LEN] + '*' * _SECRET_REDACT_LEN
-
+    """Mask secrets via centralized DLP filter (SOVEREIGN-010)."""
+    return _mask_secret_impl(value)
 def _extract_secrets(text: str) -> tuple[list[str], list[str], list[str]]:
     emails = _RE_EMAIL.findall(text)
     ipv4s = _RE_IPV4.findall(text)

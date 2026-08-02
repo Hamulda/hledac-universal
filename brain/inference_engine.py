@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import hashlib
+import heapq
 import logging
 import time
 from collections import defaultdict, deque
@@ -263,6 +264,45 @@ class MultiHopPath(msgspec.Struct, frozen=False, gc=False):
         for hop in self.hops:
             lines.append(f'    {hop.step_number}. {hop.from_entity} --[{hop.relation}]-> {hop.to_entity} (confidence: {hop.confidence:.3f})')
         return '\n'.join(lines)
+
+class _BFSNode(msgspec.Struct, frozen=False, gc=False):
+    """SOVEREIGN-006: Node for cost-weighted BFS with information gain tracking.
+
+    Attributes:
+        evidence_id: Evidence node identifier
+        path: List of evidence IDs forming the path from start
+        depth: Current depth in BFS tree
+        cost: Accumulated cost from start (lower = better)
+        gain: Information gain score (new_iocs / actions_taken)
+        last_ioc_time: Monotonic timestamp of last IOC discovery
+        iocs_found: Set of IOC evidence IDs discovered along path
+        priority: Heap priority (f = cost - gain_weight * gain)
+    """
+    evidence_id: str
+    path: list[str]
+    depth: int
+    cost: float = 0.0
+    gain: float = 0.0
+    last_ioc_time: float = 0.0
+    iocs_found: set[str] = msgspec.field(default_factory=set)
+    priority: float = 0.0
+
+    def __lt__(self, other: '_BFSNode') -> bool:
+        """Heap ordering: lower priority = higher precedence."""
+        return self.priority < other.priority
+
+    def _calculate_priority(self, gain_weight: float = 2.0) -> float:
+        """Calculate A*-like priority: f(n) = g(n) - w * h(n).
+
+        Args:
+            gain_weight: Weight for information gain heuristic (default 2.0)
+
+        Returns:
+            Priority score (lower = better path to explore first)
+        """
+        self.priority = self.cost - gain_weight * self.gain
+        return self.priority
+
 
 class InferenceEngine:
     """
@@ -696,33 +736,151 @@ class InferenceEngine:
         return matching
 
     def _bfs_chain(self, start_id: str, target_id: str, max_depth: int) -> list[InferenceStep] | None:
-        """Breadth-first search for inference chain."""
+        """SOVEREIGN-006: Cost-weighted BFS with information gain scoring and pruning.
+
+        Enhancements over vanilla BFS:
+        - Information gain scoring: gain = len(new_iocs) / actions_taken
+        - Cost-weighted edges: cost = 1.0 / edge_confidence (prefer high-confidence edges)
+        - Dead-end pruning: prune paths with gain < 0.1 (no new IOCs discovered)
+        - Timeout pruning: terminate paths with no IOC discovery for 10s
+
+        Args:
+            start_id: Starting evidence ID
+            target_id: Target evidence ID
+            max_depth: Maximum search depth
+
+        Returns:
+            List of InferenceStep or None if no chain found
+        """
         if start_id == target_id:
             return []
+
         # F-08: Reset counter per-call so each BFS starts fresh
         self._total_iterations = 0
-        queue = deque([(start_id, [start_id], 0)], maxlen=self.MAX_BFS_QUEUE)
+        start_time = time.monotonic()
+
+        # Initialize priority queue with start node
+        start_node = _BFSNode(
+            evidence_id=start_id,
+            path=[start_id],
+            depth=0,
+            cost=0.0,
+            gain=0.0,
+            last_ioc_time=start_time,
+            iocs_found=set(),
+        )
+        start_node._calculate_priority(gain_weight=2.0)
+
+        # Priority queue: (priority, node)
+        heap: list[tuple[float, _BFSNode]] = [(start_node.priority, start_node)]
         visited = {start_id}
-        while queue:
+
+        # IOC detection: evidence with IOC-like metadata
+        def _is_ioc_evidence(evidence_id: str) -> bool:
+            """Check if evidence represents an IOC (IP, domain, hash, etc.)."""
+            evidence = self._evidence.get(evidence_id)
+            if not evidence:
+                return False
+            ioc_keys = {'ip_address', 'domain', 'hash', 'url', 'email', 'file_hash'}
+            return any(key in evidence.metadata for key in ioc_keys)
+
+        # Track best path found so far
+        best_path: list[str] | None = None
+        best_gain = 0.0
+
+        while heap:
             # F-08: Prevent infinite loops via total iteration cap
             self._total_iterations += 1
             if self._total_iterations >= self.max_total_iterations:
-                raise InferenceLoopExceeded(
-                    f"InferenceEngine BFS exceeded max_total_iterations={self.max_total_iterations} "
-                    f"(loop would burn CPU indefinitely with malformed evidence)"
+                logger.warning(
+                    f"BFS exceeded max_total_iterations={self.max_total_iterations}, "
+                    f"returning best path found (gain={best_gain:.2f})"
                 )
-            current_id, path, depth = queue.popleft()
-            if depth >= max_depth:
+                break
+
+            # Pop node with lowest priority (highest potential)
+            current_priority, current_node = heapq.heappop(heap)
+
+            # SOVEREIGN-006: Timeout pruning - terminate if no IOC for 10s
+            elapsed_since_ioc = time.monotonic() - current_node.last_ioc_time
+            if elapsed_since_ioc > 10.0 and current_node.depth > 0:
+                logger.debug(
+                    f"BFS timeout: no IOC for {elapsed_since_ioc:.1f}s at depth {current_node.depth}, "
+                    f"pruning path (gain={current_node.gain:.2f})"
+                )
                 continue
-            neighbors = self._evidence_graph.get(current_id, set()) or set()
+
+            # SOVEREIGN-006: Dead-end pruning - prune if gain < 0.1
+            if current_node.gain < 0.1 and current_node.depth > 2:
+                logger.debug(
+                    f"BFS dead-end: gain={current_node.gain:.2f} < 0.1 at depth {current_node.depth}, "
+                    f"pruning path"
+                )
+                continue
+
+            # Check if we reached target
+            if current_node.evidence_id == target_id:
+                if current_node.gain > best_gain:
+                    best_path = current_node.path
+                    best_gain = current_node.gain
+                continue
+
+            # Depth limit check
+            if current_node.depth >= max_depth:
+                continue
+
+            # Explore neighbors
+            neighbors = self._evidence_graph.get(current_node.evidence_id, set()) or set()
+            actions_taken = len(neighbors)
+
             for neighbor_id in neighbors:
                 if neighbor_id in visited:
                     continue
-                new_path = path + [neighbor_id]
-                if neighbor_id == target_id:
-                    return self._path_to_chain(new_path)
+
+                # Calculate edge cost: cost = 1.0 / edge_confidence
+                neighbor_evidence = self._evidence.get(neighbor_id)
+                if not neighbor_evidence:
+                    continue
+
+                # Edge confidence = min(current_confidence, neighbor_confidence)
+                current_evidence = self._evidence.get(current_node.evidence_id)
+                if not current_evidence:
+                    continue
+                edge_confidence = min(current_evidence.confidence, neighbor_evidence.confidence)
+                edge_cost = 1.0 / max(edge_confidence, 0.01)  # Avoid division by zero
+
+                # Calculate new path cost
+                new_cost = current_node.cost + edge_cost
+
+                # Calculate information gain
+                new_iocs = set()
+                if _is_ioc_evidence(neighbor_id):
+                    new_iocs.add(neighbor_id)
+                new_gain = current_node.gain + (len(new_iocs) / max(actions_taken, 1))
+
+                # Create new node
+                new_path = current_node.path + [neighbor_id]
+                new_iocs_found = current_node.iocs_found | new_iocs
+                new_last_ioc_time = time.monotonic() if new_iocs else current_node.last_ioc_time
+
+                new_node = _BFSNode(
+                    evidence_id=neighbor_id,
+                    path=new_path,
+                    depth=current_node.depth + 1,
+                    cost=new_cost,
+                    gain=new_gain,
+                    last_ioc_time=new_last_ioc_time,
+                    iocs_found=new_iocs_found,
+                )
+                new_node._calculate_priority(gain_weight=2.0)
+
+                # Add to priority queue
+                heapq.heappush(heap, (new_node.priority, new_node))
                 visited.add(neighbor_id)
-                queue.append((neighbor_id, new_path, depth + 1))
+
+        # Return best path found
+        if best_path:
+            return self._path_to_chain(best_path)
         return None
 
     def _path_to_chain(self, path: list[str]) -> list[InferenceStep]:

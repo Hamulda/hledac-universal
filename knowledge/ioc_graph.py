@@ -16,6 +16,7 @@ Schema:
 PIVOT:  MATCH (n:IOC)-[r*1..2]-(m:IOC) WHERE n.value=$v AND n.ioc_type=$t RETURN m, r
 """
 import asyncio
+import math
 import orjson
 import re
 import time
@@ -25,6 +26,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 import xxhash
+
+from hledac.universal.brain.jtms import JTMS, Justification, apply_temporal_decay
 _KUZU_AVAILABLE: bool = False
 _kuzu = None
 try:
@@ -90,10 +93,16 @@ class IOCGraph:
     GRAPH TRUTH STORE — owns authoritative IOC entity storage.
     - buffer_ioc(), flush_buffers(), upsert_ioc_batch(), export_stix_bundle(), pivot()
     - NOT analytics backend — DuckPGQGraph serves that role.
-    """
-    __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_closed', '_conn', '_db', '_db_path', '_executor', '_ioc_buffer', '_obs_buffer'))
 
-    def __init__(self, db_path: Path | None=None) -> None:
+    JTMS INTEGRATION (APEX-1003):
+    - Maintains in-memory JTMS for justification tracking
+    - Supports retract_source() to remove all facts from a source
+    - Applies temporal decay to confidence at flush_buffers()
+    """
+    __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_closed', '_conn', '_db', '_db_path',
+                       '_executor', '_ioc_buffer', '_obs_buffer', '_jtms', '_decay_lambda'))
+
+    def __init__(self, db_path: Path | None=None, decay_lambda: float = 0.01) -> None:
         if not _KUZU_AVAILABLE:
             raise GraphBackendUnavailable('kuzu is not installed. Install via: pip install hledac-universal[kuzu-graph]')
         if db_path is None:
@@ -106,6 +115,8 @@ class IOCGraph:
         self._ioc_buffer: list[tuple[str, str, float]] = []
         self._obs_buffer: list[tuple[str, str, str, float, str]] = []
         self._BUFFER_FLUSH_SIZE: int = 500
+        self._jtms: JTMS = JTMS()
+        self._decay_lambda: float = decay_lambda
 
     async def buffer_ioc(self, ioc_type: str, value: str, confidence: float=1.0) -> None:
         """
@@ -131,9 +142,145 @@ class IOCGraph:
             return
         self._obs_buffer.append((id_a, id_b, finding_id, ts, source_type))
 
+    async def buffer_ioc_with_justification(
+        self,
+        ioc_type: str,
+        value: str,
+        confidence: float,
+        source_ids: list[str] | tuple[str, ...],
+        inference_rule: str = "manual",
+        source_reliability: float = 1.0,
+    ) -> str | None:
+        """
+        Buffer IOC with JTMS justification tracking.
+
+        Creates a justification in the in-memory JTMS before buffering.
+        When flush_buffers() runs, temporal decay is applied to confidence.
+
+        Args:
+            ioc_type: IOC type (ip, domain, hash_sha256, etc.)
+            value: IOC value
+            confidence: Base confidence (0..1) before temporal decay
+            source_ids: List of source identifiers supporting this fact
+            inference_rule: Algorithm that derived this fact (default: "manual")
+            source_reliability: Aggregate source reliability (0..1)
+
+        Returns:
+            fact_id: JTMS fact identifier for later retraction, or None if closed
+        """
+        if self._closed:
+            return None
+
+        # Generate IOC ID for JTMS tracking
+        ioc_id = _make_ioc_id(ioc_type, value)
+
+        # Add fact to JTMS with justification
+        fact_id = self._jtms.add_fact(
+            ioc_id=ioc_id,
+            source_ids=source_ids,
+            inference_rule=inference_rule,
+            confidence=confidence,
+            source_reliability=source_reliability,
+        )
+
+        # Buffer for flush (temporal decay applied at flush time)
+        self._ioc_buffer.append((ioc_type, value, confidence))
+        if len(self._ioc_buffer) >= self._BUFFER_FLUSH_SIZE:
+            await self.flush_buffers()
+
+        return fact_id
+
+    async def retract_source(self, source_id: str) -> dict[str, int]:
+        """
+        Retract all facts justified by a specific source.
+
+        Finds all facts where source_id ∈ justification.source_ids,
+        marks them inactive in JTMS, and updates confidence in Kuzu.
+
+        Args:
+            source_id: Source identifier to retract
+
+        Returns:
+            dict with:
+                - facts_retracted: Number of JTMS facts retracted
+                - iocs_updated: Number of IOC nodes updated in Kuzu
+        """
+        if self._closed or self._conn is None:
+            return {'facts_retracted': 0, 'iocs_updated': 0}
+
+        # Retract from JTMS
+        facts_retracted = self._jtms.retract_source(source_id)
+
+        if facts_retracted == 0:
+            return {'facts_retracted': 0, 'iocs_updated': 0}
+
+        # Recompute confidence for affected IOCs
+        iocs_updated = await self._recompute_ioc_confidences()
+
+        import logging
+        logging.info(f'[IOCGraph] retract_source({source_id}): {facts_retracted} facts retracted, {iocs_updated} IOCs updated')
+
+        return {'facts_retracted': facts_retracted, 'iocs_updated': iocs_updated}
+
+    async def _recompute_ioc_confidences(self) -> int:
+        """
+        Recompute IOC confidences from active JTMS facts.
+
+        For each IOC with multiple facts, aggregates confidence from
+        all active justifications. Updates Kuzu nodes.
+
+        Returns:
+            iocs_updated: Number of IOC nodes updated
+        """
+        if self._conn is None:
+            return 0
+
+        # Collect all active facts grouped by IOC
+        ioc_confidences: dict[str, list[float]] = {}
+        for fact_data in self._jtms._facts.values():
+            if not fact_data['active']:
+                continue
+            ioc_id = fact_data['ioc_id']
+            confidence = fact_data['confidence']
+            if ioc_id not in ioc_confidences:
+                ioc_confidences[ioc_id] = []
+            ioc_confidences[ioc_id].append(confidence)
+
+        # Update Kuzu nodes with aggregated confidence
+        iocs_updated = 0
+        now = time.time()
+        for ioc_id, confidences in ioc_confidences.items():
+            # Aggregate: max confidence (simple strategy)
+            # Could be enhanced with weighted average, DST fusion, etc.
+            aggregated_conf = max(confidences) if confidences else 0.0
+
+            try:
+                await asyncio.to_thread(
+                    self._update_ioc_confidence_sync,
+                    ioc_id, aggregated_conf, now
+                )
+                iocs_updated += 1
+            except Exception as e:
+                import logging
+                logging.warning(f'[IOCGraph] Failed to update confidence for {ioc_id}: {e}')
+
+        return iocs_updated
+
+    def _update_ioc_confidence_sync(self, ioc_id: str, confidence: float, now: float) -> None:
+        """Synchronous IOC confidence update — runs on executor thread."""
+        conn = self._conn
+        assert conn is not None
+        conn.execute(
+            'MATCH (n:IOC) WHERE n.id = $id SET n.confidence = $c, n.last_seen = $ts',
+            {'id': ioc_id, 'c': confidence, 'ts': now}
+        )
+
     async def flush_buffers(self) -> dict[str, int]:
         """
         Bulk flush both buffers to Kuzu — call in WINDUP or at buffer limit.
+
+        JTMS INTEGRATION: Applies temporal decay to confidence scores before
+        flushing to Kuzu. Decay formula: conf * exp(-λ * Δt_hours)
 
         Returns:
             ioc_created: count of IOC nodes NEWLY CREATED in this flush.
@@ -147,6 +294,35 @@ class IOCGraph:
         obs_copy = self._obs_buffer[:]
         self._ioc_buffer.clear()
         self._obs_buffer.clear()
+
+        # Apply temporal decay to IOC confidences if JTMS has facts
+        if self._jtms._facts and self._decay_lambda > 0:
+            now = time.time()
+            decayed_ioc_copy = []
+            for ioc_type, value, base_conf in ioc_copy:
+                ioc_id = _make_ioc_id(ioc_type, value)
+                # Find corresponding JTMS fact
+                fact_data = None
+                for fact in self._jtms._facts.values():
+                    if fact['ioc_id'] == ioc_id and fact['active']:
+                        fact_data = fact
+                        break
+
+                if fact_data:
+                    # Apply temporal decay
+                    justification = fact_data['justification']
+                    decayed_conf = apply_temporal_decay(
+                        base_conf,
+                        justification.timestamp,
+                        self._decay_lambda,
+                        now
+                    )
+                    decayed_ioc_copy.append((ioc_type, value, decayed_conf))
+                else:
+                    # No JTMS fact, use base confidence
+                    decayed_ioc_copy.append((ioc_type, value, base_conf))
+            ioc_copy = decayed_ioc_copy
+
         ioc_created: list[str] = []
         obs_recorded: int = 0
         try:

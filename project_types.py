@@ -1128,6 +1128,8 @@ class ExportHandoff(msgspec.Struct, gc=False):
     sprint_verdict: dict[str, Any] | None = None
     analyst_brief: dict[str, Any] | None = None
     timer_events: list[dict[str, Any]] | None = None
+    # APEX-1009: Uncertainty flags from synthesis — propagated to export for annotation
+    uncertainty_flags: dict[str, Any] | None = None
 
     @classmethod
     def from_windup(cls, sprint_id: str, scorecard: dict[str, Any], correlation: RunCorrelation | None=None) -> ExportHandoff:
@@ -1158,7 +1160,7 @@ class ExportHandoff(msgspec.Struct, gc=False):
         return cls(sprint_id=sprint_id, scorecard=scorecard, ranked_parquet=scorecard.get('ranked_parquet'), synthesis_engine=scorecard.get('synthesis_engine_used', 'unknown'), gnn_predictions=scorecard.get('gnn_predicted_links', 0), top_nodes=scorecard.get('top_graph_nodes', []), phase_durations=scorecard.get('phase_duration_seconds', {}), correlation=correlation)
 
     def to_dict(self) -> dict[str, Any]:
-        return {'sprint_id': self.sprint_id, 'scorecard': self.scorecard, 'ranked_parquet': self.ranked_parquet, 'synthesis_engine': self.synthesis_engine, 'gnn_predictions': self.gnn_predictions, 'top_nodes': self.top_nodes, 'phase_durations': self.phase_durations, 'correlation': self.correlation.to_dict() if self.correlation else None, 'runtime_truth': self.runtime_truth, 'execution_context': self.execution_context, 'canonical_run_summary': self.canonical_run_summary, 'synthesis_outcome_payload': self.synthesis_outcome_payload, 'sprint_verdict': self.sprint_verdict}
+        return {'sprint_id': self.sprint_id, 'scorecard': self.scorecard, 'ranked_parquet': self.ranked_parquet, 'synthesis_engine': self.synthesis_engine, 'gnn_predictions': self.gnn_predictions, 'top_nodes': self.top_nodes, 'phase_durations': self.phase_durations, 'correlation': self.correlation.to_dict() if self.correlation else None, 'runtime_truth': self.runtime_truth, 'execution_context': self.execution_context, 'canonical_run_summary': self.canonical_run_summary, 'synthesis_outcome_payload': self.synthesis_outcome_payload, 'sprint_verdict': self.sprint_verdict, 'uncertainty_flags': self.uncertainty_flags}
 
     def __repr__(self) -> str:
         """Stable debug repr — shows key fields without eval risk."""
