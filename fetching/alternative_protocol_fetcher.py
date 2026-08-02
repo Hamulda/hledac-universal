@@ -1,14 +1,20 @@
 """
 Alternative Protocol Fetcher — Unified access to beyond-indexed content.
 
-Orchestrates IPFS, Gopher, Gemini, and I2P protocols for accessing content
-invisible to standard web crawlers.
+Orchestrates IPFS, Gopher, Gemini, I2P, ZeroNet, and Freenet/Hyphanet protocols
+for accessing content invisible to standard web crawlers.
 
 F230: Alternative Protocol Stack integration.
+ISSUE-P8-004: Per-protocol concurrency — head-of-line blocking eliminated.
+ISSUE-005: ZeroNet & Freenet/Hyphanet content mining added.
 
 Gating:
-  - HLEDAC_ENABLE_ALT_PROTOCOLS=1 enables all protocols
-  - Max 2 concurrent alt-protocol requests (M1 memory constraint)
+  - HLEDAC_ENABLE_ALT_PROTOCOLS=1 enables core protocols (IPFS, Gopher, Gemini, I2P)
+  - HLEDAC_ENABLE_ZERONET=1 enables ZeroNet protocol
+  - HLEDAC_ENABLE_FREENET=1 enables Freenet/Hyphanet protocol
+  - HLEDAC_ENABLE_SOCIAL=1 enables social protocols (Fediverse, Matrix)
+  - Per-protocol concurrency limits (IPFS=3, Gemini=2, Gopher=2, I2P=1, ZeroNet=2, Freenet=1, Fediverse=2, Matrix=1)
+  - Total max concurrent: 13 I/O-bound operations (M1 8GB safe)
   - Fail-soft: individual protocol failures don't block others
 
 Returns list[CanonicalFinding] with appropriate source_type per protocol.
@@ -24,15 +30,41 @@ try:
     from hledac.universal.utils.source_types import SourceType
 except ImportError:
     SourceType = None
+from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
 ALT_PROTOCOLS_ENABLED: bool = os.getenv('HLEDAC_ENABLE_ALT_PROTOCOLS', '0').lower() in ('1', 'true', 'yes', 'on')
-MAX_CONCURRENT_ALT: int = 2
+
+# ISSUE-P8-004: Per-protocol concurrency slots — head-of-line blocking eliminated.
+# IPFS: 3 slots (CID resolution is slow 2-5s, parallel CID fetching beneficial)
+# Gemini: 2 slots (caps at 10 pages internally, reasonable bound)
+# Gopher: 2 slots (typically fast, bounded result sets)
+# I2P: 1 slot (daemon is slow; avoid overwhelming)
+# ZeroNet: 2 slots (JSON API lightweight, parallel site enumeration beneficial)
+# Freenet: 1 slot (FProxy is single-threaded; avoid overwhelming)
+# Fediverse: 2 slots (public timeline API rate limits apply)
+# Matrix: 1 slot (room message fetching is sequential by nature)
+# Total max concurrent operations: 3+2+2+1+2+1+2+1 = 14 (M1 8GB safe, all are I/O-bound)
+IPFS_CONCURRENCY: int = 3
+GEMINI_CONCURRENCY: int = 2
+GOPHER_CONCURRENCY: int = 2
+I2P_CONCURRENCY: int = 1
+ZERONET_CONCURRENCY: int = 2
+FREENET_CONCURRENCY: int = 1
+FEDIVERSE_CONCURRENCY: int = 2
+MATRIX_CONCURRENCY: int = 1
+
 IPFS_TIMEOUT: int = 30
 GOPHER_TIMEOUT: int = 15
 GEMINI_TIMEOUT: int = 20
 I2P_TIMEOUT: int = 30
+ZERONET_TIMEOUT: int = 20
+FREENET_TIMEOUT: int = 30
 FEDIVERSE_TIMEOUT: int = 10
 MATRIX_TIMEOUT: int = 10
+
+# ISSUE-005: Per-network enable gates (separate from core alt protocols)
+_ZERONET_ENABLED: bool = os.getenv('HLEDAC_ENABLE_ZERONET', '0').lower() in ('1', 'true', 'yes', 'on')
+_FREENET_ENABLED: bool = os.getenv('HLEDAC_ENABLE_FREENET', '0').lower() in ('1', 'true', 'yes', 'on')
 
 class AltProtocolResult(NamedTuple):
     """Result from a single alt-protocol source."""
@@ -61,6 +93,16 @@ def _get_i2p_client():
     from hledac.universal.network import i2p_client
     return i2p_client
 
+def _get_zeronet_client():
+    """Lazy import ZeroNet client (ISSUE-005)."""
+    from hledac.universal.network import zeronet_client
+    return zeronet_client
+
+def _get_freenet_client():
+    """Lazy import Freenet/Hyphanet client (ISSUE-005)."""
+    from hledac.universal.network import freenet_client
+    return freenet_client
+
 def _get_fediverse_adapter():
     """Lazy import Fediverse adapter."""
     from hledac.universal.discovery import fediverse_adapter
@@ -75,16 +117,37 @@ async def _fetch_from_ipfs(query: str, semaphore: asyncio.Semaphore) -> tuple[li
     """
     Fetch content via IPFS.
 
+    ISSUE-P8-005: Now supports ipfs:// and ipns:// URI schemes.
+    Resolution order:
+      1. Native DHT via ipfs CLI subprocess (if available)
+      2. HTTP gateway fallback
+
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     ipfs = _get_ipfs_client()
     async with semaphore:
         try:
             async with asyncio.timeout(IPFS_TIMEOUT):
+                # ISSUE-P8-005: Check if query is a direct URI
+                if query.startswith('ipfs://') or query.startswith('ipns://'):
+                    # Direct URI resolution via native DHT + gateway fallback
+                    content = await ipfs.resolve_ipfs_uri(query)
+                    if content:
+                        cid = query.replace('ipfs://', '').replace('ipns://', '').split('/')[0]
+                        finding = CanonicalFinding(
+                            finding_id=f'ipfs-alt-{cid[:12]}-{int(time.time() * 1000)}',
+                            query=query,
+                            source_type=SourceType.IPFS_CONTENT,
+                            confidence=0.85,  # Higher confidence for direct URI
+                            ts=time.time(),
+                            provenance=(query,),
+                            payload_text=decode_response_bytes(content)[:4096] if isinstance(content, bytes) else str(content)[:4096]
+                        )
+                        return ([finding], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=1, success=True, error=None))
+                    return ([], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error='uri_resolution_failed'))
+
                 cids = await ipfs.find_via_ipfs_search(query)
-            findings: list[CanonicalFinding] = []
             from hledac.universal.utils.async_helpers import parallel
 
             async def _fetch_one_cid(cid: str) -> CanonicalFinding | None:
@@ -165,6 +228,71 @@ async def _fetch_from_i2p(query: str, semaphore: asyncio.Semaphore) -> tuple[lis
             logger.debug(f'I2P alt fetch error: {e}')
             return ([], AltProtocolResult(source_type=SourceType.I2P_DISCOVERY, findings_count=0, success=False, error=str(e)))
 
+# ── ISSUE-005: ZeroNet fetch ────────────────────────────────────────────────
+
+async def _fetch_from_zeronet(query: str, semaphore: asyncio.Semaphore) -> tuple[list, AltProtocolResult]:
+    """
+    Fetch content via ZeroNet decentralized network (ISSUE-005).
+
+    Uses ZeroNet JSON API at http://127.0.0.1:43110/ to search and
+    enumerate content from ZeroNet sites (1ZeroMe..., 1Talk..., etc.).
+
+    Gate: HLEDAC_ENABLE_ZERONET=1
+
+    Returns:
+        (list[CanonicalFinding], AltProtocolResult)
+    """
+    if not _ZERONET_ENABLED:
+        return ([], AltProtocolResult(source_type=SourceType.ZERONET, findings_count=0, success=True, error='zeronet_disabled'))
+    zeronet = _get_zeronet_client()
+    async with semaphore:
+        try:
+            available = await zeronet.is_zeronet_available()
+            if not available:
+                return ([], AltProtocolResult(source_type=SourceType.ZERONET, findings_count=0, success=True, error='zeronet_unavailable'))
+            async with asyncio.timeout(ZERONET_TIMEOUT):
+                findings = await zeronet.zeronet_to_findings(query)
+            return (findings, AltProtocolResult(source_type=SourceType.ZERONET_CONTENT, findings_count=len(findings), success=True, error=None))
+        except TimeoutError:
+            return ([], AltProtocolResult(source_type=SourceType.ZERONET_CONTENT, findings_count=0, success=False, error='timeout'))
+        except Exception as e:
+            logger.debug(f'ZeroNet alt fetch error: {e}')
+            return ([], AltProtocolResult(source_type=SourceType.ZERONET_CONTENT, findings_count=0, success=False, error=str(e)))
+
+# ── ISSUE-005: Freenet/Hyphanet fetch ────────────────────────────────────────
+
+async def _fetch_from_freenet(query: str, semaphore: asyncio.Semaphore) -> tuple[list, AltProtocolResult]:
+    """
+    Fetch content via Freenet/Hyphanet decentralized network (ISSUE-005).
+
+    Uses Freenet FProxy HTTP gateway at http://127.0.0.1:8888/ to access
+    content via USK (Updatable Subspace Key), CHK (Content Hash Key),
+    and SSK (Signed Subspace Key) URI schemes.
+
+    Gate: HLEDAC_ENABLE_FREENET=1
+
+    Returns:
+        (list[CanonicalFinding], AltProtocolResult)
+    """
+    if not _FREENET_ENABLED:
+        return ([], AltProtocolResult(source_type=SourceType.FREENET, findings_count=0, success=True, error='freenet_disabled'))
+    freenet = _get_freenet_client()
+    async with semaphore:
+        try:
+            available = await freenet.is_freenet_available()
+            if not available:
+                return ([], AltProtocolResult(source_type=SourceType.FREENET, findings_count=0, success=True, error='freenet_unavailable'))
+            async with asyncio.timeout(FREENET_TIMEOUT):
+                findings = await freenet.freenet_to_findings(query)
+            return (findings, AltProtocolResult(source_type=SourceType.FREENET_CONTENT, findings_count=len(findings), success=True, error=None))
+        except TimeoutError:
+            return ([], AltProtocolResult(source_type=SourceType.FREENET_CONTENT, findings_count=0, success=False, error='timeout'))
+        except Exception as e:
+            logger.debug(f'Freenet alt fetch error: {e}')
+            return ([], AltProtocolResult(source_type=SourceType.FREENET_CONTENT, findings_count=0, success=False, error=str(e)))
+
+# ── Social protocol fetches ─────────────────────────────────────────────────
+
 async def _fetch_from_fediverse(query: str, semaphore: asyncio.Semaphore) -> tuple[list, AltProtocolResult]:
     """
     Fetch content via Fediverse/Mastodon public API.
@@ -172,7 +300,6 @@ async def _fetch_from_fediverse(query: str, semaphore: asyncio.Semaphore) -> tup
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     fediverse = _get_fediverse_adapter()
     async with semaphore:
         try:
@@ -203,7 +330,6 @@ async def _fetch_from_matrix(query: str, semaphore: asyncio.Semaphore) -> tuple[
     Returns:
         (list[CanonicalFinding], AltProtocolResult)
     """
-    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     from hledac.universal.utils.async_helpers import parallel
     matrix = _get_matrix_adapter()
     async with semaphore:
@@ -238,13 +364,24 @@ async def _fetch_from_matrix(query: str, semaphore: asyncio.Semaphore) -> tuple[
             logger.debug(f'Matrix alt fetch error: {e}')
             return ([], AltProtocolResult(source_type=SourceType.MATRIX_PUBLIC, findings_count=0, success=False, error=str(e)))
 
-async def fetch_all_alt_protocols(query: str, max_concurrent: int=MAX_CONCURRENT_ALT) -> tuple[list, list[AltProtocolResult]]:
+# ── Orchestrator ────────────────────────────────────────────────────────────
+
+async def fetch_all_alt_protocols(query: str, max_concurrent: int | None = None) -> tuple[list, list[AltProtocolResult]]:
     """
     Fetch content from all alternative protocols in parallel.
 
+    ISSUE-P8-004: Replaced global semaphore bottleneck with per-protocol semaphores.
+    ISSUE-005: Added ZeroNet and Freenet/Hyphanet protocol support.
+    Each protocol now runs with its own concurrency limit, eliminating head-of-line
+    blocking where slow protocols (IPFS) starved faster ones.
+
     Args:
         query: Search query string
-        max_concurrent: Max concurrent protocol requests (default 2 for M1)
+        max_concurrent: Deprecated parameter (ignored). Kept for backwards compatibility.
+                        Per-protocol concurrency is now controlled by IPFS_CONCURRENCY,
+                        GEMINI_CONCURRENCY, GOPHER_CONCURRENCY, I2P_CONCURRENCY,
+                        ZERONET_CONCURRENCY, FREENET_CONCURRENCY,
+                        FEDIVERSE_CONCURRENCY, MATRIX_CONCURRENCY constants.
 
     Returns:
         (all_findings, protocol_results) — tuple of findings list and per-protocol results
@@ -254,12 +391,30 @@ async def fetch_all_alt_protocols(query: str, max_concurrent: int=MAX_CONCURRENT
         return ([], [])
     all_findings: list = []
     protocol_results: list[AltProtocolResult] = []
-    sem = asyncio.Semaphore(max_concurrent)
-    tasks = [_fetch_from_ipfs(query, sem), _fetch_from_gopher(query, sem), _fetch_from_gemini(query, sem), _fetch_from_i2p(query, sem)]
+    # Per-protocol semaphores — ISSUE-P8-004: eliminates head-of-line blocking
+    sem_ipfs = asyncio.Semaphore(IPFS_CONCURRENCY)
+    sem_gopher = asyncio.Semaphore(GOPHER_CONCURRENCY)
+    sem_gemini = asyncio.Semaphore(GEMINI_CONCURRENCY)
+    sem_i2p = asyncio.Semaphore(I2P_CONCURRENCY)
+    tasks = [
+        _fetch_from_ipfs(query, sem_ipfs),
+        _fetch_from_gopher(query, sem_gopher),
+        _fetch_from_gemini(query, sem_gemini),
+        _fetch_from_i2p(query, sem_i2p),
+    ]
+    # ISSUE-005: ZeroNet & Freenet gated behind separate env vars
+    if _ZERONET_ENABLED:
+        sem_zeronet = asyncio.Semaphore(ZERONET_CONCURRENCY)
+        tasks.append(_fetch_from_zeronet(query, sem_zeronet))
+    if _FREENET_ENABLED:
+        sem_freenet = asyncio.Semaphore(FREENET_CONCURRENCY)
+        tasks.append(_fetch_from_freenet(query, sem_freenet))
     if os.getenv('HLEDAC_ENABLE_SOCIAL', '').strip() == '1':
-        tasks.append(_fetch_from_fediverse(query, sem))
-        tasks.append(_fetch_from_matrix(query, sem))
-    results = await parallel_ok(*tasks, label='alternative_protocol_fetcher:411')
+        sem_fediverse = asyncio.Semaphore(FEDIVERSE_CONCURRENCY)
+        sem_matrix = asyncio.Semaphore(MATRIX_CONCURRENCY)
+        tasks.append(_fetch_from_fediverse(query, sem_fediverse))
+        tasks.append(_fetch_from_matrix(query, sem_matrix))
+    results = await parallel_ok(*tasks, label='alternative_protocol_fetcher:parallel')
     for result in results:
         if isinstance(result, Exception):
             logger.debug(f'Alt protocol task exception: {result}')
@@ -271,6 +426,8 @@ async def fetch_all_alt_protocols(query: str, max_concurrent: int=MAX_CONCURRENT
         protocol_results.append(proto_result)
     logger.info(f'Alt protocols: {len(all_findings)} findings from {sum((1 for r in protocol_results if r.success))} protocols')
     return (all_findings, protocol_results)
+
+# ── Convenience single-protocol fetchers ────────────────────────────────────
 
 async def fetch_fediverse_only(query: str) -> list:
     """
@@ -362,11 +519,55 @@ async def fetch_i2p_only(query: str) -> list:
     findings, _ = await _fetch_from_i2p(query, sem)
     return findings
 
+async def fetch_zeronet_only(query: str) -> list:
+    """
+    Fetch only from ZeroNet (for targeted use). ISSUE-005.
+
+    Args:
+        query: Search query
+
+    Returns:
+        list[CanonicalFinding]
+    """
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.ZERONET_FETCH)
+    findings, _ = await _fetch_from_zeronet(query, sem)
+    return findings
+
+async def fetch_freenet_only(query: str) -> list:
+    """
+    Fetch only from Freenet/Hyphanet (for targeted use). ISSUE-005.
+
+    Args:
+        query: Search query
+
+    Returns:
+        list[CanonicalFinding]
+    """
+    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+    sem = get_semaphore_for_testing(ConcurrencyCategory.FREENET_FETCH)
+    findings, _ = await _fetch_from_freenet(query, sem)
+    return findings
+
 def get_alt_protocols_status() -> dict:
     """
     Get status of all alternative protocols.
 
     Returns:
-        Dict with protocol availability and last result info
+        Dict with protocol availability and per-protocol concurrency limits.
+        ISSUE-P8-004: Replaced global max_concurrent with per-protocol concurrency.
+        ISSUE-005: Added ZeroNet and Freenet/Hyphanet status entries.
     """
-    return {'enabled': ALT_PROTOCOLS_ENABLED, 'max_concurrent': MAX_CONCURRENT_ALT, 'protocols': {'ipfs': {'enabled': True, 'gate': 'HLEDAC_ENABLE_ALT_PROTOCOLS'}, 'gopher': {'enabled': True, 'gate': 'HLEDAC_ENABLE_ALT_PROTOCOLS'}, 'gemini': {'enabled': True, 'gate': 'HLEDAC_ENABLE_ALT_PROTOCOLS'}, 'i2p': {'enabled': True, 'gate': 'HLEDAC_ENABLE_ALT_PROTOCOLS', 'requires_daemon': True}, 'fediverse': {'enabled': True, 'gate': 'HLEDAC_ENABLE_SOCIAL'}, 'matrix': {'enabled': True, 'gate': 'HLEDAC_ENABLE_SOCIAL'}}}
+    return {
+        'enabled': ALT_PROTOCOLS_ENABLED,
+        'protocols': {
+            'ipfs': {'enabled': True, 'gate': 'HLEDAC_ENABLE_ALT_PROTOCOLS', 'concurrency': IPFS_CONCURRENCY},
+            'gopher': {'enabled': True, 'gate': 'HLEDAC_ENABLE_ALT_PROTOCOLS', 'concurrency': GOPHER_CONCURRENCY},
+            'gemini': {'enabled': True, 'gate': 'HLEDAC_ENABLE_ALT_PROTOCOLS', 'concurrency': GEMINI_CONCURRENCY},
+            'i2p': {'enabled': True, 'gate': 'HLEDAC_ENABLE_ALT_PROTOCOLS', 'requires_daemon': True, 'concurrency': I2P_CONCURRENCY},
+            'zeronet': {'enabled': _ZERONET_ENABLED, 'gate': 'HLEDAC_ENABLE_ZERONET', 'requires_daemon': True, 'concurrency': ZERONET_CONCURRENCY},
+            'freenet': {'enabled': _FREENET_ENABLED, 'gate': 'HLEDAC_ENABLE_FREENET', 'requires_daemon': True, 'concurrency': FREENET_CONCURRENCY},
+            'fediverse': {'enabled': True, 'gate': 'HLEDAC_ENABLE_SOCIAL', 'concurrency': FEDIVERSE_CONCURRENCY},
+            'matrix': {'enabled': True, 'gate': 'HLEDAC_ENABLE_SOCIAL', 'concurrency': MATRIX_CONCURRENCY},
+        }
+    }

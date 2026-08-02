@@ -155,6 +155,18 @@ _LAZY_SPECS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
         "StitchedIdentity", "UsernameEntry",
         "create_identity_stitching_engine",
     ), ()),
+    # ISSUE-007: Multi-dimensional stylometry analyzer
+    (".stylometry_analyzer", "STYLOMETRY_ANALYZER_AVAILABLE", (
+        "StylometryAnalyzer", "StylometryProfile",
+        "extract_profile", "compare_profiles", "get_analyzer",
+    ), ()),
+    # ISSUE-008: Trans-linguistic entity normalizer
+    (".translinguistic_normalizer", "TRANSLINGUISTIC_NORMALIZER_AVAILABLE", (
+        "normalize_translinguistic", "normalize_cyrillic", "normalize_arabic",
+        "normalize_cjk", "normalize_greek", "normalize_hebrew",
+        "normalize_multilingual_name", "double_metaphone",
+        "batch_normalize_translinguistic", "DoubleMetaphoneResult",
+    ), ()),
     # blockchain_analyzer: original code had 3 separate ``from`` blocks (names,
     # then PatternType alias, then RiskLevel alias). One merged spec preserves
     # the same final namespace contents. RiskLevel was renamed to RiskScore
@@ -165,6 +177,12 @@ _LAZY_SPECS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
         "analyze_blockchain_address", "detect_transaction_patterns",
         "get_blockchain_forensics",
         "BlockchainPatternType", "BlockchainRiskScore",
+    ), ()),
+    # ISSUE-009: Bitcoin UTXO graph analyzer (igraph C-core, no API dependency)
+    (".bitcoin_utxo_analyzer", "UTXO_GRAPH_ANALYZER_AVAILABLE", (
+        "UTXOGraph", "UTXOGraphAnalysis", "UTXOCluster", "UTXONode",
+        "UTXOEdge", "ChangeAddressResult",
+        "analyze_bitcoin_transactions", "cluster_bitcoin_addresses",
     ), ()),
     # input_detector + workflow_orchestrator: original set explicit
     # ``Name = None`` in the except branch so callers can ``if X is None`` guard.
@@ -305,7 +323,10 @@ __all__ = sorted(set([
     "EXPOSED_SERVICE_HUNTER_AVAILABLE", "OPEN_SOURCE_COLLECTORS_AVAILABLE",
     "ACADEMIC_DISCOVERY_AVAILABLE", "PASTEBIN_MONITOR_AVAILABLE",
     "RELATIONSHIP_DISCOVERY_AVAILABLE", "PATTERN_MINING_AVAILABLE",
-    "IDENTITY_STITCHING_AVAILABLE", "BLOCKCHAIN_FORENSICS_AVAILABLE",
+    "IDENTITY_STITCHING_AVAILABLE",
+    "STYLOMETRY_ANALYZER_AVAILABLE", "TRANSLINGUISTIC_NORMALIZER_AVAILABLE",
+    "BLOCKCHAIN_FORENSICS_AVAILABLE",
+    "UTXO_GRAPH_ANALYZER_AVAILABLE",
     "INPUT_DETECTOR_AVAILABLE", "WORKFLOW_ORCHESTRATOR_AVAILABLE",
     # Archive
     "ArchiveDiscovery", "ArchiveResult", "SnapshotInfo",
@@ -392,6 +413,14 @@ __all__ = sorted(set([
     # Identity Stitching
     "IdentityStitchingEngine", "IdentityProfile", "IdentityMatch",
     "StitchedIdentity", "UsernameEntry", "create_identity_stitching_engine",
+    # Stylometry Analyzer (ISSUE-007)
+    "StylometryAnalyzer", "StylometryProfile",
+    "extract_profile", "compare_profiles", "get_analyzer",
+    # Trans-Linguistic Normalizer (ISSUE-008)
+    "normalize_translinguistic", "normalize_cyrillic", "normalize_arabic",
+    "normalize_cjk", "normalize_greek", "normalize_hebrew",
+    "normalize_multilingual_name", "double_metaphone",
+    "batch_normalize_translinguistic", "DoubleMetaphoneResult",
     # Streaming Monitor
     "StreamingMonitor", "MonitoredSource", "StreamEvent",
     # Blockchain Forensics
@@ -400,6 +429,10 @@ __all__ = sorted(set([
     "BlockchainPatternType", "BlockchainRiskScore",
     "analyze_blockchain_address", "detect_transaction_patterns",
     "get_blockchain_forensics",
+    # ISSUE-009: Bitcoin UTXO graph analyzer
+    "UTXOGraph", "UTXOGraphAnalysis", "UTXOCluster", "UTXONode",
+    "UTXOEdge", "ChangeAddressResult",
+    "analyze_bitcoin_transactions", "cluster_bitcoin_addresses",
     # Input Detector
     "IntelligentInputDetector", "InputAnalysis", "ComplexityScore",
     "create_input_detector", "IntelligenceConfig",

@@ -115,6 +115,8 @@ except ImportError:
     MLX_AVAILABLE = False
     logger.warning('MLX not available - semantic scoring disabled')
 MPS_AVAILABLE = False
+VISION_OCR_AVAILABLE: bool | None = None
+_VisionOCREngine: Any | None = None
 _AhoExtractorModule: Any | None = None
 _AHO_AVAILABLE: bool | None = None
 
@@ -212,6 +214,265 @@ def _safe_xref_stream(doc: Any, xref: int) -> bytes | None:
         return stream
     except Exception:
         return None
+
+def _get_vision_ocr_engine():
+    """Lazily load VisionOCREngine — NOT loaded at document_intelligence boot.
+
+    Vision Framework uses ANE for OCR (zero CPU, zero GPU bandwidth on M1).
+    The engine is instantiated once and reused across all calls.
+    Fails silently if Vision is unavailable (macOS only, no PyObjC).
+    """
+    global VISION_OCR_AVAILABLE, _VisionOCREngine
+    if VISION_OCR_AVAILABLE is None:
+        try:
+            _VisionOCREngine = VisionOCREngine
+            VISION_OCR_AVAILABLE = True
+        except Exception:
+            _VisionOCREngine = None
+            VISION_OCR_AVAILABLE = False
+    return _VisionOCREngine
+
+
+class VisionOCREngine:
+    """Hardware-accelerated OCR via Apple Vision Framework on M1 ANE.
+
+    VNRecognizeTextRequest runs text recognition on the Neural Engine —
+    no CPU cycles, no GPU bandwidth stolen from MLX workers.
+    Supports accurate recognition with language correction (en-US, cs-CZ, de-DE,
+    fr-FR, es-ES, ja-JP, zh-CN out of the box).
+
+    M1 8GB safe: ANE is completely separate from Unified Memory Architecture —
+    running OCR does not pressure the RAM budget used by MLX inference.
+
+    ISSUE-012: Batch processing support. Vision Framework IS thread-safe
+    for different CGImage instances — the framework manages its own internal
+    serialization per-image. Multiple concurrent calls to different CGImages
+    are safe and allow the ANE to pipeline work.
+    """
+
+    __slots__ = tuple(('_batch_executor', '_batch_pool_lock'))
+
+    # Languages supported by Vision Framework on M1 without additional models
+    DEFAULT_LANGUAGES = ['en-US', 'cs-CZ', 'de-DE', 'fr-FR', 'es-ES']
+
+    # ISSUE-012: Batch concurrency — M1 8GB safe limit.
+    # ANE can pipeline 4 concurrent image recognition requests before
+    # saturating the Neural Engine bandwidth. Higher values waste RAM
+    # without throughput improvement.
+    _BATCH_MAX_WORKERS: int = 4
+
+    def __init__(self):
+        # Lazy-initialized ThreadPoolExecutor for batch processing.
+        # Separate from the event-loop thread pool to avoid starving
+        # async tasks when batch OCR is in flight.
+        self._batch_executor: concurrent.futures.ThreadPoolExecutor | None = None
+        self._batch_pool_lock = None
+
+    def _get_batch_executor(self) -> concurrent.futures.ThreadPoolExecutor:
+        """Get or create the batch OCR thread pool (lazy, thread-safe)."""
+        if self._batch_executor is None:
+            if self._batch_pool_lock is None:
+                import threading
+                self._batch_pool_lock = threading.Lock()
+            with self._batch_pool_lock:
+                if self._batch_executor is None:
+                    self._batch_executor = concurrent.futures.ThreadPoolExecutor(
+                        max_workers=self._BATCH_MAX_WORKERS,
+                        thread_name_prefix='vision_ocr_batch',
+                    )
+        return self._batch_executor
+
+    def recognize_bytes(self, image_bytes: bytes) -> tuple[str, float]:
+        """Recognize text from raw image bytes synchronously.
+
+        Returns (recognized_text, average_confidence).
+
+        Thread-safe: each call creates its own CGImage and VNRecognizeTextRequest.
+        Vision Framework handles internal serialization per-CGImage.
+
+        Fails safely: returns ('', 0.0) on any error.
+        """
+        try:
+            import Vision  # type: ignore[import-not-found, no-redef]
+            import AppKit  # type: ignore[import-not-found, no-redef]
+        except Exception:
+            return '', 0.0
+
+        try:
+            ns_data = AppKit.NSData.alloc().initWithBytes_length_(image_bytes, len(image_bytes))  # type: ignore[attr-defined]
+            cg_image = AppKit.NSBitmapImageRep.imageRepWithData_(ns_data).CGImage()  # type: ignore[attr-defined]
+        except Exception:
+            return '', 0.0
+
+        if cg_image is None:
+            return '', 0.0
+
+        # Vision request must run on the same thread — completion handler is sync on M1
+        results: list = []
+
+        class _ResultHandler:
+            __slots__ = tuple(('_results'))
+            def __init__(self):
+                self._results = results
+            def __call__(self, request, error):
+                if error is not None:
+                    return
+                self._results.append(request.results())
+
+        handler = _ResultHandler()
+        vn_request = Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(handler)  # type: ignore[attr-defined]
+        vn_request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)  # type: ignore[attr-defined]
+        vn_request.setRecognitionLanguages_(self.DEFAULT_LANGUAGES)
+        vn_request.setUsesLanguageCorrection_(True)
+
+        try:
+            Vision.VNImageRequestHandler.alloc().initWithCGImageOptions_(  # type: ignore[attr-defined]
+                cg_image,
+                {'VNImageOptionApplyOrientationCorrection': True},
+            ).performRequests_error_([vn_request], None)
+        except Exception:
+            return '', 0.0
+
+        if not results or not results[0]:
+            return '', 0.0
+
+        observations = results[0]
+        texts = []
+        confidences = []
+        for obs in observations:
+            txt = str(obs.text())
+            conf = float(obs.confidence())
+            texts.append(txt)
+            confidences.append(conf)
+
+        full_text = '\n'.join(texts)
+        avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
+        return full_text, avg_conf
+
+    def recognize_batch(self, images: list[bytes]) -> list[tuple[str, float]]:
+        """Recognize text from multiple images in parallel via ANE batch processing.
+
+        Uses a dedicated ThreadPoolExecutor (max_workers=_BATCH_MAX_WORKERS)
+        to submit concurrent Vision Framework requests. Each request processes
+        a different CGImage, which is thread-safe — Vision Framework serializes
+        internally per-image.
+
+        M1 8GB: _BATCH_MAX_WORKERS=4 balances ANE pipeline saturation against
+        RAM pressure from concurrent CGImage allocations (~2MB per image).
+
+        Args:
+            images: List of raw image bytes to OCR.
+
+        Returns:
+            List of (recognized_text, avg_confidence) tuples, same order as input.
+            Individual failures return ('', 0.0) for that position.
+        """
+        if not images:
+            return []
+        if len(images) == 1:
+            return [self.recognize_bytes(images[0])]
+
+        executor = self._get_batch_executor()
+        futures: list[concurrent.futures.Future] = [
+            executor.submit(self.recognize_bytes, img) for img in images
+        ]
+
+        results: list[tuple[str, float]] = []
+        for future in futures:
+            try:
+                results.append(future.result())
+            except Exception:
+                results.append(('', 0.0))
+        return results
+
+    async def recognize_bytes_async(self, image_bytes: bytes) -> tuple[str, float]:
+        """Async wrapper — runs sync ANE OCR in thread pool to avoid blocking event loop.
+
+        This is the primary entry point for async contexts (DeepForensicsAnalyzer).
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.recognize_bytes, image_bytes)
+
+    async def recognize_batch_async(self, images: list[bytes]) -> list[tuple[str, float]]:
+        """Async wrapper for batch OCR — runs recognize_batch in thread pool.
+
+        Args:
+            images: List of raw image bytes to OCR.
+
+        Returns:
+            List of (recognized_text, avg_confidence) tuples.
+        """
+        if not images:
+            return []
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self.recognize_batch, images)
+
+
+def _ocr_embedded_image(image_bytes: bytes) -> tuple[str, float]:
+    """Fire-and-forget OCR on embedded PDF image bytes.
+
+    Loads VisionOCREngine lazily on first call.
+    Returns (text, confidence). Falls back to ('', 0.0) if unavailable.
+
+    This is called from _extract_pdf_objects() for every embedded image in a PDF.
+    For batch processing, use _ocr_embedded_batch() instead.
+    """
+    engine_cls = _get_vision_ocr_engine()
+    if engine_cls is None:
+        return '', 0.0
+    try:
+        engine = engine_cls()
+        return engine.recognize_bytes(image_bytes)
+    except Exception:
+        return '', 0.0
+
+
+def _ocr_embedded_batch(image_list: list[bytes]) -> list[tuple[str, float]]:
+    """Batch OCR on embedded PDF image bytes via ANE parallel processing.
+
+    Loads VisionOCREngine lazily on first call.
+    Returns list of (text, confidence) tuples, same order as input.
+    Individual failures return ('', 0.0) for that position.
+
+    ISSUE-012: Replaces sequential per-image OCR with concurrent batch.
+    100 images at 200ms each = 20s sequential → ~5s batch (4 ANE workers).
+    """
+    engine_cls = _get_vision_ocr_engine()
+    if engine_cls is None:
+        return [('', 0.0)] * len(image_list)
+    try:
+        engine = engine_cls()
+        return engine.recognize_batch(image_list)
+    except Exception:
+        return [('', 0.0)] * len(image_list)
+
+
+async def _ocr_embedded_image_async(image_bytes: bytes) -> tuple[str, float]:
+    """Async version — runs in thread pool via VisionOCREngine's async entry point."""
+    engine_cls = _get_vision_ocr_engine()
+    if engine_cls is None:
+        return '', 0.0
+    try:
+        engine = engine_cls()
+        return await engine.recognize_bytes_async(image_bytes)
+    except Exception:
+        return '', 0.0
+
+
+async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, float]]:
+    """Async batch version — runs in thread pool via VisionOCREngine's async batch entry.
+
+    ISSUE-012: Parallel ANE OCR for async contexts (DeepForensicsAnalyzer).
+    """
+    engine_cls = _get_vision_ocr_engine()
+    if engine_cls is None:
+        return [('', 0.0)] * len(image_list)
+    try:
+        engine = engine_cls()
+        return await engine.recognize_batch_async(image_list)
+    except Exception:
+        return [('', 0.0)] * len(image_list)
+
 
 class DocumentType(Enum):
     """Supported document types."""
@@ -331,6 +592,7 @@ class DocumentAnalysis(msgspec.Struct, frozen=True):
     hidden_text: list[str] = field(default_factory=list)
     suspicious_indicators: list[str] = field(default_factory=list)
     exif_data: EXIFData | None = None
+    ocr_text: str = ''  # Vision Framework ANE OCR for scanned images/PDFs
 
 class PDFAnalyzer:
     """
@@ -491,8 +753,16 @@ class PDFAnalyzer:
             return None
 
     def _extract_pdf_objects(self, doc: fitz.Document) -> list[EmbeddedObject]:
-        """Extract embedded objects from PDF."""
+        """Extract embedded objects from PDF, including Vision Framework ANE OCR for images.
+
+        ISSUE-012: Batch OCR — collects all image xrefs first, then batch-OCRs
+        them concurrently via ANE. This replaces the old sequential per-image
+        OCR path which underutilized the Neural Engine.
+        """
         objects = []
+        # Phase 1: Collect image xrefs and extract bytes (sequential — xref extraction is fast)
+        pending_ocr: list[tuple[bytes, int]] = []  # (image_bytes, xref_index) for batch OCR
+
         for xref in range(1, doc.xref_length()):
             try:
                 doc.xref_get_key(xref, 'Type')
@@ -500,14 +770,57 @@ class PDFAnalyzer:
                 if subtype[1] == 'Image':
                     base_image = _safe_extract_image(doc, xref)
                     if base_image:
-                        objects.append(EmbeddedObject(object_type='image', object_name=f'image_{xref}', content_type=base_image.get('ext'), size_bytes=len(base_image.get('image', b'')), extracted_content=base_image.get('image'), metadata={'width': base_image.get('width'), 'height': base_image.get('height'), 'colorspace': base_image.get('colorspace')}))
+                        image_bytes = base_image.get('image', b'')
+                        obj_metadata = {
+                            'width': base_image.get('width'),
+                            'height': base_image.get('height'),
+                            'colorspace': base_image.get('colorspace'),
+                        }
+                        objects.append(EmbeddedObject(
+                            object_type='image',
+                            object_name=f'image_{xref}',
+                            content_type=base_image.get('ext'),
+                            size_bytes=len(image_bytes),
+                            extracted_content=image_bytes,
+                            metadata=obj_metadata,
+                        ))
+                        # Collect for batch OCR (only non-empty images)
+                        if image_bytes:
+                            pending_ocr.append((image_bytes, len(objects) - 1))
                 elif subtype[1] in ['FileAttachment', 'EmbeddedFile']:
                     stream = _safe_xref_stream(doc, xref)
                     if stream:
                         name = doc.xref_get_key(xref, 'F')
-                        objects.append(EmbeddedObject(object_type='file_attachment', object_name=name[1] if name else f'attachment_{xref}', content_type=None, size_bytes=len(stream), extracted_content=stream))
+                        objects.append(EmbeddedObject(
+                            object_type='file_attachment',
+                            object_name=name[1] if name else f'attachment_{xref}',
+                            content_type=None,
+                            size_bytes=len(stream),
+                            extracted_content=stream,
+                        ))
             except Exception:
                 continue
+
+        # Phase 2: Batch OCR all collected images (parallel ANE processing)
+        if pending_ocr:
+            image_list = [item[0] for item in pending_ocr]
+            ocr_results = _ocr_embedded_batch(image_list)
+            for (_, obj_idx), (ocr_text, ocr_conf) in zip(pending_ocr, ocr_results, strict=True):
+                if ocr_text and obj_idx < len(objects):
+                    # Rebuild EmbeddedObject with OCR metadata (frozen struct)
+                    obj = objects[obj_idx]
+                    updated_metadata = dict(obj.metadata)
+                    updated_metadata['ocr_text'] = ocr_text
+                    updated_metadata['ocr_confidence'] = ocr_conf
+                    objects[obj_idx] = EmbeddedObject(
+                        object_type=obj.object_type,
+                        object_name=obj.object_name,
+                        content_type=obj.content_type,
+                        size_bytes=obj.size_bytes,
+                        extracted_content=obj.extracted_content,
+                        metadata=updated_metadata,
+                    )
+
         return objects
 
     def _detect_suspicious_content(self, text: str) -> list[str]:
@@ -746,7 +1059,9 @@ class ImageAnalyzer:
             sha1_hash = hashlib.sha256(content).hexdigest()
             sha256_hash = hashlib.sha256(content).hexdigest()
             metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.IMAGE, file_extension=f'.{img_format.lower()}' if img_format else '.unknown', image_width=img_width, image_height=img_height, gps_coordinates=exif_data.gps_location if exif_data else None, raw_metadata={'format': img_format, 'mode': img_mode})
-            return DocumentAnalysis(metadata=metadata, exif_data=exif_data)
+            # Vision Framework ANE OCR — hardware-accelerated text extraction from image bytes
+            ocr_text, _ = _ocr_embedded_image(content) if PYMUPDF_AVAILABLE else ('', 0.0)
+            return DocumentAnalysis(metadata=metadata, exif_data=exif_data, ocr_text=ocr_text)
         except Exception as e:
             logger.error(f'Image analysis error: {e}')
             return self._basic_image_analysis(file_path)

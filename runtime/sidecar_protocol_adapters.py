@@ -197,6 +197,90 @@ class DHTSidecarAdapter(BaseSidecarAdapter):
             return []
 
 
+# ── DHT Leak Harvest Sidecar (ISSUE-006) ───────────────────────────────────────
+
+@SidecarRegistry.register("dht_leak_harvest")
+class DHTLeakHarvestSidecarAdapter(BaseSidecarAdapter):
+    """
+    DHT Leak Metadata Harvest Sidecar — ISSUE-006.
+
+    Extends standard DHT discovery with full metadata harvesting:
+      DHT keyword crawl -> BEP-9 metadata fetch -> IOC extraction
+
+    Discovers info_hashes via DHT keyword crawling, then harvests full
+    torrent metadata (file names, tracker URLs, creator comments) using
+    BEP-9 metadata extension. Extracts IOCs from harvested metadata.
+
+    Env: HLEDAC_ENABLE_DHT=1 AND HLEDAC_ENABLE_DHT_METADATA_HARVEST=1
+    RAM: 150MB budget (metadata fetch is I/O-bound but caches heavy)
+    Priority: 5 (lowest priority — optional enrichment sidecar)
+    """
+
+    sidecar_id: str = "dht_leak_harvest"
+    lane_id: str = "dht"
+    ram_budget_mb: int = 150
+    priority: int = 5
+
+    async def run_async(self, ctx: SidecarContext) -> list[Any]:
+        """Run DHT keyword crawl with metadata harvesting and IOC extraction."""
+        if not ctx.query:
+            return []
+
+        # Both gates must be enabled
+        import os
+        if os.getenv("HLEDAC_ENABLE_DHT", "0").lower() not in ("1", "true", "yes", "on"):
+            return []
+        if os.getenv("HLEDAC_ENABLE_DHT_METADATA_HARVEST", "0").lower() not in ("1", "true", "yes", "on"):
+            return []
+
+        try:
+            from hledac.universal.dht.kademlia_node import crawl_dht_for_keyword
+        except Exception:
+            logger.debug("DHTLeakHarvestSidecarAdapter: kademlia_node import failed")
+            return []
+
+        try:
+            # Run DHT crawl with metadata harvesting enabled (ISSUE-006)
+            crawl_results = await crawl_dht_for_keyword(
+                ctx.query,
+                duration_s=60,  # Shorter duration for sidecar context
+                max_results=50,
+                harvest_metadata=True,  # This triggers post-crawl IOC extraction
+            )
+
+            # Convert crawl results to findings format expected by sidecar framework
+            findings = []
+            for hit in crawl_results[:30]:
+                name = hit.get('name', '')
+                info_hash = hit.get('info_hash', '')
+                finding = {
+                    "source_type": "dht_metadata",
+                    "query": ctx.query,
+                    "sprint_id": ctx.sprint_id,
+                    "ioc_type": "dht_torrent_metadata",
+                    "ioc_value": info_hash,
+                    "confidence": 0.7,
+                    "payload_text": (
+                        f"Name: {name}\n"
+                        f"InfoHash: {info_hash}\n"
+                        f"Files: {len(hit.get('files', []))}\n"
+                        f"Size: {hit.get('size_bytes', 0):,} bytes\n"
+                        f"Peers: {hit.get('peers', 0)}"
+                    ),
+                }
+                findings.append(finding)
+
+            if findings:
+                logger.info(
+                    "DHTLeakHarvestSidecar: %d findings for query '%s'",
+                    len(findings), ctx.query[:50],
+                )
+            return findings
+
+        except Exception:
+            logger.warning("DHTLeakHarvestSidecarAdapter.run: fail-soft", exc_info=True)
+            return []
+
 # ── Academic Sidecar ──────────────────────────────────────────────────────────
 
 @SidecarRegistry.register("academic")

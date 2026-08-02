@@ -42,9 +42,11 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.transport.session_pool import session_pool
+from hledac.universal.network.favicon_hasher import _FaviconHasher
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
+_favicon_hasher = _FaviconHasher()
 MAX_FINGERPRINT_FINDINGS: int = 1000
 MAX_FINGERPRINTS_PER_FINDING: int = 5
 MAX_PATTERN_BYTES: int = 4096
@@ -82,6 +84,20 @@ _TLS_CERT_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [('cloudflare', re.
 _CT_CERT_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [('cloudflare', re.compile('Cloudflare', re.I), 'Cloudflare', ''), ('akamai', re.compile('CloudFront', re.I), 'CloudFront', ''), ('amazon-aws', re.compile('Amazon CloudFront', re.I), 'CloudFront', ''), ('fastly', re.compile('Fastly', re.I), 'Fastly', ''), ('microsoft', re.compile('Microsoft.*(?: corp| corporation)', re.I), 'Microsoft', ''), ('google', re.compile('Google LLC', re.I), 'Google', ''), ('apple', re.compile('Apple Inc', re.I), 'Apple', ''), ('facebook', re.compile('Facebook', re.I), 'Meta', ''), ('github', re.compile('GitHub', re.I), 'GitHub', ''), ('cloudflare', re.compile('Cloudflare, Inc', re.I), 'Cloudflare', ''), ('amazon-aws', re.compile('Amazon.com', re.I), 'Amazon AWS', ''), ('shopify', re.compile('Shopify', re.I), 'Shopify', ''), ('wordpress', re.compile('Automattic', re.I), 'WordPress', ''), ('akamai', re.compile('Akamai Technologies', re.I), 'Akamai', ''), ('vercel', re.compile('Vercel', re.I), 'Vercel', ''), ('netlify', re.compile('Netlify', re.I), 'Netlify', '')]
 _HTML_PATTERNS: list[tuple[str, re.Pattern, str, str]] = [('wordpress', re.compile('wp-content|wp-includes', re.I), 'WordPress', ''), ('wordpress', re.compile('WordPress', re.I), 'WordPress', ''), ('drupal', re.compile('drupalSettings|Drupal.theme', re.I), 'Drupal', ''), ('joomla', re.compile('Joomla', re.I), 'Joomla', ''), ('wix', re.compile('wix.com|wixi|var wix', re.I), 'Wix', ''), ('shopify', re.compile('shopify|myShopify', re.I), 'Shopify', ''), ('squarespace', re.compile('Squarespace', re.I), 'Squarespace', ''), ('ghost', re.compile('Ghost', re.I), 'Ghost CMS', ''), ('hubspot', re.compile('hubspot|hs-script', re.I), 'HubSpot', ''), ('wordpress', re.compile('xmlrpc.php|wlwmanifest.xml', re.I), 'WordPress', ''), ('drupal', re.compile('modules/.*\\.js\\?v=', re.I), 'Drupal', ''), ('joomla', re.compile('/media/jui|com_content', re.I), 'Joomla', ''), ('magento', re.compile('mage/', re.I), 'Magento', ''), ('prestashop', re.compile('prestashop|_PS_VERSION_', re.I), 'PrestaShop', ''), ('react', re.compile('react|fb-root|_react_event_id', re.I), 'React', ''), ('vue', re.compile('vuejs|__vue__|data-v-', re.I), 'Vue.js', ''), ('angular', re.compile('ng-app|angular|angularjs', re.I), 'Angular', ''), ('next.js', re.compile('__NEXT_DATA__|_next/static', re.I), 'Next.js', ''), ('gatsby', re.compile('gatsby|__gatsby', re.I), 'Gatsby', ''), ('django', re.compile('csrfmiddlewaretoken|django', re.I), 'Django', ''), ('flask', re.compile('flask|Werkzeug', re.I), 'Flask', ''), ('laravel', re.compile('laravel|_token|XSRF-TOKEN', re.I), 'Laravel', ''), ('ruby-on-rails', re.compile('Ruby on Rails|rails', re.I), 'Rails', ''), ('spring', re.compile('Spring Framework|springframework', re.I), 'Spring', ''), ('express', re.compile('Express|node_modules/express', re.I), 'Express.js', '')]
 _PROTOCOL_PATTERNS: list[tuple[str, re.Pattern]] = [('TLSv1.2', re.compile('TLSv?1\\.2', re.I)), ('TLSv1.3', re.compile('TLSv?1\\.3', re.I)), ('HTTP/1.0', re.compile('HTTP/1\\.0', re.I)), ('HTTP/1.1', re.compile('HTTP/1\\.1', re.I)), ('HTTP/2', re.compile('H2(?:[ ,]|$)|^SPDY', re.I)), ('HTTP/3', re.compile('H3(?:[ ,]|$)|HTTP/3', re.I))]
+# --- F229 / P8-007: Tracking ID patterns (GA, GTM, GA4, Google Ads) ---
+_GA_UA_PATTERN: re.Pattern = re.compile(r'UA-\d{6,}-\d+', re.I)
+_GA4_PATTERN: re.Pattern = re.compile(r'G-[A-Z0-9]{10,}', re.I)
+_GTM_PATTERN: re.Pattern = re.compile(r'GTM-[A-Z0-9]{4,}', re.I)
+_AW_PATTERN: re.Pattern = re.compile(r'AW-\d+', re.I)
+# --- P8-007: Favicon URL extraction (handles quoted/unquoted HTML attributes) ---
+_FAVICON_LINK_RE: re.Pattern = re.compile(
+    r'<link[^>]+rel=["\']?[^"\'>]*icon[^"\'>]*["\']?[^>]+href=["\']?([^"\'>\s]+)', re.I
+)
+_FAVICON_LINK_REV_RE: re.Pattern = re.compile(
+    r'<link[^>]+href=["\']?([^"\'>\s]+)["\']?[^>]+rel=["\']?[^"\'>]*icon', re.I
+)
+# --- P8-007: Favicon hash cache (finding_id -> mmh3 hash) ---
+_favicon_mmh3_cache: dict[str, str] = {}
 _stats: dict[str, int] = {'findings_scanned': 0, 'findings_skipped': 0, 'fingerprints_produced': 0, 'patterns_matched': 0}
 
 def get_fingerprint_stats() -> dict[str, int]:
@@ -117,6 +133,8 @@ class HtmlSignals(TypedDict):
     generator: list[str]
     scripts: list[str]
     all_text: list[str]
+    favicon_url: str | None
+    tracking_ids: dict[str, list[str]]
 
 def extract_http_signals(payload_text: str | None) -> HttpSignals:
     """
@@ -259,8 +277,10 @@ def extract_html_signals(payload_text: str | None) -> HtmlSignals:
       - generator: meta generator tag
       - scripts: script src patterns
       - all_text: combined HTML text
+      - favicon_url: resolved favicon URL (P8-007)
+      - tracking_ids: dict with ga_ids, gtm_ids, ga4_ids, aw_ids (P8-007)
     """
-    signals: HtmlSignals = {'title': [], 'generator': [], 'scripts': [], 'all_text': []}
+    signals: HtmlSignals = {'title': [], 'generator': [], 'scripts': [], 'all_text': [], 'favicon_url': None, 'tracking_ids': {}}
     if not payload_text:
         return signals
     try:
@@ -292,12 +312,141 @@ def extract_html_signals(payload_text: str | None) -> HtmlSignals:
         domain_match = re.search('https?://([^/]+)', href)
         if domain_match:
             signals['all_text'].append(domain_match.group(1))
-    favicon_match = re.search('<link[^>]+rel=["\\\'][^"\\\']*icon[^"\\\']*["\\\'][^>]+href=["\\\']([^"\\\']+)["\\\']', html, re.I)
+    # P8-007: Enhanced favicon URL extraction (two regex orderings)
+    favicon_match = _FAVICON_LINK_RE.search(html)
+    if not favicon_match:
+        favicon_match = _FAVICON_LINK_REV_RE.search(html)
     if favicon_match:
-        signals['all_text'].append(f'favicon:{favicon_match.group(1)}')
+        favicon_url = favicon_match.group(1)
+        signals['favicon_url'] = favicon_url
+        signals['all_text'].append(f'favicon:{favicon_url}')
+        # Also cache hash if available
+        if favicon_url in _favicon_mmh3_cache:
+            signals['all_text'].append(f'favicon_mmh3:{_favicon_mmh3_cache[favicon_url]}')
+    # P8-007: Tracking ID extraction (GA, GTM, GA4, Google Ads)
+    signals['tracking_ids'] = _extract_tracking_ids(html)
+    for ga_id in signals['tracking_ids'].get('ua_ids', []):
+        signals['all_text'].append(f'ga:{ga_id}')
+    for ga4_id in signals['tracking_ids'].get('ga4_ids', []):
+        signals['all_text'].append(f'ga4:{ga4_id}')
+    for gtm_id in signals['tracking_ids'].get('gtm_ids', []):
+        signals['all_text'].append(f'gtm:{gtm_id}')
+    for aw_id in signals['tracking_ids'].get('aw_ids', []):
+        signals['all_text'].append(f'aw:{aw_id}')
     signals['all_text'].extend(signals['title'])
     signals['all_text'].extend(signals['generator'])
     return signals
+
+def _extract_tracking_ids(html: str) -> dict[str, list[str]]:
+    """
+    P8-007: Extract Google Analytics, GA4, GTM, and Google Ads tracking IDs from HTML.
+
+    Tracking IDs are strong cross-site attribution signals:
+      - Same GA ID across domains → shared ownership or same operator
+      - Same GTM container → same tag management infrastructure
+
+    Returns dict with keys: ua_ids, ga4_ids, gtm_ids, aw_ids
+    """
+    result: dict[str, list[str]] = {}
+    if not html:
+        return result
+    try:
+        ua_matches = _GA_UA_PATTERN.findall(html)
+        if ua_matches:
+            result['ua_ids'] = list(dict.fromkeys(ua_matches))[:10]
+        ga4_matches = _GA4_PATTERN.findall(html)
+        if ga4_matches:
+            result['ga4_ids'] = list(dict.fromkeys(ga4_matches))[:10]
+        gtm_matches = _GTM_PATTERN.findall(html)
+        if gtm_matches:
+            result['gtm_ids'] = list(dict.fromkeys(gtm_matches))[:10]
+        aw_matches = _AW_PATTERN.findall(html)
+        if aw_matches:
+            result['aw_ids'] = list(dict.fromkeys(aw_matches))[:5]
+    except Exception:
+        pass
+    return result
+
+
+def _resolve_favicon_url(favicon_url: str, page_url: str) -> str:
+    """
+    P8-007: Resolve a potentially relative favicon URL against a page URL.
+
+    Handles:
+      - //cdn.example.com/favicon.ico (protocol-relative)
+      - /favicon.ico (absolute path)
+      - favicon.ico (relative path)
+      - https://example.com/favicon.ico (already absolute)
+    """
+    from urllib.parse import urljoin, urlparse
+    if not favicon_url:
+        return ''
+    favicon_url = favicon_url.strip()
+    if favicon_url.startswith('//'):
+        parsed_page = urlparse(page_url) if '://' in page_url else None
+        scheme = parsed_page.scheme if parsed_page else 'https'
+        return f'{scheme}:{favicon_url}'
+    if favicon_url.startswith('http://') or favicon_url.startswith('https://'):
+        return favicon_url
+    if page_url and ('://' in page_url):
+        return urljoin(page_url, favicon_url)
+    return favicon_url
+
+
+async def _compute_favicon_mmh3(
+    html: str,
+    page_url: str,
+    session: 'httpx.AsyncClient',
+) -> str | None:
+    """
+    P8-007: Download favicon and compute MMH3 hash for cross-site clustering.
+
+    Shodan/faviconhash.com use the same MurmurHash3 algorithm to cluster
+    sites by favicon similarity — same hash = shared hosting/ownership.
+
+    Uses network/favicon_hasher._FaviconHasher for M1-optimized hashing
+    (mmh3 primary, xxh3_64 fallback via Rust backend).
+
+    Args:
+        html: Raw HTML content of the page
+        page_url: URL of the page (for resolving relative favicon URLs)
+        session: httpx async client for downloading the favicon
+
+    Returns:
+        Favicon hash string like 'mmh3:1234567890' or None on failure.
+    """
+    import httpx
+    if not html or not page_url:
+        return None
+    favicon_url = ''
+    favicon_match = _FAVICON_LINK_RE.search(html)
+    if not favicon_match:
+        favicon_match = _FAVICON_LINK_REV_RE.search(html)
+    if favicon_match:
+        favicon_url = _resolve_favicon_url(favicon_match.group(1), page_url)
+    if not favicon_url:
+        parsed = page_url.split('://', 1)[-1].split('/')[0]
+        if '://' in page_url:
+            favicon_url = f'{page_url.rsplit("/", 1)[0]}/favicon.ico' \
+                if '/' in page_url.split('://', 1)[-1] \
+                else f'{page_url}/favicon.ico'
+        else:
+            favicon_url = f'https://{parsed}/favicon.ico'
+    if favicon_url in _favicon_mmh3_cache:
+        return _favicon_mmh3_cache[favicon_url]
+    try:
+        resp = await session.get(favicon_url, timeout=httpx.Timeout(total=5.0))
+        if resp.status_code == 200 and resp.content:
+            h = _favicon_hasher.hash_favicon(resp.content)
+            if h:
+                _favicon_mmh3_cache[favicon_url] = h
+                return h
+    except (httpx.TimeoutException, httpx.HTTPError, OSError, ValueError):
+        pass
+    except Exception:
+        pass
+    return None
+
 
 def _extract_tech_stack(headers: dict[str, str], html_head: str, cookies: list[str]) -> TechStack:
     """
@@ -554,6 +703,29 @@ def extract_fingerprints(finding: CanonicalFinding) -> list[ServiceFingerprint]:
         hfps = _match_html_content(html_signals['all_text'] + html_signals['title'] + html_signals['generator'])
         for fp in hfps:
             fingerprints.append(ServiceFingerprint(finding_id=fid, service_name=fp.service_name, product=fp.product, version=fp.version, confidence=fp.confidence, evidence_ids=(fid,), facets=fp.facets))
+    # P8-007: Extract tracking IDs (GA, GTM, GA4, Google Ads) as high-confidence fingerprints
+    tracking_ids = html_signals.get('tracking_ids', {})
+    if tracking_ids:
+        for ga_ua_id in tracking_ids.get('ua_ids', []):
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid, service_name='google-analytics', product=f'GA UA: {ga_ua_id}',
+                version='', confidence=0.95, evidence_ids=(fid,),
+                facets={'source': 'tracking_id', 'tracking_type': 'ga_ua', 'tracking_id': ga_ua_id, '_p8_007': True}))
+        for ga4_id in tracking_ids.get('ga4_ids', []):
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid, service_name='google-analytics-4', product=f'GA4: {ga4_id}',
+                version='', confidence=0.95, evidence_ids=(fid,),
+                facets={'source': 'tracking_id', 'tracking_type': 'ga4', 'tracking_id': ga4_id, '_p8_007': True}))
+        for gtm_id in tracking_ids.get('gtm_ids', []):
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid, service_name='google-tag-manager', product=f'GTM: {gtm_id}',
+                version='', confidence=0.95, evidence_ids=(fid,),
+                facets={'source': 'tracking_id', 'tracking_type': 'gtm', 'tracking_id': gtm_id, '_p8_007': True}))
+        for aw_id in tracking_ids.get('aw_ids', []):
+            fingerprints.append(ServiceFingerprint(
+                finding_id=fid, service_name='google-ads', product=f'Google Ads: {aw_id}',
+                version='', confidence=0.8, evidence_ids=(fid,),
+                facets={'source': 'tracking_id', 'tracking_type': 'google_ads', 'tracking_id': aw_id, '_p8_007': True}))
     http_signals_for_tech: HttpSignals = extract_http_signals(payload)
     if http_signals_for_tech['all_headers'] or http_signals_for_tech['html_content']:
         headers_dict: dict[str, str] = {}
@@ -669,12 +841,20 @@ async def run_passive_fingerprint_sidecar(findings: list[CanonicalFinding], stor
     """
     Async sidecar runner for passive fingerprinting.
 
+    P8-007: Enriches findings with MMH3 favicon hashes for cross-site clustering.
+
     Returns count of stored findings.
     """
     if not findings or store is None:
         return 0
     try:
         derived_findings = correlate_passive_fingerprints(findings, query)
+        if not derived_findings:
+            derived_findings = []
+        # P8-007: Enrich with favicon MMH3 hashes
+        favicon_enriched = await _enrich_favicon_findings(findings, query)
+        if favicon_enriched:
+            derived_findings.extend(favicon_enriched)
         if not derived_findings:
             return 0
         results = await store.async_ingest_findings_batch(derived_findings)
@@ -684,6 +864,106 @@ async def run_passive_fingerprint_sidecar(findings: list[CanonicalFinding], stor
         raise
     except Exception:
         return 0
+
+
+# ── P8-007: Favicon MMH3 enrichment sidecar ──────────────────────────────
+
+
+async def _enrich_favicon_findings(
+    source_findings: list[CanonicalFinding],
+    query: str,
+) -> list[CanonicalFinding]:
+    """
+    P8-007: Create CanonicalFindings with MMH3 favicon hashes.
+
+    Downloads favicons from source findings that have HTML payloads,
+    computes MMH3 hashes, and creates additional CanonicalFinding entries
+    for infrastructure clustering via favicon similarity.
+
+    Same favicon MMH3 hash across domains = strong signal of shared
+    hosting or ownership (Shodan/faviconhash.com method).
+
+    Bounds:
+      - MAX_FAVICON_ENRICHMENTS = 20 per batch
+      - FAVICON_TIMEOUT_S = 5.0 per download
+      - Uses semaphore(5) for concurrent downloads (M1 8GB friendly)
+    """
+    import httpx
+    MAX_FAVICON_ENRICHMENTS = 20
+    SEMAPHORE_LIMIT = 5
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    enriched: list[CanonicalFinding] = []
+    candidates: list[tuple[str, str]] = []
+    for finding in source_findings[:MAX_FINGERPRINT_FINDINGS]:
+        if len(candidates) >= MAX_FAVICON_ENRICHMENTS:
+            break
+        payload = getattr(finding, 'payload_text', None) or '{}'
+        page_url = ''
+        for prov in getattr(finding, 'provenance', ()):
+            if isinstance(prov, str) and (prov.startswith('url:') or prov.startswith('http://') or prov.startswith('https://')):
+                if prov.startswith('url:'):
+                    page_url = prov[4:300]
+                else:
+                    page_url = prov[:300]
+                break
+        if not page_url:
+            try:
+                data = _msgspec_decode(payload) if isinstance(payload, str) else payload
+                page_url = data.get('url', '') or data.get('page_url', '') or ''
+            except Exception:
+                pass
+        html_content = ''
+        try:
+            if isinstance(payload, str) and payload.strip():
+                data = _msgspec_decode(payload)
+                html_content = data.get('html', '') or data.get('body', '') or ''
+        except Exception:
+            html_content = ''
+        if html_content and page_url:
+            candidates.append((html_content[:MAX_PATTERN_BYTES], page_url))
+    if not candidates:
+        return enriched
+    semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
+
+    async def _fetch_one(html: str, page_url: str) -> str | None:
+        async with semaphore:
+            async with httpx.AsyncClient() as client:
+                return await _compute_favicon_mmh3(html, page_url, client)
+    tasks = [asyncio.create_task(_fetch_one(html, url)) for html, url in candidates]
+    if not tasks:
+        return enriched
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    except Exception:
+        return enriched
+    ts = time.time()
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            continue
+        if result is None:
+            continue
+        html, page_url = candidates[i]
+        domain = page_url.split('://')[-1].split('/')[0] if '://' in page_url else page_url
+        fid_input = f'favicon_mmh3:{domain}:{result}:{int(ts)}'
+        fid = f'fav_{hashlib.sha256(fid_input.encode()).hexdigest()[:20]}'
+        payload_out = {
+            'fingerprint_type': 'favicon_mmh3',
+            'fingerprint_value': result,
+            'domain': domain,
+            'page_url': page_url,
+            'source': 'passive_fingerprint_enrichment',
+            '_p8_007': True,
+        }
+        enriched.append(CanonicalFinding(
+            finding_id=fid,
+            query=query[:500],
+            source_type='passive_fingerprint',
+            confidence=0.85,
+            ts=ts,
+            provenance=('passive_fingerprint', 'favicon_mmh3'),
+            payload_text=_msgspec_encode(payload_out).decode(),
+        ))
+    return enriched
 
 def should_skip_runs(ram_percent: float, high_water: float) -> bool:
     """

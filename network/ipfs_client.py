@@ -258,6 +258,188 @@ IPFS_SEARCH_GATEWAY: str = 'https://ipfs-search.com/api/v1/search'
 IPFS_SEARCH_TIMEOUT: int = 30
 MAX_SEARCH_RESULTS: int = 20
 
+# --- URI Scheme & Native DHT Resolution (ISSUE-P8-005) ---
+IPFS_URI_PATTERN = re.compile(r'^ipfs://([a-zA-Z0-9]+)', re.IGNORECASE)
+IPNS_URI_PATTERN = re.compile(r'^ipns://([a-zA-Z0-9]+)', re.IGNORECASE)
+DHT_QUERY_TIMEOUT: int = 12
+DHT_MAX_PROVIDERS: int = 10
+
+async def resolve_ipfs_uri(uri: str) -> bytes | None:
+    """
+    Resolve ipfs://CID or ipns://name URI to content bytes via native DHT.
+
+    ISSUE-P8-005: Adds native CID/IPNS resolution beyond HTTP gateway-only.
+
+    Strategy (M1 8GB-safe):
+      1. Parse URI scheme (ipfs:// or ipns://)
+      2. For ipns://: resolve to CID via DHT (ipfs name resolve)
+      3. For ipfs://: fetch directly via DHT provider lookup
+      4. Fallback to HTTP gateways if DHT fails
+
+    Args:
+        uri: IPFS URI (ipfs://CID or ipns://name)
+
+    Returns:
+        Content bytes, or None if resolution fails.
+    """
+    uri = uri.strip()
+    ipfs_match = IPFS_URI_PATTERN.match(uri)
+    ipns_match = IPNS_URI_PATTERN.match(uri)
+
+    if ipfs_match:
+        cid = ipfs_match.group(1)
+        # Try native DHT first, fallback to gateway
+        content = await _fetch_via_dht(cid)
+        if content is not None:
+            return content
+        # Fallback to gateway fetch
+        return await fetch_ipfs(cid)
+    elif ipns_match:
+        name = ipns_match.group(1)
+        # Resolve IPNS to CID via DHT
+        cid = await _resolve_ipns_via_dht(name)
+        if cid is None:
+            # Fallback to HTTP API gateways
+            cid = await resolve_ipns(name)
+        if cid is None:
+            return None
+        # Fetch content for resolved CID
+        content = await _fetch_via_dht(cid)
+        if content is not None:
+            return content
+        return await fetch_ipfs(cid)
+    return None
+
+
+async def _resolve_ipns_via_dht(name: str) -> str | None:
+    """
+    Resolve IPNS name to CID via native DHT using ipfs CLI subprocess.
+
+    M1 8GB-safe: No daemon required, uses bootstrap nodes directly.
+
+    Args:
+        name: IPNS name (peer-id or domain name)
+
+    Returns:
+        CID string if resolved, None otherwise.
+    """
+    try:
+        result = await asyncio.create_subprocess_exec(
+            'ipfs', 'name', 'resolve', f'/ipns/{name}',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            async with asyncio.timeout(DHT_QUERY_TIMEOUT):
+                stdout, stderr = await result.communicate()
+        except asyncio.TimeoutError:
+            result.kill()
+            return None
+
+        if result.returncode != 0:
+            logger.debug(f'IPNS DHT resolve failed for {name}: {stderr.decode().strip()}')
+            return None
+
+        path = stdout.decode().strip()
+        # Path format: /ipfs/CID
+        if '/ipfs/' in path:
+            cid = path.split('/ipfs/')[-1]
+            logger.debug(f'IPNS {name} resolved to {cid} via DHT')
+            return cid
+    except FileNotFoundError:
+        logger.debug('ipfs CLI not found, DHT resolution unavailable')
+    except Exception as e:
+        logger.debug(f'IPNS DHT resolve error for {name}: {e}')
+    return None
+
+
+async def _fetch_via_dht(cid: str) -> bytes | None:
+    """
+    Fetch content directly via DHT provider lookup (no gateway required).
+
+    Uses 'ipfs dag get' or 'ipfs cat' via CLI to fetch from DHT peers.
+    M1 8GB-safe: Single-shot subprocess, no persistent daemon.
+
+    Args:
+        cid: IPFS Content Identifier
+
+    Returns:
+        Content bytes, or None if fetch fails.
+    """
+    try:
+        result = await asyncio.create_subprocess_exec(
+            'ipfs', 'cat', f'/ipfs/{cid}',
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            async with asyncio.timeout(DHT_QUERY_TIMEOUT):
+                stdout, stderr = await result.communicate()
+        except asyncio.TimeoutError:
+            result.kill()
+            return None
+
+        if result.returncode != 0:
+            logger.debug(f'DHT fetch failed for {cid}: {stderr.decode().strip()}')
+            return None
+
+        content = stdout
+        if len(content) > MAX_FILE_SIZE_BYTES:
+            logger.warning(f'DHT fetch exceeded 10MB limit: {cid} ({len(content)} bytes)')
+            return None
+        logger.debug(f'DHT fetch success: {cid} ({len(content)} bytes)')
+        return content
+    except FileNotFoundError:
+        logger.debug('ipfs CLI not found, DHT fetch unavailable')
+    except Exception as e:
+        logger.debug(f'DHT fetch error for {cid}: {e}')
+    return None
+
+
+async def find_providers_via_dht(cid: str) -> list[str]:
+    """
+    Find content providers for a CID via native DHT.
+
+    Uses 'ipfs dht findprovs' to discover peers hosting the content.
+    M1 8GB-safe: No daemon required.
+
+    Args:
+        cid: IPFS Content Identifier
+
+    Returns:
+        List of peer IDs providing the content.
+    """
+    providers: list[str] = []
+    try:
+        result = await asyncio.create_subprocess_exec(
+            'ipfs', 'dht', 'findprovs', cid,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            async with asyncio.timeout(DHT_QUERY_TIMEOUT):
+                stdout, stderr = await result.communicate()
+        except asyncio.TimeoutError:
+            result.kill()
+            return []
+
+        if result.returncode != 0:
+            logger.debug(f'DHT findprovs failed for {cid}: {stderr.decode().strip()}')
+            return []
+
+        for line in stdout.decode().strip().split('\n'):
+            line = line.strip()
+            if line and line not in providers:
+                providers.append(line)
+                if len(providers) >= DHT_MAX_PROVIDERS:
+                    break
+        logger.debug(f'DHT found {len(providers)} providers for {cid}')
+    except FileNotFoundError:
+        logger.debug('ipfs CLI not found, DHT provider lookup unavailable')
+    except Exception as e:
+        logger.debug(f'DHT findprovs error for {cid}: {e}')
+    return providers
+
 async def find_via_ipfs_search(query: str) -> list[str]:
     """
     Search IPFS content via ipfs-search.com free REST API.

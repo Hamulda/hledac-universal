@@ -39,6 +39,7 @@ except ImportError:
     CanonicalFinding = None
 logger = logging.getLogger(__name__)
 MAX_CDX_RESULTS: int = 500
+MAX_CDX_RESULTS_FULL: int = 5000  # P8-003: paginated deep search cap
 RATE_LIMIT_S: float = 2.0
 TIMEOUT_PER_REQUEST: float = 60.0
 CDX_API = 'https://web.archive.org/cdx/search/cdx'
@@ -166,6 +167,119 @@ async def cdx_deep_search(domain: str, session: httpx.AsyncClient, *, match_type
         logger.debug(f'CDX deep search error for {domain}: {e}')
         return []
 
+
+async def cdx_deep_search_full(
+    domain: str,
+    session: httpx.AsyncClient,
+    *,
+    match_type: str = 'domain',
+    from_date: str | None = None,
+    to_date: str | None = None,
+    max_total: int = MAX_CDX_RESULTS_FULL,
+) -> list[CDXSearchResult]:
+    """
+    P8-003: CDX deep search with full pagination.
+
+    Fetches ALL archived URLs for a domain by paginating through CDX API
+    results using the `resumeKey` cursor. Unlike cdx_deep_search() which
+    returns at most 500 results, this function continues until all pages
+    are exhausted or max_total is reached.
+
+    CDX API pagination:
+        - Each request returns up to 500 results (CDX API max limit)
+        - When more results exist, response includes `cdx-next-resume-key` header
+        - Pass this value as `resumeKey` param to get the next page
+        - Continue until header is absent (no more pages)
+
+    Args:
+        domain:      Domain to search (e.g. "example.com")
+        session:     httpx.AsyncClient
+        match_type:  CDX match type (default: "domain")
+        from_date:   Start date YYYYMMDD (optional)
+        to_date:     End date YYYYMMDD (optional)
+        max_total:   Maximum total results to return (default: 5000)
+
+    Returns:
+        List of CDXSearchResult with all paginated results.
+    """
+    if match_type == 'domain':
+        url_param = f'*.{domain}'
+    elif match_type == 'host':
+        url_param = domain
+    elif match_type == 'prefix':
+        url_param = f'http://{domain}/*'
+    else:
+        url_param = domain
+
+    all_results: list[CDXSearchResult] = []
+    resume_key: str | None = None
+
+    while len(all_results) < max_total:
+        params: dict[str, Any] = {
+            'url': url_param,
+            'matchType': match_type,
+            'output': 'json',
+            'fl': 'timestamp,original,mimetype,statuscode,length,digest',
+            'filter': 'statuscode:200',
+            'collapse': 'urlkey',
+            'limit': '500',  # CDX API max per page
+        }
+        if from_date:
+            params['from'] = from_date
+        if to_date:
+            params['to'] = to_date
+        if resume_key:
+            params['resumeKey'] = resume_key
+
+        try:
+            resp = await session.get(
+                CDX_API,
+                params=params,
+                timeout=httpx.Timeout(TIMEOUT_PER_REQUEST),
+            )
+            if resp.status_code == 429:
+                logger.warning(f'CDX rate limited for {domain}, stopping pagination')
+                break
+            if resp.status_code != 200:
+                logger.debug(f'CDX {domain} → HTTP {resp.status_code}, stopping pagination')
+                break
+
+            raw: list[list[str]] = resp.json()
+            page_results = _parse_cdx_response(raw)
+
+            if not page_results:
+                break  # No more results
+
+            all_results.extend(page_results)
+
+            # Get next page cursor from headers
+            next_resume_key = resp.headers.get('cdx-next-resume-key')
+            if not next_resume_key:
+                break  # Last page reached
+
+            # Guard against infinite pagination (stuck resumeKey)
+            if next_resume_key == resume_key:
+                logger.warning(f'CDX pagination stuck for {domain} (same resumeKey), breaking')
+                break
+            resume_key = next_resume_key
+
+            # Rate limit between pages
+            # Note: caller (_fetch_one) already enforces RATE_LIMIT_S, so this
+            # is additional spacing within the pagination of a single domain
+            await asyncio.sleep(RATE_LIMIT_S)
+
+        except httpx.PoolTimeout:
+            logger.debug(f'CDX connection pool exhausted for {domain}')
+            break
+        except TimeoutError:
+            logger.debug(f'CDX deep search full timeout for {domain}')
+            break
+        except Exception as e:
+            logger.debug(f'CDX deep search full error for {domain}: {e}')
+            break
+
+    return all_results[:max_total]
+
 def _parse_cdx_response(raw: list[list[str]]) -> list[CDXSearchResult]:
     """Parse CDX JSON response into CDXSearchResult list."""
     if not raw or len(raw) < 2:
@@ -283,6 +397,88 @@ class WaybackCDXDeepSearch:
         self._stats['total_results'] += len(all_results)
         elapsed = time.monotonic() - start
         return CDXDeepSearchResult(query=','.join(domains_or_urls[:5]), match_type=match_type, total_rows=len(all_results), results=all_results[:MAX_CDX_RESULTS], duration_s=elapsed)
+
+    async def search_full(
+        self,
+        domains_or_urls: list[str],
+        *,
+        match_type: str = 'domain',
+        from_date: str | None = None,
+        to_date: str | None = None,
+        max_per_domain: int = MAX_CDX_RESULTS_FULL,
+        concurrency: int = 2,
+        deduplicate: bool = True,
+    ) -> CDXDeepSearchResult:
+        """
+        P8-003: CDX deep search with FULL pagination.
+
+        Fetches ALL archived URLs for each domain by paginating through
+        all CDX API result pages (using resumeKey cursor). Unlike search()
+        which is limited to MAX_CDX_RESULTS (500), this returns up to
+        max_per_domain (default 5000) per domain.
+
+        WARNING: This can take significant time for domains with large
+        archives (archive.org itself has 20+ years). Rate limiting
+        between pages is enforced.
+
+        Args:
+            domains_or_urls: List of domains or full URLs
+            match_type:      CDX match type (default: domain)
+            from_date:       Optional start date YYYYMMDD
+            to_date:         Optional end date YYYYMMDD
+            max_per_domain:  Max results per domain (default: 5000)
+            concurrency:     Max concurrent domain searches (Semaphore)
+            deduplicate:     Deduplicate results by original URL (default: True)
+
+        Returns:
+            CDXDeepSearchResult with paginated findings + telemetry.
+        """
+        start = time.monotonic()
+        session = await self._ensure_session()
+        semaphore = asyncio.Semaphore(concurrency)
+        last_request = 0.0
+
+        async def _fetch_one(domain: str) -> list[CDXSearchResult]:
+            nonlocal last_request
+            async with semaphore:
+                elapsed = time.monotonic() - last_request
+                if elapsed < RATE_LIMIT_S:
+                    await asyncio.sleep(RATE_LIMIT_S - elapsed)
+                last_request = time.monotonic()
+                return await cdx_deep_search_full(
+                    domain,
+                    session,
+                    match_type=match_type,
+                    from_date=from_date,
+                    to_date=to_date,
+                    max_total=max_per_domain,
+                )
+
+        gathered = await parallel_ok(*[_fetch_one(d) for d in domains_or_urls], label='wayback_cdx:search_full')
+
+        # Collect results with optional deduplication
+        all_results: list[CDXSearchResult] = []
+        seen_urls: set[str] = set()
+        for res in gathered:
+            if isinstance(res, list):
+                if deduplicate:
+                    for r in res:
+                        if r.original not in seen_urls:
+                            seen_urls.add(r.original)
+                            all_results.append(r)
+                else:
+                    all_results.extend(res)
+
+        self._stats['domains_searched'] += len(domains_or_urls)
+        self._stats['total_results'] += len(all_results)
+        elapsed = time.monotonic() - start
+        return CDXDeepSearchResult(
+            query=','.join(domains_or_urls[:5]),
+            match_type=match_type,
+            total_rows=len(all_results),
+            results=all_results,
+            duration_s=elapsed,
+        )
 
     async def search_batch(self, domains: list[str], *, match_type: str='domain', concurrency: int=3) -> list[CDXSearchResult]:
         """Batch search across domains with concurrency + rate limiting."""

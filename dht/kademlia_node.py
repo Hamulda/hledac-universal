@@ -399,11 +399,12 @@ def safe_bdecode(data: bytes) -> dict[str, Any] | None:
     except (ValueError, IndexError, KeyError):
         return None
 
-async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: int=100) -> list[dict]:
+async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: int=100, harvest_metadata: bool=False) -> list[dict]:
     """
     Pasivní DHT crawl — zachytí info_hashes cirkulující sítí.
 
     FÁZE P5: Přidán limit 50 souběžných dotazů a DuckDB storage.
+    ISSUE-006: Volitelná post-crawl metadata harvest.
 
     Implementační požadavky:
       1. Bootstrap přes BOOTSTRAP_PEERS s socket.AF_INET force
@@ -418,6 +419,7 @@ async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: 
       4. Respektuj duration_s — ukonči crawl po uplynutí času
       5. Používá KademliaNode pro routing table management
       6. MAX_CONCURRENT_QUERIES = 50 — bounded semaphore
+      7. harvest_metadata=True spustí post-crawl TorrentMetadataFetcher IOCs
 
     Vrací: [{"info_hash": str, "name": str, "files": list,
              "size_bytes": int, "peers": int, "source": "dht"}]
@@ -464,6 +466,9 @@ async def crawl_dht_for_keyword(keyword: str, duration_s: int=120, max_results: 
     finally:
         await node.stop()
     logger.info(f"[DHT] crawl '{keyword}': {len(results)} results in {time.monotonic() - start_time:.1f}s")
+    # ISSUE-006: Post-crawl metadata harvest pipeline
+    if harvest_metadata and results:
+        await _try_harvest_metadata(keyword, results)
     return results[:max_results]
 
 
@@ -504,6 +509,31 @@ def _harvest_from_data_store(
                 })
                 if len(results) >= max_results:
                     break
+
+
+async def _try_harvest_metadata(keyword: str, crawl_results: list[dict]) -> None:
+    """ISSUE-006: Post-crawl metadata harvest — extract IOCs from discovered info_hashes.
+
+    Called by crawl_dht_for_keyword() when harvest_metadata=True.
+    Uses torrent_harvester module to fetch full metadata and extract IOCs.
+    Fail-soft: errors logged but never re-raised — crawl results are still returned.
+    """
+    import os
+    if os.getenv('HLEDAC_ENABLE_DHT_METADATA_HARVEST', '0').lower() not in ('1', 'true', 'yes', 'on'):
+        logger.debug('[DHT] Metadata harvest skipped: HLEDAC_ENABLE_DHT_METADATA_HARVEST != 1')
+        return
+    try:
+        from hledac.universal.dht.torrent_harvester import harvest_from_dht_crawl_results
+        harvester_findings = await harvest_from_dht_crawl_results(
+            crawl_results, keyword, max_concurrent=5,
+        )
+        if harvester_findings:
+            logger.info(
+                f"[DHT] Metadata harvest: {len(harvester_findings)} IOC findings "
+                f"from {len(crawl_results)} crawl results"
+            )
+    except Exception as e:
+        logger.warning(f'[DHT] Metadata harvest failed (non-fatal): {e}')
 
 async def lookup_info_hash_metadata(info_hash: str, timeout_s: float=15.0) -> dict:
     """

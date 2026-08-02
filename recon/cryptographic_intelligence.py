@@ -168,6 +168,36 @@ class KeyAnalysis(msgspec.Struct, frozen=True):
     vulnerabilities: list[str]
     recommended_action: str
 
+
+class SSHFPRecord(msgspec.Struct, frozen=True):
+    """
+    P8-007: SSHFP DNS record (RFC 4255) — SSH host key fingerprint.
+
+    SSHFP records published in DNS provide a verifiable fingerprint of
+    an SSH server's host key. Same fingerprint = same physical server
+    = strong infrastructure pivot independent of domain/IP.
+
+    Fields:
+        algorithm: SSH key algorithm (1=RSA, 2=DSS, 3=ECDSA, 4=Ed25519)
+        fingerprint_type: hash algorithm used (1=SHA-1, 2=SHA-256)
+        fingerprint: hex-encoded fingerprint of the host key
+        domain: domain that published this SSHFP record
+    """
+    algorithm: int
+    fingerprint_type: int
+    fingerprint: str
+    domain: str = ''
+
+    @property
+    def algorithm_name(self) -> str:
+        _algo_map = {1: 'RSA', 2: 'DSS', 3: 'ECDSA', 4: 'Ed25519', 5: 'Ed448'}
+        return _algo_map.get(self.algorithm, f'unknown({self.algorithm})')
+
+    @property
+    def fingerprint_type_name(self) -> str:
+        _type_map = {1: 'SHA-1', 2: 'SHA-256'}
+        return _type_map.get(self.fingerprint_type, f'unknown({self.fingerprint_type})')
+
 class ClassicalCryptanalysis:
     """
     Cryptanalysis of classical (pre-computer) ciphers.
@@ -749,7 +779,7 @@ class CryptographicIntelligence:
         self.hash_analyzer = HashAnalyzer()
         self.encryption_detector = EncryptionDetector()
         self.certificate_analyzer = CertificateAnalyzer()
-        self.stats = {'ciphers_cracked': 0, 'hashes_analyzed': 0, 'certs_parsed': 0}
+        self.stats = {'ciphers_cracked': 0, 'hashes_analyzed': 0, 'certs_parsed': 0, 'sshfp_queried': 0}
 
     def crack_classical_cipher(self, ciphertext: str) -> CryptanalysisResult:
         """
@@ -785,6 +815,20 @@ class CryptographicIntelligence:
         """Analyze certificate security."""
         return self.certificate_analyzer.analyze_security(cert_info)
 
+    def query_sshfp(self, domain: str) -> list[SSHFPRecord]:
+        """
+        P8-007: Query SSHFP DNS records for SSH host key fingerprints.
+
+        Returns list of SSHFPRecord with algorithm, fingerprint type,
+        and fingerprint. Empty list if no SSHFP records published.
+
+        Wraps the standalone query_sshfp() with stats tracking.
+        """
+        result = query_sshfp(domain)
+        if result:
+            self.stats['sshfp_queried'] += 1
+        return result
+
     def encode_decode(self, data: str, encoding: CipherType, decode: bool=False) -> str:
         """
         Encode/decode various encodings.
@@ -816,4 +860,83 @@ class CryptographicIntelligence:
     def get_statistics(self) -> dict[str, Any]:
         """Get cryptographic analysis statistics."""
         return {**self.stats, 'available_modules': {'classical_crypto': True, 'hash_analysis': True, 'encryption_detection': True, 'certificate_analysis': CRYPTOGRAPHY_AVAILABLE}}
-__all__ = ['CryptographicIntelligence', 'ClassicalCryptanalysis', 'HashAnalyzer', 'EncryptionDetector', 'CertificateAnalyzer', 'CryptanalysisResult', 'HashAnalysis', 'EncryptionDetection', 'CertificateInfo', 'CipherType', 'HashType']
+def query_sshfp(domain: str) -> list[SSHFPRecord]:
+    """
+    P8-007: Query SSHFP DNS records (RFC 4255) for SSH host key fingerprints.
+
+    SSHFP records published in DNS provide a verifiable fingerprint of
+    an SSH server's host key. Same SSH host key fingerprint across
+    domains = same physical server = strong infrastructure pivot
+    independent of domain name or IP address.
+
+    Algorithm mapping (RFC 4255 sec 3.1.1):
+        1 = RSA, 2 = DSS, 3 = ECDSA, 4 = Ed25519
+    Fingerprint type mapping (RFC 4255 sec 3.1.2):
+        1 = SHA-1, 2 = SHA-256
+
+    Args:
+        domain: Domain name to query SSHFP records for
+
+    Returns:
+        List of SSHFPRecord objects. Empty list if no records or on error.
+
+    Note:
+        dnspython must be installed (>=2.4.0 in pyproject.toml).
+        Uses lazy import to avoid M1 8GB startup cost.
+    """
+    try:
+        import dns.resolver
+    except ImportError:
+        logger.debug('[CryptoIntel] dnspython not available for SSHFP query')
+        return []
+    if not domain or not isinstance(domain, str):
+        return []
+    domain = domain.strip().lower().rstrip('.')
+    try:
+        answers = dns.resolver.resolve(domain, 'SSHFP')
+        records: list[SSHFPRecord] = []
+        for rdata in answers:
+            try:
+                records.append(SSHFPRecord(
+                    algorithm=rdata.algorithm,
+                    fingerprint_type=rdata.fp_type,
+                    fingerprint=rdata.fingerprint.hex(),
+                    domain=domain,
+                ))
+            except (AttributeError, TypeError):
+                # Malformed record — skip
+                continue
+        _sshfp_stats['queries'] += 1
+        _sshfp_stats['records_found'] += len(records)
+        return records
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers):
+        _sshfp_stats['queries'] += 1
+        return []
+    except Exception as e:
+        logger.debug(f'[CryptoIntel] SSHFP query failed for {domain}: {e}')
+        _sshfp_stats['queries'] += 1
+        return []
+
+
+async def query_sshfp_async(domain: str) -> list[SSHFPRecord]:
+    """
+    P8-007: Async wrapper for SSHFP DNS query.
+
+    Uses asyncio.to_thread() for non-blocking DNS resolution since
+    dnspython 2.x resolve() is synchronous. For dnspython 3.x,
+    dns.asyncresolver.resolve() would be natively async.
+    """
+    import asyncio
+    try:
+        return await asyncio.to_thread(query_sshfp, domain)
+    except Exception:
+        return []
+
+
+def get_sshfp_stats() -> dict[str, int]:
+    """P8-007: Return SSHFP query statistics."""
+    return dict(_sshfp_stats)
+
+
+_sshfp_stats: dict[str, int] = {'queries': 0, 'records_found': 0}
+__all__ = ['CryptographicIntelligence', 'ClassicalCryptanalysis', 'HashAnalyzer', 'EncryptionDetector', 'CertificateAnalyzer', 'CryptanalysisResult', 'HashAnalysis', 'EncryptionDetection', 'CertificateInfo', 'SSHFPRecord', 'CipherType', 'HashType', 'query_sshfp', 'query_sshfp_async']

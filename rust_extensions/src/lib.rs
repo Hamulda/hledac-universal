@@ -134,6 +134,8 @@ pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB saf
 pub mod async_query; // R26: Async DuckDB queries via Rust executor
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
 pub mod onion_validation; // GRAPH-03: .onion v3 address validation (Ed25519 checksum)
+#[cfg(feature = "fulltext")]
+pub mod fulltext_index;  // ISSUE-011: Tantivy fulltext search (mmap-backed, zero-copy BM25)
 
 // ---------------------------------------------------------------------------
 // Rayon thread pools — M1 8GB safe, P/E core optimized
@@ -1134,5 +1136,12 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_v3_detailed, m)?)?;
     m.add_function(wrap_pyfunction!(onion_validation::rust_validate_onion_batch, m)?)?;
 
-Ok(())
+    // ISSUE-011: Tantivy fulltext search (mmap-backed, zero-copy BM25)
+    // Feature-gated: fulltext = ["dep:tantivy"]
+    // Enables: fulltext.create_index(), fulltext.search()
+    // Replaces Python BM25Index in knowledge/rag_engine.py
+    #[cfg(feature = "fulltext")]
+    fulltext_index::register(m)?;
+
+    Ok(())
 }

@@ -1,8 +1,12 @@
 """
-I2P Eepsite Client — Access I2P HTTP proxy for hidden services.
+I2P Eepsite Client — Access I2P hidden services via SAM v3 / SOCKS / HTTP.
 
 I2P is an anonymizing network with "eepsites" (hidden services).
-Access via HTTP proxy at localhost:4444 (if I2P daemon is running).
+Access via:
+  - SAM v3 native protocol (127.0.0.1:7656) — direct STREAM CONNECT,
+    NAMING LOOKUP, persistent sessions. 50-100 req/min. Preferred.
+  - SOCKS proxy (127.0.0.1:4444) — httpx-socks based, 20-30 req/min.
+  - HTTP proxy (127.0.0.1:8888) — fallback, 5-10 req/min.
 
 F230: Alternative Protocol Stack integration.
 
@@ -22,7 +26,8 @@ import msgspec.json as _json
 from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 I2P_PROXY_HOST: str = '127.0.0.1'
-# OPSEC-001: I2P SOCKS proxy port is 4444 (standard), NOT 7654 (console).
+# Port 7656 is the I2P SAM v3 bridge (native protocol, preferred).
+# Port 4444 is the I2P SOCKS proxy (httpx-socks based, fallback).
 I2P_PROXY_PORT: int = 4444
 I2P_SOCKS_PORT: int = 4444
 I2P_PROXY_URL: str = f'http://{I2P_PROXY_HOST}:{I2P_PROXY_PORT}'

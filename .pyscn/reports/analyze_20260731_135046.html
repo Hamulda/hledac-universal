@@ -1,0 +1,1523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pyscn Analysis Report</title>
+    <style>
+        :root {
+            --color-success: #15803d;
+            --color-warning: #a16207;
+            --color-danger:  #b91c1c;
+            --color-text:    #0f172a;
+            --color-muted:   #334155;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f1f5f9;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .header h1 {
+            color: var(--color-text);
+            margin-bottom: 10px;
+        }
+        .score-badge {
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .grade-a { background: #14532d; color: white; }
+        .grade-b { background: #365314; color: white; }
+        .grade-c { background: #713f12; color: white; }
+        .grade-d { background: #7c2d12; color: white; }
+        .grade-f { background: #7f1d1d; color: white; }
+
+        .tabs {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        .tab-buttons {
+            display: flex;
+            background: #f5f5f5;
+        }
+        .tab-button {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        .tab-button.active {
+            background: white;
+            color: var(--color-muted);
+            font-weight: bold;
+            border-bottom: 2px solid var(--color-muted);
+        }
+        .tab-content {
+            display: none;
+            padding: 30px;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .metric-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: var(--color-text);
+        }
+        .metric-label {
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        .table th, .table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        .table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        .code-preview-card {
+            margin: 12px 0 0;
+            padding: 12px 14px;
+            border-radius: 8px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+        }
+        .code-preview-title {
+            margin-bottom: 8px;
+            color: #475569;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .code-preview {
+            margin: 0;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        
+        .risk-low { color: var(--color-success); }
+        .risk-medium { color: var(--color-warning); }
+        .risk-high { color: var(--color-danger); }
+
+        .severity-critical { color: var(--color-danger); }
+        .severity-warning { color: var(--color-warning); }
+        .severity-info { color: #1e40af; }
+
+         
+        .score-bars {
+            margin: 20px 0;
+        }
+        .score-bar-item {
+            margin-bottom: 24px;
+        }
+        .score-bar-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+            font-size: 14px;
+        }
+        .score-label {
+            font-weight: 600;
+            color: #333;
+        }
+        .score-value {
+            font-weight: 700;
+            color: var(--color-muted);
+        }
+        .score-bar-container {
+            width: 100%;
+            height: 12px;
+            background: #e0e0e0;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .score-bar-fill {
+            height: 100%;
+            transition: width 0.3s ease;
+            border-radius: 6px;
+        }
+        .score-excellent { background: var(--color-success); }
+        .score-good { background: #4d7c0f; }
+        .score-fair { background: var(--color-warning); }
+        .score-poor { background: var(--color-danger); }
+        .score-detail {
+            margin-top: 4px;
+            font-size: 12px;
+            color: #666;
+        }
+
+         
+        .tab-header-with-score {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .score-badge-compact {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 16px;
+            font-size: 13px;
+            font-weight: 700;
+            color: white;
+            white-space: nowrap;
+        }
+        .score-badge-compact.score-excellent {
+            background: var(--color-success);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+        }
+        .score-badge-compact.score-good {
+            background: #4d7c0f;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+        }
+        .score-badge-compact.score-fair {
+            background: var(--color-warning);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+        }
+        .score-badge-compact.score-poor {
+            background: var(--color-danger);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+        }
+        .suggestion-steps {
+            font-size: 13px;
+            margin-top: 4px;
+            padding-left: 20px;
+            color: #475569;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>pyscn Analysis Report</h1>
+            <p>Generated: 2026-07-31 13:50:46</p>
+            <div class="score-badge grade-a">
+                Health Score: 90/100 (Grade: A)
+            </div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab-buttons">
+                <button class="tab-button active" onclick="showTab('summary', this)">Summary</button>
+                
+                <button class="tab-button" onclick="showTab('suggestions', this)">Suggestions</button>
+                
+                
+                
+                
+                <button class="tab-button" onclick="showTab('clone', this)">Clone</button>
+                
+                
+                
+                
+                
+            </div>
+
+            <div id="summary" class="tab-content active">
+                <h2>Analysis Summary</h2>
+
+                <h3 style="margin-top: 20px; margin-bottom: 16px; color: var(--color-text);">Quality Scores</h3>
+                <div class="score-bars">
+                    
+
+                    
+
+                    
+                    <div class="score-bar-item">
+                        <div class="score-bar-header">
+                            <span class="score-label">Duplication</span>
+                            <span class="score-value">50/100</span>
+                        </div>
+                        <div class="score-bar-container">
+                            <div class="score-bar-fill score-poor" style="width: 50%"></div>
+                        </div>
+                        <div class="score-detail">15.7% of fragments cloned, 290 groups</div>
+                    </div>
+                    
+
+                    
+
+                    
+
+                    
+
+                    
+
+                    
+                </div>
+
+                <h3 style="margin-top: 24px; margin-bottom: 16px; color: var(--color-text);">File Statistics</h3>
+                <div class="metric-grid">
+                    <div class="metric-card">
+                        <div class="metric-value">0</div>
+                        <div class="metric-label">Total Files</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">0</div>
+                        <div class="metric-label">Analyzed Files</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">0.00</div>
+                        <div class="metric-label">Avg Complexity</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">0</div>
+                        <div class="metric-label">Dead Code Issues</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">736</div>
+                        <div class="metric-label">Unique Fragments</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">15.7%</div>
+                        <div class="metric-label">Fragments Cloned</div>
+                    </div>
+                    
+                    
+                </div>
+
+                
+                
+
+                
+            </div>
+
+            
+            <div id="suggestions" class="tab-content">
+                <h2>Suggestions</h2>
+                <p style="color: #666; margin-bottom: 20px;">Actionable improvements sorted by priority (severity × effort)</p>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Severity</th>
+                            <th>Category</th>
+                            <th>Title</th>
+                            <th>Effort</th>
+                            <th>Location</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-1 exact, 9 fragments)<br><small style="color: #666;">Identical code fragments found. Extract into a shared function.</small><ol class="suggestion-steps"><li>Create a shared function from the duplicated code</li><li>Replace all 9 occurrences with calls to the new function</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>brain/ane_embedder.py:642</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-1 exact, 4 fragments)<br><small style="color: #666;">Identical code fragments found. Extract into a shared function.</small><ol class="suggestion-steps"><li>Create a shared function from the duplicated code</li><li>Replace all 4 occurrences with calls to the new function</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>brain/deephermes3_engine.py:2245</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-1 exact, 4 fragments)<br><small style="color: #666;">Identical code fragments found. Extract into a shared function.</small><ol class="suggestion-steps"><li>Create a shared function from the duplicated code</li><li>Replace all 4 occurrences with calls to the new function</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>coordinators/memory/multi_level_cache.py:227</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-1 exact, 4 fragments)<br><small style="color: #666;">Identical code fragments found. Extract into a shared function.</small><ol class="suggestion-steps"><li>Create a shared function from the duplicated code</li><li>Replace all 4 occurrences with calls to the new function</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>coordinators/memory/context_optimizer.py:355</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-1 exact, 6 fragments)<br><small style="color: #666;">Identical code fragments found. Extract into a shared function.</small><ol class="suggestion-steps"><li>Create a shared function from the duplicated code</li><li>Replace all 6 occurrences with calls to the new function</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>coordinators/memory/context_optimizer.py:210</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-1 exact, 5 fragments)<br><small style="color: #666;">Identical code fragments found. Extract into a shared function.</small><ol class="suggestion-steps"><li>Create a shared function from the duplicated code</li><li>Replace all 5 occurrences with calls to the new function</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>coordinators/execution_coordinator.py:185</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-2 renamed, 4 fragments)<br><small style="color: #666;">Syntactically identical code with different identifiers. Extract into a parameterized function.</small><ol class="suggestion-steps"><li>Create a parameterized function, passing differing identifiers/literals as arguments</li><li>Replace all 4 occurrences with calls using appropriate arguments</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>brain/_batch/batch_processor.py:121</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-2 renamed, 4 fragments)<br><small style="color: #666;">Syntactically identical code with different identifiers. Extract into a parameterized function.</small><ol class="suggestion-steps"><li>Create a parameterized function, passing differing identifiers/literals as arguments</li><li>Replace all 4 occurrences with calls using appropriate arguments</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>coordinators/memory/context_optimizer.py:317</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-2 renamed, 6 fragments)<br><small style="color: #666;">Syntactically identical code with different identifiers. Extract into a parameterized function.</small><ol class="suggestion-steps"><li>Create a parameterized function, passing differing identifiers/literals as arguments</li><li>Replace all 6 occurrences with calls using appropriate arguments</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>brain/synthesis_runner.py:1708</td>
+                        </tr>
+                        
+                        
+                        
+                        <tr>
+                            <td><span class="severity-critical">critical</span></td>
+                            <td>clone</td>
+                            <td>Extract duplicated code (Type-2 renamed, 4 fragments)<br><small style="color: #666;">Syntactically identical code with different identifiers. Extract into a parameterized function.</small><ol class="suggestion-steps"><li>Create a parameterized function, passing differing identifiers/literals as arguments</li><li>Replace all 4 occurrences with calls using appropriate arguments</li><li>Run tests to confirm no regressions</li></ol></td>
+                            <td>easy</td>
+                            <td>brain/model_lifecycle_manager.py:172</td>
+                        </tr>
+                        
+                        
+                    </tbody>
+                </table>
+                
+            </div>
+            
+
+            
+
+            
+
+            
+            <div id="clone" class="tab-content">
+                <div class="tab-header-with-score">
+                    <h2 style="margin: 0;">Clone</h2>
+                    <div class="score-badge-compact score-poor">
+                        50/100
+                    </div>
+                </div>
+                
+                <div class="metric-grid">
+                    <div class="metric-card">
+                        <div class="metric-value">736</div>
+                        <div class="metric-label">Unique Fragments</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">290</div>
+                        <div class="metric-label">Clone Groups</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-value">0.89</div>
+                        <div class="metric-label">Avg Similarity</div>
+                    </div>
+                </div>
+                
+                
+                <h3>Clone Groups</h3>
+                <p style="color: #666; margin-bottom: 15px;">Code fragments grouped by similarity</p>
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 311 - 3 clones (Type Type-4, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>brain/_mlx_dispatcher.py</td>
+                                <td>137-142</td>
+                                <td>6 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>brain/ner_engine.py</td>
+                                <td>211-217</td>
+                                <td>7 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>brain/ner_engine.py</td>
+                                <td>288-295</td>
+                                <td>8 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 118 - 3 clones (Type Type-1, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>brain/deephermes3_engine.py</td>
+                                <td>788-793</td>
+                                <td>6 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory/multi_level_cache.py</td>
+                                <td>462-480</td>
+                                <td>19 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory_coordinator.py</td>
+                                <td>1740-1758</td>
+                                <td>19 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 151 - 3 clones (Type Type-1, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>brain/model_manager.py</td>
+                                <td>782-788</td>
+                                <td>7 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>brain/moe_router.py</td>
+                                <td>228-235</td>
+                                <td>8 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>brain/moe_router.py</td>
+                                <td>650-657</td>
+                                <td>8 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 237 - 3 clones (Type Type-1, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory/_core.py</td>
+                                <td>91-102</td>
+                                <td>12 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory/context_optimizer.py</td>
+                                <td>48-59</td>
+                                <td>12 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory_coordinator.py</td>
+                                <td>1155-1166</td>
+                                <td>12 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 241 - 3 clones (Type Type-1, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory/_core.py</td>
+                                <td>105-116</td>
+                                <td>12 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory/context_optimizer.py</td>
+                                <td>62-73</td>
+                                <td>12 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory_coordinator.py</td>
+                                <td>1168-1179</td>
+                                <td>12 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 229 - 3 clones (Type Type-1, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory/_core.py</td>
+                                <td>132-142</td>
+                                <td>11 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory/multi_level_cache.py</td>
+                                <td>70-80</td>
+                                <td>11 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory_coordinator.py</td>
+                                <td>1432-1442</td>
+                                <td>11 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 176 - 3 clones (Type Type-1, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>pipeline/feed/_build_feed_stage.py</td>
+                                <td>160-173</td>
+                                <td>14 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>pipeline/public/_build_stage.py</td>
+                                <td>150-163</td>
+                                <td>14 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>pipeline/public/_export_stage.py</td>
+                                <td>103-116</td>
+                                <td>14 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 74 - 2 clones (Type Type-4, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>brain/_batch/batch_processor.py</td>
+                                <td>165-170</td>
+                                <td>6 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>coordinators/memory/_admission.py</td>
+                                <td>59-64</td>
+                                <td>6 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 7 - 2 clones (Type Type-4, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>brain/_hermes_cache.py</td>
+                                <td>263-268</td>
+                                <td>6 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>brain/_hermes_cache.py</td>
+                                <td>338-344</td>
+                                <td>7 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                <div style="background: #f8fafc; padding: 15px; margin-bottom: 15px; border-radius: 8px; border-left: 4px solid #cbd5e1;">
+                    <h4 style="margin-top: 0; color: #333;">Group 35 - 2 clones (Type Type-4, similarity: 1.00)</h4>
+                    <table class="table" style="margin-bottom: 0;">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Lines</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            
+                            
+                            <tr>
+                                <td>brain/_mlx_dispatcher.py</td>
+                                <td>441-451</td>
+                                <td>11 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                            <tr>
+                                <td>brain/_mlx_dispatcher.py</td>
+                                <td>625-640</td>
+                                <td>16 lines</td>
+                            </tr>
+                            
+                            
+                            
+                            
+                        </tbody>
+                    </table>
+                </div>
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                
+                <p style="color: #666; margin-top: 10px;">Showing top 10 of 290 clone groups</p>
+                
+                
+                
+            </div>
+            
+
+            
+
+            
+
+            
+
+            
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabName, el) {
+            
+            const tabs = document.querySelectorAll('.tab-content');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            
+            const buttons = document.querySelectorAll('.tab-button');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            
+            
+            document.getElementById(tabName).classList.add('active');
+            
+            
+            if (el) { el.classList.add('active'); }
+        }
+    </script>
+</body>
+</html>

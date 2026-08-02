@@ -129,6 +129,7 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS | 12 | IVF-PQ num_sub_vectors (12 sub-vectors; 256d/12≈21, 384d/12=32; M1 8GB friendly) |
 | HLEDAC_ARROW_INGEST | 1 | Arrow zero-copy ingest for DuckDB (default ON, opt-out=0) |
 | HLEDAC_ENABLE_ZKP | 0 | Zero-knowledge proofs |
+| HLEDAC_WARC_ENABLED | 0 | archive | WARC/ISO 28500 HTTP response archival (10 GB max, gzip compressed) |
 
 ---
 

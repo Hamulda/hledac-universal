@@ -1746,3 +1746,110 @@ class GraphRAGOrchestrator:
             logger.warning(f'Traversal worker error: {e}')
         finally:
             await queue.put(None)
+
+    @staticmethod
+    def subgraph_to_chatml_context(
+        subgraph: dict[str, Any],
+        query_context: str = "",
+        max_node_value_len: int = 80,
+        max_output_bytes: int = 8192,
+    ) -> str:
+        """
+        Serialize an extracted IOC subgraph into canonical ChatML format.
+
+        Accepts the output of IOCGraph.extract_k_hop_subgraph() and wraps
+        the graph data in a system-context ChatML block suitable for
+        injection into DeepHermes3 / MLX inference pipelines.
+
+        Token-efficient: 2-char node keys, edges capped at 200, all
+        value strings truncated independently. Total output is budgeted
+        to max_output_bytes via progressive edge truncation.
+
+        Args:
+            subgraph: Dict from IOCGraph.extract_k_hop_subgraph().
+            query_context: Optional query string (capped at 200 chars).
+            max_node_value_len: Max chars per node/edge value (default 80).
+            max_output_bytes: Hard cap on serialized JSON payload (default 8192).
+
+        Returns:
+            ChatML-formatted string: <|im_start|>system\n{json}<|im_end|>
+        """
+        import orjson
+
+        nodes: list[dict[str, Any]] = subgraph.get('nodes', [])
+        edges: list[dict[str, Any]] = subgraph.get('edges', [])
+        stats: dict[str, Any] = subgraph.get('stats', {})
+        seed_value: str = subgraph.get('seed_value', '')
+        seed_type: str = subgraph.get('seed_type', '')
+        k: int = subgraph.get('k', 0)
+        truncated: bool = subgraph.get('truncated', False)
+
+        # Cap query_context independently
+        qc = (query_context or '(none)')[:200]
+
+        # Compact node catalog: id → {t, v, c}
+        # Cap node count by budget (~120 bytes per node serialized)
+        max_node_count = max(1, max_output_bytes // 120)
+        node_catalog: dict[str, dict[str, Any]] = {}
+        for n in nodes[:max_node_count]:
+            val = str(n.get('value', ''))[:max_node_value_len]
+            node_catalog[n['id']] = {
+                't': n.get('ioc_type', '?'),
+                'v': val,
+                'c': round(n.get('confidence', 1.0), 2),
+            }
+
+        # Degree ranking for key-node insights
+        degree: dict[str, int] = {}
+        for e in edges:
+            degree[e['source_id']] = degree.get(e['source_id'], 0) + 1
+            degree[e['target_id']] = degree.get(e['target_id'], 0) + 1
+
+        key_nodes = sorted(degree.items(), key=lambda x: -x[1])[:10]
+        key_node_list: list[dict[str, Any]] = [
+            {'id': nid, 'deg': d, 'v': node_catalog.get(nid, {}).get('v', '?')}
+            for nid, d in key_nodes
+        ]
+
+        # Measure fixed overhead (seed, query, topology, key_nodes, empty edges)
+        skeleton = {
+            'graph': {
+                'seed': f'{seed_value[:max_node_value_len]} ({seed_type})',
+                'radius': k,
+                'query': qc,
+                'topology': {
+                    'nodes': stats.get('total_nodes', 0),
+                    'edges': stats.get('total_edges', 0),
+                    'density': stats.get('density', 0),
+                    'max_degree': stats.get('max_degree', 0),
+                    'truncated': truncated,
+                },
+                'key_nodes': key_node_list,
+                'nodes': node_catalog,
+                'edges': [],
+            },
+        }
+        skeleton_blob = orjson.dumps(skeleton, option=orjson.OPT_APPEND_NEWLINE)
+        fixed_overhead = len(skeleton_blob) - 2  # minus []
+        budget = max(200, max_output_bytes - fixed_overhead)
+
+        # Fill edges within budget (capped at 200)
+        compact_edges: list[dict[str, str]] = []
+        for e in edges[:200]:
+            src_cat = node_catalog.get(e['source_id'], {})
+            dst_cat = node_catalog.get(e['target_id'], {})
+            compact_edges.append({
+                's': src_cat.get('v', '?'),
+                'd': dst_cat.get('v', '?'),
+                'st': str(e.get('source_type', '?'))[:40],
+            })
+            # ~80 bytes per edge (two values + type + JSON overhead)
+            if len(compact_edges) * 80 > budget:
+                break
+
+        skeleton['graph']['edges'] = compact_edges
+        json_blob: str = orjson.dumps(
+            skeleton, option=orjson.OPT_APPEND_NEWLINE
+        ).decode('utf-8')
+
+        return f'<|im_start|>system\n{json_blob}<|im_end|>'

@@ -1,8 +1,15 @@
-"""Local BM25 search index with metadata store for OSINT findings."""
+"""Local BM25 search index with metadata store for OSINT findings.
+
+ISSUE-011: TantivyFulltextIndex replaces Python BM25Index for fulltext search.
+When the Rust fulltext module (hledac_rust_extensions.fulltext) is available,
+LocalSearchSeam delegates to mmap-backed Tantivy. Otherwise falls back to the
+pure-Python BM25Index transparently."""
 import logging
+import os
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 import msgspec
 from time import perf_counter
 from typing import Any
@@ -155,7 +162,16 @@ class LocalSearchSeam:
     __slots__ = tuple(('_bm25', '_metadata'))
 
     def __init__(self, k1: float=1.5, b: float=0.75):
-        self._bm25 = BM25Index(k1=k1, b=b)
+        # ISSUE-011: Use TantivyFulltextIndex (Rust mmap) when available.
+        # Falls back to Python BM25Index transparently.
+        try:
+            from hledac.universal.knowledge.rag_engine import TantivyFulltextIndex
+            self._bm25: Any = TantivyFulltextIndex(
+                k1=k1, b=b,
+                index_path=str(Path.home() / '.hledac' / 'osint_fulltext_index'),
+            )
+        except ImportError:
+            self._bm25 = BM25Index(k1=k1, b=b)
         self._metadata = MetadataStore()
 
     def index(self, documents: list[SearchDocument]) -> int:
@@ -177,7 +193,7 @@ class LocalSearchSeam:
         timing_ms = (perf_counter() - start) * 1000
         results = []
         for doc_idx, score in hits:
-            doc = self._bm25._documents[doc_idx]
+            doc = self._bm25.documents[doc_idx]
             meta = self._metadata.get(doc.url) or {}
             scored_doc = SearchDocument(url=doc.url, title=doc.title, content=doc.content, metadata=meta, score=score)
             results.append(scored_doc)

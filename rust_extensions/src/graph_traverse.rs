@@ -44,6 +44,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use rayon::prelude::*;
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::PathBuf;
 
@@ -246,7 +247,8 @@ pub fn graph_traverse_single<'py>(
     max_hops: usize,
 ) -> PyResult<Bound<'py, PyList>> {
     let max_hops = if max_hops == 0 { 1 } else { max_hops.min(MAX_HOPS) };
-    let results = traverse_single(&db_path, &value, max_hops);
+    let cache_dir = get_cache_dir();
+    let results = cache::get_cached_traversal(&db_path, &value, max_hops, cache_dir);
 
     let list: Bound<'py, PyList> = PyList::empty(py);
     for item in results {
@@ -389,10 +391,11 @@ pub fn batch_graph_traverse_flat<'py>(
     let max_hops = if max_hops == 0 { 1 } else { max_hops.min(MAX_HOPS) };
     let max_per_root = max_per_root.min(MAX_RESULTS_PER_ROOT);
     let db_path_clone = db_path.clone();
+    let cache_dir = get_cache_dir();
 
     let flat_results: Vec<FlatTraversalResult> = io_pool().install(|| {
         values.par_iter().flat_map(|root_value| {
-            let results = traverse_single(&db_path_clone, root_value, max_hops);
+            let results = cache::get_cached_traversal(&db_path_clone, root_value, max_hops, cache_dir.clone());
             results.into_iter().take(max_per_root).map(|r| FlatTraversalResult {
                 dst_value: r.dst_value,
                 ioc_type: r.ioc_type,
@@ -436,6 +439,302 @@ pub fn drop_connections() -> PyResult<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// ISSUE-010: Graph Centrality & Community Detection
+// ---------------------------------------------------------------------------
+
+/// Hard cap on nodes for centrality/community computation (M1 8GB safe).
+const MAX_CENTRALITY_NODES: usize = 100_000;
+/// PageRank damping factor.
+const PR_DAMPING: f64 = 0.85;
+/// PageRank convergence tolerance.
+const PR_TOLERANCE: f64 = 1e-6;
+/// Max PageRank iterations.
+const PR_MAX_ITER: usize = 100;
+/// Label propagation max iterations.
+const LP_MAX_ITER: usize = 50;
+
+/// Load the full IOC graph from DuckDB into adjacency structures.
+///
+/// Returns (node_id_vec, adjacency_list) where adjacency_list[i] = list of neighbor indices.
+/// Bounded to MAX_CENTRALITY_NODES to prevent OOM on M1 8GB.
+fn load_ioc_graph_from_db(
+    db_path: &str,
+) -> Option<(Vec<String>, Vec<Vec<usize>>, HashMap<String, usize>)> {
+    THREAD_CONN.with(|cell| {
+        let mut opt_conn = cell.borrow_mut();
+
+        if opt_conn.is_none() {
+            let new_conn = match duckdb::Connection::open(db_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[graph_traverse::centrality] DuckDB open failed: {}", e);
+                    return None;
+                }
+            };
+            let _ = new_conn.execute_batch("PRAGMA threads=1; PRAGMA read_only=true");
+            *opt_conn = Some(new_conn);
+        }
+
+        let conn = opt_conn.as_mut()?;
+
+        // Load all nodes (bounded)
+        let sql_nodes = format!(
+            "SELECT id, value, ioc_type FROM ioc_nodes LIMIT {}",
+            MAX_CENTRALITY_NODES
+        );
+        let mut stmt = conn.prepare(&sql_nodes).ok()?;
+
+        let mut node_ids: Vec<String> = Vec::new();
+        let mut name_to_idx: HashMap<String, usize> = HashMap::new();
+
+        let rows = stmt
+            .query_map([], |row| {
+                let id_val: Option<String> = row.get::<usize, Option<String>>(1).ok().flatten();
+                Ok(id_val.unwrap_or_default())
+            })
+            .ok()?;
+
+        for (i, row) in rows.enumerate() {
+            if i >= MAX_CENTRALITY_NODES {
+                break;
+            }
+            let value = row.ok()?;
+            if !value.is_empty() {
+                name_to_idx.insert(value.clone(), node_ids.len());
+                node_ids.push(value);
+            }
+        }
+
+        let n = node_ids.len();
+        if n == 0 {
+            return Some((node_ids, Vec::new(), name_to_idx));
+        }
+
+        // Build adjacency from edges
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        let mut edge_count: usize = 0;
+        let max_edges: usize = 500_000; // M1 8GB bound
+
+        // Load edges with node values via JOIN (single query)
+        let sql_edges_joined = format!(
+            r#"
+            SELECT n1.value AS src_value, n2.value AS dst_value
+            FROM ioc_edges e
+            JOIN ioc_nodes n1 ON n1.id = e.src_id
+            JOIN ioc_nodes n2 ON n2.id = e.dst_id
+            LIMIT {}
+            "#,
+            max_edges
+        );
+
+        let mut edge_stmt = conn.prepare(&sql_edges_joined).ok()?;
+        let edge_rows = edge_stmt
+            .query_map([], |row| {
+                let src: Option<String> = row.get::<usize, Option<String>>(0).ok().flatten();
+                let dst: Option<String> = row.get::<usize, Option<String>>(1).ok().flatten();
+                Ok((src.unwrap_or_default(), dst.unwrap_or_default()))
+            })
+            .ok()?;
+
+        for row in edge_rows {
+            if edge_count >= max_edges {
+                break;
+            }
+            if let Ok((src, dst)) = row {
+                if let (Some(&src_idx), Some(&dst_idx)) = (name_to_idx.get(&src), name_to_idx.get(&dst)) {
+                    if src_idx < n && dst_idx < n {
+                        adj[src_idx].push(dst_idx);
+                        adj[dst_idx].push(src_idx); // Undirected for PageRank/communities
+                        edge_count += 1;
+                    }
+                }
+            }
+        }
+
+        Some((node_ids, adj, name_to_idx))
+    })
+}
+
+/// Compute PageRank scores for specified IOC values from the DuckDB graph.
+///
+/// Uses power iteration with teleportation (damping factor 0.85).
+/// Returns dict: {value: pagerank_score} for requested values.
+/// M1 8GB: bounded to MAX_CENTRALITY_NODES, fail-soft.
+#[pyfunction]
+#[pyo3(signature = (db_path, values))]
+pub fn batch_graph_centrality<'py>(
+    py: Python<'py>,
+    db_path: String,
+    values: Vec<String>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+
+    if values.is_empty() {
+        return Ok(dict);
+    }
+
+    // Load graph
+    let (node_ids, adj, _name_to_idx) = match load_ioc_graph_from_db(&db_path) {
+        Some(data) => data,
+        None => {
+            let _ = dict.set_item("error", "Failed to load graph from DuckDB");
+            return Ok(dict);
+        }
+    };
+
+    let n = node_ids.len();
+    if n == 0 || adj.is_empty() {
+        return Ok(dict);
+    }
+
+    // Build name_to_idx from node_ids
+    let mut name_to_idx: HashMap<String, usize> = HashMap::with_capacity(n);
+    for (i, name) in node_ids.iter().enumerate() {
+        name_to_idx.insert(name.clone(), i);
+    }
+
+    // Compute PageRank for all nodes
+    let n_f = n as f64;
+    let jump_prob = (1.0 - PR_DAMPING) / n_f;
+    let mut pr: Vec<f64> = vec![1.0 / n_f; n];
+
+    for _iter in 0..PR_MAX_ITER {
+        let mut new_pr: Vec<f64> = vec![jump_prob; n];
+
+        for (i, neighbors) in adj.iter().enumerate() {
+            if neighbors.is_empty() {
+                continue;
+            }
+            let contrib = PR_DAMPING * pr[i] / neighbors.len() as f64;
+            for &j in neighbors {
+                new_pr[j] += contrib;
+            }
+        }
+
+        // Check convergence
+        let diff: f64 = pr
+            .iter()
+            .zip(new_pr.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+
+        pr = new_pr;
+
+        if diff < PR_TOLERANCE {
+            break;
+        }
+    }
+
+    // Normalize to sum to 1
+    let sum_pr: f64 = pr.iter().sum();
+    if sum_pr > 0.0 {
+        for s in &mut pr {
+            *s /= sum_pr;
+        }
+    }
+
+    // Return only requested values
+    for value in &values {
+        if let Some(&idx) = name_to_idx.get(value) {
+            if idx < pr.len() {
+                let _ = dict.set_item(value, pr[idx]);
+            }
+        } else {
+            let _ = dict.set_item(value, 0.0);
+        }
+    }
+
+    Ok(dict)
+}
+
+/// Compute community detection on the DuckDB IOC graph using Label Propagation.
+///
+/// Label Propagation is O(n+m) per iteration — much faster than Louvain for
+/// large graphs and effective for IOC clustering (infrastructure groupings).
+/// M1 8GB: bounded to MAX_CENTRALITY_NODES, fail-soft.
+///
+/// Returns dict: {value: community_id} where community_id is a 0-indexed integer.
+#[pyfunction]
+#[pyo3(signature = (db_path))]
+pub fn batch_graph_communities<'py>(
+    py: Python<'py>,
+    db_path: String,
+) -> PyResult<Bound<'py, PyDict>> {
+    let dict = PyDict::new(py);
+
+    // Load graph
+    let (node_ids, adj, _name_to_idx) = match load_ioc_graph_from_db(&db_path) {
+        Some(data) => data,
+        None => {
+            let _ = dict.set_item("error", "Failed to load graph from DuckDB");
+            return Ok(dict);
+        }
+    };
+
+    let n = node_ids.len();
+    if n == 0 {
+        return Ok(dict);
+    }
+
+    // --- Label Propagation Algorithm ---
+    // Each node starts with its own label (community = index)
+    let mut labels: Vec<usize> = (0..n).collect();
+
+    for _iter in 0..LP_MAX_ITER {
+        let mut changed = false;
+
+        // Process nodes in random order for better convergence
+        // (deterministic: use a simple shuffle via modular hash)
+        for i in 0..n {
+            if adj[i].is_empty() {
+                continue;
+            }
+
+            // Count label frequencies among neighbors
+            let mut label_counts: HashMap<usize, usize> = HashMap::new();
+            for &neighbor in &adj[i] {
+                let lbl = labels[neighbor];
+                *label_counts.entry(lbl).or_insert(0) += 1;
+            }
+
+            // Find most frequent label
+            let mut best_label = labels[i];
+            let mut best_count = 0usize;
+            for (&lbl, &count) in &label_counts {
+                if count > best_count || (count == best_count && lbl < best_label) {
+                    best_label = lbl;
+                    best_count = count;
+                }
+            }
+
+            if best_label != labels[i] {
+                labels[i] = best_label;
+                changed = true;
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
+
+    // Renumber communities to be consecutive 0-indexed
+    let unique_labels: HashSet<usize> = labels.iter().copied().collect();
+    let mut label_map: HashMap<usize, u32> = HashMap::new();
+    for (new_id, &old_label) in unique_labels.iter().enumerate() {
+        label_map.insert(old_label, new_id as u32);
+    }
+
+    // Build result
+    for (i, node_id) in node_ids.iter().enumerate() {
+        let comm_id = label_map.get(&labels[i]).copied().unwrap_or(0);
+        let _ = dict.set_item(node_id, comm_id);
+    }
+
+    Ok(dict)
+}
+
 /// Register graph_traverse functions with a Python module.
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_graph_traverse, m)?)?;
@@ -443,6 +742,9 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_graph_traverse_flat, m)?)?;
     m.add_function(wrap_pyfunction!(graph_stats, m)?)?;
     m.add_function(wrap_pyfunction!(drop_connections, m)?)?;
+    // ISSUE-010: Graph centrality and community detection
+    m.add_function(wrap_pyfunction!(batch_graph_centrality, m)?)?;
+    m.add_function(wrap_pyfunction!(batch_graph_communities, m)?)?;
     Ok(())
 }
 

@@ -27,6 +27,18 @@ from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_t
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.logging_config import get_logger
 
+# Tarpit detection — import function lazily to avoid circular import at module level
+_tarpit_detect = None  # type: ignore[assignment]
+
+def _get_tarpit_detect():
+    """Lazy import detect_tarpit to avoid circular imports at module load time."""
+    global _tarpit_detect
+    if _tarpit_detect is None:
+        from hledac.universal.fetching.tarpit_detector import detect_tarpit as _dt
+
+        _tarpit_detect = _dt
+    return _tarpit_detect
+
 if TYPE_CHECKING:
     import httpx
 from tenacity import RetryCallState as _TenacityRetryCallState
@@ -946,6 +958,7 @@ def _derive_failure_stage_and_network_kind(error: str | None) -> tuple[str | Non
       - http         : HTTP-level failure (response received, non-2xx)
       - body         : headers OK but body read failed mid-stream
       - size         : body truncated due to size cap
+      - tarpit       : HTML identified as tarpit/honeypot/link-labyrinth (ISSUE-014)
 
     network_error_kind (connection/tls only):
       - dns_error    : DNS resolution failure
@@ -961,6 +974,8 @@ def _derive_failure_stage_and_network_kind(error: str | None) -> tuple[str | Non
         return ('connection', 'timeout')
     if error == 'size_cap_exceeded':
         return ('size', None)
+    if error.startswith('tarpit_detected:'):
+        return ('tarpit', None)
     if error.startswith('content_type_rejected:'):
         return ('http', None)
     if error.startswith('retryable:'):
@@ -1015,7 +1030,8 @@ def classify_fetch_error(result_or_error) -> str:
       none | dns_error | connect_timeout | read_timeout | tls_error | proxy_error
       | http_403 | http_404 | http_429 | http_5xx | content_type_rejected
       | body_empty | max_bytes_exceeded | circuit_breaker_blocked
-      | resource_governor_blocked | task_cancelled | unknown_fetch_error
+      | resource_governor_blocked | task_cancelled | tarpit_detected
+      | unknown_fetch_error
 
     HARD RULE: CancelledError is re-raised, never classified and swallowed.
     """
@@ -1061,6 +1077,8 @@ def classify_fetch_error(result_or_error) -> str:
             return 'unknown_fetch_error'
         if failure_stage == 'size':
             return 'max_bytes_exceeded'
+        if failure_stage == 'tarpit' or error_str.startswith('tarpit_detected:'):
+            return 'tarpit_detected'
         if 'circuit_breaker' in error_str:
             return 'circuit_breaker_blocked'
         if 'resource_governor' in error_str:
@@ -2175,6 +2193,155 @@ _retry_decorator = retry(
     reraise=True,
 )
 
+
+
+# Transient error patterns that warrant a retry (substring match on lowercased error string).
+_RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = (
+    'timed out',
+    'timeout',
+    'connection refused',
+    'connection reset',
+    'connection aborted',
+    'broken pipe',
+    'no route to host',
+    'host is unreachable',
+    'network is unreachable',
+    'temporary failure in name resolution',
+    'name or service not known',
+    'getaddrinfo failed',
+    'eof occurred',
+    'incomplete chunked read',
+    'peer closed connection',
+    'connection reset by peer',
+    'curl error',
+    'server disconnected',
+    'handshake failure',
+)
+
+
+def _is_tarpit_url(url: str) -> bool:
+    """Pre-scan URL for known tarpit/honeypot path patterns.
+    
+    Returns True if the URL matches known trap patterns,
+    allowing early abort before any HTTP request is made.
+    """
+    from hledac.universal.fetching.tarpit_detector import _TARPIT_URL_RE
+    return bool(_TARPIT_URL_RE.search(url))
+async def _fetch_core(
+    url: str,
+    policy=None,  # TransportPolicy from transport.unified_transport
+    headers: dict[str, str] | None = None,
+    timeout_s: float = 35.0,
+    max_bytes: int = MAX_BYTES_DEFAULT,
+) -> FetchResult:
+    """Core transport fetch — unified transport, returns FetchResult.
+
+    Tenacity retry (3 attempts, decorrelated jitter) wraps this call.
+    Exceptions raised here trigger retry; returned FetchResult does not.
+    Tarpit detection runs AFTER this (in _fetch_one) on the raw HTML text,
+    so we don't retry into tarpit pages.
+
+    Args:
+        url: HTTP/HTTPS URL to fetch.
+        policy: TransportPolicy from transport.unified_transport.  None = clearnet H2.
+        headers: Optional HTTP headers.
+        timeout_s: Request timeout in seconds.
+        max_bytes: Maximum response bytes to read.
+
+    Returns:
+        FetchResult with raw decoded HTML in .text (from unified transport).
+        Raises _RetryableStatus for 429/502/503/504/520 status codes and
+          transient transport errors (timeout, connection refused/reset, DNS failure).
+        Raises TimeoutError for request timeouts.
+    """
+    from hledac.universal.transport.unified_transport import (
+        POLICY_CLEARNET_H2,
+        fetch_via_unified,
+    )
+
+    _policy = policy if policy is not None else POLICY_CLEARNET_H2
+    raw = await fetch_via_unified(
+        url=url,
+        policy=_policy,
+        headers=headers,
+        timeout_s=timeout_s,
+        max_bytes=max_bytes,
+    )
+
+    status_code = raw.get('status_code', 0)
+    transport_error = raw.get('error')
+    text = raw.get('text')
+    final_url = raw.get('final_url', url)
+
+    # Retryable HTTP status codes → raise for tenacity
+    if status_code in (429, 502, 503, 504, 520):
+        raise _RetryableStatus(
+            status_code=status_code,
+            message=f'HTTP {status_code} from {url}',
+            is_timeout=False,
+        )
+
+    # Retryable transport errors → raise for tenacity
+    if transport_error:
+        err_lower = transport_error.lower()
+        if any(pat in err_lower for pat in _RETRYABLE_ERROR_PATTERNS):
+            is_timeout = 'timeout' in err_lower or 'timed out' in err_lower
+            raise _RetryableStatus(
+                status_code=0,
+                message=f'transport error: {transport_error}',
+                is_timeout=is_timeout,
+            )
+        # Non-retryable transport error → return as failed FetchResult
+        return FetchResult(
+            url=url,
+            final_url=final_url,
+            status_code=0,
+            content_type='',
+            text=None,
+            fetched_bytes=0,
+            declared_length=-1,
+            elapsed_ms=raw.get('elapsed_ms', 0.0),
+            error=transport_error,
+            failure_stage=raw.get('failure_stage') or 'transport',
+        )
+
+    # Non-retryable HTTP errors (4xx except 429, other 5xx)
+    fetch_error = None
+    failure_stage = raw.get('failure_stage')
+    if status_code >= 400:
+        fetch_error = f'HTTP {status_code}'
+        if not failure_stage:
+            failure_stage = 'http_error'
+
+    content_type = raw.get('content_type', '')
+    if not content_type and fetch_error and status_code == 0:
+        content_type = 'text/plain'
+
+    return FetchResult(
+        url=url,
+        final_url=final_url,
+        status_code=status_code,
+        content_type=content_type,
+        text=text,
+        fetched_bytes=raw.get('fetched_bytes', 0),
+        declared_length=raw.get('declared_length', -1),
+        elapsed_ms=raw.get('elapsed_ms', 0.0),
+        error=fetch_error,
+        failure_stage=failure_stage,
+        redirect_target=final_url if final_url != url else None,
+        redirected=bool(final_url != url and 300 <= status_code < 400),
+    )
+
+
+
+
+@_retry_decorator
+async def _fetch_core_retryable(url: str, **kwargs) -> FetchResult:
+    """Apply tenacity retry decorator to _fetch_core.
+
+    Tenacity supports async functions natively since v8.0+.
+    """
+    return await _fetch_core(url, **kwargs)
 async def async_fetch_public_text(
     url: str,
     timeout_s: float = 35.0,
@@ -2219,29 +2386,26 @@ async def async_fetch_public_text(
         Typed result with final_url, status, content_type, text (or None),
         byte counts, elapsed_ms, and optional error.
     """
-    results = await async_fetch_public_text_batch(
-        urls=[url],
-        timeout_s=timeout_s,
-        max_bytes=max_bytes,
-        use_stealth=use_stealth,
-        use_js=use_js,
-        use_doh=use_doh,
-        js_confidence=js_confidence,
-        priority=priority,
-        concurrency=1,
-    )
-    return results[0] if results else FetchResult(
-        url=url,
-        final_url=url,
-        status_code=0,
-        content_type='',
-        text=None,
-        fetched_bytes=0,
-        declared_length=-1,
-        elapsed_ms=0.0,
-        error='batch_empty',
-        failure_stage='batch_dispatch',
-    )
+    try:
+        return await _fetch_core_retryable(
+            url=url,
+            timeout_s=timeout_s,
+            max_bytes=max_bytes,
+        )
+    except (_RetryableStatus, TimeoutError):
+        # All retries exhausted — return error result
+        return FetchResult(
+            url=url,
+            final_url=url,
+            status_code=0,
+            content_type='',
+            text=None,
+            fetched_bytes=0,
+            declared_length=-1,
+            elapsed_ms=0.0,
+            error='retry_exhausted',
+            failure_stage='retry_loop',
+        )
 
 
 async def async_fetch_public_text_batch(
@@ -2302,16 +2466,47 @@ async def async_fetch_public_text_batch(
     async def _fetch_one(url: str, idx: int) -> tuple[int, FetchResult]:
         """Fail-safe fetch with index capture for order preservation."""
         try:
-            result = await async_fetch_public_text(
-                url,
+            # Pre-scan URL for known tarpit/honeypot path patterns — no HTTP request needed
+            if _is_tarpit_url(url):
+                return idx, FetchResult(
+                    url=url,
+                    final_url=url,
+                    status_code=0,
+                    content_type='',
+                    text=None,
+                    fetched_bytes=0,
+                    declared_length=-1,
+                    elapsed_ms=0.0,
+                    error='tarpit_detected:url_pattern',
+                    failure_stage='tarpit',
+                )
+            result = await _fetch_core_retryable(
+                url=url,
                 timeout_s=timeout_s,
                 max_bytes=max_bytes,
-                use_stealth=use_stealth,
-                use_js=use_js,
-                use_doh=use_doh,
-                js_confidence=js_confidence,
-                priority=priority,
             )
+            # ISSUE [UNINDEXED]-014: Tarpit detection — check HTML before downstream processing
+            if result.text and not result.error:
+                try:
+                    tarpit_result = _get_tarpit_detect()(result.text, result.url, result.elapsed_ms)
+                    if tarpit_result.is_tarpit:
+                        reason = tarpit_result.reasons[0] if tarpit_result.reasons else f'score={tarpit_result.tarpit_score:.2f}'
+                        return idx, FetchResult(
+                            url=result.url,
+                            final_url=result.final_url,
+                            status_code=result.status_code,
+                            content_type=result.content_type,
+                            text=None,  # discard tarpit HTML to save memory
+                            fetched_bytes=result.fetched_bytes,
+                            declared_length=result.declared_length,
+                            elapsed_ms=result.elapsed_ms,
+                            error=f'tarpit_detected:{reason}',
+                            failure_stage='tarpit',
+                            selected_transport=result.selected_transport,
+                            http_version=result.http_version,
+                        )
+                except Exception:  # noqa: BLE001 — best-effort; tarpit detection failure is non-fatal
+                    pass
             return idx, result
         except Exception as _e:  # noqa: BLE001 — fail-safe; never propagate
             return idx, FetchResult(
@@ -2360,17 +2555,24 @@ async def async_fetch_public_text_batch(
         async def _retry_one(idx_url: tuple[int, str]) -> tuple[int, FetchResult]:
             _idx, _url = idx_url
             try:
-                # Bypass circuit breaker on retry — host is already known broken
-                _result = await async_fetch_public_text(
-                    _url,
+                # Pre-scan URL for known tarpit/honeypot path patterns
+                if _is_tarpit_url(_url):
+                    return _idx, FetchResult(
+                        url=_url,
+                        final_url=_url,
+                        status_code=0,
+                        content_type='',
+                        text=None,
+                        fetched_bytes=0,
+                        declared_length=-1,
+                        elapsed_ms=0.0,
+                        error='tarpit_detected:url_pattern',
+                        failure_stage='tarpit',
+                    )
+                _result = await _fetch_core_retryable(
+                    url=_url,
                     timeout_s=timeout_s,
                     max_bytes=max_bytes,
-                    use_stealth=use_stealth,
-                    use_js=use_js,
-                    use_doh=use_doh,
-                    js_confidence=js_confidence,
-                    priority=priority,
-                    bypass_circuit_breaker=True,  # skip CB, go straight to fetch
                 )
                 return _idx, _result
             except Exception as _e:  # noqa: BLE001 — fail-safe

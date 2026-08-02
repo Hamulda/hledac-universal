@@ -431,10 +431,10 @@ class IdentityStitchingEngine:
         # Stitch identities
         stitched = engine.stitch_identities(match_threshold=0.8)
     """
-    DEFAULT_SIGNAL_WEIGHTS = {'username_exact': 1.0, 'username_similarity': 0.7, 'email_exact': 1.0, 'email_domain': 0.3, 'alias_match': 0.8, 'style_similarity': 0.5, 'temporal_overlap': 0.4, 'network_overlap': 0.6}
-    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_lsh_index', '_lsh_fingerprint_cache', '_match_cache', '_platform_index', '_profiles', '_similarity_cache', '_stats', '_username_index', 'enable_fuzzy', 'enable_lsh', 'max_memory_mb', 'signal_weights', 'similarity_threshold'))
+    DEFAULT_SIGNAL_WEIGHTS = {'username_exact': 1.0, 'username_similarity': 0.7, 'email_exact': 1.0, 'email_domain': 0.3, 'alias_match': 0.8, 'style_similarity': 0.5, 'stylometry': 0.6, 'temporal_overlap': 0.4, 'network_overlap': 0.6}
+    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_lsh_index', '_lsh_fingerprint_cache', '_match_cache', '_platform_index', '_profiles', '_similarity_cache', '_stats', '_username_index', '_stylometry_analyzer', '_stylometry_cache', '_transliteration_enabled', 'enable_fuzzy', 'enable_lsh', 'max_memory_mb', 'signal_weights', 'similarity_threshold'))
 
-    def __init__(self, similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True):
+    def __init__(self, similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True, enable_transliteration: bool=True, enable_stylometry: bool=True):
         """
         Initialize the Identity Stitching Engine.
 
@@ -444,6 +444,10 @@ class IdentityStitchingEngine:
             max_memory_mb: ADVISORY ceiling in MB — not hard-enforced.
                            Default 512MB is appropriate for M1 8GB UMA.
             enable_fuzzy: Enable fuzzy string matching (requires rapidfuzz)
+            enable_transliteration: Enable trans-linguistic normalization
+                                   (Cyrillic, Arabic, CJK → Latin). ISSUE-008.
+            enable_stylometry: Enable multi-dimensional stylometry analysis.
+                               ISSUE-007.
         """
         self.similarity_threshold = similarity_threshold
         self.signal_weights = signal_weights or self.DEFAULT_SIGNAL_WEIGHTS.copy()
@@ -463,7 +467,14 @@ class IdentityStitchingEngine:
         self._similarity_cache = _IdentityCache[float](max_size=4096, ttl_s=3600, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
         self._match_cache = _IdentityCache[IdentityMatch](max_size=2048, ttl_s=3600, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
         self._stats = {'profiles_added': 0, 'matches_computed': 0, 'identities_stitched': 0, 'graphs_built': 0}
-        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh})')
+        # ISSUE-008: Trans-linguistic normalization
+        self._transliteration_enabled: bool = enable_transliteration
+        # ISSUE-007: Multi-dimensional stylometry
+        self._stylometry_analyzer: Any = None
+        self._stylometry_cache: _IdentityCache[float] = _IdentityCache[float](
+            max_size=2048, ttl_s=7200, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8,
+        ) if enable_stylometry else _IdentityCache[float](max_size=0, ttl_s=0, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
+        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh}, translit={self._transliteration_enabled}, stylometry={enable_stylometry})')
 
     def add_profile(self, profile: IdentityProfile) -> bool:
         """
@@ -503,16 +514,16 @@ class IdentityStitchingEngine:
     def _index_profile_fields(self, profile: IdentityProfile):
         """Index username/email/alias/platform fields into reverse maps. Idempotent."""
         for entry in profile.usernames:
-            normalized = self._normalize_username(entry.username)
+            normalized = self._normalize_username_translingual(entry.username)
             self._username_index[normalized].add(profile.id)
             self._platform_index[entry.platform.lower()].add(profile.id)
         for email in profile.emails:
             normalized = self._normalize_email(email)
             self._email_index[normalized].add(profile.id)
         for alias in profile.aliases:
-            normalized = self._normalize_text(alias)
+            normalized = self._normalize_text_translingual(alias)
             self._alias_index[normalized].add(profile.id)
-        normalized_name = self._normalize_text(profile.primary_name)
+        normalized_name = self._normalize_text_translingual(profile.primary_name)
         self._alias_index[normalized_name].add(profile.id)
 
     def _register_profile_lsh(self, profile: IdentityProfile):
@@ -551,16 +562,16 @@ class IdentityStitchingEngine:
             return False
         profile = self._profiles[profile_id]
         for entry in profile.usernames:
-            normalized = self._normalize_username(entry.username)
+            normalized = self._normalize_username_translingual(entry.username)
             self._username_index[normalized].discard(profile_id)
             self._platform_index[entry.platform.lower()].discard(profile_id)
         for email in profile.emails:
             normalized = self._normalize_email(email)
             self._email_index[normalized].discard(profile_id)
         for alias in profile.aliases:
-            normalized = self._normalize_text(alias)
+            normalized = self._normalize_text_translingual(alias)
             self._alias_index[normalized].discard(profile_id)
-        normalized_name = self._normalize_text(profile.primary_name)
+        normalized_name = self._normalize_text_translingual(profile.primary_name)
         self._alias_index[normalized_name].discard(profile_id)
         self._lsh_fingerprint_cache.pop(profile_id, None)
         del self._profiles[profile_id]
@@ -572,6 +583,7 @@ class IdentityStitchingEngine:
         self._identity_graph = None
         self._similarity_cache.clear()
         self._match_cache.clear()
+        self._stylometry_cache.clear()
         if self._lsh_index is not None:
             self._lsh_index.clear()
         self._lsh_fingerprint_cache.clear()
@@ -583,6 +595,22 @@ class IdentityStitchingEngine:
         normalized = re.sub('[._-]', '', normalized)
         return normalized
 
+    def _normalize_username_translingual(self, username: str) -> str:
+        """
+        Normalize username with optional trans-linguistic transliteration.
+
+        ISSUE-008: When ``enable_transliteration=True``, detects non-Latin
+        scripts (Cyrillic, Arabic, CJK) and transliterates to Latin before
+        applying standard normalization.
+        """
+        if self._transliteration_enabled:
+            try:
+                from hledac.universal.recon.translinguistic_normalizer import normalize_translinguistic
+                username = normalize_translinguistic(username)
+            except ImportError:
+                pass
+        return self._normalize_username(username)
+
     @staticmethod
     def _normalize_email(email: str) -> str:
         """Normalize email for comparison."""
@@ -592,6 +620,25 @@ class IdentityStitchingEngine:
     def _normalize_text(text: str) -> str:
         """Normalize text for comparison."""
         return text.lower().strip()
+
+    def _normalize_text_translingual(self, text: str) -> str:
+        """
+        Normalize text with optional trans-linguistic transliteration.
+
+        ISSUE-008: When ``enable_transliteration=True``, detects non-Latin
+        scripts (Cyrillic, Arabic, CJK, Greek, Hebrew) and transliterates
+        to Latin before lowercasing and stripping.
+
+        The original static ``_normalize_text()`` is preserved for backward
+        compatibility with callers that need simple normalization only.
+        """
+        if self._transliteration_enabled:
+            try:
+                from hledac.universal.recon.translinguistic_normalizer import normalize_translinguistic
+                return normalize_translinguistic(text)
+            except ImportError:
+                pass
+        return self._normalize_text(text)
 
     @staticmethod
     def _extract_email_domain(email: str) -> str:
@@ -646,8 +693,10 @@ class IdentityStitchingEngine:
         """
         Compute writing style similarity between two sets of texts.
 
-        Uses TF-IDF cosine similarity if sklearn is available,
-        falls back to simple lexical similarity.
+        ISSUE-007: Now powered by multi-dimensional stylometry analysis
+        (n-gram frequencies, sentence structure, vocabulary richness,
+        punctuation patterns, function-word vectors). Falls back to TF-IDF
+        cosine similarity when text is too short for profile extraction.
 
         Args:
             texts1: First set of texts
@@ -658,6 +707,22 @@ class IdentityStitchingEngine:
         """
         if not texts1 or not texts2:
             return 0.0
+
+        # Try multi-dimensional stylometry first (ISSUE-007)
+        try:
+            analyzer = self._get_stylometry_analyzer()
+            if analyzer is not None:
+                combined1 = '\n\n'.join(t for t in texts1 if t and len(t.strip()) >= 20)
+                combined2 = '\n\n'.join(t for t in texts2 if t and len(t.strip()) >= 20)
+                if len(combined1) >= 50 and len(combined2) >= 50:
+                    profile_a = analyzer.extract_profile(combined1)
+                    profile_b = analyzer.extract_profile(combined2)
+                    if profile_a is not None and profile_b is not None:
+                        return analyzer.compare_profiles(profile_a, profile_b)
+        except ImportError:
+            pass
+
+        # Fallback to TF-IDF cosine similarity
         all_texts = texts1 + texts2
         try:
             from sklearn.feature_extraction.text import TfidfVectorizer
@@ -673,6 +738,74 @@ class IdentityStitchingEngine:
             except Exception as e:
                 logger.warning(f'TF-IDF similarity failed: {e}, falling back')
         return self._lexical_similarity(texts1, texts2)
+
+    def _get_stylometry_analyzer(self) -> Any | None:
+        """
+        Lazy-initialize the StylometryAnalyzer.
+        Returns None if the module is unavailable.
+        """
+        if self._stylometry_analyzer is not None:
+            return self._stylometry_analyzer
+        try:
+            from hledac.universal.recon.stylometry_analyzer import StylometryAnalyzer
+            self._stylometry_analyzer = StylometryAnalyzer()
+            return self._stylometry_analyzer
+        except ImportError:
+            return None
+
+    def compute_stylometry_similarity(
+        self,
+        texts_a: str | list[str] | None,
+        texts_b: str | list[str] | None,
+    ) -> float:
+        """
+        Compute deep stylometry similarity with profile caching.
+
+        This is the primary stylometry signal used in ``compute_match()``.
+        Caches profiles and comparison results for O(1) repeat lookups.
+
+        Args:
+            texts_a: Text samples from profile A (string or list)
+            texts_b: Text samples from profile B (string or list)
+
+        Returns:
+            Similarity score [0, 1]; returns 0 if insufficient text
+        """
+        if texts_a is None or texts_b is None:
+            return 0.0
+
+        # Normalize inputs
+        if isinstance(texts_a, str):
+            texts_a = [texts_a]
+        if isinstance(texts_b, str):
+            texts_b = [texts_b]
+
+        combined_a = '\n\n'.join(t for t in texts_a if t and len(t.strip()) >= 20)
+        combined_b = '\n\n'.join(t for t in texts_b if t and len(t.strip()) >= 20)
+
+        min_len = 50
+        if len(combined_a) < min_len or len(combined_b) < min_len:
+            return 0.0
+
+        # Check stylometry cache
+        cache_key = (hash(combined_a), hash(combined_b))
+        cached = self._stylometry_cache.get(cache_key)  # type: ignore[arg-type]
+        if cached is not None:
+            return cached
+
+        analyzer = self._get_stylometry_analyzer()
+        if analyzer is None:
+            return 0.0
+
+        profile_a = analyzer.extract_profile(combined_a)
+        profile_b = analyzer.extract_profile(combined_b)
+
+        if profile_a is None or profile_b is None:
+            return 0.0
+
+        score = analyzer.compare_profiles(profile_a, profile_b)
+        self._stylometry_cache.put(cache_key, score)  # type: ignore[arg-type]
+        return score
 
     def _lexical_similarity(self, texts1: list[str], texts2: list[str]) -> float:
         """Compute lexical similarity based on word overlap."""
@@ -794,6 +927,19 @@ class IdentityStitchingEngine:
                     max_alias_sim = max(max_alias_sim, sim)
             if max_alias_sim > 0.7:
                 signals['alias_match'] = max_alias_sim
+        # ISSUE-007: Multi-dimensional stylometry signal
+        text_samples_a = profile_a.attributes.get('text_samples', []) if profile_a.attributes else []
+        text_samples_b = profile_b.attributes.get('text_samples', []) if profile_b.attributes else []
+        if text_samples_a and text_samples_b:
+            stylometry_score = self.compute_stylometry_similarity(text_samples_a, text_samples_b)
+            if stylometry_score > 0.3:
+                signals['stylometry'] = stylometry_score
+                evidence.append(f'Writing style similarity: {stylometry_score:.2f}')
+        # Also check legacy 'style_similarity' in attributes (backward compat)
+        style_a = profile_a.attributes.get('style_similarity') if profile_a.attributes else None
+        style_b = profile_b.attributes.get('style_similarity') if profile_b.attributes else None
+        if style_a is not None and style_b is not None:
+            signals['style_similarity'] = 1.0 - abs(float(style_a) - float(style_b))
         platforms_a = profile_a.get_platforms()
         platforms_b = profile_b.get_platforms()
         shared_platforms = platforms_a & platforms_b
@@ -835,13 +981,13 @@ class IdentityStitchingEngine:
         matches: list[IdentityMatch] = []
         candidates: set[str] = set()
         for username in profile.get_all_usernames():
-            normalized = self._normalize_username(username)
+            normalized = self._normalize_username_translingual(username)
             candidates.update(self._username_index.get(normalized, set()))
         for email in profile.emails:
             normalized = self._normalize_email(email)
             candidates.update(self._email_index.get(normalized, set()))
         for alias in profile.aliases + [profile.primary_name]:
-            normalized = self._normalize_text(alias)
+            normalized = self._normalize_text_translingual(alias)
             candidates.update(self._alias_index.get(normalized, set()))
         candidates.discard(profile_id)
         for candidate_id in candidates:
@@ -888,7 +1034,7 @@ class IdentityStitchingEngine:
         for pid in profile_ids:
             profile = self._profiles[pid]
             for username in profile.get_all_usernames():
-                normalized = self._normalize_username(username)
+                normalized = self._normalize_username_translingual(username)
                 for other_pid in self._username_index.get(normalized, set()):
                     if other_pid != pid:
                         candidate_pairs.add(tuple(sorted([pid, other_pid])))
@@ -898,7 +1044,7 @@ class IdentityStitchingEngine:
                     if other_pid != pid:
                         candidate_pairs.add(tuple(sorted([pid, other_pid])))
             for alias in profile.aliases + [profile.primary_name]:
-                normalized = self._normalize_text(alias)
+                normalized = self._normalize_text_translingual(alias)
                 for other_pid in self._alias_index.get(normalized, set()):
                     if other_pid != pid:
                         candidate_pairs.add(tuple(sorted([pid, other_pid])))
@@ -1131,6 +1277,9 @@ class IdentityStitchingEngine:
         self._identity_graph = None
         self._similarity_cache.clear()
         self._match_cache.clear()
+        self._stylometry_cache.clear()
+        if self._stylometry_analyzer is not None:
+            self._stylometry_analyzer.clear_caches()
         if self._lsh_index is not None:
             self._lsh_index.clear()
         self._lsh_fingerprint_cache.clear()
@@ -1144,9 +1293,9 @@ class IdentityStitchingEngine:
         index_size = sum((sys.getsizeof(s) for s in self._username_index.values())) + sum((sys.getsizeof(s) for s in self._email_index.values())) + sum((sys.getsizeof(s) for s in self._alias_index.values()))
         return {'profiles_bytes': profile_size, 'indexes_bytes': index_size, 'total_bytes': profile_size + index_size, 'profile_count': len(self._profiles), 'similarity_cache': self._similarity_cache.stats(), 'match_cache': self._match_cache.stats()}
 
-def create_identity_stitching_engine(similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True) -> IdentityStitchingEngine:
+def create_identity_stitching_engine(similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True, enable_transliteration: bool=True, enable_stylometry: bool=True) -> IdentityStitchingEngine:
     """Factory function to create an IdentityStitchingEngine."""
-    return IdentityStitchingEngine(similarity_threshold=similarity_threshold, signal_weights=signal_weights, max_memory_mb=max_memory_mb, enable_fuzzy=enable_fuzzy)
+    return IdentityStitchingEngine(similarity_threshold=similarity_threshold, signal_weights=signal_weights, max_memory_mb=max_memory_mb, enable_fuzzy=enable_fuzzy, enable_transliteration=enable_transliteration, enable_stylometry=enable_stylometry)
 
 async def example_usage():
     """Example usage of the IdentityStitchingEngine."""

@@ -78,6 +78,10 @@ class SourceType(enum.StrEnum):
     GOPHER_CONTENT = "gopher_content"
     GEMINI = "gemini"
     GEMINI_CONTENT = "gemini_content"
+    ZERONET = "zeronet"
+    ZERONET_CONTENT = "zeronet_content"
+    FREENET = "freenet"
+    FREENET_CONTENT = "freenet_content"
 
     # ── DHT / Fediverse / Social ──────────────────────────────────────────
     DHT_DISCOVERY = "dht_discovery"
@@ -161,6 +165,8 @@ LEGACY_ALIASES: Final[dict[str, str]] = {
     "i2p": SourceType.I2P_DISCOVERY.value,
     "gopher": SourceType.GOPHER_CONTENT.value,
     "gemini": SourceType.GEMINI_CONTENT.value,
+    "zeronet": SourceType.ZERONET.value,
+    "freenet": SourceType.FREENET.value,
     "matrix": SourceType.MATRIX_PUBLIC.value,
     "academic": SourceType.ACADEMIC_SEARCH.value,
     "github": SourceType.GITHUB_SECRET_SCANNER.value,
@@ -199,6 +205,7 @@ SourceTypeLiteral = Literal[
     "onion_discovery", "i2p", "i2p_discovery", "i2p_content",
     "ipfs", "ipfs_content", "ipfs_directory", "ipfs_fetch", "ipfs_search",
     "gopher", "gopher_content", "gemini", "gemini_content",
+    "zeronet", "zeronet_content", "freenet", "freenet_content",
     "dht_discovery", "dht_metadata", "fediverse", "matrix", "matrix_public",
     "social_identity_surface",
     "academic", "academic_search", "arxiv_bulk", "openalex", "s2orc", "unpaywall",

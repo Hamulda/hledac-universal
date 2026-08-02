@@ -22,6 +22,8 @@ KATEGORIE:
 | DHT_BOOTSTRAP     | 2    | 1    | 1        | 1         | DHT bootstrap operations     |
 | DHT_REQUEST       | 50   | 25   | 10       | 5         | DHT query requests           |
 | GOPHER_LANE       | 2    | 1    | 1        | 1         | Gopher protocol             |
+| ZERONET_FETCH     | 2    | 1    | 1        | 1         | ZeroNet JSON API fetch      |
+| FREENET_FETCH     | 2    | 1    | 1        | 1         | Freenet FProxy fetch        |
 | BANNER_GRAB       | 1    | 1    | 1        | 1         | TCP banner enumeration      |
 | PASTE_SCRAPE      | 4    | 2    | 1        | 1         | Paste site scrapers         |
 | GRAPH_RAG         | 3    | 2    | 1        | 1         | LanceDB/embedding ops       |
@@ -60,6 +62,8 @@ class ConcurrencyCategory(Enum):
     DHT_BOOTSTRAP = 'dht_bootstrap'
     DHT_REQUEST = 'dht_request'
     GOPHER_LANE = 'gopher_lane'
+    ZERONET_FETCH = 'zeronet_fetch'
+    FREENET_FETCH = 'freenet_fetch'
     BANNER_GRAB = 'banner_grab'
     PASTE_SCRAPE = 'paste_scrape'
     GRAPH_RAG = 'graph_rag'
@@ -69,7 +73,7 @@ class ConcurrencyCategory(Enum):
     DUCKDB_WRITE = 'duckdb_write'
     JS_RENDERER = 'js_renderer'  # F-02: Chromium browser pool — critical=2 for M1 8GB
     MULTIMODAL_ENRICHMENT = 'multimodal_enrichment'  # F-17: CLIP model concurrency (heavy, ~100-500ms load)
-_CONCURRENCY_LIMITS: dict[ConcurrencyCategory, tuple[int, int, int, int]] = {ConcurrencyCategory.HTTP_LANE: (8, 4, 2, 1), ConcurrencyCategory.DNS_BRUTE: (50, 25, 10, 5), ConcurrencyCategory.BGP_QUERY: (3, 2, 1, 1), ConcurrencyCategory.IP_QUERY: (10, 5, 3, 1), ConcurrencyCategory.ACADEMIC_SEARCH: (5, 3, 2, 1), ConcurrencyCategory.SOCIAL_MINE: (4, 2, 1, 1), ConcurrencyCategory.TRANSPORT_TOR: (3, 2, 1, 1), ConcurrencyCategory.TRANSPORT_I2P: (2, 1, 1, 1), ConcurrencyCategory.TRANSPORT_NYM: (2, 1, 1, 1), ConcurrencyCategory.DHT_BOOTSTRAP: (2, 1, 1, 1), ConcurrencyCategory.DHT_REQUEST: (50, 25, 10, 5), ConcurrencyCategory.GOPHER_LANE: (2, 1, 1, 1), ConcurrencyCategory.BANNER_GRAB: (1, 1, 1, 1), ConcurrencyCategory.PASTE_SCRAPE: (4, 2, 1, 1), ConcurrencyCategory.GRAPH_RAG: (3, 2, 1, 1), ConcurrencyCategory.MLX_INFERENCE: (1, 1, 1, 1), ConcurrencyCategory.SCRAPE_GENERAL: (10, 5, 3, 1), ConcurrencyCategory.ISOLATED_INTERPRETER: (3, 2, 1, 1), ConcurrencyCategory.DUCKDB_WRITE: (2, 1, 1, 1), ConcurrencyCategory.JS_RENDERER: (10, 5, 2, 1), ConcurrencyCategory.MULTIMODAL_ENRICHMENT: (4, 2, 1, 1)}
+_CONCURRENCY_LIMITS: dict[ConcurrencyCategory, tuple[int, int, int, int]] = {ConcurrencyCategory.HTTP_LANE: (8, 4, 2, 1), ConcurrencyCategory.DNS_BRUTE: (50, 25, 10, 5), ConcurrencyCategory.BGP_QUERY: (3, 2, 1, 1), ConcurrencyCategory.IP_QUERY: (10, 5, 3, 1), ConcurrencyCategory.ACADEMIC_SEARCH: (5, 3, 2, 1), ConcurrencyCategory.SOCIAL_MINE: (4, 2, 1, 1), ConcurrencyCategory.TRANSPORT_TOR: (3, 2, 1, 1), ConcurrencyCategory.TRANSPORT_I2P: (2, 1, 1, 1), ConcurrencyCategory.TRANSPORT_NYM: (2, 1, 1, 1), ConcurrencyCategory.DHT_BOOTSTRAP: (2, 1, 1, 1), ConcurrencyCategory.DHT_REQUEST: (50, 25, 10, 5), ConcurrencyCategory.GOPHER_LANE: (2, 1, 1, 1), ConcurrencyCategory.ZERONET_FETCH: (2, 1, 1, 1), ConcurrencyCategory.FREENET_FETCH: (2, 1, 1, 1), ConcurrencyCategory.BANNER_GRAB: (1, 1, 1, 1), ConcurrencyCategory.PASTE_SCRAPE: (4, 2, 1, 1), ConcurrencyCategory.GRAPH_RAG: (3, 2, 1, 1), ConcurrencyCategory.MLX_INFERENCE: (1, 1, 1, 1), ConcurrencyCategory.SCRAPE_GENERAL: (10, 5, 3, 1), ConcurrencyCategory.ISOLATED_INTERPRETER: (3, 2, 1, 1), ConcurrencyCategory.DUCKDB_WRITE: (2, 1, 1, 1), ConcurrencyCategory.JS_RENDERER: (10, 5, 2, 1), ConcurrencyCategory.MULTIMODAL_ENRICHMENT: (4, 2, 1, 1)}
 
 class ConcurrencyBudget(msgspec.Struct, frozen=True, gc=False):
     """Immutable concurrency budget for a category."""

@@ -58,6 +58,15 @@ from typing import Any
 from urllib.parse import urlparse
 import httpx
 from hledac.universal.utils.async_helpers import parallel
+
+# --- Lazy UTXO graph import (ISSUE-009) ---
+_UTXO_GRAPH_AVAILABLE = False
+_UTXOGraph: Any = None
+try:
+    from hledac.universal.recon.bitcoin_utxo_analyzer import UTXOGraph as _UTXOGraph
+    _UTXO_GRAPH_AVAILABLE = True
+except ImportError:
+    pass
 logger = logging.getLogger(__name__)
 MAX_CACHE_SIZE = 1000
 try:
@@ -648,17 +657,25 @@ class BlockchainForensics:
             return TransactionPattern(pattern_type=PatternType.RAPID_TRADING, confidence=min(0.85, 0.4 + tx_rate * 0.02), transactions=[tx.tx_hash for tx in transactions], description=f'Rapid trading: {len(transactions)} transactions ({tx_rate:.1f} per hour)')
         return None
 
-    async def cluster_addresses(self, addresses: list[str], chain: str='ethereum') -> list[Cluster]:
+    async def cluster_addresses(self, addresses: list[str], chain: str='ethereum', use_local: bool=False, raw_transactions: list[dict[str, Any]] | None=None) -> list[Cluster]:
         """
-        Cluster addresses using heuristics.
+        Cluster addresses using heuristics or local UTXO graph analysis.
 
         Args:
             addresses: List of addresses to cluster
             chain: Blockchain type
+            use_local: If True, use local UTXO graph analysis (no API required).
+            raw_transactions: Raw Bitcoin transaction data for local analysis.
+                Required when use_local=True and chain='bitcoin'.
 
         Returns:
             List of Cluster objects
         """
+        # ISSUE-009: Local UTXO graph analysis mode (no API dependency)
+        if use_local and chain == 'bitcoin' and raw_transactions is not None:
+            return await self._cluster_addresses_local(addresses, raw_transactions)
+        if use_local and not raw_transactions:
+            logger.warning('use_local=True but no raw_transactions provided — falling back to API mode')
         clusters: list[Cluster] = []
         if len(addresses) < 2:
             return clusters
@@ -811,6 +828,52 @@ class BlockchainForensics:
         for cluster in merged:
             cluster.cluster_id = self._generate_cluster_id(cluster.addresses)
         return merged
+
+    async def _cluster_addresses_local(self, addresses: list[str], raw_transactions: list[dict[str, Any]]) -> list[Cluster]:
+        """ISSUE-009: Local UTXO graph analysis — no API dependency.
+
+        Uses UTXOGraph (igraph C-core) for native Bitcoin UTXO graph traversal,
+        change address detection, and multi-input clustering via connected components.
+
+        Args:
+            addresses: Bitcoin addresses to cluster.
+            raw_transactions: Raw BTC transaction data (dicts with inputs/outputs).
+
+        Returns:
+            List of Cluster objects (compatible with existing cluster_addresses() output).
+        """
+        import asyncio
+
+        if not _UTXO_GRAPH_AVAILABLE:
+            logger.warning('UTXO graph analysis not available — igraph missing')
+            return []
+
+        try:
+            analyzer = _UTXOGraph()
+            utxo_clusters = await asyncio.to_thread(
+                analyzer.cluster_addresses_graph, addresses, raw_transactions
+            )
+        except Exception as e:
+            logger.error(f'UTXO graph clustering failed: {e}')
+            return []
+
+        clusters: list[Cluster] = []
+        for uc in utxo_clusters:
+            clusters.append(Cluster(
+                cluster_id=uc.cluster_id,
+                addresses=uc.addresses,
+                entity_type=EntityType.INDIVIDUAL,
+                confidence=uc.confidence,
+                metadata={
+                    'algorithm': 'utxo_graph_connected_components',
+                    'cluster_type': uc.cluster_type,
+                    'shared_tx_count': uc.metadata.get('shared_tx_count', 0),
+                    'member_count': uc.metadata.get('member_count', 0),
+                },
+            ))
+
+        logger.info(f'Local UTXO clustering: {len(clusters)} clusters from {len(addresses)} addresses')
+        return clusters
 
     def identify_known_services(self, address: str) -> list[str]:
         """

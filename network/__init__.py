@@ -9,6 +9,8 @@ INFRASTRUCTURE (canonical, unique to network/):
   - tor_manager: Tor proxy management
   - ipfs_client: IPFS gateway client
   - i2p_client: I2P SAM protocol client
+  - zeronet_client: ZeroNet JSON API client
+  - freenet_client: Freenet/Hyphanet FProxy client
   - ipv6_recon: IPv6 reconnaissance (RDAP, WHOIS)
   - banner_grabber: TCP banner enumeration
   - domain_concurrency: Per-domain concurrency control
@@ -80,6 +82,8 @@ def __getattr__(name: str):
         "tor_manager",
         "ipfs_client",
         "i2p_client",
+        "zeronet_client",
+        "freenet_client",
         "ipv6_recon",
         "banner_grabber",
         "domain_concurrency",
@@ -112,6 +116,8 @@ DNS_TUNNEL_DETECTOR_AVAILABLE: bool = _try_import("dns_tunnel_detector")
 BANNER_GRABBER_AVAILABLE: bool = _try_import("banner_grabber")
 IPV6_RECON_AVAILABLE: bool = _try_import("ipv6_recon")
 IPFS_AVAILABLE: bool = _try_import("ipfs_client")
+ZERONET_AVAILABLE: bool = _try_import("zeronet_client")
+FREENET_AVAILABLE: bool = _try_import("freenet_client")
 
 
 __all__ = [
@@ -122,4 +128,6 @@ __all__ = [
     "IPV6_RECON_AVAILABLE",
     "NETWORK_INTEL_AVAILABLE",
     "IPFS_AVAILABLE",
+    "ZERONET_AVAILABLE",
+    "FREENET_AVAILABLE",
 ]

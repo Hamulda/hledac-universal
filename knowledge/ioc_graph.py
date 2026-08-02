@@ -441,6 +441,241 @@ class IOCGraph:
                 results.append(node_data)
         return results
 
+    async def extract_k_hop_subgraph(
+        self,
+        ioc_value: str,
+        ioc_type: str,
+        k: int = 2,
+        max_nodes: int = 500,
+        max_edges: int = 2000,
+    ) -> dict[str, Any]:
+        """
+        Extract the full induced subgraph within k hops of a seed IOC.
+
+        Unlike pivot() which returns a flat neighbor list, this returns
+        the COMPLETE induced subgraph: all nodes within k hops AND all
+        edges where both endpoints are in the node set. Single Kuzu
+        variable-length path query collects the neighbourhood in one pass.
+
+        M1 8GB: bounded to max_nodes / max_edges with early cutoff.
+
+        Args:
+            ioc_value: IOC value (e.g. IP, domain, hash)
+            ioc_type: IOC type key (e.g. 'ip', 'domain', 'hash_sha256')
+            k: Number of hops (1-5, default 2)
+            max_nodes: Hard limit on nodes collected (default 500)
+            max_edges: Hard limit on edges collected (default 2000)
+
+        Returns:
+            Dict with:
+                - seed_id: str (IOC id of the seed node)
+                - seed_value: str
+                - seed_type: str
+                - k: int (actual hop radius used)
+                - nodes: list[dict] (id, ioc_type, value, confidence,
+                          first_seen, last_seen)
+                - edges: list[dict] (source_id, target_id, finding_id,
+                          source_type, confidence)
+                - stats: dict (total_nodes, total_edges, density, max_degree)
+                - truncated: bool (True if limits were hit)
+        """
+        if self._closed or self._conn is None:
+            return self._empty_subgraph_result(ioc_value, ioc_type, k)
+
+        k_clamped = max(1, min(k, 5))
+        try:
+            return await asyncio.to_thread(
+                self._extract_k_hop_subgraph_sync,
+                ioc_value, ioc_type, k_clamped, max_nodes, max_edges,
+            )
+        except Exception as e:
+            import logging
+            logging.warning(f'[IOCGraph] extract_k_hop_subgraph failed: {e}')
+            return self._empty_subgraph_result(ioc_value, ioc_type, k)
+
+    def _empty_subgraph_result(self, value: str, ioc_type: str, k: int) -> dict[str, Any]:
+        """Return empty subgraph structure when extraction is not possible."""
+        return {
+            'seed_id': _make_ioc_id(ioc_type, value),
+            'seed_value': value,
+            'seed_type': ioc_type,
+            'k': k,
+            'nodes': [],
+            'edges': [],
+            'stats': {'total_nodes': 0, 'total_edges': 0, 'density': 0.0, 'max_degree': 0},
+            'truncated': False,
+        }
+
+    def _extract_k_hop_subgraph_sync(
+        self,
+        ioc_value: str,
+        ioc_type: str,
+        k: int,
+        max_nodes: int,
+        max_edges: int,
+    ) -> dict[str, Any]:
+        """Synchronous subgraph extraction — runs on executor thread.
+
+        Phase 1: Kuzu variable-length path MATCH collects all unique
+                 nodes within k hops in a single query.
+        Phase 2: Per-node OBSERVED edge queries collect only edges
+                 whose both endpoints are in the node set (induced).
+        """
+        # Normalize bounds for M1 8GB safety (preserve caller intent)
+        k = max(1, min(k, 5))
+        if max_nodes < 1:
+            max_nodes = 1
+        max_nodes = min(max_nodes, 500)
+        max_edges = max(0, min(max_edges, 2000))
+        # Reserve 1 slot for the seed — Phase 1 fills at most max_nodes-1 neighbours
+        neighbor_limit = max(0, max_nodes - 1)
+        conn = self._conn
+        assert conn is not None
+        seed_id = _make_ioc_id(ioc_type, ioc_value)
+        truncated = False
+        node_set: dict[str, dict[str, Any]] = {}
+
+        # Phase 1: Collect all unique nodes within k hops
+        try:
+            query = (
+                f'MATCH (n:IOC)-[r*1..{k}]-(m:IOC) '
+                'WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id '
+                'RETURN DISTINCT m.id AS id, m.ioc_type AS ioc_type, '
+                'm.value AS value, m.confidence AS confidence, '
+                'm.first_seen AS first_seen, m.last_seen AS last_seen '
+                f'LIMIT {neighbor_limit + 1}'
+            )
+            res = conn.execute(query, {'v': ioc_value, 't': ioc_type})
+            col_names = res.get_column_names()
+            while res.has_next():
+                row = res.get_next()
+                if len(node_set) >= neighbor_limit:
+                    truncated = True
+                    break
+                node_data: dict[str, Any] = dict(
+                    zip(col_names, row, strict=False)
+                )
+                nid = node_data.get('id', '')
+                if nid and nid not in node_set:
+                    node_set[nid] = {
+                        'id': nid,
+                        'ioc_type': node_data.get('ioc_type', 'unknown'),
+                        'value': node_data.get('value', ''),
+                        'confidence': float(
+                            node_data.get('confidence', 1.0)
+                        ),
+                        'first_seen': float(
+                            node_data.get('first_seen', 0.0)
+                        ),
+                        'last_seen': float(
+                            node_data.get('last_seen', 0.0)
+                        ),
+                    }
+        except Exception:
+            return self._empty_subgraph_result(ioc_value, ioc_type, k)
+
+        # Include the seed node itself (may exist with no neighbours)
+        try:
+            seed_res = conn.execute(
+                'MATCH (n:IOC) WHERE n.id = $id '
+                'RETURN n.ioc_type, n.value, n.confidence, '
+                'n.first_seen, n.last_seen',
+                {'id': seed_id},
+            )
+            if seed_res.has_next():
+                row = seed_res.get_next()
+                if seed_id not in node_set:
+                    node_set[seed_id] = {
+                        'id': seed_id,
+                        'ioc_type': str(row[0]) if row[0] else ioc_type,
+                        'value': str(row[1]) if row[1] else ioc_value,
+                        'confidence': float(row[2]) if row[2] is not None else 1.0,
+                        'first_seen': float(row[3]) if row[3] is not None else 0.0,
+                        'last_seen': float(row[4]) if row[4] is not None else 0.0,
+                    }
+        except Exception:
+            pass  # seed node missing — still valid, report what we have
+        # Phase 2: Extract induced edges (both endpoints in node_set)
+        node_ids = list(node_set.keys())
+        edges: list[dict[str, Any]] = []
+        degree_map: dict[str, int] = {nid: 0 for nid in node_ids}
+
+        if len(node_ids) >= 2:
+            edge_set: set[tuple[str, str]] = set()
+            try:
+                # Single UNWIND query — avoids N+1 per-node edge fetches.
+                # OBSERVED schema: finding_id, source_type, first_seen, last_seen
+                # (no confidence column). Use last_seen as a recency proxy,
+                # default edge confidence to 1.0.
+                edge_res = conn.execute(
+                    'UNWIND $ids AS nid '
+                    'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) '
+                    'WHERE a.id = nid AND b.id IN $ids '
+                    'RETURN a.id, b.id, r.finding_id, '
+                    'r.source_type, r.last_seen '
+                    'LIMIT $limit',
+                    {'ids': node_ids, 'limit': max_edges * 2},
+                )
+                while edge_res.has_next():
+                    if len(edge_set) >= max_edges:
+                        truncated = True
+                        break
+                    row = edge_res.get_next()
+                    src = str(row[0]) if row[0] else ''
+                    dst = str(row[1]) if row[1] else ''
+                    if src in node_set and dst in node_set:
+                        pair = (src, dst)
+                        if pair not in edge_set:
+                            edge_set.add(pair)
+                            edges.append({
+                                'source_id': src,
+                                'target_id': dst,
+                                'finding_id': (
+                                    str(row[2]) if row[2] else ''
+                                ),
+                                'source_type': (
+                                    str(row[3])
+                                    if row[3]
+                                    else 'unknown'
+                                ),
+                                'confidence': 1.0,  # OBSERVED has no conf
+                                'last_seen': (
+                                    float(row[4])
+                                    if row[4] is not None
+                                    else 0.0
+                                ),
+                            })
+                            degree_map[src] = (
+                                degree_map.get(src, 0) + 1
+                            )
+                            degree_map[dst] = (
+                                degree_map.get(dst, 0) + 1
+                            )
+            except Exception:
+                pass  # edge extraction failed — return nodes only
+
+        total_nodes = len(node_set)
+        total_edges = len(edges)
+        max_possible = total_nodes * (total_nodes - 1) // 2
+        density = total_edges / max_possible if max_possible > 0 else 0.0
+        max_degree = max(degree_map.values()) if degree_map else 0
+
+        return {
+            'seed_id': seed_id,
+            'seed_value': ioc_value,
+            'seed_type': ioc_type,
+            'k': k,
+            'nodes': list(node_set.values()),
+            'edges': edges,
+            'stats': {
+                'total_nodes': total_nodes,
+                'total_edges': total_edges,
+                'density': round(density, 4),
+                'max_degree': max_degree,
+            },
+            'truncated': truncated,
+        }
+
     async def graph_stats(self) -> dict[str, int]:
         """Return total node and edge counts."""
         if self._closed or self._conn is None:
@@ -532,3 +767,212 @@ class IOCGraph:
                 logging.warning(f'STIX bundle validation warning: {e}')
                 objects = []
         return objects
+
+    # ------------------------------------------------------------------
+    # ISSUE-010: Community Detection & Centrality Metrics
+    # ------------------------------------------------------------------
+
+    async def get_communities(self) -> dict[str, int]:
+        """
+        Compute community detection on the IOC graph.
+
+        Uses Louvain community detection via Rust petgraph (GRAPH-01 feature)
+        when available, with igraph C-core label propagation as fallback.
+
+        Returns dict mapping IOC value to community ID (0-indexed).
+        Returns empty dict if the graph is empty or computation fails.
+        """
+        if self._closed or self._conn is None:
+            return {}
+
+        try:
+            return await asyncio.to_thread(self._get_communities_sync)
+        except Exception as e:
+            import logging
+            logging.warning(f'[IOCGraph] get_communities failed: {e}')
+            return {}
+
+    def _get_communities_sync(self) -> dict[str, int]:
+        """Synchronous community detection — runs on _executor thread."""
+        conn = self._conn
+        assert conn is not None
+
+        # Extract nodes and edges from Kuzu
+        nodes: list[tuple[int, str, str]] = []
+        value_to_id: dict[str, int] = {}
+
+        try:
+            res = conn.execute('MATCH (n:IOC) RETURN n.value, n.ioc_type')
+            node_id = 1
+            while res.has_next():
+                row = res.get_next()
+                value = str(row[0]) if row[0] else ''
+                ioc_type = str(row[1]) if row[1] else 'unknown'
+                if value and value not in value_to_id:
+                    value_to_id[value] = node_id
+                    nodes.append((node_id, value, ioc_type))
+                    node_id += 1
+        except Exception as e:
+            import logging
+            logging.warning(f'[IOCGraph] Failed to load nodes for communities: {e}')
+            return {}
+
+        if len(nodes) == 0:
+            return {}
+
+        # Extract edges (OBSERVED relationships)
+        edges: list[tuple[int, int, float]] = []
+        try:
+            res = conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) RETURN a.value, b.value, r.confidence')
+            while res.has_next():
+                row = res.get_next()
+                src_value = str(row[0]) if row[0] else ''
+                dst_value = str(row[1]) if row[1] else ''
+                confidence = float(row[2]) if row[2] is not None else 1.0
+                src_id = value_to_id.get(src_value)
+                dst_id = value_to_id.get(dst_value)
+                if src_id is not None and dst_id is not None:
+                    edges.append((src_id, dst_id, confidence))
+        except Exception as e:
+            import logging
+            logging.warning(f'[IOCGraph] Failed to load edges for communities: {e}')
+            return {}
+
+        if not edges:
+            # No edges — every node is its own community
+            return {value: i for i, (_, value, _) in enumerate(nodes)}
+
+        # Try Rust Louvain first (petgraph, GRAPH-01 feature)
+        try:
+            import hledac_rust_extensions as _rust_ext
+            result = _rust_ext.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
+            if result and isinstance(result, dict):
+                communities = result.get('communities')
+                if communities and isinstance(communities, dict):
+                    return {str(k): int(v) for k, v in communities.items()}
+        except Exception:
+            pass
+
+        # Fallback: igraph label propagation
+        try:
+            import igraph as ig
+
+            id_to_idx: dict[int, int] = {}
+            idx_to_value: dict[int, str] = {}
+            for i, (nid, value, _) in enumerate(nodes):
+                id_to_idx[nid] = i
+                idx_to_value[i] = value
+
+            edge_list = [(id_to_idx[s], id_to_idx[d]) for s, d, _ in edges if s in id_to_idx and d in id_to_idx]
+            if not edge_list:
+                return {value: i for i, (_, value, _) in enumerate(nodes)}
+
+            g = ig.Graph(n=len(nodes), edges=edge_list, directed=False)
+            membership = g.community_label_propagation()
+            result: dict[str, int] = {}
+            for i, (_, value, _) in enumerate(nodes):
+                result[value] = membership.membership[i]
+            return result
+        except Exception as e:
+            import logging
+            logging.debug(f'[IOCGraph] igraph community detection fallback failed: {e}')
+
+        return {value: 0 for _, value, _ in nodes}
+
+    async def get_centrality(self, ioc_value: str) -> float:
+        """
+        Compute PageRank centrality for a specific IOC value.
+
+        Uses petgraph PageRank via Rust (GRAPH-01 feature) when available,
+        with igraph C-core power iteration as fallback.
+
+        Returns PageRank score (0.0-1.0) or 0.0 on failure.
+        """
+        if self._closed or self._conn is None:
+            return 0.0
+
+        try:
+            return await asyncio.to_thread(self._get_centrality_sync, ioc_value)
+        except Exception as e:
+            import logging
+            logging.warning(f'[IOCGraph] get_centrality({ioc_value}) failed: {e}')
+            return 0.0
+
+    def _get_centrality_sync(self, ioc_value: str) -> float:
+        """Synchronous PageRank computation — runs on _executor thread."""
+        conn = self._conn
+        assert conn is not None
+
+        # Extract graph
+        nodes: list[tuple[int, str, str]] = []
+        value_to_id: dict[str, int] = {}
+
+        try:
+            res = conn.execute('MATCH (n:IOC) RETURN n.value, n.ioc_type')
+            node_id = 1
+            while res.has_next():
+                row = res.get_next()
+                value = str(row[0]) if row[0] else ''
+                ioc_type = str(row[1]) if row[1] else 'unknown'
+                if value and value not in value_to_id:
+                    value_to_id[value] = node_id
+                    nodes.append((node_id, value, ioc_type))
+                    node_id += 1
+        except Exception:
+            return 0.0
+
+        if not nodes:
+            return 0.0
+
+        edges: list[tuple[int, int, float]] = []
+        try:
+            res = conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) RETURN a.value, b.value, r.confidence')
+            while res.has_next():
+                row = res.get_next()
+                src_value = str(row[0]) if row[0] else ''
+                dst_value = str(row[1]) if row[1] else ''
+                confidence = float(row[2]) if row[2] is not None else 1.0
+                src_id = value_to_id.get(src_value)
+                dst_id = value_to_id.get(dst_value)
+                if src_id is not None and dst_id is not None:
+                    edges.append((src_id, dst_id, confidence))
+        except Exception:
+            return 0.0
+
+        target_id = value_to_id.get(ioc_value)
+        if target_id is None:
+            return 0.0
+
+        # Try Rust PageRank first
+        try:
+            import hledac_rust_extensions as _rust_ext
+            result = _rust_ext.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
+            if result and isinstance(result, dict):
+                pagerank = result.get('pagerank')
+                if pagerank and isinstance(pagerank, dict):
+                    score = pagerank.get(target_id, 0.0)
+                    return float(score)
+        except Exception:
+            pass
+
+        # Fallback: igraph PageRank
+        try:
+            import igraph as ig
+
+            id_to_idx: dict[int, int] = {}
+            for i, (nid, _, _) in enumerate(nodes):
+                id_to_idx[nid] = i
+
+            edge_list = [(id_to_idx[s], id_to_idx[d]) for s, d, _ in edges if s in id_to_idx and d in id_to_idx]
+            if not edge_list:
+                return 0.0
+
+            g = ig.Graph(n=len(nodes), edges=edge_list, directed=True)
+            pr_scores = g.pagerank(damping=0.85, directed=True)
+            target_idx = id_to_idx.get(target_id)
+            if target_idx is not None and target_idx < len(pr_scores):
+                return float(pr_scores[target_idx])
+        except Exception:
+            pass
+
+        return 0.0

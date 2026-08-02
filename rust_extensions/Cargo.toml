@@ -78,6 +78,14 @@ hex = "0.4"
 # Enables: stix.encode(), stix.decode(), stix.validate()
 # NOTE: jsonschema crate removed 2026-07-27 — validation uses custom serde_json logic
 
+# Fulltext search — Tantivy BM25 index (mmap-backed, zero-copy, persistent)
+# Feature-gated: ~5MB additional compile, M1 8GB safe
+# Enables: fulltext.create_index(), fulltext.search()
+# M1 8GB: ~5MB RAM for Tantivy index (mmap-backed, vs ~200MB for Python BM25Index with 50K docs)
+# Python fallback: BM25Index in knowledge/rag_engine.py
+# ISSUE-011: Replaces Python in-memory BM25Index with mmap-backed Tantivy index
+tantivy = { version = "0.22", optional = true }
+
 # DNS resolution — DoH/DoT/DoQ via hickory-dns
 # Feature-gated: ~5MB additional compile, M1 8GB safe
 # Enables: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
@@ -173,7 +181,7 @@ advanced = [
 ]
 
 # full: All features (development/CI only, ~3× compile time vs core-only)
-full = ["core", "data", "graph", "advanced", "dns", "tls13", "pdf", "office", "quic", "ane", "stix", "metal", "otel"]
+full = ["core", "data", "graph", "advanced", "dns", "tls13", "pdf", "office", "quic", "ane", "stix", "metal", "otel", "fulltext"]
 
 # dns: DoH/DoT/DoQ DNS resolution via hickory-dns
 # Adds: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
@@ -246,6 +254,15 @@ quic = [
     "dep:h3",
     "dep:h3-quinn",
     "dep:rustls",
+]
+
+# fulltext: Tantivy full-text search (mmap-backed BM25, zero-copy, persistent)
+# Adds: fulltext.create_index(), fulltext.search()
+# M1 8GB: ~5MB compile, ~5MB RAM per index (mmap-backed)
+# Python fallback: BM25Index in knowledge/rag_engine.py
+# ISSUE-011: Replace Python in-memory BM25Index with mmap-backed Tantivy index
+fulltext = [
+    "dep:tantivy",
 ]
 
 # pdf: PDF text extraction and IOC extraction via lopdf

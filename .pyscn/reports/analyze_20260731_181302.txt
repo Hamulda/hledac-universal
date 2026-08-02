@@ -1,0 +1,69 @@
+Comprehensive Analysis Report
+========================================
+
+SUMMARY
+-------
+  Generated: 2026-07-31T18:13:02+02:00
+  Health Score: 97/100 (A)
+  Analysis Duration: 0.90s
+
+FILE STATISTICS
+---------------
+  Total Files: 0
+  Analyzed: 0
+  With Issues: 0
+
+MODULE QUALITY HOTSPOTS
+-----------------------
+  coordinators (coordinators/__init__.py)
+    Functions: 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators._catalog (coordinators/_catalog.py)
+    Functions: 9 total / 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators._dispatch (coordinators/_dispatch.py)
+    Functions: 4 total / 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators._dto (coordinators/_dto.py)
+    Functions: 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators.agent_coordination_engine (coordinators/agent_coordination_engine.py)
+    Functions: 14 total / 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators.aimd_controllers (coordinators/aimd_controllers.py)
+    Functions: 1 total / 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators.archive_coordinator (coordinators/archive_coordinator.py)
+    Functions: 11 total / 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators.backpressure (coordinators/backpressure.py)
+    Functions: 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators.base (coordinators/base.py)
+    Functions: 35 total / 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  coordinators.benchmark_coordinator (coordinators/benchmark_coordinator.py)
+    Functions: 0 analyzed
+    Complexity: avg 0.00, max 0, high-risk 0, handlers 0
+    Cognitive: avg 0.00
+    Dead code: 0 findings, 0 blocks
+  Showing top 10 of 144 modules
+
