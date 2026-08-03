@@ -96,6 +96,10 @@ class GenerationFacade:
         """
         Generate text from prompt.
 
+        UNIFIED-001: Acquires admission from GlobalPeakLoadCoordinator before
+        MLX generation to prevent OOM when multiple subsystems compete for memory.
+        MLX 3B model typically allocates ~2.5 GB during inference.
+
         Args:
             prompt: Input prompt
             max_tokens: Override max tokens
@@ -108,6 +112,46 @@ class GenerationFacade:
         import time
         start = time.time()
 
+        # UNIFIED-001: Acquire admission from peak load coordinator
+        peak_guard = None
+        try:
+            from hledac.universal.core.peak_load_coordinator import (
+                ResourceClass,
+                TaskPriority,
+                get_peak_coordinator,
+            )
+            coordinator = get_peak_coordinator()
+            if coordinator is not None:
+                # MLX 3B model: ~2500 MB peak allocation
+                peak_guard = await coordinator.acquire(
+                    ResourceClass.MLX_GENERATION,
+                    estimated_mb=2500.0,
+                    priority=TaskPriority.HIGH,
+                    owner=f"generate:{prompt[:32]}",
+                    timeout_s=10.0,
+                )
+        except (ImportError, TimeoutError) as e:
+            logger.debug(f"[UNIFIED-001] MLX generation admission failed: {e}")
+            # Fail-open: proceed without admission if coordinator unavailable
+        except Exception as e:
+            logger.debug(f"[UNIFIED-001] MLX generation admission error (fail-open): {e}")
+
+        # UNIFIED-001: Wrap actual work in peak_guard context to ensure release
+        if peak_guard is not None:
+            async with peak_guard:
+                return await self._generate_with_model(prompt, max_tokens, temperature, start, **kwargs)
+        else:
+            return await self._generate_with_model(prompt, max_tokens, temperature, start, **kwargs)
+
+    async def _generate_with_model(
+        self,
+        prompt: str,
+        max_tokens: int | None,
+        temperature: float | None,
+        start: float,
+        **kwargs: Any,
+    ) -> GenerateResult:
+        """Internal generation logic, optionally wrapped in peak_guard context."""
         async with self._semaphore:
             try:
                 model = self._model_getter() if self._model_getter else None

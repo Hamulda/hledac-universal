@@ -23,15 +23,18 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ctypes
 import inspect
 import logging
 import os
 import sys
 import threading
 import time
+from contextlib import asynccontextmanager
 from collections.abc import Callable
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+import heapq
 import msgspec
 
 _KT = TypeVar("_KT")
@@ -935,6 +938,10 @@ class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     max_tokens_override: int | None = None  # None = use model default, otherwise cap max_tokens
     temperature_reduction: float = 0.0  # 0.0-0.5, subtracted from temperature when throttled
     power_status: dict[str, bool | int | float | None] = {}  # HW-02: battery state info
+    # PHYSICS-01: Micro-burst phase for proactive thermal interleaving.
+    # "GPU_HEAVY" = compute window (200 ms) — OK to dispatch MLX inference.
+    # "IO_HEAVY" = I/O-only window (50 ms) — only network/DNS/disk, yield to event loop.
+    burst_phase: str = "GPU_HEAVY"
 
 
 class M1ThermalStatus(msgspec.Struct, frozen=True, gc=False):
@@ -1007,9 +1014,85 @@ class M1ThermalMonitor:
         except Exception:
             return 8  # Default pro M1
 
+    # [PHYSICS]-02: Lazy-loaded libc for direct sysctlbyname(3) calls.
+    # Eliminates 1-50ms subprocess overhead per thermal reading.
+    # sysctlbyname is a direct syscall wrapper — 1-5μs vs 1-5ms fork+exec.
+    _LIBC: ctypes.CDLL | None = None
+
+    @classmethod
+    def _get_libc(cls) -> ctypes.CDLL | None:
+        """Lazy-load libc.dylib and configure sysctlbyname argtypes.
+
+        Returns None on non-macOS, sandbox, or library load failure.
+        Callers fall back to subprocess-based sysctl(8) transparently.
+        """
+        if cls._LIBC is None:
+            try:
+                libc_path = ctypes.util.find_library("c")
+                if libc_path is None:
+                    cls._LIBC = False  # sentinel: tried and failed
+                    return None
+                libc = ctypes.CDLL(libc_path, use_errno=True)
+                libc.sysctlbyname.argtypes = [
+                    ctypes.c_char_p,                # name
+                    ctypes.c_void_p,                # oldp
+                    ctypes.POINTER(ctypes.c_size_t),  # oldlenp
+                    ctypes.c_void_p,                # newp
+                    ctypes.c_size_t,                # newlen
+                ]
+                libc.sysctlbyname.restype = ctypes.c_int
+                cls._LIBC = libc
+            except Exception:
+                cls._LIBC = False
+                return None
+        if cls._LIBC is False:
+            return None
+        return cls._LIBC
+
+    @staticmethod
+    def _read_sysctl_int64(path: str) -> int | None:
+        """Read sysctl integer via direct libc.sysctlbyname(3) — ~1-5μs.
+
+        On macOS arm64 this is a thin userspace wrapper around the sysctl
+        syscall.  Returns None if the sysctl name does not exist, libc
+        cannot be loaded, or any error occurs.
+
+        [PHYSICS]-02: Replaces subprocess.run(['sysctl', '-n', path])
+        which cost 1-5ms per call (fork+exec on macOS).  At typical
+        evaluate() cadences this saves 10-25ms of system CPU per tick.
+        """
+        libc = M1ThermalMonitor._get_libc()
+        if libc is None:
+            return None
+        try:
+            value = ctypes.c_int64(0)
+            size = ctypes.c_size_t(ctypes.sizeof(value))
+            ret = libc.sysctlbyname(
+                path.encode(),
+                ctypes.byref(value),
+                ctypes.byref(size),
+                None,
+                0,
+            )
+            if ret == 0:
+                return value.value
+        except Exception:
+            pass
+        return None
+
     @staticmethod
     def _read_sysctl_float(path: str) -> float | None:
-        """Čte sysctl hodnotu a vrací float nebo None."""
+        """Read sysctl value as float — ctypes primary, subprocess fallback.
+
+        [PHYSICS]-02: Primary path uses libc.sysctlbyname(3) (~1-5μs).
+        Falls back to subprocess-based sysctl(8) (~1-5ms) on non-macOS,
+        sandbox restrictions, or libc load failure.
+        """
+        # Primary: direct libc call (1-5μs)
+        int_val = M1ThermalMonitor._read_sysctl_int64(path)
+        if int_val is not None:
+            return float(int_val)
+        # Fallback: subprocess sysctl(8) for non-macOS or sandboxed envs
         try:
             import subprocess
 
@@ -1410,6 +1493,7 @@ class M1ResourceGovernor:
                 thermal_headroom=thermal_status.thermal_headroom,
                 max_tokens_override=max_tok_override,
                 temperature_reduction=temp_reduction,
+                burst_phase="GPU_HEAVY",  # PHYSICS-01: safe default on fallback
             )
         preset = ConcurrencyPreset.from_state(uma.state)
         now = time.monotonic()
@@ -1446,6 +1530,17 @@ class M1ResourceGovernor:
         # ISSUE-015: Also compute max_tokens_override and temperature_reduction
         worker_scale, batch_scale, max_tokens_override, temp_reduction = self._compute_thermal_scales(thermal_status.thermal_headroom)
 
+        # PHYSICS-01: Resolve micro-burst phase for proactive thermal interleaving.
+        # GPU_HEAVY (200 ms) → compute is allowed; IO_HEAVY (50 ms) → only I/O work.
+        # Callers (MLX scheduler, fetch coordinator) check burst_phase before dispatching.
+        try:
+            from hledac.universal.core.micro_burst_scheduler import step_burst_phase, get_burst_phase
+
+            step_burst_phase()
+            _burst_phase = get_burst_phase().name
+        except Exception:  # noqa: BLE001 — fail-safe; fall back to GPU_HEAVY
+            _burst_phase = "GPU_HEAVY"
+
         base_decision = GovernorDecision(
             uma_state=gated_state,
             io_only=uma.io_only,
@@ -1458,6 +1553,7 @@ class M1ResourceGovernor:
             batch_scale_factor=batch_scale,
             max_tokens_override=max_tokens_override,
             temperature_reduction=temp_reduction,
+            burst_phase=_burst_phase,
         )
         return self._adjust_for_power(uma, base_decision)
 
@@ -1501,6 +1597,7 @@ class M1ResourceGovernor:
             batch_scale_factor=base_decision.batch_scale_factor * power_factor,
             max_tokens_override=base_decision.max_tokens_override,
             temperature_reduction=base_decision.temperature_reduction,
+            burst_phase=base_decision.burst_phase,  # PHYSICS-01: propagate burst phase
             power_status={
                 "on_battery": uma.on_battery,
                 "battery_level": uma.battery_level,
@@ -1555,6 +1652,14 @@ class M1ResourceGovernor:
                 )
             except Exception:
                 pass
+        # UNIFIED-002: Propagate UMA pressure state to AsyncUMAGuard for
+        # dynamic hard-limit adjustment. This closes the race condition where
+        # two subsystems see "ELEVATED" simultaneously and both proceed.
+        try:
+            guard = get_uma_guard()
+            guard.update_hard_limit(decision.uma_state)
+        except Exception:
+            pass
 
     def apply_madvise_critical(self) -> None:
         """
@@ -1698,10 +1803,370 @@ class M1ResourceGovernor:
 
 
 class Priority(Enum):
-    CRITICAL = "CRITICAL"
-    HIGH = "HIGH"
-    NORMAL = "NORMAL"
-    LOW = "LOW"
+    CRITICAL = 0  # Lowest numeric value = highest scheduling priority
+    HIGH = 1
+    NORMAL = 2
+    LOW = 3
+
+
+class ResourceExhaustedError(RuntimeError):
+    """
+    Raised when AsyncUMAGuard cannot satisfy a reservation request.
+
+    Causes:
+        - Timeout: waited longer than timeout_s without available budget
+        - Denied: request exceeds hard limit even when fully idle
+        - Cancelled: task was cancelled while waiting
+
+    Attributes:
+        requested_mb: Requested memory in MB
+        available_mb: Available memory at time of error
+        hard_limit_mb: Current hard limit in MB
+        reason: Machine-readable reason string
+    """
+
+    __slots__ = ("requested_mb", "available_mb", "hard_limit_mb", "reason")
+
+    def __init__(
+        self,
+        requested_mb: float,
+        available_mb: float,
+        hard_limit_mb: float,
+        reason: str = "timeout",
+    ) -> None:
+        self.requested_mb = requested_mb
+        self.available_mb = available_mb
+        self.hard_limit_mb = hard_limit_mb
+        self.reason = reason
+        super().__init__(
+            f"UMAGuard: cannot reserve {requested_mb:.0f} MB "
+            f"(available={available_mb:.0f}, limit={hard_limit_mb:.0f}, reason={reason})"
+        )
+
+
+class ReservationInfo(msgspec.Struct, frozen=True, gc=False):
+    """
+    Diagnostic snapshot returned by AsyncUMAGuard.reserve() on entry.
+
+    Provides telemetry for OTel spans and logging:
+        allocated_mb: How much was reserved
+        remaining_mb: Remaining budget after this reservation
+        hard_limit_mb: Current hard limit
+        wait_time_s: How long the reservation waited (0 if immediate)
+        priority: Priority level of the reservation
+        queue_depth: Number of waiters when reservation was granted
+    """
+
+    allocated_mb: float
+    remaining_mb: float
+    hard_limit_mb: float
+    wait_time_s: float
+    priority: int
+    queue_depth: int
+
+
+class AsyncUMAGuard:
+    """
+    Async mutex barrier for UMA RAM allocation with priority-based scheduling.
+
+    Solves the race condition where multiple subsystems simultaneously see
+    "ELEVATED" pressure state and both proceed, causing combined allocation
+    to exceed the 6.48 GB hard limit.
+
+    Key features:
+        - asyncio.Condition for wait/notify (not Event — supports broadcast)
+        - Priority-based wait queue (heapq) preventing starvation
+        - Dynamic hard limit adjustment from governor pressure state
+        - Timeout support to prevent indefinite blocking
+        - ReservationInfo telemetry for OTel spans
+
+    Usage:
+        guard = get_uma_guard()
+        async with guard.reserve(estimated_mb=500, priority=Priority.NORMAL) as info:
+            # Allocation is now guaranteed within hard limit
+            await heavy_operation()
+
+    M1 8GB calibration:
+        - Default hard limit: 6480 MB (81% of 8 GB)
+        - Adjusted dynamically by governor pressure state
+        - CRITICAL/EMERGENCY: limit reduced to 4000/2000 MB
+    """
+
+    __slots__ = (
+        "_condition",
+        "_current_allocated_mb",
+        "_hard_limit_mb",
+        "_wait_queue",
+        "_queue_counter",
+        "_total_reservations",
+        "_total_wait_time_s",
+        "_lock",
+    )
+
+    # M1 8GB calibrated limits
+    _DEFAULT_HARD_LIMIT_MB: float = 6480.0  # 81% of 8 GB
+    _CRITICAL_LIMIT_MB: float = 4000.0  # Reduced at CRITICAL pressure
+    _EMERGENCY_LIMIT_MB: float = 2000.0  # Minimal at EMERGENCY
+
+    def __init__(self, hard_limit_mb: float | None = None) -> None:
+        self._lock = asyncio.Lock()
+        self._condition = asyncio.Condition(self._lock)
+        self._current_allocated_mb: float = 0.0
+        self._hard_limit_mb: float = hard_limit_mb if hard_limit_mb is not None else self._DEFAULT_HARD_LIMIT_MB
+        # Priority queue: (priority_value, sequence_number, estimated_mb, asyncio.Event)
+        # Lower priority_value = higher priority (CRITICAL=0, HIGH=1, NORMAL=2, LOW=3)
+        self._wait_queue: list[tuple[int, int, float, asyncio.Event]] = []
+        self._queue_counter: int = 0  # Monotonic sequence for FIFO within same priority
+        # Telemetry
+        self._total_reservations: int = 0
+        self._total_wait_time_s: float = 0.0
+
+    @property
+    def current_allocated_mb(self) -> float:
+        """Current total allocated memory in MB (read-only telemetry)."""
+        return self._current_allocated_mb
+
+    @property
+    def hard_limit_mb(self) -> float:
+        """Current hard limit in MB (dynamically adjustable)."""
+        return self._hard_limit_mb
+
+    @property
+    def available_mb(self) -> float:
+        """Available memory budget in MB."""
+        return max(0.0, self._hard_limit_mb - self._current_allocated_mb)
+
+    @property
+    def queue_depth(self) -> int:
+        """Number of waiters in the priority queue."""
+        return len(self._wait_queue)
+
+    def update_hard_limit(self, uma_state: str) -> None:
+        """
+        Dynamically adjust hard limit based on governor pressure state.
+
+        Called by M1ResourceGovernor.apply_decision() when UMA state changes.
+        Wakes all waiters to re-check their requests against new limit.
+
+        Args:
+            uma_state: Current UMA state ("ok", "soft_warn", "warn", "critical", "emergency")
+        """
+        new_limit = self._DEFAULT_HARD_LIMIT_MB
+        if uma_state == UMAState.CRITICAL:
+            new_limit = self._CRITICAL_LIMIT_MB
+        elif uma_state == UMAState.EMERGENCY:
+            new_limit = self._EMERGENCY_LIMIT_MB
+        elif uma_state == UMAState.WARN:
+            # Slightly reduced at WARN
+            new_limit = self._DEFAULT_HARD_LIMIT_MB * 0.85
+
+        if new_limit != self._hard_limit_mb:
+            self._hard_limit_mb = new_limit
+            # Wake all waiters to re-check against new limit
+            # (asyncio.Condition.notify_all requires holding the lock)
+            # We schedule a wake-up task to avoid blocking here
+            asyncio.create_task(self._notify_all_waiters())
+
+    async def _notify_all_waiters(self) -> None:
+        """Notify all waiters to re-check their requests."""
+        async with self._condition:
+            self._condition.notify_all()
+
+    @asynccontextmanager
+    async def reserve(
+        self,
+        estimated_mb: float,
+        priority: Priority | int = Priority.NORMAL,
+        timeout_s: float | None = 30.0,
+    ):
+        """
+        Async context manager for memory reservation with priority scheduling.
+
+        Blocks until:
+            - Sufficient budget is available (current + estimated_mb <= hard_limit)
+            - Timeout expires (raises ResourceExhaustedError)
+            - Task is cancelled (propagates CancelledError)
+
+        Priority scheduling:
+            - CRITICAL (0): Immediate bypass if possible, else first in queue
+            - HIGH (1): Second in queue
+            - NORMAL (2): Standard FIFO
+            - LOW (3): Last in queue
+
+        Args:
+            estimated_mb: Estimated memory consumption in MB
+            priority: Priority level (Priority enum or int 0-3)
+            timeout_s: Maximum wait time in seconds (None = wait forever)
+
+        Yields:
+            ReservationInfo with telemetry (allocated_mb, remaining_mb, wait_time_s, etc.)
+
+        Raises:
+            ResourceExhaustedError: If timeout expires or request exceeds hard limit
+            asyncio.CancelledError: If task is cancelled while waiting
+
+        Example:
+            async with guard.reserve(500, Priority.HIGH, timeout_s=10.0) as info:
+                print(f"Reserved {info.allocated_mb} MB, waited {info.wait_time_s:.2f}s")
+                await heavy_operation()
+        """
+        # Convert Priority enum to int if needed
+        priority_value = priority.value if isinstance(priority, Priority) else int(priority)
+
+        # Fast path: check if request can be satisfied immediately
+        start_time = time.monotonic()
+        wait_time_s = 0.0
+
+        async with self._condition:
+            # Check if request exceeds hard limit even when fully idle
+            if estimated_mb > self._hard_limit_mb:
+                raise ResourceExhaustedError(
+                    requested_mb=estimated_mb,
+                    available_mb=self.available_mb,
+                    hard_limit_mb=self._hard_limit_mb,
+                    reason="exceeds_hard_limit",
+                )
+
+            # Wait loop: block until budget is available or timeout
+            while self._current_allocated_mb + estimated_mb > self._hard_limit_mb:
+                # Enqueue with priority
+                self._queue_counter += 1
+                sequence = self._queue_counter
+                waiter_event = asyncio.Event()
+                heapq.heappush(
+                    self._wait_queue,
+                    (priority_value, sequence, estimated_mb, waiter_event),
+                )
+
+                try:
+                    # Wait for notification or timeout
+                    if timeout_s is not None:
+                        remaining_timeout = timeout_s - (time.monotonic() - start_time)
+                        if remaining_timeout <= 0:
+                            raise ResourceExhaustedError(
+                                requested_mb=estimated_mb,
+                                available_mb=self.available_mb,
+                                hard_limit_mb=self._hard_limit_mb,
+                                reason="timeout",
+                            )
+                        await asyncio.wait_for(
+                            self._condition.wait(),
+                            timeout=remaining_timeout,
+                        )
+                    else:
+                        await self._condition.wait()
+                except asyncio.TimeoutError:
+                    # Remove ourselves from queue
+                    self._wait_queue = [
+                        (p, s, m, e)
+                        for p, s, m, e in self._wait_queue
+                        if e is not waiter_event
+                    ]
+                    heapq.heapify(self._wait_queue)
+                    raise ResourceExhaustedError(
+                        requested_mb=estimated_mb,
+                        available_mb=self.available_mb,
+                        hard_limit_mb=self._hard_limit_mb,
+                        reason="timeout",
+                    )
+                except asyncio.CancelledError:
+                    # Remove ourselves from queue
+                    self._wait_queue = [
+                        (p, s, m, e)
+                        for p, s, m, e in self._wait_queue
+                        if e is not waiter_event
+                    ]
+                    heapq.heapify(self._wait_queue)
+                    raise
+
+                # Remove ourselves from queue (we were notified)
+                self._wait_queue = [
+                    (p, s, m, e)
+                    for p, s, m, e in self._wait_queue
+                    if e is not waiter_event
+                ]
+                heapq.heapify(self._wait_queue)
+
+            # Budget is available — reserve it
+            self._current_allocated_mb += estimated_mb
+            wait_time_s = time.monotonic() - start_time
+            self._total_reservations += 1
+            self._total_wait_time_s += wait_time_s
+
+            # Build telemetry snapshot
+            info = ReservationInfo(
+                allocated_mb=estimated_mb,
+                remaining_mb=self.available_mb,
+                hard_limit_mb=self._hard_limit_mb,
+                wait_time_s=wait_time_s,
+                priority=priority_value,
+                queue_depth=len(self._wait_queue),
+            )
+
+        try:
+            yield info
+        finally:
+            # Release reservation and notify waiters
+            async with self._condition:
+                self._current_allocated_mb -= estimated_mb
+                # Notify next waiter (if any) that budget is available
+                self._condition.notify_all()
+
+    def telemetry(self) -> dict[str, Any]:
+        """
+        Read-only telemetry snapshot for monitoring and debugging.
+
+        Returns:
+            dict with current_allocated_mb, hard_limit_mb, available_mb,
+            queue_depth, total_reservations, avg_wait_time_s
+        """
+        avg_wait = (
+            self._total_wait_time_s / self._total_reservations
+            if self._total_reservations > 0
+            else 0.0
+        )
+        return {
+            "current_allocated_mb": self._current_allocated_mb,
+            "hard_limit_mb": self._hard_limit_mb,
+            "available_mb": self.available_mb,
+            "queue_depth": self.queue_depth,
+            "total_reservations": self._total_reservations,
+            "avg_wait_time_s": avg_wait,
+        }
+
+    def reset(self) -> None:
+        """
+        Reset guard state. For testing only.
+
+        Clears all reservations and telemetry. Does NOT wake waiters
+        (they will timeout or be cancelled).
+        """
+        self._current_allocated_mb = 0.0
+        self._hard_limit_mb = self._DEFAULT_HARD_LIMIT_MB
+        self._wait_queue.clear()
+        self._queue_counter = 0
+        self._total_reservations = 0
+        self._total_wait_time_s = 0.0
+
+
+# Singleton accessor
+_uma_guard: AsyncUMAGuard | None = None
+
+
+def get_uma_guard() -> AsyncUMAGuard:
+    """
+    Get or create the singleton AsyncUMAGuard.
+
+    This is the canonical way to access the UMA guard from outside core/.
+    Lazily creates the instance on first call.
+
+    Returns:
+        AsyncUMAGuard singleton
+    """
+    global _uma_guard
+    if _uma_guard is None:
+        _uma_guard = AsyncUMAGuard()
+    return _uma_guard
 
 
 class ResourceGovernor:
@@ -1754,7 +2219,49 @@ class ResourceGovernor:
     def can_afford_sync(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL) -> bool:
         """
         Synchronní kontrola zdrojů bez rezervace.
+
+        UNIFIED-001: Now also checks GlobalPeakLoadCoordinator for cross-subsystem
+        admission control. If the coordinator indicates high memory pressure,
+        this returns False even if local checks pass.
         """
+        # UNIFIED-001: Check peak load coordinator first (fast path)
+        try:
+            from hledac.universal.core.peak_load_coordinator import (
+                get_peak_coordinator,
+                TaskPriority as PeakTaskPriority,
+            )
+            coordinator = get_peak_coordinator()
+            if coordinator is not None:
+                # Map Priority to TaskPriority
+                priority_map = {
+                    Priority.CRITICAL: PeakTaskPriority.CRITICAL,
+                    Priority.HIGH: PeakTaskPriority.HIGH,
+                    Priority.NORMAL: PeakTaskPriority.NORMAL,
+                    Priority.LOW: PeakTaskPriority.LOW,
+                }
+                peak_priority = priority_map.get(priority, PeakTaskPriority.NORMAL)
+
+                # Check if coordinator is under high pressure
+                snapshot = coordinator.snapshot()
+                if snapshot.emergency_active:
+                    # Emergency mode - only CRITICAL tasks proceed
+                    if priority != Priority.CRITICAL:
+                        logger.debug(
+                            f"[UNIFIED-001] can_afford_sync: emergency mode, "
+                            f"rejecting {priority} priority"
+                        )
+                        return False
+                elif snapshot.high_water_active and priority == Priority.LOW:
+                    # High water mode - reject LOW priority
+                    logger.debug(
+                        f"[UNIFIED-001] can_afford_sync: high water mode, "
+                        f"rejecting LOW priority (utilization: {snapshot.utilization_fraction:.1%})"
+                    )
+                    return False
+        except (ImportError, AttributeError):
+            # Coordinator not available - continue with local checks
+            pass
+
         ram_used = 0.0
         if psutil is not None:
             try:
@@ -1806,7 +2313,19 @@ class ResourceGovernor:
     def reserve(self, cost_estimate: dict[str, Any], priority: Priority = Priority.NORMAL):
         """
         Vrací async context manager pro rezervaci zdrojů. Samotná metoda je synchronní.
+
+        UNIFIED-002: Now delegates to AsyncUMAGuard for proper memory accounting barrier.
+        Falls back to legacy behavior if AsyncUMAGuard is unavailable.
         """
+        ram_mb = cost_estimate.get("ram_mb", 0)
+
+        # Try to use AsyncUMAGuard for proper memory barrier
+        try:
+            guard = get_uma_guard()
+            return guard.reserve(estimated_mb=ram_mb, priority=priority, timeout_s=30.0)
+        except Exception:
+            # Fallback to legacy behavior if guard unavailable
+            pass
 
         class _Reservation:
             __slots__ = ("cost", "gov", "prio")

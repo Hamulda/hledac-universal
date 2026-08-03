@@ -26,6 +26,7 @@ import binascii
 import hashlib
 import logging
 import math
+import os
 import re
 import string
 from collections import Counter
@@ -33,6 +34,7 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import UTC, datetime
 from enum import Enum
+from functools import cache
 from typing import Any
 logger = logging.getLogger(__name__)
 try:
@@ -45,6 +47,39 @@ try:
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
     logger.warning('cryptography library not available - modern crypto operations disabled')
+
+# SILICON-01: Metal GPU hash cracking — opportunistic during I/O wait
+# Feature flag: HLEDAC_ENABLE_METAL_HASHCRACK=1 to enable Metal GPU path
+# Default: 0 (disabled) — Metal crate must be compiled in (maturin develop --features "metal")
+_METAL_HASHCRACK_ENABLED: bool = os.environ.get("HLEDAC_ENABLE_METAL_HASHCRACK", "0") == "1"
+
+@cache
+def _get_metal_cracker():
+    """Lazy-init MetalHashCracker singleton (functools.cache = once per process).
+
+    Returns None if Metal is not available or not enabled.
+    The @cache decorator ensures we attempt the import exactly once.
+    """
+    if not _METAL_HASHCRACK_ENABLED:
+        return None
+    try:
+        from hledac_rust_extensions import MetalHashCracker
+        cracker = MetalHashCracker()
+        if cracker.is_available:
+            logger.info(
+                "MetalHashCracker initialized: device=%s, GPU opportunistic cracking enabled",
+                cracker.device_name,
+            )
+            return cracker
+        else:
+            logger.debug("MetalHashCracker: Metal GPU not available (non-macOS or no Metal device)")
+            return None
+    except ImportError:
+        logger.debug("MetalHashCracker: rust_extensions not built with --features metal")
+        return None
+    except Exception as exc:
+        logger.warning("MetalHashCracker init failed: %s", exc)
+        return None
 
 class CipherType(Enum):
     """Types of ciphers supported."""
@@ -460,6 +495,10 @@ class HashAnalyzer:
         """
         Attempt dictionary attack on hash.
 
+        Tries Metal GPU → CPU NEON (Rust) → Python hashlib fallback chain.
+        Metal GPU is used opportunistically — only when HLEDAC_ENABLE_METAL_HASHCRACK=1
+        and the Metal cracker is available.
+
         Args:
             hash_value: Hash to crack
             wordlist: List of passwords to try (uses common passwords if None)
@@ -476,6 +515,31 @@ class HashAnalyzer:
                 hash_type = analysis.possible_types[0]
             else:
                 hash_type = HashType.MD5
+
+        # ── SILICON-01: Try Metal GPU hash cracker first ──
+        cracker = _get_metal_cracker()
+        if cracker is not None:
+            try:
+                if hash_type == HashType.MD5:
+                    result = cracker.crack_md5(hash_value.lower(), wordlist)
+                elif hash_type in (HashType.SHA256,):
+                    result = cracker.crack_sha256(hash_value.lower(), wordlist)
+                else:
+                    result = None  # unsupported hash type for GPU
+
+                if result is not None:
+                    gpu_stats = cracker.get_stats()
+                    logger.debug(
+                        "MetalHashCracker: GPU match found gpu_attempts=%d gpu_matches=%d cpu_fallbacks=%d",
+                        gpu_stats.get("gpu_attempts", 0),
+                        gpu_stats.get("gpu_matches", 0),
+                        gpu_stats.get("cpu_fallbacks", 0),
+                    )
+                    return result
+            except Exception as exc:
+                logger.debug("MetalHashCracker.crack_md5 failed, falling back to CPU: %s", exc)
+
+        # ── Python CPU fallback (hashlib) ──
         hash_func = self._get_hash_function(hash_type)
         if hash_func is None:
             return None

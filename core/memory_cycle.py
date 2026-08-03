@@ -58,18 +58,30 @@ _GC_THRESHOLD = (700, 10, 5)
 
 # B5: Dynamic GC thresholds keyed to UMA state.
 # Applied by M1ResourceGovernor.apply_decision() on state transitions.
-# More aggressive = lower numbers = more frequent collection.
+# PHYSICS-06/07: Thresholds and freeze state imported from BlitzGCStrategy.
+# During active sprint GC is disabled — these thresholds only apply during
+# boot/idle/winddown phases. Dynamic threshold adjustments (pressure relief)
+# are no-ops when blitz mode is active.
+from hledac.universal.coordinators.resource.blitz_gc import (
+    BOOT_THRESHOLD,
+    blitz_gc as _blitz_gc,
+)
+
+# GC thresholds for different UMA states — used by _apply_gc_thresholds()
+# during non-blitz phases (boot, idle, winddown). During active sprint,
+# BlitzGCStrategy disables GC entirely so these never trigger.
+_GC_THRESHOLD = BOOT_THRESHOLD  # (2000, 100, 50) — moderate for idle periods
 _GC_THRESHOLDS: dict[str, tuple[int, int, int]] = {
-    "ok": (700, 10, 5),        # baseline: tuned for M1 8GB
-    "soft_warn": (600, 8, 4),  # slightly tighter gen-2
-    "warn": (500, 6, 3),       # aggressive — frequent full sweeps
-    "critical": (400, 4, 2),    # very aggressive — near-OOM urgency
-    "emergency": (300, 2, 1),  # maximum pressure — gen-2 every cycle
+    "ok": (2000, 100, 50),      # baseline: moderate — blitz handles active sprint
+    "soft_warn": (1500, 50, 30),  # slightly tighter
+    "warn": (1000, 30, 20),       # aggressive
+    "critical": (700, 20, 10),    # very aggressive — near-OOM urgency
+    "emergency": (500, 10, 5),    # maximum pressure
 }
-_GC_THRESHOLD_CURRENT: str = "ok"
 
 # F266-U4: gc.freeze() requires Python 3.14.7+ (gilstate_tss_set regression fix)
 _GC_FREEZE_ENABLED: bool = sys.version_info >= (3, 14, 7)
+_GC_THRESHOLD_CURRENT: str = "ok"
 
 # Triple-checked lock for init-once GC configuration (per PMB lesson #2154)
 _gc_configured = False
@@ -119,17 +131,22 @@ def _apply_gc_thresholds(state: str) -> None:
     """
     Apply GC generational thresholds for the given UMA state.
 
+    PHYSICS-06: When BlitzGCStrategy is active (GC disabled during sprint),
+    this is a no-op — threshold changes have no effect when GC is disabled.
+    The blitz teardown phase restores POST_TEARDOWN thresholds.
+
     Idempotent — skips if already on the given state.
     Fail-soft — logs and continues on any error.
 
-    After applying, if Python >= 3.14.7 and gc.freeze() is active,
-    a gen-2 collect + re-freeze is triggered to pin the new
-    "permanent" set under the tighter thresholds.
 
     Args:
         state: UMA state string — "ok" | "soft_warn" | "warn" | "critical" | "emergency".
     """
     global _GC_THRESHOLD_CURRENT
+    # PHYSICS-06: No-op when blitz is active — GC is disabled, threshold changes
+    # have no effect. Teardown will restore POST_TEARDOWN thresholds.
+    if _blitz_gc._active:
+        return
     if state == _GC_THRESHOLD_CURRENT:
         return
     threshold = _GC_THRESHOLDS.get(state)

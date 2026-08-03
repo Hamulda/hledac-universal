@@ -106,6 +106,28 @@ def _prefetch_pipeline_factory(*, duckdb_store: Any) -> Any:
     return (prefetch_pipeline, temporal_predictor)
 
 
+def _meta_reasoning_coordinator_factory(
+    *,
+    duckdb_store: Any,
+    sprint_id: str = "",
+    resume_from: dict | None = None,
+    resume_step: int = 0,
+    query_hash: str = "",  # UNIFIED-006
+) -> Any:
+    """UNIFIED-006: Create MetaReasoningCoordinator with optional resume state."""
+    from hledac.universal.coordinators.meta_reasoning_coordinator import (
+        UniversalMetaReasoningCoordinator,
+    )
+    return UniversalMetaReasoningCoordinator(
+        max_concurrent=3,
+        duckdb_store=duckdb_store,
+        sprint_id=sprint_id,
+        resume_from=resume_from,
+        resume_step=resume_step,
+        query_hash=query_hash,
+    )
+
+
 INJECTIONS: tuple[_Injection, ...] = (
     _Injection(name="policy_manager", factory=_policy_manager_factory, fail_soft=False, order=1),
     _Injection(
@@ -144,6 +166,12 @@ INJECTIONS: tuple[_Injection, ...] = (
         factory=_prefetch_pipeline_factory,
         fail_soft=True,
         order=6,
+    ),
+    _Injection(
+        name="meta_reasoning_coordinator",  # UNIFIED-006
+        factory=_meta_reasoning_coordinator_factory,
+        fail_soft=True,
+        order=7,
     ),
 )
 
@@ -201,6 +229,9 @@ class V2Init:
         duckdb_store: Any,
         rl_train_mode: bool,
         logger: _logging.Logger,
+        resume_from: dict | None = None,  # UNIFIED-006: ToT checkpoint nodes
+        resume_step: int = 0,             # UNIFIED-006: step at resume point
+        query_hash: str = "",             # UNIFIED-006: BLAKE2b-16 of query
     ) -> Any:
         """Initialize all services + apply all injections.
 
@@ -220,6 +251,9 @@ class V2Init:
             duckdb_store=duckdb_store,
             rl_train_mode=rl_train_mode,
             logger=logger,
+            resume_from=resume_from,  # UNIFIED-006
+            resume_step=resume_step,  # UNIFIED-006
+            query_hash=query_hash,    # UNIFIED-006
         )
 
         return self._ctx
@@ -308,6 +342,9 @@ class V2Init:
         duckdb_store: Any,
         rl_train_mode: bool,
         logger: _logging.Logger,
+        resume_from: dict | None = None,  # UNIFIED-006
+        resume_step: int = 0,             # UNIFIED-006
+        query_hash: str = "",             # UNIFIED-006
     ) -> None:
         """Apply all declarative injections to scheduler."""
         if flags is None:
@@ -325,6 +362,30 @@ class V2Init:
                 factory_kwargs["rl_train_mode"] = rl_train_mode
             elif inj.name in ("duckdb_store", "prefetch_pipeline"):
                 factory_kwargs["duckdb_store"] = duckdb_store
+            elif inj.name == "meta_reasoning_coordinator":  # UNIFIED-006
+                factory_kwargs["duckdb_store"] = duckdb_store
+                factory_kwargs["sprint_id"] = sprint_id
+                factory_kwargs["resume_from"] = resume_from
+                factory_kwargs["resume_step"] = resume_step
+                factory_kwargs["query_hash"] = query_hash
+                # SILICON-05: Create and wire semantic gravity field
+                try:
+                    from hledac.universal.knowledge.semantic_gravity import (
+                        SemanticGravityField,
+                    )
+                    _gravity_field = SemanticGravityField()
+                    factory_kwargs["gravity_field"] = _gravity_field
+                    # Also inject into scheduler so the pipeline can push embeddings
+                    gravity_inject = getattr(
+                        self._scheduler, "inject_gravity_field", None
+                    )
+                    if gravity_inject:
+                        gravity_inject(_gravity_field)
+                except Exception:
+                    logger.debug(
+                        'V2Init: SemanticGravityField init failed — '
+                        'continuing without gravity field'
+                    )
 
             try:
                 obj = inj.factory(**factory_kwargs)

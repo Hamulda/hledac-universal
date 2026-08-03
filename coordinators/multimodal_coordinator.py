@@ -346,6 +346,7 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         self.modality_processors[ModalityType.TEXT] = self._process_text
         self.modality_processors[ModalityType.IMAGE] = self._process_image
         self.modality_processors[ModalityType.AUDIO] = self._process_audio
+        self.modality_processors[ModalityType.VIDEO] = self._process_video
         self.modality_processors[ModalityType.DOCUMENT] = self._process_document
         self.modality_processors[ModalityType.CHART] = self._process_chart
 
@@ -520,9 +521,60 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
         return embedding.astype(np.float32)
 
     async def _process_audio(self, content: Any) -> ModalityOutput:
-        """Process audio content using MLX if available."""
-        features = {'duration': 'unknown', 'sample_rate': 0}
+        """
+        [SILICON-02/07] Process audio content via MediaDecoder transcription + IOC extraction.
+
+        Accepts:
+          - str: file path → decode + transcribe via AVFoundation/Speech
+          - np.ndarray: raw PCM samples → transcribe directly
+
+        SFSpeechRecognizer runs on ANE — zero CPU/GPU bandwidth.
+        Falls back to MLX encoder embedding if Speech framework unavailable.
+
+        [SILICON-07]: Transcribed text is scanned for IoCs via scan_text_for_iocs()
+        (Rust Aho-Corasick SIMD → Rust regex → MLX NER tiered fallback).
+        IOCs are included in features['iocs'] for downstream correlation.
+        """
+        features: dict[str, Any] = {'duration': 'unknown', 'sample_rate': 0, 'transcribed': False, 'iocs': [], 'ioc_count': 0, 'ioc_scanner': ''}
         try:
+            # Try MediaDecoder transcription first (ANE-accelerated)
+            from hledac.universal.multimodal.media_engine import MediaDecoder, is_audio_file
+
+            if isinstance(content, str) and is_audio_file(content):
+                decoder = MediaDecoder()
+                await decoder.initialize()
+                try:
+                    result = await decoder.transcribe(content)
+                    features['duration'] = result.duration_s
+                    features['sample_rate'] = 16000
+                    features['transcribed'] = True
+                    features['transcript_preview'] = result.text[:500] if result.text else ''
+                    features['confidence'] = result.confidence
+                    if result.text:
+                        # [SILICON-07]: Run IOC extraction on transcribed text
+                        try:
+                            from hledac.universal.multimodal.media_ioc_pipeline import scan_text_for_iocs
+                            iocs, scanner_name, _ = await scan_text_for_iocs(result.text)
+                            features['iocs'] = iocs
+                            features['ioc_count'] = len(iocs)
+                            features['ioc_scanner'] = scanner_name
+                        except ImportError:
+                            logger.debug('[SILICON-07] media_ioc_pipeline not available — IOC scan skipped')
+                        except Exception as exc:
+                            logger.debug('[SILICON-07] IOC scan failed for audio: %s', exc)
+
+                        # Generate embedding from transcribed text for cross-modal fusion
+                        embedding = self._generate_text_embedding(result.text)
+                        return ModalityOutput(
+                            modality=ModalityType.AUDIO,
+                            embedding=embedding,
+                            features=features,
+                            confidence=result.confidence,
+                        )
+                finally:
+                    await decoder.close()
+
+            # Fallback: raw numpy PCM samples → MLX encoder (existing path)
             if isinstance(content, np.ndarray):
                 features['duration'] = len(content)
                 features['sample_rate'] = 16000
@@ -539,7 +591,90 @@ class UniversalMultimodalCoordinator(UniversalCoordinator):
             logger.warning(f'Audio processing failed: {e}')
             embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
             confidence = 0.7
-        return ModalityOutput(modality=ModalityType.AUDIO, embedding=embedding, features=features, confidence=confidence)
+        return ModalityOutput(
+            modality=ModalityType.AUDIO,
+            embedding=embedding,
+            features=features,
+            confidence=confidence,
+        )
+
+    async def _process_video(self, content: Any) -> ModalityOutput:
+        """
+        [SILICON-02/07] Process video content via MediaDecoder + IOC extraction.
+
+        Accepts:
+          - str: file path → extract audio + keyframes → transcribe + OCR
+
+        Pipeline:
+          1. AVAssetReader → audio track as PCM float32 (VideoToolbox HW)
+          2. SFSpeechRecognizer → text from audio (ANE)
+          3. AVAssetImageGenerator → keyframes at 10s intervals
+          4. Vision VNRecognizeTextRequest → OCR on keyframes (ANE)
+          5. [SILICON-07] Combined text → scan_text_for_iocs() → IoCs
+          6. Combined text → embedding for cross-modal fusion
+
+        Fail-safe: returns ModalityOutput with random embedding if decoding fails.
+        """
+        features: dict[str, Any] = {
+            'duration': 'unknown',
+            'transcribed': False,
+            'frames_ocr': 0,
+            'combined_text_len': 0,
+            'iocs': [],
+            'ioc_count': 0,
+            'ioc_scanner': '',
+        }
+        try:
+            from hledac.universal.multimodal.media_engine import MediaDecoder, is_video_file
+
+            if isinstance(content, str) and is_video_file(content):
+                decoder = MediaDecoder()
+                await decoder.initialize()
+                try:
+                    result = await decoder.transcribe_video(content)
+                    features['duration'] = result.duration_s
+                    features['transcribed'] = bool(result.audio_transcript)
+                    features['frames_ocr'] = result.frame_count
+                    parts = [result.audio_transcript] if result.audio_transcript else []
+                    parts.extend(result.frame_texts)
+                    combined = ' '.join(parts)
+                    features['combined_text_len'] = len(combined)
+                    if combined:
+                        # [SILICON-07]: Run IOC extraction on combined text
+                        try:
+                            from hledac.universal.multimodal.media_ioc_pipeline import scan_text_for_iocs
+                            iocs, scanner_name, _ = await scan_text_for_iocs(combined)
+                            features['iocs'] = iocs
+                            features['ioc_count'] = len(iocs)
+                            features['ioc_scanner'] = scanner_name
+                        except ImportError:
+                            logger.debug('[SILICON-07] media_ioc_pipeline not available — IOC scan skipped')
+                        except Exception as exc:
+                            logger.debug('[SILICON-07] IOC scan failed for video: %s', exc)
+
+                        embedding = self._generate_text_embedding(combined)
+                        return ModalityOutput(
+                            modality=ModalityType.VIDEO,
+                            embedding=embedding,
+                            features=features,
+                            confidence=result.audio_confidence if result.audio_transcript else 0.6,
+                        )
+                finally:
+                    await decoder.close()
+
+            # Fallback: no transcription available
+            embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+            confidence = 0.65
+        except Exception as e:
+            logger.warning(f'Video processing failed: {e}')
+            embedding = np.random.randn(self.embedding_dim).astype(np.float32) * 0.1
+            confidence = 0.6
+        return ModalityOutput(
+            modality=ModalityType.VIDEO,
+            embedding=embedding,
+            features=features,
+            confidence=confidence,
+        )
 
     def _generate_audio_embedding_fallback(self, audio: Any) -> Any:
         """Generate audio embedding using numpy fallback."""

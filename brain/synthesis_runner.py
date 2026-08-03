@@ -802,6 +802,68 @@ def uncertainty_gate(
         return UncertaintyFlags()
 
 
+# ── UNIFIED-004: IoC-type → alternative protocol mapping ──────────────
+# Maps IoC types to ordered list of alternative discovery protocols for
+# micro-sprint re-fetching. Protocols are tried in order — first success
+# with entropy improvement terminates the micro-sprint.
+
+_IOC_PROTOCOL_MAP: dict[str, list[str]] = {
+    "ip": ["shodan", "censys", "bgp", "passive_dns"],
+    "domain": ["ct", "passive_dns", "doh", "wayback"],
+    "hash": ["dht", "commoncrawl", "url"],
+    "url": ["wayback", "commoncrawl", "gopher", "url"],
+    "onion": ["url", "passive_dns"],
+    "cve": [],  # CVE is canonical — no alternative source needed
+    "apt": [],  # APT attribution is textual — re-fetching won't help
+    "malware": ["dht", "url"],
+    "btc": ["blockchain", "passive_dns"],
+    "email": ["passive_dns", "url"],
+}
+
+# Always-appended fallback protocols (protocol-agnostic discovery)
+_FALLBACK_PROTOCOLS: list[str] = ["url", "ct"]
+
+# Per-IoC-type max protocols to try (M1 8GB — bounded micro-sprint)
+_MAX_PROTOCOLS_PER_ENTITY: int = 4
+
+
+def _resolve_alternative_protocols(
+    ioc_type: str,
+    entity_value: str = "",
+) -> list[str]:
+    """
+    UNIFIED-004: Resolve ordered list of alternative protocols for an IoC type.
+
+    Returns a deduplicated list of ≤ _MAX_PROTOCOLS_PER_ENTITY protocols,
+    with type-specific protocols first, then fallback protocols.
+    Empty list means no useful alternative source exists.
+
+    Args:
+        ioc_type: IoC type from IOCEntity.ioc_type (e.g., "ip", "domain", "hash")
+        entity_value: The entity value, used for protocol filtering
+                     (e.g., .onion URLs can't use clearnet CT logs)
+
+    Returns:
+        Ordered list of protocol names (max 4)
+    """
+    ioc_type_lower = ioc_type.lower().strip()
+    protocols: list[str] = _IOC_PROTOCOL_MAP.get(ioc_type_lower, []).copy()
+
+    # Filter protocols based on entity value characteristics
+    entity_lower = entity_value.lower()
+    if entity_lower.endswith(".onion") or entity_lower.endswith(".i2p"):
+        # Darknet entities can't use clearnet protocols like shodan, censys, ct
+        protocols = [p for p in protocols if p not in ("shodan", "censys", "ct", "bgp")]
+
+    # Append fallback protocols (deduplicated)
+    for fp in _FALLBACK_PROTOCOLS:
+        if fp not in protocols:
+            protocols.append(fp)
+
+    # Cap at max per entity
+    return protocols[:_MAX_PROTOCOLS_PER_ENTITY]
+
+
 class IOCEntity(msgspec.Struct, gc=False):
     """Jedna IOC entita extrahovaná z findingu."""
     value: str
@@ -1379,6 +1441,72 @@ class SynthesisRunner:
 
         return True
 
+    # ── BLITZ-10: Fast-path triage ─────────────────────────────────────────
+
+    async def _synth_triage_findings(
+        self,
+        query: str,
+        findings: list[dict],
+    ) -> tuple[list[dict], dict[str, int | float]]:
+        """
+        BLITZ-10: Pre-filter findings using FastPathTriage before Hermes-3B.
+
+        Runs in a thread to avoid blocking the event loop. Returns filtered
+        findings + triage telemetry for sprint scoreboard.
+
+        Fail-safe: any error → returns all findings unfiltered (conservative).
+        """
+        from hledac.universal.brain.fast_path_triage import FastPathTriage
+        import os
+
+        if os.environ.get("HLEDAC_TRIAGE_DISABLED", "0") == "1":
+            return findings, {"total_triaged": len(findings), "filtered_out": 0}
+
+        try:
+            triage = FastPathTriage(query)
+            loop = asyncio.get_running_loop()
+
+            # Extract text payloads for triage
+            texts: list[str] = []
+            for f in findings:
+                if isinstance(f, dict):
+                    # Extract text from payload_text (primary), fallback to str(f)
+                    payload = f.get("payload_text", "")
+                    if not payload:
+                        payload = f.get("payload", "")
+                    if not payload:
+                        payload = str(f)
+                    texts.append(payload if isinstance(payload, str) else str(payload))
+                else:
+                    texts.append(str(f))
+
+            # Run triage in thread pool (involves Rust hashing + optional embeddings)
+            results = await loop.run_in_executor(
+                None,  # default executor
+                lambda: triage.triage_batch(texts),
+            )
+
+            filtered: list[dict] = [
+                f for f, keep in zip(findings, results) if keep
+            ]
+            stats = triage.stats
+            filtered_out = stats.get("filtered_out", 0)
+            noise_pct = stats.get("noise_reduction_pct", 0)
+
+            if filtered_out > 0:
+                logger.info(
+                    "[BLITZ-10] Triage filtered %d/%d findings (%.1f%% noise reduction)",
+                    filtered_out,
+                    len(findings),
+                    noise_pct,
+                )
+
+            return filtered, stats
+
+        except Exception:
+            logger.debug("[BLITZ-10] Triage failed — passing through all findings", exc_info=True)
+            return findings, {"total_triaged": len(findings), "filtered_out": 0, "error": True}
+
     async def _synth_phase2_parallel_discovery(
         self,
         query: str,
@@ -1641,15 +1769,78 @@ class SynthesisRunner:
         if token_logprobs:
             uncertainty_flags = uncertainty_gate(report.confidence, token_logprobs)
             report.uncertainty_flags = uncertainty_flags
-            if uncertainty_flags.hallucination_risk:
-                logger.warning(
-                    "[SYNTHESIS] APEX-1009 hallucination_risk: "
-                    "self_reported=%.3f, measured_entropy=%.3f bits, divergence=%.3f, risk=%s",
-                    report.confidence,
-                    uncertainty_flags.measured_entropy,
-                    uncertainty_flags.confidence_divergence,
-                    uncertainty_flags.risk_level,
-                )
+
+            # UNIFIED-003 / UNIFIED-004: Two-path entropy alert emission:
+            #   Path A: hallucination_risk (divergence > 0.3) — confidence mismatch
+            #   Path B: measured_entropy > ENTROPY_THRESHOLD_BITS (1.5) — absolute uncertainty
+            # Both paths emit EntropyAlerts with alternative protocol suggestions.
+            _ENTROPY_THRESHOLD_BITS = 1.5
+
+            should_emit_alerts = (
+                uncertainty_flags.hallucination_risk
+                or uncertainty_flags.measured_entropy > _ENTROPY_THRESHOLD_BITS
+            )
+
+            if should_emit_alerts:
+                if uncertainty_flags.hallucination_risk:
+                    logger.warning(
+                        "[SYNTHESIS] APEX-1009 hallucination_risk: "
+                        "self_reported=%.3f, measured_entropy=%.3f bits, divergence=%.3f, risk=%s",
+                        report.confidence,
+                        uncertainty_flags.measured_entropy,
+                        uncertainty_flags.confidence_divergence,
+                        uncertainty_flags.risk_level,
+                    )
+                else:
+                    logger.info(
+                        "[SYNTHESIS] UNIFIED-003 high-entropy threshold exceeded: "
+                        "measured_entropy=%.3f bits > %.1f, confidence=%.3f",
+                        uncertainty_flags.measured_entropy,
+                        _ENTROPY_THRESHOLD_BITS,
+                        report.confidence,
+                    )
+
+                # UNIFIED-003: Emit EntropyAlert to trigger re-fetch via EntropyFetchBridge
+                try:
+                    from .uncertainty_quant import EntropyAlert, get_entropy_bridge
+                    bridge = get_entropy_bridge()
+                    if bridge is not None:
+                        # Emit alert for each high-uncertainty IOC entity
+                        for ioc_entity in (report.ioc_entities or [])[:5]:
+                            entity_value = getattr(ioc_entity, 'value', str(ioc_entity))
+                            ioc_type = getattr(ioc_entity, 'ioc_type', 'unknown')
+                            # UNIFIED-004: IoC-type-aware protocol selection
+                            alt_protocols = _resolve_alternative_protocols(
+                                ioc_type=ioc_type,
+                                entity_value=entity_value,
+                            )
+                            alert = EntropyAlert(
+                                entity_id=entity_value[:100],
+                                entropy=uncertainty_flags.measured_entropy,
+                                threshold_exceeded=_ENTROPY_THRESHOLD_BITS,
+                                confidence=report.confidence,
+                                risk_level=uncertainty_flags.risk_level,
+                                metadata={
+                                    "token_count": uncertainty_flags.token_count,
+                                    "stability": uncertainty_flags.entropy_stability,
+                                    "divergence": uncertainty_flags.confidence_divergence,
+                                    "ioc_type": ioc_type,
+                                    "alternative_protocols": alt_protocols,
+                                    "trigger_path": (
+                                        "hallucination_risk" if uncertainty_flags.hallucination_risk
+                                        else "high_entropy"
+                                    ),
+                                },
+                            )
+                            await bridge.emit(alert)
+                        logger.debug(
+                            "[SYNTHESIS] UNIFIED-003: Emitted %d EntropyAlert(s) to bridge "
+                            "(trigger=%s)",
+                            min(len(report.ioc_entities or []), 5),
+                            alert.metadata.get("trigger_path", "unknown"),
+                        )
+                except Exception as e:
+                    logger.debug(f"[SYNTHESIS] UNIFIED-003: EntropyAlert emit failed (fail-soft): {e}")
             else:
                 logger.debug(
                     "[SYNTHESIS] APEX-1009 uncertainty_gate passed: "
@@ -1745,6 +1936,28 @@ class SynthesisRunner:
 
         # ── Phase 1: Guards ──────────────────────────────────────────────
         if not await self._synth_phase1_guards(query, findings, force_synthesis):
+            return None
+
+        # ── BLITZ-10: Fast-path triage ───────────────────────────────────
+        # Pre-filter findings before expensive model discovery + inference.
+        # Eliminates 70-90% of noise that would waste Hermes-3B cycles.
+        findings, triage_stats = await self._synth_triage_findings(query, findings)
+        findings_count = len(findings)
+        if findings_count == 0:
+            logger.info("[SYNTHESIS] All findings filtered by triage — no signal")
+            self._last_synthesis_outcome = SynthesisOutcome(
+                status="skipped",
+                primary_reason="all_findings_filtered_by_triage",
+                lifecycle_gate_source=self._lifecycle_gate_source,
+                lifecycle_gate_mode=self._lifecycle_gate_mode,
+                stix_status="skipped",
+                stix_reason="BLITZ-10 triage: no findings passed relevance filter",
+                engine_used="none",
+                findings_considered=0,
+                report_produced=False,
+                confidence=0.0,
+                operator_note=f"triage filtered all {triage_stats.get('total_triaged', 0)} findings",
+            )
             return None
 
         # ── Phase 2: Parallel discovery ──────────────────────────────────

@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import hashlib
 import logging
 import os
 import signal
@@ -193,6 +194,7 @@ class SprintFlags(msgspec.Struct, frozen=True, gc=False):
     no_coordination: bool = False  # F26X-2: skip CoordinationLayer (canonical contract)
     production: bool = False  # F272B: abort on fetch=NA in pre-flight (exit 2)
     hermes_force: bool = False  # F273D: force-load Hermes3 model even if HLEDAC_ENABLE_HERMES_SYNTHESIS != '1'
+    blitz_mode: bool = False  # BLITZ-12: skip all stealth jitter delays (auto-enabled when duration ≤ 1800s)
 
 
 def _make_sprint_id() -> str:
@@ -1338,8 +1340,9 @@ def _get_live_feed_urls() -> list[str]:
 # =============================================================================
 
 # Sprint M218A: GC startup tuning for M1 UMA stability.
-# gc.freeze() reduces GC pause variance during long sprints.
-# gc.set_threshold(1000,50,50) reduces collection frequency.
+# PHYSICS-06/07: Now delegates to BlitzGCStrategy (canonical GC lifecycle).
+# _configure_gc_for_sprint() is a thin compatibility wrapper — the real work
+# happens in BlitzGCStrategy.sprint_start() called from run_sprint().
 # Opt-out via HLEDAC_DISABLE_GC_FREEZE=1.
 _gc_configured: bool = False
 
@@ -1348,51 +1351,37 @@ def _configure_gc_for_sprint() -> dict:
     """
     Configure Python GC for sprint workload.
 
-    Called once at sprint boot. Freezes GC to reduce pause variance on M1.
-    Sets threshold to (1000, 50, 50) to reduce collection frequency.
-    Opt-out via HLEDAC_DISABLE_GC_FREEZE=1.
+    PHYSICS-06/07: Compatibility wrapper — delegates to BlitzGCStrategy.
+    The canonical GC lifecycle is managed by BlitzGCStrategy:
+      - sprint_start() disables GC during active acquisition
+      - sprint_teardown() re-enables GC at winddown
 
-    Returns a dict with telemetry fields.
+    Called once at sprint boot. Returns a dict with telemetry fields.
+    Opt-out via HLEDAC_DISABLE_GC_FREEZE=1.
     """
     global _gc_configured
-    result = {
-        "gc_freeze_attempted": False,
-        "gc_freeze_applied": False,
-        "gc_thresholds": None,
-        "gc_freeze_error": None,
-    }
     if _gc_configured:
-        return result
+        return {"delegated_to": "BlitzGCStrategy", "already_configured": True}
 
-    import gc as _gc
-
-    result["gc_freeze_attempted"] = True
-    # gc.freeze() reduces GC pause variance during long sprints.
-    # F266-U4 FIX: Version guard — Python 3.14.7+ has the gilstate_tss_set fix.
-    # On M1 8GB UMA this is critical for stable MLX inference latency.
-    _gc_freeze_enabled = sys.version_info >= (3, 14, 7)
-    if _gc_freeze_enabled:
-        try:
-            if hasattr(_gc, "freeze"):
-                _gc.freeze()
-                result["gc_freeze_applied"] = True
-                logger.info("[GC] gc.freeze() applied — reduces GC pause variance")
-            else:
-                logger.debug("[GC] gc.freeze() not available on this Python build")
-        except Exception as exc:
-            result["gc_freeze_error"] = str(exc)
-            logger.debug(f"[GC] gc.freeze() failed (non-fatal): {exc}")
-
+    # PHYSICS-06/07: Delegate to BlitzGCStrategy (canonical path).
+    # sprint_start() is called from run_sprint() right before acquisition;
+    # this wrapper exists for backward-compat callers.
     try:
-        _gc.set_threshold(1000, 50, 50)
-        result["gc_thresholds"] = (1000, 50, 50)
-        logger.debug("[GC] gc.set_threshold(1000, 50, 50)")
-    except Exception as exc:
-        result["gc_thresholds"] = None
-        logger.debug(f"[GC] set_threshold failed (non-fatal): {exc}")
+        from hledac.universal.coordinators.resource.blitz_gc import blitz_gc as _bgc
 
-    _gc_configured = True
-    return result
+        _result = _bgc.sprint_start()
+        _gc_configured = True
+        return {
+            "delegated_to": "BlitzGCStrategy",
+            "blitz_active": _result.get("blitz_active", False),
+            "freeze_method": _result.get("freeze_method", "none"),
+            "blitz_thresholds": _result.get("blitz_thresholds"),
+            "startup_snapshot_count": _result.get("startup_snapshot_count", 0),
+        }
+    except Exception as _exc:
+        logger.debug("[GC] BlitzGCStrategy delegation failed (non-fatal): %s", _exc)
+        _gc_configured = True
+        return {"delegated_to": "BlitzGCStrategy", "error": str(_exc)}
 
 
 def run_pre_sprint_checks() -> bool:
@@ -2046,6 +2035,7 @@ async def run_sprint(
     force: bool = False,  # F221-ABORT: override zero-active-budget pre-flight guard
     flags: SprintFlags | None = None,  # F26X-3/F260 fix: layer-injection flag bundle
     shutdown_event: asyncio.Event | None = None,  # F350M-R ISSUE #4: cooperative shutdown event
+    resume: bool = True,  # UNIFIED-006: attempt deterministic ToT recovery from prior crash
 ) -> None:
     """
     Run a full sprint lifecycle with UMA monitoring and delta reporting.
@@ -2188,6 +2178,11 @@ async def run_sprint(
 
     # Sprint ID
     sprint_id = _make_sprint_id()
+    # UNIFIED-006: Deterministic query hash for cross-sprint ToT recovery.
+    # BLAKE2b-16 hex — same query produces same hash, enabling orphan
+    # checkpoint lookup across different random sprint_ids after a crash.
+    # M1 8GB safe: blake2b is NEON-accelerated, ~2 µs for a typical query.
+    _query_hash = hashlib.blake2b(query.encode(), digest_size=16).hexdigest() if resume else ""
     _phase_times["WARMUP"] = time.monotonic()
 
     # APEX-1001: Acquire power assertion to prevent macOS sleep during sprint.
@@ -2322,6 +2317,74 @@ async def run_sprint(
             _duckdb_init_ok = _duckdb_result
         # Circuit-breaker result is _init_results[1] — already logged inside _cb_reset_awaitable.
 
+    # UNIFIED-006: Deterministic ToT checkpoint recovery — search by query_hash
+    # (BLAKE2b-16 of query) across ALL sprint_ids. The old UNIFIED-005 probe
+    # was broken: it used the brand-new random sprint_id and never found anything.
+    # Now: same query → same hash → finds orphan from any crashed sprint.
+    _resume_from: dict | None = None
+    _resume_step: int = 0
+    if _duckdb_init_ok and resume:
+        try:
+            from hledac.universal.coordinators.meta_reasoning_coordinator import ThoughtNode
+
+            _orphan_row = await store.async_get_latest_tot_checkpoint_by_query_hash(
+                query_hash=_query_hash,
+            )
+            if _orphan_row is not None:
+                _orphan_step, _tree_json_str, _ts, _stored_checksum, _orphan_sprint_id = _orphan_row
+                # Verify checksum
+                _raw = _tree_json_str.encode("utf-8")
+                _computed = hashlib.blake2b(_raw, digest_size=32).hexdigest()
+                if _computed == _stored_checksum:
+                    _envelope = orjson.loads(_raw)
+                    _raw_nodes = _envelope.get("nodes", {})
+                    # Deserialize: dict → ThoughtNode (msgspec.Struct)
+                    _nodes: dict[str, ThoughtNode] = {}
+                    for _nid, _ndata in _raw_nodes.items():
+                        try:
+                            _nodes[_nid] = ThoughtNode(
+                                node_id=_ndata.get("node_id", _nid),
+                                thought=_ndata.get("thought", ""),
+                                value_estimate=_ndata.get("value_estimate", 0.0),
+                                parent=_ndata.get("parent"),
+                                children=_ndata.get("children", []),
+                                visited=_ndata.get("visited", False),
+                                expanded=_ndata.get("expanded", False),
+                                depth=_ndata.get("depth", 0),
+                                cost=_ndata.get("cost", 0.0),
+                                uncertainty=_ndata.get("uncertainty", 0.0),
+                            )
+                        except Exception:
+                            pass  # skip corrupt nodes
+                    if _nodes:
+                        _resume_from = _nodes
+                        _resume_step = _orphan_step
+                        logger.warning(
+                            "[UNIFIED-006] 🔄 RESUMING ToT from checkpoint: "
+                            "orphan_sprint=%s step=%d nodes=%d checksum=%s",
+                            _orphan_sprint_id[:12],
+                            _orphan_step,
+                            len(_nodes),
+                            _stored_checksum[:16],
+                        )
+                    else:
+                        logger.warning(
+                            "[UNIFIED-006] Checkpoint found but all nodes failed deserialization — "
+                            "starting fresh. orphan_sprint=%s",
+                            _orphan_sprint_id[:12],
+                        )
+                else:
+                    logger.error(
+                        "[UNIFIED-006] Checksum mismatch — checkpoint corrupt, starting fresh. "
+                        "stored=%s computed=%s",
+                        _stored_checksum[:16],
+                        _computed[:16],
+                    )
+            # Don't clean up orphaned checkpoints — the coordinator may need them.
+            # Cleanup happens in the finally block after successful completion.
+        except Exception:
+            pass  # fail-soft: checkpoint probe must never block sprint start
+
     # Scheduler config
     # A2-4: windup_lead_s now derived from _early_config.effective_windup_lead_s
     # (duplicated formula removed — guard and scheduler now use the same source)
@@ -2377,7 +2440,38 @@ async def run_sprint(
         extreme_mode=extreme_mode,
     )
 
+    # BLITZ-12: Set context var BEFORE any child tasks are spawned so
+    # all TaskGroup children inherit blitz_mode via contextvars propagation.
+    # When True, stealth/anti-correlation jitter delays are skipped entirely.
+    _blitz = getattr(flags, 'blitz_mode', False) if flags else False
+    if _blitz:
+        from hledac.universal.core.telemetry.context_state import set_blitz_mode as _set_blitz
+        _set_blitz(True)
+        logger.info("[BLITZ-12] Blitz mode enabled — stealth jitter delays skipped (duration=%ds ≤ 1800s)", int(duration_s))
+        # BLITZ-15: Reset dead-host tracking at sprint start.
+        from hledac.universal.fetching.public_fetcher import reset_blitz_dead_hosts
+        reset_blitz_dead_hosts()
+
     scheduler = SprintSchedulerV2(_config=config, _flags=flags)
+
+    # PHYSICS-06/07: Activate BlitzGC mode — disable automatic GC for the
+    # active sprint window. Only explicit gen-0 ticks during I/O-wait windows
+    # will run. Full gen-2 sweep deferred to sprint_teardown() at winddown.
+    # MUST be called after all module imports and DuckDB init are complete,
+    # but BEFORE the acquisition phase begins.
+    try:
+        from hledac.universal.coordinators.resource.blitz_gc import blitz_gc
+
+        _blitz_telemetry = blitz_gc.sprint_start()
+        logger.info(
+            "[PHYSICS-06] BlitzGC active — GC disabled for active sprint window. "
+            "freeze=%s, thresholds=%s, startup_objects=%d",
+            _blitz_telemetry.get("freeze_method"),
+            _blitz_telemetry.get("blitz_thresholds"),
+            _blitz_telemetry.get("startup_snapshot_count", 0),
+        )
+    except Exception as _blitz_err:
+        logger.debug("[PHYSICS-06] BlitzGC sprint_start failed (fail-safe): %s", _blitz_err)
 
     # A2-3: Unified init via V2Init.run() — replaces:
     # EvidenceLog init + WARMUP event, SprintLifecycleManager creation,
@@ -2396,6 +2490,9 @@ async def run_sprint(
         duckdb_store=store,
         rl_train_mode=rl_train_mode,
         logger=logger,
+        resume_from=_resume_from,  # UNIFIED-006: ToT checkpoint nodes (None if fresh)
+        resume_step=_resume_step,  # UNIFIED-006: step counter at resume point
+        query_hash=_query_hash,    # UNIFIED-006: BLAKE2b-16 of query
     )
 
     # A2-3: Retrieve EvidenceLog from scheduler (injected by V2Init._apply_injections)
@@ -3299,6 +3396,8 @@ async def run_sprint(
                 analyst_brief=scheduler.get_analyst_brief(),
                 # Sprint F238E Phase C: Runtime timer events for optional debug export
                 timer_events=getattr(result, "timer_events", None),
+                # APEX-1009: Uncertainty flags from synthesis — propagated to export for annotation
+                uncertainty_flags=getattr(result, "synthesis_uncertainty_flags", None) or None,
             )
 
             # Sprint F155: Log enrichment level
@@ -3365,6 +3464,22 @@ async def run_sprint(
         except Exception as e:
             logger.debug(f"[F285] scheduler.aclose() in finally block failed: {e}")  # fail-safe
 
+        # BLITZ-07: Run DuckDB teardown maintenance (single CHECKPOINT + conditional VACUUM).
+        # During ACTIVE phase, op-count and time-based maintenance were disabled
+        # to prevent 100-500ms I/O stalls on M1 8GB. Now we run one atomic maintenance
+        # cycle before closing the store. Fail-safe: any error is non-fatal.
+        try:
+            store.set_maintenance_disabled_during_active(False)
+            await store.run_teardown_maintenance()
+            # BLITZ-09: Switch journal from OFF→WAL for atomic final export.
+            # Must run AFTER maintenance re-enable and BEFORE store close.
+            store.set_journal_active_optimized(False)
+            await store.run_journal_teardown()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[BLITZ-07/09] teardown maintenance/journal failed (non-fatal): {e}")  # fail-safe
+
         # ISSUE-D-1: Close EvidenceLog + DuckDBStore in parallel (independent resources).
         # F285 constraint respected: scheduler already closed, no WAL write race.
         _core_close_errors: list[Exception | None] = []
@@ -3427,6 +3542,22 @@ async def run_sprint(
             await asyncio.to_thread(_memory_cycle.gc_cycle_maintain, force=False)
         except Exception as e:
             logger.debug(f"[TEARDOWN] gc_cycle_maintain failed: {e}")  # fail-soft
+        # UNIFIED-005: Clean up ToT checkpoints for this completed sprint.
+        # Only runs on successful completion — if the sprint crashed, checkpoints
+        # remain for next run's recovery probe.
+        try:
+            from hledac.universal.coordinators.tot_checkpointer import (
+                TransactionalToTCheckpointer,
+            )
+            _cleanup_ckpt = TransactionalToTCheckpointer(
+                sprint_id=sprint_id,
+                duckdb_store=store,
+                interval_s=30.0,
+            )
+            await _cleanup_ckpt.cleanup()
+            logger.debug("[UNIFIED-005] ToT checkpoints cleaned up for sprint=%s", sprint_id[:12])
+        except Exception:
+            pass  # fail-soft
         # F266-LOCK: Release sprint-level lock — must happen after all cleanup
         # so that concurrent sprints don't steal the lock before teardown completes.
         if _sprint_lock_mgr is not None:
@@ -3660,6 +3791,10 @@ def _run_sprint_loop(args: argparse.Namespace) -> None:
         no_coordination=getattr(args, "no_coordination", False),
         production=getattr(args, "production", False),
         hermes_force=getattr(args, "force_hermes", False),
+        # BLITZ-12: auto-enable blitz mode for sprints ≤ 30 min (1800s).
+        # In a one-shot burst, stealth anti-correlation timing is irrelevant
+        # and wastes 10-50s across 100+ fetch requests.
+        blitz_mode=args.duration <= 1800,
     )
     # A2: Single canonical path through build_runtime() — no duplicated
     # loop/signal/GC/malloc setup. uvloop, QoS, signals all handled inside.

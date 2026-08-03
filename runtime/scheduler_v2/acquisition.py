@@ -977,6 +977,20 @@ class AcquisitionOrchestrator:
                 ).decode("utf-8")
             except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
                 ctx.result.synthesis_text = str(report)[:4096]
+            # APEX-1009: Extract uncertainty_flags from synthesis report
+            _uf = getattr(report, "uncertainty_flags", None)
+            if _uf is not None:
+                try:
+                    ctx.result.synthesis_uncertainty_flags = {
+                        "hallucination_risk": getattr(_uf, "hallucination_risk", False),
+                        "measured_entropy": getattr(_uf, "measured_entropy", 0.0),
+                        "confidence_divergence": getattr(_uf, "confidence_divergence", 0.0),
+                        "risk_level": getattr(_uf, "risk_level", "low"),
+                        "token_count": getattr(_uf, "token_count", 0),
+                        "entropy_stability": getattr(_uf, "entropy_stability", 0.0),
+                    }
+                except Exception:  # noqa: BLE001 — best-effort; non-critical
+                    ctx.result.synthesis_uncertainty_flags = {}
             log.info(
                 "[F259] Synthesis complete: success=%s, findings=%d",
                 ctx.result.synthesis_success,

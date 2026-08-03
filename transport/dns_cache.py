@@ -4,7 +4,12 @@ transport/dns_cache.py
 LRU DNS cache for transport-layer prefetch.
 Extracted from unified_transport.py (F350M-R refactor).
 
-Bounded: max 256 entries (~128KB RAM for 50-char hostname + 4IP)
+[PHYSICS]-03/04: Upgraded to 1024 entries (matching Rust LRU) with a direct
+``rust.dns.resolve_async()`` primary path that bypasses macOS mDNSResponder
+via DoT to Cloudflare. Falls back to ``async_getaddrinfo()`` if rust.dns is
+unavailable.
+
+Bounded: max 1024 entries (~512KB RAM for 50-char hostname + 4IP)
 TTL: 60s (balances freshness vs DNS overhead)
 
 M1 8GB: Zero network at import, bounded memory.
@@ -13,6 +18,7 @@ Invariants:
   [DNS-1] Darknet addresses (.onion, .i2p) never hit OS resolver
   [DNS-2] Single-flight pattern prevents thundering herd on cache miss
   [DNS-3] Fire-and-forget prefetch, never blocks transport
+  [DNS-4] rust.dns primary path — DoT bypasses mDNSResponder bottleneck
 """
 from __future__ import annotations
 
@@ -23,26 +29,79 @@ from typing import Any
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.async_helpers import async_getaddrinfo, safe_create_task
 
+# [PHYSICS]-03: Lazy check for rust.dns availability — True when dns feature
+# is enabled in the Rust build (default since [PHYSICS]-03/04 fix).
+_HAS_RUST_DNS: bool = False
+try:
+    import rust
+    _HAS_RUST_DNS = hasattr(rust, "dns") and hasattr(rust.dns, "resolve_async")
+except Exception:
+    pass
+
 
 class DnsCache:
     """
     LRU DNS cache for transport-layer prefetch.
 
+    [PHYSICS]-03/04: Resolution now goes through ``rust.dns.resolve_async()``
+    (DoT to Cloudflare) as the primary path, bypassing macOS mDNSResponder.
+    Falls back to ``async_getaddrinfo()`` (which also tries rust.dns) if the
+    direct call fails.
+
     SEC-01: Darknet hosts (.onion, .i2p) are never resolved via the
     OS resolver. The Tor/I2P proxy handles DNS internally via socks5h://.
     """
-    __slots__ = ('_cache', '_inflight', '_order', '_lock', '_max_size', '_ttl_s')
+    __slots__ = (
+        '_cache', '_inflight', '_order', '_lock', '_max_size', '_ttl_s',
+        '_prefetch_max_urls', '_prefetch_semaphore',
+    )
 
-    def __init__(self, max_size: int = 256, ttl_s: float = 60.0) -> None:
+    # [PHYSICS]-03: Default cache size raised from 256 to 1024 to match
+    # the Rust DnsCache. 1024 hosts × ~500B per entry = ~512KB — M1 8GB safe.
+    # [PHYSICS]-05: prefetch_max_urls=500 (up from 50) for swarm/blitz
+    # fetching where discovery returns 200+ unique hosts.  Bounded by a
+    # semaphore (50 concurrent, matching Rust DNS resolver) so we never
+    # overwhelm the DoT resolver.
+    def __init__(
+        self,
+        max_size: int = 1024,
+        ttl_s: float = 60.0,
+        prefetch_max_urls: int = 500,
+        prefetch_concurrency: int = 50,
+    ) -> None:
         self._cache: dict[str, tuple[list[str], float]] = {}
         self._inflight: dict[str, asyncio.Future[list[str] | None]] = {}
         self._order: LRUCache[str, None] = LRUCache(max_size=max_size)
         self._lock = asyncio.Lock()
         self._max_size = max_size
         self._ttl_s = ttl_s
+        self._prefetch_max_urls = prefetch_max_urls
+        self._prefetch_semaphore = asyncio.Semaphore(prefetch_concurrency)
+
+    async def _resolve_via_rust_dns(self, real_host: str) -> list[str] | None:
+        """[PHYSICS]-03: Direct rust.dns resolution — DoT to Cloudflare.
+
+        Bypasses mDNSResponder entirely. Returns list of IP strings or None
+        on failure (caller falls back to async_getaddrinfo).
+        """
+        if not _HAS_RUST_DNS:
+            return None
+        try:
+            loop = asyncio.get_running_loop()
+            ips: list[str] = await loop.run_in_executor(
+                None,
+                lambda: rust.dns.resolve_async(real_host, "A"),
+            )
+            return ips if ips else None
+        except Exception:
+            return None
 
     async def resolve(self, host: str) -> list[str] | None:
         """Resolve hostname, returning cached IPs if fresh.
+
+        [PHYSICS]-03/04: Primary path = rust.dns.resolve_async() (DoT to
+        Cloudflare). Secondary path = async_getaddrinfo(). Both bypass
+        mDNSResponder when the dns feature is enabled.
 
         C3-01 FIX: Single-flight pattern — concurrent misses for the same host
         wait on a shared Future instead of spawning parallel DNS queries.
@@ -81,10 +140,15 @@ class DnsCache:
             else:
                 port = 443
                 real_host = host
-            infos = await async_getaddrinfo(real_host, port, timeout=2.0)
-            ips: list[str] | None = None
-            if infos:
-                ips = [info[4][0] for info in infos if len(info) > 4]
+
+            # [PHYSICS]-03: PRIMARY path — direct rust.dns (DoT, bypasses mDNSResponder)
+            ips: list[str] | None = await self._resolve_via_rust_dns(real_host)
+            if ips is None:
+                # SECONDARY path — async_getaddrinfo (also prefers rust.dns if available)
+                infos = await async_getaddrinfo(real_host, port, timeout=2.0)
+                if infos:
+                    ips = [info[4][0] for info in infos if len(info) > 4]
+
             async with self._lock:
                 if ips:
                     self._order.pop(host, None)
@@ -103,11 +167,21 @@ class DnsCache:
             return None
 
     async def prefetch(self, urls: list[str]) -> None:
-        """Prefetch DNS for top-N unique hosts from URL list. Fire-and-forget."""
+        """Prefetch DNS for up to ``_prefetch_max_urls`` unique hosts.
+
+        [PHYSICS]-05: Cap raised from 50 → 500 (default) for swarm/blitz
+        fetching where discovery returns 200+ unique hosts.  A bounded
+        ``asyncio.Semaphore(50)`` gates concurrent resolution so the
+        DoT resolver is never overwhelmed — excess hosts are skipped
+        (fire-and-forget semantics preserved).
+
+        Each resolve() call uses rust.dns DoT as the primary path,
+        bypassing mDNSResponder entirely.
+        """
         from urllib.parse import urlparse
 
         hosts = set()
-        for url in urls[:50]:  # Cap at 50 URLs
+        for url in urls[: self._prefetch_max_urls]:
             try:
                 parsed = urlparse(url)
                 if parsed.netloc:
@@ -119,7 +193,16 @@ class DnsCache:
             except (ValueError, OSError):
                 continue
         for host in hosts:
-            safe_create_task(self.resolve(host), name=f'dns_prefetch:{host}')
+            # [PHYSICS]-05: Bounded semaphore — skip when saturated instead
+            # of queueing, preserving fire-and-forget semantics.
+            if self._prefetch_semaphore.locked():
+                continue
+            safe_create_task(self._prefetch_one(host), name=f'dns_prefetch:{host}')
+
+    async def _prefetch_one(self, host: str) -> None:
+        """Resolve a single host for prefetch, holding the semaphore slot."""
+        async with self._prefetch_semaphore:
+            await self.resolve(host)
 
     async def close(self) -> None:
         async with self._lock:
@@ -127,11 +210,18 @@ class DnsCache:
             self._order.clear()
 
     def status(self) -> dict[str, Any]:
-        """Return DNS cache telemetry snapshot."""
+        """Return DNS cache telemetry snapshot.
+
+        [PHYSICS]-03: Now includes rust_dns_available flag for monitoring.
+        [PHYSICS]-05: Now includes prefetch_max_urls and prefetch concurrency.
+        """
         return {
             'cached_hosts': len(self._cache),
             'max_size': self._max_size,
             'ttl_s': self._ttl_s,
+            'rust_dns_available': _HAS_RUST_DNS,
+            'prefetch_max_urls': self._prefetch_max_urls,
+            'prefetch_saturated': self._prefetch_semaphore.locked(),
         }
 
 

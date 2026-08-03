@@ -6,17 +6,28 @@
 //!   - ``zstd`` — higher ratio (~3:1 on text), slower. Used when lz4
 //!     output is not smaller than input (i.e. incompressible data).
 //!
-//! Wire format: 1-byte header (`0x00`=uncompressed, `0x01`=lz4, `0x02`=zstd)
-//! followed by the compressed payload. This allows the decompressor to
-//! pick the right codec without an external schema.
+//! Wire format: 1-byte header (`0x00`=uncompressed, `0x01`=lz4, `0x02`=zstd,
+//! `0x03`=zstd_with_dict) followed by the compressed payload. For `0x03`,
+//! a 4-byte little-endian dictionary ID follows the marker before the
+//! compressed payload. This allows the decompressor to pick the right codec
+//! and dictionary without an external schema.
 //!
 //! Bounds:
 //!   - Input: 64 B ≤ page ≤ 1 MB (rejected outside range)
 //!   - Output: always ≤ input bytes (codec guarantees)
 //!   - Never panics — all errors return a meaningful Python exception.
 
+use std::collections::HashMap;
+use std::io::Read;
+use std::sync::{LazyLock, Mutex};
+
 use pyo3::prelude::*;
 use rayon::prelude::*;
+
+/// Global dictionary registry: dict_id → raw zstd dictionary bytes.
+/// Populated via Python `register_zstd_dict()` at startup.
+static DICT_REGISTRY: LazyLock<Mutex<HashMap<u32, Vec<u8>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -32,6 +43,10 @@ const MAX_PAGE_SIZE: usize = 1 * 1024 * 1024; // 1 MiB
 const HDR_UNCOMPRESSED: u8 = 0x00;
 const HDR_LZ4: u8 = 0x01;
 const HDR_ZSTD: u8 = 0x02;
+const HDR_ZSTD_DICT: u8 = 0x03;
+
+/// Size of the dictionary ID field after HDR_ZSTD_DICT marker (little-endian u32).
+const DICT_ID_SIZE: usize = 4;
 
 // ---------------------------------------------------------------------------
 // Core compression — lz4 first, zstd fallback
@@ -87,6 +102,77 @@ fn compress_page_impl(data: &[u8]) -> Result<Vec<u8>, &'static str> {
     }
 }
 
+/// Compress a page using a pre-registered zstd dictionary.
+///
+/// Wire format: `[HDR_ZSTD_DICT][dict_id: 4 bytes LE][compressed_payload]`.
+/// If the dictionary isn't registered, falls back to plain zstd (HDR_ZSTD).
+/// If compression doesn't save space, returns uncompressed.
+fn compress_page_with_dict_impl(data: &[u8], dict_id: u32) -> Result<Vec<u8>, &'static str> {
+    if data.len() < MIN_PAGE_SIZE {
+        return Err("input too small (min 64 bytes)");
+    }
+    if data.len() > MAX_PAGE_SIZE {
+        return Err("input too large (max 1 MiB)");
+    }
+
+    let dict = DICT_REGISTRY
+        .lock()
+        .map_err(|_| "dict registry lock poisoned")?
+        .get(&dict_id)
+        .cloned();
+
+    match dict {
+        Some(dict_data) => {
+            // Compress with dictionary
+            let mut encoder = zstd::stream::Encoder::with_dictionary(
+                Vec::new(), 3, &dict_data[..],
+            ).map_err(|_| "zstd dict encoder init failed")?;
+            // Use write_all via io::Write
+            std::io::Write::write_all(&mut encoder, data)
+                .map_err(|_| "zstd dict compress failed")?;
+            let zstd_out = encoder.finish()
+                .map_err(|_| "zstd dict finish failed")?;
+
+            if zstd_out.len() < data.len() {
+                let mut out = Vec::with_capacity(1 + DICT_ID_SIZE + zstd_out.len());
+                out.push(HDR_ZSTD_DICT);
+                out.extend_from_slice(&dict_id.to_le_bytes());
+                out.extend_from_slice(&zstd_out);
+                Ok(out)
+            } else {
+                // Dictionary didn't help — store uncompressed
+                let mut out = Vec::with_capacity(1 + data.len());
+                out.push(HDR_UNCOMPRESSED);
+                out.extend_from_slice(data);
+                Ok(out)
+            }
+        }
+        None => {
+            // Dictionary not registered — fall back to plain zstd
+            let zstd_out = match zstd::encode_all(data, 3) {
+                Ok(out) => out,
+                Err(_) => {
+                    let mut out = Vec::with_capacity(1 + data.len());
+                    out.push(HDR_UNCOMPRESSED);
+                    out.extend_from_slice(data);
+                    return Ok(out);
+                }
+            };
+            if zstd_out.len() < data.len() {
+                let mut out = Vec::with_capacity(1 + zstd_out.len());
+                out.push(HDR_ZSTD);
+                out.extend_from_slice(&zstd_out);
+                Ok(out)
+            } else {
+                let mut out = Vec::with_capacity(1 + data.len());
+                out.push(HDR_UNCOMPRESSED);
+                out.extend_from_slice(data);
+                Ok(out)
+            }
+        }
+    }
+}
+
 /// Decompress wire-format bytes back to original page.
 fn decompress_page_impl(wire: &[u8]) -> Result<Vec<u8>, &'static str> {
     if wire.is_empty() {
@@ -107,6 +193,32 @@ fn decompress_page_impl(wire: &[u8]) -> Result<Vec<u8>, &'static str> {
         HDR_ZSTD => match zstd::decode_all(payload) {
             Ok(out) => Ok(out),
             Err(_) => Err("zstd decompress failed"),
+        },
+        HDR_ZSTD_DICT => {
+            if payload.len() < DICT_ID_SIZE {
+                return Err("zstd dict wire too short (missing dict ID)");
+            }
+            let dict_id_bytes: [u8; 4] = payload[..DICT_ID_SIZE]
+                .try_into()
+                .map_err(|_| "zstd dict id parse failed")?;
+            let dict_id = u32::from_le_bytes(dict_id_bytes);
+            let compressed = &payload[DICT_ID_SIZE..];
+            let dict = DICT_REGISTRY
+                .lock()
+                .map_err(|_| "dict registry lock poisoned")?
+                .get(&dict_id)
+                .cloned();
+            match dict {
+                Some(dict_data) => {
+                    let mut decoder = zstd::stream::Decoder::with_dictionary(compressed, &dict_data[..])
+                        .map_err(|_| "zstd dict decoder init failed")?;
+                    let mut out = Vec::new();
+                    std::io::copy(&mut decoder, &mut out)
+                        .map_err(|_| "zstd dict decompress read failed")?;
+                    Ok(out)
+                }
+                None => Err("unknown dictionary ID — register it first"),
+            }
         },
         _ => Err("unknown compression marker"),
     }
@@ -227,6 +339,71 @@ pub fn batch_decompress_pages(wires: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
+// Dictionary-aware compression — HEIST-07
+// ---------------------------------------------------------------------------
+
+/// Register a zstd dictionary for use with compress_page_dict.
+///
+/// Dictionaries are trained offline (e.g., via zstd_compressor.py) and loaded
+/// at startup. Each dictionary gets a unique u32 ID. The registry is global
+/// and thread-safe (Mutex-protected HashMap).
+///
+/// Args:
+///   dict_id: u32 — unique dictionary identifier
+///   dict_data: bytes — raw zstd dictionary bytes (from zstd.train_dictionary)
+///
+/// Returns:
+///   bool — True if registered, False if ID already exists
+#[pyfunction]
+pub fn register_zstd_dict(dict_id: u32, dict_data: Vec<u8>) -> PyResult<bool> {
+    let mut registry = DICT_REGISTRY
+        .lock()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+            format!("dict registry lock poisoned: {}", e)
+        ))?;
+    if registry.contains_key(&dict_id) {
+        return Ok(false);
+    }
+    registry.insert(dict_id, dict_data);
+    Ok(true)
+}
+
+/// Unregister a zstd dictionary, freeing its memory.
+///
+/// Args:
+///   dict_id: u32 — dictionary ID to remove
+///
+/// Returns:
+///   bool — True if removed, False if not found
+#[pyfunction]
+pub fn unregister_zstd_dict(dict_id: u32) -> PyResult<bool> {
+    let mut registry = DICT_REGISTRY
+        .lock()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+            format!("dict registry lock poisoned: {}", e)
+        ))?;
+    Ok(registry.remove(&dict_id).is_some())
+}
+
+/// Compress a page using a pre-registered zstd dictionary.
+///
+/// Wire format: `[0x03][dict_id: 4 bytes LE][zstd_compressed_with_dict]`.
+/// Falls back to plain zstd (0x02) if dictionary not registered.
+///
+/// Args:
+///   data: bytes — raw page (64 B ≤ len ≤ 1 MB)
+///   dict_id: int — dictionary ID registered via register_zstd_dict
+///
+/// Returns:
+///   bytes — wire-format compressed page
+#[pyfunction]
+pub fn compress_page_dict(data: &[u8], dict_id: u32) -> PyResult<Vec<u8>> {
+    compress_page_with_dict_impl(data, dict_id).map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("compress_page_dict: {}", e))
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Raw LZ4 for JSONL streaming — lz4_flex frame format (no wire header)
 // ---------------------------------------------------------------------------
 
@@ -338,6 +515,9 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decompress_page, m)?)?;
     m.add_function(wrap_pyfunction!(batch_compress_pages, m)?)?;
     m.add_function(wrap_pyfunction!(batch_decompress_pages, m)?)?;
+    m.add_function(wrap_pyfunction!(register_zstd_dict, m)?)?;
+    m.add_function(wrap_pyfunction!(unregister_zstd_dict, m)?)?;
+    m.add_function(wrap_pyfunction!(compress_page_dict, m)?)?;
     Ok(())
 }
 

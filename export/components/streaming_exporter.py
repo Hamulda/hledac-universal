@@ -153,6 +153,23 @@ async def export_sprint_streaming(store: Any, handoff: ExportHandoff, sprint_id:
     async def _write_section(section_name: str, content: str) -> None:
         try:
             import aiofiles as _f273e_aiofiles
+            # HEIST-04: Attempt zstd dictionary compression for sections >= 256 bytes
+            content_bytes = content.encode("utf-8")
+            if len(content_bytes) >= 256:
+                try:
+                    from hledac.universal.export.components.zstd_dict_exporter import compress_export_section
+                    compressed = compress_export_section(content_bytes)
+                    if len(compressed) < len(content_bytes):
+                        # Write compressed (latin-1 safe binary round-trip)
+                        async with _f273e_aiofiles.open(output_path, 'ab') as f:
+                            await f.write(b'\n\n')
+                            await f.write(compressed)
+                            await f.write(b'\n\n')
+                        result.sections_written += 1
+                        return
+                except Exception:
+                    pass  # Fall through to uncompressed write
+            # Uncompressed path (small sections or compression unavailable)
             async with _f273e_aiofiles.open(output_path, 'a', encoding='utf-8') as f:
                 await f.write(f'\n\n{content}\n\n')
         except ImportError:

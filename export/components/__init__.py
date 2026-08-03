@@ -2,8 +2,10 @@
 
 # hledac/universal/export/components/__init__.py
 # Sprint F11N: Streaming export components
+# PHYSICS-08: SprintExportBuffer for continuous background serialization
 from .graph_viz_writer import GraphVizSection, stream_graph_viz_section
 from .ioc_table_writer import stream_ioc_table_section
+from .sprint_buffer import SprintExportBuffer
 from .stix_streaming import STIXStreamingResult, stream_stix_bundle
 from .streaming_exporter import SprintStreamingResult, export_sprint_streaming
 
@@ -15,4 +17,5 @@ __all__ = [
     "SprintStreamingResult",
     "stream_stix_bundle",
     "STIXStreamingResult",
+    "SprintExportBuffer",
 ]

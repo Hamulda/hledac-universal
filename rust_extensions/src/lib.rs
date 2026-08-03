@@ -54,6 +54,7 @@ pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wave
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata build_many (NEON on M1)
+pub mod ioc_stream_scan; // HEIST-01: Streaming SIMD scanner for mmap/bytes zero-copy IOC sweep
 pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
 pub mod ip_parse; // Sprint P2-3: IP address parsing, classification, CIDR containment
 pub mod lmdb_dht; // ISSUE-004: Rust LMDB backend for DHT — eliminates asyncio.to_thread overhead
@@ -62,6 +63,10 @@ pub mod os_unfair_lock; // ISSUE 4.3: Darwin os_unfair_lock (~5ns) vs parking_lo
 pub mod memory;
 #[cfg(feature = "metal")]
 pub mod metal_compute; // R22: Metal GPU batch matmul for MoE router (CPU fallback always available)
+#[cfg(feature = "metal")]
+pub mod metal_hashcrack; // SILICON-01: Metal GPU opportunistic hash cracking during I/O wait
+#[cfg(feature = "metal")]
+pub mod metal_shared_buf; // SILICON-04: Shared Metal buffer for Rust↔Python↔MLX zero-copy
 #[cfg(feature = "accelerate")]
 pub mod accelerate; // R22: Accelerate/vDSP FFI for NER cosine similarity (scalar fallback on non-macOS)
 pub mod quality_gate;
@@ -86,6 +91,8 @@ pub mod url_ops;
 pub mod url_set;
 pub mod zero_copy;
 pub mod serde_json_rs;
+#[cfg(feature = "simdjson")]
+pub mod simdjson_extract;  // HEIST-05: zero-alloc JSON Pointer extraction via simd-json
 #[cfg(feature = "stix")]
 pub mod stix_2_1;
 #[cfg(feature = "data")]
@@ -117,6 +124,7 @@ pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, c
 pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
 #[cfg(feature = "quic")]
 pub mod quic;           // QUIC/HTTP3 via quinn + h3 — F350M-R: real HTTP/3 fallback
+pub mod nw_connection;  // SILICON-03: Apple Network.framework user-space TCP + hardware TLS
 pub mod tls13;          // TLS 1.3 JA4 fingerprinting + ECH detection via rustls
 #[cfg(feature = "pdf")]
 pub mod pdf;            // PDF text extraction + IOC extraction via lopdf
@@ -134,6 +142,10 @@ pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB saf
 pub mod async_query; // R26: Async DuckDB queries via Rust executor
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
 pub mod onion_validation; // GRAPH-03: .onion v3 address validation (Ed25519 checksum)
+#[cfg(feature = "native_db")]
+pub mod native_db;      // HEIST-03: Wire-protocol DB extraction (MongoDB, Redis, Elasticsearch)
+#[cfg(feature = "embedded_tor")]
+pub mod arti_bridge; // HEIST-02: Embedded Tor via Arti — in-process .onion fetching
 #[cfg(feature = "fulltext")]
 pub mod fulltext_index;  // ISSUE-011: Tantivy fulltext search (mmap-backed, zero-copy BM25)
 
@@ -804,6 +816,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_extract_structured_entities_py, m)?)?;
     // R4.3: SIMD IOC extraction — regex-automata build_many (NEON on M1, ~5× faster for bulk text ≥4KB)
     ioc_extract_simd::register_functions(m)?;
+    // HEIST-01: Streaming mmap/bytes IOC scanner — zero-copy, 3-4 GB/s on M1 NEON Teddy
+    ioc_stream_scan::register_functions(m)?;
 
     // PDF extraction via lopdf — pure Rust PDF parser (~10× vs Python pypdf)
     // Feature-gated: pdf = ["dep:lopdf"] — enables pdf.extract_text(), pdf.extract_iocs()
@@ -885,6 +899,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "quic")]
     quic::register(m)?;
 
+    // SILICON-03: Apple Network.framework user-space TCP + hardware TLS
+    // Always registers — stub returns clear error when feature not enabled.
+    nw_connection::register(m)?;
+
     // DoH/DoT/DoQ DNS resolution — replaces batch_dns.py triple-path duplication.
     // F350M-R: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
     #[cfg(feature = "dns")]
@@ -939,8 +957,20 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ip_parse::cidr_contains, m)?)?;
 
     // Sprint F265B-III: LMDB page compression (lz4 + zstd) for hot-edges cache.
-    // Wire format: [marker=0x00/0x01/0x02][payload] — lz4 fast path, zstd fallback.
+    // Wire format: [marker=0x00/0x01/0x02/0x03][payload] — lz4 fast path, zstd fallback,
+    // 0x03 = zstd_with_dict (HEIST-07).
     compress::register_functions(m)?;
+
+    // HEIST-02: Embedded Tor via Arti — in-process .onion fetching
+    // Feature-gated: embedded_tor = ["dep:arti-client", "dep:tor-rtcompat", "dep:tokio"]
+    #[cfg(feature = "embedded_tor")]
+    arti_bridge::register(m)?;
+
+    // HEIST-03: Native DB wire-protocol extraction (MongoDB, Redis, Elasticsearch)
+    // No external crate deps — pure Rust std + crossbeam-channel.
+    // Feature-gated: native_db — compile with --features native_db
+    #[cfg(feature = "native_db")]
+    native_db::register(m)?;
 
     // Raw lz4 frame for JSONL streaming pipeline.
     // jsonl_lz4_writer: batch-compress JSONL lines → lz4 frame → disk.
@@ -991,6 +1021,11 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Sprint F266: serde_json — Rust-powered JSON serialization for STIX export.
     // Drop-in for Python json.dumps in export/stix_exporter.py (2-4× faster, no GIL).
     serde_json_rs::register_functions(m)?;
+
+    // HEIST-05: simdjson_extract — Zero-alloc JSON Pointer extraction via simd-json.
+    // ARM NEON native, 2-4x faster than serde_json on M1. Used for CT log scanning.
+    #[cfg(feature = "simdjson")]
+    simdjson_extract::register_functions(m)?;
 
     // F350M-R: STIX 2.1 — native Rust STIX bundle encode/decode + jsonschema validation.
     // Replaces runtime/stix_exporter.py json.dumps with serde + jsonschema for 2-4× speedup.
@@ -1109,6 +1144,14 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // R22: Metal GPU batch matmul — MoE router integration (feature-gated)
     #[cfg(feature = "metal")]
     metal_compute::register(m)?;
+
+    // SILICON-04: Shared Metal buffer — zero-copy Rust↔Python↔MLX tensor sharing
+    #[cfg(feature = "metal")]
+    metal_shared_buf::register(m)?;
+
+    // SILICON-01: Metal GPU opportunistic hash cracking — GPU during I/O wait
+    #[cfg(feature = "metal")]
+    metal_hashcrack::register(m)?;
 
     // DuckDB bridge — isolated module for future cdylib extraction (saves ~8 MB .dylib)
     #[cfg(feature = "data")]

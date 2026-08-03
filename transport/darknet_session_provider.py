@@ -35,7 +35,7 @@ _MAX_SESSIONS: int = 4   # CONCURRENCY_TOR — unchanged from L201
 # --- Singleton state ---
 _lock: asyncio.Lock | None = None
 # {transport_name: {host: last_access_monotonic}}
-_last_used: dict[str, dict[str, float]] = {"tor": {}, "i2p": {}}
+_last_used: dict[str, dict[str, float]] = {"tor": {}, "i2p": {}, "arti": {}}
 
 
 def _get_lock() -> asyncio.Lock:
@@ -65,12 +65,14 @@ async def get_session(
         For tor: returns the TorTransport._session_tor (httpx.AsyncClient, owned by transport).
         For i2p: returns the lazy singleton from get_i2p_session() (httpx.AsyncClient).
     """
-    if transport not in ("tor", "i2p"):
+    if transport not in ("tor", "i2p", "arti"):
         return None
 
     try:
         if transport == "tor":
             return await _get_tor_session(host)
+        elif transport == "arti":
+            return await _get_arti_session(host)
         else:
             return await _get_i2p_session(host)
     except Exception:
@@ -102,6 +104,28 @@ async def _tor_is_running(tor: Any) -> bool:
         return False
 
 
+async def _get_arti_session(_host: str) -> Any | None:
+    """Return ArtiTransport singleton if available (HEIST-06)."""
+    try:
+        from .arti_transport import (
+            get_arti_transport_singleton,
+            is_arti_enabled,
+        )
+
+        if not is_arti_enabled():
+            return None
+        arti = get_arti_transport_singleton()
+        if arti is None or not arti.available:
+            return None
+        if not await arti.is_running():
+            return None
+        # ArtiTransport doesn't expose httpx sessions — callers should
+        # use ArtiTransport.fetch() directly for optimal performance.
+        return None
+    except Exception:
+        return None
+
+
 async def _get_i2p_session(_host: str) -> Any | None:
     """Delegate to I2PTransport module-level lazy singleton."""
     try:
@@ -120,7 +144,7 @@ async def mark_used(transport: str, host: str) -> None:
     Fails silently — missing a mark_used entry just means next get_session
     treats it as cold and evicts it.
     """
-    if transport not in ("tor", "i2p"):
+    if transport not in ("tor", "i2p", "arti"):
         return
     try:
         async with _get_lock():
@@ -142,7 +166,7 @@ async def close_idle() -> int:
     evicted = 0
     now = time.monotonic()
     async with _get_lock():
-        for transport in ("tor", "i2p"):
+        for transport in ("tor", "i2p", "arti"):
             expired = [
                 host
                 for host, ts in _last_used[transport].items()
@@ -167,7 +191,7 @@ async def close_all() -> None:
     global _last_used
     async with _get_lock():
         # Clear tracking
-        _last_used = {"tor": {}, "i2p": {}}
+        _last_used = {"tor": {}, "i2p": {}, "arti": {}}
 
     # Close I2P lazy singleton so it recreates fresh on next use
     try:

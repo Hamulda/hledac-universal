@@ -92,7 +92,46 @@ def _lazy_load_modules() -> None:
         _PIL_AVAILABLE = True
     except ImportError:
         _PIL_AVAILABLE = False
+
+
+async def _ensure_media_decoder(governor: Any | None = None) -> Any | None:
+    """[SILICON-02] Lazy-load MediaDecoder singleton for audio/video enrichment.
+
+    Returns MediaDecoder instance or None if AVFoundation is unavailable.
+    Caches the instance globally — AVAssetReader must be single-threaded on M1.
+    """
+    global _MediaDecoder, _MEDIA_DECODER_AVAILABLE
+    if _MEDIA_DECODER_AVAILABLE and _MediaDecoder is not None:
+        return _MediaDecoder
+    try:
+        from hledac.universal.multimodal.media_engine import MediaDecoder
+        _MediaDecoder = MediaDecoder
+        decoder = MediaDecoder(governor=governor)
+        await decoder.initialize()
+        _MEDIA_DECODER_AVAILABLE = True
+        return decoder
+    except ImportError:
+        log.debug('[SILICON-02] media_engine import failed — audio/video enrichment disabled')
+        _MEDIA_DECODER_AVAILABLE = False
+        return None
+    except Exception as exc:
+        log.debug('[SILICON-02] MediaDecoder init failed: %s', exc)
+        _MEDIA_DECODER_AVAILABLE = False
+        return None
 _SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp', '.pdf'}
+# [SILICON-02]: Audio/video extensions added for MediaEngine decode + transcription
+_AUDIO_EXTENSIONS: frozenset[str] = frozenset({
+    '.mp3', '.aac', '.m4a', '.flac', '.wav', '.ogg', '.opus',
+    '.wma', '.aiff', '.aif', '.alac', '.ac3', '.amr', '.caf',
+})
+_VIDEO_EXTENSIONS: frozenset[str] = frozenset({
+    '.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.flv',
+    '.wmv', '.3gp', '.3g2', '.ts', '.mts', '.m2ts',
+})
+_MEDIA_EXTENSIONS = _AUDIO_EXTENSIONS | _VIDEO_EXTENSIONS
+# [SILICON-02]: Lazy singleton for MediaDecoder — loaded on first audio/video enrichment
+_MediaDecoder: type | None = None
+_MEDIA_DECODER_AVAILABLE = False
 _DOCUMENT_SOURCE_TYPE = 'document'
 _MAX_ENVELOPE_SIZE = 4098
 _PdfReader: type | None = None
@@ -129,7 +168,15 @@ def _extract_file_path_from_payload(payload_text: str | None) -> str | None:
 def _file_has_multimodal_support(file_path: str) -> bool:
     """Check if file extension is supported by multimodal enrichment."""
     ext = Path(file_path).suffix.lower()
-    return ext in _SUPPORTED_EXTENSIONS
+    return ext in _SUPPORTED_EXTENSIONS or ext in _MEDIA_EXTENSIONS
+
+def _file_is_audio(file_path: str) -> bool:
+    """Check if file is an audio file needing MediaDecoder transcription."""
+    return Path(file_path).suffix.lower() in _AUDIO_EXTENSIONS
+
+def _file_is_video(file_path: str) -> bool:
+    """Check if file is a video file needing MediaDecoder transcription."""
+    return Path(file_path).suffix.lower() in _VIDEO_EXTENSIONS
 
 def _build_document_envelope(text_content: str | None, triage_facets: dict[str, Any], file_path: str, file_type: str) -> str:
     """
@@ -275,6 +322,13 @@ class MultimodalEnricher:
             return None
         if not _file_has_multimodal_support(file_path):
             return None
+
+        # [SILICON-02]: Audio/video dispatch — transcribe then scan for IoCs
+        if _file_is_audio(file_path):
+            return await self.enrich_audio(finding, file_path)
+        if _file_is_video(file_path):
+            return await self.enrich_video(finding, file_path)
+
         finding_id = getattr(finding, 'finding_id', 'unknown')
         enrichment: dict[str, Any] = {'finding_id': finding_id, 'file_path': file_path, 'vision_embedding': None, 'fused_embedding': None, 'clip_score': None, 'enrichment_available': False}
         if not self._can_run_heavy_vision():
@@ -432,6 +486,205 @@ class MultimodalEnricher:
         except Exception as exc:
             log.debug('CLIP similarity score failed for %s: %s', file_path, exc)
             return None
+
+    # ── [SILICON-02] Audio/Video enrichment ────────────────────────────────
+
+    async def enrich_audio(self, finding: Any, file_path: str) -> dict[str, Any] | None:
+        """
+        [SILICON-02] Enrich audio finding via MediaDecoder transcription + IoC extraction.
+
+        Pipeline:
+          1. AVFoundation decode → PCM float32 mono 16kHz (VideoToolbox HW)
+          2. SFSpeechRecognizer → text (ANE-accelerated, on-device)
+          3. ioc_extract_simd → IoC scanning on transcribed text
+          4. Returns enrichment dict with transcript + iocs
+
+        M1 8GB: Audio buffer capped at 50 MB (~12 min @ 16kHz mono).
+                MediaDecoder loaded on-demand and released after use.
+        """
+        if not self._check_ram_guard():
+            log.debug('[SILICON-02] RAM guard denied audio enrichment for %s', file_path)
+            return None
+
+        decoder = await _ensure_media_decoder(self._governor)
+        if decoder is None:
+            return None
+
+        finding_id = getattr(finding, 'finding_id', 'unknown')
+        try:
+            result = await decoder.transcribe(file_path)
+            if not result.text:
+                log.debug('[SILICON-02] No transcription for %s', file_path)
+                return {
+                    'finding_id': finding_id,
+                    'file_path': file_path,
+                    'media_type': 'audio',
+                    'transcript': '',
+                    'transcript_confidence': result.confidence,
+                    'duration_s': result.duration_s,
+                    'iocs_extracted': [],
+                    'ioc_count': 0,
+                    'enrichment_available': True,
+                }
+
+            # Run IoC extraction on transcribed text
+            iocs = await self._extract_iocs_from_text(result.text, file_path)
+
+            return {
+                'finding_id': finding_id,
+                'file_path': file_path,
+                'media_type': 'audio',
+                'transcript': result.text,
+                'transcript_confidence': result.confidence,
+                'duration_s': result.duration_s,
+                'segments': result.segments,
+                'iocs_extracted': iocs,
+                'ioc_count': len(iocs),
+                'enrichment_available': True,
+            }
+        except Exception as exc:
+            log.debug('[SILICON-02] enrich_audio failed for %s: %s', file_path, exc)
+            return None
+
+    async def enrich_video(self, finding: Any, file_path: str) -> dict[str, Any] | None:
+        """
+        [SILICON-02] Enrich video finding via MediaDecoder: audio transcribe + frame OCR + IoCs.
+
+        Pipeline:
+          1. AVFoundation audio track → PCM decode (VideoToolbox HW)
+          2. SFSpeechRecognizer → text (ANE)
+          3. AVAssetImageGenerator → keyframes at 10s intervals
+          4. Vision OCR → text from each keyframe (ANE)
+          5. ioc_extract_simd → IoC scanning on all text
+          6. Returns enrichment dict with transcript + frame_texts + iocs
+
+        M1 8GB: Keyframes capped at 120 (20 min @ 10s intervals).
+                Audio buffer capped at 50 MB. Max 500 MB video file.
+        """
+        if not self._check_ram_guard():
+            log.debug('[SILICON-02] RAM guard denied video enrichment for %s', file_path)
+            return None
+
+        decoder = await _ensure_media_decoder(self._governor)
+        if decoder is None:
+            return None
+
+        finding_id = getattr(finding, 'finding_id', 'unknown')
+        try:
+            result = await decoder.transcribe_video(file_path)
+
+            # Combine all text sources for IoC scanning
+            all_text_parts = [result.audio_transcript] if result.audio_transcript else []
+            all_text_parts.extend(result.frame_texts)
+            combined_text = ' '.join(all_text_parts)
+
+            iocs = []
+            if combined_text:
+                iocs = await self._extract_iocs_from_text(combined_text, file_path)
+
+            return {
+                'finding_id': finding_id,
+                'file_path': file_path,
+                'media_type': 'video',
+                'audio_transcript': result.audio_transcript,
+                'audio_confidence': result.audio_confidence,
+                'duration_s': result.duration_s,
+                'frame_texts': result.frame_texts,
+                'frame_timestamps': result.frame_timestamps,
+                'frame_count': result.frame_count,
+                'combined_text': combined_text[:10000],  # bounded preview
+                'iocs_extracted': iocs,
+                'ioc_count': len(iocs),
+                'enrichment_available': True,
+            }
+        except Exception as exc:
+            log.debug('[SILICON-02] enrich_video failed for %s: %s', file_path, exc)
+            return None
+
+    async def _extract_iocs_from_text(self, text: str, source_path: str) -> list[dict[str, Any]]:
+        """
+        [SILICON-07] Run IoC extraction on transcribed/OCR'd text.
+
+        Delegates to the canonical scan_text_for_iocs() in media_ioc_pipeline
+        which provides a 4-tier fallback:
+          1. IocStreamScanner (Rust Aho-Corasick, SIMD NEON) — 3-4 GB/s
+          2. rust.ioc.extract_iocs_flat (Rust regex) — fast, high precision
+          3. brain.ner_engine.extract_iocs_from_text (MLX NER) — unstructured text
+          4. forensics.ioc_extractor._IOC_COMBINED (Python regex) — last resort
+
+        Returns list of IoC dicts: {type, value, confidence, scanner}.
+        Fail-safe: returns empty list on any error — never blocks enrichment.
+        """
+        if not text or not text.strip():
+            return []
+        try:
+            from hledac.universal.multimodal.media_ioc_pipeline import scan_text_for_iocs
+            iocs, scanner_name, ok = await scan_text_for_iocs(text)
+            if iocs:
+                log.info('[SILICON-07] Extracted %d unique IoCs from %s (%d chars, scanner=%s)',
+                         len(iocs), Path(source_path).name, len(text), scanner_name)
+            return iocs
+        except ImportError:
+            log.debug('[SILICON-07] media_ioc_pipeline unavailable, using inline fallback')
+        except Exception as exc:
+            log.debug('[SILICON-07] scan_text_for_iocs failed, trying inline fallback: %s', exc)
+
+        # Inline fallback (preserved for when media_ioc_pipeline is unavailable)
+        try:
+            iocs: list[dict[str, Any]] = []
+
+            # Primary: Rust SIMD regex scanner (fast, high precision)
+            try:
+                from hledac.universal.rust.ioc import extract_iocs_flat
+                flat_iocs = await asyncio.to_thread(extract_iocs_flat, text)
+                if flat_iocs:
+                    for ioc in flat_iocs:
+                        iocs.append({
+                            'type': getattr(ioc, 'ioc_type', 'unknown'),
+                            'value': getattr(ioc, 'value', str(ioc)),
+                            'confidence': getattr(ioc, 'confidence', 0.9),
+                            'scanner': 'rust_simd',
+                        })
+            except ImportError:
+                log.debug('[SILICON-07] Rust IoC scanner not available, trying NER fallback')
+            except Exception as exc:
+                log.debug('[SILICON-07] Rust IoC extract failed: %s', exc)
+
+            # Fallback/Complementary: MLX NER engine for unstructured text
+            if not iocs:
+                try:
+                    from hledac.universal.brain.ner_engine import extract_iocs_from_text
+                    ner_iocs = await asyncio.to_thread(extract_iocs_from_text, text)
+                    if ner_iocs:
+                        for ioc in ner_iocs:
+                            iocs.append({
+                                'type': getattr(ioc, 'ioc_type', getattr(ioc, 'type', 'unknown')),
+                                'value': getattr(ioc, 'value', str(ioc)),
+                                'confidence': getattr(ioc, 'confidence', 0.7),
+                                'scanner': 'mlx_ner',
+                            })
+                except ImportError:
+                    log.debug('[SILICON-07] NER engine not available')
+                except Exception as exc:
+                    log.debug('[SILICON-07] NER extract failed: %s', exc)
+
+            # Deduplicate by value
+            seen: set[str] = set()
+            deduped: list[dict[str, Any]] = []
+            for ioc in iocs:
+                val = ioc.get('value', '')
+                if val and val not in seen:
+                    seen.add(val)
+                    deduped.append(ioc)
+
+            log.info('[SILICON-07] Extracted %d unique IoCs from %s (%d chars of text)',
+                     len(deduped), Path(source_path).name, len(text))
+            return deduped[:200]  # cap at 200 IoCs per file
+        except Exception as exc:
+            log.debug('[SILICON-07] _extract_iocs_from_text failed: %s', exc)
+            return []
+
+    # ── Batch enrichment ───────────────────────────────────────────────────
 
     async def enrich_batch(self, findings: list[Any]) -> dict[str, dict[str, Any]]:
         """
@@ -621,6 +874,11 @@ class DocumentExtractor:
             if ext == '.pdf':
                 text_content, page_count = await self._extract_pdf(file_path)
                 metadata['extracted_pages'] = page_count
+            elif ext in _MEDIA_EXTENSIONS:
+                # [SILICON-02]: Audio/video → transcribe via MediaDecoder
+                text_content = await self._extract_media_text(file_path)
+                metadata['media_type'] = 'audio' if ext in _AUDIO_EXTENSIONS else 'video'
+                metadata['extracted_chars'] = len(text_content) if text_content else 0
             else:
                 text_content = await self._extract_image_text(file_path)
                 metadata['extracted_chars'] = len(text_content) if text_content else 0
@@ -739,4 +997,31 @@ class DocumentExtractor:
             return await asyncio.to_thread(_read_image)
         except Exception as exc:
             log.debug('DocumentExtractor: image extraction failed for %s: %s', file_path, exc)
+            return None
+
+    async def _extract_media_text(self, file_path: str) -> str | None:
+        """
+        [SILICON-02] Extract text from audio/video via MediaDecoder transcription.
+
+        For audio: SFSpeechRecognizer → text (ANE-accelerated).
+        For video: audio track → SFSpeechRecognizer + keyframes → Vision OCR.
+
+        Returns transcribed text or None on failure.
+        Fail-safe — returns None on error.
+        """
+        decoder = await _ensure_media_decoder(self._governor)
+        if decoder is None:
+            return None
+        ext = Path(file_path).suffix.lower()
+        try:
+            if ext in _VIDEO_EXTENSIONS:
+                result = await decoder.transcribe_video(file_path)
+                parts = [result.audio_transcript] if result.audio_transcript else []
+                parts.extend(result.frame_texts)
+                return ' '.join(parts) if parts else None
+            else:
+                result = await decoder.transcribe(file_path)
+                return result.text if result.text else None
+        except Exception as exc:
+            log.debug('DocumentExtractor: media extraction failed for %s: %s', file_path, exc)
             return None

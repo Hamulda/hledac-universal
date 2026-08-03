@@ -18,6 +18,7 @@ INFRASTRUCTURE (canonical, unique to network/):
   - js_bundle_extractor: JavaScript bundle analysis
   - js_source_map_extractor: Source map extraction
   - open_storage_scanner: S3/open storage discovery
+  - native_extraction: Native DB wire-protocol extraction (HEIST-08)
 
 OSINT RE-EXPORTS (lazy — avoid circular import with recon/):
   - dns_tunnel_detector → recon.dns.dns_tunnel_detector
@@ -91,6 +92,7 @@ def __getattr__(name: str):
         "js_bundle_extractor",
         "js_source_map_extractor",
         "open_storage_scanner",
+        "native_extraction",
     ):
         return import_module(f".{name}", __package__)
     # OSINT re-exports — delegate to recon/ lazily

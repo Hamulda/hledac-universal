@@ -479,17 +479,25 @@ class OpsECCoordinator(UniversalCoordinator):
         max_delay: float = 10.0,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Stealth HTTP request with Weibull-distributed jitter delays."""
+        """Stealth HTTP request with Weibull-distributed jitter delays.
+
+        BLITZ-12: When blitz mode is active (duration ≤ 30 min), the jitter
+        sleep is skipped — the sprint is a one-shot burst where anti-correlation
+        timing provides no value.
+        """
         import asyncio
         start_time = time.time()
+        delay: float = 0.0  # BLITZ-12: default to 0 (no jitter) when blitz mode active
         try:
-            try:
-                import numpy as np
-                delay = np.random.weibull(jitter_shape) * jitter_scale
-            except ImportError:
-                delay = _RNG.uniform(min_delay, max_delay)
-            delay = max(min_delay, min(delay, max_delay))
-            await asyncio.sleep(delay)
+            from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+            if not _is_blitz():
+                try:
+                    import numpy as np
+                    delay = np.random.weibull(jitter_shape) * jitter_scale
+                except ImportError:
+                    delay = _RNG.uniform(min_delay, max_delay)
+                delay = max(min_delay, min(delay, max_delay))
+                await asyncio.sleep(delay)
             try:
                 from curl_cffi.requests import AsyncSession
                 async with AsyncSession(impersonate=impersonate) as session:

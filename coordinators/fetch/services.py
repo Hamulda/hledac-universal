@@ -36,7 +36,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from cachetools import TTLCache
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.async_helpers import async_getaddrinfo, parallel
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +180,10 @@ class DNSCacheService:
             self._inflight[cache_key] = fut
 
             try:
-                raw_results = await loop.getaddrinfo(
+                # [PHYSICS]-03: Use async_getaddrinfo() which routes through
+                # rust.dns.resolve_async() (DoT, bypasses macOS mDNSResponder)
+                # when the dns feature is enabled. Falls back to loop.getaddrinfo().
+                raw_results = await async_getaddrinfo(
                     host, 0, proto=socket.IPPROTO_TCP
                 )
             finally:

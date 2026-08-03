@@ -386,7 +386,7 @@ class DeepHermes3Engine:
     # Duplicate __slots__ removed - see line 367
     _DEEP_THINKING_PREFIX = 'You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.'
 
-    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_generation_facade', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_inference_active', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_mgr', '_batch_adapter', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_metal_device', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_state_observer', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
+    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_draft_tokenizer', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_generation_facade', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_inference_active', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_mgr', '_batch_adapter', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_metal_device', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_state_observer', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_triage_mode', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
 
     def __init__(self, model_path: str | None=None, sanitize_for_llm: Callable[[str], str] | None=None):
         """
@@ -419,10 +419,12 @@ class DeepHermes3Engine:
         self._outlines_generators = {}
         self._draft_model_obj = None
         self._draft_model_name = None
+        self._draft_tokenizer = None
         self._speculative_enabled = False
         self._num_draft_tokens = 4
         self._supports_stream_generate = False
         self._supports_draft = False
+        self._triage_mode = False
         self._supports_kv_quant = False
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
         self._system_prompt_cache = None
@@ -1545,20 +1547,40 @@ class DeepHermes3Engine:
         - UMA eviction: if system usage > 85% (6.8GB), draft model is evicted
         - Lazy loading: draft model only loaded when explicitly enabled via env var
         - Default: DISABLED (safe mode) — opt-in via HLEDAC_ENABLE_SPEC_DECODE=1
+        - BLITZ-11: When blitz mode + HLEDAC_ENABLE_BLITZ_TRIAGE=1, loads model for
+          triage classification instead of speculative decoding
 
         Memory budget: 200MB draft model + 500MB KV cache = 700MB total overhead
         """
         import os
 
+        # ── BLITZ-11: Blitz triage path ─────────────────────────────────────
+        # When blitz mode is active (duration ≤ 30 min) AND triage is enabled,
+        # load SmolLM-360M for fast binary relevance classification.
+        # Independent of speculative decoding — the model slot is repurposed.
+        _blitz_triage = False
+        try:
+            from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+            if _is_blitz() and os.environ.get('HLEDAC_ENABLE_BLITZ_TRIAGE', '0') == '1':
+                _blitz_triage = True
+        except Exception:
+            pass
+
         # Check if speculative decoding is explicitly enabled
         enable_spec = os.environ.get('HLEDAC_ENABLE_SPEC_DECODE', '0')
-        if enable_spec != '1':
+
+        # Neither spec decode nor blitz triage — skip model load entirely
+        if enable_spec != '1' and not _blitz_triage:
             self._speculative_enabled = False
             self._draft_model_name = None
             self._draft_model_obj = None
+            self._draft_tokenizer = None
             self._supports_draft = False
-            logger.info('[SPEC] Draft model disabled (M1 8GB safe mode, set HLEDAC_ENABLE_SPEC_DECODE=1 to enable)')
+            self._triage_mode = False
+            logger.info('[SPEC] Draft model disabled (M1 8GB safe mode, set HLEDAC_ENABLE_SPEC_DECODE=1 or HLEDAC_ENABLE_BLITZ_TRIAGE=1 to enable)')
             return
+
+        _mode_label = 'BLITZ-TRIAGE' if _blitz_triage else 'SPEC'
 
         # SOVEREIGN-004: Check UMA before loading draft model
         try:
@@ -1568,14 +1590,16 @@ class DeepHermes3Engine:
 
             # 85% threshold = 6.8GB on 8GB M1
             if uma_usage_pct > 85:
-                logger.warning(f'[SPEC] UMA usage {uma_usage_pct}% > 85% threshold — skipping draft model init')
+                logger.warning(f'[{_mode_label}] UMA usage {uma_usage_pct}% > 85% threshold — skipping draft model init')
                 self._speculative_enabled = False
                 self._draft_model_name = None
                 self._draft_model_obj = None
+                self._draft_tokenizer = None
                 self._supports_draft = False
+                self._triage_mode = False
                 return
         except Exception as e:
-            logger.debug(f'[SPEC] UMA check failed, proceeding with caution: {e}')
+            logger.debug(f'[{_mode_label}] UMA check failed, proceeding with caution: {e}')
 
         # SOVEREIGN-004: Use SmolLM-360M (200MB) instead of SmolLM-0.5B (700MB)
         # SmolLM-360M is 3.5× smaller, reducing Metal pressure significantly
@@ -1585,7 +1609,7 @@ class DeepHermes3Engine:
         try:
             from mlx_lm import load
 
-            logger.info(f'[SPEC] Loading draft model {DRAFT_MODEL} (~{DRAFT_MODEL_SIZE_MB}MB)')
+            logger.info(f'[{_mode_label}] Loading draft model {DRAFT_MODEL} (~{DRAFT_MODEL_SIZE_MB}MB)')
 
             def _load_draft():
                 return load(DRAFT_MODEL)
@@ -1601,20 +1625,28 @@ class DeepHermes3Engine:
                 self._draft_tokenizer = None
 
             self._draft_model_name = DRAFT_MODEL
-            self._speculative_enabled = True
-            self._supports_draft = True
 
-            logger.info(f'[SPEC] Draft model loaded: {DRAFT_MODEL} (SOVEREIGN-004 safe mode)')
+            if _blitz_triage:
+                self._triage_mode = True
+                self._speculative_enabled = False
+                self._supports_draft = False  # Not for speculative decode
+                logger.info(f'[BLITZ-11] Triage model loaded: {DRAFT_MODEL} (~{DRAFT_MODEL_SIZE_MB}MB) — fast binary classification')
+            else:
+                self._speculative_enabled = True
+                self._supports_draft = True
+                logger.info(f'[SPEC] Draft model loaded: {DRAFT_MODEL} (SOVEREIGN-004 safe mode)')
 
             # Register UMA watchdog callback for draft model eviction
             self._register_draft_eviction_callback()
 
         except Exception as e:
-            logger.warning(f'[SPEC] Draft model load failed: {e}')
+            logger.warning(f'[{_mode_label}] Draft model load failed: {e}')
             self._speculative_enabled = False
             self._draft_model_name = None
             self._draft_model_obj = None
+            self._draft_tokenizer = None
             self._supports_draft = False
+            self._triage_mode = False
 
     def _register_draft_eviction_callback(self) -> None:
         """
@@ -1668,11 +1700,14 @@ class DeepHermes3Engine:
 
         Called automatically by UMA watchdog when pressure > 85%.
         Can also be called manually via force=True parameter.
+
+        BLITZ-11: Also clears triage mode when evicting.
         """
         if self._draft_model_obj is None:
             return
 
         try:
+            _was_triage = self._triage_mode
             logger.info('[SPEC] Evicting draft model to free unified memory')
 
             # Clear draft model references
@@ -1681,6 +1716,7 @@ class DeepHermes3Engine:
             self._draft_model_name = None
             self._speculative_enabled = False
             self._supports_draft = False
+            self._triage_mode = False
 
             # Force garbage collection to release Metal buffers
             import gc
@@ -1693,10 +1729,173 @@ class DeepHermes3Engine:
             except Exception:
                 pass
 
-            logger.info('[SPEC] Draft model evicted successfully (~200MB freed)')
+            logger.info('[SPEC] Draft model evicted successfully (~200MB freed)%s',
+                        ' [triage mode cleared]' if _was_triage else '')
 
         except Exception as e:
             logger.warning(f'[SPEC] Draft model eviction failed: {e}')
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BLITZ-11: Triage Classifier — Fast binary relevance classification
+    # ═══════════════════════════════════════════════════════════════════════════
+
+    @property
+    def triage_mode(self) -> bool:
+        """BLITZ-11: Whether triage classifier is active (draft model repurposed)."""
+        return self._triage_mode and self._draft_model_obj is not None
+
+    async def triage_relevance(
+        self,
+        text: str,
+        query: str,
+        threshold: float = 0.5,
+        max_tokens: int = 4,
+    ) -> bool:
+        """
+        BLITZ-11: Fast binary relevance classification using SmolLM-360M.
+
+        Repurposes the _draft_model_obj slot (normally used for speculative
+        decoding) for lightweight triage. Returns True if the text is relevant
+        to the query, False otherwise.
+
+        Design:
+        - Uses SmolLM-360M-4bit (~200MB) — 3.5× smaller than Hermes-3B
+        - Simple YES/NO prompt with structured output
+        - Token-level probability check: p(YES) vs p(NO)
+        - Fail-safe: returns True (pass-through) on any error — triage is
+          an optimization, not a gate
+
+        M1 8GB bounds:
+        - max_tokens=4 (only needs "YES" or "NO")
+        - No KV cache — single forward pass
+        - UMA-budget aware: skips if memory pressure > 85%
+
+        Args:
+            text: The text/content to evaluate for relevance
+            query: The search query to check relevance against
+            threshold: Confidence threshold for YES (default 0.5)
+            max_tokens: Maximum tokens to generate (default 4)
+
+        Returns:
+            True if text is relevant to query, False otherwise.
+            Returns True on any error (fail-open — let downstream filter).
+        """
+        if not self._triage_mode or self._draft_model_obj is None:
+            # Triage not available — pass-through (fail-open)
+            logger.debug('[BLITZ-11] triage_relevance: model not loaded, pass-through=True')
+            return True
+
+        # UMA budget check — skip triage if memory is tight
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_snapshot
+            _snap = get_uma_snapshot()
+            if _snap.get('uma_usage_pct', 0) > 85:
+                logger.debug('[BLITZ-11] triage_relevance: UMA > 85%%, pass-through=True')
+                return True
+        except Exception:
+            pass
+
+        # ── Build triage prompt ──────────────────────────────────────────
+        # Truncate text to 512 chars — triage only needs signal, not full body
+        _text_snippet = text[:512].replace('\n', ' ').strip()
+        _query_clean = query[:128].strip()
+
+        _prompt = (
+            '<|im_start|>system\n'
+            'You are a relevance classifier. Answer ONLY "YES" or "NO".\n'
+            '<|im_end|>\n'
+            '<|im_start|>user\n'
+            f'Is the following text relevant to the query "{_query_clean}"?\n\n'
+            f'Text: {_text_snippet}\n\n'
+            'Answer (YES or NO):<|im_end|>\n'
+            '<|im_start|>assistant\n'
+        )
+
+        try:
+            import mlx.core as mx
+
+            _model = self._draft_model_obj
+            _tok = self._draft_tokenizer
+            if _tok is None:
+                logger.debug('[BLITZ-11] triage_relevance: no tokenizer, pass-through=True')
+                return True
+
+            # Tokenize
+            _input_ids = _tok.encode(_prompt)
+            if not _input_ids:
+                return True
+
+            _input_arr = mx.array([_input_ids])
+
+            # Single forward pass — no KV cache, no generation loop
+            # Just check logits at last position for YES/NO tokens
+            _logits = _model(_input_arr)
+            mx.eval(_logits)
+
+            # Extract last-token logits
+            _last_logits = _logits[0, -1, :]
+
+            # Get token IDs for "YES" and "NO"
+            _yes_id = _tok.encode("YES")[0] if hasattr(_tok, 'encode') else None
+            _no_id = _tok.encode("NO")[0] if hasattr(_tok, 'encode') else None
+
+            if _yes_id is None or _no_id is None:
+                # Fallback: generate a short completion and check
+                _gen_result = await self._triage_generate_fallback(_prompt, max_tokens)
+                _answer = _gen_result.strip().upper()
+                return _answer.startswith('YES')
+
+            # Get log-probabilities for YES and NO
+            _yes_logit = float(_last_logits[_yes_id].item())
+            _no_logit = float(_last_logits[_no_id].item())
+
+            # Softmax over just YES/NO
+            import math
+            _max_l = max(_yes_logit, _no_logit)
+            _yes_exp = math.exp(_yes_logit - _max_l)
+            _no_exp = math.exp(_no_logit - _max_l)
+            _denom = _yes_exp + _no_exp
+            _yes_prob = _yes_exp / _denom if _denom > 0 else 0.5
+
+            _relevant = _yes_prob >= threshold
+            logger.debug(
+                '[BLITZ-11] triage_relevance: query=%.64s text=%.64s '
+                'p_yes=%.3f threshold=%.2f -> %s',
+                _query_clean, _text_snippet, _yes_prob, threshold,
+                'RELEVANT' if _relevant else 'IRRELEVANT'
+            )
+            return _relevant
+
+        except Exception as e:
+            logger.warning(f'[BLITZ-11] triage_relevance failed: {e} — pass-through=True')
+            return True  # Fail-open: let the text through
+
+    async def _triage_generate_fallback(
+        self, prompt: str, max_tokens: int = 4
+    ) -> str:
+        """BLITZ-11: Fallback generation-based triage when token ID lookup fails."""
+        try:
+            import mlx.core as mx
+            from mlx_lm.utils import generate_step
+
+            _model = self._draft_model_obj
+            _tok = self._draft_tokenizer
+
+            _input_ids = mx.array([_tok.encode(prompt)])
+            _generated: list[int] = []
+
+            for _ in range(max_tokens):
+                _logits = _model(_input_ids)
+                mx.eval(_logits)
+                _next_token = int(mx.argmax(_logits[0, -1, :]).item())
+                if _next_token == _tok.eos_token_id:
+                    break
+                _generated.append(_next_token)
+                _input_ids = mx.array([list(_input_ids[0].tolist()) + [_next_token]])
+
+            return _tok.decode(_generated) if _generated else ""
+        except Exception:
+            return ""
 
     async def _init_system_prompt_cache(self) -> None:
         """Initialize persistent system-prompt cache (Sprint 75 + Sprint M4)."""
@@ -3745,6 +3944,9 @@ class DeepHermes3Engine:
         Built on top of existing synthesize(), not a separate engine.
         Returns structured dict instead of raw text.
 
+        BLITZ-10: Pre-filters findings via FastPathTriage before synthesis.
+        Falls back to unfiltered pass-through on any triage error.
+
         Bounds:
         - query truncated to _SYNTH_MAX_QUERY_CHARS
         - findings limited to _SYNTH_MAX_FINDINGS items
@@ -3768,6 +3970,9 @@ class DeepHermes3Engine:
         """
         if self._model is None:
             return {'report': 'Model not loaded', 'confidence': 0.0, 'sources_count': 0, 'hypotheses_evaluated': 0, 'bounded': False, 'synthesis_id': None}
+
+        # ── BLITZ-10: Triage pre-filter ──────────────────────────────────
+        findings = await self._triage_findings_if_needed(query, findings)
         bounded_query = str(query)[:self._SYNTH_MAX_QUERY_CHARS]
         query_truncated = len(str(query)) > self._SYNTH_MAX_QUERY_CHARS
         bounded_findings = []
@@ -3796,6 +4001,47 @@ class DeepHermes3Engine:
         except Exception as e:
             logger.warning(f'[GENERATE] Failed: {e}')
             return {'report': f'Synthesis failed: {str(e)[:500]}', 'confidence': 0.0, 'sources_count': len(bounded_findings), 'hypotheses_evaluated': len(bounded_hypotheses), 'bounded': True, 'synthesis_id': None}
+
+    # ── BLITZ-10: FastPathTriage for synthesize_findings ────────────────────
+
+    async def _triage_findings_if_needed(
+        self, query: str, findings: list[Any]
+    ) -> list[Any]:
+        """
+        BLITZ-10: Pre-filter findings via FastPathTriage (defense-in-depth).
+
+        Runs in thread pool. Fail-safe: returns all findings on any error.
+        Gated by HLEDAC_TRIAGE_DISABLED=1 env var.
+        """
+        import os
+        if os.environ.get("HLEDAC_TRIAGE_DISABLED", "0") == "1":
+            return findings
+        if len(findings) <= 3:
+            return findings  # too few to bother — all relevant by default
+        try:
+            from hledac.universal.brain.fast_path_triage import FastPathTriage
+            triage = FastPathTriage(query)
+            loop = asyncio.get_running_loop()
+
+            texts: list[str] = []
+            for f in findings:
+                if isinstance(f, dict):
+                    payload = f.get("payload_text", "") or f.get("payload", "") or str(f)
+                    texts.append(payload if isinstance(payload, str) else str(payload))
+                else:
+                    texts.append(str(f))
+
+            results = await loop.run_in_executor(None, lambda: triage.triage_batch(texts))
+            filtered = [f for f, keep in zip(findings, results) if keep]
+
+            if len(filtered) < len(findings):
+                logger.info(
+                    "[BLITZ-10/hermes] Triage filtered %d → %d findings",
+                    len(findings), len(filtered),
+                )
+            return filtered
+        except Exception:
+            return findings  # fail-safe: pass through unfiltered
 
     async def synthesize(self, context: dict[str, Any]) -> str:
         """

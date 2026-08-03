@@ -114,6 +114,121 @@ class AlertThreshold(msgspec.Struct, frozen=True, gc=False):
     critical: float
     enabled: bool = True
 
+
+class DriftResult(msgspec.Struct, frozen=True, gc=False):
+    """UNIFIED-010: Výsledek drift detection — detekce postupné degradace.
+
+    Měří trend (derivaci) systémových metrik za poslední okno.
+    Kalibrováno pro M1 8GB UMA — thresholdy odpovídají známým degradačním
+    patternům (memory fragmentation, MLX thermal throttling, event loop bloat).
+    """
+    ok: bool = True
+    memory_drift_mb_per_hour: float = 0.0
+    event_loop_drift_pct_per_hour: float = 0.0
+    mlx_latency_drift_pct_per_hour: float = 0.0
+    exceeded: bool = False
+    exceeded_reasons: list[str] = []
+
+
+class DriftDetector:
+    """UNIFIED-010: Detektor postupné degradace systému pomocí lineární regrese.
+
+    Sleduje trend (směrnici) klíčových metrik v čase:
+    - memory_used_mb: detekce memory fragmentation leaků
+    - cpu_percent: proxy pro event loop congestion
+    - MLX inference latency: detekce thermal throttling degradace
+
+    Používá skutečné timestampy (ne fixní interval) protože background
+    collection interval se dynamicky mění podle memory pressure.
+
+    M1 8GB safe:
+    - bounded deque (max 360 samples při 1h okně, 10s intervalech)
+    - O(n) lineární regrese s n ≤ 360
+    - žádné alokace mimo record() a check()
+    - msgspec output struct (frozen, gc=False)
+
+    Thresholdy kalibrovány pro M1 8GB:
+    - memory_drift > 50 MB/h → memory fragmentation leak
+    - cpu_drift > 10 %/h → event loop congestion
+    - mlx_latency_drift > 20 %/h → thermal throttling degradace
+    """
+
+    __slots__ = ('_interval_s', '_maxlen', 'samples')
+
+    def __init__(self, window_hours: float = 1.0, interval_s: float = 10.0) -> None:
+        self._interval_s = interval_s
+        self._maxlen = int(window_hours * 3600.0 / interval_s)
+        self.samples: deque[tuple[float, 'SystemMetrics', float | None]] = deque(
+            maxlen=self._maxlen
+        )
+
+    def record(self, metrics: 'SystemMetrics', mlx_latency_ms: float | None = None) -> None:
+        """Zaznamená snapshot metrik s volitelnou MLX latencí."""
+        self.samples.append((time.time(), metrics, mlx_latency_ms))
+
+    def check(self) -> DriftResult:
+        """Spočítá drift (derivaci) metrik a vrátí DriftResult.
+
+        Používá skutečné timestampy pro přesnou derivaci i při
+        proměnlivém collection intervalu (memory pressure scaling).
+        """
+        if len(self.samples) < 10:
+            return DriftResult(ok=True)
+
+        # Use actual timestamps for x-axis (hours from first sample)
+        base_time = self.samples[0][0]
+        x_hours = [(s[0] - base_time) / 3600.0 for s in self.samples]
+        mem_values = [s[1].memory_used_mb for s in self.samples]
+        cpu_values = [s[1].cpu_percent for s in self.samples]
+        mlx_values = [s[2] for s in self.samples if s[2] is not None]
+
+        # Linear regression slopes (per-hour drift directly)
+        mem_drift = self._slope_with_x(x_hours, mem_values)  # MB/h
+        cpu_drift = self._slope_with_x(x_hours, cpu_values)  # p.p./h
+
+        # MLX latency drift as percentage of mean (relative drift)
+        mlx_drift: float = 0.0
+        if len(mlx_values) >= 5:
+            mean_latency = sum(mlx_values) / len(mlx_values)
+            if mean_latency > 0.0:
+                x_mlx = [(s[0] - base_time) / 3600.0 for s in self.samples
+                         if s[2] is not None]
+                mlx_slope = self._slope_with_x(x_mlx, mlx_values)
+                mlx_drift = (mlx_slope / mean_latency) * 100.0  # %/h
+
+        # Thresholds calibrated for M1 8GB
+        reasons: list[str] = []
+        if mem_drift > 50.0:
+            reasons.append(f'memory_drift={mem_drift:.1f}MB/h')
+        if cpu_drift > 10.0:
+            reasons.append(f'cpu_drift={cpu_drift:.1f}%/h')
+        if mlx_drift > 20.0:
+            reasons.append(f'mlx_latency_drift={mlx_drift:.1f}%/h')
+
+        return DriftResult(
+            ok=len(reasons) == 0,
+            memory_drift_mb_per_hour=mem_drift,
+            event_loop_drift_pct_per_hour=cpu_drift,
+            mlx_latency_drift_pct_per_hour=mlx_drift,
+            exceeded=len(reasons) > 0,
+            exceeded_reasons=reasons,
+        )
+
+    @staticmethod
+    def _slope_with_x(x: list[float], y: list[float]) -> float:
+        """Lineární regrese: slope = cov(x,y) / var(x).
+
+        Returns 0.0 for fewer than 2 points or zero variance.
+        """
+        n = len(x)
+        if n < 2:
+            return 0.0
+        x_mean = sum(x) / n
+        y_mean = sum(y) / n
+        num = sum((xi - x_mean) * (yi - y_mean) for xi, yi in zip(x, y))
+        den = sum((xi - x_mean) ** 2 for xi in x)
+        return num / den if den != 0.0 else 0.0
+
 class UniversalMonitoringCoordinator(UniversalCoordinator):
     """
     Universal coordinator for monitoring operations.
@@ -134,7 +249,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
     - Maintains history of last 100 entries
     - Memory-aware (reduces frequency under pressure)
     """
-    __slots__ = ('_advanced_available', '_advanced_monitoring', '_alert_thresholds', '_alerts_enabled', '_alerts_triggered', '_benchmark_history', '_collection_interval', '_collection_task', '_collections_count', '_current_metrics', '_health_checks_performed', '_metrics_history', '_operation_stats', '_stop_collection', '_watchdog', '_watchdog_available')
+    __slots__ = ('_advanced_available', '_advanced_monitoring', '_alert_thresholds', '_alerts_enabled', '_alerts_triggered', '_benchmark_history', '_collection_interval', '_collection_task', '_collections_count', '_current_metrics', '_drift_detector', '_health_checks_performed', '_metrics_history', '_operation_stats', '_stop_collection', '_watchdog', '_watchdog_available')
 
     def __init__(self, max_concurrent: int=10, collection_interval: float=30.0, max_history: int=100) -> None:
         super().__init__(name='universal_monitoring_coordinator', max_concurrent=max_concurrent, memory_aware=True)
@@ -154,6 +269,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         self._alerts_triggered = 0
         self._health_checks_performed = 0
         self._operation_stats: dict[str, dict[str, Any]] = {}
+        self._drift_detector = DriftDetector(window_hours=1.0, interval_s=collection_interval)
 
     async def _do_initialize(self) -> bool:
         """Initialize monitoring subsystems with graceful degradation."""
@@ -312,6 +428,8 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             self._current_metrics = metrics
             self._metrics_history.append(metrics)
             self._collections_count += 1
+            # UNIFIED-010: Feed metrics into drift detector for trend analysis
+            self._drift_detector.record(metrics)
             alert_triggered, alert_message = self._check_alerts(metrics)
             if alert_triggered:
                 self._alerts_triggered += 1
@@ -431,6 +549,14 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             return {}
         return {'peak_cpu_percent': max(m.cpu_percent for m in entries), 'peak_memory_percent': max(m.memory_percent for m in entries), 'peak_disk_percent': max(m.disk_percent for m in entries), 'peak_network_connections': max(m.network_connections for m in entries)}
 
+    def get_drift_status(self) -> DriftResult:
+        """UNIFIED-010: Get current drift detection results.
+
+        Returns DriftResult with per-hour trend slopes for memory, CPU,
+        and MLX latency. Use exceeded flag for alerting.
+        """
+        return self._drift_detector.check()
+
     def get_benchmark_history(self, limit: int=10) -> list[dict[str, Any]]:
         """Get recent benchmark results."""
         return list(self._benchmark_history)[-limit:]
@@ -453,6 +579,16 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
             health['metrics_summary'] = self.get_average_metrics(5)
             health['peak_metrics'] = self.get_peak_metrics(5)
             health['collection_stats'] = {'total_collections': self._collections_count, 'alerts_triggered': self._alerts_triggered, 'health_checks': self._health_checks_performed}
+            # UNIFIED-010: Include drift status in detailed health checks
+            drift = self._drift_detector.check()
+            health['drift'] = {
+                'ok': drift.ok,
+                'memory_drift_mb_per_hour': drift.memory_drift_mb_per_hour,
+                'cpu_drift_pct_per_hour': drift.event_loop_drift_pct_per_hour,
+                'mlx_latency_drift_pct_per_hour': drift.mlx_latency_drift_pct_per_hour,
+                'exceeded': drift.exceeded,
+                'exceeded_reasons': drift.exceeded_reasons,
+            }
         resource_checks = health['checks'].get('resources', {})
         if not all([resource_checks.get('cpu_ok', True), resource_checks.get('memory_ok', True), resource_checks.get('disk_ok', True)]):
             health['status'] = 'degraded'
@@ -560,7 +696,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     def _get_feature_list(self) -> list[str]:
         """Report available features."""
-        features = ['System metrics collection (psutil)', 'Background metrics collection', 'Historical metrics tracking', 'Alert threshold management', 'Performance benchmarking', 'OWASP security auditing', 'Codebase integrity validation', 'Batch syntax verification']
+        features = ['System metrics collection (psutil)', 'Background metrics collection', 'Historical metrics tracking', 'Alert threshold management', 'Performance benchmarking', 'OWASP security auditing', 'Codebase integrity validation', 'Batch syntax verification', 'Automated drift detection (memory/CPU/MLX)']
         if self._advanced_available:
             features.append('Advanced system monitoring')
         if self._watchdog_available:
@@ -569,8 +705,9 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
         return features
 
     def get_monitoring_stats(self) -> dict[str, Any]:
-        """Get monitoring statistics."""
-        return {'collections_count': self._collections_count, 'alerts_triggered': self._alerts_triggered, 'health_checks_performed': self._health_checks_performed, 'metrics_history_size': len(self._metrics_history), 'benchmark_history_size': len(self._benchmark_history), 'background_collection_active': self._collection_task is not None and (not self._collection_task.done()), 'current_memory_pressure': self._components.memory.current_level.value}
+        """Get monitoring statistics including drift status."""
+        drift = self._drift_detector.check()
+        return {'collections_count': self._collections_count, 'alerts_triggered': self._alerts_triggered, 'health_checks_performed': self._health_checks_performed, 'metrics_history_size': len(self._metrics_history), 'benchmark_history_size': len(self._benchmark_history), 'background_collection_active': self._collection_task is not None and (not self._collection_task.done()), 'current_memory_pressure': self._components.memory.current_level.value, 'drift_ok': drift.ok, 'memory_drift_mb_per_hour': drift.memory_drift_mb_per_hour, 'cpu_drift_pct_per_hour': drift.event_loop_drift_pct_per_hour}
 
     def get_available_monitoring_systems(self) -> dict[str, bool]:
         """Get availability status of all monitoring systems."""

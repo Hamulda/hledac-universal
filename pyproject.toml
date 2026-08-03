@@ -163,6 +163,11 @@ dependencies = [
     "pyobjc-framework-naturallanguage>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-coreml>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-WebKit>=12.2; sys_platform == 'darwin'",
+    # SILICON-02: Audio/video decoding + on-device speech recognition via Apple
+    # Media Engine. AVFoundation → VideoToolbox HW decode (H.265 8K real-time <5% CPU).
+    # Speech → SFSpeechRecognizer on ANE (1h audio in ~3 min, zero GPU bandwidth).
+    "pyobjc-framework-AVFoundation>=12.2; sys_platform == 'darwin'",
+    "pyobjc-framework-Speech>=12.2; sys_platform == 'darwin'",
     # Python 3.14: both 8.x and 9.x lack wheels; upper bound needed for ANE ops (macOS SDK 15+)
     "coremltools>=8.0,<10.0",
     # ── Kryptografie ──────────────────────────────────────────────────────────
@@ -779,6 +784,8 @@ allowed-unresolved-imports = [
     "Vision", "Vision.**",
     "NaturalLanguage", "NaturalLanguage.**",
     "Quartz", "Cocoa", "CoreML", "AppKit", "Foundation",
+    "AVFoundation", "AVFoundation.**",
+    "Speech", "Speech.**",
     "Metal", "MetalPerformanceShaders", "MetalPerformanceShadersGraph",
     "selectolax", "selectolax.tags",
     "pyxorfilter",

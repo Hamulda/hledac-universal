@@ -102,16 +102,27 @@ Architektura: Model registry s max 2 modely současně (ANE HW limit). Skutečn�
 maturin develop --features "metal"
 ```
 
-GPU batch matmul pro MoE router. Aktuálně stub s CPU (NEON) fallback.
+GPU batch matmul pro MoE router + SILICON-01 opportunistic hash cracking.
 
-Funkce:
+Funkce (metal_compute):
 - `rust.metal.init()` — Inicializace Metal GPU
-- `rust.metal.batch_matmul(query, expert_weights, batch, experts, hidden, expert_dim)` — Batch maticové násobení
-- `rust.metal.batch_matvec(query, expert_weights, batch, experts, hidden)` — Batch maticový vektor součin
-- `rust.metal.get_telemetry()` — Telemetrie (matmul_calls, total_tokens, gpu_fallback_cpu)
+- `rust.metal.batch_matmul(...)` — Batch maticové násobení
+- `rust.metal.batch_matvec(...)` — Batch maticový vektor součin
+- `rust.metal.get_telemetry()` — Telemetrie
 - `rust.metal.clear_cache()` — Uvolnění GPU paměti
 
-MoE integrace: `brain/moe_router.py` → `batch_matvec_metal()` → Rust Metal batch matmul.
+Funkce (MetalHashCracker — SILICON-01):
+- `rust.MetalHashCracker()` — Inicializace GPU hash crackeru
+- `cracker.is_available` — True pokud Metal GPU dostupné
+- `cracker.device_name` — Název zařízení (např. "Apple M1")
+- `cracker.crack_md5(target_hex, wordlist) -> Optional[str]` — MD5 dictionary attack (GPU → CPU fallback)
+- `cracker.crack_sha256(target_hex, wordlist) -> Optional[str]` — SHA-256 dictionary attack
+- `cracker.crack_batch_md5(targets, wordlist) -> Dict[str, Optional[str]]` — Batch cracking
+- `cracker.get_stats() -> Dict` — Telemetrie (gpu_attempts, cpu_fallbacks, atd.)
+- `cracker.clear_cache()` — Uvolnění GPU bufferů
+
+M1 8GB: GPU buffery bounded na 64 MB, total guard 256 MB.
+CPU fallback: Rayon + NEON (vždy dostupný, bez Metal crate).
 
 ### accelerate — Accelerate/vDSP FFI (always compiled)
 

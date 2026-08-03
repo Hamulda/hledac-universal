@@ -299,13 +299,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-07-29T21:55:21.607Z",
+  "generated_at": "2026-08-03T05:45:46.828Z",
   "lane_tokens": {
     "contexts": 3981,
     "stubs": 0,
     "summaries": 1952
   },
-  "source_fingerprint": "8cdb4a185e2737de504c0e00f0e7a6ba98d27babd895149adbbffb031a7717d5",
+  "source_fingerprint": "1413561fb1d1af01fd25070fd6675b0eb0ce4d357173b3c1d4dbece7f4cec3ae",
   "total_tokens": 5933,
   "version": 1
 }

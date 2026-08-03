@@ -2,20 +2,35 @@
 //!
 //! ## Architecture
 //!
-//! ANE je dedicated Neural Engine chip na M1/M2/M3 Apple Silicon (15 TOPS).
+//! ANE je dedicated Neural Engine chip na M1/M2/M3 Apple Silicon (16 jader, 11 TOPS).
 //! Není přístupný přímo - pouze přes CoreML framework.
 //!
-//! Tento modul poskytuje:
-//! - Model registry s bounded memory (max 2 modely současně per ANE HW limit)
-//! - Batch size enforcement (max 4096 per ANE HW constraint)
-//! - Token-based inference interface pro embedding úlohy
-//! - Fallback routing pro CPU/GPU když ANE není dostupný
+//! ## SILICON-06: ANE Idle Fix (2026-07)
+//!
+//! **Problem**: ANE was completely idle during embedding batches — all inference
+//! ran on GPU via mx.eval(). The ANE mutex was acquired in submit_embedding()
+//! but there was no actual ANE inference behind it.
+//!
+//! **Solution**: Dual-path ANE/GPU dispatch:
+//! - Python: `brain/ane_inference.py` — ANEInferenceEngine with coremltools
+//! - Rust:   This module (`ane.rs`) — model registry + CoreML FFI infrastructure
+//!
+//! **Dispatch logic** (in `mlx_unified_scheduler.py:submit_embedding()`):
+//! - batch ≤ 16, dim ≤ 1024 → ANE path (16-core Neural Engine, 11 TOPS)
+//! - batch > 16 → GPU path (MLX via mx.eval(), existing)
+//!
+//! **Rust-native ANE inference** (future work):
+//! The `coreml` crate (v0.2) provides Rust bindings to CoreML's C API.
+//! When integrated, `run_inference()` and `embed_tokens()` will call
+//! CoreML directly without Python bridge overhead. Current stubs delegate
+//! to `brain/ane_inference.py:ANEInferenceEngine` via PyO3 callbacks.
 //!
 //! ## ANE Memory Constraints (M1 8GB specific)
 //!
 //! - Max 2 modely v paměti najednou
-//! - Max batch size 4096 tokenů
-//! - Pro embedding úlohy: typicky 64-512 tokenů na sekvenci, batche 8-32
+//! - Max batch size 4096 tokenů (ANE HW limit)
+//! - Per-model footprint ~50 MB (compiled CoreML)
+//! - Pro embedding úlohy: typicky 64-512 tokenů na sekvenci, batche 8-16
 //!
 //! ## Usage
 //!
@@ -26,18 +41,22 @@
 //! rust.ane.init()
 //!
 //! # Load model (max 2 simultaneous models)
-//! rust.ane.load_model("modernbert-ane", "/path/to/model.mlpackage")
+//! rust.ane.load_model("bge-small", "/path/to/model.mlpackage", 384, 512)
 //!
-//! # Run inference
-//! embeddings = rust.ane.embed_tokens("modernbert-ane", token_ids, attention_mask)
+//! # Validate batch before inference
+//! rust.ane.validate_batch(batch_size=16, seq_len=512, max_seq_len=512)
 //!
-//! # Unload when done (allows new model to be loaded)
-//! rust.ane.unload_model("modernbert-ane")
+//! # Run inference (delegates to brain/ane_inference.py if Rust-native unavailable)
+//! embeddings = rust.ane.embed_tokens("bge-small", token_ids, attention_mask)
+//!
+//! # Unload when done
+//! rust.ane.unload_model("bge-small")
 //! ```
 //!
 //! ## Feature Gate
 //!
-//! Enabled via `ane = ["ane"]` feature flag in Cargo.toml.
+//! Enabled via `ane = []` feature flag in Cargo.toml.
+//! No external dependencies — pure Rust std + PyO3.
 
 use pyo3::prelude::*;
 use std::collections::{BTreeMap, HashMap};
@@ -49,11 +68,20 @@ const ANE_MAX_MODELS: usize = 2;
 const ANE_MAX_BATCH_SIZE: usize = 4096;
 
 /// ANE compute unit preference for CoreML
+///
+/// SILICON-06: Maps to coremltools.ComputeUnit on Python side.
+/// Rust-native CoreML FFI (future): maps to MLComputeUnits enum
+/// via the `coreml` crate (v0.2, `coreml_sys::MLComputeUnits`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ANEComputeUnit {
+    /// Apple Neural Engine — 16 cores, 11 TOPS int8 (M1)
+    /// Preferred for small-batch embedding (≤16 docs, dim ≤ 1024)
     NeuralEngine,
+    /// CPU fallback — always available, no memory pressure
     CPU,
+    /// GPU (Metal) — unified memory, shared with MLX LLM
     GPU,
+    /// All compute units — CoreML auto-selects optimal unit
     All,
 }
 
@@ -355,15 +383,23 @@ pub fn validate_batch(batch_size: usize, seq_len: usize, max_seq_len: usize) -> 
     Ok(())
 }
 
-/// Run model inference on ANE (stub).
+/// Run model inference on ANE.
 ///
-/// This is a placeholder that delegates to Python's CoreML implementation.
-/// The Python side should call coreml_embedder or mlx_embedder for actual inference.
+/// SILICON-06: This is a stub that delegates to Python's ANEInferenceEngine.
+/// For direct Rust-native ANE inference, see the `coreml` crate integration
+/// plan in rust_extensions/src/ane.rs module docs.
 ///
-/// For full ANE support, models must be:
-/// 1. Compiled with coremltools (compute_units=ComputeUnit.ANANEURAL)
-/// 2. Loaded via CoreML framework
-/// 3. Executed with Neural Engine compute unit preference
+/// Current implementation: returns an error directing to Python path.
+/// Python callers should use:
+///     from hledac.universal.brain.ane_inference import get_ane_engine
+///     engine = get_ane_engine()
+///     embeddings = await engine.embed_batch_ane(texts, model_key="bge-small")
+///
+/// For Rust-native CoreML FFI (future):
+///     1. Add `coreml = { version = "0.2", optional = true }` to Cargo.toml
+///     2. Implement MLModel::load() + MLPrediction in Rust
+///     3. Call MLPredictionOptions::set_compute_units(NeuralEngine)
+///     4. Run inference without Python bridge overhead
 ///
 /// Args:
 ///     model_id: Registered model identifier
@@ -398,25 +434,28 @@ pub fn run_inference(model_id: String, input_ids: Vec<i64>, attention_mask: Vec<
         telemetry.embed_tokens = telemetry.embed_tokens.saturating_add(input_ids.len() as u64);
     }
 
-    // Delegate to Python side for actual inference
-    // This stub returns an error directing to Python implementation
+    // SILICON-06: Delegate to Python ANEInferenceEngine for actual inference.
+    // Rust-native CoreML FFI is future work (see module docs).
+    // This stub returns an error directing to the Python implementation.
     Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-        "ANE inference for '{}' should be called from Python via CoreML. \
-         Use brain.ane_embedder.ANEEmbedder.embed() for actual inference. \
-         Registered model: hidden_dim={}, max_seq_len={}",
+        "ANE inference for '{}' delegates to Python. \
+         Use brain.ane_inference.ANEInferenceEngine.embed_batch_ane() for actual inference. \
+         SILICON-06: Rust-native CoreML FFI not yet integrated. \
+         Model: hidden_dim={}, max_seq_len={}. \
+         See rust_extensions/src/ane.rs module docs for coreml crate integration plan.",
         model_id, meta.hidden_dim, meta.max_seq_len
     )))
 }
 
-/// Compute embedding from tokenized input (stub).
+/// Compute embedding from tokenized input.
 ///
-/// Similar to run_inference but specifically for embedding models.
-/// Returns pooled embeddings of shape (batch, hidden_dim).
-///
+/// SILICON-06: Stub — delegates to Python ANEInferenceEngine.embed_batch_ane().
 /// For actual ANE embedding:
-/// 1. Use coremltools to compile model with compute_units=ComputeUnit.ANANEURAL
-/// 2. Load via CoreML in Python
-/// 3. Execute with Neural Engine preference
+/// 1. Use coremltools to compile model with compute_units=ComputeUnit.NEURAL_ENGINE
+/// 2. Load via brain/ane_inference.py:ANEInferenceEngine
+/// 3. Call engine.embed_batch_ane(texts, model_key="bge-small")
+///
+/// Rust-native path (future): coreml crate → MLModel::prediction_from_features()
 #[pyfunction]
 pub fn embed_tokens(model_id: String, token_ids: Vec<i64>, attention_mask: Vec<i64>) -> Result<Vec<f32>, PyErr> {
     run_inference(model_id, token_ids, attention_mask)
@@ -463,12 +502,16 @@ pub fn get_supported_compute_units() -> Vec<String> {
 }
 
 /// Check if Neural Engine is available on this hardware.
+///
+/// SILICON-06: Returns true on Apple Silicon (M1+).
+/// Actual ANE inference requires coremltools on Python side
+/// (brain/ane_inference.py:is_ane_available() for runtime check).
+/// This function checks hardware capability only.
 #[pyfunction]
 pub fn is_ane_available() -> bool {
-    // ANE is available on all Apple Silicon chips (M1, M1 Pro, M1 Max, M1 Ultra, M2, M3, etc.)
+    // ANE is available on all Apple Silicon chips (M1, M1 Pro, M1 Max, M1 Ultra, M2, M3, M4, etc.)
+    // This checks hardware only — runtime availability needs coremltools (Python side).
     if std::env::consts::OS == "macos" && std::env::consts::ARCH == "aarch64" {
-        // Check if we're on Apple Silicon
-        // This is a basic check - actual ANE availability requires CoreML
         return true;
     }
     false

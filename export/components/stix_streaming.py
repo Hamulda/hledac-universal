@@ -49,6 +49,7 @@ class STIXStreamingResult:
     """Result of streaming STIX write."""
 
     bundle_size_bytes: int = 0
+    compressed_size_bytes: int = 0  # HEIST-04: size after zstd dict compression
     object_count: int = 0
     ioc_count: int = 0
     capped: bool = False
@@ -109,10 +110,21 @@ def stream_stix_bundle(
     result.bundle_size_bytes = len(content.encode("utf-8"))
     result.object_count = len(bundle.get("objects", []))
 
+    # HEIST-04: Compress STIX bundle with pre-trained zstd dictionary
+    content_bytes = content.encode("utf-8")
+    try:
+        from hledac.universal.export.components.zstd_dict_exporter import compress_export_section
+        compressed = compress_export_section(content_bytes)
+        result.compressed_size_bytes = len(compressed)
+    except Exception:
+        compressed = content_bytes
+        result.compressed_size_bytes = result.bundle_size_bytes
+
     # Write to path if specified
     if output_path:
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(output_path).write_text(content, encoding="utf-8")
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(compressed)
     elif output_path is not None:
         # Use render_stix_bundle_to_path for default path resolution
         path = render_stix_bundle_to_path(report)

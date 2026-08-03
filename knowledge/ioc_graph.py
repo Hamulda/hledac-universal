@@ -36,6 +36,14 @@ try:
 except ImportError:
     _kuzu = None
 
+_PYARROW_AVAILABLE: bool = False
+_pa = None
+try:
+    import pyarrow as _pa
+    _PYARROW_AVAILABLE = True
+except ImportError:
+    _pa = None
+
 class GraphBackendUnavailableError(Exception):
     """Raised when a required graph backend (kuzu) is not installed."""
     pass
@@ -94,21 +102,44 @@ class IOCGraph:
     - buffer_ioc(), flush_buffers(), upsert_ioc_batch(), export_stix_bundle(), pivot()
     - NOT analytics backend — DuckPGQGraph serves that role.
 
+    BLITZ-08: Supports in-memory mode (memory_mode=True) for zero-disk-I/O
+    sprint ACTIVE phase. Use persist_to_disk() during TEARDOWN to export
+    the in-memory graph to a file-backed Kuzu database.
+
     JTMS INTEGRATION (APEX-1003):
     - Maintains in-memory JTMS for justification tracking
     - Supports retract_source() to remove all facts from a source
     - Applies temporal decay to confidence at flush_buffers()
     """
     __slots__ = tuple(('_BUFFER_FLUSH_SIZE', '_closed', '_conn', '_db', '_db_path',
-                       '_executor', '_ioc_buffer', '_obs_buffer', '_jtms', '_decay_lambda'))
+                       '_executor', '_ioc_buffer', '_is_memory_mode', '_obs_buffer',
+                       '_jtms', '_decay_lambda'))
 
-    def __init__(self, db_path: Path | None=None, decay_lambda: float = 0.01) -> None:
+    def __init__(self, db_path: Path | None=None, decay_lambda: float = 0.01,
+                 *, memory_mode: bool = False) -> None:
+        """Initialize IOCGraph with optional in-memory mode (BLITZ-08).
+
+        Args:
+            db_path: Path to Kuzu database directory. If None, defaults to
+                     ~/.hledac/kuzu/ioc_graph. Ignored when memory_mode=True.
+            decay_lambda: Temporal decay rate for JTMS confidence scores.
+            memory_mode: When True, Kuzu database lives entirely in RAM
+                         (":memory:" path). No disk I/O on flush_buffers().
+                         At TEARDOWN, call persist_to_disk() to export.
+                         M1 8GB safe: Kuzu :memory: is page-backed, not
+                         fully resident — ~10-50 MB for typical sprint IOCs.
+        """
         if not _KUZU_AVAILABLE:
             raise GraphBackendUnavailable('kuzu is not installed. Install via: pip install hledac-universal[kuzu-graph]')
-        if db_path is None:
+        self._is_memory_mode: bool = memory_mode
+        if memory_mode:
+            self._db_path = Path(':memory:')
+        elif db_path is None:
             _KUZU_DB_ROOT.mkdir(parents=True, exist_ok=True)
             db_path = _KUZU_DB_ROOT / _IOC_GRAPH_FILENAME
-        self._db_path: Path = Path(db_path)
+            self._db_path = Path(db_path)
+        else:
+            self._db_path = Path(db_path)
         self._db: Any | None = None
         self._conn: Any | None = None
         self._closed: bool = False
@@ -397,6 +428,153 @@ class IOCGraph:
             self._db.close()
             self._db = None
 
+    @property
+    def is_memory_mode(self) -> bool:
+        """BLITZ-08: True if this graph operates in :memory: mode (no disk I/O)."""
+        return self._is_memory_mode
+
+    async def persist_to_disk(self, target_path: Path) -> int:
+        """BLITZ-08: Export in-memory graph to a file-backed Kuzu database.
+
+        Creates a new Kuzu database at target_path, copies the schema
+        (IOC node table + OBSERVED rel table), then bulk-copies all nodes
+        and edges from the in-memory graph.
+
+        Call this during sprint TEARDOWN to persist the in-memory graph
+        before the :memory: database is destroyed on close().
+
+        Args:
+            target_path: Directory path for the new file-backed Kuzu DB.
+                        Parent directories are created if needed.
+
+        Returns:
+            Total number of nodes + edges copied, or 0 on failure.
+
+        M1 8GB safe: uses sequential COPY via Kuzu Cypher — no buffered
+        bulk transfer, O(n) memory for the largest single row.
+        """
+        if self._closed or self._conn is None:
+            logger.warning('[IOCGraph] persist_to_disk: graph is closed, nothing to persist')
+            return 0
+        if not self._is_memory_mode:
+            logger.debug('[IOCGraph] persist_to_disk: already file-backed, no-op')
+            return 0
+
+        target_path = Path(target_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists():
+            import shutil
+            logger.warning(
+                '[IOCGraph] persist_to_disk: target %s exists, removing',
+                target_path,
+            )
+            shutil.rmtree(str(target_path), ignore_errors=True)
+
+        total_copied = 0
+        target_db: Any = None
+        target_conn: Any = None
+        try:
+            # Create file-backed Kuzu database with identical schema
+            target_db = _kuzu.Database(str(target_path))
+            target_conn = _kuzu.Connection(target_db)
+
+            # Create schema (idempotent — first time on a fresh DB)
+            target_conn.execute(
+                'CREATE NODE TABLE IOC('
+                'id STRING PRIMARY KEY, '
+                'ioc_type STRING, '
+                'value STRING, '
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE, '
+                'confidence DOUBLE'
+                ')'
+            )
+        except Exception:
+            # Schema already exists (Kuzu raises on duplicate CREATE)
+            pass
+
+        try:
+            target_conn.execute(
+                'CREATE REL TABLE OBSERVED('
+                'FROM IOC TO IOC, '
+                'finding_id STRING, '
+                'source_type STRING, '
+                'first_seen DOUBLE, '
+                'last_seen DOUBLE'
+                ')'
+            )
+        except Exception:
+            pass
+
+        try:
+            # Copy IOC nodes — MATCH all, CREATE in target
+            ioc_res = self._conn.execute(
+                'MATCH (n:IOC) RETURN n.id, n.ioc_type, n.value, '
+                'n.first_seen, n.last_seen, n.confidence'
+            )
+            ioc_count = 0
+            while ioc_res.has_next():
+                row = ioc_res.get_next()
+                target_conn.execute(
+                    'CREATE (:IOC {'
+                    'id: $id, ioc_type: $t, value: $v, '
+                    'first_seen: $fs, last_seen: $ls, confidence: $c'
+                    '})',
+                    {
+                        'id': row[0], 't': row[1], 'v': row[2],
+                        'fs': row[3], 'ls': row[4], 'c': row[5],
+                    },
+                )
+                ioc_count += 1
+            total_copied += ioc_count
+            logger.info('[IOCGraph] persist_to_disk: %d IOC nodes copied', ioc_count)
+
+            # Copy OBSERVED edges — MATCH with endpoints, CREATE in target
+            obs_res = self._conn.execute(
+                'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) '
+                'RETURN a.id, b.id, r.finding_id, r.source_type, '
+                'r.first_seen, r.last_seen'
+            )
+            obs_count = 0
+            while obs_res.has_next():
+                row = obs_res.get_next()
+                target_conn.execute(
+                    'MATCH (a:IOC {id: $aid}), (b:IOC {id: $bid}) '
+                    'CREATE (a)-[:OBSERVED {'
+                    'finding_id: $fid, source_type: $st, '
+                    'first_seen: $fs, last_seen: $ls'
+                    '}]->(b)',
+                    {
+                        'aid': row[0], 'bid': row[1],
+                        'fid': row[2], 'st': row[3],
+                        'fs': row[4], 'ls': row[5],
+                    },
+                )
+                obs_count += 1
+            total_copied += obs_count
+            logger.info('[IOCGraph] persist_to_disk: %d OBSERVED edges copied', obs_count)
+
+        except Exception as exc:
+            logger.error('[IOCGraph] persist_to_disk failed: %s', exc)
+            return 0
+        finally:
+            if target_conn is not None:
+                try:
+                    target_conn.close()
+                except Exception:
+                    pass
+            if target_db is not None:
+                try:
+                    target_db.close()
+                except Exception:
+                    pass
+
+        logger.info(
+            '[IOCGraph] persist_to_disk: %d total entities written to %s',
+            total_copied, target_path,
+        )
+        return total_copied
+
     async def upsert_ioc(self, ioc_type: str, value: str, confidence: float=1.0) -> str | None:
         """
         Idempotent upsert of an IOC node.
@@ -583,8 +761,9 @@ class IOCGraph:
         """
         Find IOC nodes connected to the given IOC up to *depth* hops.
 
-        Kuzu: MATCH (n:IOC)-[r*1..2]-(m:IOC)
-              WHERE n.value=$v AND n.ioc_type=$t RETURN m, r
+        Uses Kuzu getAsArrow() → PyArrow zero-copy path when pyarrow is
+        available (Kuzu 0.11.3+).  Falls back to row-by-row iteration
+        otherwise.  Both paths run on the executor thread.
 
         Returns list of dicts: id, ioc_type, value, confidence, first_seen, last_seen.
         """
@@ -593,23 +772,77 @@ class IOCGraph:
 
         depth_clamped = max(1, min(depth, 2))
         try:
-            return await asyncio.to_thread(self._pivot_sync, ioc_value, ioc_type, depth_clamped)
+            return await asyncio.to_thread(self._pivot_arrow_sync, ioc_value, ioc_type, depth_clamped)
         except Exception as e:
             import logging
             logging.warning(f'[IOCGraph] pivot failed: {e}')
             return []
 
+    def _pivot_arrow_sync(self, ioc_value: str, ioc_type: str, depth: int) -> list[dict[str, Any]]:
+        """Arrow-accelerated pivot — Kuzu getAsArrow() → PyArrow zero-copy → to_pylist().
+
+        Kuzu 0.11.3+ exports results via the C Data Interface directly into a
+        PyArrow Table.  The per-column Arrow arrays are shared with Kuzu's
+        internal buffers — no per-row Python calls, no dict(zip(...)) overhead.
+        to_pylist() constructs dicts in C++ inside the Arrow compute layer,
+        which is ~10× faster than Python-level row iteration.
+
+        Falls back to _pivot_sync() when pyarrow is not importable at runtime.
+        """
+        if not _PYARROW_AVAILABLE or _pa is None:
+            return self._pivot_sync(ioc_value, ioc_type, depth)
+
+        conn = self._conn
+        assert conn is not None
+        query = (
+            f'MATCH (n:IOC)-[r*1..{depth}]-(m:IOC) '
+            'WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id '
+            'RETURN m.id AS id, m.ioc_type AS ioc_type, m.value AS value, '
+            'm.confidence AS confidence, m.first_seen AS first_seen, m.last_seen AS last_seen'
+        )
+        try:
+            res = conn.execute(query, {'v': ioc_value, 't': ioc_type})
+            # Kuzu → Arrow zero-copy via C Data Interface (Kuzu 0.11.3+).
+            # chunkSize=0 means all rows in one batch — safe for ≤500 rows.
+            arrow_table = res.getAsArrow(0)
+            # to_pylist() constructs list[dict] in C++ (Arrow compute layer).
+            # This is the only Python heap allocation — no per-row overhead.
+            records: list[dict[str, Any]] = arrow_table.to_pylist()
+        except Exception:
+            return self._pivot_sync(ioc_value, ioc_type, depth)
+
+        # Dedup by id (Kuzu variable-length paths may return duplicates)
+        results: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for node_data in records:
+            nid = node_data.get('id', '')
+            if nid and nid not in seen_ids:
+                seen_ids.add(nid)
+                results.append(node_data)
+        return results
+
     def _pivot_sync(self, ioc_value: str, ioc_type: str, depth: int) -> list[dict[str, Any]]:
-        """Synchronous pivot — runs on _executor thread."""
+        """Synchronous pivot — runs on _executor thread.
+
+        Fallback path when pyarrow is unavailable.  Uses row-by-row iteration
+        with get_column_names() hoisted outside the loop (was inside in v1).
+        """
         conn = self._conn
         assert conn is not None
         results: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
-        query = f'MATCH (n:IOC)-[r*1..{depth}]-(m:IOC) WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id RETURN m.id AS id, m.ioc_type AS ioc_type, m.value AS value, m.confidence AS confidence, m.first_seen AS first_seen, m.last_seen AS last_seen'
+        query = (
+            f'MATCH (n:IOC)-[r*1..{depth}]-(m:IOC) '
+            'WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id '
+            'RETURN m.id AS id, m.ioc_type AS ioc_type, m.value AS value, '
+            'm.confidence AS confidence, m.first_seen AS first_seen, m.last_seen AS last_seen'
+        )
         res = conn.execute(query, {'v': ioc_value, 't': ioc_type})
+        # Hoisted: get_column_names() is O(columns), was previously called
+        # inside the loop — O(N × columns) → O(columns).
+        col_names = res.get_column_names()
         while res.has_next():
             row = res.get_next()
-            col_names = res.get_column_names()
             node_data: dict[str, Any] = dict(zip(col_names, row, strict=False))
             nid = node_data.get('id', '')
             if nid and nid not in seen_ids:
@@ -661,7 +894,7 @@ class IOCGraph:
         k_clamped = max(1, min(k, 5))
         try:
             return await asyncio.to_thread(
-                self._extract_k_hop_subgraph_sync,
+                self._extract_k_hop_subgraph_arrow_sync,
                 ioc_value, ioc_type, k_clamped, max_nodes, max_edges,
             )
         except Exception as e:
@@ -680,6 +913,161 @@ class IOCGraph:
             'edges': [],
             'stats': {'total_nodes': 0, 'total_edges': 0, 'density': 0.0, 'max_degree': 0},
             'truncated': False,
+        }
+
+    def _extract_k_hop_subgraph_arrow_sync(
+        self,
+        ioc_value: str,
+        ioc_type: str,
+        k: int,
+        max_nodes: int,
+        max_edges: int,
+    ) -> dict[str, Any]:
+        """Arrow-accelerated subgraph extraction — Kuzu getAsArrow() for both phases.
+
+        Phase 1 (node collection) and Phase 2 (edge collection) both use
+        Kuzu's native Arrow export via the C Data Interface.  Falls back to
+        _extract_k_hop_subgraph_sync() when pyarrow is not available or any
+        Arrow operation fails.
+        """
+        if not _PYARROW_AVAILABLE or _pa is None:
+            return self._extract_k_hop_subgraph_sync(
+                ioc_value, ioc_type, k, max_nodes, max_edges,
+            )
+
+        k = max(1, min(k, 5))
+        if max_nodes < 1:
+            max_nodes = 1
+        max_nodes = min(max_nodes, 500)
+        max_edges = max(0, min(max_edges, 2000))
+        neighbor_limit = max(0, max_nodes - 1)
+
+        conn = self._conn
+        assert conn is not None
+        seed_id = _make_ioc_id(ioc_type, ioc_value)
+        truncated = False
+        node_set: dict[str, dict[str, Any]] = {}
+
+        # --- Phase 1: Arrow-accelerated node collection ---
+        try:
+            query = (
+                f'MATCH (n:IOC)-[r*1..{k}]-(m:IOC) '
+                'WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id '
+                'RETURN DISTINCT m.id AS id, m.ioc_type AS ioc_type, '
+                'm.value AS value, m.confidence AS confidence, '
+                'm.first_seen AS first_seen, m.last_seen AS last_seen '
+                f'LIMIT {neighbor_limit + 1}'
+            )
+            res = conn.execute(query, {'v': ioc_value, 't': ioc_type})
+            arrow_table = res.getAsArrow(0)  # zero-copy C Data Interface
+            records: list[dict[str, Any]] = arrow_table.to_pylist()
+
+            for node_data in records:
+                if len(node_set) >= neighbor_limit:
+                    truncated = True
+                    break
+                nid = node_data.get('id', '')
+                if nid and nid not in node_set:
+                    node_set[nid] = {
+                        'id': nid,
+                        'ioc_type': node_data.get('ioc_type', 'unknown'),
+                        'value': node_data.get('value', ''),
+                        'confidence': float(node_data.get('confidence', 1.0)),
+                        'first_seen': float(node_data.get('first_seen', 0.0)),
+                        'last_seen': float(node_data.get('last_seen', 0.0)),
+                    }
+        except Exception:
+            return self._extract_k_hop_subgraph_sync(
+                ioc_value, ioc_type, k, max_nodes, max_edges,
+            )
+
+        # --- Seed node lookup (single row — keep as-is) ---
+        try:
+            seed_res = conn.execute(
+                'MATCH (n:IOC) WHERE n.id = $id '
+                'RETURN n.ioc_type, n.value, n.confidence, '
+                'n.first_seen, n.last_seen',
+                {'id': seed_id},
+            )
+            if seed_res.has_next():
+                row = seed_res.get_next()
+                if seed_id not in node_set:
+                    node_set[seed_id] = {
+                        'id': seed_id,
+                        'ioc_type': str(row[0]) if row[0] else ioc_type,
+                        'value': str(row[1]) if row[1] else ioc_value,
+                        'confidence': float(row[2]) if row[2] is not None else 1.0,
+                        'first_seen': float(row[3]) if row[3] is not None else 0.0,
+                        'last_seen': float(row[4]) if row[4] is not None else 0.0,
+                    }
+        except Exception:
+            pass
+
+        # --- Phase 2: Arrow-accelerated edge collection ---
+        node_ids = list(node_set.keys())
+        edges: list[dict[str, Any]] = []
+        degree_map: dict[str, int] = {nid: 0 for nid in node_ids}
+
+        if len(node_ids) >= 2:
+            edge_set: set[tuple[str, str]] = set()
+            try:
+                res = conn.execute(
+                    'UNWIND $ids AS nid '
+                    'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) '
+                    'WHERE a.id = nid AND b.id IN $ids '
+                    'RETURN a.id AS src, b.id AS dst, '
+                    'r.finding_id AS finding_id, '
+                    'r.source_type AS source_type, '
+                    'r.last_seen AS last_seen '
+                    'LIMIT $limit',
+                    {'ids': node_ids, 'limit': max_edges * 2},
+                )
+                arrow_table = res.getAsArrow(0)
+                edge_records: list[dict[str, Any]] = arrow_table.to_pylist()
+
+                for rec in edge_records:
+                    if len(edge_set) >= max_edges:
+                        truncated = True
+                        break
+                    src = str(rec.get('src', ''))
+                    dst = str(rec.get('dst', ''))
+                    if src in node_set and dst in node_set:
+                        pair = (src, dst)
+                        if pair not in edge_set:
+                            edge_set.add(pair)
+                            edges.append({
+                                'source_id': src,
+                                'target_id': dst,
+                                'finding_id': str(rec.get('finding_id', '')),
+                                'source_type': str(rec.get('source_type', 'unknown')),
+                                'confidence': 1.0,
+                                'last_seen': float(rec.get('last_seen', 0.0) or 0.0),
+                            })
+                            degree_map[src] = degree_map.get(src, 0) + 1
+                            degree_map[dst] = degree_map.get(dst, 0) + 1
+            except Exception:
+                pass
+
+        total_nodes = len(node_set)
+        total_edges = len(edges)
+        max_possible = total_nodes * (total_nodes - 1) // 2
+        density = total_edges / max_possible if max_possible > 0 else 0.0
+        max_degree = max(degree_map.values()) if degree_map else 0
+
+        return {
+            'seed_id': seed_id,
+            'seed_value': ioc_value,
+            'seed_type': ioc_type,
+            'k': k,
+            'nodes': list(node_set.values()),
+            'edges': edges,
+            'stats': {
+                'total_nodes': total_nodes,
+                'total_edges': total_edges,
+                'density': round(density, 4),
+                'max_degree': max_degree,
+            },
+            'truncated': truncated,
         }
 
     def _extract_k_hop_subgraph_sync(

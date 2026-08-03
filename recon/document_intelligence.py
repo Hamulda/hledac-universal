@@ -463,13 +463,47 @@ async def _ocr_embedded_batch_async(image_list: list[bytes]) -> list[tuple[str, 
     """Async batch version — runs in thread pool via VisionOCREngine's async batch entry.
 
     ISSUE-012: Parallel ANE OCR for async contexts (DeepForensicsAnalyzer).
+
+    UNIFIED-001: Acquires admission from GlobalPeakLoadCoordinator before
+    ANE OCR batch to prevent OOM when multiple subsystems compete for memory.
+    ANE OCR batch typically allocates ~1.5 GB for 4 concurrent workers.
     """
     engine_cls = _get_vision_ocr_engine()
     if engine_cls is None:
         return [('', 0.0)] * len(image_list)
+
+    # UNIFIED-001: Acquire admission from peak load coordinator
+    peak_guard = None
+    try:
+        from hledac.universal.core.peak_load_coordinator import (
+            ResourceClass,
+            TaskPriority,
+            get_peak_coordinator,
+        )
+        coordinator = get_peak_coordinator()
+        if coordinator is not None:
+            # ANE OCR batch: ~1500 MB peak allocation (4 concurrent workers)
+            peak_guard = await coordinator.acquire(
+                ResourceClass.ANE_VISION,
+                estimated_mb=1500.0,
+                priority=TaskPriority.NORMAL,
+                owner=f"ane_ocr_batch:{len(image_list)}_images",
+                timeout_s=5.0,
+            )
+    except (ImportError, TimeoutError) as e:
+        logger.debug(f"[UNIFIED-001] ANE OCR admission failed: {e}")
+        # Fail-open: proceed without admission if coordinator unavailable
+    except Exception as e:
+        logger.debug(f"[UNIFIED-001] ANE OCR admission error (fail-open): {e}")
+
+    # UNIFIED-001: Wrap actual work in peak_guard context to ensure release
     try:
         engine = engine_cls()
-        return await engine.recognize_batch_async(image_list)
+        if peak_guard is not None:
+            async with peak_guard:
+                return await engine.recognize_batch_async(image_list)
+        else:
+            return await engine.recognize_batch_async(image_list)
     except Exception:
         return [('', 0.0)] * len(image_list)
 

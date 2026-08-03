@@ -71,8 +71,12 @@ from .meta_reasoning_coordinator import (
     ReasoningChain,
     ReasoningStep,
     ReasoningStrategy,
+    SprintClock,  # BLITZ-04
     ThoughtNode,
     UniversalMetaReasoningCoordinator,
+)
+from .tot_checkpointer import (  # UNIFIED-005
+    TransactionalToTCheckpointer,
 )
 from .monitoring_coordinator import UniversalMonitoringCoordinator
 from .opsec_coordinator import OpsECCoordinator
@@ -211,7 +215,9 @@ __all__ = [
     'ReasoningStrategy',
     'ReasoningStep',
     'ReasoningChain',
+    'SprintClock',  # BLITZ-04
     'ThoughtNode',
+    'TransactionalToTCheckpointer',  # UNIFIED-005
 
     # Performance optimization
     'AgentPerformanceOptimizer',

@@ -1,134 +1,149 @@
 ---
-children_hash: 88b31d4204ccf114fc91a64ac1c5e30c59beaa008942eb2dbb3ba4599f9140dd
-compression_ratio: 0.1171946390496497
+children_hash: 28015bdad4d19e45108b01aff650dcb6f966fd6411206914aa4a69ad6d792e76
+compression_ratio: 0.09835712748403759
 condensation_order: 1
-covers: [caps-capability-registry-for-feature-gating.md, caps-capability-registry-unification.md, coding_conventions_status.md, configuration_constants.md, context.md, environment-gates-control-feature-activation.md, exit_code_convention.md, git_stash_guard_hook.md, hashing_facade_issue_2.md, hledac_universal_claude_md.md, issue_0_2_curl_cffi_caps_invariants.md, issue_2_3_rayon_dispatch_channel_fix.md, issue_3_2_federatedqtable_parking_lot_migration.md, issue_5_2_rag_hnsw_quality_fix.md, issue_a5_feature_flag_sprawl_analysis.md, issue_g2_pep_734_isolation_infrastructure.md, known_issues_and_todos.md, parallel_async_helper.md, pep_562_brain_lazy_loading_refactoring.md, probe_test_state_correction_2026_07_27.md, pyo3-bridges-python-and-rust-across-all-performance-paths.md, rust-pyo3-ffi-dominates-all-hot-paths.md, rust-pyo3-ffi-hot-path-strategy.md, rust-pyo3-unifies-all-hot-paths.md, rust_extensions_overview.md, technology_stack.md, xxhash_rust_implementation.md]
-covers_token_total: 13132
+covers: [caps-capability-registry-for-feature-gating.md, caps-capability-registry-unification.md, coding_conventions_status.md, configuration_constants.md, context.md, environment-gates-control-feature-activation.md, exit_code_convention.md, git_stash_guard_hook.md, hashing_facade_issue_2.md, heist_04_zstd_dictionary_wired_into_export.md, heist_05_simdjson_zero_alloc_json_path.md, hledac_universal_claude_md.md, issue_0_2_curl_cffi_caps_invariants.md, issue_2_3_rayon_dispatch_channel_fix.md, issue_3_2_federatedqtable_parking_lot_migration.md, issue_5_2_rag_hnsw_quality_fix.md, issue_a5_feature_flag_sprawl_analysis.md, issue_g2_pep_734_isolation_infrastructure.md, known_issues_and_todos.md, parallel_async_helper.md, pep_562_brain_lazy_loading_refactoring.md, probe_test_state_correction_2026_07_27.md, pyo3-bridges-python-and-rust-across-all-performance-paths.md, rust-pyo3-ffi-dominates-all-hot-paths.md, rust-pyo3-ffi-hot-path-strategy.md, rust-pyo3-unifies-all-hot-paths.md, rust_extensions_overview.md, technology_stack.md, xxhash_rust_implementation.md]
+covers_token_total: 13939
 summary_level: d1
-token_count: 1539
+token_count: 1371
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries about the Hledac Universal project. I need to:
+The user wants me to create a structural summary at level d1 from the provided knowledge entries. Let me analyze these entries and identify key themes, relationships, and patterns.
 
-1. Review all child entries and identify key themes, patterns, and relationships
-2. Create a condensed structural summary (~20-30% of input)
-3. Preserve entity names, file paths, architectural decisions
-4. Reference entry names for drill-down
-5. Output clean markdown without code blocks
+Key themes I can identify:
 
-Key themes I'm seeing:
-- **Feature Gating**: CAPS capability registry, environment gates (HLEDAC_*), feature flag sprawl
-- **Rust/PyO3 FFI**: 30+ Rust modules, crossbeam-channel MPSC, xxh3 hashing, DuckPGQGraph
-- **Coding Conventions**: Exit codes, async patterns, DuckDB/LMDB patterns, git guard hook
-- **Performance**: Hashing facade, rayon dispatch channel fix, MPSC pool
-- **Issues Resolved**: ISSUE-0.2 (curl_cffi caps), ISSUE-2 (hashing), ISSUE-2.3 (rayon dispatch), ISSUE-3.2 (parking_lot migration), ISSUE-5.2 (RAG HNSW)
-- **Configuration**: DuckDB memory limits, environment variables, technology stack
+1. **Rust/PyO3 FFI Architecture**: Multiple entries about the 30+ Rust modules via PyO3, crossbeam-channel MPSC, xxhash hashing, DuckPGQGraph
+2. **Feature Gating**: CAPS capability registry, environment gates (HLEDAC_*), feature flag sprawl
+3. **Project Conventions**: Exit codes, coding conventions, git stash guard hook
+4. **Performance Optimizations**: SIMDjson, Zstd dictionary compression, rayon dispatch channel fix
+5. **Known Issues**: evidence_log timeout, shodan rate, DuckPGQGraph integration gap
+6. **Technology Stack**: Python 3.14, M1 Apple Silicon, DuckDB, mlxcel, sqlite-vec
 
-Let me structure this into a coherent domain summary.
+Let me create a cohesive structural summary that preserves key facts and relationships while compressing the content.
 </think>
 
 # facts/project — Project Knowledge Summary
 
-Domain covering project configuration, coding conventions, feature gating, Rust/PyO3 FFI hot paths, and resolved issues.
+## Overview
 
-## Core Architectural Patterns
+The `facts/project` domain captures project-specific knowledge for Hledac Universal: a Python 3.14 OSINT orchestrator targeting M1 Apple Silicon (8GB UMA).
 
-**Rust/PyO3 FFI Hot Path Strategy**
-- 30+ Rust modules in `rust_extensions/src/` via PyO3/Maturin (pyo3 0.23, extension-module + abi3-py39)
-- Crossbeam-channel MPSC pool (capacity=2048, 512B/slot ≈ 1MiB budget, ARM LSE atomics ~2-5ns/send)
-- Zero-copy IPC via msgspec.msgpack
-- `#[pyclass(unsendable)]` required because `Receiver<QueueItem>` is not Send
+---
 
-**Centralized Hashing Facade** (`utils/hashing.py`)
-- `xxh3_64_hex`, `batch_xxh3_64_hex`, `sha256_hex`, `blake3_64_hex`
-- Migrated 7 calls in `utils/deduplication.py` + 1 in `tools/url_dedup.py` to xxh3
-- Crypto-grade hashing preserved for forensics/security/stealth/vault
-- Expected ~10× speedup via Rust NEON SIMD
+## Architecture: Rust/PyO3 FFI Hot Path Strategy
 
-**Parallel Async Concurrency** (`utils/async_helpers.py`)
-- `parallel()` replaces deprecated `bounded_gather` (rule #2997)
-- 4 exception policies: raise, first, collect, log
-- Invariants I6/I7/I8 govern exception routing (CancelledError always re-raised)
+**30+ Rust modules** in `rust_extensions/src/` handle all performance-critical paths via PyO3/Maturin.
 
-**PEP 562 Lazy Loading** (`brain/__init__.py`)
-- 17 engine blocks consolidated into TypedDict registry
-- 270-line `__getattr__` reduced to ~10 lines (99.8% deduplication)
+**Core Modules:**
+- `mpsc_pool.rs` — crossbeam-channel bounded MPSC (2048×512B≈1MiB), ARM LSE atomics ~2-5ns/send
+- `rayon_dispatch.rs` — crossbeam-channel dispatch eliminates 25× context-switch overhead (1 dispatcher per pool vs 2 threads/task)
+- `federated_qtable.rs` — Migrated from DashMap→parking_lot::RwLock+AHashMap to fix PyO3 GIL segfaults
+- `simdjson_extract.rs` — zero-alloc JSON Pointer via RFC 6901, NDJSON selective streaming
+- `bloom.rs`, `dedup_bloom.rs` — RotatingBloomFilter for URL dedup
+- `content_hasher.rs`, `url_ops.rs` — xxh3 NEON SIMD hashing
 
-## Feature Gating Architecture
+**IOC Extraction:** 3-tier fallback (Python→Rust/Rayon→Rust/PyO3), `batch_ioc_extract_unified`
 
-**CAPS Capability Registry** (`core/capabilities.py`)
-- `CAPS.require(CURL_CFFI)` canonical availability check with FAIL-FAST policy
-- ISSUE-0.2: replaced `is_curl_cffi_available()` with CAPS-based gating
-- Should extend to other optional dependencies
+**DuckPGQGraph:** F272 replacing Python igraph, 10-100× speedup for graph analytics
 
-**Environment Variables** (14+ HLEDAC_* gates)
-- `HLEDAC_ARROW_INGEST=ON`, `HLEDAC_DUCKDB_QUERY_CACHE=OFF`, `HLEDAC_RG_USE_RATIOS=0`
-- `HLEDAC_DUCKDB_MEMORY` (600MB-2GB), `HLEDAC_DUCKDB_THREADS` (2 M1 optimal)
+**HEIST-04:** Zstd dictionary (Dict ID=1) wired into STIX export pipeline
 
-**Feature Flag Sprawl** (ISSUE-A5)
-- 410 HLEDAC_* env vars, 97 ENABLE flags, only 36 checked at runtime
+**Dependency Stack:** PyO3 0.23, crossbeam-channel 0.5, xxhash-rust 0.8, msgspec.msgpack for zero-copy IPC
+
+---
+
+## Capability & Feature Gating
+
+**CAPS System:** Canonical capability registry replacing `is_curl_cffi_available()` with `CAPS.require(CURL_CFFI)` (FAIL-FAST policy)
+
+**ISSUE-A5 Analysis:**
+- 410 HLEDAC_* env vars, 97 ENABLE_* flags, only 36 checked at runtime
 - Three-layer model: Capabilities (keep) → SprintProfile/LaneRegistry (fix) → RuntimeConfig/FlagSpec (validate)
-- 5 flag presets: MINIMAL/OSINT/RECON/RESEARCH/FULL
+
+**Key Gates:**
+- `HLEDAC_ARROW_INGEST=ON`, `HLEDAC_DUCKDB_QUERY_CACHE=OFF`
+- `HLEDAC_RG_USE_RATIOS=0` (absolute GiB vs ratio mode)
+- Emergency overrides remain as env vars
+
+---
 
 ## Configuration Constants
 
-- **DuckDB**: 600MB memory limit, 1GB max temp, 2 threads for M1 8GB
-- **Shodan**: 36 requests/10s (should be 360)
-- **Evidence log**: 1000ms busy_timeout (should be 30000ms)
-- **M1 8GB UMA cap**: ~6.25GB total budget, swap threshold 3.8 GiB
+| Parameter | Value |
+|-----------|-------|
+| DuckDB memory | 600MB (GHOST_DUCKDB_MEMORY) |
+| DuckDB max temp | 1GB |
+| DuckDB threads | 2 (M1 optimal) |
+| Shodan rate | 36/10s (documented), should be 360 |
+| Evidence log timeout | 1000ms configured, 30000ms actual |
 
-## Coding Conventions (`.claude/CLAUDE.md`)
+**M1 8GB UMA cap:** ~6.25GB total budget, swap threshold 3.8 GiB
 
-- **Async**: `asyncio.gather` always with `return_exceptions=True`; no `time.sleep()` in async; no `asyncio.run()` in ThreadPoolExecutor
-- **Storage**: DuckDB writes via `async_ingest_findings_batch()`; LMDB bulk via `cursor.putmulti()`
-- **MLX**: `mx.eval([])` before `mx.metal.clear_cache()`
-- **Bloom filters**: `RotatingBloomFilter` (not ScalableBloomFilter)
-- **Exceptions**: No bare `except:` — always `except Exception:`
-- **Exit codes**: 0=success, 1=runtime, 2=config, 3=programmer, 130=SIGINT
+---
 
-## Resolved Issues
+## Coding Conventions
 
-| Issue | Summary |
-|-------|---------|
-| ISSUE-0.2 | CAPS-based curl_cffi availability with FAIL-FAST fallback |
-| ISSUE-2 | Hashing facade replacing hashlib bottleneck (~10× speedup) |
-| ISSUE-2.3 | Rayon dispatch channel fix — 1 dispatcher thread per pool type, eliminates 25× context-switch overhead |
-| ISSUE-3.2 | `parking_lot::RwLock` + AHashMap replaces DashMap to fix PyO3 GIL segfaults |
-| ISSUE-5.2 | RAG HNSW adaptive expansion_add (200/300) + native batch_search API |
-| ISSUE-G2 | PEP 734 isolation infrastructure for DuckDB writes |
+**Location:** `.claude/CLAUDE.md` (no dedicated `docs/conventions/`)
 
-## Git Protection
+**Critical Invariants:**
+1. No bare `except:` — always `except Exception:`
+2. `asyncio.gather()` always with `return_exceptions=True`
+3. `mx.eval([])` before `mx.metal.clear_cache()`
+4. DuckDB writes ONLY via `async_ingest_findings_batch()`
+5. LMDB bulk via `cursor.putmulti()`
+6. No `time.sleep()` in async — use `asyncio.sleep()`
+7. No `asyncio.run()` in ThreadPoolExecutor — use `loop.run_until_complete()`
+8. Use `RotatingBloomFilter` not `ScalableBloomFilter`
 
-**Git Stash Guard Hook** (`.claude/hooks/git-stash-guard.sh`)
-- Blocks 8 categories: `git stash*`, `git reset --hard`, `git checkout --`, `git clean -fd`, `git push --force`, `git branch -D`, `git update-ref -d`
-- 36 coverage tests validate behavior
-- Alternative: `/checkpoint create/restore`
+**parallel() Function:** Replaces deprecated `bounded_gather` with 4 policies (raise/first/collect/log), I6/I7/I8 exception routing invariants
 
-## Technology Stack
+---
 
-- **Python 3.14** (darwin + arm64 only)
-- **Storage Trinity**: DuckDB (SQL), LMDB (key-value), sqlite-vec (ANN ~5MB)
-- **ML Inference**: mlxcel external Rust binary (~1GB RSS savings vs in-process)
-- **HTTP**: curl-cffi (JA3 fingerprints) + aioquic (real QUIC)
-- **Parsing**: nh3 (9× faster than BS4), uvloop (2× speedup)
+## Exit Code Convention
+
+**6 regression tests** in `tests/test_exit_codes.py`:
+
+| Code | Meaning |
+|------|---------|
+| 0 | Clean success |
+| 1 | Runtime error |
+| 2 | Config/validation error (F221-ABORT windup guard) |
+| 3 | Programmer error (NameError, AttributeError, ImportError) |
+| 130 | SIGINT (KeyboardInterrupt) |
+
+`sys.exit(N)` must propagate verbatim — envelope has `except SystemExit: raise`
+
+---
+
+## Git Operations
+
+**git-stash-guard.sh:** Synchronous PreToolUse hook blocks 8 categories (stash, reset --hard, force push, clean -fd, branch -D). 36 coverage tests. Safe alternative: `/checkpoint create/restore`.
+
+---
+
+## PEP 562 Brain Lazy Loading
+
+`brain/__init__.py`: 17 engine blocks consolidated into TypedDict registry, 270-line `__getattr__` reduced to ~10 lines, 99.8% structural deduplication.
+
+---
 
 ## Known Tech Debt
 
-- Evidence log timeout mismatch (1000ms vs 30000ms)
-- Shodan rate formula (36 vs 360)
-- DuckPGQGraph integration gap
-- neqo HTTP/3 not yet on PyPI
-- Lock-free counter (AtomicCounter) not implemented
-- Social identity platform detection not implemented
+| Issue | Location | Status |
+|-------|----------|--------|
+| evidence_log timeout mismatch | transport/http3_lane.py | Open |
+| shodan rate 36 vs 360 | config | Open |
+| DuckPGQGraph integration gap | data/duckdb_store | Open |
+| neqo HTTP/3 not on PyPI | F320-TODO | Pending |
+| social identity detection | recon/social_identity_miner.py | Not impl |
+| domain allowlist/blocklist | recon/stealth/_models.py | Not impl |
 
-## Related Drill-Down
+---
 
-- `facts/project/rust_extensions_overview.md` — 30+ Rust modules
-- `facts/project/hledac_universal_claude_md.md` — Comprehensive project docs
-- `facts/project/coding_conventions_status.md` — Convention rules
-- `facts/project/issue_0_2_curl_cffi_caps_invariants.md` — CAPS invariants
-- `facts/project/issue_2_3_rayon_dispatch_channel_fix.md` — Rayon architecture
-- `facts/project/issue_3_2_federatedqtable_parking_lot_migration.md` — RwLock migration
-- `facts/project/environment-gates-control-feature-activation.md` — Feature gates
-- `facts/project/issue_a5_feature_flag_sprawl_analysis.md` — Flag sprawl analysis
+## Key Files
+
+- `utils/hashing.py` — centralized facade: `xxh3_64_hex`, `batch_xxh3_64_hex`, `sha256_hex`, `blake3_64_hex`
+- `utils/async_helpers.py` — `parallel()` with exception policies
+- `utils/simdjson_bridge.py` — lazy Rust import, orjson fallback
+- `rust_extensions/Cargo.toml` — PyO3 0.23, crossbeam-channel 0.5, xxhash-rust 0.8

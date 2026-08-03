@@ -48,12 +48,18 @@ _ENV_ALLOW_LARGE_BATCH_VAR = 'HLEDAC_ALLOW_LARGE_MLX_BATCH'
 
 class EmbeddingRouter:
     """
-    MLX-only priority routing: MLX ModernBERT → MLXEmbeddingManager.
+    Priority routing: ANE (small batch) → MLX ModernBERT → MLXEmbeddingManager.
 
-    CoreML ANE path removed per CoreML→MLX migration.
-    All inference is in-process on M1 Metal — no subprocess, no blocking.
+    SILICON-06: ANE path restored for small-batch (≤16 docs) inference.
+    ANE runs on the 16-core Neural Engine (11 TOPS), independent of GPU —
+    leaves Metal memory bandwidth free for LLM inference.
+    Large batches (>16) route through GPU (MLX ModernBERT or fallback).
+    All inference is in-process on M1 — no subprocess, no blocking.
     """
     __slots__ = tuple(('_modernbert',))
+
+    # SILICON-06: ANE small-batch threshold
+    _ANE_BATCH_THRESHOLD = 16
 
     def __init__(self) -> None:
         self._modernbert: ModernBERTEmbedder | None = None
@@ -74,48 +80,104 @@ class EmbeddingRouter:
 
     def encode(self, texts: str | list[str], **kwargs) -> np.ndarray:
         """
-        Encode texts using MLX ModernBERT or MLXEmbeddingManager.
+        Encode texts using ANE (small batch) → MLX ModernBERT → MLXEmbeddingManager.
 
-        MLX-only: CoreML ANE path removed per CoreML→MLX migration.
+        SILICON-06: For single-text or small-batch (≤16) encoding, tries ANE first.
+        Falls back to MLX GPU path if ANE unavailable or batch too large.
         """
+        # SILICON-06: Try ANE for small batches (≤16 docs)
+        text_list = [texts] if isinstance(texts, str) else list(texts)
+        if 0 < len(text_list) <= self._ANE_BATCH_THRESHOLD:
+            ane_result = self._try_ane_encode(text_list, **kwargs)
+            if ane_result is not None:
+                return ane_result
+        # GPU fallback
         embedder = self._get_embedder_sync()
         if embedder is None:
-            return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
+            return np.zeros((len(text_list), _EMBEDDING_DIM), dtype=np.float32)
         try:
             return embedder.encode(texts, **kwargs)
         except AttributeError:
             try:
-                if isinstance(texts, str):
-                    texts = [texts]
-                return embedder.embed_batch(texts, **kwargs)
+                return embedder.embed_batch(text_list, **kwargs)
             except AttributeError:
-                return np.zeros((len(texts) if isinstance(texts, list) else 1, _EMBEDDING_DIM), dtype=np.float32)
+                return np.zeros((len(text_list), _EMBEDDING_DIM), dtype=np.float32)
+
+    def _try_ane_encode(self, texts: list[str], **kwargs) -> np.ndarray | None:
+        """
+        SILICON-06: Try ANE inference for small batches.
+
+        Returns np.ndarray on success, None on any failure (caller falls back to GPU).
+        Uses asyncio.run() — safe because this is called from sync context
+        (either main thread before event loop or thread-pool worker).
+        """
+        try:
+            import asyncio
+            from hledac.universal.brain.ane_inference import get_ane_engine, is_ane_available
+            if not is_ane_available():
+                return None
+            ane = get_ane_engine()
+
+            async def _run_ane():
+                return await ane.embed_batch_ane(texts, model_key='bge-small')
+
+            # Try to get running loop — if there is one, schedule via thread.
+            # If not (thread-pool worker), use asyncio.run().
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None and loop.is_running():
+                # Running in async context — run in a separate thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(asyncio.run, _run_ane())
+                    result = future.result(timeout=30.0)
+            else:
+                result = asyncio.run(_run_ane())
+
+            if result is not None:
+                logger.debug('[EMBED:ROUTER] ANE embed OK: %d texts', len(texts))
+                # Truncate/pad to target dim
+                if result.shape[1] > _EMBEDDING_DIM:
+                    result = result[:, :_EMBEDDING_DIM]
+                elif result.shape[1] < _EMBEDDING_DIM:
+                    pad = np.zeros((result.shape[0], _EMBEDDING_DIM - result.shape[1]),
+                                   dtype=np.float32)
+                    result = np.hstack([result, pad])
+                return result
+            return None
+        except Exception as e:
+            logger.debug('[EMBED:ROUTER] ANE encode failed: %s', e)
+            return None
 
     def _get_embedder_sync(self):
         """
-        MLX-only embedder selection (CoreML ANE path removed).
+        Embedder selection (SILICON-06: ANE tried at .encode() level, not here).
         Priority: MLX ModernBERT (if already in UMA) → MLX ModernBERT → MLXEmbeddingManager.
-        No ANE/CoreML subprocess — all inference in-process on M1 Metal.
+        ANE dispatch happens in encode() / _try_ane_encode() — this method
+        returns GPU embedders only.
         """
         if self._check_mlx_loaded():
             try:
                 mb = self._load_modernbert()
                 logger.debug('[EMBED:ROUTER] sync: MLX in UMA, using ModernBERT')
                 return mb
-            except Exception:  # noqa: BLE001 — fail-soft: MLX load failures are varied (memory, Metal, import)
+            except Exception:  # noqa: BLE001 — fail-soft
                 pass
         try:
             mb = self._load_modernbert()
             logger.debug('[EMBED:ROUTER] sync: MLX ModernBERT loaded')
             return mb
-        except Exception as e:  # noqa: BLE001 — fail-soft: log and fallback to compat embedder
+        except Exception as e:  # noqa: BLE001 — fail-soft
             logger.debug(f'[EMBED:ROUTER] ModernBERT sync load failed: {e}')
         from hledac.universal.core.mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
 
     async def get_embedder(self):
         """
-        MLX-only embedder (CoreML ANE path removed).
+        Async embedder (SILICON-06: ANE dispatch at encode() level).
         Priority: MLX ModernBERT → MLXEmbeddingManager.
         """
         if self._check_mlx_loaded():
@@ -123,13 +185,13 @@ class EmbeddingRouter:
                 mb = self._load_modernbert()
                 logger.debug('[EMBED:ROUTER] async: MLX in UMA, using ModernBERT')
                 return mb
-            except Exception:  # noqa: BLE001 — fail-soft: MLX load failures are varied (memory, Metal, import)
+            except Exception:  # noqa: BLE001 — fail-soft
                 pass
         try:
             mb = self._load_modernbert()
             logger.debug('[EMBED:ROUTER] async: MLX ModernBERT loaded')
             return mb
-        except Exception as e:  # noqa: BLE001 — fail-soft: log and fallback to compat embedder
+        except Exception as e:  # noqa: BLE001 — fail-soft
             logger.warning(f'[EMBED:ROUTER] ModernBERT load failed: {e}')
         from hledac.universal.core.mlx_embeddings import get_mlx_embedder
         return get_mlx_embedder()
@@ -146,13 +208,19 @@ class EmbeddingRouter:
                 embedder.warmup()
 
     def unload_all(self):
-        """Release all embedders from memory (MLX-only)."""
+        """Release all embedders from memory (GPU + ANE)."""
         if self._modernbert is not None:
             try:
                 self._modernbert.unload()
-            except Exception:  # noqa: BLE001 — best-effort cleanup, unload failures are non-critical
+            except Exception:  # noqa: BLE001 — best-effort cleanup
                 pass
             self._modernbert = None
+        # SILICON-06: Also unload ANE models
+        try:
+            from hledac.universal.brain.ane_inference import unload_ane_engine
+            unload_ane_engine()
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
         logger.info('[EMBED:ROUTER] All embedders unloaded')
 _embedding_router = None
 
@@ -1149,6 +1217,7 @@ def get_embedding_backend() -> str:
     F218A: Return which embedding backend is currently active.
 
     Inspects the EmbeddingRouter state to determine the active path:
+      - "ane"        — ANE (CoreML Neural Engine) available and active
       - "mlx"        — MLX ModernBERT loaded and active
       - "not_loaded" — router exists but no model loaded yet
       - "unknown"    — cannot determine (error state)
@@ -1160,7 +1229,13 @@ def get_embedding_backend() -> str:
         return 'not_loaded'
     try:
         router = _embedding_router
-        # CoreML ANE path removed — MLX-only (ModernBERT or fallback)
+        # SILICON-06: Check ANE first
+        try:
+            from hledac.universal.brain.ane_inference import is_ane_available, get_ane_engine
+            if is_ane_available() and get_ane_engine().is_ready:
+                return 'ane'
+        except Exception:
+            pass
         if router._check_mlx_loaded():
             if router._modernbert is not None and router._modernbert.is_loaded:
                 return 'mlx'

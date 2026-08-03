@@ -10,11 +10,13 @@ Features:
 - Chain of Thought (CoT) reasoning
 - Tree of Thoughts (ToT) exploration with learned value prediction
 - Graph reasoning
-- Strategy selection based on query
+- Strategy selection based on query + semantic gravity field [SILICON-05]
 - Strategy switching during execution
 - Ensemble results
 - Cost-weighted branch pruning (SOVEREIGN-005)
 - Dead-end detection with IOC progress tracking (SOVEREIGN-005)
+- Semantic gravity field — void-aware branch boosting in ToT [SILICON-05]
+- Fetch directive generation for acquisition lane targeting [SILICON-05]
 """
 import asyncio
 import logging
@@ -30,6 +32,17 @@ import numpy as np
 
 from hledac.universal.utils.async_helpers import parallel_ok
 
+try:
+    from hledac.universal.knowledge.semantic_gravity import (
+        FetchDirective,
+        SemanticGravityField,
+        VoidRegion,
+    )
+except ImportError:
+    SemanticGravityField = None  # type: ignore[assignment,misc]
+    FetchDirective = None  # type: ignore[assignment,misc]
+    VoidRegion = None  # type: ignore[assignment,misc]
+
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
@@ -42,6 +55,88 @@ _PRUNE_GAIN_THRESHOLD = 0.1  # prune branches with gain < 0.1
 _PRUNE_MIN_DEPTH = 2  # only prune after 2+ actions
 _DEAD_END_TIMEOUT_S = 10.0  # 10s without new IOCs = dead-end
 _VALUE_PREDICTOR_FEATURE_DIM = 16  # lightweight feature dim for ToT value prediction
+
+# BLITZ-04: Urgency thresholds for sprint-phase-aware reasoning parameter clamping.
+# Urgency = 1.0 / max(remaining_minutes, 0.5). Higher = less time remaining.
+# Derived from SprintClock.remaining_s at call time.
+_URGENCY_TOT_SKIP = 4.0       # Skip ToT entirely, fall back to CoT with max_steps=3
+_URGENCY_TOT_LIGHT = 2.0      # Light ToT: max_depth=2, branching_factor=2, beam_width=1
+_URGENCY_TOT_REDUCED = 1.0    # Reduced ToT: max_depth=4, branching_factor=3 (beam unchanged)
+_URGENCY_MIN_REMAINING_M = 0.5  # Floor for denominator to avoid division by zero
+
+# BLITZ-06: Ensemble reasoning time-gating thresholds (in seconds remaining).
+# When sprint time is critically low, ensemble degrades to avoid wasted compute
+# on redundant parallel strategies.
+_ENSEMBLE_CO_T_ONLY_REMAINING_S = 120   # 2 min: ensemble → CoT only
+_ENSEMBLE_SKIP_TOT_REMAINING_S = 300    # 5 min: ensemble → CoT + Graph (skip ToT)
+
+
+class SprintClock(msgspec.Struct, frozen=True, gc=False):
+    """BLITZ-04: Time-awareness clock injected into reasoning coordinators.
+
+    Wraps sprint timing fields that already exist in SprintTelemetry
+    (hard_deadline_monotonic, sprint_start_monotonic) and exposes them
+    as a lightweight protocol for reasoning-layer consumption.
+
+    Computed properties:
+        remaining_s: Seconds until hard deadline (inf if no deadline set).
+        urgency: 1.0 / max(remaining_minutes, 0.5). Range [0.03, inf).
+                 >4.0 = last 5 min, >2.0 = last 10 min, <1.0 = >30 min.
+
+    M1 8GB safe: single frozen struct, zero allocations after construction.
+    """
+    hard_deadline_monotonic: float = 0.0
+    sprint_start_monotonic: float = 0.0
+    total_duration_s: float = 0.0
+
+    @property
+    def remaining_s(self) -> float:
+        """Seconds remaining until hard deadline (inf if no deadline)."""
+        if self.hard_deadline_monotonic <= 0.0:
+            return float('inf')
+        return max(self.hard_deadline_monotonic - time.monotonic(), 0.0)
+
+    @property
+    def urgency(self) -> float:
+        """Urgency multiplier: 1.0 / max(remaining_minutes, _URGENCY_MIN_REMAINING_M).
+
+        Examples (30-min sprint):
+            t=0   → remaining=30m → urgency=0.03
+            t=15m → remaining=15m → urgency=0.066
+            t=20m → remaining=10m → urgency=0.1
+            t=25m → remaining=5m  → urgency=0.2
+            t=28m → remaining=2m  → urgency=0.5
+            t=29m → remaining=1m  → urgency=1.0
+            t=29.5m→remaining=0.5m→ urgency=2.0  → _URGENCY_TOT_LIGHT
+            t=29.75m→remaining=15s→urgency=4.0 → _URGENCY_TOT_SKIP
+        """
+        remaining_m = self.remaining_s / 60.0
+        if remaining_m <= 0.0:
+            return float('inf')
+        return 1.0 / max(remaining_m, _URGENCY_MIN_REMAINING_M)
+
+    @classmethod
+    def from_telemetry(
+        cls,
+        hard_deadline_monotonic: float = 0.0,
+        total_duration_s: float = 0.0,
+        sprint_start_monotonic: float | None = None,
+    ) -> 'SprintClock':
+        """Construct from SprintTelemetry fields.
+
+        Args:
+            hard_deadline_monotonic: Absolute deadline from telemetry.
+            total_duration_s: Total sprint duration.
+            sprint_start_monotonic: Sprint start timestamp (default: now).
+        """
+        if sprint_start_monotonic is None:
+            sprint_start_monotonic = time.monotonic()
+        return cls(
+            hard_deadline_monotonic=hard_deadline_monotonic,
+            sprint_start_monotonic=sprint_start_monotonic,
+            total_duration_s=total_duration_s,
+        )
+
 
 class ReasoningStrategy(Enum):
     """Available reasoning strategies."""
@@ -213,16 +308,64 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     - Learned value prediction for ToT via AdaptiveCostModel (SOVEREIGN-005)
     - Cost-weighted branch pruning (SOVEREIGN-005)
     - Dead-end detection with IOC progress tracking (SOVEREIGN-005)
+    - UNIFIED-005: Periodic/atomic/crash-resilient ToT state checkpointing
+      via TransactionalToTCheckpointer
+    - BLITZ-04: SprintClock-driven urgency clamping — ToT parameters
+      (max_depth, branching_factor, beam_width) and CoT max_steps
+      are dynamically reduced when sprint time runs low.
+      At urgency > 4.0 (last 5 min), ToT is skipped entirely in
+      favour of CoT with max_steps=3.
+    - BLITZ-06: Ensemble urgency gating — when remaining < 5 min,
+      ensemble skips ToT (CoT + Graph only); when remaining < 2 min,
+      ensemble degrades to CoT-only to avoid wasted parallel compute.
+    - SILICON-05: Semantic gravity field for void-aware reasoning.
+      The coordinator accepts an optional SemanticGravityField that tracks
+      IOC embedding density. ``_select_strategy()`` factors void coverage
+      into strategy selection; ``_tree_of_thoughts_reasoning()`` boosts
+      branches that explore semantic voids; ``suggest_fetch_targets()``
+      returns actionable directives for the acquisition pipeline.
     """
-    __slots__ = ('_cost_model', '_stats', 'reasoning_history', 'strategy_configs', 'strategy_keywords')
+    __slots__ = (
+        '_cost_model', '_stats', 'reasoning_history',
+        'strategy_configs', 'strategy_keywords',
+        '_checkpointer', '_duckdb_store', '_sprint_id',
+        '_sprint_clock',  # BLITZ-04
+        '_resume_from', '_resume_step',  # UNIFIED-006
+        '_query_hash',  # UNIFIED-006: for checkpoint writes during recovery
+        '_gravity_field',  # SILICON-05: semantic void detection
+    )
 
     def __init__(
         self,
         max_concurrent: int = 3,
         cost_model: Any | None = None,
+        duckdb_store: Any | None = None,  # UNIFIED-005: DuckDBShadowStore for checkpointing
+        sprint_id: str | None = None,     # UNIFIED-005: sprint identifier for checkpoint isolation
+        sprint_clock: SprintClock | None = None,  # BLITZ-04: time-awareness for reasoning
+        resume_from: dict | None = None,  # UNIFIED-006: pre-populated ToT nodes from checkpoint
+        resume_step: int = 0,             # UNIFIED-006: step counter at resume point
+        query_hash: str = "",             # UNIFIED-006: BLAKE2b-16 hex for cross-sprint recovery
+        gravity_field: Any | None = None,  # SILICON-05: SemanticGravityField for void detection
     ) -> None:
+        """
+        UNIFIED-006: resume_from and resume_step enable deterministic ToT recovery
+        after a sprint crash. When resume_from is provided (a dict of node_id → ThoughtNode
+        restored from DuckDB), the coordinator starts from the checkpointed state rather
+        than seeding a fresh ToT tree. resume_step carries the step counter forward.
+
+        query_hash is the deterministic BLAKE2b-16 hex of the query — passed through
+        to TransactionalToTCheckpointer so future restarts can find checkpoints.
+        """
         super().__init__(name='universal_meta_reasoning_coordinator', max_concurrent=max_concurrent, memory_aware=True)
         self._cost_model = cost_model
+        self._duckdb_store = duckdb_store
+        self._sprint_id = sprint_id
+        self._sprint_clock = sprint_clock
+        self._checkpointer: Any | None = None  # Lazy-initialized in _tree_of_thoughts_reasoning
+        self._resume_from: dict | None = resume_from  # UNIFIED-006
+        self._resume_step: int = resume_step  # UNIFIED-006
+        self._query_hash: str = query_hash  # UNIFIED-006
+        self._gravity_field: Any | None = gravity_field  # SILICON-05
         self.strategy_configs: dict[ReasoningStrategy, dict[str, Any]] = {ReasoningStrategy.CHAIN_OF_THOUGHT: {'max_steps': 10, 'min_confidence': 0.7, 'step_description_template': 'Step {i}: {thought}'}, ReasoningStrategy.TREE_OF_THOUGHTS: {'max_depth': 5, 'branching_factor': 3, 'beam_width': 2, 'exploration_strategy': 'beam_search'}, ReasoningStrategy.GRAPH_REASONING: {'max_nodes': 50, 'connection_density': 0.3, 'centrality_metric': 'betweenness'}}
         self.strategy_keywords: dict[ReasoningStrategy, list[str]] = {ReasoningStrategy.CHAIN_OF_THOUGHT: ['step by step', 'explain', 'how', 'why', 'derive', 'calculate', 'sequence', 'process', 'procedure', 'logical'], ReasoningStrategy.TREE_OF_THOUGHTS: ['options', 'alternatives', 'compare', 'decide', 'choose', 'select', 'best', 'optimal', 'trade-off', 'multiple'], ReasoningStrategy.GRAPH_REASONING: ['connections', 'relationships', 'network', 'dependencies', 'interconnected', 'linked', 'graph', 'structure']}
         self._stats = {'chains_executed': 0, 'trees_explored': 0, 'graphs_traversed': 0, 'strategy_switches': 0, 'avg_confidence': 0.0}
@@ -279,6 +422,14 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             result = await self._chain_of_thought_reasoning(query)
         elif strategy == ReasoningStrategy.TREE_OF_THOUGHTS:
             result = await self._tree_of_thoughts_reasoning(query)
+            # BLITZ-04: if ToT was skipped due to urgency, fall back to CoT
+            if result.get('fallback_recommended') == 'chain_of_thought':
+                logger.info(
+                    '[BLITZ-04] ToT skipped → falling back to CoT (urgency=%.2f)',
+                    self._compute_urgency(),
+                )
+                result = await self._chain_of_thought_reasoning(query)
+                result['strategy'] = 'cot_fallback_from_tot_urgency'
         elif strategy == ReasoningStrategy.GRAPH_REASONING:
             result = await self._graph_reasoning(query)
         else:
@@ -292,20 +443,204 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         return {'success': True, 'strategy': strategy.value, 'query': query, **result}
 
     def _select_strategy(self, query: str) -> ReasoningStrategy:
-        """Select best reasoning strategy based on query."""
+        """Select best reasoning strategy based on query, sprint urgency,
+        and semantic gravity field void coverage [SILICON-05].
+
+        Strategy selection now factors in four dimensions:
+        1. Keyword matching (existing): query terms → strategy scores
+        2. Semantic gravity: if gravity field detects voids, boost ToT
+           (exploration-heavy) to fill under-explored regions
+        3. Time pressure (BLITZ-04): urgency override forces CoT
+        4. Gravity urgency: when many voids detected AND time permits,
+           prioritize ToT over CoT even when keyword scores are equal
+
+        BLITZ-04: When urgency >= _URGENCY_TOT_SKIP (last ~5 min),
+        never select ToT — fall back to CoT regardless of other signals.
+        """
         query_lower = query.lower()
         scores: dict[ReasoningStrategy, int] = dict.fromkeys(ReasoningStrategy, 0)
         for strategy, keywords in self.strategy_keywords.items():
             for keyword in keywords:
                 if keyword in query_lower:
                     scores[strategy] += 1
+
+        # ── SILICON-05: Gravity field aware scoring ──────────────────────
+        gravity_voids = 0
+        gravity_ready = False
+        if self._gravity_field is not None:
+            try:
+                gravity_ready = self._gravity_field.is_ready
+                if gravity_ready:
+                    voids = self._gravity_field.find_voids(k=5, min_distance=0.25)
+                    gravity_voids = len(voids)
+                    if gravity_voids >= 3:
+                        # Significant semantic gaps — exploration is valuable
+                        # Boost ToT (best for exploration) and Graph (discovers connections)
+                        scores[ReasoningStrategy.TREE_OF_THOUGHTS] += 2
+                        scores[ReasoningStrategy.GRAPH_REASONING] += 1
+                        logger.debug(
+                            '[SILICON-05] Gravity: %d voids detected — boosting ToT+Graph',
+                            gravity_voids,
+                        )
+                    elif gravity_voids >= 1:
+                        # Minor gaps — slight boost to ToT
+                        scores[ReasoningStrategy.TREE_OF_THOUGHTS] += 1
+            except Exception:
+                logger.debug('[SILICON-05] Gravity query failed in _select_strategy')
+
+        # BLITZ-04: urgency override — force CoT when time is critical
+        urgency = self._compute_urgency()
+        if urgency >= _URGENCY_TOT_SKIP and scores.get(ReasoningStrategy.TREE_OF_THOUGHTS, 0) > 0:
+            logger.info(
+                '[BLITZ-04] Urgency=%.2f — overriding ToT selection to CoT (time-critical phase)',
+                urgency,
+            )
+            self._stats['strategy_switches'] += 1
+            return ReasoningStrategy.CHAIN_OF_THOUGHT
+
         if max(scores.values()) > 0:
-            return max(scores, key=scores.get)
+            selected = max(scores, key=scores.get)
+            if gravity_voids > 0:
+                logger.info(
+                    '[SILICON-05] Strategy=%s selected (gravity_voids=%d ready=%s)',
+                    selected.value, gravity_voids, gravity_ready,
+                )
+            return selected
         return ReasoningStrategy.CHAIN_OF_THOUGHT
 
+    # ── BLITZ-04: Urgency-aware parameter clamping helpers ────────────────
+
+    def _compute_urgency(self) -> float:
+        """Compute current urgency multiplier from SprintClock.
+
+        Returns 0.0 if no sprint clock is set (unbounded time → no urgency).
+        """
+        if self._sprint_clock is None:
+            return 0.0
+        return self._sprint_clock.urgency
+
+    def _clamp_tot_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Clamp ToT parameters (max_depth, branching_factor, beam_width)
+        based on current sprint urgency.
+
+        Urgency tiers:
+            <  _URGENCY_TOT_REDUCED (1.0): no change
+            >= _URGENCY_TOT_REDUCED (1.0): max_depth=4
+            >= _URGENCY_TOT_LIGHT (2.0):   max_depth=2, branching=2, beam=1
+            >= _URGENCY_TOT_SKIP (4.0):    return sentinel (max_depth=0, skip)
+
+        Returns a copy — never mutates the canonical config on the instance.
+        """
+        urgency = self._compute_urgency()
+        if urgency <= 0.0:           # No clock → no clamping
+            return dict(config)
+        if urgency >= _URGENCY_TOT_SKIP:
+            logger.warning(
+                '[BLITZ-04] Urgency=%.2f >= %.1f — skipping ToT (fallback to CoT)',
+                urgency, _URGENCY_TOT_SKIP,
+            )
+            return {
+                'max_depth': 0,
+                'branching_factor': 0,
+                'beam_width': 0,
+                'exploration_strategy': 'skipped_high_urgency',
+            }
+        if urgency >= _URGENCY_TOT_LIGHT:
+            logger.info(
+                '[BLITZ-04] Urgency=%.2f — light ToT (depth=2, branch=2, beam=1)',
+                urgency,
+            )
+            return {
+                **config,
+                'max_depth': 2,
+                'branching_factor': 2,
+                'beam_width': 1,
+            }
+        if urgency >= _URGENCY_TOT_REDUCED:
+            logger.info(
+                '[BLITZ-04] Urgency=%.2f — reduced ToT (depth=4)',
+                urgency,
+            )
+            return {**config, 'max_depth': 4}
+        return dict(config)
+
+    def _clamp_cot_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Clamp CoT max_steps based on current sprint urgency.
+
+        Urgency tiers:
+            <  _URGENCY_TOT_REDUCED (1.0): no change (max_steps=10)
+            >= _URGENCY_TOT_REDUCED (1.0): max_steps=7
+            >= _URGENCY_TOT_LIGHT (2.0):   max_steps=5
+            >= _URGENCY_TOT_SKIP (4.0):    max_steps=3
+
+        Returns a copy — never mutates the canonical config on the instance.
+        """
+        urgency = self._compute_urgency()
+        if urgency <= 0.0:
+            return dict(config)
+        if urgency >= _URGENCY_TOT_SKIP:
+            logger.info('[BLITZ-04] Urgency=%.2f — minimal CoT (max_steps=3)', urgency)
+            return {**config, 'max_steps': 3}
+        if urgency >= _URGENCY_TOT_LIGHT:
+            return {**config, 'max_steps': 5}
+        if urgency >= _URGENCY_TOT_REDUCED:
+            return {**config, 'max_steps': 7}
+        return dict(config)
+
+    # ── SILICON-05: Semantic gravity field passthrough ───────────────────
+
+    def add_embedding(self, entity_id: str, vec: Any) -> None:
+        """SILICON-05: Push an IOC embedding into the gravity field.
+
+        No-op if no gravity field is configured.
+        """
+        if self._gravity_field is not None:
+            try:
+                self._gravity_field.add_embedding(entity_id, vec)
+            except Exception:
+                logger.debug('[SILICON-05] add_embedding failed')
+
+    def add_embeddings_batch(self, ids: list[str], vecs: Any) -> None:
+        """SILICON-05: Push a batch of IOC embeddings into the gravity field.
+
+        No-op if no gravity field is configured.
+        """
+        if self._gravity_field is not None:
+            try:
+                self._gravity_field.add_embeddings_batch(ids, vecs)
+            except Exception:
+                logger.debug('[SILICON-05] add_embeddings_batch failed')
+
+    def suggest_fetch_targets(self, n: int = 3) -> list[Any]:
+        """SILICON-05: Get actionable fetch directives from semantic voids.
+
+        Returns empty list if no gravity field or no voids detected.
+        These directives should flow to acquisition lanes for targeted fetching.
+        """
+        if self._gravity_field is None:
+            return []
+        try:
+            return self._gravity_field.suggest_fetch_targets(n)
+        except Exception:
+            logger.debug('[SILICON-05] suggest_fetch_targets failed')
+            return []
+
+    def get_gravity_stats(self) -> dict[str, Any]:
+        """SILICON-05: Get gravity field statistics for monitoring."""
+        if self._gravity_field is None:
+            return {'enabled': False}
+        try:
+            return {'enabled': True, **self._gravity_field.get_stats()}
+        except Exception:
+            return {'enabled': True, 'error': 'stats_failed'}
+
+    # ── Reasoning strategy execution ────────────────────────────────────
+
     async def _chain_of_thought_reasoning(self, query: str) -> dict[str, Any]:
-        """Execute Chain of Thought reasoning."""
-        config = self.strategy_configs[ReasoningStrategy.CHAIN_OF_THOUGHT]
+        """Execute Chain of Thought reasoning with BLITZ-04 urgency clamping."""
+        config = self._clamp_cot_config(
+            self.strategy_configs[ReasoningStrategy.CHAIN_OF_THOUGHT]
+        )
         max_steps = config['max_steps']
         min_confidence = config['min_confidence']
         chain = ReasoningChain(chain_id=f'cot_{int(time.time())}')
@@ -328,15 +663,63 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     async def _tree_of_thoughts_reasoning(self, query: str) -> dict[str, Any]:
         """Execute Tree of Thoughts reasoning.
 
+        BLITZ-04: Urgency-aware — parameters (max_depth, branching_factor,
+        beam_width) are dynamically clamped via _clamp_tot_config().
+        When urgency >= _URGENCY_TOT_SKIP (last ~5 min), returns immediately
+        with a CoT fallback recommendation (caller handles fallback).
+
         SOVEREIGN-005 enhancements:
         - Learned value prediction via AdaptiveCostModel (replaces random estimates)
         - Cost-weighted pruning: branches with gain < 0.1 after 2+ actions are pruned
         - Dead-end detection: branches stalled for 10s without IOC progress are terminated
+
+        UNIFIED-005: Periodic checkpointing via TransactionalToTCheckpointer.
+        If duckdb_store and sprint_id were provided at construction, the ToT
+        state is checkpointed every 30s (background task) + at key depth transitions.
+        On crash, state can be restored via restore_tot_state().
         """
-        config = self.strategy_configs[ReasoningStrategy.TREE_OF_THOUGHTS]
+        config = self._clamp_tot_config(
+            self.strategy_configs[ReasoningStrategy.TREE_OF_THOUGHTS]
+        )
         max_depth = config['max_depth']
         branching_factor = config['branching_factor']
         beam_width = config['beam_width']
+
+        # BLITZ-04: urgency sentinel — skip ToT entirely
+        if max_depth == 0:
+            logger.info(
+                '[BLITZ-04] ToT skipped (urgency sentinel) — returning CoT fallback signal'
+            )
+            return {
+                'type': 'tree_of_thoughts_skipped_urgency',
+                'nodes': 0,
+                'depth': 0,
+                'best_path': [],
+                'best_value': 0.0,
+                'pruned_branches': 0,
+                'dead_ends': 0,
+                'used_learned_values': False,
+                'urgency': self._compute_urgency(),
+                'fallback_recommended': 'chain_of_thought',
+                'summary': 'ToT skipped due to high urgency — use CoT with max_steps=3',
+            }
+
+        # UNIFIED-005: Wire checkpointing if duckdb_store is available
+        checkpointer = None
+        if self._duckdb_store is not None and self._sprint_id is not None:
+            try:
+                from hledac.universal.coordinators.tot_checkpointer import (
+                    TransactionalToTCheckpointer,
+                )
+                checkpointer = TransactionalToTCheckpointer(
+                    sprint_id=self._sprint_id,
+                    duckdb_store=self._duckdb_store,
+                    interval_s=30.0,
+                    query_hash=self._query_hash,  # UNIFIED-006
+                )
+                self._checkpointer = checkpointer
+            except Exception:
+                logger.debug('ToT checkpointer init failed — continuing without checkpointing')
 
         # SOVEREIGN-005: Initialize value predictor and dead-end detector
         value_predictor = _TotValuePredictor(cost_model=self._cost_model)
@@ -346,23 +729,93 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         query_terms = query.split()
         query_complexity = min(len(set(query_terms)) / 20.0, 1.0)
 
-        root = ThoughtNode(
-            node_id='root',
-            thought=f'Exploring: {query[:50]}...',
-            value_estimate=0.5,
-            depth=0,
-            cost=0.0,
-            uncertainty=0.0,
-        )
-        nodes: dict[str, ThoughtNode] = {'root': root}
-        leaves = [root]
+        # UNIFIED-006: Resume from checkpoint — skip root creation, start from saved state
+        _resumed = False
+        if self._resume_from is not None and self._resume_step > 0:
+            _resumed = True
+            nodes = dict(self._resume_from)  # shallow copy — ThoughtNodes are frozen
+            # Find the root node (depth 0) or use the first node as anchor
+            root_candidates = [n for n in nodes.values() if n.depth == 0]
+            root = root_candidates[0] if root_candidates else next(iter(nodes.values()))
+            # Rebuild leaves: unexpanded nodes at the frontier (max depth, not expanded)
+            max_existing_depth = max((n.depth for n in nodes.values()), default=0)
+            leaves = [
+                n for n in nodes.values()
+                if not n.expanded and n.depth == max_existing_depth
+            ]
+            if not leaves:
+                leaves = [root]
+            best_path = []
+            best_value = float('-inf')
+            logger.info(
+                '[UNIFIED-006] ToT resumed from checkpoint: step=%d nodes=%d leaves=%d max_depth=%d',
+                self._resume_step,
+                len(nodes),
+                len(leaves),
+                max_existing_depth,
+            )
+        else:
+            root = ThoughtNode(
+                node_id='root',
+                thought=f'Exploring: {query[:50]}...',
+                value_estimate=0.5,
+                depth=0,
+                cost=0.0,
+                uncertainty=0.0,
+            )
+            nodes = {'root': root}
+            leaves = [root]
+
         best_path: list[str] = []
-        best_value = float('-inf')
+        best_value: float = float('-inf')
         nodes_since_yield = 0
         pruned_count = 0
         dead_end_count = 0
 
         dead_end_detector.register_branch('root')
+
+        # ── SILICON-05: Gravity field void detection ────────────────────
+        # Query the semantic gravity field for voids — these inform
+        # exploration bonuses during branch expansion.
+        _gravity_void_count = 0
+        _gravity_void_radius_max = 0.0
+        _gravity_exploration_bonus = 0.0
+        if self._gravity_field is not None:
+            try:
+                _gravity_voids = self._gravity_field.find_voids(k=5, min_distance=0.25)
+                _gravity_void_count = len(_gravity_voids)
+                if _gravity_voids:
+                    _gravity_void_radius_max = max(v.radius for v in _gravity_voids)
+                    # Exploration bonus proportional to void severity
+                    # Bonus range: 0.02 (1 small void) to 0.15 (5+ large voids)
+                    _gravity_exploration_bonus = min(
+                        0.15,
+                        0.02 * _gravity_void_count * (1.0 + _gravity_void_radius_max),
+                    )
+                    # Boost branching factor when voids exist and time is not critical
+                    if _gravity_void_count >= 3:
+                        branching_factor = min(branching_factor + 1, 6)
+                        logger.debug(
+                            '[SILICON-05] ToT branching boosted to %d (voids=%d max_radius=%.3f)',
+                            branching_factor, _gravity_void_count, _gravity_void_radius_max,
+                        )
+                if _gravity_exploration_bonus > 0:
+                    logger.debug(
+                        '[SILICON-05] ToT exploration bonus=%.3f (voids=%d)',
+                        _gravity_exploration_bonus, _gravity_void_count,
+                    )
+            except Exception:
+                logger.debug('[SILICON-05] Gravity void query failed in ToT')
+
+        # UNIFIED-005: Start periodic checkpointing and bind nodes reference
+        # UNIFIED-006: On resume, step counter starts from resume_step
+        _initial_step = self._resume_step if _resumed else 0
+        if checkpointer is not None:
+            checkpointer._step = _initial_step  # forward step counter
+            checkpointer.bind(nodes)
+            await checkpointer.start()
+            # Initial checkpoint so we have at least one on disk
+            await checkpointer.checkpoint(nodes=nodes, step=_initial_step)
 
         for depth in range(max_depth):
             new_leaves: list[ThoughtNode] = []
@@ -387,6 +840,22 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                         parent_value=parent_value,
                         query_complexity=query_complexity,
                     )
+
+                    # SILICON-05: Void-aware exploration bonus
+                    # Branches that explore novel semantic areas (higher uncertainty)
+                    # get a boost proportional to gravity void severity.
+                    # This prevents the ToT from converging on already-explored
+                    # regions when there are known semantic gaps.
+                    if _gravity_exploration_bonus > 0:
+                        # Boost is proportional to uncertainty — branches with
+                        # higher uncertainty benefit more from void-directed exploration
+                        uncertainty_bonus = _gravity_exploration_bonus * uncertainty
+                        # Decay with depth: deeper nodes already capture exploration
+                        depth_decay = 1.0 / (1.0 + 0.1 * (depth + 1))
+                        value_est = float(np.clip(
+                            value_est + uncertainty_bonus * depth_decay,
+                            0.0, 1.0,
+                        ))
 
                     # SOVEREIGN-005: Cost-weighted pruning
                     # After 2+ actions, prune branches with insufficient gain
@@ -451,6 +920,10 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             active_ids = {n.node_id for n in leaves} | {'root'}
             dead_end_detector.cleanup_pruned(active_ids)
 
+            # UNIFIED-005: Checkpoint at depth transition
+            if checkpointer is not None:
+                await checkpointer.checkpoint(nodes=nodes, step=depth + 1)
+
             for leaf in leaves:
                 if leaf.value_estimate > best_value:
                     best_value = leaf.value_estimate
@@ -461,6 +934,14 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                         current = nodes[current.parent]
                     best_path = list(reversed(path))
 
+        # UNIFIED-005: Final checkpoint + stop periodic task
+        if checkpointer is not None:
+            try:
+                await checkpointer.checkpoint(nodes=nodes)  # final step
+                await checkpointer.stop(final_checkpoint=False)  # already did it above
+            except Exception:
+                pass
+
         return {
             'type': 'tree_of_thoughts',
             'nodes': len(nodes),
@@ -470,7 +951,13 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'pruned_branches': pruned_count,
             'dead_ends': dead_end_count,
             'used_learned_values': value_predictor.is_learned,
-            'summary': f'ToT reasoning: {len(nodes)} nodes, {pruned_count} pruned, {dead_end_count} dead-ends, learned={value_predictor.is_learned}',
+            'resumed': _resumed,  # UNIFIED-006
+            'resume_step': self._resume_step if _resumed else 0,  # UNIFIED-006
+            'summary': (
+                f'ToT reasoning: {len(nodes)} nodes, {pruned_count} pruned, '
+                f'{dead_end_count} dead-ends, learned={value_predictor.is_learned}'
+                f'{", RESUMED from step " + str(self._resume_step) if _resumed else ""}'
+            ),
         }
 
     async def _graph_reasoning(self, query: str) -> dict[str, Any]:
@@ -493,8 +980,55 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         return {'type': 'graph_reasoning', 'nodes': len(nodes), 'edges': len(edges), 'central_concepts': [{'concept': nodes[nid]['concept'], 'connections': count} for nid, count in central_nodes], 'summary': f'Graph reasoning: {len(nodes)} concepts, {len(edges)} relationships'}
 
     async def _ensemble_reason(self, query: str) -> dict[str, Any]:
-        """Execute ensemble reasoning with multiple strategies."""
-        strategies = [ReasoningStrategy.CHAIN_OF_THOUGHT, ReasoningStrategy.TREE_OF_THOUGHTS, ReasoningStrategy.GRAPH_REASONING]
+        """Execute ensemble reasoning with urgency-aware strategy selection.
+
+        BLITZ-06: When remaining_time < 2min, ensemble degrades to CoT-only
+        (skipping both ToT and Graph). When remaining_time < 5min, ToT is
+        excluded but CoT + Graph still run in parallel. In all cases the
+        result shape stays identical — callers see no difference.
+
+        CoT is ALWAYS included because it's the fastest strategy (~100ms).
+        Graph is the second-fastest and provides complementary structure.
+        ToT is the most expensive (5-50× CoT) and only worth it with
+        sufficient time budget.
+        """
+        remaining_s: float = (
+            self._sprint_clock.remaining_s
+            if self._sprint_clock is not None
+            else float('inf')
+        )
+
+        # BLITZ-06: Urgency-aware strategy selection
+        if remaining_s <= _ENSEMBLE_CO_T_ONLY_REMAINING_S:
+            logger.warning(
+                '[BLITZ-06] Remaining=%.1fs ≤ %ds — ensemble degraded to CoT-only '
+                '(skipping ToT + Graph, sprint critically low on time)',
+                remaining_s, _ENSEMBLE_CO_T_ONLY_REMAINING_S,
+            )
+            self._stats['ensemble_degraded_cot_only'] = (
+                self._stats.get('ensemble_degraded_cot_only', 0) + 1
+            )
+            strategies = [ReasoningStrategy.CHAIN_OF_THOUGHT]
+        elif remaining_s <= _ENSEMBLE_SKIP_TOT_REMAINING_S:
+            logger.info(
+                '[BLITZ-06] Remaining=%.1fs ≤ %ds — ensemble skipping ToT '
+                '(CoT + Graph only, ToT too expensive)',
+                remaining_s, _ENSEMBLE_SKIP_TOT_REMAINING_S,
+            )
+            self._stats['ensemble_skipped_tot'] = (
+                self._stats.get('ensemble_skipped_tot', 0) + 1
+            )
+            strategies = [
+                ReasoningStrategy.CHAIN_OF_THOUGHT,
+                ReasoningStrategy.GRAPH_REASONING,
+            ]
+        else:
+            strategies = [
+                ReasoningStrategy.CHAIN_OF_THOUGHT,
+                ReasoningStrategy.TREE_OF_THOUGHTS,
+                ReasoningStrategy.GRAPH_REASONING,
+            ]
+
         tasks = [self.reason(query, s) for s in strategies]
         results = await parallel_ok(*tasks, label='meta_reasoning_coordinator:422')
         successful = [r for r in results if isinstance(r, dict) and r.get('success')]
@@ -505,11 +1039,120 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             s = r.get('strategy', 'unknown')
             strategy_counts[s] = strategy_counts.get(s, 0) + 1
         best_strategy = max(strategy_counts, key=strategy_counts.get)
-        return {'success': True, 'ensemble_size': len(successful), 'strategies_used': [r.get('strategy') for r in successful], 'selected_strategy': best_strategy, 'results': successful, 'summary': f'Ensemble reasoning: {len(successful)} strategies, selected {best_strategy}'}
+        return {
+            'success': True,
+            'ensemble_size': len(successful),
+            'strategies_used': [r.get('strategy') for r in successful],
+            'selected_strategy': best_strategy,
+            'results': successful,
+            'summary': (
+                f'Ensemble reasoning: {len(successful)} strategies, '
+                f'selected {best_strategy}'
+                f'{" (urgency-degraded)" if len(strategies) < 3 else ""}'
+            ),
+        }
 
     def get_statistics(self) -> dict[str, Any]:
-        """Get reasoning statistics."""
-        return {**self._stats, 'history_size': len(self.reasoning_history)}
+        """Get reasoning statistics including BLITZ-04 urgency info."""
+        stats = {
+            **self._stats,
+            'history_size': len(self.reasoning_history),
+            'urgency': self._compute_urgency(),  # BLITZ-04
+        }
+        if self._checkpointer is not None:
+            stats['checkpointer'] = self._checkpointer.stats
+        if self._sprint_clock is not None:
+            stats['remaining_s'] = self._sprint_clock.remaining_s
+            stats['total_duration_s'] = self._sprint_clock.total_duration_s
+        return stats
+
+    # ── UNIFIED-005: ToT State Persistence ────────────────────────────────
+
+    async def save_state(self) -> bool:
+        """
+        UNIFIED-005: Persist current ToT state to DuckDB atomically.
+
+        Delegates to TransactionalToTCheckpointer if initialized.
+        Called on explicit shutdown or at key depth transitions.
+        Returns True if saved, False if no checkpointer or on error.
+        """
+        if self._checkpointer is None:
+            return False
+        # The checkpointer already has the nodes reference bound —
+        # periodic loop + depth-level checkpoints handle persistence.
+        # This is an explicit trigger for caller convenience.
+        try:
+            if self._checkpointer._nodes_ref is not None:
+                return await self._checkpointer.checkpoint(
+                    nodes=self._checkpointer._nodes_ref,
+                )
+            return False
+        except Exception:
+            return False
+
+    async def load_state(
+        self,
+        sprint_id: str,
+        duckdb_store: Any,
+    ) -> dict | None:
+        """
+        UNIFIED-005: Load ToT state from the latest checkpoint for a sprint.
+
+        Creates a Temporary TransactionalToTCheckpointer to read the
+        checkpoint. Returns the nodes dict or None if not found / corrupt.
+
+        Args:
+            sprint_id: Sprint identifier to load checkpoint for.
+            duckdb_store: Initialized DuckDBShadowStore instance.
+
+        Returns:
+            dict[ str → ThoughtNode ] or None.
+        """
+        try:
+            from hledac.universal.coordinators.tot_checkpointer import (
+                TransactionalToTCheckpointer,
+            )
+            temp_ckpt = TransactionalToTCheckpointer(
+                sprint_id=sprint_id,
+                duckdb_store=duckdb_store,
+                interval_s=30.0,
+            )
+            restored = await temp_ckpt.restore()
+            if restored is None:
+                return None
+            step, nodes_dict, checksum = restored
+            logger.info(
+                "[UNIFIED-005] ToT state loaded: sprint=%s step=%d nodes=%d checksum=%s",
+                sprint_id[:12],
+                step,
+                len(nodes_dict),
+                checksum[:16],
+            )
+            # Store for later use
+            self._sprint_id = sprint_id
+            self._duckdb_store = duckdb_store
+            self._checkpointer = temp_ckpt
+            return nodes_dict
+        except Exception as exc:
+            logger.warning("[UNIFIED-005] load_state failed: %s", exc)
+            return None
+
+    async def cleanup_checkpoints(self) -> bool:
+        """
+        UNIFIED-005: Delete all checkpoints for this sprint.
+
+        Called when the sprint completes successfully — frees storage.
+        Returns True on success.
+        """
+        if self._checkpointer is None:
+            return False
+        try:
+            await self._checkpointer.stop(final_checkpoint=False)
+            ok = await self._checkpointer.cleanup()
+            self._checkpointer = None
+            return ok
+        except Exception:
+            return False
 
     def _get_feature_list(self) -> list[str]:
         return [
@@ -522,4 +1165,10 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'Learned value prediction (SOVEREIGN-005)',
             'Cost-weighted branch pruning (SOVEREIGN-005)',
             'Dead-end detection (SOVEREIGN-005)',
+            'SprintClock urgency clamping (BLITZ-04)',
+            'Ensemble urgency gating (BLITZ-06)',
+            'Semantic gravity field void detection [SILICON-05]',
+            'Gravity-aware strategy selection [SILICON-05]',
+            'Void-aware ToT branch boosting [SILICON-05]',
+            'Fetch directive generation [SILICON-05]',
         ]

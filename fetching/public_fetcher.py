@@ -27,6 +27,8 @@ from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_t
 from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.logging_config import get_logger
 
+logger = get_logger(__name__)
+
 # Tarpit detection — import function lazily to avoid circular import at module level
 _tarpit_detect = None  # type: ignore[assignment]
 
@@ -110,12 +112,28 @@ def _reset_tenacity_jitter_state() -> None:
     _tenacity_prev_sleep = 0.0
 
 
+# BLITZ-15: Blitz mode backoff cap — 1.0 s max (vs 8.0 s default).
+# In a 30-min sprint, waiting 8 s for a single retry is unacceptable;
+# the URL should be marked dead after 1–2 fast retries.
+_BLITZ_BACKOFF_CAP_S: Final[float] = 1.0
+_DEFAULT_BACKOFF_CAP_S: Final[float] = 8.0
+
+
+def _resolve_backoff_cap_s() -> float:
+    """Return the current backoff cap: 1.0 s in blitz mode, 8.0 s otherwise."""
+    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+
+    return _BLITZ_BACKOFF_CAP_S if _is_blitz() else _DEFAULT_BACKOFF_CAP_S
+
+
 def _tenacity_wait_jitter(retry_state: _TenacityRetryCallState) -> float:
-    """Tenacity wait generator: Retry-After header → backoff → jitter cap at 8 s.
+    """Tenacity wait generator: Retry-After header → backoff → jitter.
 
     ISSUES-7: Replaces manual retry loop with tenacity decorator.
     Uses decorrelated jitter (same formula as existing _compute_backoff_seconds)
     but accepts tenacity's RetryCallState so @retry can drive it.
+
+    BLITZ-15: Backoff cap is 1.0 s in blitz mode (8.0 s default).
 
     prev_sleep is carried via module-level _tenacity_prev_sleep to maintain
     the decorrelated jitter chain across retries. Reset via _reset_tenacity_jitter_state().
@@ -126,13 +144,14 @@ def _tenacity_wait_jitter(retry_state: _TenacityRetryCallState) -> float:
     retry_after: float | None = None
     if isinstance(exc, _RetryableStatus):
         retry_after = exc.retry_after
-    # Fallback: geometric backoff capped at 8 s (matches _compute_backoff_seconds)
+    cap_s = _resolve_backoff_cap_s()
+    # Fallback: geometric backoff capped (matches _compute_backoff_seconds)
     if retry_after is None or retry_after <= 0:
-        retry_after = min(2.0 ** (attempt + 1), 8.0)
+        retry_after = min(2.0 ** (attempt + 1), cap_s)
     else:
         retry_after = min(retry_after, 60.0)
     # Decorrelated jitter: same formula as _compute_backoff_seconds
-    jittered = min(8.0, _JITTER_RNG.uniform(0.0, max(retry_after, _tenacity_prev_sleep) * 3.0))
+    jittered = min(cap_s, _JITTER_RNG.uniform(0.0, max(retry_after, _tenacity_prev_sleep) * 3.0))
     _tenacity_prev_sleep = jittered
     return jittered
 
@@ -827,24 +846,33 @@ def _extract_retry_after(headers) -> float | None:
     except (ValueError, TypeError):
         return None
 
-def _compute_backoff_seconds(retry_after: float | None, attempt: int, *, jitter: bool=True, _prev_sleep: float=0.0) -> float:
+def _compute_backoff_seconds(
+    retry_after: float | None,
+    attempt: int,
+    *,
+    jitter: bool = True,
+    _prev_sleep: float = 0.0,
+    blitz_backoff_cap_s: float | None = None,
+) -> float:
     """Return bounded backoff in seconds.
 
-    Uses Retry-After if available, otherwise exponential backoff capped at 8 s.
+    Uses Retry-After if available, otherwise exponential backoff.
+    BLITZ-15: Backoff cap is 1.0 s in blitz mode (8.0 s default).
     Attempt 0 = no backoff (first failure already counted).
 
     When ``jitter`` is True (default), applies decorrelated jitter (AWS
     Architecture Blog "Exponential Backoff and Jitter"): samples
-    ``Uniform(0, max(base, _prev_sleep) * 3)`` and caps at 8 s. The optional
+    ``Uniform(0, max(base, _prev_sleep) * 3)``. The optional
     ``_prev_sleep`` carries state across consecutive retries so successive
     sleep durations are de-correlated (callers may pass it as a kwarg).
     """
+    cap_s = blitz_backoff_cap_s if blitz_backoff_cap_s is not None else _resolve_backoff_cap_s()
     if retry_after is not None and retry_after > 0:
         base = min(retry_after, 60.0)
     else:
-        base = min(2.0 ** (attempt + 1), 8.0)
+        base = min(2.0 ** (attempt + 1), cap_s)
     if jitter:
-        return min(8.0, _JITTER_RNG.uniform(0.0, max(base, _prev_sleep) * 3.0))
+        return min(cap_s, _JITTER_RNG.uniform(0.0, max(base, _prev_sleep) * 3.0))
     return base
 
 def _build_retry_error(status_code: int, retry_after: float | None) -> str:
@@ -1402,7 +1430,18 @@ async def _renew_tor_circuit() -> bool:
         return False
 
 async def _maybe_renew_tor_circuit() -> None:
-    """Renew Tor circuit if request count threshold reached."""
+    """Renew Tor circuit if request count threshold reached.
+
+    BLITZ-14: When blitz mode is active (duration ≤ 30 min), circuit renewal
+    is skipped entirely. The sprint is a one-shot burst — circuit rotation
+    provides no stealth value and costs 1-5s per renewal (NEWNYM signal).
+    In a 30-min sprint with 50 Tor requests, this saves ~15s of latency.
+    """
+    # BLITZ-14: Skip Tor circuit renewal in blitz mode
+    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+    if _is_blitz():
+        return
+
     async with _SESSION_MGR._get_tor_lock():
         _SESSION_MGR._tor_request_count += 1
         if _SESSION_MGR._tor_request_count >= TOR_CIRCUIT_RENEWAL_REQUEST_COUNT:
@@ -1414,7 +1453,17 @@ async def _maybe_renew_tor_circuit() -> None:
 _JITTER_RNG = secrets.SystemRandom()
 
 async def _jitter_delay() -> None:
-    """Apply random jitter before request (Tor/stealth anti-correlation)."""
+    """Apply random jitter before request (Tor/stealth anti-correlation).
+
+    BLITZ-12: When blitz mode is active (duration ≤ 30 min), this is a no-op.
+    The sprint is a one-shot burst — anti-correlation timing provides no value.
+
+    NOTE: As of BLITZ-12 analysis, this function has zero callers across the
+    codebase. It is kept for API stability and exported in __all__.
+    """
+    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+    if _is_blitz():
+        return
     await asyncio.sleep(_JITTER_RNG.uniform(JITTER_MIN_S, JITTER_MAX_S))
 
 async def _close_tor_session() -> None:
@@ -2177,15 +2226,56 @@ async def _playwright_locked(url: str, timeout: float) -> str:
             await browser.close()
 
 
+# BLITZ-15: Dead-host tracking — hosts marked dead after exhausting retries
+# in blitz mode are excluded from further fetch attempts for the sprint duration.
+# Reset at sprint start via reset_blitz_dead_hosts().
+_blitz_dead_hosts: set[str] = set()
+_blitz_dead_hosts_lock: threading.Lock = threading.Lock()
+
+
+def mark_blitz_host_dead(host: str) -> None:
+    """BLITZ-15: Mark a host as dead for the sprint duration after retry exhaustion."""
+    with _blitz_dead_hosts_lock:
+        _blitz_dead_hosts.add(host)
+
+
+def is_blitz_host_dead(host: str) -> bool:
+    """BLITZ-15: Check if a host has been marked dead in blitz mode."""
+    with _blitz_dead_hosts_lock:
+        return host in _blitz_dead_hosts
+
+
+def reset_blitz_dead_hosts() -> None:
+    """BLITZ-15: Clear dead-host tracking (called at sprint start)."""
+    global _blitz_dead_hosts
+    with _blitz_dead_hosts_lock:
+        _blitz_dead_hosts.clear()
+
+
+def _blitz_aware_stop(retry_state: _TenacityRetryCallState) -> bool:
+    """Tenacity stop function: blitz-aware max attempts.
+
+    BLITZ-15: In blitz mode, stop after 2 total attempts (1 retry).
+    In normal mode, stops after MAX_RETRIES+1 attempts (default: 3 total = 2 retries).
+
+    Returns:
+        True if retries should stop, False to continue retrying.
+    """
+    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+
+    max_attempts = 2 if _is_blitz() else MAX_RETRIES + 1
+    return retry_state.attempt_number >= max_attempts
+
+
 # ISSUE-7: tenacity decorator — replaces manual for/retry loop.
-# stop: MAX_RETRIES+1 attempts total (matches original for loop behavior)
+# BLITZ-15: stop uses _blitz_aware_stop — 2 attempts in blitz mode, MAX_RETRIES+1 otherwise.
 # wait: _tenacity_wait_jitter — decorrelated jitter with Retry-After header priority
 # retry: only on _RetryableStatus (HTTP retryable status codes)
 # before_sleep: record circuit-breaker failure before waiting
 # after: record circuit-breaker success on final success
 # reraise: re-raise if all retries exhausted (tenacity returns last exception)
 _retry_decorator = retry(
-    stop=stop_after_attempt(MAX_RETRIES + 1),
+    stop=_blitz_aware_stop,
     wait=_tenacity_wait_jitter,
     retry=retry_if_exception_type((_RetryableStatus, TimeoutError)),
     before_sleep=_tenacity_before_sleep,
@@ -2199,6 +2289,7 @@ _retry_decorator = retry(
 _RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = (
     'timed out',
     'timeout',
+    'ttfb_timeout',
     'connection refused',
     'connection reset',
     'connection aborted',
@@ -2219,6 +2310,14 @@ _RETRYABLE_ERROR_PATTERNS: tuple[str, ...] = (
 )
 
 
+# PHYSICS-11: TTFB (Time-To-First-Byte) kill switch default — 1.5 s is
+# aggressive enough to kill unresponsive hosts while leaving headroom for
+# normal latency (TCP + TLS + server processing + first chunk on non-local
+# servers). After 2 TTFB timeouts on the same host in blitz mode the
+# dead-host blacklist blocks it for the remainder of the sprint.
+_TTFB_TIMEOUT_S: float = 1.5
+
+
 def _is_tarpit_url(url: str) -> bool:
     """Pre-scan URL for known tarpit/honeypot path patterns.
     
@@ -2233,6 +2332,7 @@ async def _fetch_core(
     headers: dict[str, str] | None = None,
     timeout_s: float = 35.0,
     max_bytes: int = MAX_BYTES_DEFAULT,
+    ttfb_timeout_s: float | None = _TTFB_TIMEOUT_S,
 ) -> FetchResult:
     """Core transport fetch — unified transport, returns FetchResult.
 
@@ -2247,6 +2347,10 @@ async def _fetch_core(
         headers: Optional HTTP headers.
         timeout_s: Request timeout in seconds.
         max_bytes: Maximum response bytes to read.
+        ttfb_timeout_s: Time-To-First-Byte kill-switch timeout in seconds.
+            If the server hasn't sent the first byte within this window the
+            request is cancelled immediately.  Default 1.5 s (PHYSICS-11).
+            Set to None to disable (legacy behaviour — single 35 s timeout).
 
     Returns:
         FetchResult with raw decoded HTML in .text (from unified transport).
@@ -2260,13 +2364,35 @@ async def _fetch_core(
     )
 
     _policy = policy if policy is not None else POLICY_CLEARNET_H2
-    raw = await fetch_via_unified(
-        url=url,
-        policy=_policy,
-        headers=headers,
-        timeout_s=timeout_s,
-        max_bytes=max_bytes,
-    )
+
+    # PHYSICS-11: TTFB kill switch — wrap fetch_via_unified with a
+    # short deadline for the first byte.  If the server accepts the TCP
+    # connection but never sends data, we abort early instead of burning
+    # the full timeout_s (35 s) per attempt.
+    if ttfb_timeout_s is not None and ttfb_timeout_s > 0:
+        try:
+            raw = await asyncio.wait_for(
+                fetch_via_unified(
+                    url=url,
+                    policy=_policy,
+                    headers=headers,
+                    timeout_s=timeout_s,
+                    max_bytes=max_bytes,
+                ),
+                timeout=ttfb_timeout_s,
+            )
+        except asyncio.TimeoutError:
+            raise asyncio.TimeoutError(
+                f"ttfb_timeout:{url}:{ttfb_timeout_s:.1f}s"
+            ) from None
+    else:
+        raw = await fetch_via_unified(
+            url=url,
+            policy=_policy,
+            headers=headers,
+            timeout_s=timeout_s,
+            max_bytes=max_bytes,
+        )
 
     status_code = raw.get('status_code', 0)
     transport_error = raw.get('error')
@@ -2352,6 +2478,7 @@ async def async_fetch_public_text(
     js_confidence: float = 0.8,
     priority: int = 5,
     bypass_circuit_breaker: bool = False,
+    ttfb_timeout_s: float | None = _TTFB_TIMEOUT_S,
 ) -> FetchResult:
     """
     Fetch a public URL — single-URL wrapper for async_fetch_public_text_batch.
@@ -2379,6 +2506,10 @@ async def async_fetch_public_text(
         Request priority 1–10 (default 5, lower = higher priority).
     bypass_circuit_breaker : bool
         If True, skip circuit breaker on retry (internal use).
+    ttfb_timeout_s : float | None
+        PHYSICS-11: Time-To-First-Byte kill switch.  If the server hasn't
+        sent the first byte within this window the request is cancelled.
+        Default 1.5 s.  Set to None to disable (legacy 35 s single timeout).
 
     Returns
     -------
@@ -2386,14 +2517,39 @@ async def async_fetch_public_text(
         Typed result with final_url, status, content_type, text (or None),
         byte counts, elapsed_ms, and optional error.
     """
+    # BLITZ-15: Skip fetch if host is marked dead for the sprint.
+    _host = _extract_domain_from_url(url)
+    if _host and is_blitz_host_dead(_host):
+        return FetchResult(
+            url=url,
+            final_url=url,
+            status_code=0,
+            content_type='',
+            text=None,
+            fetched_bytes=0,
+            declared_length=-1,
+            elapsed_ms=0.0,
+            error='blitz_host_dead',
+            failure_stage='blitz_dead_host',
+        )
     try:
         return await _fetch_core_retryable(
             url=url,
             timeout_s=timeout_s,
             max_bytes=max_bytes,
+            ttfb_timeout_s=ttfb_timeout_s,
         )
     except (_RetryableStatus, TimeoutError):
         # All retries exhausted — return error result
+        # PHYSICS-12 / BLITZ-15: In blitz mode only, mark the host as dead for the
+        # sprint duration to avoid wasting time on unreachable hosts. Non-blitz
+        # sprints may benefit from retrying hosts later; the dynamic backoff cap
+        # (1.0 s vs 8.0 s) and attempt count (2 vs 3) already differentiate.
+        _host = _extract_domain_from_url(url)
+        if _host:
+            from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz_cs
+            if _is_blitz_cs():
+                mark_blitz_host_dead(_host)
         return FetchResult(
             url=url,
             final_url=url,
@@ -2408,6 +2564,93 @@ async def async_fetch_public_text(
         )
 
 
+# ---------------------------------------------------------------------------
+# UNIFIED-007/008: Domain reputation helpers
+# ---------------------------------------------------------------------------
+
+def _extract_domain_from_url(url: str) -> str:
+    """Extract netloc (host:port → host) from URL string. Fail-safe."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.netloc or parsed.hostname or ""
+        # Strip port
+        if ":" in host:
+            host = host.rsplit(":", 1)[0]
+        return host.lower()
+    except Exception:
+        return ""
+
+
+_rep_service_cache: Any = None  # DomainReputationService singleton, lazy
+
+
+def _lazy_get_reputation_service() -> Any | None:
+    """Lazy-load DomainReputationService singleton.
+
+    Returns None if HLEDAC_DOMAIN_REPUTATION=0 or service unavailable.
+    Never raises.
+    """
+    global _rep_service_cache
+    if _rep_service_cache is not None:
+        return _rep_service_cache
+    if os.getenv("HLEDAC_DOMAIN_REPUTATION", "1") == "0":
+        return None
+    try:
+        from hledac.universal.knowledge.domain_reputation import get_domain_reputation_service
+
+        _rep_service_cache = get_domain_reputation_service()
+        return _rep_service_cache
+    except Exception:  # noqa: BLE001 — fail-safe; optional feature
+        return None
+
+
+_ANTI_BOT_HEADERS: tuple[tuple[str, str], ...] = (
+    ("cf-ray", "cloudflare"),
+    ("cf-cache-status", "cloudflare"),
+    ("x-amz-cf-pop", "cloudfront"),
+    ("x-sucuri-id", "sucuri"),
+    ("x-cdn", "cdn"),
+)
+_ANTI_BOT_BODY_SUBSTRINGS: tuple[tuple[str, str], ...] = (
+    ("challenges.cloudflare.com", "cloudflare"),
+    ("cloudflare-challenge", "cloudflare"),
+    ("_cf_chl_opt", "cloudflare"),
+    ("datadome", "datadome"),
+    ("akamaihd", "akamai"),
+    ("perimeterx", "perimeterx"),
+    ("imperva", "imperva"),
+    ("incapsula", "imperva"),
+)
+
+
+def _detect_anti_bot_type(result: Any) -> str:
+    """Detect anti-bot/WAF type from FetchResult headers and text.
+
+    Returns: 'cloudflare' | 'akamai' | 'datadome' | 'cloudfront' |
+             'imperva' | 'perimeterx' | 'sucuri' | 'none'
+    Never raises.
+    """
+    try:
+        # Check server header (from FetchResult, not raw response headers)
+        server = getattr(result, "server_header", None) or ""
+        server_lower = server.lower()
+        for keyword in ("cloudflare", "akamai", "datadome", "imperva"):
+            if keyword in server_lower:
+                return keyword
+
+        # Check body for known anti-bot patterns (cheap substring scan)
+        text = getattr(result, "text", None) or ""
+        if text:
+            text_lower = text[:4096].lower()  # only scan first 4 KB
+            for substr, bot_type in _ANTI_BOT_BODY_SUBSTRINGS:
+                if substr in text_lower:
+                    return bot_type
+
+        return "none"
+    except Exception:  # noqa: BLE001 — fail-safe
+        return "none"
+
+
 async def async_fetch_public_text_batch(
     urls: list[str],
     timeout_s: float = 35.0,
@@ -2418,6 +2661,7 @@ async def async_fetch_public_text_batch(
     js_confidence: float = 0.8,
     priority: int = 5,
     concurrency: int | None = None,
+    ttfb_timeout_s: float | None = _TTFB_TIMEOUT_S,
 ) -> list[FetchResult]:
     """
     Batch URL fetching via parallel() — concurrent, bounded, fail-safe.
@@ -2443,6 +2687,8 @@ async def async_fetch_public_text_batch(
             - None (default): UMA-aware dynamic limit via ConcurrencyBudgetRegistry.
               OK state → 8, WARN → 4, CRITICAL → 2, EMERGENCY → 1.
             - int: explicit override (e.g. concurrency=3 for Pastebin rate-limit).
+        ttfb_timeout_s: PHYSICS-11 TTFB kill switch (default 1.5 s).
+            Set to None to disable.
 
     Returns:
         List of FetchResult in same order as input urls.
@@ -2466,6 +2712,45 @@ async def async_fetch_public_text_batch(
     async def _fetch_one(url: str, idx: int) -> tuple[int, FetchResult]:
         """Fail-safe fetch with index capture for order preservation."""
         try:
+            # UNIFIED-007/008: Pre-fetch domain reputation check — skip known tarpits
+            _domain = _extract_domain_from_url(url)
+            _rep_service = _lazy_get_reputation_service()
+            if _rep_service is not None and _domain:
+                try:
+                    _rep = await _rep_service.get(_domain)
+                    if _rep.is_tarpit:
+                        logger.debug(
+                            '\n[DOMAIN_REPUTATION] Skipping known tarpit domain: %s (score=%.2f)',
+                            _domain, _rep.tarpit_score,
+                        )
+                        return idx, FetchResult(
+                            url=url,
+                            final_url=url,
+                            status_code=0,
+                            content_type='',
+                            text=None,
+                            fetched_bytes=0,
+                            declared_length=-1,
+                            elapsed_ms=0.0,
+                            error=f'tarpit_detected:reputation_score={_rep.tarpit_score:.2f}',
+                            failure_stage='tarpit',
+                        )
+                except Exception:  # noqa: BLE001 — fail-safe; reputation check non-critical
+                    pass
+            # BLITZ-15: Skip fetch if host is marked dead for sprint duration
+            if _domain and is_blitz_host_dead(_domain):
+                return idx, FetchResult(
+                    url=url,
+                    final_url=url,
+                    status_code=0,
+                    content_type='',
+                    text=None,
+                    fetched_bytes=0,
+                    declared_length=-1,
+                    elapsed_ms=0.0,
+                    error='blitz_host_dead',
+                    failure_stage='blitz_dead_host',
+                )
             # Pre-scan URL for known tarpit/honeypot path patterns — no HTTP request needed
             if _is_tarpit_url(url):
                 return idx, FetchResult(
@@ -2484,13 +2769,26 @@ async def async_fetch_public_text_batch(
                 url=url,
                 timeout_s=timeout_s,
                 max_bytes=max_bytes,
+                ttfb_timeout_s=ttfb_timeout_s,
             )
             # ISSUE [UNINDEXED]-014: Tarpit detection — check HTML before downstream processing
             if result.text and not result.error:
                 try:
-                    tarpit_result = _get_tarpit_detect()(result.text, result.url, result.elapsed_ms)
+                    _tarpit_detect_fn = _get_tarpit_detect()
+                    tarpit_result = _tarpit_detect_fn(result.text, result.url, result.elapsed_ms)
                     if tarpit_result.is_tarpit:
                         reason = tarpit_result.reasons[0] if tarpit_result.reasons else f'score={tarpit_result.tarpit_score:.2f}'
+                        # UNIFIED-007: Record tarpit in domain reputation
+                        if _domain and _rep_service is not None:
+                            try:
+                                _anti_bot = _detect_anti_bot_type(result)
+                                await _rep_service.record_failure(
+                                    _domain,
+                                    tarpit_score=tarpit_result.tarpit_score,
+                                    anti_bot_type=_anti_bot,
+                                )
+                            except Exception:  # noqa: BLE001 — fail-safe; non-critical
+                                pass
                         return idx, FetchResult(
                             url=result.url,
                             final_url=result.final_url,
@@ -2506,6 +2804,16 @@ async def async_fetch_public_text_batch(
                             http_version=result.http_version,
                         )
                 except Exception:  # noqa: BLE001 — best-effort; tarpit detection failure is non-fatal
+                    pass
+            # UNIFIED-007/008: Record successful fetch in domain reputation
+            if result.text and not result.error and _domain and _rep_service is not None:
+                try:
+                    _anti_bot = _detect_anti_bot_type(result)
+                    await _rep_service.record_success(
+                        _domain,
+                        anti_bot_type=_anti_bot,
+                    )
+                except Exception:  # noqa: BLE001 — fail-safe; non-critical
                     pass
             return idx, result
         except Exception as _e:  # noqa: BLE001 — fail-safe; never propagate
@@ -2573,6 +2881,7 @@ async def async_fetch_public_text_batch(
                     url=_url,
                     timeout_s=timeout_s,
                     max_bytes=max_bytes,
+                    ttfb_timeout_s=ttfb_timeout_s,
                 )
                 return _idx, _result
             except Exception as _e:  # noqa: BLE001 — fail-safe
@@ -2616,7 +2925,7 @@ async def async_fetch_public_text_batch(
     return ordered
 
 
-__all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status']
+__all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status', 'reset_blitz_dead_hosts', 'mark_blitz_host_dead', 'is_blitz_host_dead']
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
 
 

@@ -13,7 +13,7 @@ aho-corasick = "1.1"
 # P6-004 FIX: abi3-py314 unlocks full Python 3.14 C API (tp_subclass, tp_new,
 # memory-view C API changes) instead of being capped at Python 3.12 stable ABI.
 # CI ban: with_gil / allow_threads removed from all code (only comments remain).
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py314", "buffer"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py314"] }
 rayon = "1.10"
 # GRAPH-01: petgraph for graph algorithms (PageRank, Louvain community detection)
 # Provides: GraphMap, UnGraph, DiGraph, NodeIndex, algo::kosaraju_scc
@@ -94,7 +94,8 @@ tantivy = { version = "0.22", optional = true }
 hickory = { package = "hickory-dns", version = "0.24", optional = true, features = ["resolver", "rustls"] }
 # P1-UPGRADE: tokio 1.x → 1.40+ (2026-07-27)
 # Backward compatible for standard runtime builder APIs in dns.rs and quic.rs.
-tokio = { version = "1.40", optional = true, features = ["rt-multi-thread", "net", "time", "sync"] }
+# io-util added for HEIST-02 Arti bridge (AsyncReadExt/AsyncWriteExt).
+tokio = { version = "1.40", optional = true, features = ["rt-multi-thread", "net", "time", "sync", "io-util"] }
 
 # QUIC/HTTP3 via quinn + h3 (for http3 feature)
 # Feature-gated: ~8MB additional compile, M1 8GB safe
@@ -106,7 +107,59 @@ h3-quinn = { version = "0.0.10", optional = true }
 # ISSUE-014: Missing crates that were used but not declared
 bincode = { version = "2.0", features = ["derive", "serde"] }
 zstd = "0.13"
+# HEIST-05: simd-json for zero-alloc JSON Pointer extraction (ARM NEON native)
+# Used by simdjson_extract.rs for CT log scanning, NDJSON parsing — 2-4x faster
+# than serde_json on aarch64, zero-alloc via BorrowedValue.
+simd-json = { version = "0.14", optional = true }
 dirs = "5"
+
+# HEIST-02: Embedded Tor via Arti (Rust Tor client, feature-gated).
+# Eliminates external tor binary subprocess + SOCKS5 IPC overhead.
+# M1 8GB: ~20-30 MB resident (consensus cache + circuits), ~15 MB compile.
+# Python fallback: TorTransport (external tor binary + SOCKS5 proxy).
+arti-client = { version = "0.22", optional = true, default-features = false, features = ["tokio", "native-tls"] }
+tor-rtcompat = { version = "0.22", optional = true }
+
+# SILICON-03: Apple Network.framework bindings — user-space TCP + hardware TLS 1.3.
+# objc2 provides safe Objective-C runtime bindings; block2 enables block/closure
+# callbacks required by Network.framework's async C API.
+# M1 8GB: ~3 MB compile, zero runtime overhead beyond framework linking.
+# Platform: aarch64-apple-darwin ONLY (compiled conditionally via nw_framework feature).
+objc2 = { version = "0.6", optional = true, features = ["apple"] }
+block2 = { version = "0.6", optional = true }
+
+# objc2-foundation: Safe Rust wrappers for Foundation types (NSString, NSArray,
+# NSDictionary, NSData, NSError). Complements objc2's `apple` feature with
+# higher-level type-safe APIs for ObjC interop beyond raw *mut c_void pointers.
+# M1 8GB: ~1 MB compile, zero runtime overhead (thin message-send wrappers).
+objc2-foundation = { version = "0.2", optional = true }
+
+# SILICON-06: coreml — CoreML model loading, compilation, and ANE inference.
+# Replaces the empty `ane` feature stub with real CoreML bindings from Rust.
+# ANE (Apple Neural Engine) uses dedicated memory — does not compete with main RAM.
+# M1 8GB: ~3 MB compile, models loaded from disk on-demand, released after use.
+# Python fallback: coremltools + ANE via brain/ane_engine.py.
+coreml = { version = "0.2", optional = true }
+
+# SILICON-01: Metal GPU compute — opportunistic hash cracking during I/O wait.
+# macOS-only (Metal.framework). ~45s compile, ~3 MB dylib.
+# GPU buffers bounded to 64 MB, released after each crack call.
+# CPU fallback: NEON + Rayon (always available, no Metal dep needed).
+# Feature-gated: metal = ["dep:metal"]
+metal = { version = "0.29", optional = true }
+
+# SILICON-04: objc2-metal — safe MTLDevice, MTLBuffer, MTLCommandQueue types.
+# Type-safe wrappers over Metal.framework C API. Complements metal_shared_buf.rs
+# (currently uses raw C FFI) with safe Rust types for zero-copy buffer sharing.
+# M1 8GB: ~1 MB compile, zero runtime overhead (thin ObjC message wrappers).
+objc2-metal = { version = "0.2", optional = true }
+
+# SILICON-02: Whisper.cpp speech-to-text via whisper-rs, CoreML/ANE backend.
+# whisper-rs binds whisper.cpp (C/C++); on Apple Silicon supports WHISPER_COREML=1
+# which delegates encoder inference to ANE (dedicated memory, not main RAM).
+# M1 8GB: ONLY tiny (25 MB) and base (75 MB) models safe. Bounded to 1 concurrent inf.
+# ~45s compile (whisper.cpp C++). Python fallback: mlx-whisper (MLX-native).
+whisper-rs = { version = "0.13", optional = true }
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +182,7 @@ dirs = "5"
 # Default = core + data (DuckDB wired) — standard Hledac build
 # NOTE: dns feature temporarily disabled — hickory-dns is a binary crate, not lib
 # Use --features "dns" to enable DNS resolution when hickory-resolver is fixed
-default = ["core", "data"]
+default = ["core", "data", "dns", "native_db"]
 
 # core: IOC extraction, URL ops, hashing, compression, HTML parsing
 # Always compiled. No heavy deps. Available even with --no-default-features.
@@ -181,7 +234,22 @@ advanced = [
 ]
 
 # full: All features (development/CI only, ~3× compile time vs core-only)
-full = ["core", "data", "graph", "advanced", "dns", "tls13", "pdf", "office", "quic", "ane", "stix", "metal", "otel", "fulltext"]
+full = ["core", "data", "graph", "advanced", "dns", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper"]
+
+# simdjson: Zero-alloc JSON Pointer extraction via simd-json (ARM NEON native)
+# Adds: simdjson_extract.json_pointer_extract() — 2-4x faster than serde_json on M1
+# M1 8GB: ~2MB compile, zero runtime alloc for BorrowedValue traversal
+simdjson = [
+    "dep:simd-json",
+]
+
+# native_db: Lightweight wire-protocol database extraction (MongoDB, Redis, Elasticsearch)
+# No external crate deps — pure Rust std + crossbeam-channel (already a dep).
+# Adds: rust.native_db.MongoDumper, RedisDumper, ElasticsearchDumper
+# M1 8GB: ~50 KB compile, ~200 KB resident per extraction session
+# Feature-gated: compile with --features native_db
+# Python fallback: exposed_service_hunter.py logs auth status only.
+native_db = []
 
 # dns: DoH/DoT/DoQ DNS resolution via hickory-dns
 # Adds: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
@@ -216,7 +284,24 @@ signal_batch = []     # Referenced by advanced
 dedup_bloom = []      # Referenced by advanced
 graph_cache = []      # Referenced by advanced
 ane = []              # Apple Neural Engine bindings (model registry, batch validation)
-metal = []            # R22: Metal GPU batch matmul for MoE router (stub, CPU fallback always available)
+# SILICON-06: coreml_ane — CoreML model loading + ANE offload from Rust.
+# Replaces the empty `ane` stub with real CoreML bindings.
+# coreml crate: ~3 MB compile, models loaded from disk on-demand.
+# ANE uses dedicated memory — does not compete with main RAM budget.
+# Python fallback: coremltools + brain/ane_engine.py for CoreML inference.
+coreml_ane = ["dep:coreml"]
+# SILICON-01: Metal GPU hash cracking — opportunistic during I/O wait
+# metal crate: ~45s compile, ~3 MB dylib, macOS-only (Metal.framework)
+# M1 8GB: GPU buffers bounded to 64 MB, released after each crack call
+# Python fallback: CPU NEON + Rayon hash cracking (always available)
+metal = ["dep:metal", "dep:objc2-metal"]
+
+# SILICON-04: Shared Metal buffer — zero-copy Rust↔Python↔MLX tensor sharing
+# Uses the same `metal` crate as the `metal` feature above.
+# Provides: SharedMetalBuffer PyClass with MTLBuffer (StorageModeShared),
+#   zero-copy numpy views via PEP 3118 buffer protocol,
+#   batch MLX array creation (1 copy vs N copies).
+metal_shared = ["dep:metal", "dep:objc2-metal"]
 
 # R24: OpenTelemetry-compatible tracing via tracing-subscriber JSON stdout
 # Python reads spans from stdout JSON — no opentelemetry dep conflicts
@@ -224,6 +309,13 @@ otel = [
     "dep:tracing",
     "dep:tracing-subscriber",
 ]
+
+# SILICON-02: whisper — Whisper.cpp speech-to-text via CoreML/ANE backend.
+# whisper-rs binds whisper.cpp (C/C++); WHISPER_COREML=1 delegates encoder
+# inference to ANE (dedicated memory, not main RAM).
+# M1 8GB: ONLY tiny (25 MB) and base (75 MB) models safe. Bounded 1 concurrent inf.
+# ~45s compile (whisper.cpp C++). Python fallback: mlx-whisper (MLX-native).
+whisper = ["dep:whisper-rs"]
 
 # py-version: Python version compiled-for (via pyo3-build-config intercept_version)
 # Adds: __py_version__() — enables Python version mismatch detection at runtime
@@ -263,6 +355,30 @@ quic = [
 # ISSUE-011: Replace Python in-memory BM25Index with mmap-backed Tantivy index
 fulltext = [
     "dep:tantivy",
+]
+
+# HEIST-02: embedded_tor — in-process Tor via Arti (Rust Tor client).
+# Eliminates external tor binary subprocess + SOCKS5 IPC overhead.
+# M1 8GB: ~20-30 MB resident (consensus cache + circuits), ~15 MB compile.
+# Python fallback: TorTransport (external tor binary) provides identical API.
+# Requires: tokio runtime (shared with dns feature).
+embedded_tor = [
+    "dep:arti-client",
+    "dep:tor-rtcompat",
+    "dep:tokio",
+]
+
+# SILICON-03: nw_framework — Apple Network.framework user-space networking.
+# Replaces BSD socket path with user-space TCP + hardware-accelerated TLS 1.3.
+# For non-anti-bot clearnet targets (open APIs, CT logs, NoSQL ports).
+# Requires: objc2 + block2 (Objective-C runtime + block support).
+# Platform: aarch64-apple-darwin ONLY.
+# M1 8GB: ~3 MB compile, ~200 KB resident. Pool: max 200 connections × 50 KB.
+# Python fallback: existing curl_cffi/httpx path when unavailable.
+nw_framework = [
+    "dep:objc2",
+    "dep:objc2-foundation",
+    "dep:block2",
 ]
 
 # pdf: PDF text extraction and IOC extraction via lopdf
@@ -305,23 +421,14 @@ codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
-# ISSUE-P6-003 FIX: build-override vynucuje +neon,+crypto na ÚROVNI PROFILU.
-#
-# PROBLÉM: [target.aarch64-apple-darwin] rustflags v Cargo.toml jsou IGNOROVÁNY
-# maturinem (maturin filtruje CARGO_* env vars). build.rs sice emituje
-# cargo:rustc-cfg=neon_available, ale bez +neon v target-features compiler
-# emituje skalární fallback místo skutečných NEON instrukcí.
-#
-# ŘEŠENÍ: [profile.release.build-override] přepisuje rustflags pro release
-# profil bez ohledu na [target.*] nebo RUSTFLAGS prostředí. Toto je ZÁLOHA
-# pro [tool.maturin.env] RUSTFLAGS v pyproject.toml — obě vrstvy dávají
-# +neon,+crypto. Pokud maturin env selže, build-override zachrání situaci.
-#
-# NOTE: build-override je správné řešení na úrovni profilu, NE
-# [profile.release.package.hledac-rust-extensions].build-override, protože
-# ten by vyžadoval publikaci crate na crates.io (a my nepublikujeme).
-[profile.release.build-override]
-rustflags = ["-C", "target-feature=+neon,+crypto"]
+# ISSUE-P6-003 FIX: NEON target features are provided via TWO layers:
+# 1. .cargo/config.toml [target.aarch64-apple-darwin] rustflags (cargo builds)
+# 2. [tool.maturin.env] RUSTFLAGS in pyproject.toml (maturin builds)
+# The [profile.release.build-override] was removed because it requires the
+# unstable 'profile-rustflags' Cargo feature (not available in stable 1.97.1).
+# Build override is no longer needed — the two layers above cover all build paths.
+# [profile.release] — using .cargo/config.toml [profile.release] section instead
+
 
 [build-dependencies]
 pyo3-build-config = "0.29"

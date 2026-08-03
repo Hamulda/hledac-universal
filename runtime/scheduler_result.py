@@ -41,6 +41,7 @@ class SprintSchedulerResult:
     synthesis_findings_count: int = 0
     ioc_cooccurrence_edges: int = 0
     synthesis_text: str = ''
+    synthesis_uncertainty_flags: dict = field(default_factory=dict)  # APEX-1009
     hypotheses_generated: int = 0
     pii_findings_anonymized: int = 0
     public_discovered: int = 0

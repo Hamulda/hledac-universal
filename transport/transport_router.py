@@ -10,6 +10,7 @@ ROLE:
 
 LANES:
   - aiohttp_default    — plain aiohttp, for general clearnet
+  - nw_connection      — Apple Network.framework, user-space TCP + hw TLS (SILICON-03)
   - httpx_h2           — HTTPX with HTTP/2, env-gated, API-like URLs only
   - curl_cffi_stealth  — JA3 fingerprint spoofing, for stealth/403/429 retry
   - tor_socks          — Tor SOCKS5 proxy, .onion domains
@@ -23,8 +24,10 @@ DECISION RULES (in priority order):
   3. use_js=True       → js_renderer
   4. use_stealth=True  → curl_cffi_stealth
   5. status 403/429    → curl_cffi_stealth (retry path)
-  6. API-like URL + HLEDAC_ENABLE_HTTPX_H2=1 + h2 available → httpx_h2
-  7. default           → aiohttp_default
+  6. nw_connection available + non-dark clearnet → nw_connection (SILICON-03)
+  7. API-like URL + HLEDAC_ENABLE_HTTPX_H2=1 + h2 available → httpx_h2
+  8. API-like URL + HLEDAC_ENABLE_HTTPX_H3=1 + h3 available → httpx_h3
+  9. default           → aiohttp_default
 
 CACHE RULE:
   cache_allowed=True ONLY when cache_safe=True AND lane is NOT
@@ -46,7 +49,7 @@ from typing import Any, Literal
 
 from hledac.universal.core.env_config import ENV
 
-Lane = Literal['aiohttp_default', 'httpx_h2', 'httpx_h3', 'curl_cffi_stealth', 'tor_socks', 'i2p_socks', 'js_renderer', 'cache_safe_http', 'gopher']
+Lane = Literal['aiohttp_default', 'nw_connection', 'httpx_h2', 'httpx_h3', 'curl_cffi_stealth', 'tor_socks', 'i2p_socks', 'js_renderer', 'cache_safe_http', 'gopher']
 
 @dataclass(frozen=True, slots=True)
 class TransportDecision:
@@ -139,6 +142,8 @@ class TransportRouter:
             return _d('curl_cffi_stealth', 'explicit_stealth', 'medium')
         if retry_after_status in (403, 429):
             return _d('curl_cffi_stealth', f'retry_after_http_{retry_after_status}', 'medium')
+        if self._is_nw_connection_candidate(url, hostname):
+            return _d('nw_connection', 'nw_framework_user_space_tcp', 'high', cache=cache_safe)
         if self._is_httpx_h2_candidate(url, hostname):
             return _d('httpx_h2', 'api_like_httpx_h2', 'high', cache=cache_safe)
         if self._is_httpx_h3_candidate(url, hostname):
@@ -172,6 +177,43 @@ class TransportRouter:
             return ('clearnet', host)
         except (ValueError, OSError):  # urllib raises ValueError for malformed URLs; OSError for IDN encoding failures
             return ('malformed', '')
+
+    def _is_nw_connection_candidate(self, url: str, hostname: str = "") -> bool:
+        """
+        Return True if URL is a candidate for the Network.framework lane.
+
+        SILICON-03: Network.framework is the PREFERRED path for all
+        non-stealth, non-dark-web clearnet traffic because it eliminates
+        BSD socket kernel transitions and uses hardware-accelerated TLS.
+
+        Preconditions:
+          - Target is clearnet (not .onion/.i2p/.freenet — checked before)
+          - HLEDAC_ENABLE_NW_CONNECTION is not set to 0
+          - Platform is darwin (macOS — Network.framework is macOS-only)
+          - Rust extension with nw_framework feature is importable
+
+        Unlike H2/H3 which require API-like URL patterns, NW connection
+        is suitable for ALL clearnet URLs — it's a general-purpose
+        replacement for BSD socket networking.
+        """
+        if not ENV.get_bool("HLEDAC_ENABLE_NW_CONNECTION"):
+            return False
+        import sys
+        if sys.platform != "darwin":
+            return False
+        # Lazy check: only probe the Rust extension if we pass the cheap gates
+        if not hostname:
+            hostname = self._classify_url(url)[1]
+        if not hostname:
+            return False
+        # Dark web check — already done before this call, but double-check
+        if hostname.endswith((".onion", ".i2p", ".b32.i2p", ".freenet")):
+            return False
+        try:
+            from hledac.universal.transport.nw_connection_lane import is_nw_connection_available
+            return is_nw_connection_available()
+        except (ValueError, OSError):
+            return False
 
     def _is_httpx_h2_candidate(self, url: str, hostname: str='') -> bool:
         """

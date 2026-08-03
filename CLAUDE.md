@@ -76,10 +76,12 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 |------|---------|---------|-------|
 | HLEDAC_ENABLE_ACADEMIC | 0 | research | Academic research lane (R9) |
 | HLEDAC_ENABLE_ALT_PROTOCOLS | 0 | network | Gopher, Finger, etc. |
+| HLEDAC_ENABLE_ARTI | 0 | network | Arti in-process Tor (HEIST-06, mirrors I2P SAM v3) |
 | HLEDAC_ENABLE_BANNER_GRAB | 0 | network | TCP banner enumeration |
 | HLEDAC_ENABLE_BGP | 0 | intel | BGP enrichment sidecar (F234) |
 | HLEDAC_ENABLE_BGP_PDNS | 0 | intel | Passive DNS via BGP |
 | HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER | 0 | forensic | Blockchain forensics lane (BTC/ETH address analysis) |
+| HLEDAC_ENABLE_BLITZ_TRIAGE | 0 | blitz | BLITZ-11: Repurpose SmolLM-360M draft model slot for fast binary relevance triage classifier (blitz mode only) |
 | HLEDAC_ENABLE_CAPTCHA_DETECTION | 0 | browser | CAPTCHA solving |
 | HLEDAC_ENABLE_CENSYS | 0 | intel | Censys intelligence API |
 | HLEDAC_ENABLE_COMMONCRAWL | 0 | fetch | CommonCrawl search |
@@ -109,6 +111,7 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | HLEDAC_ENABLE_LEAKSENTINEL | 0 | Secret/leak detection |
 | HLEDAC_ENABLE_LLM | 0 | LLM inference |
 | HLEDAC_ENABLE_MLX_OUTLINES | 1 | MLX outlines NER extractor (NER engine, M1 RAM budget) |
+| HLEDAC_ENABLE_NATIVE_EXTRACTION | 0 | extract | HEIST-08: Native DB wire-protocol extraction (MongoDB/Redis via Rust native_db, ES via HTTP). Opt-in: requires `native_db` Rust feature for MongoDB/Redis. |
 | HLEDAC_ENABLE_NETWORK_RECON | 0 | Network reconnaissance lane (DNS/WHOIS/SSL) |
 | HLEDAC_ENABLE_NODRIVER | 0 | Headless browser (Chrome required) |
 | HLEDAC_ENABLE_NYM | 0 | Nym mixnet transport |
@@ -130,6 +133,8 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | HLEDAC_ARROW_INGEST | 1 | Arrow zero-copy ingest for DuckDB (default ON, opt-out=0) |
 | HLEDAC_ENABLE_ZKP | 0 | Zero-knowledge proofs |
 | HLEDAC_WARC_ENABLED | 0 | archive | WARC/ISO 28500 HTTP response archival (10 GB max, gzip compressed) |
+| HLEDAC_DOMAIN_REPUTATION | 1 | fetch | UNIFIED-007/008: Persistent cross-sprint domain reputation store (DuckDB-backed) with proxy affinity, tarpit scoring, and anti-bot type tracking. Opt-out: 0 disables persistence, falls back to in-memory TTL store. |
+| HLEDAC_ENABLE_METAL_HASHCRACK | 0 | crypto | SILICON-01: Opportunistic Metal GPU hash cracking during I/O wait. Requires Rust `metal` crate (`--features metal`). M1 GPU sits idle during .onion fetch (45-75s TTFB) — this uses those cycles for MD5/SHA-256 dictionary attacks. GPU: 64MB buffer limit, 256MB total guard, 512-candidate minimum. CPU fallback: Rayon + NEON (always available, no flag needed). Opt-in: 1 to enable. |
 
 ---
 

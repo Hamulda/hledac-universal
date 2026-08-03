@@ -31,6 +31,153 @@ class AhoCorasickMatcher:
     def __len__(self) -> int: ...
     def close(self) -> None: ...
 
+class StreamPatternHit:
+    """A single pattern match from StreamingIocScanner (zero-copy)."""
+    start: int
+    end: int
+    pattern: str
+    label: str | None
+    value: str
+
+class StreamingIocScanner:
+    """HEIST-01: Streaming SIMD scanner for mmap'd files and raw byte buffers.
+
+    Zero-copy, zero-UTF8-validation, NEON Teddy SIMD on Apple Silicon.
+    3-4 GB/s throughput on M1 for large file sweeps.
+
+    Usage:
+        scanner = StreamingIocScanner(patterns=["malware", "CVE-..."], labels=["threat", "vuln"])
+        hits = scanner.scan_mmap("/data/5gb.dump")  # zero-copy mmap
+        hits = scanner.scan_bytes(raw_bytes)         # direct &[u8] scan
+    """
+    def __init__(self, patterns: list[str], labels: list[str] | None = None) -> None: ...
+    def scan_bytes(self, buffer: bytes) -> list[StreamPatternHit]: ...
+    def scan_bytearray(self, buffer: bytearray) -> list[StreamPatternHit]: ...
+    def scan_memoryview(self, buffer: memoryview) -> list[StreamPatternHit]: ...
+    def scan_mmap(self, path: str) -> list[StreamPatternHit]: ...
+    def scan_iter_mmap(self, path: str, chunk_size: int | None = None) -> list[StreamPatternHit]: ...
+    def scan_mmap_range(self, path: str, offset: int, length: int) -> list[StreamPatternHit]: ...
+    def contains_any(self, buffer: bytes) -> bool: ...
+    def contains_any_mmap(self, path: str) -> bool: ...
+    def count_matches(self, buffer: bytes) -> int: ...
+    def count_matches_mmap(self, path: str) -> int: ...
+    def __len__(self) -> int: ...
+    def is_empty(self) -> bool: ...
+    def close(self) -> None: ...
+
+class ArtiNode:
+    """HEIST-02: In-process Tor client via Arti (Rust Tor client).
+
+    Eliminates external tor binary subprocess + SOCKS5 IPC overhead.
+    Bootstrap: 1-10s (first run), ~1s (cached consensus).
+    M1 8GB: ~20-30 MB resident.
+
+    Usage (via asyncio.to_thread):
+        node = ArtiNode(data_dir="/tmp/arti-cache")
+        await asyncio.to_thread(node.start)
+        body = await asyncio.to_thread(node.fetch_onion, "http://xxx.onion", 30.0)
+        node.close()
+    """
+    def __init__(self, data_dir: str | None = None) -> None: ...
+    def start(self) -> bool: ...
+    def fetch_onion(self, url: str, timeout_s: float | None = None) -> bytes: ...
+    def is_bootstrapped(self) -> bool: ...
+    def bootstrap_status_str(self) -> str: ...
+    def close(self) -> None: ...
+
+class MongoDumpEntry:
+    """HEIST-03: MongoDB extraction result entry.
+
+    Returned by MongoDumper.dump_all() — one per database/collection.
+    """
+    database: str
+    collection: str | None
+    document_count: int | None
+    documents_json: list[str] | None
+    error: str | None
+    def __repr__(self) -> str: ...
+
+class MongoDumper:
+    """HEIST-03: MongoDB wire-protocol dumper.
+
+    Connects to unauthenticated MongoDB via OP_MSG protocol.
+    No external crate deps — pure Rust std + crossbeam-channel.
+
+    Usage (via asyncio.to_thread):
+        dumper = MongoDumper()
+        entries = await asyncio.to_thread(dumper.dump_all, "10.0.0.1", 27017, limit=100, timeout_s=15.0)
+        for entry in entries:
+            print(entry.database, entry.collection, entry.document_count)
+    """
+    def __init__(self) -> None: ...
+    def list_databases(self, host: str, port: int, timeout_s: float | None = None) -> list[str]: ...
+    def list_collections(self, host: str, port: int, database: str, timeout_s: float | None = None) -> list[str]: ...
+    def dump_documents(self, host: str, port: int, database: str, collection: str, limit: int | None = None, timeout_s: float | None = None) -> list[str]: ...
+    def dump_all(self, host: str, port: int, limit: int | None = None, timeout_s: float | None = None) -> list[MongoDumpEntry]: ...
+
+class RedisDumpEntry:
+    """HEIST-03: Redis extraction result entry.
+
+    Returned by RedisDumper.dump_all() — one per key.
+    """
+    key: str
+    key_type: str | None
+    value: bytes | None
+    ttl: int | None
+    error: str | None
+    def __repr__(self) -> str: ...
+
+class RedisDumper:
+    """HEIST-03: Redis RESP-protocol dumper.
+
+    Connects to unauthenticated Redis via RESP2 wire protocol.
+    No external crate deps — pure Rust std.
+
+    Usage (via asyncio.to_thread):
+        dumper = RedisDumper()
+        entries = await asyncio.to_thread(dumper.dump_all, "10.0.0.1", 6379, max_keys=500, timeout_s=15.0)
+        for entry in entries:
+            print(entry.key, entry.key_type, len(entry.value or b""))
+    """
+    def __init__(self) -> None: ...
+    def get_info(self, host: str, port: int, timeout_s: float | None = None) -> str: ...
+    def check_auth(self, host: str, port: int, timeout_s: float | None = None) -> bool: ...
+    def scan_keys(self, host: str, port: int, max_keys: int | None = None, timeout_s: float | None = None) -> list[str]: ...
+    def key_type(self, host: str, port: int, key: str, timeout_s: float | None = None) -> str: ...
+    def key_ttl(self, host: str, port: int, key: str, timeout_s: float | None = None) -> int: ...
+    def get_value(self, host: str, port: int, key: str, timeout_s: float | None = None) -> bytes | None: ...
+    def get_list(self, host: str, port: int, key: str, max_items: int | None = None, timeout_s: float | None = None) -> list[bytes]: ...
+    def get_hash(self, host: str, port: int, key: str, timeout_s: float | None = None) -> list[tuple[str, bytes]]: ...
+    def dump_all(self, host: str, port: int, max_keys: int | None = None, timeout_s: float | None = None) -> list[RedisDumpEntry]: ...
+
+class ElasticsearchDumpEntry:
+    """HEIST-03: Elasticsearch extraction result entry.
+
+    Returned by ElasticsearchDumper.dump_all() — one per index.
+    """
+    index: str
+    document_count: int | None
+    documents_json: list[str] | None
+    error: str | None
+    def __repr__(self) -> str: ...
+
+class ElasticsearchDumper:
+    """HEIST-03: Elasticsearch REST API dumper.
+
+    Connects to unauthenticated Elasticsearch via HTTP/1.1 TCP.
+    No external crate deps — pure Rust std.
+
+    Usage (via asyncio.to_thread):
+        dumper = ElasticsearchDumper()
+        entries = await asyncio.to_thread(dumper.dump_all, "10.0.0.1", 9200, limit=100, timeout_s=15.0)
+        for entry in entries:
+            print(entry.index, entry.document_count)
+    """
+    def __init__(self) -> None: ...
+    def list_indices(self, host: str, port: int, timeout_s: float | None = None) -> list[str]: ...
+    def search_documents(self, host: str, port: int, index: str, query_json: str | None = None, size: int | None = None, timeout_s: float | None = None) -> list[str]: ...
+    def dump_all(self, host: str, port: int, limit: int | None = None, timeout_s: float | None = None) -> list[ElasticsearchDumpEntry]: ...
+
 class BloomFilter:
     """Pure-Rust FNV-1a double-hash bloom filter.
 

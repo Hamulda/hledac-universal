@@ -13,11 +13,11 @@
 //!
 //! # Constants
 //!
-//! AIMD_SUCCESS_THRESHOLD = 40: successes before additive increase
-//! AIMD_ADDITIVE_INCREMENT = 1.0: additive increase amount per threshold crossing
+//! AIMD_SUCCESS_THRESHOLD = 8:  successes before additive increase (BLITZ-13 aligned with Python)
+//! AIMD_ADDITIVE_INCREMENT = 2.0: additive increase amount per threshold crossing
 //! AIMD_MIN_CONCURRENCY = 1.0: hard floor
-//! AIMD_MAX_CONCURRENCY = 200.0: hard ceiling (per domain, not global)
-//! AIMD_DECREASE_BY_STATE: uma_state → multiplicative decrease factor
+//! AIMD_MAX_CONCURRENCY = 25.0: hard ceiling (M1 8GB safe, matches Python CONCURRENCY_GLOBAL_MAX)
+//! AIMD_DECREASE_BY_STATE: uma_state → multiplicative decrease factor (BLITZ-13: less aggressive)
 
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
@@ -36,10 +36,10 @@ use pyo3::prelude::*;
 // Constants
 // ---------------------------------------------------------------------------
 
-const AIMD_SUCCESS_THRESHOLD: u32 = 40;
-const AIMD_ADDITIVE_INCREMENT: f64 = 1.0;
+const AIMD_SUCCESS_THRESHOLD: u32 = 8;
+const AIMD_ADDITIVE_INCREMENT: f64 = 2.0;
 const AIMD_MIN_CONCURRENCY: f64 = 1.0;
-const AIMD_MAX_CONCURRENCY: f64 = 200.0;
+const AIMD_MAX_CONCURRENCY: f64 = 25.0;
 
 /// Decrease factors per UMA state — multiplicative decrease when failure recorded.
 /// Uses RwLock: get() is read-only, allowing concurrent readers.
@@ -47,9 +47,9 @@ const AIMD_MAX_CONCURRENCY: f64 = 200.0;
 static AIMD_DECREASE_BY_STATE: std::sync::LazyLock<RwLock<HashMap<String, f64>>> =
     std::sync::LazyLock::new(|| {
         let mut m = HashMap::new();
-        m.insert("ok".to_string(), 0.5);       // healthy → halve window
-        m.insert("pressure".to_string(), 0.25); // memory pressure → quarter
-        m.insert("critical".to_string(), 0.125); // critical → 1/8
+        m.insert("ok".to_string(), 0.75);      // healthy → reduce by 25%
+        m.insert("pressure".to_string(), 0.5); // memory pressure → halve
+        m.insert("critical".to_string(), 0.25); // critical → quarter
         RwLock::new(m)
     });
 
@@ -266,6 +266,25 @@ impl PyAIMDController {
             guard.clamp_events += 1;
             guard.window_changes += 1;
         }
+    }
+
+    /// BLITZ-13: Boost window to a target concurrency, resetting success counter.
+    ///
+    /// Same as set_window but also resets the successes counter so the
+    /// additive-increase phase starts from zero at the new target.
+    /// Called by FetchCoordinator.blitz_boost().
+    pub fn blitz_boost(&self, target: f64) -> f64 {
+        let clamped = target.clamp(AIMD_MIN_CONCURRENCY, AIMD_MAX_CONCURRENCY);
+        let old_bits = self.window.load(Ordering::Relaxed);
+        let old = f64::from_bits(old_bits);
+        self.window.store(clamped.to_bits(), Ordering::Relaxed);
+        self.successes.store(0, Ordering::Relaxed);
+        if (clamped - old).abs() > f64::EPSILON {
+            let mut guard = self.stats.lock();
+            guard.clamp_events += 1;
+            guard.window_changes += 1;
+        }
+        clamped
     }
 
     /// Get the current window value (read-only, no lock).

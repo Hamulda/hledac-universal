@@ -211,6 +211,9 @@ python3 --version         # 3.10+ (CWD projektu cílí 3.14+)
 ### 6.2 Build & install (development)
 ```bash
 cd ~/PycharmProjects/Hledac/hledac/universal/rust_extensions
+# [PHYSICS]-03/04: Default build now includes 'dns' feature (DoT via hickory-dns)
+# If build fails with 'profile-rustflags required', Cargo.toml's build-override was
+# removed — use .cargo/config.toml + [tool.maturin.env] RUSTFLAGS for NEON flags.
 maturin develop --release
 ```
 

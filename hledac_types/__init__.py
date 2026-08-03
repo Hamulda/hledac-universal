@@ -98,6 +98,9 @@ from hledac.universal.project_types import (
     SystemMetrics,
     AgentMetrics,
     ComplexityAnalysis,
+    # UNIFIED-004: Micro-sprint types
+    MicroSprintPlan,
+    MicroSprintResult,
 )
 
 __all__ = [
@@ -129,4 +132,6 @@ __all__ = [
     'SpikeData', 'StealthSession', 'CaptchaSolution', 'PrivacyStatus',
     'SubAgentResult', 'ResearchResult', 'SystemMetrics', 'AgentMetrics',
     'ComplexityAnalysis',
+    # UNIFIED-004: Micro-sprint types
+    'MicroSprintPlan', 'MicroSprintResult',
 ]

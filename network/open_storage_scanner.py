@@ -1,4 +1,12 @@
-"""Open Storage Scanner – discovers exposed S3, Firebase, Elasticsearch, Mongo buckets."""
+"""Open Storage Scanner — discovers exposed S3, Firebase, Elasticsearch, Mongo buckets.
+
+HEIST-08 (2026-07): Extended with native protocol extraction mode.
+After positive HTTP detection, also probes common database ports and,
+when HLEDAC_ENABLE_NATIVE_EXTRACTION=1, performs wire-protocol data
+extraction via Rust native_db or pure-Python ES HTTP.
+"""
+
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -8,17 +16,28 @@ from hledac.universal.network.session_runtime import async_get_httpx_session
 
 logger = logging.getLogger(__name__)
 
-# F4XX: httpx replaces aiohttp — no longer need conditional import
-# async_get_httpx_session() always returns httpx.AsyncClient
+# ── Database ports for extraction mode ──────────────────────────────────────
+# Mirrors DatabasePortScanner.DATABASE_PORTS in recon/exposed_service_hunter.py
+# but scoped to the three databases with native extraction support.
+_DB_EXTRACTION_PORTS: dict[int, str] = {
+    27017: "mongodb",
+    27018: "mongodb",
+    6379: "redis",
+    6380: "redis",
+    9200: "elasticsearch",
+}
 
 
 class _OpenStorageScanner:
-    """Scans for exposed cloud storage buckets."""
+    """Scans for exposed cloud storage buckets and (optionally) open databases."""
 
     MAX_GUESSES_PER_DOMAIN = 15
     # F185D: use session_runtime canonical constants
-    _CONNECT_TIMEOUT_S: float = 10.0  # canonical HTML connect
-    _READ_TIMEOUT_S: float = 5.0  # HEAD request — short read
+    _CONNECT_TIMEOUT_S: float = 10.0   # canonical HTML connect
+    _READ_TIMEOUT_S: float = 5.0       # HEAD request — short read
+    _PORT_SCAN_TIMEOUT_S: float = 3.0  # TCP port probe — quick
+
+    # ── URL Guess Generation ───────────────────────────────────────────────
 
     def _generate_guesses(self, domain: str) -> list[str]:
         """Generate a list of potential bucket URLs (only external services)."""
@@ -48,8 +67,22 @@ class _OpenStorageScanner:
         # Remove duplicates and limit
         return list(dict.fromkeys(guesses))[: self.MAX_GUESSES_PER_DOMAIN]
 
-    async def scan_domain(self, domain: str) -> list[dict[str, Any]]:
-        """Scan a single domain for open storage. Returns list of found URLs with metadata."""
+    # ── Cloud Storage HTTP Scan (existing) ─────────────────────────────────
+
+    async def scan_domain(
+        self, domain: str, *, extraction_mode: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Scan a single domain for open storage.
+
+        Args:
+            domain: Domain name to scan.
+            extraction_mode: If True, also probes database ports and attempts
+                native protocol extraction (via native_extraction module).
+
+        Returns:
+            List of found URLs/databases with metadata. Each dict has at minimum
+            ``url``/``host``, ``type``/``service``, and ``status``/``success``.
+        """
         guesses = self._generate_guesses(domain)
         if not guesses:
             return []
@@ -86,10 +119,105 @@ class _OpenStorageScanner:
             [_check_url(url) for url in guesses],
             policy="collect",
             concurrency=5,
-            ctx="open_storage:scan_domain"
+            ctx="open_storage:scan_domain",
         )
 
-        return [r for r in results.ok if r is not None]
+        findings: list[dict[str, Any]] = [r for r in results.ok if r is not None]
+
+        # ── HEIST-08: Native extraction mode ───────────────────────────────
+        if extraction_mode:
+            db_findings = await self._extract_from_domain(domain)
+            findings.extend(db_findings)
+
+        return findings
+
+    # ── HEIST-08: Database port scan + extraction ──────────────────────────
+
+    async def _extract_from_domain(self, domain: str) -> list[dict[str, Any]]:
+        """Probe database ports and attempt native protocol extraction.
+
+        Only runs when HLEDAC_ENABLE_NATIVE_EXTRACTION=1.
+        Fail-soft: returns [] on any error, never raises.
+        """
+        try:
+            from hledac.universal.network.native_extraction import (
+                extract_from_exposed,
+                is_native_extraction_enabled,
+            )
+        except Exception:
+            return []
+
+        if not is_native_extraction_enabled():
+            return []
+
+        # Phase 1: Quick TCP port probe (bounded, fast)
+        open_ports: list[tuple[int, str]] = []
+        host = domain.split(":")[0]  # strip port if present
+
+        async def _probe_port(port: int, service: str) -> None:
+            try:
+                async with asyncio.timeout(self._PORT_SCAN_TIMEOUT_S):
+                    _, writer = await asyncio.open_connection(host, port)
+                writer.close()
+                await writer.wait_closed()
+                open_ports.append((port, service))
+            except asyncio.TimeoutError:
+                pass
+            except ConnectionRefusedError:
+                pass
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+
+        await parallel(
+            [_probe_port(port, svc) for port, svc in _DB_EXTRACTION_PORTS.items()],
+            policy="collect",
+            concurrency=10,  # TCP probes are cheap, 10 concurrent is fine
+            ctx="open_storage:port_probe",
+        )
+
+        if not open_ports:
+            return []
+
+        logger.debug(
+            "HEIST-08: %d open DB ports on %s: %s",
+            len(open_ports), domain,
+            [(p, s) for p, s in open_ports],
+        )
+
+        # Phase 2: Native protocol extraction (bounded concurrency)
+        findings: list[dict[str, Any]] = []
+        for port, service in open_ports:
+            try:
+                result = await extract_from_exposed(host, port, service)
+                if result is not None:
+                    findings.append({
+                        "host": host,
+                        "port": port,
+                        "service": service,
+                        "success": result.success,
+                        "error": result.error,
+                        # MongoDB
+                        "databases": result.databases,
+                        "collections": dict(result.collections) if result.collections else None,
+                        # Redis
+                        "keys": result.keys,
+                        "key_count": result.key_count,
+                        # Elasticsearch
+                        "indices": result.indices,
+                        # Common
+                        "auth_required": result.auth_required,
+                        "extraction_source": "native_extraction",
+                    })
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+
+        return findings
+
+    # ── Classification ─────────────────────────────────────────────────────
 
     def _classify_bucket(self, url: str) -> str:
         """Classify bucket type based on URL."""

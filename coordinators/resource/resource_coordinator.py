@@ -63,37 +63,58 @@ logger = logging.getLogger(__name__)
 # GC STRATEGY
 # =============================================================================
 
-# M1 8GB thresholds — agresivnější gen-0, šetrnější gen-2
-_GC_THRESHOLD = (700, 50, 20)
-_GC_FREEZE_ENABLED: bool = sys.version_info >= (3, 14, 7)
+# PHYSICS-06/07: GC thresholds managed by BlitzGCStrategy.
+# During active sprint, GC is disabled entirely; explicit gen-0 ticks
+# replace involuntary collections. Boot thresholds are applied once at import.
+from hledac.universal.coordinators.resource.blitz_gc import (
+    BLITZ_THRESHOLD,
+    BOOT_THRESHOLD,
+    POST_TEARDOWN_THRESHOLD,
+    _GC_FREEZE_NATIVE as _BLITZ_GC_FREEZE_NATIVE,
+    blitz_gc as _blitz_gc,
+)
+
+# Legacy threshold constant — kept for backward compat, but BlitzGCStrategy
+# is the canonical source of truth for sprint GC lifecycle.
+_GC_THRESHOLD = BOOT_THRESHOLD
+_GC_FREEZE_ENABLED: bool = _BLITZ_GC_FREEZE_NATIVE
 _configured = False
 _configure_lock = threading.Lock()
 
 
 def _ensure_configured() -> None:
-    """Apply gc.set_threshold and gc.freeze() — called once at startup."""
+    """Apply gc.set_threshold and gc.freeze() — called once at startup.
+    
+    PHYSICS-06/07: Delegates to blitz_gc module for boot config.
+    BlitzGCStrategy.sprint_start() must be called separately at sprint boot.
+    """
     global _configured
     if _configured:
         return
     with _configure_lock:
-        if _configured:  # type: ignore[unreachable] # false positive: reachable when another thread set _configured
+        if _configured:
             return
         _apply_gc_config()
 
 
 def _apply_gc_config() -> None:
-    """Apply gc thresholds + freeze. Idempotent."""
+    """Apply gc thresholds + freeze. Idempotent.
+    
+    PHYSICS-06/07: Boot thresholds from blitz_gc module.
+    Native freeze is attempted if Python >= 3.14.7.
+    Full blitz activation happens via BlitzGCStrategy.sprint_start().
+    """
     try:
         _gc.set_threshold(*_GC_THRESHOLD)
-        logger.debug(f"[GC] set_threshold{_GC_THRESHOLD}")
+        logger.debug("[GC] set_threshold%s (boot, BlitzGCStrategy will override at sprint start)", _GC_THRESHOLD)
     except Exception as exc:
-        logger.debug(f"[GC] set_threshold failed: {exc}")
+        logger.debug("[GC] set_threshold failed: %s", exc)
     if _GC_FREEZE_ENABLED:
         try:
             _gc.freeze()
-            logger.debug("[GC] freeze() applied at startup")
+            logger.debug("[GC] freeze() applied at startup (boot, BlitzGCStrategy will re-freeze at sprint start)")
         except Exception as exc:
-            logger.debug(f"[GC] freeze failed: {exc}")
+            logger.debug("[GC] freeze failed: %s", exc)
     global _configured
     _configured = True
 
@@ -134,11 +155,34 @@ async def gc_collect_async(
     """
     Async wrapper — gc.collect() in thread pool, does not block event loop.
 
+    PHYSICS-06: When BlitzGCStrategy is active (GC disabled during sprint),
+    gen-0 calls are routed to blitz_gc.gc_tick() (cooldown-gated explicit tick),
+    and gen-1/gen-2 calls are SKIPPED (no involuntary gen-1/gen-2 pauses
+    during active sprint). At teardown, blitz_gc.sprint_teardown() runs
+    the single full gen-2 sweep.
+
     Args:
         generation: 0 = gen-0 only (fast), 2 = full sweep (expensive)
         force_aggressive: if True, also runs gen-2 + freeze
     """
     _ensure_configured()
+
+    # PHYSICS-06: Route through BlitzGCStrategy when blitz mode is active
+    if _blitz_gc._active:
+        if generation == 0 and not force_aggressive:
+            # Route gen-0 through blitz tick (cooldown-gated, explicit)
+            await _blitz_gc.gc_tick()
+            return
+        elif force_aggressive or generation >= 1:
+            # SKIP gen-1/gen-2 during active sprint — these are the
+            # expensive stop-the-world pauses we're eliminating.
+            # Only blitz_gc.sprint_teardown() runs full gen-2 sweep.
+            logger.debug(
+                "[GC] blitz active — skipping gen-%s collect (deferred to teardown)",
+                generation if not force_aggressive else "aggressive",
+            )
+            return
+        # fall through for non-blitz paths
 
     def _work() -> None:
         if force_aggressive:

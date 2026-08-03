@@ -158,6 +158,27 @@ class Injector:
         """SecurityCoordinator is not a governor; no ctx update needed."""
         scheduler._security_coordinator = coordinator
 
+    @staticmethod
+    def inject_meta_reasoning_coordinator(scheduler: Any, coordinator: Any) -> None:
+        """UNIFIED-006: Wire UniversalMetaReasoningCoordinator into scheduler.
+        
+        The coordinator provides CoT/ToT/Graph reasoning strategies with
+        deterministic crash recovery via DuckDB checkpointing.
+        Fail-soft: stored as instance attribute, used by advisory runners.
+        """
+        scheduler._meta_reasoning_coordinator = coordinator
+
+    @staticmethod
+    def inject_gravity_field(scheduler: Any, gravity_field: Any) -> None:
+        """SILICON-05: Wire SemanticGravityField into the scheduler.
+
+        The gravity field tracks IOC embedding density for void detection.
+        The scheduler pipeline pushes embeddings via add_embedding() as
+        findings are accumulated.
+        Fail-soft: stored as instance attribute.
+        """
+        scheduler._gravity_field = gravity_field
+
     # ── Bulk apply ──────────────────────────────────────────────────────────
 
     @classmethod

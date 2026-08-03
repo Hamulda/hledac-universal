@@ -78,9 +78,16 @@ class StealthSession:
         """
         Apply random jitter before request (anti-correlation).
 
+        BLITZ-12: When blitz mode is active (duration ≤ 30 min), returns 0.0
+        immediately — the sprint is a one-shot burst where anti-correlation
+        timing provides no value.
+
         Returns:
-            Actual seconds slept (for testing variance verification).
+            Actual seconds slept (0.0 when blitz mode, for testing variance verification).
         """
+        from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+        if _is_blitz():
+            return 0.0
         delay = _JITTER_RNG.uniform(self._jitter_min, self._jitter_max)
         await asyncio.sleep(delay)
         return delay

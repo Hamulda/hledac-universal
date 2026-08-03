@@ -1225,3 +1225,96 @@ class CanonicalGroundingHints(msgspec.Struct, frozen=True, gc=False):
     def is_empty(self) -> bool:
         """Returns True if no grounding hints are set."""
         return len(self.topic_hints) == 0 and len(self.domain_tags) == 0 and (self.correlation is None) and (self.budget_hint is None) and (self.evidence_hint is None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UNIFIED-004: Micro-Sprint Types for Entropy Feedback Loop
+# ─────────────────────────────────────────────────────────────────────────────
+
+class MicroSprintPlan(msgspec.Struct, frozen=True, gc=False):
+    """
+    Lightweight targeted re-fetch plan for high-entropy entities.
+
+    UNIFIED-004: Closes the entropy feedback loop by providing a structured
+    plan for re-fetching a single entity with alternative protocols when
+    entropy quality is below threshold.
+
+    Design constraints (M1 8GB):
+    - max_hops: 1-2 (bounded graph traversal)
+    - timeout: 30s max (prevents sprint starvation)
+    - protocols: alternative discovery protocols (e.g., ["ct", "passive_dns"])
+
+    Fields:
+        entity_id: Target entity identifier (URL, domain, IP, hash)
+        entropy: Measured entropy score (0.0-1.0) that triggered re-fetch
+        protocols: Alternative discovery protocols to try (ordered by priority)
+        max_hops: Maximum graph traversal depth (1-2, default 2)
+        timeout: Hard timeout in seconds (default 30.0, max 30.0)
+        reason: Human-readable reason for re-fetch (optional)
+    """
+    entity_id: str
+    entropy: float
+    protocols: tuple[str, ...] = msgspec.field(default_factory=tuple)
+    max_hops: int = 2
+    timeout: float = 30.0
+    reason: str | None = None
+
+    @classmethod
+    def create(
+        cls,
+        entity_id: str,
+        entropy: float,
+        protocols: list[str] | tuple[str, ...] = (),
+        max_hops: int = 2,
+        timeout: float = 30.0,
+        reason: str | None = None,
+    ) -> MicroSprintPlan:
+        """Factory with constraint validation."""
+        if not (0.0 <= entropy <= 1.0):
+            raise ValueError(f"entropy must be in [0.0, 1.0], got {entropy}")
+        if not (1 <= max_hops <= 2):
+            raise ValueError(f"max_hops must be 1 or 2, got {max_hops}")
+        if not (0.0 < timeout <= 30.0):
+            raise ValueError(f"timeout must be in (0.0, 30.0], got {timeout}")
+        return cls(
+            entity_id=entity_id,
+            entropy=entropy,
+            protocols=tuple(protocols),
+            max_hops=max_hops,
+            timeout=timeout,
+            reason=reason,
+        )
+
+
+class MicroSprintResult(msgspec.Struct, frozen=True, gc=False):
+    """
+    Result of a micro-sprint execution.
+
+    UNIFIED-004: Captures outcome of targeted re-fetch attempt.
+
+    Fields:
+        entity_id: Target entity that was re-fetched
+        success: Whether re-fetch produced improved entropy
+        new_entropy: New entropy score after re-fetch (0.0 if failed)
+        protocols_tried: Protocols actually attempted (subset of plan.protocols)
+        evidence_ids: Evidence IDs created during micro-sprint
+        duration_ms: Execution time in milliseconds
+        error: Error message if failed (optional)
+        hops_explored: Number of graph hops actually explored
+    """
+    entity_id: str
+    success: bool
+    new_entropy: float = 0.0
+    protocols_tried: tuple[str, ...] = msgspec.field(default_factory=lambda: ())
+    evidence_ids: tuple[str, ...] = msgspec.field(default_factory=lambda: ())
+    duration_ms: float = 0.0
+    error: str | None = None
+    hops_explored: int = 0
+
+    def entropy_improvement(self) -> float:
+        """Calculate entropy improvement (new - old). Requires old entropy context."""
+        return self.new_entropy
+
+    def is_meaningful_improvement(self, threshold: float = 0.1) -> bool:
+        """Check if improvement exceeds meaningful threshold."""
+        return self.success and self.new_entropy > threshold

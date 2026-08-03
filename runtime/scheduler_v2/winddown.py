@@ -98,6 +98,25 @@ class WinddownOrchestrator:
         synthesis_success = False
 
         # Phase 0: Serial sync operations (required first, cannot parallelize)
+        # PHYSICS-06/07: Re-enable GC and run final gen-2 sweep BEFORE export.
+        # This is the ONLY full gen-2 collection during the entire sprint lifecycle.
+        # During active sprint, GC was disabled — zero involuntary pauses.
+        try:
+            from hledac.universal.coordinators.resource.blitz_gc import blitz_gc
+
+            _blitz_teardown_result = blitz_gc.sprint_teardown()
+            _logger = __import__("logging").getLogger(__name__)
+            _logger.info(
+                "[PHYSICS-06] BlitzGC teardown: gc_reenabled=%s, gen2_collected=%d, "
+                "gen0_ticks=%d, freeze=%s",
+                _blitz_teardown_result.get("gc_reenabled"),
+                _blitz_teardown_result.get("gen2_collected", 0),
+                _blitz_teardown_result.get("gen0_ticks_total", 0),
+                _blitz_teardown_result.get("freeze_method"),
+            )
+        except Exception:
+            pass  # fail-safe — winddown continues even if GC teardown fails
+
         _maybe_call_pressure_relief(ctx)
         if ctx.runner:
             ctx.runner.teardown()

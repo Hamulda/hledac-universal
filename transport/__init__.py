@@ -42,6 +42,15 @@ def __getattr__(name: str):
         from .http3_lane import is_enabled as http3_lane_enabled
 
         return http3_lane_enabled
+    # SILICON-03: Network.framework lane
+    if name == 'fetch_nw_connection':
+        from .nw_connection_lane import fetch_nw_connection
+
+        return fetch_nw_connection
+    if name == 'is_nw_connection_available':
+        from .nw_connection_lane import is_nw_connection_available
+
+        return is_nw_connection_available
     # Unified transport
     if name in ('TransportKind', 'TransportPolicy', 'POLICY_CLEARNET_H2', 'POLICY_STEALTH_CHROME',
                 'POLICY_STEALTH_SAFARI', 'POLICY_TOR', 'POLICY_I2P', 'get_transport_client',
@@ -87,6 +96,21 @@ def __getattr__(name: str):
         from . import base
 
         return getattr(base, name)
+    # HEIST-06: Arti transport (lazy)
+    if name in ('ArtiTransport', 'ArtiClient', 'get_arti_transport_singleton',
+                'is_arti_available', 'is_arti_enabled'):
+        from .arti_transport import (
+            ArtiTransport, ArtiClient, get_arti_transport_singleton,
+            is_arti_available, is_arti_enabled,
+        )
+
+        return {
+            'ArtiTransport': ArtiTransport,
+            'ArtiClient': ArtiClient,
+            'get_arti_transport_singleton': get_arti_transport_singleton,
+            'is_arti_available': is_arti_available,
+            'is_arti_enabled': is_arti_enabled,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -112,6 +136,9 @@ __all__ = [
     'http3_lane_enabled',
     'record_from_curl_cffi_result',
     'record_h3_support',
+    # SILICON-03: Network.framework user-space TCP lane
+    'fetch_nw_connection',
+    'is_nw_connection_available',
     # Unified Transport (backwards compatible re-exports)
     'TransportKind',
     'TransportPolicy',
@@ -141,4 +168,10 @@ __all__ = [
     'should_use_curl_cffi',
     'fetch_via_curl_cffi',
     'fetch_via_tor_curl_cffi',
+    # HEIST-06: Arti transport
+    'ArtiTransport',
+    'ArtiClient',
+    'get_arti_transport_singleton',
+    'is_arti_available',
+    'is_arti_enabled',
 ]

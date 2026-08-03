@@ -292,25 +292,65 @@ class JSONFormatter:
             elif isinstance(sanitized_obj, list):
                 sanitized_obj = {"_truncated_content": sanitized_obj, "product_value_summary": pvs, "capability_synthesis": capability_synthesis}
 
-            # Sprint F320+: Parallel export formats — JSON + PQ + Vault run concurrently
+            # PHYSICS-08: Serialize ONCE — all three writers share the same bytes.
+            # Eliminates triple orjson.dumps() (~1-3s per 200MB dict on M1 8GB).
+            # SOVEREIGN-009: Sign forensic JSON report before serialization.
+            from hledac.universal.brain.report_signer import sign_forensic_json
+            _signed_obj = sign_forensic_json(sanitized_obj)
+            _json_bytes = orjson.dumps(_signed_obj, option=orjson.OPT_INDENT_2)
+
+            # Phase 1: Write main JSON report (with optional streaming zstd sidecar)
             async def _write_json() -> str | None:
                 try:
-                    # SOVEREIGN-009: Sign forensic JSON report before writing
-                    from hledac.universal.brain.report_signer import sign_forensic_json
-                    signed_obj = sign_forensic_json(sanitized_obj)
-                    _json_bytes = orjson.dumps(signed_obj, option=orjson.OPT_INDENT_2)
-                    _CHUNK_SIZE = 64 * 1024
+                    _CHUNK_SIZE = 256 * 1024  # 256 KiB chunks (was 64 KiB)
+                    # Write uncompressed report (canonical, usable without zstd)
+                    _report_bytes_written = 0
                     with open(report_path, "wb") as f:
                         for _chunk_start in range(0, len(_json_bytes), _CHUNK_SIZE):
-                            f.write(_json_bytes[_chunk_start:_chunk_start + _CHUNK_SIZE])
-                    logger.info(f"[EXPORT] JSON report → {report_path}")
+                            _chunk = _json_bytes[_chunk_start:_chunk_start + _CHUNK_SIZE]
+                            f.write(_chunk)
+                            _report_bytes_written += len(_chunk)
+
+                    # PHYSICS-08: Write streaming zstd sidecar asynchronously
+                    # compression.zstd (Python 3.14 stdlib) — streaming compressor
+                    _zst_path = Path(str(report_path) + ".zst")
+                    try:
+                        import compression.zstd as _zstd
+                        _zst_compressor = _zstd.ZstdCompressor(level=3)
+                        with open(_zst_path, "wb") as _zst_f:
+                            for _chunk_start in range(0, len(_json_bytes), _CHUNK_SIZE):
+                                _chunk = _json_bytes[_chunk_start:_chunk_start + _CHUNK_SIZE]
+                                _zst_f.write(_zst_compressor.compress(_chunk))
+                            _zst_f.write(_zst_compressor.flush())
+                        _zst_size = _zst_path.stat().st_size
+                        logger.info(
+                            f"[EXPORT] JSON report → {report_path} "
+                            f"({_report_bytes_written / 1024 / 1024:.1f} MiB) + "
+                            f"zstd sidecar → {_zst_path} "
+                            f"({_zst_size / 1024:.1f} KiB, "
+                            f"{_zst_size / max(_report_bytes_written, 1) * 100:.1f}%)"
+                        )
+                    except ImportError:
+                        logger.debug("[EXPORT] compression.zstd not available — skipping zstd sidecar")
+                    except Exception as _zst_err:
+                        logger.warning(f"[EXPORT] zstd sidecar failed (non-fatal): {_zst_err}")
                     return str(report_path)
                 except Exception as _e:
                     logger.warning(f"[EXPORT] JSON write failed: {_e}")
                     return None
 
+            # Phase 1 MUST complete first (writes report_path for Vault to copy)
+            json_result = await _write_json()
+            if json_result is None or isinstance(json_result, Exception):
+                logger.warning(f"[EXPORT] JSON write exception: {json_result}")
+                report_path = None
+            else:
+                report_path = Path(json_result) if json_result else None
+
+            # Phase 2: PQ + Vault run in parallel (both read from pre-serialized bytes or file)
             async def _write_pq_encrypted() -> str | None:
-                """Post-process: PQ encrypt JSON report if enabled."""
+                """Post-process: PQ encrypt JSON report if enabled.
+                PHYSICS-08: Uses pre-serialized _json_bytes — no re-serialization."""
                 try:
                     import os as _os
                     if _os.environ.get("HLEDAC_ENABLE_PQ_EXPORT") != "1":
@@ -321,16 +361,16 @@ class JSONFormatter:
                         ExportPolicy,
                         encrypt_export_bundle,
                     )
-                    report_bytes = orjson.dumps(sanitized_obj, option=orjson.OPT_INDENT_2)
+                    # PHYSICS-08: Use shared _json_bytes instead of re-serializing
                     aad = f"sprint_id={_sprint_id}&timestamp={int(time.time())}".encode()
                     envelope, was_encrypted, error_code = await encrypt_export_bundle(
-                        plaintext=report_bytes,
+                        plaintext=_json_bytes,
                         aad=aad,
                         recipient_public_key_b64="",
                         policy=ExportPolicy.PQ_PREFERRED,
                     )
                     if was_encrypted and envelope:
-                        _pq_encrypted_path = str(report_path.with_suffix(".pq.enc"))
+                        pq_path = str(report_path.with_suffix(".pq.enc"))
                         encrypted_bundle = {
                             "version": 1,
                             "mode": envelope.mode,
@@ -338,10 +378,10 @@ class JSONFormatter:
                             "aad_b64": base64.b64encode(aad).decode(),
                             "ciphertext_b64": envelope.ciphertext_b64,
                         }
-                        with open(_pq_encrypted_path, "wb") as f:
+                        with open(pq_path, "wb") as f:
                             f.write(orjson.dumps(encrypted_bundle))
-                        logger.info(f"[EXPORT] PQ-encrypted report → {_pq_encrypted_path}")
-                        return _pq_encrypted_path
+                        logger.info(f"[EXPORT] PQ-encrypted report → {pq_path}")
+                        return pq_path
                     return None
                 except Exception as _pq_err:
                     logger.warning(f"[EXPORT] PQ encryption skipped: {_pq_err}")
@@ -375,29 +415,19 @@ class JSONFormatter:
                     logger.warning(f"[EXPORT] Vault encryption skipped: {_vault_err}")
                     return None
 
-            # Run all post-processing in parallel (JSON must complete first for PQ/Vault to read it)
+            # Phase 2: PQ + Vault run in parallel (both read from pre-serialized bytes or file)
             # ISSUE ASYNC-001: asyncio.gather → parallel() with bounded concurrency
-            _export_result = await parallel(
-                _write_json(),
-                _write_pq_encrypted(),
-                _write_vault_encrypted(),
-                policy="log",
-                concurrency=3,
-            )
-            # Handle any exceptions from parallel result
-            json_result, pq_result, vault_result = (
-                _export_result.ok[0] if len(_export_result.ok) > 0 else None,
-                _export_result.ok[1] if len(_export_result.ok) > 1 else None,
-                _export_result.ok[2] if len(_export_result.ok) > 2 else None,
-            )
-            # Check for exceptions in the result
-            if json_result is None or isinstance(json_result, Exception):
-                logger.warning(f"[EXPORT] JSON write exception: {json_result}")
-                report_path = None
-            else:
-                report_path = Path(json_result) if json_result else None
-            _pq_encrypted_path = pq_result if not isinstance(pq_result, Exception) else None
-            _vault_encrypted_path = vault_result if not isinstance(vault_result, Exception) else None
+            if report_path is not None:
+                _export_result = await parallel(
+                    _write_pq_encrypted(),
+                    _write_vault_encrypted(),
+                    policy="log",
+                    concurrency=2,
+                )
+                pq_result = _export_result.ok[0] if len(_export_result.ok) > 0 else None
+                vault_result = _export_result.ok[1] if len(_export_result.ok) > 1 else None
+                _pq_encrypted_path = pq_result if not isinstance(pq_result, Exception) else None
+                _vault_encrypted_path = vault_result if not isinstance(vault_result, Exception) else None
         except Exception as e:
             logger.warning(f"[EXPORT] JSON write failed: {e}")
             report_path = None

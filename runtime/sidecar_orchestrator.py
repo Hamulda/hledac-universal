@@ -118,6 +118,26 @@ def _get_advisory_semaphore() -> _asyncio.Semaphore:
     return _advisory_sidecar_sem
 
 
+# UNIFIED-001: Peak load coordinator integration
+# Each advisory sidecar is estimated at ~15 MB peak memory usage.
+# We acquire admission from the global peak load coordinator BEFORE
+# running the sidecar to prevent OOM when multiple subsystems compete.
+_ADVISORY_SIDECAR_ESTIMATED_MB: float = 15.0
+
+
+def _get_peak_coordinator():
+    """Lazy import of peak load coordinator to avoid circular dependencies."""
+    try:
+        from hledac.universal.core.peak_load_coordinator import (
+            ResourceClass,
+            TaskPriority,
+            get_peak_coordinator,
+        )
+        return get_peak_coordinator(), ResourceClass, TaskPriority
+    except ImportError:
+        return None, None, None
+
+
 async def _run_bounded_sidecar(coro, name: str) -> None:
     """
     P0: Run a sidecar coroutine through the advisory semaphore.
@@ -126,11 +146,46 @@ async def _run_bounded_sidecar(coro, name: str) -> None:
     _ADVISORY_SIDECAR_SEMAPHORE_LIMIT regardless of how many
     HLEDAC_ENABLE_* flags are active.
 
+    UNIFIED-001: Also acquires admission from GlobalPeakLoadCoordinator
+    to prevent OOM when multiple subsystems compete for memory.
+    Advisory sidecars run at LOW priority and may be deferred under
+    high memory pressure.
+
     Fail-soft: any exception is caught and logged, never raised.
     F039: OTel span for sidecar telemetry.
     """
     tracer = _get_otel_tracer()
     sem = _get_advisory_semaphore()
+
+    # UNIFIED-001: Acquire admission from peak load coordinator
+    coordinator, ResourceClass, TaskPriority = _get_peak_coordinator()
+    peak_guard = None
+    if coordinator is not None:
+        try:
+            peak_guard = await coordinator.acquire(
+                ResourceClass.SIDECAR_ADVISORY,
+                _ADVISORY_SIDECAR_ESTIMATED_MB,
+                priority=TaskPriority.LOW,
+                owner=f"sidecar:{name}",
+                timeout_s=5.0,  # Short timeout for advisory sidecars
+            )
+        except TimeoutError:
+            log.debug("[UNIFIED-001] sidecar %s deferred: peak load timeout", name)
+            return  # Fail-soft: skip sidecar under memory pressure
+        except Exception as e:
+            log.debug("[UNIFIED-001] sidecar %s: peak coordinator error (fail-soft): %s", name, e)
+            # Fall through to semaphore-only path
+
+    # UNIFIED-001: Wrap semaphore block in peak_guard context to ensure release
+    if peak_guard is not None:
+        async with peak_guard:
+            await _run_sidecar_with_semaphore(sem, coro, name, tracer)
+    else:
+        await _run_sidecar_with_semaphore(sem, coro, name, tracer)
+
+
+async def _run_sidecar_with_semaphore(sem, coro, name: str, tracer: Any) -> None:
+    """Internal sidecar execution within semaphore and optional OTel span."""
     async with sem:
         if tracer:
             with tracer.start_as_current_span(f"sidecar.{name}") as span:
@@ -152,6 +207,28 @@ async def _run_bounded_sidecar(coro, name: str) -> None:
                 log.debug("[P0 advisory] sidecar %s failed (fail-soft): %s", name, e)
 
 
+async def _execute_sidecar_with_tracer(coro, name: str, tracer: Any) -> None:
+    """Execute sidecar coroutine with OTel tracing (helper for _run_bounded_sidecar)."""
+    if tracer:
+        with tracer.start_as_current_span(f"sidecar.{name}") as span:
+            span.set_attribute("sidecar.name", name)
+            span.set_attribute("sidecar.type", "advisory")
+            try:
+                await coro
+            except _asyncio.CancelledError:
+                raise
+            except Exception as e:
+                span.set_attribute("sidecar.error", str(e))
+                log.debug("[P0 advisory] sidecar %s failed (fail-soft): %s", name, e)
+    else:
+        try:
+            await coro
+        except _asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug("[P0 advisory] sidecar %s failed (fail-soft): %s", name, e)
+
+
 # P0: Shared semaphore for plugin sidecar concurrency control.
 # All plugin sidecar dispatches share ONE semaphore to enforce the global
 # _PLUGIN_SIDECAR_SEMAPHORE_LIMIT cap regardless of how many adapters
@@ -168,40 +245,74 @@ def _get_plugin_semaphore() -> _asyncio.Semaphore:
 
 async def _run_bounded_plugin_sidecar(coro, sidecar_id: str) -> None:
     """
-    P0: Run a plugin sidecar coroutine through the plugin semaphore.
+    P0: Run a plugin sidecar coroutine through the plugin semaphore + UMA memory guard.
 
     Bounds concurrent plugin sidecar executions to
     _PLUGIN_SIDECAR_SEMAPHORE_LIMIT regardless of how many
     @SidecarRegistry.register adapters are available.
+
+    UNIFIED-002: Now also reserves memory budget via AsyncUMAGuard to prevent
+    race condition where multiple sidecars simultaneously see "ELEVATED" pressure
+    and both proceed, exceeding the 6.48 GB hard limit.
 
     Fail-soft: any exception is caught and logged, never raised.
     F039: OTel span for plugin sidecar telemetry.
     """
     tracer = _get_otel_tracer()
     sem = _get_plugin_semaphore()
+
+    # UNIFIED-002: Reserve memory budget via AsyncUMAGuard
+    guard = None
+    try:
+        from hledac.universal.core.resource_governor import get_uma_guard, Priority
+        guard = get_uma_guard()
+    except Exception:
+        guard = None
+
     async with sem:
-        if tracer:
-            with tracer.start_as_current_span(f"sidecar.plugin.{sidecar_id}") as span:
-                span.set_attribute("sidecar.id", sidecar_id)
-                span.set_attribute("sidecar.type", "plugin")
-                try:
-                    await coro
+        # If guard available, wrap execution in memory reservation
+        if guard is not None:
+            try:
+                async with guard.reserve(
+                    estimated_mb=30.0,  # ~30 MB per plugin sidecar
+                    priority=Priority.LOW,
+                    timeout_s=10.0,
+                ):
+                    await _execute_plugin_sidecar_with_tracer(coro, sidecar_id, tracer)
                     return None
-                except _asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    span.set_attribute("sidecar.error", str(e))
-                    log.debug("[P0 plugin] sidecar %s failed (fail-soft): %s", sidecar_id, e)
-                    return None
+            except Exception as e:
+                log.debug("[P0 plugin] sidecar %s blocked by UMA guard: %s", sidecar_id, e)
+                return None
         else:
+            # Fallback: no guard available, execute without memory reservation
+            await _execute_plugin_sidecar_with_tracer(coro, sidecar_id, tracer)
+            return None
+
+
+async def _execute_plugin_sidecar_with_tracer(coro, sidecar_id: str, tracer: Any) -> None:
+    """Execute plugin sidecar coroutine with OTel tracing (helper for _run_bounded_plugin_sidecar)."""
+    if tracer:
+        with tracer.start_as_current_span(f"sidecar.plugin.{sidecar_id}") as span:
+            span.set_attribute("sidecar.id", sidecar_id)
+            span.set_attribute("sidecar.type", "plugin")
             try:
                 await coro
                 return None
             except _asyncio.CancelledError:
                 raise
             except Exception as e:
+                span.set_attribute("sidecar.error", str(e))
                 log.debug("[P0 plugin] sidecar %s failed (fail-soft): %s", sidecar_id, e)
                 return None
+    else:
+        try:
+            await coro
+            return None
+        except _asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug("[P0 plugin] sidecar %s failed (fail-soft): %s", sidecar_id, e)
+            return None
 
 
 def _get_sprint_advisory_runner():

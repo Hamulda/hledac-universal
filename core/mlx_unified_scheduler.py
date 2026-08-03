@@ -266,10 +266,13 @@ class MLXUnifiedScheduler:
         Embedding batches now wait for in-flight LLM inference to complete before
         executing, preventing GPU memory bandwidth contention.
 
-        Routing:
-        - ANE if available (via ANE_MLX_Mutex, held for entire operation)
-        - MLXEmbedder with AdaptiveEmbeddingBatcher (Issue #23: dynamic mid-batch
-          memory pressure feedback)
+        Routing (SILICON-06: ANE dual-path dispatch):
+        - ANE path: small batches (≤16 docs, dim ≤ 1024) → CoreML Neural Engine
+          · Dedicated ANE inference via coremltools + compiled CoreML models
+          · Leaves GPU free for LLM inference — ANE/GPU concurrent safe
+        - GPU path: larger batches (>16) or ANE unavailable → MLXEmbedder
+          · AdaptiveEmbeddingBatcher (Issue #23: dynamic mid-batch
+            memory pressure feedback)
         - Memory-aware batch size reduction at high pressure
 
         Args:
@@ -285,14 +288,41 @@ class MLXUnifiedScheduler:
             return []
         start_ts = time_module.monotonic()
 
-        # ISSUE-010 FIX: Acquire inference semaphore to serialize with LLM lane.
-        # This prevents embedding batches from running concurrently with
-        # mlx_lm.generate() on the shared GPU memory bandwidth.
+        # SILICON-06: Try ANE path for small batches first.
+        # ANE is independent of GPU — no need for inference semaphore.
+        # Small batches (≤16) are the ANE sweet spot (16-core Neural Engine, 11 TOPS).
+        ane_embeddings: list[list[float]] | None = None
+        ane_routed = False
+        effective_bs = batch_size if batch_size is not None else _EMBEDDING_HIGH_WATER
+        if effective_bs <= 16 and len(texts) <= 16:
+            try:
+                from hledac.universal.brain.ane_inference import get_ane_engine
+                ane_engine = get_ane_engine()
+                result = await ane_engine.embed_batch_ane(texts, model_key='bge-small')
+                if result is not None:
+                    ane_embeddings = result.tolist()
+                    ane_routed = True
+                    self._update_stats(ane_offload_count=1, active_lane='embedding_ane')
+                    logger.debug('[MLXScheduler] ANE embed OK: %d texts', len(texts))
+            except Exception:
+                self._update_stats(gpu_fallback_count=1)
+
+        if ane_embeddings is not None:
+            latency_ms = (time_module.monotonic() - start_ts) * 1000
+            self._lane_metrics[LanePriority.EMBEDDING].record(latency_ms)
+            self._update_stats(embedding_requests=len(texts))
+            try:
+                from hledac.universal.core.telemetry.context_state import update_lane_latency
+                update_lane_latency('embedding', latency_ms)
+            except Exception:
+                pass
+            return ane_embeddings
+
+        # GPU path: larger batches or ANE unavailable
         _inference_sem = self._inference_semaphore
         if _inference_sem is not None:
             await _inference_sem.acquire()
 
-        ane_routed = False
         try:
             # ISSUE-010 FIX: Acquire ANE mutex and HOLD for entire embedding operation.
             # Previously the mutex was released before the actual embed call, allowing
@@ -301,7 +331,6 @@ class MLXUnifiedScheduler:
                 try:
                     self._ane_mutex.acquire_embed_ane(model_size_mb=50)
                     ane_routed = True
-                    self._update_stats(ane_offload_count=1)
                 except MemoryError:
                     self._update_stats(gpu_fallback_count=1)
 

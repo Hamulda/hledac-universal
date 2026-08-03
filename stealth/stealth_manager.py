@@ -504,20 +504,32 @@ class StealthSession:
         allowed, reason = self.manager._stealth_domain_allowed(url)
         if not allowed:
             raise SkipFetch(f'circuit_breaker_open:{reason}')
+        # PHYSICS-13 / BLITZ-12+14: Resolve blitz mode once before the retry
+        # loop — used by both per-request jitter and Tor circuit rotation gates.
+        # Blitz mode is set at sprint start via contextvars and never changes
+        # mid-sprint, so caching at function entry is safe.
+        from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
         for attempt in range(MAX_RETRY_ATTEMPTS):
             # D-9: Per-request jitter — Tor anti-correlation (0.3-1.8s) on attempt 0
             # only; retry attempts use _calculate_retry_delay() which already has
             # exponential-backoff jitter built in. Applying full jitter on every
             # attempt was burning 3× to 9× the intended latency budget.
-            if attempt == 0:
+            # BLITZ-12: When blitz mode is active (duration ≤ 30 min), skip
+            # stealth jitter entirely — the sprint is a one-shot burst where
+            # anti-correlation timing provides no real value.
+            if attempt == 0 and not _is_blitz():
                 if self._is_onion_url(url):
                     await asyncio.sleep(_JITTER_RNG.uniform(0.3, 1.8))
                 else:
                     await asyncio.sleep(_JITTER_RNG.uniform(0.05, 0.15))
             self._request_count += 1
+            # PHYSICS-13: In blitz mode, skip Tor circuit rotation (NEWNYM)
+            # entirely — saves 1-5s per 10 Tor requests. The sprint is a
+            # one-shot burst where circuit rotation provides no stealth value.
             if self._request_count >= 10:
                 self._request_count = 0
-                await self._rotate_tor_identity()
+                if not _is_blitz():
+                    await self._rotate_tor_identity()
             if attempt == 0 and self.manager.rate_limiter:
                 try:
                     await self.manager.rate_limiter.acquire()

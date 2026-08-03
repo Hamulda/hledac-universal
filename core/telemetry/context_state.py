@@ -230,6 +230,31 @@ def is_stealth_enabled() -> bool:
     return _stealth_enabled_var.get()
 
 
+# ─── BLITZ-12: Blitz mode ContextVar ─────────────────────────────────────────
+
+# Blitz mode — set at sprint start when duration ≤ 1800s (30 min).
+# When active, ALL stealth/anti-correlation jitter delays are skipped
+# because the sprint is a one-shot burst where stealth timing is irrelevant.
+# Visible to all TaskGroup child tasks via contextvars propagation.
+_blitz_mode_var: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "blitz_mode", default=False
+)
+
+
+def set_blitz_mode(enabled: bool) -> None:
+    """Enable/disable blitz mode — skips all stealth jitter delays.
+
+    BLITZ-12: When enabled, per-request jitter (0.1-1.8s) is skipped
+    entirely, saving 10-50s per 100 requests in short-duration sprints.
+    """
+    _blitz_mode_var.set(enabled)
+
+
+def is_blitz_mode() -> bool:
+    """Check if blitz mode is active (no stealth jitter)."""
+    return _blitz_mode_var.get()
+
+
 # ─── Issue #046: Sprint ID ContextVar ───────────────────────────────────────
 
 # Per-sprint correlation ID — set once at sprint start, visible to all child tasks

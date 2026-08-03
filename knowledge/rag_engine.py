@@ -346,6 +346,53 @@ class TantivyFulltextIndex:
             for doc in self._documents:
                 self._bm25_fallback.add_document(doc)
 
+    async def commit_pending_async(self) -> None:
+        """Async version of _commit_pending with peak load coordinator admission.
+
+        UNIFIED-001: Acquires admission from GlobalPeakLoadCoordinator before
+        Tantivy indexing to prevent OOM when multiple subsystems compete for memory.
+        Tantivy mmap indexing typically allocates ~2 GB for large batches.
+
+        This method should be called from async contexts instead of _commit_pending().
+        """
+        if not self._needs_commit or not self._rust_available:
+            return
+
+        if not self._documents:
+            self._needs_commit = False
+            return
+
+        # UNIFIED-001: Acquire admission from peak load coordinator
+        peak_guard = None
+        try:
+            from hledac.universal.core.peak_load_coordinator import (
+                ResourceClass,
+                TaskPriority,
+                get_peak_coordinator,
+            )
+            coordinator = get_peak_coordinator()
+            if coordinator is not None:
+                # Tantivy mmap indexing: ~2000 MB peak allocation
+                peak_guard = await coordinator.acquire(
+                    ResourceClass.TANTIVY_INDEX,
+                    estimated_mb=2000.0,
+                    priority=TaskPriority.NORMAL,
+                    owner=f"tantivy_commit:{len(self._documents)}_docs",
+                    timeout_s=10.0,
+                )
+        except (ImportError, TimeoutError) as e:
+            logger.debug(f"[UNIFIED-001] Tantivy commit admission failed: {e}")
+            # Fail-open: proceed without admission if coordinator unavailable
+        except Exception as e:
+            logger.debug(f"[UNIFIED-001] Tantivy commit admission error (fail-open): {e}")
+
+        # UNIFIED-001: Wrap actual work in peak_guard context to ensure release
+        if peak_guard is not None:
+            async with peak_guard:
+                self._commit_pending()
+        else:
+            self._commit_pending()
+
     def search(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
         """Search documents using BM25.
 
@@ -370,8 +417,35 @@ class TantivyFulltextIndex:
         if self._rust_available:
             try:
                 rust_mod = self._get_rust_module()
+                # ISSUE [BLITZ]-01: Zero-copy Arrow path — try first,
+                # fall back to legacy tuple-path on any error.
+                ipc_bytes = rust_mod.fulltext_search_arrow(
+                    self._index_path, query, top_k
+                )
+                if ipc_bytes and len(ipc_bytes) > 8:
+                    import io as _io
+                    import pyarrow as _pa
+                    reader = _pa.ipc.open_stream(_io.BytesIO(ipc_bytes))
+                    try:
+                        batch = reader.read_next_batch()
+                    except StopIteration:
+                        return []  # empty schema-only batch
+
+                    # Columnar access: doc_id column + score column → mapped tuples
+                    doc_id_to_idx: dict[str, int] = {
+                        doc.id: i for i, doc in enumerate(self._documents)
+                    }
+                    doc_id_col = batch.column(0).to_pylist()
+                    score_col = batch.column(1).to_pylist()
+                    mapped: list[tuple[int, float]] = []
+                    for doc_id, score in zip(doc_id_col, score_col):
+                        idx = doc_id_to_idx.get(doc_id)
+                        if idx is not None:
+                            mapped.append((idx, float(score)))
+                    return mapped
+
+                # Fallback: legacy tuple path
                 results = rust_mod.fulltext_search(self._index_path, query, top_k)
-                # Map doc_id -> index in self._documents for backward compat
                 doc_id_to_idx: dict[str, int] = {
                     doc.id: i for i, doc in enumerate(self._documents)
                 }
