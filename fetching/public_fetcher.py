@@ -662,6 +662,53 @@ def get_session_source_telemetry() -> dict[str, str]:
     result['transport_policy_bypassed'] = 'true' if _SESSION_MGR._injected_session_provider is None else 'false'
     result['fallback_reason'] = 'injected_provider_available' if _SESSION_MGR._injected_session_provider is not None else 'local_pool_until_transport_unified'
     return result
+
+
+# [NEXUS]-018-01: WebKit HTTP/2 transport telemetry.
+def get_webkit_transport_stats() -> dict[str, int]:
+    """Return WebKit HTTP/2 transport telemetry snapshot.
+    
+    Delegates to transport/curl_cffi_fetch module-level counters.
+    
+    Returns:
+        dict with keys:
+        - macos_webkit_count: total Safari profile fetch attempts
+        - macos_webkit_success: successful Safari profile fetches
+        - macos_webkit_failure: failed Safari profile fetches
+        - h2_webkit_preset_enabled: whether HLEDAC_H2_WEBKIT_PRESET is enabled
+    """
+    try:
+        from hledac.universal.transport.curl_cffi_fetch import (
+            get_webkit_transport_telemetry,
+            HLEDAC_H2_WEBKIT_PRESET,
+        )
+        telemetry = get_webkit_transport_telemetry()
+        return {
+            "macos_webkit_count": telemetry["webkit_count"],
+            "macos_webkit_success": telemetry["webkit_success"],
+            "macos_webkit_failure": telemetry["webkit_failure"],
+            "h2_webkit_preset_enabled": 1 if HLEDAC_H2_WEBKIT_PRESET else 0,
+        }
+    except ImportError:
+        return {
+            "macos_webkit_count": 0,
+            "macos_webkit_success": 0,
+            "macos_webkit_failure": 0,
+            "h2_webkit_preset_enabled": 0,
+        }
+
+
+def _reset_webkit_transport_telemetry() -> None:
+    """Reset WebKit transport telemetry counters (call at sprint winddown)."""
+    try:
+        from hledac.universal.transport.curl_cffi_fetch import (
+            _reset_webkit_transport_telemetry as _reset_wt,
+        )
+        _reset_wt()
+    except ImportError:
+        pass
+
+
 _CAMOUFOX_LOCK: asyncio.Lock | None = None
 _CAMOUFOX_LOCK_INIT: bool = False
 
@@ -3136,7 +3183,7 @@ async def async_fetch_public_text_batch(
     return ordered
 
 
-__all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status', 'reset_blitz_dead_hosts', 'mark_blitz_host_dead', 'is_blitz_host_dead']
+__all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status', 'reset_blitz_dead_hosts', 'mark_blitz_host_dead', 'is_blitz_host_dead', 'get_webkit_transport_stats', '_reset_webkit_transport_telemetry']
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
 
 

@@ -12,6 +12,10 @@ M1 8GB optimizations:
 - Streaming tar write (bounded memory)
 - compression.zstd (Python 3.14 stdlib)
 
+ISSUE [META]-001: Extended with mmap byte-range offsets for zero-copy
+entity loading without full decompression. Bundle extraction now builds
+an index mapping entity→byte-range for O(1) access.
+
 Bundle format:
   ~/.hledac/bundles/{sprint_id}.hledac-sprint
   └── tar.zst archive containing:
@@ -19,7 +23,8 @@ Bundle format:
       ├── metadata.json (sprint_id, timestamp, format version)
       ├── report.json (canonical sprint report)
       ├── seeds.json (next sprint seeds)
-      └── evidence.jsonl.zst (evidence log, zstd compressed)
+      ├── evidence.jsonl.zst (evidence log, zstd compressed)
+      └── entity_index.json.zst (IOC → byte-range mapping for [META]-001)
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ import logging
 import os
 import shutil
 import tarfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -74,6 +80,7 @@ async def bundle_sprint(
     evidence_path: Path | None = None,
     output_path: Path | None = None,
     metadata: dict[str, Any] | None = None,
+    dashboard_html: Path | None = None,
 ) -> Path | None:
     """
     Create .hledac-sprint bundle from sprint artifacts.
@@ -85,6 +92,10 @@ async def bundle_sprint(
         evidence_path: Path to evidence.jsonl (optional, auto-detected)
         output_path: Output bundle path (optional, auto-generated)
         metadata: Additional metadata to include in bundle
+        dashboard_html: [META]-009: Path to pre-generated dashboard.html.
+                       When set, the dashboard is included as dashboard.html
+                       in the tar.zst archive AND stored alongside the bundle
+                       as {sprint_id}.html for direct browser opening.
 
     Returns:
         Path to created bundle, or None on failure
@@ -201,7 +212,28 @@ async def bundle_sprint(
     else:
         logger.debug(f"[BUNDLER] Evidence not found: {evidence_path}")
 
-    # 5. Generate manifest
+    # 6. [META]-009: Dashboard HTML — standalone investigator dashboard
+    if dashboard_html and dashboard_html.exists():
+        try:
+            html_bytes = dashboard_html.read_bytes()
+            artifacts["dashboard.html"] = html_bytes
+            manifest_entries.append({
+                "file": "dashboard.html",
+                "sha256": _compute_sha256(html_bytes),
+                "size": str(len(html_bytes)),
+            })
+            logger.debug(f"[BUNDLER] Added dashboard.html ({len(html_bytes)} bytes)")
+            # Also store alongside the bundle for direct browser opening
+            try:
+                import shutil as _shutil
+
+                _shutil.copy2(dashboard_html, output_path.with_suffix(".html"))
+            except Exception:
+                pass  # Non-fatal
+        except Exception as e:
+            logger.warning(f"[BUNDLER] Failed to read dashboard: {e}")
+
+    # 7. Generate manifest
     manifest_lines = [
         "# SHA-256 manifest for .hledac-sprint bundle",
         f"# Sprint: {sprint_id}",
@@ -215,7 +247,7 @@ async def bundle_sprint(
     manifest_bytes = manifest_text.encode("utf-8")
     artifacts["manifest.sha256"] = manifest_bytes
 
-    # 6. Create tar.zst archive
+    # 8. Create tar.zst archive
     try:
         # Create tar in memory (streaming for large bundles)
         tar_buffer = io.BytesIO()
@@ -337,4 +369,264 @@ async def verify_bundle(bundle_path: Path) -> dict[str, Any]:
     return result
 
 
-__all__ = ["bundle_sprint", "verify_bundle", "BUNDLE_FORMAT_VERSION"]
+# ── Streaming Bundle Extraction with Byte-Range Index ─────────────────────────
+
+async def extract_bundle_streaming(
+    bundle_path: Path,
+    sprint_id: str,
+) -> tuple[Path, dict[str, dict[str, Any]]]:
+    """
+    Extract bundle with byte-range index for [META]-001 zero-copy loading.
+
+    Streams the tar archive while building an index mapping IOC values
+    to their byte offsets within the uncompressed tar. This enables
+    mmap-based random access without full decompression.
+
+    Args:
+        bundle_path: Path to the .hledac-sprint bundle
+        sprint_id: Sprint identifier
+
+    Returns:
+        (extracted_dir, entity_index): Directory with extracted content and
+        index mapping "ioc_type:entity_value" → {entity_value, ioc_type, sha256, ...}
+    """
+
+    extracted_dir = bundle_path.parent / f"{sprint_id}_extracted"
+    extracted_dir.mkdir(parents=True, exist_ok=True)
+
+    entity_index: dict[str, dict[str, Any]] = {}
+    now = time.time()
+    _TAR_BLOCK_SIZE = 512  # tar records are 512-byte blocks
+
+    def _data_offset(header_offset: int, member_size: int) -> int:
+        """Calculate actual data offset after tar header and padding."""
+        header_blocks = 1  # header is 1 block (512 bytes)
+        data_blocks = (member_size + _TAR_BLOCK_SIZE - 1) // _TAR_BLOCK_SIZE
+        return header_offset + (header_blocks + data_blocks) * _TAR_BLOCK_SIZE
+
+    try:
+        # Read bundle and decompress
+        bundle_bytes = bundle_path.read_bytes()
+        try:
+            import compression.zstd
+            tar_bytes = compression.zstd.decompress(bundle_bytes)
+        except ImportError:
+            tar_bytes = bundle_bytes
+
+        # Stream through tar, tracking offsets
+        tar_buffer = io.BytesIO(tar_bytes)
+        with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
+            for member in tar:
+                if not member.isfile():
+                    continue
+
+                # Track byte offset for this member
+                current_offset = tar_buffer.tell()
+                data_offset = _data_offset(current_offset, member.size)
+
+                member_path = extracted_dir / member.name
+                member_path.parent.mkdir(parents=True, exist_ok=True)
+
+                with tar.extractfile(member) as src:
+                    if src is not None:
+                        data = src.read()
+                        member_path.write_bytes(data)
+
+                # Index evidence entries
+                if member.name.startswith("evidence"):
+                    try:
+                        content = data
+                        if member.name.endswith(".zst"):
+                            try:
+                                import compression.zstd
+                                content = compression.zstd.decompress(data)
+                            except ImportError:
+                                pass
+
+                        text = content.decode("utf-8")
+                        sha256 = _compute_sha256(content)
+                        data_length = len(content)
+
+                        for line in text.splitlines():
+                            if not line.strip():
+                                continue
+                            try:
+                                import orjson
+                                entry = orjson.loads(line)
+
+                                # Extract IOC from entry
+                                ioc_value = (
+                                    entry.get("value")
+                                    or entry.get("entity")
+                                    or entry.get("ioc_value")
+                                )
+                                ioc_type = (
+                                    entry.get("type")
+                                    or entry.get("ioc_type")
+                                    or "unknown"
+                                )
+                                source = entry.get("source", "unknown")
+                                confidence = entry.get("confidence", 0.5)
+
+                                if ioc_value and ioc_type:
+                                    # Create composite key
+                                    idx_key = f"{ioc_type}:{ioc_value}"
+
+                                    if idx_key not in entity_index:
+                                        entity_index[idx_key] = {
+                                            "entity_value": ioc_value,
+                                            "ioc_type": ioc_type,
+                                            "last_confirmed_sprint": sprint_id,
+                                            "source_count": 0,
+                                            "sources": [],
+                                            "sha256": sha256,
+                                            "bundle_path": str(bundle_path),
+                                            "mmap_offset": data_offset,
+                                            "mmap_length": data_length,
+                                            "first_seen_ts": now,
+                                            "last_confirmed_ts": now,
+                                            "confidence_sum": 0.0,
+                                        }
+
+                                    # Update aggregates
+                                    entry_idx = entity_index[idx_key]
+                                    entry_idx["source_count"] += 1
+                                    if source not in entry_idx["sources"]:
+                                        entry_idx["sources"].append(source)
+                                    entry_idx["confidence_sum"] += confidence
+                                    entry_idx["last_confirmed_ts"] = now
+
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        logger.debug("[BUNDLER] Evidence indexing failed: %s", e)
+
+    except Exception as e:
+        logger.warning("[BUNDLER] Streaming extraction failed: %s", e)
+
+    return (extracted_dir, entity_index)
+
+
+async def index_bundle_entities(
+    sprint_id: str,
+    bundle_path: Path,
+    entity_index: dict[str, dict[str, Any]],
+    duckdb_store: Any | None = None,
+) -> None:
+    """
+    Index extracted entities into DuckDB cross_sprint_entity_index.
+
+    Uses async_upsert_cross_sprint_entity() via DuckDBShadowStore.
+    Called after extract_bundle_streaming() completes.
+
+    Args:
+        sprint_id: Sprint identifier
+        bundle_path: Path to the bundle (for logging)
+        entity_index: Index from extract_bundle_streaming()
+        duckdb_store: Optional DuckDBShadowStore reference. If None, tries
+                      to get the shared store via knowledge module.
+    """
+    try:
+        # Get duckdb store if not provided
+        if duckdb_store is None:
+            try:
+                from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+                # Try the singleton pattern if available
+                duckdb_store = DuckDBShadowStore.get_shared_instance() if hasattr(
+                    DuckDBShadowStore, "get_shared_instance"
+                ) else None
+            except Exception:
+                duckdb_store = None
+
+        if duckdb_store is None:
+            logger.debug("[BUNDLER] No DuckDB store available for entity indexing")
+            return
+
+        indexed = 0
+        for idx_key, entry in entity_index.items():
+            try:
+                avg_confidence = (
+                    entry["confidence_sum"] / entry["source_count"]
+                    if entry["source_count"] > 0
+                    else 0.5
+                )
+                await duckdb_store.async_upsert_cross_sprint_entity(
+                    entity_value=entry["entity_value"],
+                    ioc_type=entry["ioc_type"],
+                    sprint_id=sprint_id,
+                    ts=entry["last_confirmed_ts"],
+                    confidence=avg_confidence,
+                    content_hash=entry.get("sha256"),
+                )
+                indexed += 1
+            except Exception:
+                pass
+
+        logger.info(
+            "[BUNDLER] Indexed %d entities from sprint %s into cross_sprint_entity_index",
+            indexed, sprint_id
+        )
+
+    except Exception as e:
+        logger.warning("[BUNDLER] Entity indexing failed: %s", e)
+
+
+async def bundle_and_index_sprint(
+    sprint_id: str,
+    report_path: Path | None = None,
+    seeds_path: Path | None = None,
+    evidence_path: Path | None = None,
+    output_path: Path | None = None,
+    metadata: dict[str, Any] | None = None,
+    index_entities: bool = True,
+    duckdb_store: Any | None = None,  # [META]-001: store for entity indexing
+    dashboard_html: Path | None = None,  # [META]-009: standalone dashboard
+) -> Path | None:
+    """
+    Create bundle AND index entities into DuckDB cross_sprint_entity_index.
+
+    Convenience function that calls bundle_sprint() and then
+    extract_bundle_streaming() + index_bundle_entities().
+
+    Args:
+        Same as bundle_sprint() plus:
+        index_entities: If True, also index entities for [META]-001
+        duckdb_store: DuckDBShadowStore for entity indexing
+        dashboard_html: [META]-009: Path to pre-generated dashboard.html
+
+    Returns:
+        Path to created bundle, or None on failure
+    """
+    # Create the bundle
+    bundle_path = await bundle_sprint(
+        sprint_id,
+        report_path=report_path,
+        seeds_path=seeds_path,
+        evidence_path=evidence_path,
+        output_path=output_path,
+        metadata=metadata,
+        dashboard_html=dashboard_html,
+    )
+
+    if bundle_path is None:
+        return None
+
+    # Index entities if requested
+    if index_entities:
+        try:
+            _, entity_index = await extract_bundle_streaming(bundle_path, sprint_id)
+            await index_bundle_entities(sprint_id, bundle_path, entity_index, duckdb_store=duckdb_store)
+        except Exception as e:
+            logger.warning("[BUNDLER] Entity indexing failed: %s", e)
+
+    return bundle_path
+
+
+__all__ = [
+    "bundle_sprint",
+    "bundle_and_index_sprint",
+    "verify_bundle",
+    "extract_bundle_streaming",
+    "index_bundle_entities",
+    "BUNDLE_FORMAT_VERSION",
+]

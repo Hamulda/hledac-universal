@@ -236,6 +236,7 @@ advanced = [
     "regex_lz4",
     "content_hasher",
     "adaptive_scheduler",
+    "swarm_dag",
     "simd_similarity",
     "feed_decision",
     "pipeline_compose",
@@ -247,7 +248,15 @@ advanced = [
 ]
 
 # full: All features (development/CI only, ~3× compile time vs core-only)
-full = ["core", "data", "graph", "advanced", "dns", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper"]
+# [NEXUS]-018-03: Mach vm_remap zero-copy remapping — opt-in, macOS only.
+# No external deps — pure raw Mach syscall via libc + inline asm.
+# Requires: rust fork() for sandbox IPC bridge, anonymous mmap, pipe.
+# Feature-gated: compile with --features mach
+# Python path: security/mach_remap.py lazy-imports rust.mach_remap only when
+#   HLEDAC_ENABLE_MACH_REMAP=1 AND file_size >= 100MB.
+mach = []
+
+full = ["core", "data", "graph", "advanced", "dns", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper", "mach"]
 
 # simdjson: Zero-alloc JSON Pointer extraction via simd-json (ARM NEON native)
 # Adds: simdjson_extract.json_pointer_extract() — 2-4x faster than serde_json on M1
@@ -279,7 +288,8 @@ dns = [
 bloom = []           # Referenced by core; #[cfg(feature = "bloom")] in lib.rs
 regex_lz4 = []        # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 content_hasher = []   # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
-adaptive_scheduler = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+adaptive_scheduler = []  // Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+swarm_dag = []          // SILICON-07: Work-stealing task DAG; #[cfg(feature = "advanced")]
 simd_similarity = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 feed_decision = []    # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 pipeline_compose = [] # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs

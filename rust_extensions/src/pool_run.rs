@@ -46,10 +46,9 @@ use std::time::Duration;
 
 use crossbeam_channel::{bounded, Sender, Receiver};
 
-use crate::cpu_pool;
+use crate::elastic_pool::{get_cpu_pool, get_io_pool};
 #[cfg(feature = "otel")]
 use crate::tracing::{is_tracing_enabled, set_tls_trace_context, clear_tls_trace_context};
-use crate::io_pool;
 use crate::mixed_pool;
 
 // State encoding for atomic compare-exchange
@@ -154,24 +153,24 @@ fn spawn_dispatcher(pool_name: &str, rx: Arc<Receiver<WorkItem>>) {
             }
 
             match pool_name_owned.as_str() {
-                "cpu" => run_dispatcher_loop(cpu_pool(), rx),
-                "io" => run_dispatcher_loop(io_pool(), rx),
+                "cpu" => run_dispatcher_loop(get_cpu_pool(), rx),
+                "io" => run_dispatcher_loop(get_io_pool(), rx),
                 "mixed" => run_mixed_dispatcher_loop(rx),
-                _ => run_dispatcher_loop(cpu_pool(), rx),
+                _ => run_dispatcher_loop(get_cpu_pool(), rx),
             }
         })
         .expect("spawn_dispatcher: thread::Builder failed (OOM?)");
 }
 
 /// Dispatcher loop for fixed pools (cpu, io).
-fn run_dispatcher_loop(pool: &'static ThreadPool, rx: Arc<Receiver<WorkItem>>) {
+fn run_dispatcher_loop(pool: Arc<ThreadPool>, rx: Arc<Receiver<WorkItem>>) {
     pool.install(|| {
         loop {
             if RAYON_SHUTDOWN.load(Ordering::Acquire) {
                 break;
             }
             match rx.recv_timeout(Duration::from_millis(100)) {
-                Ok(work) => execute_work_item(work, || pool),
+                Ok(work) => execute_work_item(work),
                 Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
                 Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
             }
@@ -194,8 +193,7 @@ fn run_mixed_dispatcher_loop(rx: Arc<Receiver<WorkItem>>) {
         }
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(work) => {
-                let n = work.n_items;
-                execute_work_item(work, || mixed_pool(n));
+                execute_work_item(work);
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
@@ -269,10 +267,7 @@ fn execute_with_optional_span<R>(
 /// dropped its Arc<SharedTask> (via Box::into_raw) before the worker started or finished.
 /// This prevents use-after-free where Arc was dropped at line 360 (drop(shared_box))
 /// while the worker thread was still running.
-fn execute_work_item<F>(work: WorkItem, _pool_fn: F)
-where
-    F: Fn() -> &'static ThreadPool,
-{
+fn execute_work_item(work: WorkItem) {
     // R5 FIX: Upgrade Weak to Arc — may return None if Python already dropped its Arc.
     // This can happen when:
     //   1. Python called rayon_join_channel and its local Arc was dropped at function return

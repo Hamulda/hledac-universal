@@ -2324,6 +2324,29 @@ class DuckDBShadowStore:
         """Return analytics graph for synthesis layer."""
         return self._ensure_graph_attachment().get_analytics_graph_for_synthesis()
 
+    def export_graph_topology(
+        self,
+        *,
+        max_nodes: int = 1000,
+        max_community_size: int = 200,
+        include_centrality: bool = True,
+    ) -> dict[str, Any]:
+        """
+        [META]-010: Export graph topology as Canvas-ready JSON.
+
+        Delegates to the attached graph's export_graph_topology() method.
+        DuckDBShadowStore → DuckDBGraphAttachment → GraphAttachmentStore → IOCGraph.
+
+        Returns:
+            {"nodes": [...], "edges": [...], "communities": {...},
+             "centrality": {...}, "stats": {...}}
+        """
+        return self._ensure_graph_attachment().export_graph_topology(
+            max_nodes=max_nodes,
+            max_community_size=max_community_size,
+            include_centrality=include_centrality,
+        )
+
     def get_top_entities_for_ghost_global(self, n: int = 100) -> list[tuple[str, str, float]]:
         """Return top N entities for ghost global identity resolution."""
         return self._ensure_graph_attachment().get_top_entities_for_ghost_global(n=n)
@@ -2425,6 +2448,7 @@ class DuckDBShadowStore:
                 if not any((r for r in all_ioc_results)):
                     return
                 all_iocs: list[tuple[str, str]] = []
+                ioc_observed_at: dict[tuple[str, str], float] = {}
                 finding_observations: list[tuple[int, str, str, float, str]] = []
                 for finding_idx, (finding, iocs) in enumerate(zip(findings, all_ioc_results, strict=False)):
                     if not iocs:
@@ -2437,6 +2461,10 @@ class DuckDBShadowStore:
                         all_iocs.append((ioc_type, value))
                         ioc_id = f"{ioc_type}:{xxhash.xxh64(value.encode()).hexdigest()}"
                         id_map[value] = ioc_id
+                        # [META]-006: Track observed_at per unique IOC
+                        ioc_key = (ioc_type, value)
+                        if ioc_key not in ioc_observed_at:
+                            ioc_observed_at[ioc_key] = ts
                     values = list(id_map.keys())
                     for i, v_a in enumerate(values):
                         id_a = id_map[v_a]
@@ -2447,8 +2475,10 @@ class DuckDBShadowStore:
                 for ioc_type, value in all_iocs:
                     ioc_key = (ioc_type, value)
                     if ioc_key not in seen_iocs:
-                        await truth_graph.buffer_ioc(ioc_type, value, 1.0)
                         seen_iocs.add(ioc_key)
+                        # [META]-006: Use stored observed_at for this IOC
+                        obs_at = ioc_observed_at.get(ioc_key)
+                        await truth_graph.buffer_ioc(ioc_type, value, 1.0, observed_at=obs_at)
                 for _, id_a, id_b, ts, src in finding_observations:
                     await truth_graph.buffer_observation(id_a, id_b, fid, ts, src)
             except Exception as e:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
@@ -3012,6 +3042,165 @@ class DuckDBShadowStore:
         except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
             pass
 
+    # ── [META]-002: Cross-sprint entity index ──────────────────────────────
+
+    def ensure_cross_sprint_entity_index_schema(self) -> None:
+        """
+        [META-002]: Ensure cross_sprint_entity_index table exists in DuckDB.
+        Safe to call multiple times - uses CREATE TABLE IF NOT EXISTS.
+        Must be called after _init_connection (connection must exist).
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return
+            conn.execute(
+                "\n                CREATE TABLE IF NOT EXISTS cross_sprint_entity_index (\n"
+                "                    entity_value             TEXT    NOT NULL,\n"
+                "                    ioc_type                 TEXT    NOT NULL,\n"
+                "                    confirmation_count       INTEGER NOT NULL DEFAULT 1,\n"
+                "                    last_confirmed_sprint    TEXT[]  NOT NULL DEFAULT [],\n"
+                "                    first_seen_sprint        TEXT    NOT NULL DEFAULT '',\n"
+                "                    sha256_content_hash      TEXT,\n"
+                "                    last_confirmed_ts        DOUBLE  NOT NULL DEFAULT 0.0,\n"
+                "                    avg_confidence           REAL    NOT NULL DEFAULT 0.0,\n"
+                "                    UNIQUE (entity_value, ioc_type)\n"
+                "                )\n"
+                "            ")
+            conn.execute(
+                "\n                CREATE INDEX IF NOT EXISTS idx_cross_sprint_entity_value\n"
+                "                    ON cross_sprint_entity_index(entity_value)\n"
+                "            ")
+            # Note: DuckDB does NOT support USING GIN; standard B-tree index is used.
+            conn.execute(
+                "\n                CREATE INDEX IF NOT EXISTS idx_cross_sprint_confirmed_sprints\n"
+                "                    ON cross_sprint_entity_index(last_confirmed_sprint)\n"
+                "            ")
+            conn.execute(
+                "\n                CREATE INDEX IF NOT EXISTS idx_cross_sprint_confirmations\n"
+                "                    ON cross_sprint_entity_index(confirmation_count DESC)\n"
+                "            ")
+            conn.execute(
+                "\n                CREATE INDEX IF NOT EXISTS idx_cross_sprint_last_seen\n"
+                "                    ON cross_sprint_entity_index(last_confirmed_ts ASC)\n"
+                "            ")
+        except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+            pass
+
+    def _sync_upsert_cross_sprint_entity(
+        self, entity_value: str, ioc_type: str, sprint_id: str,
+        ts: float, confidence: float, content_hash: str | None = None,
+    ) -> bool:
+        """
+        [META]-002: Upsert a single entity into cross_sprint_entity_index.
+        Called at sprint winddown to aggregate entity_observations.
+        Returns True on success, False on error.
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None:
+                return False
+            row = conn.execute(
+                "SELECT confirmation_count, last_confirmed_sprint, avg_confidence "
+                "FROM cross_sprint_entity_index "
+                "WHERE entity_value = ? AND ioc_type = ?",
+                (entity_value, ioc_type),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO cross_sprint_entity_index "
+                    "(entity_value, ioc_type, confirmation_count, last_confirmed_sprint, "
+                    "first_seen_sprint, sha256_content_hash, last_confirmed_ts, avg_confidence) "
+                    "VALUES (?, ?, 1, ?, ?, ?, ?, ?)",
+                    (entity_value, ioc_type, [sprint_id], sprint_id, content_hash, ts, confidence),
+                )
+            else:
+                existing_count, existing_sprints, existing_avg_conf = row
+                new_sprints = list(existing_sprints) if existing_sprints else []
+                if sprint_id not in new_sprints:
+                    new_sprints.append(sprint_id)
+                new_count = existing_count + 1
+                new_avg_conf = 0.3 * confidence + 0.7 * (existing_avg_conf or 0.0)
+                conn.execute(
+                    "UPDATE cross_sprint_entity_index "
+                    "SET confirmation_count = ?, last_confirmed_sprint = ?, "
+                    "sha256_content_hash = COALESCE(?, sha256_content_hash), "
+                    "last_confirmed_ts = ?, avg_confidence = ? "
+                    "WHERE entity_value = ? AND ioc_type = ?",
+                    (new_count, new_sprints, content_hash, ts, new_avg_conf, entity_value, ioc_type),
+                )
+            return True
+        except Exception:  # noqa: BLE001 — fail-soft
+            return False
+
+    def _sync_get_cross_sprint_entities(self, sprint_ids: list[str]) -> list[dict[str, Any]]:
+        """
+        [META-002]: Fetch all entities confirmed by any of the given sprint IDs.
+        Used by DeltaSyncEngine to populate KnownGoodCache at sprint startup.
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None or not sprint_ids:
+                return []
+            # Load all cross-sprint entities and filter in Python.
+            # DuckDB cross_sprint_entity_index max ~50K rows (M1 8GB bounded);
+            # Python-side filter is faster than complex DuckDB array functions.
+            rows = conn.execute(
+                "SELECT entity_value, ioc_type, confirmation_count, "
+                "       last_confirmed_sprint, first_seen_sprint, "
+                "       sha256_content_hash, last_confirmed_ts, avg_confidence "
+                "FROM cross_sprint_entity_index"
+            ).fetchall()
+            sprint_set = set(sprint_ids)
+            return [
+                {"entity_value": r[0], "ioc_type": r[1], "confirmation_count": r[2],
+                 "last_confirmed_sprint": (r[3] if isinstance(r[3], list) else [r[3]]),
+                 "first_seen_sprint": r[4] if r[4] else "",
+                 "sha256_content_hash": r[5], "last_confirmed_ts": r[6],
+                 "avg_confidence": r[7]}
+                for r in rows
+                if isinstance(r[3], list) and sprint_set.intersection(r[3])
+            ]
+        except Exception:  # noqa: BLE001 — fail-soft
+            return []
+
+    def _sync_check_cross_sprint_batch(
+        self, entity_values: list[str],
+    ) -> list[tuple[str, str, int, float, str, str | None]]:
+        """
+        [META-002]: Batch check for known-good entities.
+        Returns list of (entity_value, ioc_type, confirmation_count,
+        last_confirmed_ts, last_confirmed_sprint, sha256_content_hash) tuples.
+        last_confirmed_sprint is the latest sprint from the TEXT[] array.
+        """
+        try:
+            conn = self._file_conn if self._db_path else self._persistent_conn
+            if conn is None or not entity_values:
+                return []
+            placeholders = ", ".join(["?" for _ in entity_values])
+            rows = conn.execute(
+                f"SELECT entity_value, ioc_type, confirmation_count, "
+                f"       last_confirmed_ts, last_confirmed_sprint, sha256_content_hash "
+                f"FROM cross_sprint_entity_index "
+                f"WHERE entity_value IN ({placeholders})",
+                entity_values,
+            ).fetchall()
+            results: list[tuple[str, str, int, float, str, str | None]] = []
+            for r in rows:
+                # DuckDB returns TEXT[] as Python list; extract last sprint
+                sprint_arr = r[4]
+                if isinstance(sprint_arr, list) and sprint_arr:
+                    last_sprint = sprint_arr[-1]
+                elif isinstance(sprint_arr, str):
+                    last_sprint = sprint_arr
+                else:
+                    last_sprint = ""
+                results.append((r[0], r[1], r[2], r[3], last_sprint, r[5]))
+            return results
+        except Exception:  # noqa: BLE001 — fail-soft
+            return []
+
+
     async def async_ingest_dht_metadata(self, metadata: list[dict[str, Any]]) -> int:
         """
         Sprint F224A: Ingest DHT metadata from torrent discovery.
@@ -3339,6 +3528,52 @@ class DuckDBShadowStore:
                 for r in result
             ]
         except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+            return []
+
+    # ── [META-002]: Sprint observation query ─────────────────────────────────
+
+    def _sync_get_entity_observations_by_sprint(
+        self, sprint_id: str, limit: int = 100_000,
+    ) -> list[dict[str, Any]]:
+        """
+        [META-002]: Fetch entity_observations for a specific sprint.
+        Uses idx_entity_observations_sprint index for efficient lookup.
+        """
+        try:
+            conn = self._qe()._conn()
+            sql = (
+                "SELECT observation_id, entity_value, entity_type, sprint_id, "
+                "source_type, confidence, ts, finding_id "
+                "FROM entity_observations "
+                "WHERE sprint_id = ? "
+                "ORDER BY ts DESC LIMIT ?"
+            )
+            result = list(self._store.arrow_fetch_batch(conn, sql, [sprint_id, limit]))
+            return [
+                {
+                    "observation_id": r[0], "entity_value": r[1],
+                    "entity_type": r[2], "sprint_id": r[3],
+                    "source_type": r[4], "confidence": r[5],
+                    "ts": r[6], "finding_id": r[7],
+                }
+                for r in result
+            ]
+        except Exception:  # noqa: BLE001 — fail-soft
+            return []
+
+    async def async_get_entity_observations_by_sprint(
+        self, sprint_id: str, limit: int = 100_000,
+    ) -> list[dict[str, Any]]:
+        """[META-002]: Async wrapper for by-sprint entity_observations query."""
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._sync_get_entity_observations_by_sprint,
+                sprint_id,
+                limit,
+            )
+        except Exception:  # noqa: BLE001 — fail-soft
             return []
 
     def _sync_get_recent_research_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
@@ -4003,6 +4238,7 @@ class DuckDBShadowStore:
         self.ensure_domain_reputation_schema()  # UNIFIED-007/008: cross-sprint domain reputation
         self.ensure_proxy_routes_schema()       # UNIFIED-009: cross-sprint proxy route graph
         self.ensure_anti_bot_profiles_schema()  # UNIFIED-010: cross-sprint anti-bot profiles
+        self.ensure_cross_sprint_entity_index_schema()  # [META]-002: cross-sprint entity confirmation index
         if self._db_path is not None:
             self._checkpoint_task = safe_create_task(self._maintenance_loop())
         self._startup_ready.set()
@@ -7937,6 +8173,8 @@ class DuckDBShadowStore:
 
         Extracts IOCs via Rust batch, deduplicates, and buffers to truth graph
         in parallel chunks. Reduces nesting from 6 to 2 levels.
+
+        [META]-006: Uses finding.timestamp as observed_at for protocol provenance.
         """
         if not (_IOC_EXTRACT_BATCH_AVAILABLE and _get_rust_batch_ioc_extract()):
             return
@@ -7951,23 +8189,24 @@ class DuckDBShadowStore:
             flush_buffers = getattr(truth_graph, "flush_buffers", None)
             if not (callable(buffer_ioc) and callable(flush_buffers)):
                 return
-            # Collect and dedupe IOCs
-            all_iocs: list[tuple[str, str, float]] = []
+            # [META]-006: Collect IOCs with observed_at from finding.timestamp
+            all_iocs: list[tuple[str, str, float, float]] = []
             seen_iocs: set[tuple[str, str]] = set()
-            for finding_idx, _ in enumerate(findings):
+            for finding_idx, finding in enumerate(findings):
+                observed_at = getattr(finding, 'timestamp', None)
                 for ioc_value, ioc_type in ioc_results[finding_idx]:
                     ioc_key = (ioc_type, ioc_value)
                     if ioc_key not in seen_iocs:
                         seen_iocs.add(ioc_key)
-                        all_iocs.append((ioc_type, ioc_value, 1.0))
+                        all_iocs.append((ioc_type, ioc_value, 1.0, observed_at))
             # Chunk and buffer in parallel
-            ioc_chunks: list[list[tuple[str, str, float]]] = [
+            ioc_chunks: list[list[tuple[str, str, float, float]]] = [
                 all_iocs[i : i + _IOC_CHUNK] for i in range(0, len(all_iocs), _IOC_CHUNK)
             ]
 
-            async def _buffer_chunk(chunk: list[tuple[str, str, float]]) -> None:
-                for ioc_type, ioc_value, score in chunk:
-                    await buffer_ioc(ioc_type, ioc_value, score)
+            async def _buffer_chunk(chunk: list[tuple[str, str, float, float]]) -> None:
+                for ioc_type, ioc_value, score, obs_at in chunk:
+                    await buffer_ioc(ioc_type, ioc_value, score, obs_at)
 
             if ioc_chunks:
                 await parallel(

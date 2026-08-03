@@ -20,6 +20,11 @@ use std::sync::LazyLock;
 // ISSUE-014: Removed custom lazy_static! macro — Rust 1.80+ std::sync::LazyLock
 // is stable and ships with the 2024 edition. Each module now uses LazyLock directly.
 
+// [META]-004: elastic_pool provides dynamic pool resize (RwLock-wrapped ThreadPools).
+// cpu_pool()/io_pool() below delegate to it for backward compatibility with
+// existing callers throughout the codebase.
+pub mod finding_collapser; // NEXUS-018-04: Pre-LLM synthesis map-reduce collapser — deterministic single-pass
+pub mod consistency_verifier; // META-007: Propositional consistency verifier — "confident liar" detection
 pub mod aho_corasick;
 pub mod query_terms; // B4: Aho-Corasick query-context scan + whitespace trim
 #[cfg(feature = "bloom")]
@@ -35,6 +40,8 @@ pub mod xxhash_ext; // xxHash3-64 for non-cryptographic content hashing
 // ISSUE-014: adaptive_scheduler is always compiled — used by always-compiled modules
 // (claims_extraction, health). Previously gated behind advanced feature.
 pub mod adaptive_scheduler;
+#[cfg(feature = "advanced")]
+pub mod swarm_dag; // SILICON-07: Work-stealing task DAG with ROI-based adaptive pool sizing
 #[cfg(feature = "data")]
 pub mod rolling_hash; // P3-3: Rolling hash for content fingerprinting
 pub mod graph_traverse;
@@ -127,6 +134,9 @@ pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call rep
 pub mod quic;           // QUIC/HTTP3 via quinn + h3 — F350M-R: real HTTP/3 fallback
 pub mod nw_connection;  // SILICON-03: Apple Network.framework user-space TCP + hardware TLS
 pub mod tls13;          // TLS 1.3 JA4 fingerprinting + ECH detection via rustls
+pub mod h2_safari_preset; // [NEXUS]-018-01: Safari WebKit HTTP/2 SETTINGS presets
+#[cfg(feature = "mach")]
+pub mod mach_remap;        // [NEXUS]-018-03: Mach vm_remap zero-copy remapping (opt-in, macOS only)
 #[cfg(feature = "pdf")]
 pub mod pdf;            // PDF text extraction + IOC extraction via lopdf
 #[cfg(feature = "office")]
@@ -135,6 +145,7 @@ pub mod office;        // Office document text extraction (.docx, .xlsx, .pptx) 
 pub mod dns;            // DoH/DoT/DoQ DNS via hickory-dns — replaces batch_dns.py triplicate paths
 pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
 pub mod pool_run;      // R2: Rayon pool runners — GIL wrappers + channel-based dispatch (consolidated)
+pub mod elastic_pool;  // [META]-004: Dynamic rayon pool resizing — phase-aware elasticity
 pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
 #[cfg(feature = "ane")]
 pub mod ane;           // Apple Neural Engine bindings — model registry, batch validation, telemetry
@@ -297,71 +308,24 @@ fn apply_affinity_hint(_p_cores: usize) {
 
 /// Process-wide singleton — P-core ceiling for CPU-bound work.
 ///
-/// Shared by quality_gate, xxhash_ext parallel, simd_similarity.
+/// SHARED by quality_gate, xxhash_ext parallel, simd_similarity.
 ///
-/// p_cores threads × 4 MiB = 4–16 MB total stack.
-/// P-core count = hw.perflevel0.logicalcpu on Apple Silicon (clamped 1-4).
-///
-/// Thread count is STATIC (set at pool creation):
-///   - rayon ThreadPool is a singleton, cannot be reconfigured at runtime
-///   - Dynamic thread count handled at CALL SITE via adaptive_scheduler
-///     recommended_cpu_threads() + mixed_pool() fallback
-///
-/// Use when: BLAKE2b, xxhash parallel, cosine similarity on embeddings.
-pub(crate) fn cpu_pool() -> &'static ThreadPool {
-    static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
-        let p_cores = detect_p_core_count();
-
-        ThreadPoolBuilder::new()
-            .num_threads(p_cores)
-            .stack_size(4_194_304) // 4 MiB — SIMD BLAKE2b/xxhash stack safety
-            .thread_name(|i| format!("hledac-cpu-{}", i))
-            .spawn_handler(move |thread| {
-                std::thread::spawn(move || {
-                    // QoS / affinity hint uvnitř spawned thread — správné vlákno
-                    #[cfg(target_os = "macos")]
-                    apply_qos_hint();
-                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-                    apply_affinity_hint(p_cores);
-                    thread.run();
-                });
-                Ok(())
-            })
-            .build()
-            .expect("cpu_pool: ThreadPoolBuilder::build failed (OOM?)")
-    });
-    &POOL
+/// [META]-004: Delegates to `elastic_pool::get_cpu_pool()` so that callers
+/// (quality_gate, xxhash, etc.) automatically use the current resized pool.
+/// Resize via `elastic_pool::resize_cpu_pool(n)` from Python.
+pub(crate) fn cpu_pool() -> std::sync::Arc<ThreadPool> {
+    crate::elastic_pool::get_cpu_pool()
 }
 
 /// Process-wide singleton — 2-thread ceiling for I/O-bound work.
 ///
-/// Shared by graph_traverse (DuckDB read-only), compress.
+/// SHARED by graph_traverse (DuckDB read-only), compress.
 ///
-/// 2 threads × 4 MiB = 8 MB total stack.
-/// DuckDB thread-local connection is the bottleneck — 2 threads matches the
-/// F265-U5 thread-local pool ceiling.
-/// QoS hint = USER_INITIATED (stejně jako cpu_pool) — I/O-bound benefituje z P-core.
-pub(crate) fn io_pool() -> &'static ThreadPool {
-    static POOL: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
-        ThreadPoolBuilder::new()
-            .num_threads(2)
-            .stack_size(4_194_304) // 4 MiB — DuckDB stmt compilation stack
-            .thread_name(|i| format!("hledac-io-{}", i))
-            .spawn_handler(|thread| {
-                std::thread::spawn(move || {
-                    // QoS hint uvnitř spawned thread (io_pool = 2 threads, P-core benefit)
-                    #[cfg(target_os = "macos")]
-                    apply_qos_hint();
-                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-                    apply_affinity_hint(2);
-                    thread.run();
-                });
-                Ok(())
-            })
-            .build()
-            .expect("io_pool: ThreadPoolBuilder::build failed (OOM?)")
-    });
-    &POOL
+/// [META]-004: Delegates to `elastic_pool::get_io_pool()` so that callers
+/// automatically use the current resized pool.
+/// Resize via `elastic_pool::resize_io_pool(n)` from Python.
+pub(crate) fn io_pool() -> std::sync::Arc<ThreadPool> {
+    crate::elastic_pool::get_io_pool()
 }
 
 /// Per-call memory-bounded thread pool for mixed workloads.
@@ -891,6 +855,15 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "advanced")]
     m.add_class::<content_hasher::ContentHasher>()?;
 
+    // NEXUS-018-04: Pre-LLM synthesis map-reduce collapser — deterministic
+    m.add_function(wrap_pyfunction!(finding_collapser::collapse_findings, m)?)?;
+    m.add_function(wrap_pyfunction!(finding_collapser::collapser_is_deterministic, m)?)?;
+
+    // META-007: Propositional consistency verifier — "confident liar" detection
+    m.add_function(wrap_pyfunction!(consistency_verifier::check_finding_consistency, m)?)?;
+    m.add_function(wrap_pyfunction!(consistency_verifier::get_contradiction_type_name, m)?)?;
+    m.add_function(wrap_pyfunction!(consistency_verifier::quick_consistency_check, m)?)?;
+
     // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback.
     tls_metadata::register_functions(m)?;
 
@@ -906,6 +879,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Always registers — stub returns clear error when feature not enabled.
     nw_connection::register(m)?;
 
+    // [NEXUS]-018-01: Safari WebKit HTTP/2 SETTINGS presets
+    h2_safari_preset::register(m)?;
+
     // DoH/DoT/DoQ DNS resolution — replaces batch_dns.py triple-path duplication.
     // F350M-R: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
     #[cfg(feature = "dns")]
@@ -915,6 +891,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crypto_accelerate::register_functions(m)?;
     // adaptive_scheduler is always compiled — no feature gate needed
     adaptive_scheduler::register_functions(m)?;
+    swarm_dag::register(m)?; // SILICON-07: Work-stealing DAG with ROI-based adaptive pool sizing
     rate_limit::register_module(m)?;  // ISSUE #016: NVD token bucket rate limiter
     // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
     sprint_policies::register(m)?;
@@ -948,6 +925,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // F273F: Darwin madvise — MADV_FREE_REUSABLE for LMDB/DuckDB mmap regions
     madvise::register_functions(m)?;
+
+    // [NEXUS]-018-03: Mach vm_remap zero-copy remapping (opt-in, feature=mach)
+    #[cfg(feature = "mach")]
+    mach_remap::add_module(m)?;
 
     // ISSUE-004: Rust LMDB backend for DHT — eliminates asyncio.to_thread overhead
     lmdb_dht::register_functions(m)?;
@@ -1085,9 +1066,9 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // m.add_class::<hnsw::py_api::PyHNSWBridge>()?;
     // m.add_class::<hnsw::py_api::PyHNSWIndex>()?;
 
-    // R4.4: TinyLFU LRU cache for cross-worker graph results.
-    #[cfg(feature = "advanced")]
-    m.add_class::<graph_cache::PyGraphLRUCache>()?;
+    // [META]-004: Elastic pool resize — phase-aware rayon thread pool management
+    // (no feature gate, always compiled — used by always-compiled pool_run.rs)
+    elastic_pool::register_functions(m)?;
 
     // F320+: Parallel graph centrality via rayon (B8/B7 Rust acceleration).
     // batch_centrality_all: all 5 metrics in single pass (degree/betweenness/closeness/eigenvector/pagerank).
@@ -1107,6 +1088,10 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // dedup_bloom is always compiled — no feature gate needed
     m.add_class::<dedup_bloom::PyDistributedBloomFilter>()?;
     m.add_class::<dedup_bloom::DedupBloomStats>()?;
+
+    // R4.4: TinyLFU LRU cache for cross-worker graph results.
+    #[cfg(feature = "advanced")]
+    m.add_class::<graph_cache::PyGraphLRUCache>()?;
 
     // Issue #22: Health endpoint
     health::register(m)?;

@@ -15,11 +15,13 @@ Features:
 - Ensemble results
 - Cost-weighted branch pruning (SOVEREIGN-005)
 - Dead-end detection with IOC progress tracking (SOVEREIGN-005)
+- Information Gain Density (IGD) dynamic pruning [NEXUS]-018-02
 - Semantic gravity field — void-aware branch boosting in ToT [SILICON-05]
 - Fetch directive generation for acquisition lane targeting [SILICON-05]
 """
 import asyncio
 import logging
+import os
 import secrets
 import time
 from collections import deque
@@ -54,6 +56,17 @@ _YIELD_EVERY_TOT = 16
 _PRUNE_GAIN_THRESHOLD = 0.1  # prune branches with gain < 0.1
 _PRUNE_MIN_DEPTH = 2  # only prune after 2+ actions
 _DEAD_END_TIMEOUT_S = 10.0  # 10s without new IOCs = dead-end
+
+# [NEXUS]-018-02: Information Gain Density (IGD) Dynamic Pruning
+# IGD = Δ|unique_ioc_values| / Δt — measures actual IOC discovery rate per branch.
+# Complements _DEAD_END_TIMEOUT_S by adding a rate-sensitive abort that catches
+# branches still delivering but below useful density.
+_IGD_WINDOW_S = 30.0           # Sliding window: look back 30 s for IOC rate
+_IGD_ABORT_THRESHOLD = 0.1     # Abort branch if IGD < 0.1 unique IOC/s
+_IGD_PERSIST_S = 5.0          # Abort only after 5 consecutive s below threshold
+_IGD_MIN_DEPTH = 1            # Apply IGD pruning after depth 1+ (not root)
+_IGD_REPORT_MIN_IOC_VALUE = 0.5  # Only count IOC reports with estimated_value >= this
+
 _VALUE_PREDICTOR_FEATURE_DIM = 16  # lightweight feature dim for ToT value prediction
 
 # BLITZ-04: Urgency thresholds for sprint-phase-aware reasoning parameter clamping.
@@ -215,6 +228,189 @@ class _DeadEndDetector:
             del self._last_progress[nid]
 
 
+# ── [NEXUS]-018-02: IGD Pruning ──────────────────────────────────────────────
+
+class _IGDPruningPolicy:
+    """[NEXUS]-018-02: Information Gain Density (IGD) dynamic branch pruning.
+
+    Tracks per-branch IOC discovery rate using a sliding-window buffer of
+    (ioc_value, monotonic_ts) pairs.  IGD = Δ|unique_ioc_values| / Δt (unique
+    IOC values / elapsed seconds over the window).
+
+    A branch is aborted only when its IGD drops below ``_IGD_ABORT_THRESHOLD``
+    for a *consecutive* ``_IGD_PERSIST_S`` seconds — this prevents false
+    positives during brief IOC delivery pauses.
+
+    Design decisions (M1 8GB):
+    - ``__slots__`` — zero dict overhead per instance
+    - Per-branch deque bounded to window length — memory O(active_branches × window)
+    - ``_below_since`` cached as float | None — O(1) abort check
+    - ``report_iocs`` silently ignores branches not yet registered (fail-soft)
+    - ``should_abort`` returns False when window is empty (insufficient data)
+
+    Env-override: ``HLEDAC_IGD_THRESHOLD`` (float, IOC/s), ``HLEDAC_IGD_PERSIST_S``
+    (float, seconds).
+
+    Wire into ToT: call ``should_abort(node_id)`` before expanding each leaf;
+    call ``report_iocs(node_id, ioc_values: list[float])`` whenever the
+    fetch layer delivers IOCs for that branch.
+    """
+
+    __slots__ = (
+        '_window_s', '_threshold', '_persist_s',
+        '_report_min',        # minimum IOC value to count (HLEDAC_IGD_REPORT_MIN)
+        '_buffers',           # dict[node_id, deque[(ioc_value, ts)]]
+        '_below_since',       # dict[node_id, float | None]  — when IGD fell below
+        '_abort_count',       # total branches aborted
+    )
+
+    def __init__(
+        self,
+        window_s: float | None = None,
+        threshold: float | None = None,
+        persist_s: float | None = None,
+        report_min: float | None = None,
+    ) -> None:
+        # Env-override for thresholds so operators can tune without code changes.
+        # Guard against empty-string env vars that would cause float("") → ValueError.
+        def _env_float(key: str, fallback: str) -> float:
+            raw = os.environ.get(key, '')
+            if raw and raw.strip():
+                return float(raw)
+            return float(fallback)
+
+        self._window_s: float = _env_float(
+            'HLEDAC_IGD_WINDOW_S', str(window_s or _IGD_WINDOW_S),
+        )
+        self._threshold: float = _env_float(
+            'HLEDAC_IGD_THRESHOLD', str(threshold or _IGD_ABORT_THRESHOLD),
+        )
+        self._persist_s: float = _env_float(
+            'HLEDAC_IGD_PERSIST_S', str(persist_s or _IGD_PERSIST_S),
+        )
+        # Minimum IOC value to count in the window (filter low-confidence reports)
+        self._report_min: float = _env_float(
+            'HLEDAC_IGD_REPORT_MIN', str(report_min or _IGD_REPORT_MIN_IOC_VALUE),
+        )
+        self._buffers: dict[str, deque[tuple[float, float]]] = {}
+        self._below_since: dict[str, float | None] = {}
+        self._abort_count: int = 0
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def register_branch(self, node_id: str) -> None:
+        """Register a new ToT branch for IGD tracking."""
+        if node_id not in self._buffers:
+            self._buffers[node_id] = deque(maxlen=int(self._window_s * 4))  # ~4 entries/s
+            self._below_since[node_id] = None
+
+    def report_iocs(self, node_id: str, ioc_values: list[float]) -> None:
+        """Record IOC discovery for a branch.
+
+        Args:
+            node_id: ToT node / branch identifier.
+            ioc_values: List of IOC quality scores (estimated values, 0-1).
+                       Only values >= _report_min are inserted into the window.
+        """
+        if node_id not in self._buffers:
+            # Lazily register — branches may be created externally
+            self.register_branch(node_id)
+
+        now = time.monotonic()
+        buf = self._buffers[node_id]
+        for v in ioc_values:
+            if v >= self._report_min:
+                buf.append((v, now))
+
+    def should_abort(self, node_id: str, depth: int = 0) -> bool:
+        """Return True if the branch should be aborted due to low IGD.
+
+        A branch is aborted when:
+        1. It has been registered
+        2. Its IGD has been below ``_threshold`` for >= ``_persist_s`` seconds
+        3. It has reached ``_min_depth`` (avoids aborting the root immediately)
+
+        Returns False if the branch has insufficient data in its window.
+        """
+        if node_id not in self._buffers:
+            return False
+        if depth < _IGD_MIN_DEPTH:
+            return False
+
+        igd = self._igd(node_id)
+        now = time.monotonic()
+
+        if igd is None:
+            # Window not yet filled — don't abort
+            self._below_since[node_id] = None
+            return False
+
+        if igd < self._threshold:
+            if self._below_since[node_id] is None:
+                self._below_since[node_id] = now
+            elif (now - self._below_since[node_id]) >= self._persist_s:
+                self._abort_count += 1
+                logger.debug(
+                    '[NEXUS]-018-02 IGD abort: node=%s igd=%.4f < %.4f for %.1fs',
+                    node_id, igd, self._threshold, now - self._below_since[node_id],
+                )
+                return True
+        else:
+            self._below_since[node_id] = None
+
+        return False
+
+    def igd(self, node_id: str) -> float | None:
+        """Return the current IGD (unique IOC/s) for a branch, or None if
+        the window is empty / insufficient data."""
+        return self._igd(node_id)
+
+    # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _igd(self, node_id: str) -> float | None:
+        """Compute IGD = Δ|unique_ioc_values| / Δt over the sliding window."""
+        buf = self._buffers.get(node_id)
+        if not buf:
+            return None
+
+        now = time.monotonic()
+        window_start = now - self._window_s
+
+        # Evict expired entries (rare — deque maxlen handles overflow)
+        while buf and buf[0][1] < window_start:
+            buf.popleft()
+
+        if len(buf) < 2:
+            return None
+
+        oldest_ts = buf[0][1]
+        newest_ts = buf[-1][1]
+        elapsed = newest_ts - oldest_ts
+        if elapsed <= 0.0:
+            return None
+
+        unique_values = len({round(v, 3) for v, _ in buf})
+        return unique_values / elapsed
+
+    def cleanup_pruned(self, active_node_ids: set[str]) -> None:
+        """Remove tracking state for pruned/finished branches."""
+        stale = [nid for nid in self._buffers if nid not in active_node_ids]
+        for nid in stale:
+            self._buffers.pop(nid, None)
+            self._below_since.pop(nid, None)
+
+    @property
+    def stats(self) -> dict[str, Any]:
+        """Return telemetry dict for observability."""
+        return {
+            'tracked_branches': len(self._buffers),
+            'abort_count': self._abort_count,
+            'threshold': self._threshold,
+            'persist_s': self._persist_s,
+            'window_s': self._window_s,
+        }
+
+
 class _TotValuePredictor:
     """SOVEREIGN-005: Learned value predictor for ToT branch scoring.
 
@@ -308,6 +504,10 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
     - Learned value prediction for ToT via AdaptiveCostModel (SOVEREIGN-005)
     - Cost-weighted branch pruning (SOVEREIGN-005)
     - Dead-end detection with IOC progress tracking (SOVEREIGN-005)
+    - [NEXUS]-018-02: Information Gain Density (IGD) dynamic pruning — tracks
+      per-branch IOC discovery rate and aborts branches that drop below
+      0.1 unique IOC/s for 5 consecutive seconds. Wired into ToT before
+      the dead-end check so IGD is evaluated first.
     - UNIFIED-005: Periodic/atomic/crash-resilient ToT state checkpointing
       via TransactionalToTCheckpointer
     - BLITZ-04: SprintClock-driven urgency clamping — ToT parameters
@@ -333,6 +533,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         '_resume_from', '_resume_step',  # UNIFIED-006
         '_query_hash',  # UNIFIED-006: for checkpoint writes during recovery
         '_gravity_field',  # SILICON-05: semantic void detection
+        '_igd_policy',     # [NEXUS]-018-02: IGD dynamic pruning policy
     )
 
     def __init__(
@@ -366,6 +567,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         self._resume_step: int = resume_step  # UNIFIED-006
         self._query_hash: str = query_hash  # UNIFIED-006
         self._gravity_field: Any | None = gravity_field  # SILICON-05
+        self._igd_policy = _IGDPruningPolicy()  # [NEXUS]-018-02: IGD dynamic pruning
         self.strategy_configs: dict[ReasoningStrategy, dict[str, Any]] = {ReasoningStrategy.CHAIN_OF_THOUGHT: {'max_steps': 10, 'min_confidence': 0.7, 'step_description_template': 'Step {i}: {thought}'}, ReasoningStrategy.TREE_OF_THOUGHTS: {'max_depth': 5, 'branching_factor': 3, 'beam_width': 2, 'exploration_strategy': 'beam_search'}, ReasoningStrategy.GRAPH_REASONING: {'max_nodes': 50, 'connection_density': 0.3, 'centrality_metric': 'betweenness'}}
         self.strategy_keywords: dict[ReasoningStrategy, list[str]] = {ReasoningStrategy.CHAIN_OF_THOUGHT: ['step by step', 'explain', 'how', 'why', 'derive', 'calculate', 'sequence', 'process', 'procedure', 'logical'], ReasoningStrategy.TREE_OF_THOUGHTS: ['options', 'alternatives', 'compare', 'decide', 'choose', 'select', 'best', 'optimal', 'trade-off', 'multiple'], ReasoningStrategy.GRAPH_REASONING: ['connections', 'relationships', 'network', 'dependencies', 'interconnected', 'linked', 'graph', 'structure']}
         self._stats = {'chains_executed': 0, 'trees_explored': 0, 'graphs_traversed': 0, 'strategy_switches': 0, 'avg_confidence': 0.0}
@@ -611,6 +813,18 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             except Exception:
                 logger.debug('[SILICON-05] add_embeddings_batch failed')
 
+    def report_iocs(self, branch_id: str, ioc_values: list[float]) -> None:
+        """[NEXUS]-018-02: Report IOC quality scores to the IGD pruning policy.
+
+        Convenience method exposed on the coordinator so callers don't need
+        to reach into ``._igd_policy`` directly.
+
+        Args:
+            branch_id: ToT node_id / branch identifier.
+            ioc_values: Estimated quality/value scores for discovered IOCs (0-1).
+        """
+        self._igd_policy.report_iocs(branch_id, ioc_values)
+
     def suggest_fetch_targets(self, n: int = 3) -> list[Any]:
         """SILICON-05: Get actionable fetch directives from semantic voids.
 
@@ -778,8 +992,10 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         nodes_since_yield = 0
         pruned_count = 0
         dead_end_count = 0
+        igd_abort_count = 0
 
         dead_end_detector.register_branch('root')
+        self._igd_policy.register_branch('root')  # [NEXUS]-018-02
 
         # ── SILICON-05: Gravity field void detection ────────────────────
         # Query the semantic gravity field for voids — these inform
@@ -828,6 +1044,13 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             new_leaves: list[ThoughtNode] = []
             for leaf in leaves:
                 if leaf.expanded:
+                    continue
+
+                # [NEXUS]-018-02: IGD abort check — abort branches with low IOC discovery rate
+                # Runs BEFORE dead_end_detector so IGD is checked first (more precise).
+                if self._igd_policy.should_abort(leaf.node_id, depth=leaf.depth):
+                    igd_abort_count += 1
+                    leaf.expanded = True
                     continue
 
                 # SOVEREIGN-005: Dead-end check — skip branches that stalled
@@ -909,14 +1132,18 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                             step=depth + 1,
                         )
 
-                    # Register new branch for dead-end tracking
+                    # Register new branch for IGD and dead-end tracking
+                    self._igd_policy.register_branch(child_id)
                     dead_end_detector.register_branch(child_id)
 
                     # SOVEREIGN-005: Simulate IOC progress signal
                     # In real usage, this would be wired to actual IOC discovery;
-                    # here we use value_estimate as a proxy for progress
+                    # here we use value_estimate as a proxy for progress.
+                    # Both the dead-end detector (timeout-based) and IGD policy
+                    # (rate-based) share this proxy so they work in lockstep.
                     if value_est > 0.5:
                         dead_end_detector.report_progress(child_id, ioc_count=1)
+                        self._igd_policy.report_iocs(child_id, [value_est])  # [NEXUS]-018-02
 
                     nodes_since_yield += 1
                     if nodes_since_yield >= _YIELD_EVERY_TOT:
@@ -939,6 +1166,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             # SOVEREIGN-005: Cleanup dead-end detector for pruned branches
             active_ids = {n.node_id for n in leaves} | {'root'}
             dead_end_detector.cleanup_pruned(active_ids)
+            self._igd_policy.cleanup_pruned(active_ids)  # [NEXUS]-018-02
 
             # UNIFIED-005: Checkpoint at depth transition
             if checkpointer is not None:
@@ -970,12 +1198,15 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'best_value': best_value,
             'pruned_branches': pruned_count,
             'dead_ends': dead_end_count,
+            'igd_aborts': igd_abort_count,  # [NEXUS]-018-02
             'used_learned_values': value_predictor.is_learned,
             'resumed': _resumed,  # UNIFIED-006
             'resume_step': self._resume_step if _resumed else 0,  # UNIFIED-006
+            'igd_policy_stats': self._igd_policy.stats,  # [NEXUS]-018-02
             'summary': (
                 f'ToT reasoning: {len(nodes)} nodes, {pruned_count} pruned, '
-                f'{dead_end_count} dead-ends, learned={value_predictor.is_learned}'
+                f'{dead_end_count} dead-ends, {igd_abort_count} IGD-aborts, '
+                f'learned={value_predictor.is_learned}'
                 f'{", RESUMED from step " + str(self._resume_step) if _resumed else ""}'
             ),
         }

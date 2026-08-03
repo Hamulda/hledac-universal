@@ -137,7 +137,8 @@ class GraphService:
         value: str,
         ioc_type: str = "unknown",
         confidence: float = 0.5,
-        source: str = ""
+        source: str = "",
+        observed_at: float | None = None,
     ) -> bool:
         """
         Idempotent IOC upsert — skip if already upserted within this sprint session.
@@ -145,9 +146,14 @@ class GraphService:
         Idempotency is enforced via an in-memory set, so duplicate upserts within
         a sprint return False (already handled) rather than re-writing to DuckDB.
 
+        [META]-012: observed_at captures the original event timestamp for temporal
+        provenance. When None, defaults to current time (backward-compatible).
+
         Returns:
             True if IOC was newly upserted, False if it already existed or on error.
         """
+        import time as _time
+        _ts = observed_at if observed_at is not None else _time.time()
         if _RUST_IOC_DEDUP_AVAILABLE:
             if self._seen_iocs.contains(value, ioc_type):
                 return False
@@ -167,7 +173,7 @@ class GraphService:
         if graph is None:
             return False
         try:
-            row_id = graph.add_ioc(value, ioc_type, confidence, source)
+            row_id = graph.add_ioc(value, ioc_type, confidence, source, observed_at=_ts)
             if row_id is not None:
                 if _RUST_IOC_DEDUP_AVAILABLE:
                     self._seen_iocs.add(value, ioc_type)
@@ -230,24 +236,50 @@ class GraphService:
         except Exception as _e:
             logger.debug(f"[GraphService] LanceDB entity upsert failed: {_e}")
 
-    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
+    def upsert_ioc_batch(
+        self,
+        rows: list[tuple[str, str, float, str]],
+        observed_at: float | None = None,
+    ) -> int:
         """
         Batch upsert IOCs — single DuckDB round-trip for N rows.
 
         Idempotency is enforced via _seen_iocs (in-memory dedup set) so duplicate
         values within a sprint are filtered before the batch is sent to DuckDB.
 
+        [META]-012: observed_at provides default timestamp for all rows.
+        Supports 5-tuple format (value, ioc_type, confidence, source, observed_at)
+        for per-row timestamps. Falls back to 4-tuple for backward compat.
+
         Args:
             rows: List of (value, ioc_type, confidence, source) tuples.
+                  Optional 5th element: observed_at (Unix epoch seconds).
+            observed_at: Default timestamp for rows without explicit observed_at.
         Returns:
             Number of rows passed to DuckDB (not number actually inserted).
         """
+        import time as _time
+        _ts = observed_at if observed_at is not None else _time.time()
+
         from hledac.universal.utils.ioc_extract import IOC_TYPES as _VALID_IOC_TYPES
 
         if not rows:
             return 0
+        # [META]-012: Support 5-tuple (value, ioc_type, confidence, source, observed_at)
+        # and 4-tuple (value, ioc_type, confidence, source) for backward compat
         unique: list[tuple[str, str, float, str]] = []
-        for value, ioc_type, confidence, source in rows:
+        unique_with_ts: list[tuple[str, str, float, str, float]] = []
+        has_ts_rows = False
+
+        for row in rows:
+            if len(row) >= 5:
+                value, ioc_type, confidence, source, row_ts = row[0], row[1], row[2], row[3], row[4]
+                row_ts = row_ts if row_ts is not None else _ts
+                has_ts_rows = True
+            else:
+                value, ioc_type, confidence, source = row[0], row[1], row[2], row[3]
+                row_ts = _ts
+
             # Deduplicate via Rust IocSet or Python set
             if _RUST_IOC_DEDUP_AVAILABLE:
                 if self._seen_iocs.contains(value, ioc_type):
@@ -260,18 +292,23 @@ class GraphService:
             # Sprint F320: unknown IOC types → "pending" (awaiting manual classification)
             if ioc_type not in _VALID_IOC_TYPES:
                 ioc_type = "pending"
-            unique.append((value, ioc_type, confidence, source))
+            if has_ts_rows:
+                unique_with_ts.append((value, ioc_type, confidence, source, row_ts))
+            else:
+                unique.append((value, ioc_type, confidence, source))
             if _RUST_IOC_DEDUP_AVAILABLE:
                 self._seen_iocs.add(value, ioc_type)
             else:
                 self._seen_iocs.add((value, ioc_type))
-        if not unique:
+        if not unique and not unique_with_ts:
             return 0
 
         graph = _get_graph()
         if graph is None:
             return 0
         try:
+            if has_ts_rows:
+                return graph.upsert_ioc_batch(unique_with_ts)
             return graph.upsert_ioc_batch(unique)
         except Exception as e:
             logger.warning(f"[GraphService] upsert_ioc_batch failed: {e}")
@@ -781,13 +818,17 @@ def upsert_ioc(
     value: str,
     ioc_type: str = "unknown",
     confidence: float = 0.5,
-    source: str = ""
+    source: str = "",
+    observed_at: float | None = None,
 ) -> bool:
-    return _DEFAULT_GRAPH_SERVICE.upsert_ioc(value, ioc_type, confidence, source)
+    return _DEFAULT_GRAPH_SERVICE.upsert_ioc(value, ioc_type, confidence, source, observed_at=observed_at)
 
 
-def upsert_ioc_batch(rows: list[tuple[str, str, float, str]]) -> int:
-    return _DEFAULT_GRAPH_SERVICE.upsert_ioc_batch(rows)
+def upsert_ioc_batch(
+    rows: list[tuple[str, str, float, str]],
+    observed_at: float | None = None,
+) -> int:
+    return _DEFAULT_GRAPH_SERVICE.upsert_ioc_batch(rows, observed_at=observed_at)
 
 
 def upsert_relation(

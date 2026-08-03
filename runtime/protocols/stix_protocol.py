@@ -34,8 +34,14 @@ class StixProtocol(Protocol):
         ioc_type: str,
         value: str,
         confidence: float = 1.0,
+        observed_at: float | None = None,
     ) -> None:
-        """Buffer IOC for later flush. No-op on non-buffered backends."""
+        """Buffer IOC for later flush.
+
+        [META]-006: observed_at captures the original event timestamp
+        (e.g., CT certificate not_before, Telegram message date).
+        No-op on non-buffered backends.
+        """
         ...
 
     async def flush_buffers(self) -> dict[str, int]:

@@ -49,6 +49,12 @@ from hledac.universal.export.sprint_exporter import (
     export_sprint,
 )
 
+# ISSUE [META]-009: WASMDashboardBuilder — standalone investigator dashboard
+from hledac.universal.export.dashboard_builder import (
+    WASMDashboardBuilder,
+    build_wasm_dashboard,
+)
+
 # ISSUE [APEX]-1010: Sprint bundle format
 from hledac.universal.export.sprint_bundler import (
     bundle_sprint,
@@ -93,4 +99,7 @@ __all__ = [
     "verify_bundle",
     "BUNDLE_FORMAT_VERSION",
     "view_bundle",
+    # [META]-009
+    "WASMDashboardBuilder",
+    "build_wasm_dashboard",
 ]

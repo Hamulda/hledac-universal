@@ -303,6 +303,15 @@ class V2Init:
         object.__setattr__(self._scheduler, "_hermes_engine", _hermes_engine)
         object.__setattr__(self._scheduler, "_evidence_log", _evidence_log)
 
+        # META-001: Inject DuckDB store into CrossSprintGate for pre-fetch gating
+        try:
+            from hledac.universal.knowledge.cross_sprint_gate import get_cross_sprint_gate
+            _gate = get_cross_sprint_gate()
+            _duckdb_raw = _duckdb_store.value if hasattr(_duckdb_store, 'value') else _duckdb_store
+            _gate.inject_duckdb_store(_duckdb_raw)
+        except Exception:  # noqa: BLE001 — fail-soft; gate injection is non-critical
+            pass
+
         # SidecarOrchestrator (needs duckdb — runs after)
         _sidecar_orch = await self._init_sidecar_orchestrator(query)
         object.__setattr__(self._scheduler, "_sidecar_orchestrator", _sidecar_orch)

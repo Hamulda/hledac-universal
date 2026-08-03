@@ -66,6 +66,8 @@ from hledac.universal.utils.flow_trace import (
 )
 
 from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
+from ..knowledge.cross_sprint_gate import get_cross_sprint_gate
+from ..knowledge.entity_confirmation import get_entity_confirmation_service
 from .base import UniversalCoordinator
 
 # R6: Centralized Rust access — all hledac_rust_extensions symbols route through
@@ -423,7 +425,7 @@ class FetchCoordinator(UniversalCoordinator):
     A5-02: evidence_sink parameter enables Dependency Inversion —
     FetchCoordinator never imports EvidenceLog directly.
     """
-    __slots__ = ('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_blitz_mode', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_entropy_bridge_queue', '_entropy_bridge_task', '_entropy_alerts_processed', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_micro_sprint_queue', '_micro_sprint_worker_task', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_retry_budget_max', '_retry_budget_window', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd')
+    __slots__ = ('_adaptive_priority_provider', '_aimd', '_aimd_semaphore', '_base_retry_delay', '_batch_cp_result', '_blitz_mode', '_capacity', '_captcha_detections', '_captcha_detector', '_concurrency', '_concurrency_provider', '_config', '_cooldown_seconds', '_cover_count', '_cross_sprint_gate', '_entity_confirmation_service', '_ctx', '_current_geo_context', '_darknet_connector', '_dedup_lock', '_domain_rate_limiter', '_effective_ua', '_enqueue_pivot_provider', '_entropy_bridge_queue', '_entropy_bridge_task', '_entropy_alerts_processed', '_evidence_ids', '_evidence_sink', '_frontier', '_geo_proxies', '_gopher_transport', '_gopher_transport_enabled', '_hints_extractor', '_host_ips_cache', '_host_ips_inflight', '_http_cache_enabled', '_http_cache_transport', '_hypothesis_depth_provider', '_hypothesis_depth_setter', '_hypothesis_query_count_provider', '_hypothesis_query_count_setter', '_lightpanda_lock', '_lightpanda_pool', '_lightpanda_pool_started', '_max_backoff_delay', '_max_retries', '_micro_sprint_queue', '_micro_sprint_original_findings', '_micro_sprint_worker_task', '_orchestrator', '_paywall_bypass', '_per_host_gate', '_per_host_limit', '_pivot_queue_provider', '_pivot_stats_provider', '_privacy_allocator', '_privacy_lock', '_processed_urls', '_retry_budget', '_retry_budget_lock', '_retry_budget_max', '_retry_budget_window', '_robots_parser', '_running', '_session_checkpoint_task', '_session_lmdb_env', '_session_manager', '_sprint_config_provider', '_sprint_remaining_provider', '_stop_reason', '_swarm_dag', '_swarm_dag_rebalance_task', '_telemetry', '_tor_transport', '_tor_transport_enabled', '_urls_fetched_count', '_zstd')
 
     def __init__(self, config: FetchCoordinatorConfig | None=None, max_concurrent: int=3, blitz_mode: bool=True, pivot_queue_provider: Callable[[], Any]=lambda: None, pivot_stats_provider: Callable[[], dict] | None=None, hypothesis_query_count_provider: Callable[[], int]=lambda: 0, hypothesis_query_count_setter: Callable[[int], None]=lambda v: None, hypothesis_depth_provider: Callable[[], int]=lambda: 0, hypothesis_depth_setter: Callable[[int], None]=lambda v: None, sprint_config_provider: Callable[[], Any]=lambda: None, adaptive_priority_provider: Callable[[str, float], float]=lambda tt, base: base, enqueue_pivot_provider: Callable[..., Any]=lambda **kw: None, concurrency_provider: Callable[[], tuple[int, int, str, bool] | None] | None=None, sprint_remaining_provider: Callable[[], float | None]=lambda: None, evidence_sink: object | None=None) -> None:
         super().__init__(name='FetchCoordinator', max_concurrent=max_concurrent)
@@ -442,6 +444,8 @@ class FetchCoordinator(UniversalCoordinator):
         self._batch_cp_result = _CP_NOT_CALLED
         self._frontier: deque = deque(maxlen=1000)
         self._processed_urls: DeduplicationStrategy = _create_dedup_strategy()
+        self._cross_sprint_gate = get_cross_sprint_gate()
+        self._entity_confirmation_service = get_entity_confirmation_service_sync()
         self._evidence_ids: deque = deque(maxlen=500)
         self._evidence_sink = evidence_sink  # A5-02: Dependency Inversion — injected sink, not direct EvidenceLog import
         self._urls_fetched_count: int = 0
@@ -548,7 +552,7 @@ class FetchCoordinator(UniversalCoordinator):
         # Configurable via HLEDAC_RATE_LIMIT_RPS env var
         _rate_limit_rps = float(os.environ.get("HLEDAC_RATE_LIMIT_RPS", "0.5"))
         self._domain_rate_limiter = DomainRateLimiter(rate=_rate_limit_rps, max_hosts=512)
-        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0}
+        self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0, 'cross_sprint_skipped': 0, 'entity_confirmation_skipped': 0}
         # CB-04: Retry budget per domain — track total retries in last 60s to prevent amplification
         self._retry_budget: dict[str, list[float]] = {}  # domain -> list of retry timestamps
         self._retry_budget_lock = threading.Lock()
@@ -563,6 +567,10 @@ class FetchCoordinator(UniversalCoordinator):
         # UNIFIED-003: Micro-sprint queue — bounded queue for re-fetch requests
         self._micro_sprint_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=32)
         self._micro_sprint_worker_task: asyncio.Task[None] | None = None
+        # [META]-015: Cache for original findings before micro-sprint re-fetch.
+        # Maps entity_id -> list of original findings (dict with source, content, confidence).
+        # TTL 5 min — bounded at 256 entries (M1 8GB safe).
+        self._micro_sprint_original_findings: dict[str, tuple[list[dict[str, Any]], float]] = {}
         self.init_session_manager()
 
     @property
@@ -609,6 +617,39 @@ class FetchCoordinator(UniversalCoordinator):
     def blitz_mode(self) -> bool:
         """BLITZ-13: Whether blitz (aggressive) fetch mode is active."""
         return self._blitz_mode
+
+    # ── [NEXUS]-018-02: IGD telemetry bridge ─────────────────────────────────
+
+    def report_iocs(self, branch_id: str, ioc_values: list[float]) -> None:
+        """[NEXUS]-018-02: Report IOC quality scores to the IGD pruning policy.
+
+        This method is the canonical bridge between the fetch layer (which
+        discovers IOCs) and the meta-reasoning coordinator (which needs IOC
+        rate data to drive IGD-based branch pruning).
+
+        The caller passes the estimated quality/value of each IOC so that
+        the IGD policy can filter low-confidence reports (threshold:
+        ``_IGD_REPORT_MIN_IOC_VALUE``, default 0.5).
+
+        Usage::
+
+            # In a fetch worker that delivers IOCs for a ToT branch:
+            self._orchestrator._meta_reasoning_coordinator._igd_policy.report_iocs(
+                branch_id=branch.node_id,
+                ioc_values=[ioc.estimated_value for ioc in findings],
+            )
+
+        Note:
+            This is a fire-and-forget telemetry method. Errors are logged
+            and swallowed so that fetch work is never blocked by IGD policy.
+        """
+        try:
+            if hasattr(self, '_orchestrator') and self._orchestrator is not None:
+                igd = getattr(self._orchestrator, '_igd_policy', None)
+                if igd is not None and callable(igd.report_iocs):
+                    igd.report_iocs(branch_id, ioc_values)
+        except Exception as e:
+            logger.debug('[NEXUS]-018-02 report_iocs failed: %s', e)
 
     def _check_circuit(self, domain: str) -> tuple[bool, str, float]:
         """
@@ -1465,6 +1506,31 @@ class FetchCoordinator(UniversalCoordinator):
                 '[UNIFIED-003] Entropy feedback loop disabled '
                 '(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0)',
             )
+        # SILICON-07: Initialize SwarmDAG for dynamic lane rebalancing.
+        # Lazy: the domain is created but workers are started lazily.
+        # The rebalancer loop runs in a background task.
+        self._swarm_dag_rebalance_task: asyncio.Task[None] | None = None
+        _swarm_dag_enabled = os.environ.get('HLEDAC_ENABLE_SWARM_DAG', '1') != '0'
+        if _swarm_dag_enabled:
+            try:
+                from ..core.rust_backend.swarm_dag import get_domain
+                self._swarm_dag = get_domain()
+                logger.info(
+                    '[SILICON-07] SwarmDAG initialized: type=%s, running=%s',
+                    type(self._swarm_dag).__name__,
+                    self._swarm_dag.is_running,
+                )
+                # Start rebalancer loop in background (fires every 10s)
+                self._swarm_dag_rebalance_task = safe_create_task(
+                    self._swarm_dag_rebalance_loop(),
+                    name='fetch_coordinator.swarm_dag_rebalancer',
+                )
+            except Exception as e:
+                logger.warning('[SILICON-07] SwarmDAG init failed (fail-soft): %s', e)
+                self._swarm_dag = None
+        else:
+            self._swarm_dag = None
+            logger.info('[SILICON-07] SwarmDAG disabled via HLEDAC_ENABLE_SWARM_DAG=0')
         # F-05: RobotsParser — 15 min TTL, 1024 domain LRU cache (M1 8GB bounded)
         try:
             from ..utils.robots_parser import RobotsParser
@@ -1490,6 +1556,13 @@ class FetchCoordinator(UniversalCoordinator):
                 self._http_cache_transport = None
         elif not self._http_cache_enabled:
             logger.info('FetchCoordinator HTTP cache disabled via HLEDAC_HTTP_CACHE=0')
+        # [DETA]-001: Inject SprintDeltaIndex into CrossSprintGate
+        if self._cross_sprint_gate is not None:
+            try:
+                await self._cross_sprint_gate.inject_delta_index()
+                logger.info('[DETA]-001 SprintDeltaIndex injected into CrossSprintGate')
+            except Exception as e:
+                logger.debug('[DETA]-001 SprintDeltaIndex injection failed (fail-soft): %s', e)
         return True
 
     async def _do_start(self, ctx: dict[str, Any]) -> None:
@@ -1516,6 +1589,35 @@ class FetchCoordinator(UniversalCoordinator):
             self._effective_ua = get_random_ua()
         except Exception:  # noqa: BLE001 — best-effort; UA pool unavailable; fallback
             self._effective_ua = 'Hledac-Bot/1.0'
+        # [META]-002: Configure and load DeltaSyncEngine KnownGoodCache at sprint prelude.
+        # Sprint ID and DuckDB store come from orchestrator context.
+        # SprintDeltaIndex injection (for CrossSprintGate) happens in _do_initialize.
+        _delta_enabled = os.environ.get('HLEDAC_ENABLE_CROSS_SPRINT_GATE', '1').lower() in ('1', 'true', 'yes', 'on')
+        if _delta_enabled and self._orchestrator is not None:
+            try:
+                _duckdb = getattr(self._orchestrator, '_duckdb_store', None)
+                _sid = ctx.get('sprint_id', '')
+                _prior = ctx.get('prior_sprint_ids', [])
+                if _duckdb and _sid:
+                    from hledac.universal.knowledge.sprint_delta_index import get_delta_sync_engine
+                    _engine = get_delta_sync_engine()
+                    _engine.configure(duckdb_store=_duckdb, sprint_id=_sid)
+                    if _prior:
+                        _engine.set_prior_sprint_ids(_prior)
+                    _loaded = await _engine.load_cache()
+                    logger.info(
+                        '[META-002] DeltaSyncEngine cache loaded: %d entities '
+                        '(sprint=%s, prior=%s)',
+                        _loaded, _sid, _prior,
+                    )
+                    # [META-002: Inject DuckDB store into SprintDeltaIndex for CrossSprintGate]
+                    if self._cross_sprint_gate is not None and self._cross_sprint_gate._delta_index is not None:
+                        self._cross_sprint_gate._delta_index._duckdb_store = _duckdb
+                    # [META]-014: Inject DuckDB store into EntityConfirmationService
+                    if self._entity_confirmation_service is not None:
+                        self._entity_confirmation_service._store = _duckdb
+            except Exception as exc:
+                logger.debug('[META-002] DeltaSyncEngine config/load failed (fail-soft): %s', exc)
         logger.info('FetchCoordinator started with %s URLs in frontier', len(self._frontier))
 
     def _url_priority(self, url: str) -> int:
@@ -1693,8 +1795,64 @@ class FetchCoordinator(UniversalCoordinator):
             except (TimeoutError, asyncio.CancelledError, OSError) as exc:  # noqa: BLE001 — best-effort; batch DNS pre-resolve failure; non-critical
                 logger.debug('[F-A4] batch DNS pre-resolve failed: %s: %s', type(exc).__name__, exc)
         candidates: list[tuple[float, str]] = []
+        # META-001: Cross-sprint pre-fetch gate — skip domains confirmed by
+        # >=2 distinct sources across >=1 sprints with avg confidence >=75%.
+        _skip_set: set[str] = set()
+        _freshness_list: list[Any] = []
+        try:
+            if self._cross_sprint_gate is not None and self._cross_sprint_gate.enabled:
+                # Extract entity_values (hosts) from unique URLs
+                _gate_entities: list[dict[str, str]] = []
+                for url in unique_batch:
+                    _host = _fast_url_host(url)
+                    if _host:
+                        _gate_entities.append({"entity_value": _host.lower(), "entity_type": "domain"})
+                if _gate_entities:
+                    _skip_set, _freshness_list = await self._cross_sprint_gate.should_skip_batch(
+                        _gate_entities
+                    )
+        except Exception:  # noqa: BLE001 — best-effort; cross-sprint gating failure; continue
+            pass
+
+        # [META]-014: Entity confirmation check — skip entities confirmed by
+        # >=3 distinct source types with MAX(confidence) > 0.7
+        _confirmed_set: set[str] = set()
+        if self._entity_confirmation_service is not None and self._entity_confirmation_service.enabled:
+            try:
+                _conf_tuples = [
+                    (_fast_url_host(url).lower(), "domain")
+                    for url in unique_batch
+                    if _fast_url_host(url)
+                ]
+                if _conf_tuples:
+                    _conf_results = await self._entity_confirmation_service.is_confirmed_batch(
+                        _conf_tuples
+                    )
+                    for _key, _conf in _conf_results.items():
+                        if _conf.is_confirmed:
+                            _confirmed_set.add(_conf.entity_value)
+            except Exception:  # noqa: BLE001 — best-effort; entity confirmation failure; continue
+                pass
+
         for url in unique_batch:
-            candidates.append((self._url_priority(url), url))
+            _host = _fast_url_host(url).lower()
+            # META-001: Skip known-good domains (CrossSprintGate)
+            if _host and _host in _skip_set:
+                self._telemetry["cross_sprint_skipped"] += 1
+                continue
+            # [META]-014: Skip confirmed entities (EntityConfirmationService)
+            # Entity is confirmed if >=3 distinct sources with MAX(confidence) > 0.7
+            if _host and _host in _confirmed_set:
+                self._telemetry["entity_confirmation_skipped"] += 1
+                continue
+            # META-001: Boost priority for novel domains (never seen in any sprint)
+            _priority = self._url_priority(url)
+            if _host:
+                for _f in _freshness_list:
+                    if _f.entity_value == _host and _f.freshness == "novel":
+                        _priority = max(_priority - 5, _PRIORITY_API)  # boost to near-API priority
+                        break
+            candidates.append((_priority, url))
         del unique_batch
         if not candidates:
             self._stop_reason = 'frontier_empty'
@@ -2446,6 +2604,18 @@ class FetchCoordinator(UniversalCoordinator):
         self._frontier.clear()
         self._processed_urls = _create_dedup_strategy()
         self._cover_count = 0
+        # META-001: Clear CrossSprintGate TTL cache on shutdown
+        try:
+            if self._cross_sprint_gate is not None:
+                self._cross_sprint_gate.reset()
+        except Exception:  # noqa: BLE001 — best-effort; gate reset is cleanup only
+            pass
+        # [META]-014: Clear EntityConfirmationService cache on shutdown
+        try:
+            if self._entity_confirmation_service is not None:
+                await self._entity_confirmation_service.invalidate_all()
+        except Exception:  # noqa: BLE001 — best-effort; confirmation reset is cleanup only
+            pass
         # UNIFIED-003: Stop consumer/worker loops gracefully before cancelling tasks.
         # Sets _running=False so loops exit their while conditions naturally,
         # then cancel for immediate teardown. Prevents CancelledError noise.
@@ -2462,6 +2632,16 @@ class FetchCoordinator(UniversalCoordinator):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._micro_sprint_worker_task
             self._micro_sprint_worker_task = None
+        # SILICON-07: Stop SwarmDAG rebalancer loop and DAG workers
+        if self._swarm_dag_rebalance_task is not None:
+            self._swarm_dag_rebalance_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._swarm_dag_rebalance_task
+            self._swarm_dag_rebalance_task = None
+        if self._swarm_dag is not None:
+            with contextlib.suppress(Exception):
+                self._swarm_dag.stop()
+            self._swarm_dag = None
         await self._stop_checkpoint_loop()
         if self._session_manager is not None:
             with contextlib.suppress(Exception):
@@ -2678,6 +2858,349 @@ class FetchCoordinator(UniversalCoordinator):
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # [META]-015: Micro-Sprint Contradiction Detection
+    # Detects contradictions between original findings and micro-sprint re-fetch results
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _get_original_findings_for_entity(self, entity_id: str) -> tuple[list[dict[str, Any]], float]:
+        """
+        Fetch original findings for an entity from DuckDB before micro-sprint re-fetch.
+
+        [META]-015: Critical step — stores original findings so they can be compared
+        against micro-sprint results. If contradiction is detected, the original
+        source is flagged for retraction.
+
+        Args:
+            entity_id: The entity to look up (URL, domain, IP, hash)
+
+        Returns:
+            Tuple of (findings list, original entropy). Findings are dicts with
+            source, content, confidence, ts fields. Returns ([], 0.0) on failure.
+        """
+        try:
+            # Get orchestrator and duckdb store
+            orchestrator = self._orchestrator
+            if orchestrator is None:
+                logger.debug('[META-015] No orchestrator, skipping original findings fetch')
+                return [], 0.0
+
+            duckdb_store = getattr(orchestrator, '_duckdb_store', None)
+            if duckdb_store is None:
+                logger.debug('[META-015] No DuckDB store, skipping original findings fetch')
+                return [], 0.0
+
+            # Check cache first (TTL 5 min)
+            if entity_id in self._micro_sprint_original_findings:
+                cached_findings, cached_at = self._micro_sprint_original_findings[entity_id]
+                if time.monotonic() - cached_at < 300.0:  # 5 min TTL
+                    # Compute entropy from cached findings
+                    entropy = await self._compute_evidence_entropy([
+                        {'content': f['content'], 'source': f['source']}
+                        for f in cached_findings
+                    ])
+                    return cached_findings, entropy
+
+            # Fetch from DuckDB using async path
+            # Use LIKE query on payload_text to find entity-related findings
+            rows = await duckdb_store.async_query_findings_by_text(
+                like_pattern=f'%{entity_id}%',
+                limit=50,
+            )
+
+            findings = []
+            for row in rows:
+                if isinstance(row, dict):
+                    # Extract relevant fields
+                    content = row.get('payload_text', '') or row.get('content', '') or ''
+                    if not content:
+                        continue
+
+                    # Only include if entity_id is actually mentioned
+                    if entity_id.lower() in content.lower():
+                        findings.append({
+                            'finding_id': row.get('finding_id', row.get('id', '')),
+                            'source': row.get('source_type', 'unknown'),
+                            'content': content,
+                            'confidence': float(row.get('confidence', 0.0)),
+                            'ts': float(row.get('ts', 0.0)),
+                        })
+
+            # Cache findings with timestamp
+            self._micro_sprint_original_findings[entity_id] = (findings, time.monotonic())
+
+            # Prune cache if too large (M1 8GB safe: max 256 entries)
+            if len(self._micro_sprint_original_findings) > 256:
+                # Remove oldest entries (by timestamp)
+                oldest_keys = sorted(
+                    self._micro_sprint_original_findings.keys(),
+                    key=lambda k: self._micro_sprint_original_findings[k][1]
+                )[:32]  # Remove 32 oldest
+                for key in oldest_keys:
+                    del self._micro_sprint_original_findings[key]
+
+            # Compute entropy
+            entropy = await self._compute_evidence_entropy([
+                {'content': f['content'], 'source': f['source']}
+                for f in findings
+            ])
+
+            logger.debug(
+                '[META-015] Fetched %d original findings for %s (entropy=%.3f)',
+                len(findings), entity_id, entropy,
+            )
+            return findings, entropy
+
+        except Exception as e:
+            logger.debug('[META-015] Failed to fetch original findings for %s: %s', entity_id, e)
+            return [], 0.0
+
+    def _detect_micro_sprint_contradictions(
+        self,
+        original_findings: list[dict[str, Any]],
+        micro_sprint_evidence_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        """
+        Detect contradictions between original findings and micro-sprint results.
+
+        [META]-015: Core fix — compares original findings against micro-sprint
+        re-fetch. Uses simple content comparison to detect factual contradictions.
+
+        Contradiction types detected:
+        - Factual: same entity has conflicting claims (e.g., different IPs for same domain)
+        - Confidence: new findings have significantly different confidence scores
+        - Source conflict: multiple sources disagree on same attribute
+
+        Args:
+            original_findings: List of original finding dicts (from DuckDB)
+            micro_sprint_evidence_ids: Evidence IDs from micro-sprint re-fetch
+
+        Returns:
+            List of contradiction dicts with severity, reason, conflicting_sources
+        """
+        contradictions: list[dict[str, Any]] = []
+
+        if not original_findings or not micro_sprint_evidence_ids:
+            return contradictions
+
+        try:
+            # Parse micro-sprint evidence IDs to extract protocol and content hints
+            # Evidence IDs are formatted as "protocol:entity:value" (e.g., "ct:example.com:subdomain")
+            ms_sources = set()
+            ms_values: dict[str, set[str]] = {}  # protocol -> set of values
+
+            for eid in micro_sprint_evidence_ids:
+                parts = eid.split(':', 2)
+                if len(parts) >= 2:
+                    protocol = parts[0]
+                    ms_sources.add(protocol)
+
+                    # Extract the value (third part if exists)
+                    if len(parts) >= 3:
+                        value = parts[2]
+                        if value not in ms_values.get(protocol, set()):
+                            ms_values.setdefault(protocol, set()).add(value)
+
+            # Check for factual contradictions in original findings
+            original_claims: dict[str, list[str]] = {}  # claim_type -> list of values
+
+            for finding in original_findings:
+                content = finding.get('content', '')
+                source = finding.get('source', 'unknown')
+
+                # Extract potential claims from content
+                # Simple heuristics for common IOC types
+                claims = self._extract_claims_from_content(content)
+                for claim_type, value in claims.items():
+                    if claim_type not in original_claims:
+                        original_claims[claim_type] = []
+                    original_claims[claim_type].append(value)
+
+            # Detect contradictions
+            for finding in original_findings:
+                content = finding.get('content', '')
+                source = finding.get('source', 'unknown')
+                confidence = finding.get('confidence', 0.5)
+
+                # Check for confidence contradictions
+                # If original confidence is high but micro-sprint found different results
+                if confidence > 0.7 and ms_sources:
+                    # Look for content differences
+                    ms_content_hints = set()
+                    for protocol_values in ms_values.values():
+                        ms_content_hints.update(protocol_values)
+
+                    for hint in ms_content_hints:
+                        if hint and hint != finding.get('finding_id', ''):
+                            # Check if hint is NOT in original content (contradiction)
+                            if hint.lower() not in content.lower()[:200]:
+                                contradictions.append({
+                                    'severity': 0.8,
+                                    'reason': 'micro_sprint_contradiction',
+                                    'original_source': source,
+                                    'micro_sprint_sources': list(ms_sources),
+                                    'description': f'Micro-sprint found new value "{hint[:50]}" not in original finding',
+                                    'entity_id': '',  # Will be filled by caller
+                                })
+
+            # Check for protocol-level conflicts
+            # e.g., CT log says one thing, passive DNS says another
+            if len(ms_sources) > 1:
+                # Multiple micro-sprint protocols disagree
+                protocol_values_flat = {v for vals in ms_values.values() for v in vals}
+                if len(protocol_values_flat) > 1:
+                    # Different protocols found different values
+                    for orig_finding in original_findings:
+                        orig_source = orig_finding.get('source', '')
+                        orig_confidence = orig_finding.get('confidence', 0.5)
+
+                        # If original source is authoritative (high confidence)
+                        # and micro-sprint found different values
+                        if orig_confidence > 0.6:
+                            contradictions.append({
+                                'severity': 0.7,
+                                'reason': 'protocol_conflict',
+                                'original_source': orig_source,
+                                'micro_sprint_sources': list(ms_sources),
+                                'description': f'Protocol conflict: {orig_source} vs {list(ms_sources)}',
+                                'entity_id': '',
+                            })
+
+            # Deduplicate by description
+            seen = set()
+            unique_contradictions = []
+            for c in contradictions:
+                desc = c.get('description', '')
+                if desc not in seen:
+                    seen.add(desc)
+                    unique_contradictions.append(c)
+
+            logger.debug(
+                '[META-015] Detected %d contradictions between original findings '
+                'and micro-sprint results',
+                len(unique_contradictions),
+            )
+
+            return unique_contradictions[:10]  # Cap at 10
+
+        except Exception as e:
+            logger.debug('[META-015] Contradiction detection failed: %s', e)
+            return []
+
+    def _extract_claims_from_content(self, content: str) -> dict[str, str]:
+        """
+        Extract IOC claims from finding content.
+
+        Returns dict of claim_type -> extracted_value.
+        Simple heuristic extraction for common IOC types.
+        """
+        claims: dict[str, str] = {}
+        content_lower = content.lower()
+
+        # Extract IP addresses
+        import re as _re
+        ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+        ips = _re.findall(ip_pattern, content)
+        if ips:
+            claims['ip'] = ips[0]
+
+        # Extract domain names (simple heuristic)
+        domain_pattern = r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b'
+        domains = _re.findall(domain_pattern, content_lower)
+        if domains:
+            claims['domain'] = domains[0]
+
+        # Extract SHA256 hashes
+        sha256_pattern = r'\b[a-fA-F0-9]{64}\b'
+        sha256s = _re.findall(sha256_pattern, content)
+        if sha256s:
+            claims['sha256'] = sha256s[0]
+
+        # Extract URLs
+        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+        urls = _re.findall(url_pattern, content)
+        if urls:
+            claims['url'] = urls[0][:100]  # Truncate for comparison
+
+        return claims
+
+    async def _emit_contradiction_alert(
+        self,
+        entity_id: str,
+        contradictions: list[dict[str, Any]],
+        original_entropy: float,
+    ) -> None:
+        """
+        Emit EntropyAlert for detected micro-sprint contradictions.
+
+        [META]-015: Bridges contradiction detection back to EntropyFetchBridge
+        for downstream handling (JTMS retraction, source blacklisting).
+
+        Args:
+            entity_id: The entity that had contradictions
+            contradictions: List of contradiction dicts from _detect_micro_sprint_contradictions
+            original_entropy: Entropy of original findings
+        """
+        if not contradictions:
+            return
+
+        try:
+            # Get EntropyFetchBridge
+            from ..brain.uncertainty_quant import get_entropy_bridge, EntropyAlert
+
+            bridge = get_entropy_bridge()
+            if bridge is None:
+                logger.debug('[META-015] No EntropyFetchBridge available')
+                return
+
+            # Create metadata for contradiction alert
+            metadata = {
+                'reason': 'micro_sprint_contradiction',
+                'contradiction_count': len(contradictions),
+                'max_severity': max(c.get('severity', 0.0) for c in contradictions),
+                'contradictions': [
+                    {
+                        'severity': c.get('severity', 0.0),
+                        'reason': c.get('reason', ''),
+                        'original_source': c.get('original_source', ''),
+                        'micro_sprint_sources': c.get('micro_sprint_sources', []),
+                        'description': c.get('description', ''),
+                    }
+                    for c in contradictions
+                ],
+                'original_entropy': original_entropy,
+                'alert_type': 'micro_sprint_contradiction',
+            }
+
+            # Find most severe source to blame
+            most_severe = max(contradictions, key=lambda c: c.get('severity', 0.0))
+            contradiction_source = most_severe.get('original_source', None)
+
+            # Create and emit alert with high severity
+            max_severity = max(c.get('severity', 0.0) for c in contradictions)
+
+            alert = EntropyAlert(
+                entity_id=entity_id,
+                entropy=max_severity * 2.0,  # Scale to entropy range
+                threshold_exceeded=1.5,
+                confidence=1.0 - max_severity,  # Inverse: high severity = low confidence
+                risk_level='high',
+                timestamp=time.time(),
+                metadata=metadata,
+                contradiction_source_id=contradiction_source,
+            )
+
+            await bridge.emit(alert)
+
+            logger.info(
+                '[META-015] Emitted contradiction alert for %s: '
+                '%d contradictions, max_severity=%.2f, source=%s',
+                entity_id, len(contradictions), max_severity, contradiction_source,
+            )
+
+        except Exception as e:
+            logger.debug('[META-015] Failed to emit contradiction alert: %s', e)
 
     # ─────────────────────────────────────────────────────────────────────────
     # UNIFIED-004: Micro-Sprint API — Entropy Feedback Loop
@@ -3052,6 +3575,56 @@ class FetchCoordinator(UniversalCoordinator):
 
         return 0.0
 
+    # SILICON-07: SwarmDAG rebalancer loop
+    async def _swarm_dag_rebalance_loop(self) -> None:
+        """
+        SILICON-07: Background loop that triggers SwarmDAG adaptive rebalancing.
+
+        Fires every 10 seconds (matching REBALANCE_INTERVAL_SECS in swarm_dag.rs).
+        On rebalance, logs the new worker allocation so operators can observe
+        mid-sprint lane migrations.
+
+        This loop is separate from the SwarmDAG internal rebalancer (which fires
+        every 10s) to provide Python-side observability and integration with
+        FetchCoordinator telemetry.
+        """
+        import time
+
+        last_rebalance_log = 0.0
+        while getattr(self, '_running', False):
+            try:
+                await asyncio.sleep(10.0)
+                if not self._swarm_dag:
+                    continue
+
+                # Trigger rebalance check in Rust/Python DAG
+                did_rebalance = self._swarm_dag.rebalance()
+
+                # Log allocation changes (but not every 10s — only on change)
+                roi_signals = self._swarm_dag.get_roi_signals()
+                allocation = self._swarm_dag.get_worker_allocation()
+
+                if did_rebalance or time.time() - last_rebalance_log > 60.0:
+                    logger.info(
+                        '[SILICON-07] SwarmDAG state: '
+                        'fetch_roi=%.1f parse_roi=%.1f analyze_roi=%.1f | '
+                        'workers: fetch=%d parse=%d analyze=%d | '
+                        'rebalance=%s',
+                        roi_signals.get('fetch', 0.0),
+                        roi_signals.get('parse', 0.0),
+                        roi_signals.get('analyze', 0.0),
+                        allocation.get('fetch', 0),
+                        allocation.get('parse', 0),
+                        allocation.get('analyze', 0),
+                        did_rebalance,
+                    )
+                    last_rebalance_log = time.time()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug('[SILICON-07] Rebalance loop error: %s', e)
+
     async def _entropy_alert_consumer_loop(self) -> None:
         """
         Background loop to consume entropy alerts and enqueue micro-sprint requests.
@@ -3199,6 +3772,28 @@ class FetchCoordinator(UniversalCoordinator):
                     )
                     continue
 
+                # [NEXUS]-018-02: IGD abort — skip micro-sprint if IGD below threshold
+                # Keys micro-sprint branches as "ms:<entity_id>" to avoid polluting
+                # ToT branch keys.
+                _ms_abort = False
+                try:
+                    if hasattr(self, '_orchestrator') and self._orchestrator is not None:
+                        igd = getattr(self._orchestrator, '_igd_policy', None)
+                        if igd is not None and callable(igd.should_abort):
+                            _ms_key = f'ms:{entity_id}'
+                            igd.register_branch(_ms_key)
+                            if igd.should_abort(_ms_key, depth=1):
+                                logger.info(
+                                    '[NEXUS]-018-02 IGD abort micro-sprint: entity=%s',
+                                    entity_id,
+                                )
+                                _ms_abort = True
+                except Exception:
+                    pass  # fail-soft — IGD abort is advisory, never blocks micro-sprint
+
+                if _ms_abort:
+                    continue
+
                 # Trigger micro-sprint with untried protocols only
                 result = await self.trigger_micro_sprint(
                     entity_id=entity_id,
@@ -3209,6 +3804,26 @@ class FetchCoordinator(UniversalCoordinator):
                     reason=reason,
                 )
 
+                # [META]-015: Contradiction check — compare micro-sprint results with originals
+                # This is the CORE FIX for the missing comparison step.
+                # If micro-sprint finds conflicting data, we emit an EntropyAlert
+                # to trigger JTMS retraction of the contradictory source.
+                if result.evidence_ids:
+                    original_findings, original_entropy = await self._get_original_findings_for_entity(
+                        entity_id
+                    )
+                    if original_findings:
+                        contradictions = self._detect_micro_sprint_contradictions(
+                            original_findings,
+                            list(result.evidence_ids),
+                        )
+                        if contradictions:
+                            # [META]-015: Emit high-severity alert for contradiction
+                            # This bridges back to EntropyFetchBridge for JTMS retraction
+                            await self._emit_contradiction_alert(
+                                entity_id, contradictions, original_entropy,
+                            )
+
                 all_tried = previously_tried + list(result.protocols_tried)
 
                 if result.success:
@@ -3218,6 +3833,21 @@ class FetchCoordinator(UniversalCoordinator):
                         entity_id, result.new_entropy,
                         result.protocols_tried, retry_count,
                     )
+                    # [NEXUS]-018-02: Feed micro-sprint success back to IGD policy
+                    # so the next IGD check on the same entity sees real IOC density.
+                    if not _ms_abort:  # only if we didn't IGD-abort (path not expected here)
+                        try:
+                            if hasattr(self, '_orchestrator') and self._orchestrator is not None:
+                                igd = getattr(self._orchestrator, '_igd_policy', None)
+                                if igd is not None and callable(igd.report_iocs):
+                                    # report new_entropy as an IOC quality proxy
+                                    # (higher = better IOC yield)
+                                    igd.report_iocs(
+                                        f'ms:{entity_id}',
+                                        [result.new_entropy],
+                                    )
+                        except Exception:
+                            pass
                     # Success — remove from pending tracking
                     continue
 

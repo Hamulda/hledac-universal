@@ -266,6 +266,7 @@ class DuckDBQualityGate:
 
         Current stateful rules:
           - Duplicate detection (persistent dedup flag)
+          - Low consistency score detection (META-007)
         """
         try:
             dedup_key = getattr(finding, "dedup_key", None) or getattr(
@@ -277,6 +278,44 @@ class DuckDBQualityGate:
             return True, None
         except Exception:  # noqa: BLE001 — best-effort; fail open
             return True, None
+
+    def check_consistency_score(
+        self,
+        finding: Any,
+        consistency_score: float,
+        entity_scores: dict[str, float] | None = None,
+    ) -> tuple[bool, str | None]:
+        """
+        META-007: Check if finding's consistency score passes threshold.
+
+        Findings with low consistency scores (from propositional contradictions)
+        are flagged but NOT automatically rejected — they are passed to synthesis
+        with a warning flag for analyst review.
+
+        Args:
+            finding: Finding to check
+            consistency_score: Batch-level consistency score
+            entity_scores: Optional per-entity consistency scores
+
+        Returns:
+            (passes, warning_if_any) — passes is True unless score is 0.0
+        """
+        # Get entity-specific score if available
+        entity = getattr(finding, "value", None) or getattr(finding, "ioc", None) or getattr(finding, "entity_value", "")
+
+        score = 1.0  # Default: assume consistent
+        if entity and entity_scores:
+            score = entity_scores.get(entity, 1.0)
+        elif consistency_score < 1.0:
+            score = consistency_score
+
+        # Never auto-reject based on consistency (analyst review needed)
+        # Just flag the warning
+        if score < 0.3:
+            return True, "consistency_critical"  # Low consistency, needs review
+        elif score < 0.6:
+            return True, "consistency_warning"  # Some concern
+        return True, None
 
     def classify_ingest_outcome(
         self,

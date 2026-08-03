@@ -84,6 +84,9 @@ __all__ = [
     "get_interpreter_stats",
     "IsolatedRuntime",
     "get_isolated_runtime",
+    # [META]-004: Elastic rayon pool manager
+    "RayonPoolManager",
+    "get_rayon_pool_manager",
 ]
 
 # -----------------------------------------------------------------------------
@@ -862,3 +865,317 @@ def get_isolated_runtime() -> IsolatedRuntime:
     if _isolated_runtime is None:
         _isolated_runtime = IsolatedRuntime()
     return _isolated_runtime
+
+
+# -----------------------------------------------------------------------------
+# [META]-004: RayonPoolManager — Phase-aware elastic pool resizing
+# -----------------------------------------------------------------------------
+
+# Import the elastic pool Rust bindings lazily to avoid import-time crashes.
+_RUST_ELASTIC: dict[str, Any] = {}
+
+
+def _get_elastic_rust() -> dict[str, Any] | None:
+    """Lazily load Rust elastic pool bindings via rust.raw. Returns None if unavailable.
+
+    R6: All Rust extension access goes through rust.raw, never direct import.
+    The elastic_pool functions (resize_cpu_pool_py, etc.) are registered as
+    top-level pyfunctions in the hledac_rust_extensions module.
+    """
+    global _RUST_ELASTIC
+    if _RUST_ELASTIC:
+        return _RUST_ELASTIC
+    try:
+        from hledac.universal.core.rust_backend import rust
+
+        raw = rust.raw
+        # rust.raw is a RustRawAccessor — missing attributes return None
+        fn1 = getattr(raw, "resize_cpu_pool", None)
+        fn2 = getattr(raw, "resize_io_pool", None)
+        fn3 = getattr(raw, "init_elastic_pools", None)
+        fn4 = getattr(raw, "get_elastic_cpu_threads", None)
+        fn5 = getattr(raw, "get_elastic_io_threads", None)
+        fn6 = getattr(raw, "get_elastic_total_threads", None)
+        if None in (fn1, fn2, fn3, fn4, fn5, fn6):
+            return None
+        _RUST_ELASTIC = {
+            "resize_cpu_pool": fn1,
+            "resize_io_pool": fn2,
+            "init_elastic_pools": fn3,
+            "get_cpu_threads": fn4,
+            "get_io_threads": fn5,
+            "get_total_threads": fn6,
+        }
+        return _RUST_ELASTIC
+    except Exception:
+        return None
+
+
+# M1 8GB thread budget: 4P + 4E = 8 total
+_MAX_TOTAL_THREADS: int = 8
+
+# Default pool sizes (BOOT phase)
+_DEFAULT_CPU_THREADS: int = 4
+_DEFAULT_IO_THREADS: int = 2
+
+# Phase-aware pool configurations
+# During ACTIVE: io_pool grows to 4 for fetch-heavy I/O workloads
+# During SYNTHESIS: cpu_pool grows to 6 for MLX inference (borrows from io_pool)
+# During WINDUP: back to defaults (4 cpu, 2 io)
+_PHASE_POOL_CONFIG: dict[str, tuple[int, int]] = {
+    "BOOT": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
+    "WARMUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
+    "ACTIVE": (_DEFAULT_CPU_THREADS, 4),  # 8 total — io-heavy fetch
+    "SYNTHESIS": (6, _DEFAULT_IO_THREADS),  # 8 total — cpu-heavy inference
+    "WINDUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
+    "EXPORT": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
+    "TEARDOWN": (2, 2),  # 4 total — minimal resources
+}
+
+
+class RayonPoolManager:
+    """
+    Phase-aware elastic rayon pool manager.
+
+    ISSUE [META]-004: Dynamically resizes cpu_pool and io_pool based on
+    sprint phase transitions. Replaces the static LazyLock<ThreadPool>
+    pattern with atomic RwLock-wrapped ThreadPools in Rust.
+
+    Phase table (M1 8GB: 4P + 4E = 8 total threads max):
+
+      | Phase     | cpu_pool | io_pool | Total | Rationale                  |
+      |-----------|----------|---------|-------|----------------------------|
+      | BOOT      | 4        | 2       | 6     | Bootstrap: not heavy       |
+      | WARMUP    | 4        | 2       | 6     | Prelude lanes parallel      |
+      | ACTIVE    | 4        | 4       | 8     | Fetch-heavy: io expands    |
+      | SYNTHESIS  | 6        | 2       | 8     | CPU-heavy: MLX inference   |
+      | WINDUP    | 4        | 2       | 6     | Back to default             |
+      | EXPORT    | 4        | 2       | 6     | Export I/O                 |
+      | TEARDOWN  | 2        | 2       | 4     | Minimal: tear down          |
+
+    Invariants:
+      - Total threads never exceed 8 (M1 8GB ceiling)
+      - io_pool shrink during SYNTHESIS: 2 → pool idle, mlx inference uses P-cores
+      - cpu_pool shrink during TEARDOWN: 4 → 2 to release memory
+      - All resize operations are atomic (RwLock swap in Rust)
+      - Rust pools auto-initialize on first access (lazy fallback)
+      - Fail-safe: if Rust unavailable, manager logs warning and is no-op
+
+    Usage:
+        manager = RayonPoolManager()
+        manager.set_phase("ACTIVE")   # cpu=4, io=4
+        manager.set_phase("SYNTHESIS")  # cpu=6, io=2
+        manager.set_phase("WINDUP")  # cpu=4, io=2
+        manager.shutdown()           # TEARDOWN: cpu=2, io=2
+    """
+
+    __slots__ = ("_current_phase", "_last_cpu", "_last_io", "_initialized", "_lock")
+
+    def __init__(self) -> None:
+        self._current_phase: str = "BOOT"
+        self._last_cpu: int = 0
+        self._last_io: int = 0
+        self._initialized: bool = False
+        self._lock = threading.Lock()
+
+        # Initialize Rust elastic pools if available
+        rust = _get_elastic_rust()
+        if rust:
+            try:
+                cpu, io = rust["init_elastic_pools"]()
+                self._last_cpu = cpu
+                self._last_io = io
+                self._initialized = True
+                logger.info(
+                    "[RayonPoolManager] Initialized: cpu=%d io=%d total=%d",
+                    cpu,
+                    io,
+                    cpu + io,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[RayonPoolManager] Rust init failed: %s — manager is no-op",
+                    e,
+                )
+        else:
+            logger.warning(
+                "[RayonPoolManager] Rust elastic_pool bindings unavailable — "
+                "pool resize is DISABLED (static pools will be used)"
+            )
+
+    @property
+    def current_phase(self) -> str:
+        """Current sprint phase."""
+        return self._current_phase
+
+    @property
+    def cpu_threads(self) -> int:
+        """Current CPU pool thread count."""
+        return self._last_cpu
+
+    @property
+    def io_threads(self) -> int:
+        """Current I/O pool thread count."""
+        return self._last_io
+
+    @property
+    def total_threads(self) -> int:
+        """Current total rayon threads."""
+        return self._last_cpu + self._last_io
+
+    @property
+    def is_available(self) -> bool:
+        """True if Rust elastic pool resize is available."""
+        return self._initialized
+
+    def set_phase(self, phase: str) -> None:
+        """
+        Set sprint phase and resize pools accordingly.
+
+        Phase must be one of: BOOT, WARMUP, ACTIVE, SYNTHESIS, WINDUP, EXPORT, TEARDOWN.
+        If the phase config exceeds the 8-thread total, both pools are clamped.
+
+        Args:
+            phase: Sprint phase name (case-insensitive).
+
+        Fail-safe: logs warning and does nothing if Rust unavailable.
+        """
+        phase_upper = phase.upper()
+        if phase_upper not in _PHASE_POOL_CONFIG:
+            logger.warning(
+                "[RayonPoolManager] Unknown phase %r — using current config",
+                phase,
+            )
+            return
+
+        if not self._initialized:
+            return  # Fail-safe: no-op
+
+        target_cpu, target_io = _PHASE_POOL_CONFIG[phase_upper]
+
+        # Enforce 8-thread total ceiling
+        total = target_cpu + target_io
+        if total > _MAX_TOTAL_THREADS:
+            # Clamp both proportionally
+            excess = total - _MAX_TOTAL_THREADS
+            # Give preference to keeping io_pool at least 1
+            if target_cpu > 1 and excess > 0:
+                target_cpu = max(1, target_cpu - excess)
+                excess = target_cpu + target_io - _MAX_TOTAL_THREADS
+                if excess > 0 and target_io > 1:
+                    target_io = max(1, target_io - excess)
+
+        with self._lock:
+            self._current_phase = phase_upper
+
+            # Resize CPU pool
+            if target_cpu != self._last_cpu:
+                try:
+                    rust = _get_elastic_rust()
+                    if rust:
+                        actual = rust["resize_cpu_pool"](target_cpu)
+                        logger.info(
+                            "[RayonPoolManager] [%s] cpu_pool: %d → %d threads",
+                            phase_upper,
+                            self._last_cpu,
+                            actual,
+                        )
+                        self._last_cpu = actual
+                except Exception as e:
+                    logger.warning(
+                        "[RayonPoolManager] [%s] cpu_pool resize(%d) failed: %s",
+                        phase_upper,
+                        target_cpu,
+                        e,
+                    )
+
+            # Resize I/O pool
+            if target_io != self._last_io:
+                try:
+                    rust = _get_elastic_rust()
+                    if rust:
+                        actual = rust["resize_io_pool"](target_io)
+                        logger.info(
+                            "[RayonPoolManager] [%s] io_pool: %d → %d threads",
+                            phase_upper,
+                            self._last_io,
+                            actual,
+                        )
+                        self._last_io = actual
+                except Exception as e:
+                    logger.warning(
+                        "[RayonPoolManager] [%s] io_pool resize(%d) failed: %s",
+                        phase_upper,
+                        target_io,
+                        e,
+                    )
+
+    def shutdown(self) -> None:
+        """
+        Tear down to minimal resources (TEARDOWN phase).
+
+        Reduces both pools to 2 threads each (total = 4), freeing
+        memory and OS thread slots before final teardown.
+        """
+        with self._lock:
+            self._current_phase = "TEARDOWN"
+            rust = _get_elastic_rust()
+            if rust and self._initialized:
+                try:
+                    cpu = rust["resize_cpu_pool"](2)
+                    io = rust["resize_io_pool"](2)
+                    self._last_cpu = cpu
+                    self._last_io = io
+                    logger.info(
+                        "[RayonPoolManager] [TEARDOWN] pools minimized: cpu=%d io=%d",
+                        cpu,
+                        io,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[RayonPoolManager] [TEARDOWN] resize failed: %s",
+                        e,
+                    )
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return current pool statistics."""
+        rust = _get_elastic_rust()
+        if rust and self._initialized:
+            try:
+                return {
+                    "available": True,
+                    "phase": self._current_phase,
+                    "cpu_threads": rust["get_cpu_threads"](),
+                    "io_threads": rust["get_io_threads"](),
+                    "total_threads": rust["get_total_threads"](),
+                }
+            except Exception:
+                pass
+        return {
+            "available": self._initialized,
+            "phase": self._current_phase,
+            "cpu_threads": self._last_cpu,
+            "io_threads": self._last_io,
+            "total_threads": self._last_cpu + self._last_io,
+        }
+
+
+# Module-level singleton
+_rayon_manager: RayonPoolManager | None = None
+_rayon_manager_lock = threading.Lock()
+
+
+def get_rayon_pool_manager() -> RayonPoolManager:
+    """
+    Get or create the global RayonPoolManager singleton.
+
+    Thread-safe lazy initialization.
+    Lazily initializes Rust elastic pools on first call.
+    """
+    global _rayon_manager
+    if _rayon_manager is not None:
+        return _rayon_manager
+    with _rayon_manager_lock:
+        if _rayon_manager is None:
+            _rayon_manager = RayonPoolManager()
+        return _rayon_manager

@@ -51,10 +51,14 @@ class DuckPGQGraphAdapter(GraphProtocol):
         ioc_type: str,
         sprint_id: str,
         properties: dict[str, Any] | None = None,  # noqa: ARG002
+        observed_at: float | None = None,
     ) -> bool:
-        """Delegate IOC upsert to DuckPGQGraph.add_ioc()."""
+        """Delegate IOC upsert to DuckPGQGraph.add_ioc().
+
+        [META]-012: observed_at captures the original event timestamp.
+        """
         try:
-            row_id = self._graph.add_ioc(ioc_value, ioc_type, 0.5, sprint_id)
+            row_id = self._graph.add_ioc(ioc_value, ioc_type, 0.5, sprint_id, observed_at=observed_at)
             return row_id is not None
         except Exception:
             return False
@@ -81,10 +85,17 @@ class DuckPGQGraphAdapter(GraphProtocol):
         except Exception:
             return False
 
-    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
-        """Delegate batch upsert to DuckPGQGraph.upsert_ioc_batch()."""
+    def upsert_ioc_batch(
+        self,
+        rows: list[tuple[str, str, float, str]],
+        observed_at: float | None = None,
+    ) -> int:
+        """Delegate batch upsert to DuckPGQGraph.upsert_ioc_batch().
+
+        [META]-012: observed_at provides default timestamp for all rows.
+        """
         try:
-            return self._graph.upsert_ioc_batch(rows)
+            return self._graph.upsert_ioc_batch(rows, observed_at=observed_at)
         except Exception:
             return 0
 
@@ -130,10 +141,14 @@ class DuckPGQGraphAdapter(GraphProtocol):
         ioc_type: str,
         value: str,
         confidence: float = 1.0,
+        observed_at: float | None = None,
     ) -> None:
-        """DuckPGQGraph: buffer via buffer_ioc (F272, in-memory)."""
+        """DuckPGQGraph: buffer via buffer_ioc (F272, in-memory).
+
+        [META]-006: observed_at captures the original event timestamp.
+        """
         try:
-            await self._graph.buffer_ioc(ioc_type, value, confidence)
+            await self._graph.buffer_ioc(ioc_type, value, confidence, observed_at)
         except Exception:  # noqa: BLE001
             pass
 
@@ -236,13 +251,17 @@ class IOCGraphAdapter(GraphProtocol):
         ioc_type: str,
         sprint_id: str,  # noqa: ARG002 — IOCGraph uses confidence, not sprint_id
         properties: dict[str, Any] | None = None,
+        observed_at: float | None = None,
     ) -> bool:
-        """Delegate IOC upsert to IOCGraph.upsert_ioc()."""
+        """Delegate IOC upsert to IOCGraph.upsert_ioc().
+
+        [META]-012: observed_at captures the original event timestamp.
+        """
         try:
             confidence = 0.5
             if properties:
                 confidence = properties.get("confidence", 0.5)
-            node_id = await self._graph.upsert_ioc(ioc_type, ioc_value, confidence)
+            node_id = await self._graph.upsert_ioc(ioc_type, ioc_value, confidence, observed_at=observed_at)
             return node_id is not None
         except Exception:
             return False
@@ -266,11 +285,19 @@ class IOCGraphAdapter(GraphProtocol):
         """IOCGraph does not have a direct relation API — use upsert_ioc_batch + observations."""
         return False
 
-    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
-        """Delegate batch upsert to IOCGraph.upsert_ioc_batch()."""
+    def upsert_ioc_batch(
+        self,
+        rows: list[tuple[str, str, float, str]],
+        observed_at: float | None = None,
+    ) -> int:
+        """Delegate batch upsert to IOCGraph.upsert_ioc_batch().
+
+        [META]-012: observed_at provides default timestamp for all rows.
+        Supports 5-tuple format for per-row timestamps.
+        """
         try:
             iocs = [(ioc_type, value, conf) for value, ioc_type, conf, _source in rows]
-            return len(self._graph.upsert_ioc_batch(iocs))
+            return len(self._graph.upsert_ioc_batch(iocs, observed_at=observed_at))
         except Exception:
             return 0
 
@@ -318,10 +345,14 @@ class IOCGraphAdapter(GraphProtocol):
         ioc_type: str,
         value: str,
         confidence: float = 1.0,
+        observed_at: float | None = None,
     ) -> None:
-        """Delegate buffered IOC to IOCGraph.buffer_ioc()."""
+        """Delegate buffered IOC to IOCGraph.buffer_ioc().
+
+        [META]-006: observed_at captures the original event timestamp.
+        """
         try:
-            await self._graph.buffer_ioc(ioc_type, value, confidence)
+            await self._graph.buffer_ioc(ioc_type, value, confidence, observed_at)
         except Exception:  # noqa: BLE001
             pass
 
@@ -431,20 +462,24 @@ class GraphFacade:
         ioc_type: str,
         sprint_id: str,
         properties: dict[str, Any] | None = None,
+        observed_at: float | None = None,
     ) -> bool:
-        """Upsert IOC — analytics path."""
+        """Upsert IOC — analytics path.
+
+        [META]-012: observed_at captures the original event timestamp.
+        """
         graph = self._store._ioc_graph
         if graph is None:
             return False
         if hasattr(graph, "upsert_ioc"):
             try:
-                return await graph.upsert_ioc(ioc_value, ioc_type, sprint_id, properties)
+                return await graph.upsert_ioc(ioc_value, ioc_type, sprint_id, properties, observed_at=observed_at)
             except Exception:
                 return False
         # DuckPGQGraph fallback via add_ioc
         if hasattr(graph, "add_ioc"):
             try:
-                row_id = graph.add_ioc(ioc_value, ioc_type, 0.5, sprint_id)
+                row_id = graph.add_ioc(ioc_value, ioc_type, 0.5, sprint_id, observed_at=observed_at)
                 return row_id is not None
             except Exception:
                 return False
@@ -482,14 +517,21 @@ class GraphFacade:
                 return False
         return False
 
-    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
-        """Batch upsert IOCs — analytics path."""
+    def upsert_ioc_batch(
+        self,
+        rows: list[tuple[str, str, float, str]],
+        observed_at: float | None = None,
+    ) -> int:
+        """Batch upsert IOCs — analytics path.
+
+        [META]-012: observed_at provides default timestamp for all rows.
+        """
         graph = self._store._ioc_graph
         if graph is None:
             return 0
         if hasattr(graph, "upsert_ioc_batch"):
             try:
-                return graph.upsert_ioc_batch(rows)
+                return graph.upsert_ioc_batch(rows, observed_at=observed_at)
             except Exception:
                 return 0
         return 0
@@ -560,14 +602,18 @@ class GraphFacade:
         ioc_type: str,
         value: str,
         confidence: float = 1.0,
+        observed_at: float | None = None,
     ) -> None:
-        """Buffer IOC for flush — truth-write path (_truth_write_graph)."""
+        """Buffer IOC for flush — truth-write path (_truth_write_graph).
+
+        [META]-006: observed_at captures the original event timestamp.
+        """
         graph = self._store._truth_write_graph or self._store._stix_graph
         if graph is None:
             return
         if hasattr(graph, "buffer_ioc"):
             try:
-                await graph.buffer_ioc(ioc_type, value, confidence)
+                await graph.buffer_ioc(ioc_type, value, confidence, observed_at)
             except Exception:  # noqa: BLE001
                 pass
 

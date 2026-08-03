@@ -45,6 +45,8 @@ import asyncio
 import logging
 import os
 import time
+import urllib.parse as _urlparse
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Final
 
@@ -89,6 +91,110 @@ _TRANSPORT_SEMAPHORE_LIMITS: Final[dict[str, int]] = {
     "curl_cffi_stealth": 3,  # ISSUE-15: stealth curl_cffi for racing
     "curl_cffi_tor": 2,  # ISSUE-15: Tor curl_cffi (higher latency per conn)
 }
+
+# ---------------------------------------------------------------------------
+# NEXUS-018-011: Transport winner cache
+# ---------------------------------------------------------------------------
+# Per-host caching of the last winning transport. Eliminates redundant
+# racing for repeat requests to the same host — saving 50-100 ms per URL
+# (3× asyncio.create_task + semaphore + gather overhead).
+# For 200 URLs per sprint, this saves ~10-20 s in redundant racing.
+#
+# M1 8GB bounded: 256 entries, FIFO eviction, 120 s TTL.
+
+# Winner cache: host → (transport_name, timestamp_monotonic)
+_WINNER_CACHE: dict[str, tuple[str, float]] = {}
+_WINNER_CACHE_TTL_S: float = 120.0  # 2 min TTL
+_WINNER_CACHE_MAX: int = 256  # M1 8GB bounded
+# LRU tracking: move to end on access, popleft for eviction
+_winner_access_order: deque[str] = deque()
+# Lock for cache operations
+_winner_cache_lock = asyncio.Lock()
+# Stats — protected by _winner_cache_lock
+_WINNER_CACHE_STATS: dict[str, int] = {
+    "hits": 0,
+    "misses": 0,
+    "fastpath_failures": 0,
+}
+
+# Transport aliases map for canonical names
+_WINNER_CANONICAL_TRANSPORTS: frozenset[str] = frozenset({
+    "httpx", "curl_cffi", "nw_connection", "nw_quic",
+})
+
+
+def _extract_host_for_winner_cache(url: str) -> str:
+    """Extract host:port for winner cache key. Port stripped if default."""
+    try:
+        parsed = _urlparse.urlparse(url)
+        host = parsed.netloc.lower()
+        if not host:
+            host = url.lower()
+        # Normalize: strip default port
+        if host.endswith(":80") and parsed.scheme == "http":
+            host = host[:-3]
+        elif host.endswith(":443") and parsed.scheme == "https":
+            host = host[:-4]
+        return host
+    except Exception:  # noqa: BLE001
+        return url.lower()
+
+
+async def _winner_cache_get(host: str) -> tuple[str, float] | None:
+    """Look up the cached winning transport for a host.
+
+    Returns (transport_name, timestamp) or None on miss/expiry.
+    Updates LRU access order on hit.
+    """
+    async with _winner_cache_lock:
+        if host not in _WINNER_CACHE:
+            return None
+        transport, ts = _WINNER_CACHE[host]
+        if time.monotonic() - ts >= _WINNER_CACHE_TTL_S:
+            # Expired — evict
+            del _WINNER_CACHE[host]
+            if host in _winner_access_order:
+                _winner_access_order.remove(host)
+            return None
+        # Hit — touch LRU
+        if host in _winner_access_order:
+            _winner_access_order.remove(host)
+        _winner_access_order.append(host)
+        return (transport, ts)
+
+
+async def _winner_cache_set(host: str, transport: str) -> None:
+    """Store a winning transport for a host."""
+    async with _winner_cache_lock:
+        now = time.monotonic()
+        # Evict oldest if at capacity
+        while len(_WINNER_CACHE) >= _WINNER_CACHE_MAX and _winner_access_order:
+            oldest = _winner_access_order.popleft()
+            _WINNER_CACHE.pop(oldest, None)
+        _WINNER_CACHE[host] = (transport, now)
+        if host in _winner_access_order:
+            _winner_access_order.remove(host)
+        _winner_access_order.append(host)
+
+
+def _winner_cache_stats() -> dict[str, int]:
+    """Return winner cache telemetry snapshot."""
+    return {
+        "winner_cache_size": len(_WINNER_CACHE),
+        "winner_cache_max": _WINNER_CACHE_MAX,
+        "winner_cache_hits": _WINNER_CACHE_STATS["hits"],
+        "winner_cache_misses": _WINNER_CACHE_STATS["misses"],
+        "winner_cache_fastpath_failures": _WINNER_CACHE_STATS["fastpath_failures"],
+    }
+
+
+def _reset_winner_cache() -> None:
+    """Reset winner cache (for testing)."""
+    _WINNER_CACHE.clear()
+    _winner_access_order.clear()
+    _WINNER_CACHE_STATS["hits"] = 0
+    _WINNER_CACHE_STATS["misses"] = 0
+    _WINNER_CACHE_STATS["fastpath_failures"] = 0
 
 # ---------------------------------------------------------------------------
 # Transport race result
@@ -296,6 +402,56 @@ class TransportRaceManager:
         # ISSUE-15: Auto-detect JS-heavy pages for playwright inclusion
         _auto_js = use_js or _is_likely_js_page(url)
 
+        # ── NEXUS-018-011: Winner cache fast path ────────────────────────
+        # Before running the full race, check if we already know the
+        # winning transport for this host. If the cached winner is still
+        # allowed (not circuit-broken), try it directly — saving the
+        # 50-100 ms race overhead (create_task × 3 + semaphore + gather).
+        # Falls through to the full race on any failure.
+        if not _auto_js and not use_stealth:
+            _cache_host = _extract_host_for_winner_cache(url)
+            _cached = await _winner_cache_get(_cache_host)
+            if _cached is not None:
+                _cached_transport, _ = _cached
+                if (_cached_transport in _WINNER_CANONICAL_TRANSPORTS
+                        and self.transport_check(_cached_transport)):
+                    async with _winner_cache_lock:
+                        _WINNER_CACHE_STATS["hits"] += 1
+                    logger.debug(
+                        "transport_race: winner cache hit for %s → %s",
+                        _cache_host, _cached_transport,
+                    )
+                    async with self._global_sem:
+                        self._stats["races_run"] += 1
+                        _fast_result = await _run_transport_standalone(
+                            self, _cached_transport, url, headers,
+                            max_bytes, timeout,
+                        )
+                    if _fast_result is not None and _fast_result.success:
+                        self.record_success(_cached_transport)
+                        self._stats[f"races_won_{_cached_transport}"] += 1
+                        return (_fast_result.result, _cached_transport)
+                    # Cached winner failed — evict from cache and retry full race
+                    async with _winner_cache_lock:
+                        _WINNER_CACHE_STATS["fastpath_failures"] += 1
+                        _WINNER_CACHE.pop(_cache_host, None)
+                        if _cache_host in _winner_access_order:
+                            _winner_access_order.remove(_cache_host)
+                    logger.debug(
+                        "transport_race: winner cache fast path failed for %s "
+                        "(%s), falling through to full race",
+                        _cache_host, _cached_transport,
+                    )
+                else:
+                    # Cached transport is circuit-broken — evict
+                    async with _winner_cache_lock:
+                        _WINNER_CACHE.pop(_cache_host, None)
+                        if _cache_host in _winner_access_order:
+                            _winner_access_order.remove(_cache_host)
+            else:
+                async with _winner_cache_lock:
+                    _WINNER_CACHE_STATS["misses"] += 1
+
         async with self._global_sem:
             self._stats["races_run"] += 1
             t0 = time.monotonic()
@@ -439,6 +595,15 @@ class TransportRaceManager:
                                 self.record_failure(t_name)
 
                 if winner is not None and winner.result is not None:
+                    # NEXUS-018-011: Cache the winning transport for this host
+                    _race_host = _extract_host_for_winner_cache(url)
+                    # Only cache canonical clearnet transports (not stealth/playwright)
+                    if winner.transport in _WINNER_CANONICAL_TRANSPORTS:
+                        await _winner_cache_set(_race_host, winner.transport)
+                        logger.debug(
+                            "transport_race: winner cache set %s → %s",
+                            _race_host, winner.transport,
+                        )
                     return (winner.result, winner.transport)
 
                 # Try to return a partial result from any non-cancelled transport
@@ -787,11 +952,16 @@ class TransportRaceManager:
 
     def get_stats(self) -> dict[str, int]:
         """Return racing statistics snapshot."""
-        return dict(self._stats)
+        stats = dict(self._stats)
+        # NEXUS-018-011: merge winner cache stats
+        stats.update(_winner_cache_stats())
+        return stats
 
     def reset_stats(self) -> None:
         """Reset racing statistics."""
         self._stats = {k: 0 for k in self._stats}
+        # NEXUS-018-011: also reset winner cache
+        _reset_winner_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -809,6 +979,52 @@ def _is_darknet_url(url: str) -> bool:
         or url_lower.endswith(".freenet")
         or url_lower.startswith("gopher://")
     )
+
+
+# ── NEXUS-018-011: Winner cache fast-path fetch ────────────────────────────
+
+
+async def _run_transport_standalone(
+    manager: "TransportRaceManager",
+    transport: str,
+    url: str,
+    headers: dict[str, str] | None,
+    max_bytes: int,
+    timeout_s: float,
+) -> RaceResult | None:
+    """Run a single transport fetch outside the full race (winner cache fast path).
+
+    Does NOT acquire per-transport semaphore — the fast path is only
+    used when the winner cache hits, and we want minimal overhead.
+    If the transport fails, returns None so the caller falls through
+    to the full race.
+
+    Returns RaceResult on success, None on failure (to trigger full race fallback).
+    """
+    t_start = time.monotonic()
+    try:
+        result = await manager._fetch_one(
+            transport, url, headers, max_bytes, timeout_s,
+        )
+    except asyncio.CancelledError:
+        return RaceResult(
+            transport=transport,
+            cancelled=True,
+            elapsed_ms=(time.monotonic() - t_start) * 1000,
+        )
+    except Exception:
+        return None
+
+    if result is None:
+        return None
+
+    rr = RaceResult(
+        transport=transport,
+        result=result if isinstance(result, dict) else None,
+        error=result.get("error") if isinstance(result, dict) else str(result),
+        elapsed_ms=(time.monotonic() - t_start) * 1000,
+    )
+    return rr
 
 
 # ISSUE-15: Known JS-heavy domain patterns for auto-detection.
@@ -949,4 +1165,8 @@ __all__ = [
     "get_race_manager",
     "is_transport_race_enabled",
     "reset_race_manager",
+    # NEXUS-018-011: winner cache exports
+    "_winner_cache_stats",
+    "_reset_winner_cache",
+    "_extract_host_for_winner_cache",
 ]

@@ -129,6 +129,29 @@ class DuckDBGraphAttachment:
         """Return analytics graph for synthesis layer."""
         return self._ensure().get_analytics_graph_for_synthesis()
 
+    def export_graph_topology(
+        self,
+        *,
+        max_nodes: int = 1000,
+        max_community_size: int = 200,
+        include_centrality: bool = True,
+    ) -> dict[str, Any]:
+        """
+        [META]-010: Export graph topology as Canvas-ready JSON.
+
+        Delegates to the attached graph's export_graph_topology() method.
+        DuckDBGraphAttachment → GraphAttachmentStore → IOCGraph.export_graph_topology().
+
+        Returns:
+            {"nodes": [...], "edges": [...], "communities": {...},
+             "centrality": {...}, "stats": {...}}
+        """
+        return self._ensure().export_graph_topology(
+            max_nodes=max_nodes,
+            max_community_size=max_community_size,
+            include_centrality=include_centrality,
+        )
+
     def get_top_entities_for_ghost_global(
         self, n: int = 100
     ) -> list[tuple[str, str, float]]:

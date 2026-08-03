@@ -44,6 +44,31 @@ logger = logging.getLogger(__name__)
 _wasmtime = None
 _wasmtime_available: bool | None = None
 
+# [NEXUS]-018-03: Mach vm_remap bridge — lazy import to avoid compile-time deps
+_mach_remap: object | None = None
+
+
+def _get_mach_remap_bridge():
+    """
+    Lazily import the MachRemapBridge from security/mach_remap.py.
+
+    Returns None if:
+      - HLEDAC_ENABLE_MACH_REMAP != "1"
+      - Platform is not macOS
+      - Rust extension not compiled with --features mach
+      - Any import error
+    """
+    global _mach_remap
+    if _mach_remap is not None:
+        return _mach_remap
+    try:
+        from hledac.universal.security.mach_remap import get_mach_remap_bridge as _get
+        _mach_remap = _get()
+        return _mach_remap
+    except ImportError:
+        _mach_remap = None
+        return None
+
 
 def _check_wasmtime() -> bool:
     global _wasmtime_available, _wasmtime
@@ -68,6 +93,13 @@ SANDBOX_ENABLED: bool = (
 
 SANDBOX_ALLOW_FALLBACK: bool = (
     os.environ.get("HLEDAC_SANDBOX_ALLOW_FALLBACK", "1") == "1"
+)
+
+# [NEXUS]-018-03: MachRemap threshold — files >= this size (bytes) are
+# candidates for zero-copy Mach vm_remap. Below this, tempfile is faster.
+# Default: 100 MB. Override: HLEDAC_MACH_REMAP_MIN_SIZE env var.
+SANDBOX_MACH_REMAP_MIN_SIZE: int = int(
+    os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))
 )
 
 # macOS Seatbelt available on macOS 10.10+
@@ -686,6 +718,7 @@ class MediaSandboxCoordinator:
             "total": 0,
             "seatbelt": 0,
             "subprocess": 0,
+            "zero_copy": 0,  # [NEXUS]-018-008: Mach remap path
             "wasm": 0,
             "fallback": 0,
             "errors": 0,
@@ -946,30 +979,290 @@ class MediaSandboxCoordinator:
         timeout_s: float,
         elapsed_start: float,
     ) -> SandboxResult:
-        """Run in subprocess isolation with rlimit + optional chroot."""
+        """
+        [NEXUS]-018-008 Tier-B: Run in subprocess isolation with Mach vm_remap zero-copy.
+
+        Strategy:
+          1. If file_size >= SANDBOX_MACH_REMAP_MIN_SIZE → Rust vm_remap_and_exec
+             (fork + COW remap + bidirectional pipe + exec analysis)
+          2. If remap fails or file too small → tempfile.NamedTemporaryFile copy
+
+        Pipeline A (Mach remap, zero-copy):
+          Rust vm_remap_and_exec():
+            fork()
+            child: mmap(file) → mach_vm_remap(self, addr, size)
+            child: write handshake [pid(4)+addr(8)+size(8)] to response_pipe
+            child: read analysis_script from stdin
+            child: exec(python -c "<script>") with remapped file path in env
+            child: write results to response_pipe, exit
+          Python:
+            read response_pipe for handshake
+            send analysis_script to child via stdin
+            read response_pipe for results
+            return SandboxResult
+
+        Pipeline B (tempfile, fallback):
+          Traditional: copy file to temp, spawn subprocess, collect output.
+
+        Fail-soft: ALWAYS returns a SandboxResult, never raises.
+        """
         import time
         if elapsed_start == 0.0:
             elapsed_start = time.monotonic()
 
-        config = IsolationConfig(
-            max_memory_mb=512,
-            max_cpu_seconds=timeout_s,
-            max_file_size_mb=100,
-            no_network=True,
-            read_only_fs=True,
-        )
+        file_path = Path(file_path)
+        elapsed_ms: float = 0.0
 
-        # This is the generic wrapper - actual binary-specific calls use this
-        # For now, return a result indicating subprocess isolation was applied
-        elapsed_ms = (time.monotonic() - elapsed_start) * 1000
-        self._stats["subprocess"] += 1
+        # ── Determine file size ─────────────────────────────────────────────
+        file_size: int | None = None
+        try:
+            file_size = file_path.stat().st_size
+        except OSError:
+            logger.debug(
+                "[MACH-REMAP] cannot stat %s — tempfile path",
+                file_path,
+            )
 
-        return SandboxResult(
-            success=True,
-            tier=SandboxTier.SUBPROCESS,
-            elapsed_ms=elapsed_ms,
-            sandboxed=True,
-        )
+        # Build safe environment
+        safe_env = {
+            k: v for k, v in os.environ.items()
+            if not any(
+                prefix in k
+                for prefix in (
+                    "API_", "KEY_", "TOKEN", "SECRET",
+                    "HLEDAC_", "SHODAN", "CENSYS", "GREYNOISE",
+                )
+            )
+        }
+
+        # Build analysis script
+        analysis_script = f"""
+import sys, os
+for k in list(os.environ):
+    if any(p in k for p in ('API','KEY','TOKEN','SECRET','HLEDAC')):
+        del os.environ[k]
+try:
+    with open({repr(str(file_path))}, 'rb') as f:
+        data = f.read()
+    sys.stdout.write('ok:' + str(len(data)) + ':')
+except Exception as e:
+    sys.stdout.write('err:' + str(e))
+"""
+
+        # ── Strategy 1: vm_remap_and_exec (zero-copy) ─────────────────────
+        remap_result = None
+        if (
+            file_size is not None
+            and file_size >= SANDBOX_MACH_REMAP_MIN_SIZE
+            and sys.platform == "darwin"
+        ):
+            bridge = _get_mach_remap_bridge()
+            if bridge is not None:
+                try:
+                    remap_result = await asyncio.to_thread(
+                        bridge.remap_for_sandbox,
+                        str(file_path),
+                        file_size,
+                    )
+                    if remap_result is not None:
+                        logger.info(
+                            "[MACH-REMAP] zero-copy remap: pid=%d addr=0x%x "
+                            "size=%d path=%s",
+                            remap_result.child_pid,
+                            remap_result.mapped_addr,
+                            remap_result.mapped_size,
+                            file_path.name,
+                        )
+                except Exception as exc:
+                    logger.debug(
+                        "[MACH-REMAP] remap_for_sandbox raised: %s — tempfile fallback",
+                        exc,
+                    )
+                    remap_result = None
+
+        # ── Execute (Path A: remap | Path B: tempfile) ────────────────────
+        try:
+            if remap_result is not None:
+                # ── Path A: Zero-copy via Rust remap+exec pipeline ─────────
+                # The Rust child is already running (exec'd the analysis script).
+                # We use asyncio.to_thread to do os.waitpid + pipe I/O synchronously
+                # since asyncio doesn't have native support for raw FD pipe communication.
+                stdout_data, returncode = await self._collect_mach_child_output(
+                    remap_result.child_pid,
+                    timeout_s,
+                    elapsed_start,
+                    analysis_script,
+                )
+                elapsed_ms = (time.monotonic() - elapsed_start) * 1000
+                self._stats["zero_copy"] += 1
+                return SandboxResult(
+                    success=(returncode == 0),
+                    tier=SandboxTier.SUBPROCESS,
+                    stdout=stdout_data,  # already bytes from os.read()
+                    stderr=b"",
+                    returncode=returncode,
+                    elapsed_ms=elapsed_ms,
+                    sandboxed=True,
+                )
+            else:
+                # ── Path B: Tempfile subprocess (existing fallback) ─────────────
+                tmp = tempfile.NamedTemporaryFile(
+                    suffix=file_path.suffix,
+                    mode='wb',
+                    delete=False,
+                    dir=tempfile.gettempdir(),
+                )
+                tmp.write(file_path.read_bytes())
+                tmp.close()
+                temp_path = Path(tmp.name)
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable, "-c", analysis_script,
+                        stdin=asyncio.subprocess.DEVNULL,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=safe_env,
+                    )
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(),
+                        timeout=timeout_s,
+                    )
+                    elapsed_ms = (time.monotonic() - elapsed_start) * 1000
+                    self._stats["subprocess"] += 1
+                    return SandboxResult(
+                        success=(proc.returncode == 0),
+                        tier=SandboxTier.SUBPROCESS,
+                        stdout=stdout,
+                        stderr=stderr,
+                        returncode=proc.returncode or 0,
+                        elapsed_ms=elapsed_ms,
+                        sandboxed=True,
+                    )
+                finally:
+                    try:
+                        temp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+        except asyncio.TimeoutError:
+            logger.warning(
+                "[SANDBOX] subprocess isolation timeout after %.1fs",
+                timeout_s,
+            )
+            elapsed_ms = (time.monotonic() - elapsed_start) * 1000
+            self._stats["errors"] += 1
+            return SandboxResult(
+                success=False,
+                tier=SandboxTier.SUBPROCESS,
+                elapsed_ms=elapsed_ms,
+                error="timeout",
+                sandboxed=True,
+            )
+        except Exception as exc:
+            logger.warning("[SANDBOX] subprocess isolation error: %s", exc)
+            elapsed_ms = (time.monotonic() - elapsed_start) * 1000
+            self._stats["errors"] += 1
+            return SandboxResult(
+                success=False,
+                tier=SandboxTier.SUBPROCESS,
+                elapsed_ms=elapsed_ms,
+                error=str(exc),
+                sandboxed=True,
+            )
+
+    async def _collect_mach_child_output(
+        self,
+        child_pid: int,
+        timeout_s: float,
+        elapsed_start: float,
+        analysis_script: str | None = None,
+    ) -> tuple[bytes, int]:
+        """
+        [NEXUS]-018-008: Wait for and collect output from a Rust-forked Mach remap child.
+
+        The child was spawned by Rust vm_remap_and_exec() which:
+          1. Mmap'd file into parent address space
+          2. Fork'd a child that remapped the pages into its own address space
+          3. Wrote the child PID to a handshake file
+          4. Reads analysis script from /tmp/hledac_mach_script_{pid}
+          5. Exec's the analysis script (python -c "<script>")
+          6. Writes results to /tmp/hledac_mach_result_{pid} and exits
+
+        We write the analysis script to the script path, read the handshake file
+        to get the real child PID, then wait and read the result file.
+
+        Returns: (stdout_bytes, returncode)
+        """
+        import time
+        import os as _os
+        import asyncio as _asyncio
+
+        # Write analysis script BEFORE child tries to read it
+        if analysis_script is not None:
+            script_path = f"/tmp/hledac_mach_script_{child_pid}"
+            sfd = _os.open(script_path, _os.O_CREAT | _os.O_WRONLY | _os.O_TRUNC, 0o600)
+            _os.write(sfd, analysis_script.encode("utf-8"))
+            _os.close(sfd)
+
+        # Read handshake file — written by Rust child before exec
+        # Format: pid(4 bytes LE)
+        handshake_path = f"/tmp/hledac_mach_handshake_{child_pid}"
+        result_path = f"/tmp/hledac_mach_result_{child_pid}"
+        real_pid: int | None = None
+        start = time.monotonic()
+
+        # Poll for handshake file (written before exec)
+        while time.monotonic() - start < 5.0:
+            try:
+                data = _os.read(
+                    _os.open(handshake_path, _os.O_RDONLY), 4
+                )
+                if data:
+                    import struct as _struct
+                    real_pid = _struct.unpack("<I", data)[0]
+                    _os.unlink(handshake_path)
+                    break
+            except (FileNotFoundError, OSError):
+                pass
+            await _asyncio.sleep(0.01)
+
+        if real_pid is None:
+            # Fallback: use original PID
+            real_pid = child_pid
+
+        # Poll for result file or wait for child
+        start2 = time.monotonic()
+        while time.monotonic() - start2 < timeout_s:
+            # Check if child exited
+            try:
+                wpid, status = await _asyncio.to_thread(
+                    _os.wait4, real_pid, _os.WNOHANG
+                )
+                if wpid != 0:
+                    rc = _os.WEXITSTATUS(status) if _os.WIFEXITED(status) else -1
+                    # Read result file
+                    try:
+                        fd = _os.open(result_path, _os.O_RDONLY)
+                        result = _os.read(fd, 65536)
+                        _os.close(fd)
+                        _os.unlink(result_path)
+                    except (FileNotFoundError, OSError):
+                        result = b""
+                    return result, rc
+            except ChildProcessError:
+                return b"", -1
+            await _asyncio.sleep(0.05)
+
+        # Timeout — kill child
+        try:
+            await _asyncio.to_thread(_os.kill, real_pid, 9)
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            _os.unlink(result_path)
+        except OSError:
+            pass
+        return b"", -1
 
     def get_tier_for_file(
         self,

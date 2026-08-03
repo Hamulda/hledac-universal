@@ -434,6 +434,7 @@ class CertstreamWebSocketClient:
         """Buffer certificate domains to IOCGraph.
 
         Adds CN and SANs as domain IOCs with confidence 0.85.
+        [META]-006: Uses not_before timestamp as observed_at for protocol provenance.
 
         Args:
             cert: Certificate to buffer
@@ -441,14 +442,24 @@ class CertstreamWebSocketClient:
         if not self._ioc_graph:
             return
 
+        # [META]-006: Convert not_before ISO string to Unix timestamp
+        observed_at: float | None = None
+        if cert.not_before:
+            try:
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(cert.not_before.replace('Z', '+00:00'))
+                observed_at = dt.timestamp()
+            except Exception:
+                pass
+
         try:
             # Buffer CN
             if cert.subject_common_name:
-                await self._ioc_graph.buffer_ioc('domain', cert.subject_common_name, confidence=0.85)
+                await self._ioc_graph.buffer_ioc('domain', cert.subject_common_name, confidence=0.85, observed_at=observed_at)
 
             # Buffer SANs
             for san in cert.san_names:
-                await self._ioc_graph.buffer_ioc('domain', san, confidence=0.85)
+                await self._ioc_graph.buffer_ioc('domain', san, confidence=0.85, observed_at=observed_at)
 
         except Exception as e:
             logger.warning(f'[Certstream] IOCGraph buffer error: {e}')

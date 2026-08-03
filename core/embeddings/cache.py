@@ -194,8 +194,15 @@ class EmbeddingCache:
     VERSION = _CACHE_VERSION  # ISSUE #022: = 2 (int8+scale)
 
     # bytes per entry: VERSION=2 (int8+scale) vs VERSION=1 (float16)
-    _INT8_BYTES_PER_ENTRY = 256 + 4  # int8_vec(256B) + scale(4B)
-    _FLOAT16_BYTES_PER_ENTRY = 512  # float16 vec
+    _FLOAT16_BYTES_PER_ENTRY = 512  # float16 vec (always 512 regardless of dim)
+
+    def _int8_bytes_per_entry(self) -> int:
+        """Dynamic int8 bytes per entry: dim bytes + 4B scale."""
+        return self.dim + 4
+
+    def _float16_bytes_per_entry(self) -> int:
+        """Dynamic float16 bytes per entry."""
+        return self.dim * 2  # 2 bytes per float16 element
 
     __slots__ = tuple(
         (
@@ -292,7 +299,7 @@ class EmbeddingCache:
                             dtype=np.int8,
                             mode="r+",
                             offset=_HEADER_SIZE,
-                            shape=(self._max_shape()[0], self._INT8_BYTES_PER_ENTRY),
+                            shape=(self._max_shape()[0], self._int8_bytes_per_entry()),
                         )
                     else:
                         self._mmap = np.memmap(
@@ -440,7 +447,7 @@ class EmbeddingCache:
 
     def _bytes_per_entry(self) -> int:
         """ISSUE #022: Return bytes per entry based on version."""
-        return self._INT8_BYTES_PER_ENTRY if self._version >= _VERSION_INT8 else self._FLOAT16_BYTES_PER_ENTRY
+        return self._int8_bytes_per_entry() if self._version >= _VERSION_INT8 else self._float16_bytes_per_entry()
 
     async def _init_memmap(self) -> None:
         async with await self._get_mmap_lock():
@@ -471,7 +478,7 @@ class EmbeddingCache:
                             dtype=np.int8,
                             mode="r+",
                             offset=_HEADER_SIZE,
-                            shape=(self._max_shape()[0], self._INT8_BYTES_PER_ENTRY),
+                            shape=(self._max_shape()[0], self._int8_bytes_per_entry()),
                         )
                     else:
                         self._mmap = np.memmap(
@@ -498,9 +505,9 @@ class EmbeddingCache:
                 self._mmap = None
 
     def _max_shape(self) -> tuple[int, int]:
-        entry_bytes = self._INT8_BYTES_PER_ENTRY  # always use int8 for max_shape
+        entry_bytes = self._int8_bytes_per_entry()  # always use int8 for max_shape
         max_entries = min(self.max_entries, self.max_bytes // entry_bytes)
-        return (max(max_entries, 1000), self._INT8_BYTES_PER_ENTRY)
+        return (max(max_entries, 1000), self._int8_bytes_per_entry())
 
     async def _create_memmap(self) -> None:
         max_entries, entry_bytes = self._max_shape()

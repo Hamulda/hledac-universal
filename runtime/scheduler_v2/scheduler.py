@@ -62,6 +62,9 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     _sidecar_orchestrator: Any = None
     _acquisition_plan: Any = None
 
+    # ── [META]-004: Elastic rayon pool manager ────────────────────────────
+    _rayon_manager: Any = None
+
     # ── Winddown extras ─────────────────────────────────────────────────────
     _synth_windup_task: Any = None
     _privacy_layer: Any = None
@@ -136,8 +139,14 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 ),
             )
 
+        # [META]-004: Initialize elastic pool manager before any work
+        self._init_rayon_pool_manager()
+
         # Phase prelude: run prelude lanes
         await self._run_prelude_and_first_cycle(query)
+
+        # [META]-004: ACTIVE phase — expand io_pool for fetch-heavy workload
+        self._set_pool_phase("ACTIVE")
 
         # Phase acquisition: run until terminal
         await self._run_acquisition_loop(query)
@@ -280,6 +289,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             ctx=self._ctx,
             ordered_sources=ordered_sources,
             duckdb_store=_duckdb_raw,
+            _rayon_manager=self._rayon_manager,
         )
 
         self._result.cycles_started = _phase_result.cycles_started
@@ -291,6 +301,10 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     async def _run_winddown(self, query: str) -> None:
         """Run winddown: export, synthesis, teardown."""
         from hledac.universal.runtime.scheduler_v2.winddown import WinddownOrchestrator
+
+        # [META]-004: WINDUP phase — revert to default pool config (4 cpu, 2 io)
+        # Synthesis runs on cpu_pool which is now at 4 threads (vs 6 in SYNTHESIS)
+        self._set_pool_phase("WINDUP")
 
         _duckdb_raw = self._ctx.duckdb_store if self._ctx else None
         _hermes_raw = self._hermes_engine.value if self._hermes_engine else None
@@ -313,6 +327,34 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
 
         _orch = WinddownOrchestrator()
         await _orch.run(ctx=self._ctx, lifecycle=self._lifecycle, query=query)
+
+        # [META]-004: TEARDOWN — minimize pools (cpu=2, io=2) after sprint ends
+        if self._rayon_manager is not None:
+            try:
+                self._rayon_manager.shutdown()
+            except Exception:
+                pass  # fail-safe
+
+    # ── [META]-004: Rayon pool management ──────────────────────────────────
+
+    def _init_rayon_pool_manager(self) -> None:
+        """Initialize the RayonPoolManager singleton (called at sprint start)."""
+        if self._rayon_manager is None:
+            from hledac.universal.core.isolated_executors import get_rayon_pool_manager
+            self._rayon_manager = get_rayon_pool_manager()
+            self._set_pool_phase("BOOT")
+
+    def _set_pool_phase(self, phase: str) -> None:
+        """Set sprint phase and resize rayon pools accordingly.
+
+        Safe to call multiple times — only logs on actual resize.
+        No-op if _rayon_manager is None (Rust unavailable or not initialized).
+        """
+        if self._rayon_manager is not None:
+            try:
+                self._rayon_manager.set_phase(phase)
+            except Exception:
+                pass  # fail-safe: pool resize errors are non-critical
 
     # ── Critical inject methods (needed for aclose / tests) ─────────────────
 

@@ -35,8 +35,12 @@ class AnalyticsProtocol(Protocol):
         ioc_type: str,
         sprint_id: str,
         properties: dict[str, Any] | None = None,
+        observed_at: float | None = None,
     ) -> bool:
-        """Upsert IOC into analytics graph. Returns True on success."""
+        """Upsert IOC into analytics graph. Returns True on success.
+
+        [META]-012: observed_at captures the original event timestamp.
+        """
         ...
 
     def find_connected(
@@ -57,9 +61,14 @@ class AnalyticsProtocol(Protocol):
         ...
 
     def upsert_ioc_batch(
-        self, rows: list[tuple[str, str, float, str]]
+        self,
+        rows: list[tuple[str, str, float, str]],
+        observed_at: float | None = None,
     ) -> int:
-        """Batch upsert IOCs. Returns number of rows passed to backend."""
+        """Batch upsert IOCs. Returns number of rows passed to backend.
+
+        [META]-012: observed_at provides default timestamp for all rows.
+        """
         ...
 
     def find_connected_batch(

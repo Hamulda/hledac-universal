@@ -326,16 +326,22 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
             pass  # no event loop or upsert failed — non-critical
 
     async def _upsert_graph_loop(self, findings: list[dict[str, Any]]) -> None:
-        """Async graph upsert — runs in the background."""
+        """Async graph upsert — runs in the background.
+
+        [META]-012: Extracts timestamp from finding dict for observed_at.
+        """
         try:
             from hledac.universal.knowledge.graph_service import DuckPGQGraph
             graph = DuckPGQGraph.get_instance()
             for finding in findings:
-                await graph.upsert_ioc(
-                    ioc_type=finding["ioc_type"],
+                # [META]-012: Extract observed_at from finding timestamp
+                observed_at = finding.get("ts") or finding.get("timestamp") or None
+                graph.upsert_ioc(
                     ioc_value=finding["ioc_value"],
+                    ioc_type=finding["ioc_type"],
+                    confidence=finding.get("confidence", 0.5),
                     source=finding["source"],
-                    metadata=finding.get("metadata", {}),
+                    observed_at=observed_at,
                 )
         except Exception as e:
             logger.debug("[AUTO-RE] graph upsert failed: %s", e)

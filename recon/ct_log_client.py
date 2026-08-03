@@ -390,11 +390,29 @@ class CTLogClient:
         return certs
 
     async def ingest_to_graph(self, ct_result: dict, ioc_graph: IOCGraph) -> int:
-        """Zapsat CT log findings do IOC graph. Vrátí počet nových uzlů."""
+        """Zapsat CT log findings do IOC graph. Vrátí počet nových uzlů.
+
+        [META]-006: Uses valid_from timestamp as observed_at for protocol provenance.
+        """
         source_domain = ct_result['domain']
         count = 0
+
+        # [META]-006: Convert valid_from to Unix timestamp for observed_at
+        observed_at: float | None = None
+        valid_from = ct_result.get('valid_from')
+        if valid_from:
+            try:
+                if isinstance(valid_from, (int, float)):
+                    observed_at = valid_from
+                elif isinstance(valid_from, str):
+                    from datetime import datetime, timezone
+                    dt = datetime.fromisoformat(valid_from.replace('Z', '+00:00'))
+                    observed_at = dt.timestamp()
+            except Exception:
+                pass
+
         for san in ct_result['san_names']:
-            await ioc_graph.buffer_ioc('domain', san, confidence=0.75)
+            await ioc_graph.buffer_ioc('domain', san, confidence=0.75, observed_at=observed_at)
             count += 1
         logger.debug(f'CT log {source_domain}: buffered {count} SAN domains')
         return count

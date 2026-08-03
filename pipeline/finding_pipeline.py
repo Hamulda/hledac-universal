@@ -381,12 +381,27 @@ class FindingPipeline:
             logger.warning(f"FindingPipeline: store flush graph error: {graph_ok}")
 
     def _graph_upsert_batch(self, batch: list[Any]) -> None:
-        """Sync graph batch upsert (called on thread pool)."""
+        """Sync graph batch upsert (called on thread pool).
+
+        [META]-012: Extracts timestamp from CanonicalFinding.ts for observed_at.
+        """
         if self._graph_service is None:
             return
         for f in batch:
             try:
-                self._graph_service.upsert_ioc(f)
+                # [META]-012: Get observed_at from finding timestamp
+                observed_at = getattr(f, 'ts', None)
+                # DuckPGQGraph.upsert_ioc accepts (value, ioc_type, confidence, source, observed_at)
+                # But GraphService.upsert_ioc uses (value, ioc_type, confidence, source, observed_at)
+                # Extract IOC from finding
+                ioc_type = getattr(f, 'ioc_type', None) or getattr(f, 'source_type', 'unknown')
+                ioc_value = getattr(f, 'ioc_value', None) or getattr(f, 'value', None)
+                confidence = getattr(f, 'confidence', 0.5)
+                source = getattr(f, 'source_type', 'finding_pipeline')
+                if ioc_value:
+                    self._graph_service.upsert_ioc(
+                        ioc_value, ioc_type, confidence, source, observed_at=observed_at
+                    )
             except Exception as e:
                 logger.warning(f"Graph upsert error: {e}")
 

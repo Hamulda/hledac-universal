@@ -197,17 +197,24 @@ async def _export_graph_html(
 
 
 def _build_graph_from_findings(findings: list[dict[str, Any]]) -> Any | None:
-    """Build a graph from findings for HTML export."""
+    """Build a graph from findings for HTML export.
+
+    [META]-012: Extracts timestamp from finding dict for observed_at.
+    """
     try:
         from hledac.universal.knowledge.graph_service import DuckPGQGraph
 
         graph = DuckPGQGraph()
         for f in findings:
-            graph.upsert_ioc({
-                "type": "url",
-                "value": f.get("url", ""),
-                "source": f.get("source_type", "public"),
-            })
+            # [META]-012: Extract observed_at from finding timestamp
+            observed_at = f.get("ts") or f.get("timestamp") or None
+            graph.upsert_ioc(
+                ioc_value=f.get("url", ""),
+                ioc_type="url",
+                confidence=f.get("confidence", 0.5),
+                source=f.get("source_type", "public"),
+                observed_at=observed_at,
+            )
         return graph
     except Exception:
         return None

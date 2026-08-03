@@ -193,6 +193,7 @@ if TYPE_CHECKING:
     from .async_query import AsyncQueryDomain, PythonFallbackAsyncQueryDomain, get_domain as _async_query_get_domain
     from .feed_decision import FeedDecisionDomain, get_domain as _feed_decision_get_domain
     from .feed_pipeline import FeedPipelineDomain, get_domain as _feed_pipeline_get_domain
+    from .swarm_dag import SwarmDAG, PythonFallbackSwarmDAG, get_domain as _swarm_dag_get_domain
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +391,11 @@ class AccelBackend:
         return self._get_domain("quality", _get_submodule("quality").get_domain)
 
     @property
+    def consistency(self) -> Any:
+        """META-007: Propositional consistency verifier domain."""
+        return _get_submodule("consistency").get_consistency_domain()
+
+    @property
     def ioc(self) -> "_RustIocDomain | _PythonIocDomain":
         return self._get_domain("ioc", _get_submodule("ioc").get_domain)
 
@@ -434,6 +440,15 @@ class AccelBackend:
     @property
     def spsc(self) -> "_RustSPSCDomain | _PythonSPSCDomain":
         return self._get_domain("spsc", _get_submodule("spsc").get_spsc_domain)
+
+    @property
+    def swarm_dag(self) -> Any:
+        """SILICON-07: Work-stealing task DAG with ROI-based adaptive pool sizing.
+
+        Provides WorkStealingDAG for dynamic lane rebalancing.
+        Falls back to PythonFallbackSwarmDAG when Rust is unavailable.
+        """
+        return self._get_domain("swarm_dag", _swarm_dag_get_domain)
 
     @property
     def query(self) -> "_RustQueryDomain | _PythonQueryDomain":
@@ -929,6 +944,11 @@ class _RustCompatShim:
     @property
     def spsc(self) -> Any:
         return self._accel.spsc
+
+    @property
+    def swarm_dag(self) -> Any:
+        """SILICON-07: Work-stealing task DAG. Falls back to PythonFallbackSwarmDAG."""
+        return self._accel.swarm_dag
 
     @property
     def query(self) -> Any:

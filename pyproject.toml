@@ -68,6 +68,11 @@ dependencies = [
     "orjson>=3.11.0,<4.0.0",   # 3.11+ obsahuje critical perf a memory optimalizace
     # msgspec: gc=True je default az do 0.21.x (confirmed stubs). Hot-path Structs mají
     # explicit gc=False (333 upraveno v F350M-R upgrade). msgspec 0.22+ není na PyPI.
+    # [NEXUS]-018-007: msgspec 0.22+ removes `gc` kwarg → replaces with `weakref`
+    #   (gc=False ↔ weakref=False). compat/msgspec_gc_compat.py provides a drop-in
+    #   `struct()` factory and `Struct` base class that translates `gc=False → weakref=False`
+    #   automatically. When msgspec>=0.22.0 lands on PyPI: upgrade upper bound to <0.24.0
+    #   and run migration to replace `msgspec.Struct(gc=False)` with `from compat.msgspec_gc_compat import struct`.
     "msgspec>=0.21.1,<0.22.0",
     # ── JSON Serialization Strategy (Issue M3) ───────────────────────────────
     # Wire format (typed structs with known schema): msgspec (msgspec.Struct)
@@ -387,6 +392,12 @@ check-silent-excepts = "hledac.universal.scripts.check_silent_excepts:main"
 dev = [
     # ── Testing ────────────────────────────────────────────────────────────────
     "pytest>=8.0.0",
+    # [NEXUS]-018-006: typeguard>=4.4.0 required for Python 3.14 PEP 649 compat.
+    # Python 3.14 evaluates annotations at runtime (PEP 649), so typeguard's
+    # `def pytest_addoption(parser: Parser)` needs `Parser` available at runtime.
+    # typeguard<4.4.0 imported `Parser` only under `if TYPE_CHECKING` → NameError.
+    # 4.4.3 (current) is verified working on Python 3.14 in CI. Pin floor:
+    "typeguard>=4.4.0",
     "pytest-asyncio>=1.4.0",
     "pytest-mock>=3.14.0",  # Issue #10: mocker fixture for MagicMock/AsyncMock lifecycle (~30-50 MB session savings)
     "pytest-xdist>=3.5.0",

@@ -138,6 +138,8 @@ class WinddownOrchestrator:
                 _tg.create_task(self._run_sidecars(ctx))
                 _tg.create_task(self._run_ane_semantic_dedup_advisory(ctx))
                 _tg.create_task(self._cancel_bg_tasks(ctx))
+                # [META]-002: Cross-sprint entity sync — aggregate entity_observations → cross_sprint_entity_index
+                _tg.create_task(self._run_delta_sync(ctx))
         except BaseExceptionGroup as _eg:
             # TaskGroup captures all exceptions; we log and continue for winddown
             for _exc in _eg.exceptions:
@@ -162,6 +164,10 @@ class WinddownOrchestrator:
         # Phase 2: Serial barrier - synthesis must complete before hermes unload
         _synth_success = await self._await_synthesis(ctx)
         synthesis_success = _synth_success
+
+        # META-007: Contradiction feedback audit — detect source disagreements
+        # and push re-fetch candidates to FetchCoordinator for next sprint.
+        _contradiction_result = await self._run_contradiction_audit(ctx, query)
 
         # Phase 3: Hermes unload (depends on synthesis complete) + lazy models
         await self._unload_hermes_at_teardown(ctx)
@@ -437,6 +443,60 @@ class WinddownOrchestrator:
         except Exception:
             pass
 
+    # ── META-007: Contradiction Feedback Audit ──────────────────────────────
+
+    async def _run_contradiction_audit(self, ctx: Any, query: str) -> Any:
+        """META-007: Run all contradiction detection engines and feed back.
+
+        Queries DuckDB for recent findings, runs all 4+ contradiction engines,
+        aggregates results, and pushes re-fetch candidates into the feedback
+        bridge queue for FetchCoordinator to pick up in the next sprint.
+
+        Fail-soft: any error → returns None, sprint continues.
+        """
+        try:
+            from hledac.universal.knowledge.contradiction_feedback import (
+                get_contradiction_bridge,
+            )
+        except ImportError:
+            return None
+
+        bridge = get_contradiction_bridge()
+        if not bridge.enabled:
+            return None
+
+        # Get findings from DuckDB
+        _duckdb = ctx.duckdb_store
+        if _duckdb is None:
+            return None
+
+        findings: list[dict[str, Any]] = []
+        try:
+            if hasattr(_duckdb, "get_top_findings"):
+                findings = await _duckdb.get_top_findings(limit=200)
+            elif hasattr(_duckdb, "get_recent_findings"):
+                findings = await _duckdb.get_recent_findings(limit=200)
+        except Exception:
+            pass
+
+        if not findings:
+            return None
+
+        # Run contradiction audit
+        sprint_id = getattr(ctx, "sprint_id", "") or ""
+        result = await bridge.run_contradiction_audit(findings, sprint_id=sprint_id)
+
+        # Store quality gate result in sprint result for export
+        if hasattr(ctx, "result") and ctx.result is not None:
+            try:
+                ctx.result.contradiction_quality_gate = result.quality_gate_passed
+                ctx.result.contradiction_count = result.total_contradictions
+                ctx.result.contradiction_re_fetch_candidates = len(result.re_fetch_candidates)
+            except Exception:
+                pass
+
+        return result
+
     def _maybe_launch_enhanced_research(self, ctx: Any) -> None:
         """Launch deep research advisory fire-and-forget after teardown/export."""
         try:
@@ -539,6 +599,51 @@ class WinddownOrchestrator:
             except Exception:
                 pass
             _bg_tasks.clear()
+
+    # ── [META]-002: Cross-sprint entity sync ─────────────────────────────────
+
+    async def _run_delta_sync(self, ctx: Any) -> None:
+        """
+        [META]-002: Run DeltaSyncEngine at sprint winddown.
+
+        Aggregates entity_observations from the current sprint into
+        cross_sprint_entity_index (DuckDB persistent). This survives
+        sprint teardown and feeds KnownGoodCache at the next sprint's
+        prelude, eliminating redundant network fetches for confirmed entities.
+
+        Runs in parallel with other winddown tasks (Phase 1 TaskGroup).
+        Fail-soft: any error is logged and ignored — winddown proceeds.
+        """
+        try:
+            from hledac.universal.knowledge.sprint_delta_index import get_delta_sync_engine
+
+            _store = ctx.duckdb_store
+            _sprint_id = getattr(ctx, 'sprint_id', None) or getattr(ctx, '_sprint_id', '') or str(getattr(ctx.result, 'sprint_id', ''))
+
+            if _store is None or not _sprint_id:
+                _logger = __import__("logging").getLogger(__name__)
+                _logger.debug("[META-002] DeltaSyncEngine: no duckdb_store or sprint_id — skipping")
+                return
+
+            _engine = get_delta_sync_engine()
+            _engine.configure(duckdb_store=_store, sprint_id=_sprint_id)
+
+            _logger = __import__("logging").getLogger(__name__)
+            _logger.info("[META-002] DeltaSyncEngine: starting sync for sprint=%s", _sprint_id)
+
+            _result = await _engine.sync()
+
+            _logger.info(
+                "[META-002] DeltaSyncEngine: sync complete for sprint=%s — "
+                "synced=%d, errors=%d, observations=%d",
+                _sprint_id,
+                _result.get("synced", 0),
+                _result.get("errors", 0),
+                _result.get("observations", 0),
+            )
+        except Exception as _exc:
+            _logger = __import__("logging").getLogger(__name__)
+            _logger.debug("[META-002] DeltaSyncEngine: sync failed (fail-soft): %s", _exc)
 
     async def _close_duckdb(self, ctx: Any) -> None:
         """Close DuckDB store at teardown."""

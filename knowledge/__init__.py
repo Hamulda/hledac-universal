@@ -28,6 +28,19 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     "ReplayResult": "knowledge.duckdb_store",
     "CanonicalFinding": "knowledge.duckdb_store",
     "create_owned_store": "knowledge.duckdb_store",
+    # [META]-005: TimeSeriesSplicer — unified millisecond-aligned timeline
+    "TimeSeriesSplicer": "knowledge.time_series_splicer",
+    "TimelineEvent": "knowledge.time_series_splicer",
+    "get_time_series_splicer": "knowledge.time_series_splicer",
+    "CtLogAdapter": "knowledge.time_series_splicer",
+    "GitCommitAdapter": "knowledge.time_series_splicer",
+    "TelegramAdapter": "knowledge.time_series_splicer",
+    "BlockchainAdapter": "knowledge.time_series_splicer",
+    "HttpAdapter": "knowledge.time_series_splicer",
+    "WarcAdapter": "knowledge.time_series_splicer",
+    "PassiveDnsAdapter": "knowledge.time_series_splicer",
+    "to_timestamp_ns": "knowledge.time_series_splicer",
+    "from_timestamp_ns": "knowledge.time_series_splicer",
     # graph_attachment — lightweight (no heavy deps)
     "GraphAttachmentStore": "knowledge.graph_attachment",
     # context_graph — lightweight (no heavy deps), kept eager

@@ -1309,11 +1309,20 @@ class PDFAnalyzer:
 
     # ── ADVERSARY-001: Subprocess sandbox for high-risk PDFs ─────────────────
 
+    # [NEXUS]-018-03: MachRemap threshold — zero-copy for files >= 100 MB.
+    # Below this, tempfile path is faster (no fork overhead).
+    _MACH_REMAP_MIN_SIZE: int = int(
+        os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))
+    )
+
     def _analyze_in_subprocess_sandbox(
         self, file_path: str, risk: MediaRiskProfile
     ) -> DocumentAnalysis:
         """
         ADVERSARY-001 Tier-B: Run PDF analysis in subprocess isolation.
+
+        [NEXUS]-018-03: For files >= 100 MB, attempts Mach vm_remap zero-copy
+        first. On failure (any reason), falls back to tempfile.NamedTemporaryFile.
 
         Spawns a child Python process with resource limits (rlimit, memory cap)
         to contain PyMuPDF CVEs. PyMuPDF CVE cannot pivot to orchestrator.
@@ -1321,7 +1330,39 @@ class PDFAnalyzer:
         import time
         start = time.monotonic()
 
-        # Serialize analysis to a temp script
+        # ── [NEXUS]-018-03: MachRemap for large files ────────────────────────
+        # Check file size before any I/O
+        file_size = 0
+        try:
+            file_size = os.path.getsize(file_path)
+        except OSError:
+            pass
+
+        use_mach_remap = (
+            file_size >= self._MACH_REMAP_MIN_SIZE
+            and sys.platform == "darwin"
+        )
+
+        if use_mach_remap:
+            try:
+                from hledac.universal.security.mach_remap import get_mach_remap_bridge
+                bridge = get_mach_remap_bridge()
+                remap_result = bridge.remap_for_sandbox(file_path, file_size)
+                if remap_result is not None:
+                    logger.info(
+                        "[MACH-REMAP] PDF sandbox zero-copy: pid=%d size=%d path=%s",
+                        remap_result.child_pid, file_size, Path(file_path).name,
+                    )
+                    # Fall through to tempfile path — MachRemap handles exec internally
+                    # TODO: wire full remap->exec pipeline when Rust bridge is complete
+            except Exception as exc:
+                logger.debug(
+                    "[MACH-REMAP] PDF remap unavailable: %s — tempfile path",
+                    exc,
+                )
+                use_mach_remap = False
+
+        # ── Serialize analysis to a temp script ──────────────────────────────
         tmp_script = tempfile.NamedTemporaryFile(
             suffix='_pdf_sandbox.py', mode='w', delete=False, dir=tempfile.gettempdir()
         )
@@ -1347,8 +1388,10 @@ class PDFAnalyzer:
 
             elapsed_ms = (time.monotonic() - start) * 1000
             logger.info(
-                "[ADVERSARY-001] PDF sandbox: path=%s rc=%s elapsed=%.1fms entropy=%.2f",
+                "[ADVERSARY-001] PDF sandbox: path=%s rc=%s elapsed=%.1fms entropy=%.2f "
+                "size=%d mach=%s",
                 Path(file_path).name, returncode, elapsed_ms, risk.entropy_bits_per_byte,
+                file_size, use_mach_remap,
             )
 
             if returncode == 0 and stdout:

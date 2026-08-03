@@ -23,10 +23,10 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
-from pathlib import Path
 from typing import Any
 import numpy as np
 from ..security.pii_gate import fallback_sanitize
+from ..core.embeddings.cache import EmbeddingCache
 MAX_LLM_PROMPT_CHARS = 8192
 try:
     import mlx.core as mx
@@ -108,7 +108,17 @@ class MoERouter:
     - Memory-aware routing (Sprint 8TD)
     """
     KNOWN_MODEL_SIZES: dict[str, float] = {'mlx-community/Hermes-3-Llama-3.1-8B-4bit': 5.2, 'mlx-community/Hermes-3-Llama-3.1-8B-8bit': 9.1, 'mlx-community/Phi-3.5-mini-instruct-4bit': 2.4, 'mlx-community/Mistral-7B-Instruct-v0.3-4bit': 4.8, 'mlx-community/gemma-2-2b-it-4bit': 1.8}
-    __slots__ = tuple(('_MEMMAP_CACHE_ENTRIES', '_MEMMAP_DTYPE', '_MEMMAP_EMBED_DIM', '_embedding_cache', '_embedding_model', '_embedding_tokenizer', '_expert_usage', '_experts', '_max_cache_size', '_memmap_cache', '_memmap_dir', '_memmap_file', '_memmap_index', '_memmap_next_row', '_prompt_cache_by_expert', '_router_mlp', '_sanitize_for_llm', 'config'))
+    __slots__ = tuple((
+        '_embed_cache',
+        '_embedding_model',
+        '_embedding_tokenizer',
+        '_expert_usage',
+        '_experts',
+        '_prompt_cache_by_expert',
+        '_router_mlp',
+        '_sanitize_for_llm',
+        'config',
+    ))
 
     def __init__(self, config: MoERouterConfig | None=None, sanitize_for_llm: Callable[[str], str] | None=None):
         """
@@ -128,16 +138,10 @@ class MoERouter:
         self._embedding_model = None
         self._embedding_tokenizer = None
         self._prompt_cache_by_expert: dict[str, Any] = {}
-        self._embedding_cache: dict[str, np.ndarray] = {}
-        self._max_cache_size = 100
-        self._memmap_cache: np.memmap | None = None
-        self._memmap_index: dict[str, int] = {}
-        self._memmap_next_row: int = 0
-        self._MEMMAP_CACHE_ENTRIES: int = 1000
-        self._MEMMAP_EMBED_DIM: int = 768
-        self._MEMMAP_DTYPE: type = np.float16
-        self._memmap_dir: Path = Path.home() / '.hledac' / 'cache' / 'moe_embed_cache'
-        self._memmap_file: Path | None = None
+        # [META]-013: Delegating to EmbeddingCache(dim=768) — two-layer LRU with
+        # free-list memmap. Replaces the old circular-round-robin memmap that
+        # had no real eviction. Shares the cache across sessions (meta.json persist).
+        self._embed_cache: EmbeddingCache | None = None
 
     async def initialize(self) -> None:
         """Inicializovat router MLP a embedding model"""
@@ -235,47 +239,48 @@ class MoERouter:
                 mx.clear_cache()
         logger.info(f"✓ Expert '{expert_name}' unloaded")
 
+    async def _embed_with_torch(self, text: str) -> np.ndarray | None:
+        """
+        Encode text using the torch embedding model (the original approach).
+        
+        Returns 768-dim normalized float32 embedding, or None on failure.
+        """
+        try:
+            if self._embedding_model is None or self._embedding_tokenizer is None:
+                return None
+            inputs = self._embedding_tokenizer(text, return_tensors='pt', truncation=True, max_length=512, padding=True)
+            try:
+                import torch
+                import torch.nn.functional as F
+                with torch.no_grad():
+                    outputs = self._embedding_model(**inputs)
+                    embeddings = outputs.last_hidden_state.mean(dim=1)
+                    embeddings = F.normalize(embeddings, p=2, dim=1)
+                    return embeddings.numpy().flatten().astype(np.float32)
+            except ImportError:
+                return None
+        except Exception:
+            return None
+
     async def _get_query_embedding(self, query: str) -> np.ndarray:
         """
         Získat embedding dotazu pro router.
 
-        Issue 4.2: Three-tier cache — in-memory dict (fastest) →
-        memmap index (persistent) → compute (slowest).
+        [META]-013: Now delegates to EmbeddingCache(dim=768) — two-layer LRU
+        with free-list persistent memmap (cross-session). Uses torch-based
+        encode when available, falls back to _fallback_embedding on failure.
         """
-        cache_key = hash(query) % 2 ** 32
-        key_str = str(cache_key)
-        if key_str in self._embedding_cache:
-            return self._embedding_cache[key_str]
-        memmap_result = self._lookup_memmap(key_str)
-        if memmap_result is not None:
-            self._embedding_cache[key_str] = memmap_result
-            return memmap_result
-        try:
-            if self._embedding_model is None or self._embedding_tokenizer is None:
-                return self._fallback_embedding(query)
-            inputs = self._embedding_tokenizer(query, return_tensors='pt', truncation=True, max_length=512, padding=True)
-            try:
-                from contextlib import nullcontext
-                import torch
-                with torch.no_grad():
-                    outputs = self._embedding_model(**inputs)
-                    embeddings = outputs.last_hidden_state.mean(dim=1)
-                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-                    result = embeddings.numpy().flatten()
-            except ImportError:
-                logger.warning('torch not available for embedding, using fallback')
-                return self._fallback_embedding(query)
-            if len(self._embedding_cache) >= self._max_cache_size:
-                oldest_key = next(iter(self._embedding_cache))
-                del self._embedding_cache[oldest_key]
-            self._embedding_cache[key_str] = result
-            self._ensure_memmap_cache()
-            self._memmap_index[key_str] = self._memmap_next_row
-            self._cache_to_memmap(result)
+        # [META]-013: lazily create the facade wrapping EmbeddingCache(dim=768)
+        if self._embed_cache is None:
+            self._embed_cache = EmbeddingCache(dim=768)
+        # EmbeddingCache.get_or_encode with torch embed fn for correct 768-dim output
+        result: np.ndarray | None = await self._embed_cache.get_or_encode(
+            query, encode_fn=self._embed_with_torch
+        )
+        if result is not None:
             return result
-        except Exception as e:
-            logger.warning(f'Embedding failed, using fallback: {e}')
-            return self._fallback_embedding(query)
+        # Fallback: stateless hash embedding when nothing works
+        return self._fallback_embedding(query)
 
     def _fallback_embedding(self, query: str) -> np.ndarray:
         """
@@ -301,67 +306,6 @@ class MoERouter:
             return embedding_768
         except Exception:
             return np.zeros(768, dtype=np.float32)
-
-    def _ensure_memmap_cache(self) -> bool:
-        """
-        Ensure memmap cache file is initialized.
-
-        Returns True if memmap is ready, False on error.
-        """
-        if self._memmap_cache is not None:
-            return True
-        try:
-            self._memmap_dir.mkdir(parents=True, exist_ok=True)
-            cache_file = self._memmap_dir / 'embeddings.memmap'
-            arr = np.memmap(cache_file, dtype=self._MEMMAP_DTYPE, mode='w+', shape=(self._MEMMAP_CACHE_ENTRIES, self._MEMMAP_EMBED_DIM))
-            arr.flush()
-            del arr
-            self._memmap_cache = np.memmap(cache_file, dtype=self._MEMMAP_DTYPE, mode='r+', shape=(self._MEMMAP_CACHE_ENTRIES, self._MEMMAP_EMBED_DIM))
-            self._memmap_file = cache_file
-            logger.debug(f'[MoE] memmap cache initialized: {self._MEMMAP_CACHE_ENTRIES}×{self._MEMMAP_EMBED_DIM} float16 ({self._MEMMAP_CACHE_ENTRIES * self._MEMMAP_EMBED_DIM * 2 / 1024:.0f}KB on disk)')
-            return True
-        except Exception as e:
-            logger.warning(f'[MoE] memmap cache init failed: {e}')
-            return False
-
-    def _cache_to_memmap(self, embedding: np.ndarray) -> None:
-        """Write embedding to next available memmap row."""
-        if self._memmap_cache is None:
-            return
-        try:
-            row = self._memmap_next_row
-            if row >= self._MEMMAP_CACHE_ENTRIES:
-                self._memmap_next_row = 0
-                row = 0
-            self._memmap_cache[row] = embedding.astype(self._MEMMAP_DTYPE)
-            self._memmap_next_row += 1
-        except Exception as e:
-            logger.debug(f'[MoE] memmap write failed: {e}')
-
-    def _lookup_memmap(self, cache_key: str) -> np.ndarray | None:
-        """Look up embedding from memmap by cache key. Returns None if not found."""
-        idx = self._memmap_index.get(cache_key)
-        if idx is None or self._memmap_cache is None:
-            return None
-        try:
-            row = self._memmap_cache[idx]
-            return np.array(row, dtype=np.float32)
-        except Exception:
-            return None
-
-    def _invalidate_memmap(self) -> None:
-        """Close and delete memmap cache file."""
-        try:
-            if self._memmap_cache is not None:
-                del self._memmap_cache
-                self._memmap_cache = None
-            if self._memmap_file is not None and self._memmap_file.exists():
-                self._memmap_file.unlink()
-                self._memmap_file = None
-            self._memmap_index.clear()
-            self._memmap_next_row = 0
-        except Exception as e:
-            logger.debug(f'[MoE] memmap invalidate failed: {e}')
 
     def _get_available_memory_gb(self) -> float:
         """
@@ -642,8 +586,9 @@ class MoERouter:
         expert_names = list(self._experts.keys())
         for expert_name in expert_names:
             await self._unload_expert(expert_name)
-        self._embedding_cache.clear()
-        self._invalidate_memmap()
+        if self._embed_cache is not None:
+            await self._embed_cache.close()
+            self._embed_cache = None
         self._router_mlp = None
         self._embedding_model = None
         self._embedding_tokenizer = None
@@ -659,7 +604,15 @@ class MoERouter:
 
     def get_status(self) -> dict[str, Any]:
         """Get router status (non-async version for simple checks)."""
-        return {'initialized': self._router_mlp is not None, 'experts_loaded': list(self._experts.keys()), 'expert_usage': dict(self._expert_usage), 'max_active': self.config.max_active_experts, 'cache_size': len(self._embedding_cache), 'memmap_cache_size': len(self._memmap_index), 'memmap_entries': self._MEMMAP_CACHE_ENTRIES, 'mlx_available': MLX_AVAILABLE}
+        cache_stats = self._embed_cache.get_stats() if self._embed_cache else {}
+        return {
+            'initialized': self._router_mlp is not None,
+            'experts_loaded': list(self._experts.keys()),
+            'expert_usage': dict(self._expert_usage),
+            'max_active': self.config.max_active_experts,
+            'embed_cache_stats': cache_stats,
+            'mlx_available': MLX_AVAILABLE,
+        }
 
     async def get_expert_info(self) -> dict[str, Any]:
         """
@@ -668,7 +621,18 @@ class MoERouter:
         Returns:
             Dict s informacemi
         """
-        return {'config': {'expert_names': self.config.expert_names, 'max_active_experts': self.config.max_active_experts, 'temperature': self.config.temperature, 'max_tokens_per_expert': self.config.max_tokens_per_expert}, 'loaded_experts': list(self._experts.keys()), 'expert_usage': self._expert_usage.copy(), 'embedding_cache_size': len(self._embedding_cache), 'mlx_available': MLX_AVAILABLE}
+        return {
+            'config': {
+                'expert_names': self.config.expert_names,
+                'max_active_experts': self.config.max_active_experts,
+                'temperature': self.config.temperature,
+                'max_tokens_per_expert': self.config.max_tokens_per_expert,
+            },
+            'loaded_experts': list(self._experts.keys()),
+            'expert_usage': self._expert_usage.copy(),
+            'embed_cache_stats': self._embed_cache.get_stats() if self._embed_cache else {},
+            'mlx_available': MLX_AVAILABLE,
+        }
 
 def route_synthesis(findings_count: int, has_gnn: bool, memory_pressure: str, sprint_query: str) -> str:
     """

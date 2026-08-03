@@ -104,8 +104,15 @@ def _ensure_patched() -> None:
 # ----------------------------------------------------------------------
 
 
-def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
-    """Add pattern hits to graph (inline from live_public_pipeline.py)."""
+def _add_pattern_hits_to_graph(
+    hits: list,
+    graph: Any,
+    observed_at: float | None = None,
+) -> None:
+    """Add pattern hits to graph (inline from live_public_pipeline.py).
+
+    [META]-012: observed_at captures the HTTP fetch timestamp for temporal provenance.
+    """
     if not hits or graph is None:
         return
     try:
@@ -120,6 +127,7 @@ def _add_pattern_hits_to_graph(hits: list, graph: Any) -> None:
                         value=value,
                         source="public_pipeline",
                         properties={"pattern": pattern},
+                        observed_at=observed_at,
                     )
                 except Exception:
                     pass  # noqa: BLE001
@@ -518,7 +526,10 @@ async def _fetch_and_process_page(
 
         # Graph injection
         if graph is not None and hits:
-            _add_pattern_hits_to_graph(hits, graph)
+            # [META]-012: Use current time as observed_at for fetched IOCs
+            import time as _time
+            _observed_at = getattr(result, "fetched_at", None) or _time.time()
+            _add_pattern_hits_to_graph(hits, graph, observed_at=_observed_at)
 
         # ---- Query-term secondary matching (P0-FIX F290) --------------
         _query_hits: list = []
@@ -548,7 +559,8 @@ async def _fetch_and_process_page(
                         hits = _query_hits
                         matched_count = len(_query_hits)
                         if graph is not None:
-                            _add_pattern_hits_to_graph(hits, graph)
+                            # [META]-012: Reuse same observed_at for query-term hits
+                            _add_pattern_hits_to_graph(hits, graph, observed_at=_observed_at)
             except Exception:
                 pass  # noqa: BLE001
 

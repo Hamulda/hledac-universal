@@ -441,6 +441,60 @@ class GraphAttachmentStore:
         """
         return self._ioc_graph
 
+    def export_graph_topology(
+        self,
+        *,
+        max_nodes: int = 1000,
+        max_community_size: int = 200,
+        include_centrality: bool = True,
+    ) -> dict[str, Any]:
+        """
+        [META]-010: Export graph topology as Canvas-ready JSON.
+
+        Delegates to the attached graph's export_graph_topology() method.
+        The attached graph is typically IOCGraph (Kuzu).
+
+        Fail-soft: returns empty structure if no graph is attached.
+
+        Returns:
+            {"nodes": [...], "edges": [...], "communities": {...},
+             "centrality": {...}, "stats": {...}}
+        """
+        if self._ioc_graph is None:
+            return {
+                "nodes": [],
+                "edges": [],
+                "communities": {},
+                "centrality": {},
+                "stats": {
+                    "total_nodes": 0,
+                    "total_edges": 0,
+                    "total_communities": 0,
+                    "density": 0.0,
+                    "max_degree": 0,
+                },
+            }
+        try:
+            return self._ioc_graph.export_graph_topology(
+                max_nodes=max_nodes,
+                max_community_size=max_community_size,
+                include_centrality=include_centrality,
+            )
+        except Exception:
+            return {
+                "nodes": [],
+                "edges": [],
+                "communities": {},
+                "centrality": {},
+                "stats": {
+                    "total_nodes": 0,
+                    "total_edges": 0,
+                    "total_communities": 0,
+                    "density": 0.0,
+                    "max_degree": 0,
+                },
+            }
+
     def get_top_entities_for_ghost_global(self, n: int=100) -> list[tuple[str, str, float]]:
         """
         Sprint 8TF §2: Bounded read-only seam for ghost_global cross-sprint entity accumulation.

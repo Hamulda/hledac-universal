@@ -58,6 +58,7 @@ __all__ = [
     "DATASKETCH",
     "RAPIDFUZZ",
     "RUST_EXT",
+    "H2_SAFARI_PRESET",
     # Language detection
     "FAST_LANGDETECT",
     # Internal tools
@@ -266,4 +267,11 @@ FAST_LANGDETECT = Capability("fast_langdetect", "fast_langdetect", install_hint=
 # Rust extensions
 RUST_EXT = Capability(
     "rust_extensions", "hledac_rust_extensions", install_hint="Build rust extensions: uv run maturin develop"
+)
+
+# [NEXUS]-018-01: Safari WebKit HTTP/2 SETTINGS preset
+H2_SAFARI_PRESET = Capability(
+    "h2_safari_preset",
+    "hledac_rust_extensions.h2_safari_preset",
+    install_hint="Build rust extensions: uv run maturin develop"
 )

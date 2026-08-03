@@ -60,6 +60,9 @@ class EntropyAlert:
         risk_level: "low" | "medium" | "high"
         timestamp: Unix epoch when alert was created
         metadata: Additional context (e.g., token_count, stability)
+        contradiction_source_id: [META-008] Source identifier when high entropy
+            traces back to a specific contradictory source. None if the
+            high entropy is not source-attributable.
     """
     entity_id: str
     entropy: float
@@ -68,6 +71,7 @@ class EntropyAlert:
     risk_level: str
     timestamp: float = field(default_factory=time.time)
     metadata: dict[str, Any] = field(default_factory=dict)
+    contradiction_source_id: str | None = None  # [META-008]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for queue serialization."""
@@ -79,6 +83,7 @@ class EntropyAlert:
             "risk_level": self.risk_level,
             "timestamp": self.timestamp,
             "metadata": self.metadata,
+            "contradiction_source_id": self.contradiction_source_id,
         }
 
     @classmethod
@@ -92,6 +97,7 @@ class EntropyAlert:
             risk_level=data["risk_level"],
             timestamp=data.get("timestamp", time.time()),
             metadata=data.get("metadata", {}),
+            contradiction_source_id=data.get("contradiction_source_id"),
         )
 
 

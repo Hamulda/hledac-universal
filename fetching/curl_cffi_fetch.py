@@ -44,6 +44,9 @@ from hledac.universal.transport.curl_cffi_fetch import (
     HLEDAC_DEBUG_JA3,
     _JA3_ROTATION_POOL,
     _blocking_altsvc_probe_for_url,
+    # [NEXUS]-018-01: WebKit HTTP/2 telemetry
+    get_webkit_transport_telemetry,
+    _reset_webkit_transport_telemetry,
 )
 
 logger = logging.getLogger(__name__)
@@ -144,4 +147,7 @@ __all__ = [
     "is_curl_cffi_capable",
     "require_curl_cffi",
     "fetch_via_curl_cffi_with_caps_check",
+    # [NEXUS]-018-01: WebKit HTTP/2 telemetry
+    "get_webkit_transport_telemetry",
+    "_reset_webkit_transport_telemetry",
 ]

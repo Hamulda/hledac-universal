@@ -143,6 +143,7 @@ class AcquisitionOrchestrator:
         ordered_sources: list[str],
         duckdb_store: Any,
         wall_clock_start: float,
+        rayon_manager: Any = None,  # [META]-004: RayonPoolManager for SYNTHESIS phase
     ) -> bool:
         """Execute windup sequence and return True if barrier passed.
 
@@ -150,6 +151,14 @@ class AcquisitionOrchestrator:
         Returns False if mandatory nonfeed failed (forced terminalization).
         """
         await self._flush_dedup(ctx)
+
+        # [META]-004: SYNTHESIS phase — expand cpu_pool to 6 for MLX inference
+        # io_pool shrinks to 2 (fetch is done, DuckDB writes are minimal)
+        if rayon_manager is not None:
+            try:
+                rayon_manager.set_phase("SYNTHESIS")
+            except Exception:
+                pass  # fail-safe
 
         # Fire-and-forget IOC co-occurrence
         safe_create_task_tracked(
@@ -216,6 +225,7 @@ class AcquisitionOrchestrator:
         ordered_sources: list[str],
         duckdb_store: Any,
         _now_monotonic: float | None = None,  # unused: shadowed inside loop; nominal API param
+        _rayon_manager: Any = None,  # [META]-004: RayonPoolManager for elastic resize
     ) -> AcquisitionPhaseResult:
         """Run acquisition cycles until runner signals terminal.
 
@@ -350,7 +360,7 @@ class AcquisitionOrchestrator:
 
                 if _guard_result:
                     barrier_passed = await self._run_windup_sequence(
-                        ctx, ordered_sources, duckdb_store, _wall_clock_start
+                        ctx, ordered_sources, duckdb_store, _wall_clock_start, _rayon_manager
                     )
                     return AcquisitionPhaseResult(
                         cycles_started=cycles_started,

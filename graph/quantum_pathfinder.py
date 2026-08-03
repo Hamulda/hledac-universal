@@ -999,7 +999,7 @@ class DuckPGQGraph:
         except Exception as e:
             logger.debug(f'[GRAPH] WAL pragma init failed: {e}')
         self._init_schema()
-        self._ioc_buffer: list[tuple[str, str, float]] = []
+        self._ioc_buffer: list[tuple[str, str, float, float | None]] = []
         self._closed = False  # ISSUE-5.1: close guard — also in __slots__
         self._obs_buffer: list[tuple[str, str, str, float, str]] = []
         self._BUFFER_FLUSH_SIZE: int = 500
@@ -1064,16 +1064,24 @@ class DuckPGQGraph:
         """
         return _graph_stats(self.db_path, self.con)
 
-    async def buffer_ioc(self, ioc_type: str, value: str, confidence: float=1.0) -> None:
+    async def buffer_ioc(
+        self,
+        ioc_type: str,
+        value: str,
+        confidence: float = 1.0,
+        observed_at: float | None = None,
+    ) -> None:
         """
         F272: Add IOC to in-memory buffer — ZERO DuckDB I/O in ACTIVE phase.
+
+        [META]-006: observed_at captures the original event timestamp.
 
         No auto-flush here — explicit flush_buffers() called in winddown.
         Thread-safe via GIL (called from async context on main thread).
         """
         if getattr(self, '_closed', False):
             return
-        self._ioc_buffer.append((ioc_type, value, confidence))
+        self._ioc_buffer.append((ioc_type, value, confidence, observed_at))
 
     async def buffer_observation(self, id_a: str, id_b: str, finding_id: str, ts: float, source_type: str) -> None:
         """
@@ -1089,6 +1097,8 @@ class DuckPGQGraph:
         """
         F272: Bulk flush both buffers to DuckDB — call in WINDUP or at buffer limit.
 
+        [META]-006: Resolves observed_at timestamps for DuckDB write.
+
         Returns:
             ioc_flushed: count of IOC nodes written (upserted) in this flush.
             obs_flushed: count of observation edges written to the graph.
@@ -1099,11 +1109,23 @@ class DuckPGQGraph:
         obs_copy = self._obs_buffer[:]
         self._ioc_buffer.clear()
         self._obs_buffer.clear()
+
+        # [META]-006: Resolve observed_at (None → time.time())
+        import time as _time
+        now = _time.time()
+        resolved_ioc_copy = [
+            (ioc_type, value, conf, (obs_at if obs_at is not None else now))
+            for ioc_type, value, conf, obs_at in ioc_copy
+        ]
+
         ioc_flushed = 0
         obs_flushed = 0
         try:
-            if ioc_copy:
-                rows = [(value, ioc_type, confidence, '') for ioc_type, value, confidence in ioc_copy]
+            if resolved_ioc_copy:
+                rows = [
+                    (value, ioc_type, confidence, '', obs_at)
+                    for ioc_type, value, confidence, obs_at in resolved_ioc_copy
+                ]
                 ioc_flushed = self.upsert_ioc_batch(rows)
             if obs_copy:
                 for id_a, id_b, fid, _ts_val, _src in obs_copy:
@@ -1552,25 +1574,91 @@ class DuckPGQGraph:
                 logger.debug(f'[GRAPH] DuckDB lock file removal failed: {e}')
 
     def _init_schema(self):
-        self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_nodes (\n                id         BIGINT PRIMARY KEY,\n                value      VARCHAR NOT NULL UNIQUE,\n                ioc_type   VARCHAR,\n                confidence FLOAT,\n                source     VARCHAR,\n                first_seen TIMESTAMP DEFAULT now()\n            )\n        ')
+        # [META]-006: Schema includes earliest_observed, latest_observed, observation_count
+        self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_nodes (\n                id               BIGINT PRIMARY KEY,\n                value            VARCHAR NOT NULL UNIQUE,\n                ioc_type         VARCHAR,\n                confidence       FLOAT,\n                source           VARCHAR,\n                first_seen       TIMESTAMP DEFAULT now(),\n                observed_at      DOUBLE,\n                earliest_observed DOUBLE,\n                latest_observed  DOUBLE,\n                observation_count INTEGER DEFAULT 1\n            )\n        ')
         self.con.execute('\n            CREATE TABLE IF NOT EXISTS ioc_edges (\n                src_id   BIGINT REFERENCES ioc_nodes(id),\n                dst_id   BIGINT REFERENCES ioc_nodes(id),\n                rel_type VARCHAR,\n                weight   FLOAT DEFAULT 1.0,\n                evidence VARCHAR\n            )\n        ')
         self.con.execute('CREATE INDEX IF NOT EXISTS idx_edges_src_id ON ioc_edges(src_id)')
         self.con.execute('CREATE INDEX IF NOT EXISTS idx_edges_dst_id ON ioc_edges(dst_id)')
 
-    def add_ioc(self, value: str, ioc_type: str='unknown', confidence: float=0.5, source: str='') -> int:
+    def add_ioc(
+        self,
+        value: str,
+        ioc_type: str = 'unknown',
+        confidence: float = 0.5,
+        source: str = '',
+        observed_at: float | None = None,
+    ) -> int:
+        """Add an IOC node with [META]-006 temporal provenance.
+
+        Args:
+            value: IOC value (domain, IP, hash, etc.)
+            ioc_type: IOC type classification
+            confidence: Base confidence (0..1)
+            source: Source identifier
+            observed_at: Original event timestamp (Unix epoch seconds).
+                         When None, defaults to current time.
+
+        Returns:
+            Stable node id (xxhash64-based).
+        """
         if getattr(self, '_lock_acquired', True) is False:
             logger.warning(f'[GRAPH] READ-ONLY — add_ioc({value!r}) ignored')
             return _stable_node_id(value)
+        import time as _time
         row_id = _stable_node_id(value)
-        self.con.execute('INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)\n               VALUES (?, ?, ?, ?, ?)\n               ON CONFLICT (id) DO NOTHING', [row_id, value, ioc_type, confidence, source])
+        ts = observed_at if observed_at is not None else _time.time()
+        self.con.execute(
+            'INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at, earliest_observed, latest_observed, observation_count)\n'
+            '               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)\n'
+            '               ON CONFLICT (id) DO UPDATE SET\n'
+            '               latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n'
+            '                                      THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n'
+            '               observation_count = ioc_nodes.observation_count + 1',
+            [row_id, value, ioc_type, confidence, source, ts, ts, ts]
+        )
         return row_id
 
-    def upsert_ioc_batch(self, rows: list[tuple[str, str, float, str]]) -> int:
+    def upsert_ioc(
+        self,
+        ioc_value: str,
+        ioc_type: str = 'unknown',
+        confidence: float = 0.5,
+        source: str = '',
+        observed_at: float | None = None,
+    ) -> int | None:
+        """Idempotent IOC upsert — delegates to add_ioc().
+
+        [META]-012: observed_at captures the original event timestamp.
+        Falls back to current time when None (backward-compatible).
+
+        Args:
+            ioc_value: IOC value (domain, IP, hash, etc.)
+            ioc_type: IOC type classification
+            confidence: Base confidence (0..1)
+            source: Source identifier
+            observed_at: Original event timestamp (Unix epoch seconds).
+
+        Returns:
+            Stable node id (xxhash64-based).
+        """
+        return self.add_ioc(ioc_value, ioc_type, confidence, source, observed_at=observed_at)
+
+    def upsert_ioc_batch(
+        self,
+        rows: list[tuple[str, str, float, str]],
+        observed_at: float | None = None,
+    ) -> int:
         """
         Batch upsert IOCs — single DuckDB round-trip for N rows.
 
+        [META]-012: observed_at provides default timestamp for all rows.
+        Supports 5-tuple format (value, ioc_type, confidence, source, observed_at)
+        for per-row timestamps. Falls back to 4-tuple for backward compat.
+
         Args:
             rows: List of (value, ioc_type, confidence, source) tuples.
+                  Optional 5th element: observed_at (Unix epoch seconds).
+            observed_at: Default timestamp for rows without explicit observed_at.
         Returns:
             Number of rows attempted (DuckDB executes all or none).
         """
@@ -1579,9 +1667,25 @@ class DuckPGQGraph:
         if getattr(self, '_lock_acquired', True) is False:
             logger.warning(f'[GRAPH] READ-ONLY — upsert_ioc_batch({len(rows)} rows) ignored')
             return 0
-        batch_with_ids = [(_stable_node_id(v), v, it, c, s) for v, it, c, s in rows]
-        self.con.executemany('INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source)\n               VALUES (?, ?, ?, ?, ?)\n               ON CONFLICT (id) DO NOTHING', batch_with_ids)
-        return len(batch_with_ids)
+        # [META]-012: Use provided default or current time
+        import time as _time
+        _now = observed_at if observed_at is not None else _time.time()
+        normalized_rows: list[tuple[int, str, str, float, str, float]] = []
+        for row in rows:
+            if len(row) >= 5:
+                value, ioc_type, confidence, source, row_ts = row[0], row[1], row[2], row[3], row[4]
+                obs = row_ts if row_ts is not None else _now
+            else:
+                value, ioc_type, confidence, source = row[0], row[1], row[2], row[3]
+                obs = _now
+            normalized_rows.append((_stable_node_id(value), value, ioc_type, confidence, source, obs))
+
+        # Use INSERT with ON CONFLICT DO UPDATE for upsert
+        self.con.executemany(
+            'INSERT INTO ioc_nodes (id, value, ioc_type, confidence, source, observed_at)\n             VALUES (?, ?, ?, ?, ?, ?)\n             ON CONFLICT (id) DO UPDATE SET\n             observed_at = CASE WHEN excluded.observed_at > ioc_nodes.observed_at OR ioc_nodes.observed_at IS NULL\n                               THEN excluded.observed_at ELSE ioc_nodes.observed_at END,\n             earliest_observed = CASE WHEN ioc_nodes.earliest_observed IS NULL OR excluded.observed_at < ioc_nodes.earliest_observed\n                                     THEN excluded.observed_at ELSE ioc_nodes.earliest_observed END,\n             latest_observed = CASE WHEN ioc_nodes.latest_observed IS NULL OR excluded.observed_at > ioc_nodes.latest_observed\n                                    THEN excluded.observed_at ELSE ioc_nodes.latest_observed END,\n             observation_count = ioc_nodes.observation_count + 1',
+            normalized_rows
+        )
+        return len(normalized_rows)
 
     def add_relation(self, src: str, dst: str, rel_type: str, weight: float=1.0, evidence: str=''):
         if getattr(self, '_lock_acquired', True) is False:

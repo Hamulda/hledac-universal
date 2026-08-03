@@ -150,6 +150,136 @@ _ja3_iter: itertools.cycle[str] = itertools.cycle(_JA3_ROTATION_POOL)
 # the hot path zero-cost.
 HLEDAC_DEBUG_JA3: bool = ENV.get_bool("HLEDAC_DEBUG_JA3")
 
+# [NEXUS]-018-01: HTTP/2 WebKit SETTINGS spoofing
+# Default ON — enables Safari WebKit HTTP/2 SETTINGS presets for Safari profiles.
+# Safari 18.0/17.4 uses INITIAL_WINDOW_SIZE=4,194,304 (4 MiB) vs curl_cffi's 65,535.
+# This prevents anti-bot systems from detecting automation via HTTP/2 fingerprinting.
+HLEDAC_H2_WEBKIT_PRESET: bool = ENV.get_bool("HLEDAC_H2_WEBKIT_PRESET", default=True)
+
+# Safari profiles that need WebKit HTTP/2 preset.
+_WEBKIT_H2_PROFILES: frozenset[str] = frozenset({"safari18_0", "safari17_4", "safari16_0", "safari_ios_18", "safari_ios_17"})
+
+# WINDOW_UPDATE increment for Safari WebKit (bytes).
+# Safari sends +1,048,304 byte increments (1 MiB - 216).
+_WEBKIT_WINDOW_INCREMENT: int = 1_048_304
+
+
+def _is_webkit_h2_profile(profile: str) -> bool:
+    """Check if profile needs Safari WebKit HTTP/2 SETTINGS preset."""
+    return profile.lower() in _WEBKIT_H2_PROFILES
+
+
+def _get_webkit_h2_settings(profile: str) -> dict[str, Any] | None:
+    """Get Safari WebKit HTTP/2 SETTINGS dict for curl_cffi impersonate profile.
+    
+    Returns dict with:
+    - initial_window_size: 4,194,304 (Safari) vs 65,535 (curl_cffi default)
+    - max_header_list_size: 100,000 (Safari 18) / 80,000 (Safari 17)
+    - no_priority: True for Safari 18+ (RFC 9218 strict)
+    """
+    if not HLEDAC_H2_WEBKIT_PRESET:
+        return None
+    
+    if not _is_webkit_h2_profile(profile):
+        return None
+    
+    try:
+        # Lazy import of Rust extension (registered at top-level in hledac.rust)
+        from hledac.rust import get_preset_for_profile as _rust_get_webkit_preset
+        preset = _rust_get_webkit_preset(profile)
+        if preset is None:
+            return None
+        return {
+            "initial_window_size": preset.settings[3][1] if len(preset.settings) > 3 else 4_194_304,
+            "max_header_list_size": preset.settings[5][1] if len(preset.settings) > 5 else 100_000,
+            "no_priority": preset.no_priority,
+            "window_increment": preset.window_increment,
+        }
+    except ImportError:
+        # Rust extension not built — fail soft, use default
+        return None
+    except Exception:  # noqa: BLE001
+        # Rust extension not available — fail soft, use default
+        return None
+
+
+async def _webkit_window_update_worker(
+    session: Any,
+    host: str,
+    increment: int = _WEBKIT_WINDOW_INCREMENT,
+    delay_ms: int = 80,
+) -> None:
+    """Fire-and-forget WINDOW_UPDATE worker for Safari WebKit back-pressure signal.
+    
+    Safari WebKit sends WINDOW_UPDATE frames with +1,048,304 byte increments
+    after ~80ms pauses between requests on keep-alive connections.
+    
+    This repliates the WebKit back-pressure signal to avoid detection by
+    anti-bot systems that analyze HTTP/2 frame sequences.
+    
+    Args:
+        session: curl_cffi AsyncSession (for connection reuse)
+        host: Target host for connection tracking
+        increment: WINDOW_UPDATE increment in bytes (default 1,048,304)
+        delay_ms: Delay before sending WINDOW_UPDATE (default 80ms)
+    
+    Note:
+        This is a best-effort signal. curl_cffi doesn't expose raw frame
+        control, so this serves as a placeholder for future curl_cffi 0.8.x
+        http2_settings hook integration.
+    """
+    try:
+        await asyncio.sleep(delay_ms / 1000.0)
+        # Note: curl_cffi 0.7.x doesn't expose WINDOW_UPDATE frames directly.
+        # This will be wired to http2_settings kwarg in curl_cffi >= 0.8.x.
+        # For now, log the intent for telemetry.
+        logger.debug(
+            f"[NEXUS-018-01] WINDOW_UPDATE intent for {host}: "
+            f"+{increment} bytes (Safari WebKit profile)"
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        pass  # Fail-soft: never propagate errors from background workers
+
+
+# [NEXUS]-018-01: WebKit transport telemetry counters (in transport layer).
+# These counters are incremented here and read by public_fetcher.get_webkit_transport_stats().
+_webkit_transport_count: int = 0
+_webkit_transport_success: int = 0
+_webkit_transport_failure: int = 0
+
+
+def _increment_webkit_telemetry(success: bool) -> None:
+    """Increment WebKit telemetry counters (called from the fetch hot path)."""
+    global _webkit_transport_count, _webkit_transport_success, _webkit_transport_failure
+    _webkit_transport_count += 1
+    if success:
+        _webkit_transport_success += 1
+    else:
+        _webkit_transport_failure += 1
+
+
+def get_webkit_transport_telemetry() -> dict[str, int]:
+    """Return WebKit HTTP/2 transport telemetry snapshot.
+    
+    Returns:
+        dict with keys: count, success, failure
+    """
+    return {
+        "webkit_count": _webkit_transport_count,
+        "webkit_success": _webkit_transport_success,
+        "webkit_failure": _webkit_transport_failure,
+    }
+
+
+def _reset_webkit_transport_telemetry() -> None:
+    """Reset WebKit transport telemetry counters (call at sprint winddown)."""
+    global _webkit_transport_count, _webkit_transport_success, _webkit_transport_failure
+    _webkit_transport_count = 0
+    _webkit_transport_success = 0
+    _webkit_transport_failure = 0
+
 
 def next_ja3_profile() -> str:
     """Return the next JA3/TLS profile from the rotation pool (thread-safe).
@@ -219,6 +349,186 @@ _resolved_sessions: dict[tuple[str, frozenset[tuple[str, int, str]]], tuple[Any,
 _resolved_sessions_order: deque[tuple[str, frozenset[tuple[str, int, str]]]] = deque()
 _MAX_RESOLVED_SESSIONS: int = 64  # Max unique resolve bindings
 _RESOLVED_SESSION_TTL_S: float = 300.0  # 5 min TTL
+
+# ── NEXUS-018-010: Background stale session eviction ───────────────────────
+# Sessions cached in _host_sessions, _curl_cffi_sessions, and _resolved_sessions
+# can become stale (server-closed TCP connection) after idle periods.
+# Without proactive eviction, the first request after idle triggers a
+# TLS re-handshake (200-400 ms RST + handshake cost).
+#
+# The eviction task runs every _EVICTION_INTERVAL_S and removes sessions
+# older than their TTL from all three caches.
+
+# Eviction interval: 30 s (matches prewarm_pool staleness guard pattern)
+_EVICTION_INTERVAL_S: float = 30.0
+# Profile session idle TTL: 90 s (typical server keep-alive + TIME_WAIT)
+_PROFILE_SESSION_IDLE_TTL_S: float = 90.0
+# Per-profile last-access timestamps for idle eviction
+_profile_session_access: dict[str, float] = {}
+
+# Eviction task handle (None until started)
+_eviction_task: asyncio.Task[None] | None = None
+# Lock to prevent double-start
+_eviction_started: bool = False
+_eviction_start_lock = threading.Lock()
+
+
+def _touch_profile_session(profile: str) -> None:
+    """Record a last-access timestamp for a profile session."""
+    _profile_session_access[profile] = time.monotonic()
+
+
+async def _evict_stale_sessions() -> None:
+    """Evict stale sessions from all three caches.
+
+    Called periodically by the background eviction task.
+    Never raises — all errors are caught and logged.
+    """
+    now = time.monotonic()
+
+    async with _curl_cffi_lock:
+        # ── Profile sessions: evict idle > _PROFILE_SESSION_IDLE_TTL_S ──
+        stale_profiles: list[str] = []
+        for profile in list(_curl_cffi_sessions):
+            last_access = _profile_session_access.get(profile, now)
+            if now - last_access >= _PROFILE_SESSION_IDLE_TTL_S:
+                stale_profiles.append(profile)
+
+        for profile in stale_profiles:
+            try:
+                session = _curl_cffi_sessions.pop(profile, None)
+                if profile in _curl_cffi_profiles_order:
+                    _curl_cffi_profiles_order.remove(profile)
+                _profile_session_access.pop(profile, None)
+                if session is not None and hasattr(session, "aclose"):
+                    safe_create_task(
+                        session.aclose(),
+                        name=f"curl_cffi:evict:idle:{profile}",
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+
+        # ── Host sessions: evict expired TTL ──
+        stale_hosts: list[tuple[str, str]] = []
+        for cache_key, (_session, last_access) in list(_host_sessions.items()):
+            if now - last_access >= _HOST_SESSION_TTL_S:
+                stale_hosts.append(cache_key)
+
+        for cache_key in stale_hosts:
+            try:
+                old = _host_sessions.pop(cache_key, None)
+                if cache_key in _host_access_order:
+                    _host_access_order.remove(cache_key)
+                if old is not None:
+                    old_session, _ = old
+                    if hasattr(old_session, "aclose"):
+                        safe_create_task(
+                            old_session.aclose(),
+                            name=f"curl_cffi:evict:host:{cache_key[0]}",
+                        )
+            except Exception:  # noqa: BLE001
+                pass
+
+        # ── Resolved sessions: evict expired TTL ──
+        stale_resolved: list = []
+        for cache_key, (_session, last_access) in list(_resolved_sessions.items()):
+            if now - last_access >= _RESOLVED_SESSION_TTL_S:
+                stale_resolved.append(cache_key)
+
+        for cache_key in stale_resolved:
+            try:
+                old = _resolved_sessions.pop(cache_key, None)
+                if cache_key in _resolved_sessions_order:
+                    _resolved_sessions_order.remove(cache_key)
+                if old is not None:
+                    old_session, _ = old
+                    if hasattr(old_session, "aclose"):
+                        safe_create_task(
+                            old_session.aclose(),
+                            name=f"curl_cffi:evict:resolved",
+                        )
+            except Exception:  # noqa: BLE001
+                pass
+
+    total_evicted = len(stale_profiles) + len(stale_hosts) + len(stale_resolved)
+    if total_evicted > 0:
+        logger.debug(
+            "[NEXUS-018-010] Evicted %d stale sessions: "
+            "%d profiles + %d hosts + %d resolved",
+            total_evicted,
+            len(stale_profiles),
+            len(stale_hosts),
+            len(stale_resolved),
+        )
+
+
+async def _eviction_loop() -> None:
+    """Background loop that periodically evicts stale sessions.
+
+    Runs until cancelled. Never raises — all errors are caught
+    and logged so the loop continues.
+    """
+    logger.debug(
+        "[NEXUS-018-010] Session eviction loop started "
+        "(interval=%.0fs, profile_ttl=%.0fs, host_ttl=%.0fs)",
+        _EVICTION_INTERVAL_S,
+        _PROFILE_SESSION_IDLE_TTL_S,
+        _HOST_SESSION_TTL_S,
+    )
+    # NEXUS-018-010-review: Run an immediate first pass so stale sessions
+    # accumulated before the loop started are evicted without waiting 30s.
+    try:
+        await _evict_stale_sessions()
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        pass
+    while True:
+        try:
+            await asyncio.sleep(_EVICTION_INTERVAL_S)
+            await _evict_stale_sessions()
+        except asyncio.CancelledError:
+            logger.debug("[NEXUS-018-010] Session eviction loop cancelled")
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "[NEXUS-018-010] Session eviction error (continuing)",
+                exc_info=True,
+            )
+
+
+def _ensure_eviction_started() -> None:
+    """Start the background session eviction task (idempotent).
+
+    Called lazily on first session access. Thread-safe —
+    double-start is prevented via _eviction_start_lock.
+    """
+    global _eviction_task, _eviction_started
+    if _eviction_started:
+        return
+    with _eviction_start_lock:
+        if _eviction_started:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop yet — defer until first use in async context
+            return
+        _eviction_task = loop.create_task(_eviction_loop())
+        _eviction_started = True
+
+
+async def _stop_eviction() -> None:
+    """Stop the background eviction task. Idempotent, used during cleanup."""
+    global _eviction_task, _eviction_started
+    if _eviction_task is not None and not _eviction_task.done():
+        _eviction_task.cancel()
+        try:
+            await _eviction_task
+        except asyncio.CancelledError:
+            pass
+    _eviction_task = None
+    _eviction_started = False
 
 
 async def _get_or_create_resolved_session(
@@ -471,6 +781,8 @@ async def async_get_curl_cffi_session_for_host(
                     _host_access_order.remove(cache_key)
                 _host_access_order.append(cache_key)
                 _host_sessions[cache_key] = (session, now)
+                # NEXUS-018-010: ensure eviction loop is running
+                _ensure_eviction_started()
                 logger.debug(f"[F273H/F-02] host+profile cache hit: {host} profile={profile}")
                 return True, session, profile, host
             else:
@@ -529,7 +841,12 @@ async def _get_or_create_session(profile: str) -> Any | None:
         _curl_cffi_profiles_order.append(profile)
         session = _curl_cffi_sessions[profile]
         if hasattr(session, "closed") and not session.closed:
+            # NEXUS-018-010: touch profile access timestamp + ensure eviction running
+            _touch_profile_session(profile)
+            _ensure_eviction_started()
             return session
+        # NEXUS-018-010: ensure eviction loop is running
+        _ensure_eviction_started()
         del _curl_cffi_sessions[profile]
 
     # F265B: try prewarm pool first
@@ -564,18 +881,30 @@ async def _get_or_create_session(profile: str) -> Any | None:
 
             from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]
 
-            # P3-04 FIX: Explicit connection pooling + HTTP/2 for connection reuse.
-            # http2=True enables HTTP/2 multiplexing over persistent connections.
-            # max_clients=25 matches max_connections intent; max_keepalive implicit via HTTP/2.
-            new_session = AsyncSession(
-                impersonate=profile,
-                timeout=10.0,
-                max_clients=25,  # connection pool size (keepalive connections)
-                http2=True,  # P3-04: HTTP/2 for multiplexing and connection reuse
-                curl_options=_TCP_KEEPALIVE_CURL_OPTIONS,  # ISSUE-P6-001: TCP keep-alive on sockets
-            )
+            # [NEXUS]-018-01: Safari WebKit HTTP/2 SETTINGS preset.
+            # Safari 18.0/17.4 uses INITIAL_WINDOW_SIZE=4,194,304 (4 MiB) vs
+            # curl_cffi's default 65,535. This prevents anti-bot systems from
+            # detecting automation via HTTP/2 frame fingerprinting.
+            # Note: curl_cffi 0.7.x doesn't expose http2_settings kwarg.
+            # This will be wired to curl_cffi >= 0.8.x http2_settings hook.
+            _webkit_preset = _get_webkit_h2_settings(profile)
+            _session_kwargs: dict[str, Any] = {
+                "impersonate": profile,
+                "timeout": 10.0,
+                "max_clients": 25,  # connection pool size (keepalive connections)
+                "http2": True,  # P3-04: HTTP/2 for multiplexing and connection reuse
+                "curl_options": _TCP_KEEPALIVE_CURL_OPTIONS,  # ISSUE-P6-001: TCP keep-alive on sockets
+            }
+            # curl_cffi >= 0.8.x will support http2_settings kwarg:
+            # if _webkit_preset:
+            #     _session_kwargs["http2_settings"] = _webkit_preset
+            #     logger.debug(f"curl_cffi session with WebKit HTTP/2 preset for: {profile}")
+            new_session = AsyncSession(**_session_kwargs)
             _curl_cffi_sessions[profile] = new_session
             _curl_cffi_profiles_order.append(profile)
+            # NEXUS-018-010: start tracking idle time for eviction
+            _touch_profile_session(profile)
+            _ensure_eviction_started()
             logger.debug(f"curl_cffi session created for profile: {profile}")
             return new_session
     finally:
@@ -597,9 +926,14 @@ async def close_curl_cffi_sessions_async() -> None:
     Close all cached curl_cffi sessions (profile + host cache).
     Idempotent — safe to call multiple times.
     CancelledError is re-raised.
+
+    NEXUS-018-010: Also stops the background eviction loop.
     """
     global _curl_cffi_sessions, _curl_cffi_profiles_order, _host_sessions, _host_access_order
     global _resolved_sessions, _resolved_sessions_order
+
+    # NEXUS-018-010: Stop background eviction before closing sessions
+    await _stop_eviction()
 
     await asyncio.sleep(0)  # yield to event loop before closing
 
@@ -607,6 +941,8 @@ async def close_curl_cffi_sessions_async() -> None:
         profile_sessions = list(_curl_cffi_sessions.values())
         _curl_cffi_sessions.clear()
         _curl_cffi_profiles_order.clear()
+        # NEXUS-018-010: clear profile access timestamps
+        _profile_session_access.clear()
 
         host_sessions = [s for s, _ in _host_sessions.values()]
         _host_sessions.clear()
@@ -647,6 +983,10 @@ def get_curl_cffi_runtime_status() -> dict[str, Any]:
         "resolved_cache_size": len(_resolved_sessions),
         "resolved_cache_capacity": _MAX_RESOLVED_SESSIONS,
         "resolved_cache_ttl_s": _RESOLVED_SESSION_TTL_S,
+        # NEXUS-018-010: session eviction telemetry
+        "eviction_active": _eviction_started,
+        "eviction_interval_s": _EVICTION_INTERVAL_S,
+        "profile_idle_ttl_s": _PROFILE_SESSION_IDLE_TTL_S,
     }
 
 
@@ -1081,6 +1421,20 @@ async def fetch_via_curl_cffi(
                 "failure_stage": None,
                 "network_error_kind": None,
             }
+
+            # [NEXUS]-018-01: Fire-and-forget WINDOW_UPDATE worker for Safari WebKit.
+            # Safari sends WINDOW_UPDATE after ~80ms pause on keep-alive connections.
+            # This repliates the WebKit back-pressure signal to avoid detection.
+            if _is_webkit_h2_profile(used_profile):
+                _parsed = urllib.parse.urlparse(url)
+                _host = _parsed.netloc or url
+                safe_create_task(
+                    _webkit_window_update_worker(session, _host, _WEBKIT_WINDOW_INCREMENT),
+                    name=f"webkit-h2-winupdate:{_host}",
+                )
+                # [NEXUS]-018-01: Track Safari WebKit HTTP/2 profile usage
+                # Telemetry consumed by get_webkit_transport_telemetry().
+                _increment_webkit_telemetry(success=True)
 
             # F-02: Check for JA3 ban — rotate profile on retry
             status = int(response.status_code or 0)

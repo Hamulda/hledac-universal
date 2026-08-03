@@ -578,20 +578,81 @@ class JSONFormatter:
         except Exception as _ane_err:
             logger.debug("[ANE:export] dedup skipped: %s", _ane_err)
 
-        # ISSUE [APEX]-1010: Create .hledac-sprint bundle
-        bundle_path = None
+        # [META]-009: Build standalone investigator dashboard (unconditional, uses all sprint data)
+        dashboard_html_path: str | None = None
         try:
-            from hledac.universal.export.sprint_bundler import bundle_sprint
-            bundle_path = await bundle_sprint(
+            from hledac.universal.export.dashboard_builder import WASMDashboardBuilder
+            from hledac.universal.export.dashboard_builder import MAX_GRAPH_NODES
+
+            # Get graph data from DuckDBShadowStore._graph_store (DuckPGQGraph)
+            graph_data: dict[str, Any] = {"nodes": [], "edges": []}
+            if store is not None and hasattr(store, "_graph_store"):
+                _graph = store._graph_store
+                if _graph is not None:
+                    try:
+                        nodes_out, edges_out = [], []
+                        if hasattr(_graph, "export_edge_list"):
+                            for src, dst, rel, weight in _graph.export_edge_list():
+                                edges_out.append({"source": src, "target": dst, "relation": rel, "weight": weight})
+                                for nid in (src, dst):
+                                    if not any(n.get("id") == nid for n in nodes_out):
+                                        nodes_out.append({"id": nid, "entity_type": "unknown", "confidence": 0.5})
+                        elif hasattr(_graph, "get_top_nodes_by_degree"):
+                            top_n = _graph.get_top_nodes_by_degree(limit=500)
+                            if top_n:
+                                nodes_out = [{"id": n if isinstance(n, str) else str(n),
+                                              "entity_type": "unknown", "confidence": 0.5}
+                                             for n in top_n]
+                        graph_data = {"nodes": nodes_out, "edges": edges_out}
+                    except Exception as _g_err:
+                        logger.debug("[DASHBOARD] Graph export skipped: %s", _g_err)
+
+            # Get timeline data from TimeSeriesSplicer (opt-in)
+            timeline_data: list[dict[str, Any]] = []
+            if os.environ.get("HLEDAC_ENABLE_TIMELINE_SPLICER", "0") == "1":
+                try:
+                    from hledac.universal.knowledge.time_series_splicer import get_time_series_splicer
+                    splicer = get_time_series_splicer()
+                    if splicer is not None and not isinstance(splicer, type(None).__class__):
+                        if hasattr(splicer, "export_timeline"):
+                            tl = await splicer.export_timeline(sprint_id, limit=2000)
+                            if isinstance(tl, list):
+                                timeline_data = tl
+                except Exception:
+                    pass  # Non-fatal, timeline is optional
+
+            # Build dashboard
+            dashboard_builder = WASMDashboardBuilder()
+            dashboard_html_path_raw = await dashboard_builder.build(
+                handoff=eh,
+                graph_data=graph_data,
+                timeline_data=timeline_data,
+                warc_snippets=None,
+                output_path=None,
+            )
+            if dashboard_html_path_raw is not None:
+                dashboard_html_path = str(dashboard_html_path_raw)
+                logger.info("[EXPORT] Dashboard built: %s", dashboard_html_path)
+        except Exception as _dash_err:
+            logger.debug("[EXPORT] Dashboard build skipped (non-fatal): %s", _dash_err)
+            dashboard_html_path = None
+
+        # ISSUE [APEX]-1010: Create .hledac-sprint bundle with [META]-001 delta indexing
+        bundle_path: str | None = None
+        try:
+            from hledac.universal.export.sprint_bundler import bundle_and_index_sprint
+            bundle_path = await bundle_and_index_sprint(
                 sprint_id=_sprint_id,
                 report_path=report_path,
                 seeds_path=seeds_path,
                 evidence_path=None,  # Auto-detect from EVIDENCE_ROOT
+                duckdb_store=store,  # [META]-001: index entities into cross_sprint_entity_index
+                dashboard_html=pathlib.Path(dashboard_html_path) if dashboard_html_path else None,  # [META]-009
             )
             if bundle_path:
-                logger.info(f"[EXPORT] Sprint bundle created: {bundle_path}")
+                logger.info("[EXPORT] Sprint bundle created: %s", bundle_path)
         except Exception as _bundle_err:
-            logger.warning(f"[EXPORT] Bundle creation failed (non-fatal): {_bundle_err}")
+            logger.warning("[EXPORT] Bundle creation failed (non-fatal): %s", _bundle_err)
 
         return {
             "report_json": str(report_path) if report_path else "",
@@ -620,6 +681,7 @@ class JSONFormatter:
             "next_sprint_seeds_count": seeds_count,
             "next_sprint_seeds_path": str(seeds_path) if seeds_path else None,
             "investigation_packet": sanitized_obj.get("investigation_packet") if isinstance(sanitized_obj, dict) else None,
+            "dashboard_html_path": dashboard_html_path,  # [META]-009
         }
 
 
