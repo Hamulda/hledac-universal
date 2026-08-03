@@ -42,9 +42,10 @@ _RUST_ACO_AVAILABLE = False
 _RUST_STRUCTURED_EXTRACTOR_AVAILABLE = False
 _RUST_IMPORT_ERROR: str | None = None
 try:
-    import hledac_rust_extensions
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
     # Expose Rust classes as RustAhoCorasickMatcher for API compatibility
-    RustAhoCorasickMatcher = hledac_rust_extensions.AhoCorasickMatcher
+    RustAhoCorasickMatcher = rust.raw.AhoCorasickMatcher
     _RUST_ACO_AVAILABLE = True
     # Issue #15: check for unified structured entity extractor
     if hasattr(hledac_rust_extensions, "extract_structured_entities_py"):

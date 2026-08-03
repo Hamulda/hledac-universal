@@ -44,7 +44,9 @@ _rust_fn_npy: Callable[..., Any] | None = None
 _rust_topk_fn: Callable[..., Any] | None = None
 
 try:
-    import hledac_rust_extensions as _rust_mod  # type: ignore[unresolved-import]
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    _rust_mod = rust.raw.module
 
     # Prefer zero-copy npy path (ISSUE-001 fix).
     _raw_npy = getattr(_rust_mod, "batch_cosine_scores_npy", None)

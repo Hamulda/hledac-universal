@@ -126,16 +126,34 @@ _ADVISORY_SIDECAR_ESTIMATED_MB: float = 15.0
 
 
 def _get_peak_coordinator():
-    """Lazy import of peak load coordinator to avoid circular dependencies."""
+    """Lazy import of peak load coordinator to avoid circular dependencies.
+
+    UNIFIED-003: Now also tries GlobalPeakCoScheduler for enhanced features
+    (mutex groups, UMA gating, deadline boosting). Falls back to raw
+    GlobalPeakLoadCoordinator if co-scheduler is not initialized.
+    """
+    try:
+        # Try co-scheduler first (UNIFIED-003)
+        from hledac.universal.core.global_co_scheduler import (
+            get_co_scheduler,
+            Subsystem,
+        )
+        from hledac.universal.core.peak_load_coordinator import (
+            ResourceClass,
+            TaskPriority,
+        )
+        return get_co_scheduler(), ResourceClass, TaskPriority, Subsystem
+    except ImportError:
+        pass
     try:
         from hledac.universal.core.peak_load_coordinator import (
             ResourceClass,
             TaskPriority,
             get_peak_coordinator,
         )
-        return get_peak_coordinator(), ResourceClass, TaskPriority
+        return get_peak_coordinator(), ResourceClass, TaskPriority, None
     except ImportError:
-        return None, None, None
+        return None, None, None, None
 
 
 async def _run_bounded_sidecar(coro, name: str) -> None:
@@ -157,26 +175,38 @@ async def _run_bounded_sidecar(coro, name: str) -> None:
     tracer = _get_otel_tracer()
     sem = _get_advisory_semaphore()
 
-    # UNIFIED-001: Acquire admission from peak load coordinator
-    coordinator, ResourceClass, TaskPriority = _get_peak_coordinator()
+    # UNIFIED-001+003: Acquire admission from peak load coordinator
+    coordinator_result = _get_peak_coordinator()
+    coordinator, ResourceClass, TaskPriority, Subsystem = coordinator_result
     peak_guard = None
     if coordinator is not None:
         try:
-            peak_guard = await coordinator.acquire(
-                ResourceClass.SIDECAR_ADVISORY,
-                _ADVISORY_SIDECAR_ESTIMATED_MB,
-                priority=TaskPriority.LOW,
-                owner=f"sidecar:{name}",
-                timeout_s=5.0,  # Short timeout for advisory sidecars
-            )
+            # UNIFIED-003: If co-scheduler is available, use it (enhanced features)
+            if Subsystem is not None:
+                peak_guard = coordinator.guard(
+                    Subsystem.SIDECAR_ADVISORY,
+                    _ADVISORY_SIDECAR_ESTIMATED_MB,
+                    priority="low",
+                    owner=f"sidecar:{name}",
+                    timeout_s=5.0,
+                )
+            else:
+                # Fall back to raw coordinator (backward compat)
+                peak_guard = await coordinator.acquire(
+                    ResourceClass.SIDECAR_ADVISORY,
+                    _ADVISORY_SIDECAR_ESTIMATED_MB,
+                    priority=TaskPriority.LOW,
+                    owner=f"sidecar:{name}",
+                    timeout_s=5.0,
+                )
         except TimeoutError:
             log.debug("[UNIFIED-001] sidecar %s deferred: peak load timeout", name)
             return  # Fail-soft: skip sidecar under memory pressure
         except Exception as e:
             log.debug("[UNIFIED-001] sidecar %s: peak coordinator error (fail-soft): %s", name, e)
-            # Fall through to semaphore-only path
+            peak_guard = None  # Fall through to semaphore-only path
 
-    # UNIFIED-001: Wrap semaphore block in peak_guard context to ensure release
+    # UNIFIED-003: Wrap in peak_guard context to ensure release
     if peak_guard is not None:
         async with peak_guard:
             await _run_sidecar_with_semaphore(sem, coro, name, tracer)

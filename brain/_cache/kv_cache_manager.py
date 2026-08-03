@@ -57,6 +57,13 @@ class KVCacheManager:
     - KV pool management (tensor pool)
 
     M1 8GB UMA safe: Bounded sizes, memory tracking, pressure-aware eviction.
+
+    MemoryPressureListener protocol (R8):
+      - listener_priority = 1 (HIGH — large memory consumer)
+      - listener_name = "kv_cache_manager"
+      - on_soft_warn: prune 50% of KV pool
+      - on_warn: prune 75% of KV pool + clear session cache
+      - on_critical: invalidate all caches
     """
 
     # KV Pool config
@@ -123,6 +130,8 @@ class KVCacheManager:
             'prefix_cache_hits': 0,
             'prefix_cache_misses': 0,
         }
+        # R8: register with MemoryPressureBroadcaster
+        self._register_with_broadcaster()
 
     # ========================================================================
     # Prefix Cache Methods
@@ -312,6 +321,82 @@ class KVCacheManager:
         self._prefix_cache.clear()
         self._session_cache_pool.clear()
         self._kv_cache_pool.clear()
+
+    # ========================================================================
+    # MemoryPressureListener protocol (R8)
+    # ========================================================================
+
+    @property
+    def listener_priority(self) -> int:
+        """Priority 1 = HIGH — large memory consumer (KV tensors)."""
+        return 1
+
+    @property
+    def listener_name(self) -> str:
+        """Human-readable name for telemetry."""
+        return "kv_cache_manager"
+
+    def on_soft_warn(self) -> None:
+        """
+        R8: ELEVATED pressure — prune KV pool by 50%, clear prefix cache.
+
+        Called by MemoryPressureBroadcaster via asyncio.to_thread().
+        Thread-safe: each cache pool has its own lock via LRUCache.
+        """
+        # Prune 50% of KV pool
+        pool_size = len(self._kv_cache_pool)
+        evict_count = max(1, pool_size // 2)
+        self._evict_kv_pool_items(evict_count)
+        # Clear non-essential prefix cache
+        self._prefix_cache.clear()
+        logger.info(
+            "[KVCacheManager] on_soft_warn: pruned %d/%d KV pool, cleared prefix cache",
+            evict_count, pool_size,
+        )
+
+    def on_warn(self) -> None:
+        """
+        R8: HIGH pressure — prune KV pool by 75%, clear session + prefix caches.
+
+        Called by MemoryPressureBroadcaster via asyncio.to_thread().
+        """
+        pool_size = len(self._kv_cache_pool)
+        evict_count = max(1, pool_size * 3 // 4)
+        self._evict_kv_pool_items(evict_count)
+        self._session_cache_pool.clear()
+        self._prefix_cache.clear()
+        logger.warning(
+            "[KVCacheManager] on_warn: pruned %d/%d KV pool, cleared session+prefix",
+            evict_count, pool_size,
+        )
+
+    def on_critical(self) -> None:
+        """
+        R8: CRITICAL pressure — invalidate everything.
+
+        Called by MemoryPressureBroadcaster via asyncio.to_thread().
+        """
+        self.invalidate_all_caches("critical_pressure")
+        logger.critical("[KVCacheManager] on_critical: all caches invalidated")
+
+    def on_normal(self) -> None:
+        """
+        R8: NORMAL pressure restored — no action needed.
+
+        Caches naturally refill via normal get/put operations.
+        """
+        pass
+
+    def _register_with_broadcaster(self) -> None:
+        """
+        R8: Register with MemoryPressureBroadcaster. Fail-open.
+        """
+        try:
+            from hledac.universal.core.memory_pressure import MemoryPressureBroadcaster
+            broadcaster = MemoryPressureBroadcaster.get_instance()
+            broadcaster.register(self)
+        except Exception:
+            pass  # Non-fatal — broadcaster may not be initialized yet
 
 
 # Singleton accessor

@@ -331,6 +331,14 @@ mlx-embed = [
 xpath = [
     "lxml>=6.1.1",
 ]
+# SILICON-02b: whisper.cpp speech-to-text with CoreML/ANE acceleration.
+# whispercpp Python package provides bindings to whisper.cpp C++ library.
+# On Apple Silicon with CoreML models, encoder runs on ANE (Neural Engine).
+# Model download on first use: tiny (39 MB) or base (74 MB).
+# Install with: uv sync --extra whisper
+whisper = [
+    "whispercpp>=0.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 http3 = [
     # Real QUIC lane for stealth/DA+ profiles (M1 8GB: ~50-80 MB resident).
     # INSTALL WITH: uv sync --extra http3  (NOT automatic — opt-in only)
@@ -428,6 +436,25 @@ package = true
 # rust_extensions workspace member — maturin build for PyO3 cdylib
 # Build: uv run maturin develop --manifest-path rust_extensions/Cargo.toml --release
 # CI pre-built wheels: .github/workflows/rust-extensions.yml (aarch64-apple-darwin)
+#
+# R6: Feature-gated builds for M1 8GB compile time optimization:
+#   Standard (core + data only, ~15s compile):
+#     uv run maturin develop --release --manifest-path rust_extensions/Cargo.toml
+#   With DNS (adds hickory-dns + tokio, ~5MB extra compile time):
+#     uv run maturin develop --release --manifest-path rust_extensions/Cargo.toml --features "dns"
+#   With native DB extraction:
+#     uv run maturin develop --release --manifest-path rust_extensions/Cargo.toml --features "native_db"
+#   Full build (everything, ~3× compile time):
+#     uv run maturin develop --release --manifest-path rust_extensions/Cargo.toml --features "full"
+#
+# FUTURE: Per-feature wheels via maturin/uv build pipeline.
+# Each feature combination produces a separate cp314-specific wheel, so M1 8GB
+# never compiles features it doesn't need:
+#   uv run maturin build --release --features "core,data" -o dist/core/
+#   uv run maturin build --release --features "core,data,dns" -o dist/dns/
+# Install specific variant: uv pip install dist/core/hledac_rust_extensions-*.whl
+# This eliminates the need to compile heavy features (metal, quic, whisper)
+# on M1 8GB when only core IOC extraction is needed.
 ["tool.uv.sources"]
 "hledac-rust-extensions" = { path = "rust_extensions" }
 

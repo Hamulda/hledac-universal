@@ -57,17 +57,19 @@ def _ensure_rust() -> bool:
     if _RUST_LOADED:
         return _RUST_AVAILABLE
     _RUST_LOADED = True
-    try:
-        from hledac_rust_extensions import (
-            get_memory_snapshot as _rust_snapshot,
-            get_process_rss_gib as _rust_rss,
-            get_available_memory_gib as _rust_avail,
-            get_metal_active_memory_bytes as _rust_metal,
-            get_metal_active_memory_gib as _rust_metal_gib,
-            memory_pressure_level as _rust_pressure,
-            peak_rss_bytes as _rust_peak,
-            set_memory_pressure_thresholds as _rust_set_thresholds,
-        )
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    raw = rust.raw
+    _rust_snapshot = raw.get_memory_snapshot
+    _rust_rss = raw.get_process_rss_gib
+    _rust_avail = raw.get_available_memory_gib
+    _rust_metal = raw.get_metal_active_memory_bytes
+    _rust_metal_gib = raw.get_metal_active_memory_gib
+    _rust_pressure = raw.memory_pressure_level
+    _rust_peak = raw.peak_rss_bytes
+    _rust_set_thresholds = raw.set_memory_pressure_thresholds
+    _RUST_AVAILABLE = all([_rust_snapshot, _rust_rss, _rust_avail, _rust_metal, _rust_pressure])
+    if _RUST_AVAILABLE:
         globals()["_rust_snapshot"] = _rust_snapshot
         globals()["_rust_rss"] = _rust_rss
         globals()["_rust_avail"] = _rust_avail
@@ -76,10 +78,8 @@ def _ensure_rust() -> bool:
         globals()["_rust_pressure"] = _rust_pressure
         globals()["_rust_peak"] = _rust_peak
         globals()["set_memory_pressure_thresholds"] = _rust_set_thresholds
-        _RUST_AVAILABLE = True
         logger.debug("[memory] Rust SSOT loaded OK")
-    except ImportError:
-        _RUST_AVAILABLE = False
+    else:
         logger.debug("[memory] Rust extension unavailable, using Python fallback")
     return _RUST_AVAILABLE
 

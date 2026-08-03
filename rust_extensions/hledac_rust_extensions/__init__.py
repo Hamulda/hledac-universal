@@ -50,18 +50,24 @@ def _is_editable_install() -> bool:
     # The parent of the package dir is the rust_extensions workspace root
     pkg_dir = os.path.dirname(own_file)  # → rust_extensions/hledac_rust_extensions/
     parent_dir = os.path.dirname(pkg_dir)  # → rust_extensions/
-    # Check for workspace artifacts - abi3.so inside package dir (maturin python-source=".")
-    # takes priority over .dylib in parent (leftover from older builds).
-    abi3_path = os.path.join(pkg_dir, "hledac_rust_extensions.abi3.so")
-    if os.path.isfile(abi3_path):
-        return True
-    # Also check parent dir for .dylib (legacy/bug-compatible)
+    # ISSUE-014: Non-abi3 native wheel — check for cp314-specific .so first,
+    # then abi3.so for legacy compatibility, then .dylib for older builds.
+    # maturin python-source="." places the .so inside the package dir.
     import sys
+    py_ver = f"cpython-{sys.version_info.major}{sys.version_info.minor}-darwin"
+    candidates_pkg = [
+        f"hledac_rust_extensions.{py_ver}.so",
+        "hledac_rust_extensions.abi3.so",
+    ]
+    for c in candidates_pkg:
+        if os.path.isfile(os.path.join(pkg_dir, c)):
+            return True
+    # Also check parent dir for legacy .dylib/.so artifacts
     if sys.platform == "darwin":
-        candidates = ["hledac_rust_extensions.dylib", "hledac_rust_extensions.cdylib.so"]
+        candidates_parent = ["hledac_rust_extensions.dylib", "hledac_rust_extensions.cdylib.so"]
     else:
-        candidates = ["hledac_rust_extensions.so", "hledac_rust_extensions.cdylib.so"]
-    return any(os.path.isfile(os.path.join(parent_dir, c)) for c in candidates)
+        candidates_parent = ["hledac_rust_extensions.so", "hledac_rust_extensions.cdylib.so"]
+    return any(os.path.isfile(os.path.join(parent_dir, c)) for c in candidates_parent)
 
 
 def _find_workspace_so() -> str | None:
@@ -74,17 +80,24 @@ def _find_workspace_so() -> str | None:
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     # one level up = rust_extensions/
     parent_dir = os.path.dirname(pkg_dir)
-    # Check inside package dir FIRST for abi3.so (maturin python-source=".")
-    abi3_path = os.path.join(pkg_dir, "hledac_rust_extensions.abi3.so")
-    if os.path.isfile(abi3_path):
-        return abi3_path
-    # Then check parent dir for .dylib/.so (legacy/bug-compatible)
+    # ISSUE-014: Non-abi3 native wheel — check cp314-specific .so first,
+    # then abi3.so for legacy, then .dylib for older builds.
     import sys
+    py_ver = f"cpython-{sys.version_info.major}{sys.version_info.minor}-darwin"
+    candidates_pkg = [
+        f"hledac_rust_extensions.{py_ver}.so",
+        "hledac_rust_extensions.abi3.so",
+    ]
+    for c in candidates_pkg:
+        so_path = os.path.join(pkg_dir, c)
+        if os.path.isfile(so_path):
+            return so_path
+    # Then check parent dir for .dylib/.so (legacy/bug-compatible)
     if sys.platform == "darwin":
-        candidates = ["hledac_rust_extensions.dylib", "hledac_rust_extensions.cdylib.so"]
+        candidates_parent = ["hledac_rust_extensions.dylib", "hledac_rust_extensions.cdylib.so"]
     else:
-        candidates = ["hledac_rust_extensions.so", "hledac_rust_extensions.cdylib.so"]
-    for c in candidates:
+        candidates_parent = ["hledac_rust_extensions.so", "hledac_rust_extensions.cdylib.so"]
+    for c in candidates_parent:
         so_path = os.path.join(parent_dir, c)
         if os.path.isfile(so_path):
             return so_path

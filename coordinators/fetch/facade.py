@@ -23,10 +23,9 @@ import os
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+import msgspec
 from typing import Any, cast
 
-from msgspec import Struct
 
 from hledac.universal.utils.async_helpers import parallel
 
@@ -40,9 +39,8 @@ from .services import (
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class FetchCoordinatorConfig:
-    """Configuration for FetchCoordinatorFacade."""
+class FetchCoordinatorConfig(msgspec.Struct, frozen=True, gc=False):
+    """Configuration for FetchCoordinatorFacade. M1 8GB: msgspec.Struct for fast init."""
     max_concurrent: int = 10
     max_retries: int = 3
     timeout: float = 30.0

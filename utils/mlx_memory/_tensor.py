@@ -40,7 +40,9 @@ def _get_mx():
 def _get_shared_buf():
     """Lazy import of SharedMetalBuffer from Rust extensions (SILICON-04)."""
     try:
-        from hledac_rust_extensions import SharedMetalBuffer
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        SharedMetalBuffer = rust.raw.SharedMetalBuffer
         return SharedMetalBuffer
     except ImportError:
         return None

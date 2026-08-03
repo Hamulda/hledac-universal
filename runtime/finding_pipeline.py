@@ -116,7 +116,9 @@ class FindingPipeline:
     def _init_rust(self, capacity: int) -> None:
         """Initialize Rust MPSCPool. Falls back to no-op on import error."""
         try:
-            from hledac_rust_extensions import MPSCPool  # type: ignore[attr-defined]
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            MPSCPool = rust.raw.MPSCPool  # type: ignore[assignment]
 
             pool = MPSCPool(capacity=capacity)  # type: ignore[attr-defined]
             sender_ptr = pool.add_sender()  # type: ignore[attr-defined]

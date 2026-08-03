@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
-import json
+import json as _stdlib_json
 import logging
 import os
 import shutil
@@ -128,7 +128,7 @@ async def bundle_sprint(
     }
     if metadata:
         bundle_metadata.update(metadata)
-    metadata_bytes = json.dumps(bundle_metadata, indent=2).encode("utf-8")
+    metadata_bytes = _stdlib_json.dumps(bundle_metadata, indent=2).encode("utf-8")
     artifacts["metadata.json"] = metadata_bytes
     manifest_entries.append({
         "file": "metadata.json",

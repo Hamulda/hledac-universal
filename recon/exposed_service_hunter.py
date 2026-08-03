@@ -26,7 +26,7 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 import httpx
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
@@ -604,7 +604,7 @@ class DatabasePortScanner:
         findings = []
         ports_to_check = ports or list(self.DATABASE_PORTS.keys())
         logger.info(f'Scanning {len(hosts)} hosts on {len(ports_to_check)} ports')
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_port(host: str, port: int) -> ExposedService | None:
             async with semaphore:
@@ -823,11 +823,11 @@ class DatabasePortScanner:
         Called after test_mongodb_auth() returns auth_required=False.
         Falls back gracefully if Rust native_db feature not compiled.
         """
-        try:
-            from hledac.universal.rust_extensions.hledac_rust_extensions import (
-                MongoDumper,
-            )
-        except ImportError:
+        # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
+        # capability scoring, and container-based force override.
+        from hledac.universal.core.rust_backend import rust
+        MongoDumper = rust.raw.MongoDumper
+        if MongoDumper is None:
             logger.debug(
                 f'[HEIST-03] Rust native_db not available — '
                 f'skipping MongoDB extraction for {host}:{port}'
@@ -876,11 +876,11 @@ class DatabasePortScanner:
         Called after test_redis_auth() returns auth_required=False.
         Falls back gracefully if Rust native_db feature not compiled.
         """
-        try:
-            from hledac.universal.rust_extensions.hledac_rust_extensions import (
-                RedisDumper,
-            )
-        except ImportError:
+        # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
+        # capability scoring, and container-based force override.
+        from hledac.universal.core.rust_backend import rust
+        RedisDumper = rust.raw.RedisDumper
+        if RedisDumper is None:
             logger.debug(
                 f'[HEIST-03] Rust native_db not available — '
                 f'skipping Redis extraction for {host}:{port}'
@@ -929,43 +929,45 @@ class DatabasePortScanner:
         Falls back to httpx-based extraction if Rust native_db not compiled.
         """
         # First try Rust native_db path
-        try:
-            from hledac.universal.rust_extensions.hledac_rust_extensions import (
-                ElasticsearchDumper,
-            )
-            dumper = ElasticsearchDumper()
-            entries = await asyncio.to_thread(
-                dumper.dump_all, host, port, limit, self.timeout
-            )
-            results: list[dict[str, Any]] = []
-            for entry in entries:
-                entry_dict = {
-                    'index': entry.index,
-                    'document_count': entry.document_count,
-                    'documents_json': entry.documents_json,
-                    'error': entry.error,
-                }
-                results.append(entry_dict)
-                if entry.error:
-                    logger.warning(
-                        f'[HEIST-03] ES extraction error '
-                        f'{host}:{port}/{entry.index}: {entry.error}'
-                    )
-                elif entry.document_count:
-                    logger.info(
-                        f'[HEIST-03] ES extracted '
-                        f'{entry.document_count} docs from '
-                        f'{host}:{port}/{entry.index}'
-                    )
-            return results
-        except ImportError:
+        # ISSUE-014: Route through core.rust_backend wrapper for ABI checking,
+        # capability scoring, and container-based force override.
+        from hledac.universal.core.rust_backend import rust
+        ElasticsearchDumper = rust.raw.ElasticsearchDumper
+        if ElasticsearchDumper is not None:
+            try:
+                dumper = ElasticsearchDumper()
+                entries = await asyncio.to_thread(
+                    dumper.dump_all, host, port, limit, self.timeout
+                )
+                results: list[dict[str, Any]] = []
+                for entry in entries:
+                    entry_dict = {
+                        'index': entry.index,
+                        'document_count': entry.document_count,
+                        'documents_json': entry.documents_json,
+                        'error': entry.error,
+                    }
+                    results.append(entry_dict)
+                    if entry.error:
+                        logger.warning(
+                            f'[HEIST-03] ES extraction error '
+                            f'{host}:{port}/{entry.index}: {entry.error}'
+                        )
+                    elif entry.document_count:
+                        logger.info(
+                            f'[HEIST-03] ES extracted '
+                            f'{entry.document_count} docs from '
+                            f'{host}:{port}/{entry.index}'
+                        )
+                return results
+            except Exception as e:
+                logger.debug(
+                    f'[HEIST-03] Rust ES extraction failed, httpx fallback: {e}'
+                )
+        else:
             logger.debug(
                 f'[HEIST-03] Rust native_db not available — '
                 f'falling back to httpx ES extraction for {host}:{port}'
-            )
-        except Exception as e:
-            logger.debug(
-                f'[HEIST-03] Rust ES extraction failed, httpx fallback: {e}'
             )
 
         # Python httpx fallback for Elasticsearch (REST-based)
@@ -1156,7 +1158,7 @@ class GraphQLIntrospector:
         """
         findings = []
         base_url = base_url.rstrip('/')
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_endpoint(endpoint: str) -> ExposedService | None:
             async with semaphore:
@@ -1323,7 +1325,7 @@ class ContainerAPIExplorer:
     async def scan_docker_apis(self, hosts: list[str], max_concurrent: int=20) -> list[ExposedService]:
         """Scan for exposed Docker APIs."""
         findings = []
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_host(host: str, port: int) -> ExposedService | None:
             async with semaphore:
@@ -1367,7 +1369,7 @@ class ContainerAPIExplorer:
     async def scan_kubernetes_apis(self, hosts: list[str], max_concurrent: int=20) -> list[ExposedService]:
         """Scan for exposed Kubernetes APIs."""
         findings = []
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_host(host: str, port: int) -> ExposedService | None:
             async with semaphore:
@@ -1476,7 +1478,7 @@ class SwaggerEnumerator:
         """
         findings: list[ExposedService] = []
         base_url = base_url.rstrip('/')
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def _probe_path(path: str) -> ExposedService | None:
             async with semaphore:
@@ -1854,7 +1856,7 @@ class DirectoryListingDetector:
             List of ExposedService findings for directory listings
         """
         findings: list[ExposedService] = []
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def _check_url_combo(base_url: str, subpath: str) -> ExposedService | None:
             async with semaphore:
@@ -2008,7 +2010,10 @@ class ExposedServiceHunter:
 
     async def __aenter__(self):
         """Async context manager entry."""
-        self.session = httpx.AsyncClient(timeout=httpx.Timeout(total=30), connector=aiohttp.TCPConnector(limit=100, limit_per_host=20, enable_cleanup_closed=True, force_close=True))
+        self.session = httpx.AsyncClient(
+            timeout=httpx.Timeout(total=30),
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
         self._s3_enumerator = S3BucketEnumerator(self.session)
         self._graphql_introspector = GraphQLIntrospector(self.session)
         self._ct_logs = CertificateTransparency(self.session)

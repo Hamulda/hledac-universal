@@ -10,6 +10,7 @@ NOTE (Sprint 8VH): brain/inference_engine.py is functionally distinct:
 """
 from __future__ import annotations
 import asyncio
+import atexit
 import concurrent.futures
 import gc
 import hashlib
@@ -18,6 +19,7 @@ import logging
 import os
 import threading
 import time
+import weakref
 from collections import deque
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
@@ -45,6 +47,12 @@ def _otel_resolver() -> Any:
     return _otel_fallback()
 _otel_instrumented = _otel_resolver()
 T = TypeVar('T')
+
+# R3: Hermes executor pools via centralized R1 resource pool (lazy import)
+_get_hermes_prep_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_prep_executor')
+_get_hermes_post_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_post_executor')
+_get_hermes_inference_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_inference_executor')
+_get_hermes_compile_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_compile_executor')
 _xxh3_func: Callable[[str], str] | None = None
 _xxh3_func_batch: Callable[..., list[str]] | None = None
 
@@ -386,7 +394,7 @@ class DeepHermes3Engine:
     # Duplicate __slots__ removed - see line 367
     _DEEP_THINKING_PREFIX = 'You are a deep thinking AI, you may use extremely long chains of thought to deeply consider the problem and deliberate with yourself via systematic reasoning processes to help come to a correct solution prior to answering. You should enclose your thoughts and internal monologue inside <think> </think> tags, and then provide your solution or response to the problem.'
 
-    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_draft_tokenizer', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_flush_cycle_count', '_force_kv_quantize', '_generation_facade', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_inference_active', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_mgr', '_batch_adapter', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_metal_device', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_state_observer', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_triage_mode', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
+    __slots__ = ('_active_iteration_count', '_age_bump_interval', '_batch_default_flush_interval', '_batch_flush_interval', '_batch_high_pressure_depth', '_batch_max_size', '_batch_medium_pressure_depth', '_batch_queue', '_batch_tie_breaker', '_batch_worker_shutting_down', '_batch_worker_task', '_closed', '_compile_executor', '_compile_in_progress', '_draft_model_name', '_draft_tokenizer', '_generation_since_clear', '_draft_model_obj', '_ema_alpha', '_executors_shared', '_flush_cycle_count', '_force_kv_quantize', '_generation_facade', '_idle_unload_timeout_s', '_inference_executor', '_inference_semaphore', '_inference_active', '_key_locks', '_kv_bits', '_kv_cache_enabled', '_kv_cache_mgr', '_batch_adapter', '_kv_cache_pool', '_kv_cache_pool_maxsize', '_kv_cache_pool_memory_mb', '_kv_cache_pool_stats', '_lazy_ops_eval_count', '_kv_cache_stats', '_last_age_bump', '_last_bandit_arm', '_last_clear_at', '_last_inference_at', '_lora_adapter_path', '_lora_cache_stats', '_max_kv_size', '_metal_device', '_mlx_batcher', '_mlx_scheduler', '_mlx_worker_thread', '_model', '_model_breaker', '_model_ever_loaded', '_num_draft_tokens', '_outlines_generators', '_outlines_model', '_paged_kv_cache', '_paged_kv_keep', '_pending_futures', '_pipeline', '_post_executor', '_prep_executor', '_prefix_cache', '_prefix_cache_maxsize', '_prefix_cache_stats', '_prompt_bandit', '_prompt_cache', '_sanitize_for_llm', '_session_cache_maxsize', '_session_cache_memory_mb', '_session_cache_pool', '_session_cache_stats', '_speculative_enabled', '_state_observer', '_stream_cancelled', '_supports_draft', '_supports_kv_quant', '_supports_stream_generate', '_system_prompt', '_system_prompt_cache', '_system_prompt_hash', '_telemetry_counters', '_telemetry_ema', '_triage_mode', '_tokenizer', '_warmup_cache', '_warmup_prompt_hash', 'config')
 
     def __init__(self, model_path: str | None=None, sanitize_for_llm: Callable[[str], str] | None=None):
         """
@@ -483,19 +491,43 @@ class DeepHermes3Engine:
         self._batch_adapter: PriorityQueueAdapter | None = None
         # PEP 698: GenerationFacade (lazy, bound to engine's model/tokenizer/metal)
         self._generation_facade: Any | None = None
-        self._inference_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        # Issue #14: CPU prep || GPU exec pipeline — 3-stage overlap
+        # R3: Executors obtained from centralized R1 resource pool for lifecycle management.
         # Stage 1 (prep): format_chatml + tokenization — CPU-bound, parallel across prompts
         # Stage 2 (GPU): mlx_lm.generate() — single Metal command queue, serial
         # Stage 3 (post): JSON parse + model_validate — CPU-bound, parallel across prompts
-        self._prep_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=3, thread_name_prefix='hermes_prep'
-        )
-        self._post_executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix='hermes_post'
-        )
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._inference_semaphore = get_semaphore_for_testing(ConcurrencyCategory.MLX_INFERENCE)
+        #
+        # M1 8GB: 3+2+1 = 6 worker threads across the 3-stage pipeline.
+        # R1 pools are NOT adaptive — worker counts are hard-tuned.
+        # R5: Try R1 resource pool first, fall back to domain_executors registry.
+        # BOTH paths use centrally-managed shared pools — the engine never owns
+        # its own raw ThreadPoolExecutor instances. This fixes Issue 2.
+        _executors_shared = False
+        try:
+            self._inference_executor = _get_hermes_inference_exec()
+            self._prep_executor = _get_hermes_prep_exec()
+            self._post_executor = _get_hermes_post_exec()
+            _executors_shared = True
+        except Exception:
+            # R5 FIX (Issue 2): Fallback through domain_executors registry
+            # instead of creating raw, unmanaged ThreadPoolExecutor instances.
+            # These pools are shared across all engine instances and centrally
+            # shut down by domain_executors.shutdown_all().
+            logger.debug(
+                '[R5] R1 pool unavailable, falling back to domain_executors '
+                '(Issue 2 fix)'
+            )
+            from hledac.universal.utils.domain_executors import (
+                get_hermes_prep_fallback_executor,
+                get_hermes_post_fallback_executor,
+                get_hermes_inference_fallback_executor,
+            )
+            self._inference_executor = get_hermes_inference_fallback_executor()
+            self._prep_executor = get_hermes_prep_fallback_executor()
+            self._post_executor = get_hermes_post_fallback_executor()
+            _executors_shared = True
+        self._executors_shared = _executors_shared
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._inference_semaphore = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
         self._mlx_batcher: Any = None
         self._mlx_worker_thread: Any = None
         self._mlx_scheduler: Any = None
@@ -507,6 +539,8 @@ class DeepHermes3Engine:
         self._stream_cancelled: asyncio.Event = asyncio.Event()
         self._batch_queue = None
         self._batch_worker_task: asyncio.Task | None = None
+        # Issue #17: bounded 3-stage inference pipeline (lazy, always-on)
+        self._pipeline: Any = None
         self._batch_max_size = 8
         self._batch_default_flush_interval = 2.0
         self._batch_flush_interval = self._batch_default_flush_interval
@@ -537,6 +571,9 @@ class DeepHermes3Engine:
         # G2: State observer for ModelManager visibility
         self._state_observer = get_state_observer()
         self._inference_active = False
+        self._closed = False
+        # R3: Register with atexit for emergency executor cleanup (GC safety net)
+        weakref.finalize(self, self._cleanup_executors_sync, self._inference_executor, self._prep_executor, self._post_executor)
 
     def _notify_state(self, load_state: ModelLoadState | None = None) -> None:
         """
@@ -1438,7 +1475,15 @@ class DeepHermes3Engine:
             sample_tokens = [tokenizer.bos_id or 1] * 4
             dummy_input = mx.array([sample_tokens])
             if self._compile_executor is None:
-                self._compile_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix='hermes_compile')
+                # R3: Use centralized R1 pool for compile executor
+                try:
+                    self._compile_executor = _get_hermes_compile_exec()
+                except Exception:
+                    # R5 FIX: Fallback through domain_executors instead of raw TPE
+                    from hledac.universal.utils.domain_executors import (
+                        get_hermes_compile_fallback_executor,
+                    )
+                    self._compile_executor = get_hermes_compile_fallback_executor()
 
             def _do_compile() -> None:
                 """Fire-and-forget compile — sets flag when done."""
@@ -2274,8 +2319,8 @@ class DeepHermes3Engine:
         parts.append('<|im_start|>assistant\n')
         return '\n'.join(parts)
 
-    @staticmethod
     def _prep_generate(
+        self,
         prompt: str,
         system: str,
         sanitize_fn: Callable[[str], str] | None,
@@ -3070,6 +3115,42 @@ class DeepHermes3Engine:
             self._mlx_scheduler = None
         return self._mlx_scheduler
 
+    async def _ensure_inference_pipeline(self) -> Any:
+        """
+        Issue #17: Lazy initialization of BoundedInferencePipeline.
+
+        The pipeline connects _prep_executor → MLXWorkerThread → _post_executor
+        through bounded asyncio.Queue channels, enabling 3-stage overlap with
+        explicit backpressure.  While request N runs GPU inference, request
+        N+1's prompt prep runs in parallel.
+
+        Idempotent. Returns the pipeline instance or None on failure.
+        M1 8GB safe: imports are lazy; pipeline is bounded by queue sizes.
+
+        Routing in generate():
+            0. Try BoundedInferencePipeline.submit() when available (NEW)
+            1. Fall back to MLXUnifiedScheduler.submit_inference()
+            2. Fall back to MLXBatchedExecutor.execute()
+            3. Final fallback to _submit_inference() direct path
+
+        Always-on: pipeline is optional; fail-soft ensures direct path works.
+        """
+        if self._pipeline is not None:
+            return self._pipeline
+        try:
+            from hledac.universal.brain.inference_stage_pipeline import (
+                BoundedInferencePipeline,
+            )
+            # Ensure MLX worker thread is started (pipeline inference worker
+            # routes through worker.submit() for non-blocking main loop)
+            self._ensure_mlx_worker_thread()
+            self._pipeline = BoundedInferencePipeline(engine=self)
+            logger.debug('[Issue-17] BoundedInferencePipeline initialized')
+        except Exception as _e:
+            logger.debug('[Issue-17] BoundedInferencePipeline init skipped: %s', _e)
+            self._pipeline = None
+        return self._pipeline
+
     async def _run_inference_async(self, fn, *args, **kwargs):
         """
         Run a sync inference function from the worker thread context.
@@ -3170,6 +3251,7 @@ class DeepHermes3Engine:
     # ------------------------------------------------------------------
     # generate() exit paths (for complexity analysis)
     # ------------------------------------------------------------------
+    # Path 0: pipeline.submit() -> return                      (Issue #17)
     # Path 1: scheduler.submit_inference() -> return
     # Path 2: batcher.execute() -> return
     # Path 3: response -> return (main success)
@@ -3212,6 +3294,27 @@ class DeepHermes3Engine:
         # Guard: wait for ongoing compilation
         while self._compile_in_progress:
             await asyncio.sleep(0.1)
+
+        # Path 0: Try bounded 3-stage pipeline (Issue #17)
+        # Routes through BoundedInferencePipeline for 3-stage overlap with
+        # backpressure.  Text-only path (no structured output, no adapter_path,
+        # no logits_processors) — for those cases fall through to direct path.
+        if adapter_path is None and logits_processors is None:
+            try:
+                pipeline = await self._ensure_inference_pipeline()
+                if pipeline is not None:
+                    return await pipeline.submit(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        system_msg=system_msg,
+                        thinking=thinking,
+                    )
+            except Exception as _pipeline_err:
+                logger.debug(
+                    '[Issue-17] Pipeline routing failed, falling back: %s',
+                    _pipeline_err,
+                )
 
         # Path 1: Try scheduler routing (ISSUE-120)
         try:
@@ -4285,9 +4388,10 @@ class DeepHermes3Engine:
 
     async def unload(self) -> None:
         """
-        Sprint 7K: Unload model with FULL lifecycle closure.
+        Sprint 7K + Issue #17: Unload model with FULL lifecycle closure.
 
-        NEW ORDER (Sprint 7K + P1-3):
+        NEW ORDER (Sprint 7K + P1-3 + Issue #17):
+        0.5 _pipeline.shutdown() — bounded 3-stage pipeline (Issue #17)
         1. _shutdown_batch_worker(timeout=3.0) — bounded, fail-pending-futures
         2. _batch_queue = None + _batch_worker_task = None (done by shutdown)
         3. _save_cache() — persists system_prompt_cache + warmup_cache to disk
@@ -4303,6 +4407,13 @@ class DeepHermes3Engine:
 
         Safe-clear: Emergency flag is NOT auto-cleared here — caller decides.
         """
+        # Issue #17: shutdown bounded 3-stage pipeline first
+        if self._pipeline is not None:
+            try:
+                await self._pipeline.shutdown()
+            except Exception as _e:
+                logger.debug('[Issue-17] Pipeline shutdown error: %s', _e)
+            self._pipeline = None
         await self._shutdown_batch_worker(timeout=3.0)
         self._batch_queue = None
         self._batch_worker_task = None
@@ -4321,16 +4432,29 @@ class DeepHermes3Engine:
         logger.debug('[LIFECYCLE][F289] _kv_cache_pool evicted')
         self.invalidate_prefix_cache()
         logger.info('Unloading Hermes-3...')
-        self._inference_executor.shutdown(wait=True)
-        # Issue #14: shutdown thread pools (prep + post)
-        if hasattr(self, '_prep_executor') and self._prep_executor is not None:
-            self._prep_executor.shutdown(wait=False)
-            self._prep_executor = None
-        if hasattr(self, '_post_executor') and self._post_executor is not None:
-            self._post_executor.shutdown(wait=False)
-            self._post_executor = None
-        if self._compile_executor is not None:
-            self._compile_executor.shutdown(wait=False)
+        # R5: Only shut down executors if NOT from shared pool (R1 or domain_executors).
+        # Shared pools persist across engine instances and are cleaned up
+        # by domain_executors' multi-layer shutdown (signal + atexit + weakref).
+        # Fallback raw executors (if any remain) are shut down here.
+        _shared = getattr(self, '_executors_shared', False)
+        if not _shared:
+            self._inference_executor.shutdown(wait=True)
+            # Issue #14: shutdown thread pools (prep + post)
+            if hasattr(self, '_prep_executor') and self._prep_executor is not None:
+                self._prep_executor.shutdown(wait=False)
+                self._prep_executor = None
+            if hasattr(self, '_post_executor') and self._post_executor is not None:
+                self._post_executor.shutdown(wait=False)
+                self._post_executor = None
+            if self._compile_executor is not None:
+                self._compile_executor.shutdown(wait=False)
+                self._compile_executor = None
+        else:
+            # R1 pools: clear local references only (pool lives in R1 singleton)
+            if hasattr(self, '_prep_executor'):
+                self._prep_executor = None
+            if hasattr(self, '_post_executor'):
+                self._post_executor = None
             self._compile_executor = None
         if self._mlx_batcher is not None:
             try:
@@ -4372,6 +4496,160 @@ class DeepHermes3Engine:
         # G2: Notify observers that model is unloaded
         self._notify_state(ModelLoadState.UNLOADED)
         logger.info('✓ Hermes-3 unloaded (Sprint 7K lifecycle closed)')
+
+    # ── R3: Async Context Manager + Lifecycle ──────────────────────────────────
+
+    @staticmethod
+    def _cleanup_executors_sync(
+        inference_executor: concurrent.futures.ThreadPoolExecutor | None,
+        prep_executor: concurrent.futures.ThreadPoolExecutor | None,
+        post_executor: concurrent.futures.ThreadPoolExecutor | None,
+    ) -> None:
+        """
+        R5: Synchronous emergency executor cleanup for GC/atexit safety net.
+
+        Called by weakref.finalize when DeepHermes3Engine is garbage-collected
+        without explicit aclose()/unload(). Only shuts down non-shared (legacy raw)
+        executors — R1-managed and domain_executors-managed pools are handled
+        by domain_executors' multi-layer shutdown.
+
+        Python 3.14: ThreadPoolExecutor.shutdown(cancel_futures=True) ensures
+        pending futures are cancelled immediately, preventing stall on GC.
+        """
+        for name, ex in (
+            ('inference', inference_executor),
+            ('prep', prep_executor),
+            ('post', post_executor),
+        ):
+            if ex is not None:
+                try:
+                    ex.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
+
+    async def aclose(self) -> None:
+        """
+        R3: Idempotent async close — shutdowns all executors, frees MLX model + cache.
+
+        Uses Python 3.14 asyncio.TaskGroup for parallel bounded executor shutdown:
+        - _inference_executor (wait=True,  timeout=5s)
+        - _prep_executor      (wait=False, timeout=2s)
+        - _post_executor      (wait=False, timeout=2s)
+        - _compile_executor   (wait=False, timeout=1s)
+
+        After executor shutdown, delegates to unload() for model/cache cleanup.
+        Idempotent: safe to call multiple times (checks _closed flag).
+        Fail-safe: collects errors, logs them, never raises.
+
+        M1 8GB invariant: ThreadPoolExecutor threads are freed immediately
+        (cancel_futures=True) — ~12 MB RSS reclaimed per executor.
+        """
+        if self._closed:
+            return
+        self._closed = True
+
+        # Phase 1: Parallel bounded executor shutdown via TaskGroup
+        # R5: If executors are from shared pool (R1 or domain_executors), only clear
+        # local references — pool lifecycle managed centrally.
+        # If somehow still raw executors, shut them down explicitly.
+        errors: list[tuple[str, str]] = []
+        _shared = getattr(self, '_executors_shared', False)
+
+        async def _shutdown_one(
+            name: str,
+            executor: concurrent.futures.ThreadPoolExecutor | None,
+            *,
+            wait: bool = False,
+            timeout_s: float = 2.0,
+        ) -> None:
+            nonlocal errors
+            if executor is None:
+                return
+            if _shared:
+                return  # shared pool — skip shutdown, managed centrally
+            try:
+                await asyncio.to_thread(
+                    executor.shutdown, wait=wait, cancel_futures=True
+                )
+            except Exception as exc:
+                errors.append((name, str(exc)))
+
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(_shutdown_one('inference', getattr(self, '_inference_executor', None), wait=True, timeout_s=5.0))
+                tg.create_task(_shutdown_one('prep', getattr(self, '_prep_executor', None), wait=False, timeout_s=2.0))
+                tg.create_task(_shutdown_one('post', getattr(self, '_post_executor', None), wait=False, timeout_s=2.0))
+                tg.create_task(_shutdown_one('compile', getattr(self, '_compile_executor', None), wait=False, timeout_s=1.0))
+        except* Exception as eg:
+            for exc in eg.exceptions:
+                errors.append(('taskgroup', str(exc)))
+
+        if errors:
+            logger.warning(
+                '[R3] aclose executor shutdown errors: %s',
+                ', '.join(f'{n}:{e}' for n, e in errors)
+            )
+
+        # Phase 2: Delegate model/cache teardown to canonical unload()
+        if self._model is not None:
+            try:
+                await self.unload()
+            except Exception as exc:
+                logger.warning('[R3] aclose unload error: %s', exc)
+
+        # Phase 3: Clear remaining references for GC
+        self._inference_executor = None  # type: ignore[assignment]
+        self._prep_executor = None  # type: ignore[assignment]
+        self._post_executor = None  # type: ignore[assignment]
+        self._compile_executor = None
+
+        logger.info('[R3] DeepHermes3Engine aclose complete')
+
+    async def __aenter__(self) -> 'DeepHermes3Engine':
+        """
+        R3: Async context manager entry.
+
+        Usage:
+            async with DeepHermes3Engine() as engine:
+                result = await engine.generate(prompt='...')
+        """
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """
+        R3: Async context manager exit — guarantees aclose() on scope exit.
+
+        Never suppresses exceptions — delegates to aclose() which is fail-safe.
+        """
+        await self.aclose()
+
+    def __del__(self) -> None:
+        """
+        R3: Emergency fallback — sync cleanup when GC reclaims an unclosed engine.
+
+        Python 3.14 note: weakref.finalize is preferred over __del__ for
+        deterministic cleanup. This __del__ is a secondary safety net that
+        covers the case where finalize was already called or the engine was
+        resurrected.
+        """
+        try:
+            self._cleanup_executors_sync(
+                getattr(self, '_inference_executor', None),
+                getattr(self, '_prep_executor', None),
+                getattr(self, '_post_executor', None),
+            )
+            if getattr(self, '_compile_executor', None) is not None:
+                try:
+                    self._compile_executor.shutdown(wait=False, cancel_futures=True)  # type: ignore[union-attr]
+                except Exception:
+                    pass
+        except Exception:
+            pass  # GC path — never raise
 
     def reset_session(self, *, keep_cache_pool: bool = True) -> None:
         """

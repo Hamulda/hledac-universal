@@ -2074,16 +2074,23 @@ async def _generate_and_store_report(
                         pass  # Fall back to NER extraction
 
                 if not key_iocs and not key_entities:
-                    # Fallback: use NER extraction
-                    ioc_results = extract_iocs_from_text(report_text)
-                    key_iocs = list(
-                        r["value"] for r in ioc_results
-                        if r.get("value") and len(r["value"]) > 3
-                    )[:20]
-                    key_entities = list(
-                        r["value"] for r in ioc_results
-                        if r.get("ioc_type") in ("org", "person", "gpe", "product")
-                    )[:20]
+                    # R7: Use zero-copy batch_ioc_extract_unified_python via rayon channel
+                    try:
+                        from hledac.universal.utils.ioc_extract import extract_iocs_single
+                        ioc_tuples = await extract_iocs_single(report_text)
+                        key_iocs = [v for _, v in ioc_tuples if len(v) > 3][:20]
+                        key_entities = [v for t, v in ioc_tuples if t in ("org", "person", "gpe", "product")][:20]
+                    except ImportError:
+                        # Fallback to NER extraction
+                        ioc_results = extract_iocs_from_text(report_text)
+                        key_iocs = list(
+                            r["value"] for r in ioc_results
+                            if r.get("value") and len(r["value"]) > 3
+                        )[:20]
+                        key_entities = list(
+                            r["value"] for r in ioc_results
+                            if r.get("ioc_type") in ("org", "person", "gpe", "product")
+                        )[:20]
 
                 pivot_suggestions = key_iocs[:10]
 
@@ -2997,11 +3004,11 @@ async def async_run_live_public_pipeline(
                     if academic_enabled or has_academic_keywords or deep_research:
                         from hledac.universal.discovery.academic import ACADEMIC_ENABLED, search_all_academic
                         if ACADEMIC_ENABLED:
-                            from hledac.universal.core.concurrency_registry import (
+                            from hledac.universal.core.concurrency import (
                                 ConcurrencyCategory,
-                                get_semaphore_for_testing,
+                                get_semaphore,
                             )
-                            academic_semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
+                            academic_semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
                             async def limited_academic_search():
                                 async with academic_semaphore:
                                     return await search_all_academic(self.query, max_results_per_source=10)

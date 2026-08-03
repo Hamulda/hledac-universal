@@ -76,11 +76,16 @@ def _get_otel_meter() -> "Meter | None":
 
 def _get_rust_aggregator() -> Any:
     """Lazily get Rust PyTelemetryAggregator."""
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    create_fn = rust.raw.create_telemetry_aggregator
+    if create_fn is None:
+        logger.warning("[otel_bridge] Rust telemetry aggregator unavailable")
+        return None
     try:
-        from hledac_rust_extensions import create_telemetry_aggregator
-        return create_telemetry_aggregator()
+        return create_fn()
     except Exception as e:
-        logger.warning(f"[otel_bridge] Rust telemetry aggregator unavailable: {e}")
+        logger.warning(f"[otel_bridge] Rust telemetry aggregator failed: {e}")
         return None
 
 

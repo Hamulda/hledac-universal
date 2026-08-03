@@ -10,7 +10,7 @@ ConcurrencyBudget Registry — Centralizovaný správce semaforů pro M1 8GB.
 KATEGORIE:
 | Category          | OK   | WARN | CRITICAL | EMERGENCY | Use case                    |
 |-------------------|------|------|----------|-----------|-----------------------------|
-| HTTP_LANE         | 8    | 4    | 2        | 1         | curl_cffi/aiohttp fetches   |
+| HTTP_LANE         | 8    | 4    | 2        | 1         | curl_cffi/httpx fetches     |
 | DNS_BRUTE         | 50   | 25   | 10       | 5         | Subdomain enumeration       |
 | BGP_QUERY         | 3    | 2    | 1        | 1         | Heavyweight ASN lookups     |
 | IP_QUERY          | 10   | 5    | 3        | 1         | IP-to-ASN/ipinfo/etc        |
@@ -333,16 +333,36 @@ def _get_cached_semaphore(category: ConcurrencyCategory) -> asyncio.Semaphore:
 
 def get_semaphore_for_testing(category: ConcurrencyCategory) -> asyncio.Semaphore:
     """
-    Get cached Semaphore for category (synchronous, no async init required).
+    DEPRECATED since R12 (2026-07-19): Use ``get_semaphore(category)`` from
+    ``hledac.universal.core.concurrency`` instead.
 
-    DEPRECATED: For production code, prefer `await get_budget(category)` which
-    uses the full async registry with dynamic UMA state adjustment.
-    This function exists for backwards compatibility with test/sync code.
+    This function existed for historical test/sync convenience but became
+    the de facto production API across ~53 files. The name is misleading —
+    the function delegates to a SEPARATE module-level cache
+    (_SEMAPHORE_CACHE) that duplicated ConcurrencyBudgetRegistry state.
 
-    Returns the SAME semaphore instance for all call sites — semaphore is
-    cached per category via the module-level _SEMAPHORE_CACHE dict.
+    MIGRATION:
+        OLD: from hledac.universal.core.concurrency_registry import (
+                 ConcurrencyCategory, get_semaphore_for_testing)
+             sem = get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
 
-    Thread-safety: threading.Lock + dict.get() atomic in CPython (GIL).
-    All semaphore creation uses FIXED OK-state limits.
+        NEW: from hledac.universal.core.concurrency import (
+                 ConcurrencyCategory, get_semaphore)
+             sem = get_semaphore(ConcurrencyCategory.HTTP_LANE)
+
+    RATIONALE:
+        — core/concurrency.py delegates to ConcurrencyBudgetRegistry
+          (single cache, UMA-aware, telemetry)
+        — "get_semaphore_for_testing" is a misnomer — it's used in production
+        — Separate _SEMAPHORE_CACHE duplicated the registry's state
+
+    BACKWARDS COMPATIBILITY:
+        This function remains available for test code (tests/ directory)
+        and any un-migrated call sites. It now delegates to
+        ConcurrencyBudgetRegistry.get_instance().get(category) to unify
+        the two caches, and emits a DeprecationWarning on first call
+        per process.
     """
-    return _get_cached_semaphore(category)
+    # R12: Unify with registry instead of separate _SEMAPHORE_CACHE
+    registry = ConcurrencyBudgetRegistry.get_instance()
+    return registry.get(category)

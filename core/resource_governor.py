@@ -1660,6 +1660,15 @@ class M1ResourceGovernor:
             guard.update_hard_limit(decision.uma_state)
         except Exception:
             pass
+        # UNIFIED-003: Propagate UMA pressure to GlobalPeakCoScheduler for
+        # preemption + mutex group awareness. This ensures CRITICAL/EMERGENCY
+        # pressure triggers active task cancellation.
+        try:
+            from hledac.universal.core.global_co_scheduler import get_co_scheduler
+            scheduler = get_co_scheduler()
+            asyncio.create_task(scheduler.on_pressure_change(decision.uma_state))
+        except Exception:
+            pass
 
     def apply_madvise_critical(self) -> None:
         """

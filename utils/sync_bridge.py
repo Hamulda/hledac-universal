@@ -164,7 +164,9 @@ async def _rayon_join_async(handle: int, timeout: float | None = None) -> Any:
     asyncio.timeout provides deadline-aware cancellation.
     """
     try:
-        from hledac_rust_extensions import rayon_join_channel
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        rayon_join_channel = rust.raw.rayon_join_channel
     except ImportError:
         # Fallback: rayon not compiled — propagate the import error as RuntimeError
         raise RuntimeError(
@@ -233,7 +235,10 @@ async def to_thread_rayon(
         instead (py314_executors.py, PEP 756).
     """
     try:
-        from hledac_rust_extensions import rayon_submit_channel, rayon_join_channel
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        rayon_submit_channel = rust.raw.rayon_submit_channel
+        rayon_join_channel = rust.raw.rayon_join_channel
     except ImportError:
         raise RuntimeError(
             "hledac_rust_extensions.rayon_submit_channel unavailable (not compiled). "
@@ -248,7 +253,9 @@ async def to_thread_rayon(
     except BaseException:
         # On any exit (timeout, error, cancellation), abort the rayon task
         try:
-            from hledac_rust_extensions import rayon_abort_channel
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            rayon_abort_channel = rust.raw.rayon_abort_channel
             rayon_abort_channel(handle)
         except BaseException:
             pass  # Best-effort abort — don't mask the original exception

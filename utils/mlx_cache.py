@@ -90,8 +90,8 @@ def get_mlx_semaphore() -> asyncio.Semaphore:
     """
     global _MLX_SEMAPHORE
     if _MLX_SEMAPHORE is None:
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        _MLX_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.MLX_INFERENCE)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        _MLX_SEMAPHORE = get_semaphore(ConcurrencyCategory.MLX_INFERENCE)
     return _MLX_SEMAPHORE
 
 

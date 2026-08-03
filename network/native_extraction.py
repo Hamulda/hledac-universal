@@ -119,7 +119,9 @@ def _get_rust_native_db() -> Any | None:
         return _native_db_module
     _native_db_checked = True
     try:
-        import hledac_rust_extensions as _rust  # type: ignore[import-not-found]
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _rust = rust.raw.module  # type: ignore[assignment]
 
         MongoDumper = getattr(_rust, "MongoDumper", None)
         RedisDumper = getattr(_rust, "RedisDumper", None)

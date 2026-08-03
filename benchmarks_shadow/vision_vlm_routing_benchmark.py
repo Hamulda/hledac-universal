@@ -17,7 +17,7 @@ Usage:
   python benchmarks/vision_vlm_routing_benchmark.py --list-routes
 """
 import argparse
-import json
+import json as _stdlib_json
 import os
 import sys
 from dataclasses import dataclass, field

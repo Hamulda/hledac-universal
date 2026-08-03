@@ -324,36 +324,34 @@ class FingerprintMuterConfig(msgspec.Struct):
 class FingerprintMuterStrategy:
     """Inject JS to mute browser fingerprinting vectors.
 
-    Delegates to existing FingerprintRandomizer + JavaScriptEvasion
-    classes in stealth_layer.py (lazy import inside strategy).
+    APEX-1005/1006/1007: Uses the unified ``ProfileGenerator`` +
+    ``FingerprintProfile.to_evasion_scripts()`` pipeline from
+    ``evasion_pipeline.py``.  No longer delegates to separate
+    FingerprintRandomizer + JavaScriptEvasion.
     """
 
-    __slots__ = ("_config", "_fingerprint_randomizer", "_js_evasion", "_evasions_applied", "_profile_rotations")
+    __slots__ = ("_config", "_profile_gen", "_current_profile", "_evasions_applied", "_profile_rotations")
     strategy_name: str = "fingerprint_muter"
 
     def __init__(self, config: FingerprintMuterConfig | None = None) -> None:
         self._config = config or FingerprintMuterConfig()
-        self._fingerprint_randomizer: Any = None
-        self._js_evasion: Any = None
+        self._profile_gen: Any = None
+        self._current_profile: Any = None
         self._evasions_applied: int = 0
         self._profile_rotations: int = 0
 
     async def mount(self, ctx: Any) -> None:
-        # Lazy import existing classes — stays inside strategy
-        from hledac.universal.layers.stealth_layer import (
-            FingerprintConfig,
-            FingerprintRandomizer,
-            JavaScriptEvasion,
-            JavaScriptEvasionConfig,
+        # Lazy import unified pipeline — APEX-1005/1006/1007
+        from hledac.universal.layers.evasion_pipeline import (
+            ProfileGenerator,
+            _EvasionScriptGenerator,
+            FingerprintProfile,
         )
 
-        fp_config = FingerprintConfig()  # use defaults
-        self._fingerprint_randomizer = FingerprintRandomizer(config=fp_config)
+        self._profile_gen = ProfileGenerator()
+        self._current_profile = self._profile_gen.generate()
 
-        js_config = JavaScriptEvasionConfig()  # use defaults
-        self._js_evasion = JavaScriptEvasion(config=js_config)
-
-        logger.debug("FingerprintMuterStrategy mounted")
+        logger.debug("FingerprintMuterStrategy mounted (unified pipeline)")
 
     async def unmount(self, ctx: Any) -> None:
         logger.debug(
@@ -366,27 +364,28 @@ class FingerprintMuterStrategy:
         return event
 
     def get_js_protection_script(self) -> str:
-        """Get JS fingerprint protection script (composed from sub-strategies)."""
-        scripts: list[str] = []
+        """Get JS fingerprint protection script (unified pipeline).
 
-        if self._fingerprint_randomizer:
-            scripts.append(self._fingerprint_randomizer.get_js_protection_script() or "")
-        if self._js_evasion:
-            scripts.append(
-                self._js_evasion.get_all_evasion_scripts()[0] if self._js_evasion.get_all_evasion_scripts() else ""
-            )
-
-        return "\n".join(s for s in scripts if s)
+        APEX-1005/1006/1007: Uses the unified EvasionScriptGenerator from
+        the current profile — all 17 categories, CSPRNG+Gaussian, no duplicates.
+        """
+        if self._current_profile is None:
+            return ""
+        scripts = self._current_profile.to_evasion_scripts()
+        return "\n".join(s.script for s in scripts)
 
     def rotate_profile(self) -> None:
         """Generate new fingerprint profile."""
-        if self._fingerprint_randomizer:
-            self._fingerprint_randomizer.rotate()
+        if self._profile_gen is not None:
+            self._current_profile = self._profile_gen.rotate()
             self._profile_rotations += 1
 
     def get_detection_score(self) -> dict[str, Any]:
-        if self._js_evasion:
-            return self._js_evasion.get_detection_score() or {}
+        if self._current_profile is not None:
+            from hledac.universal.layers.evasion_pipeline import compute_detection_score
+            return compute_detection_score(
+                self._current_profile.to_evasion_scripts()
+            )
         return {}
 
     def get_stats(self) -> dict[str, Any]:

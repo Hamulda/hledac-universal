@@ -41,7 +41,9 @@ except ImportError:
 _RustBloomFilter: type | None = None
 _RUST_BLOOM_AVAILABLE = False
 try:
-    import hledac_rust_extensions as _rust
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    _rust = rust.raw.module
     _RustBloomFilter = getattr(_rust, 'BloomFilter', None)
     _RUST_BLOOM_AVAILABLE = _RustBloomFilter is not None
 except ImportError:

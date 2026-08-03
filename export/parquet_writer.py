@@ -366,7 +366,9 @@ class ParquetExporter:
             # Call Rust arrow batch builder (uncompressed Arrow IPC bytes)
             # Uses rayon parallel column build (n >= 64 items) — ~3× faster than Python loops
             try:
-                from hledac_rust_extensions import build_arrow_batch_from_findings
+                # R6: Centralized Rust access via core.rust_backend
+                from hledac.universal.core.rust_backend import rust
+                build_arrow_batch_from_findings = rust.raw.build_arrow_batch_from_findings
                 rust_result = build_arrow_batch_from_findings(findings_dicts)
                 if rust_result is None or len(rust_result) == 0:
                     raise RuntimeError("Rust arrow batch returned empty")

@@ -271,7 +271,9 @@ except ImportError:
 # Rust ANE module — model registry, batch validation, telemetry
 _RUST_ANE_AVAILABLE = False
 try:
-    import hledac_rust_extensions as _rust
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    _rust = rust.raw.module
     if hasattr(_rust, 'ane'):
         _RUST_ANE_AVAILABLE = True
         _rust_ane = _rust.ane

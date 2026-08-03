@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import sqlite3
 import threading
@@ -41,6 +40,25 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# JSON helpers — routed through canonical codec (Issue 10 fix)
+# ---------------------------------------------------------------------------
+
+
+def _json_encode(obj: Any) -> str:
+    """Encode Python object to JSON string via canonical codec."""
+    from hledac.universal.utils.codec import encode_str
+    return encode_str(obj)
+
+
+def _json_decode(raw: str | None) -> Any:
+    """Decode JSON string to Python object via canonical codec."""
+    if not raw:
+        return {}
+    from hledac.universal.utils.codec import decode
+    return decode(raw)
+
 
 # ---------------------------------------------------------------------------
 # Dataclasses
@@ -84,7 +102,7 @@ class DLQPayload:
             error_type=row['error_type'],
             error_message=row['error_message'],
             payload_data=bytes.fromhex(row['payload_data']),
-            metadata=json.loads(row['metadata']) if row['metadata'] else {},
+            metadata=_json_decode(row['metadata']) if row['metadata'] else {},
             created_at=datetime.fromisoformat(row['created_at']),
             attempt_count=row['attempt_count'],
             last_attempt_at=datetime.fromisoformat(row['last_attempt_at'])
@@ -264,7 +282,7 @@ class DLQManager:
                     payload.error_type,
                     payload.error_message,
                     payload.payload_data.hex(),
-                    json.dumps(payload.metadata),
+                    _json_encode(payload.metadata),
                     payload.created_at.isoformat(),
                 ),
             )
@@ -343,7 +361,7 @@ class DLQManager:
                     payload.error_type,
                     payload.error_message,
                     payload.payload_data.hex(),
-                    json.dumps(payload.metadata),
+                    _json_encode(payload.metadata),
                     payload.created_at.isoformat(),
                 ),
             )

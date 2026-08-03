@@ -326,7 +326,7 @@ class InferenceEngine:
     MAX_EVIDENCE_ITEMS = 10000
     MAX_BFS_QUEUE = 1000
     MAX_BFS_DEPTH = 10
-    __slots__ = tuple(('_evidence', '_evidence_graph', '_evidence_pruned_count', '_graph_pruned_count', '_hypothesis_set', '_inference_rules', '_thread_pool', 'max_chain_depth', 'max_total_iterations', 'min_confidence_threshold', 'streaming_batch_size', 'use_mlx', '_total_iterations'))
+    __slots__ = tuple(('_evidence', '_evidence_graph', '_evidence_pruned_count', '_graph_pruned_count', '_hypothesis_set', '_inference_rules', 'max_chain_depth', 'max_total_iterations', 'min_confidence_threshold', 'streaming_batch_size', 'use_mlx', '_total_iterations'))
 
     def __init__(self, max_chain_depth: int=5, min_confidence_threshold: float=0.3, use_mlx: bool=True, streaming_batch_size: int=1000, max_total_iterations: int=100):
         """
@@ -344,7 +344,8 @@ class InferenceEngine:
         self.min_confidence_threshold = min_confidence_threshold
         self.use_mlx = use_mlx and MLX_AVAILABLE
         self.streaming_batch_size = streaming_batch_size
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._thread_pool = None  # R5: unused in this class, kept for compat; lazy via domain_executors if needed
+        # _run_coro_sync_safe uses asyncio.new_event_loop() directly, not a thread pool
         self._evidence: LRUCache[str, InferenceEvidence] = LRUCache(max_size=self.MAX_EVIDENCE_ITEMS)
         self._evidence_graph: LRUCache[str, set[str]] = LRUCache(max_size=self.MAX_GRAPH_NODES)
         self._inference_rules: list[InferenceRule] = []
@@ -379,8 +380,12 @@ class InferenceEngine:
         return loop.run_until_complete(coro)
 
     def _shutdown_executor(self) -> None:
-        """Shutdown thread pool fail-safe."""
-        if hasattr(self, '_thread_pool'):
+        """R5: Shutdown thread pool if it was ever created (no-op if None).
+
+        InferenceEngine does not use a dedicated thread pool —
+        _run_coro_sync_safe uses asyncio.new_event_loop() directly.
+        """
+        if hasattr(self, '_thread_pool') and self._thread_pool is not None:
             try:
                 self._thread_pool.shutdown(wait=False, cancel_futures=True)
             except Exception:

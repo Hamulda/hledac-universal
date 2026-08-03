@@ -441,8 +441,8 @@ class ForensicsEnricher:
         """
         if not findings:
             return {}
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
 
         async def enrich_one(finding: Any) -> tuple[str, dict[str, Any] | None]:
             async with semaphore:

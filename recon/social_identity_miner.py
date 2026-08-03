@@ -123,8 +123,8 @@ class SocialIdentityMiner:
 
     def __init__(self) -> None:
         self._bloom_seen: bool = False
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._semaphore: asyncio.Semaphore = get_semaphore_for_testing(ConcurrencyCategory.SOCIAL_MINE)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._semaphore: asyncio.Semaphore = get_semaphore(ConcurrencyCategory.SOCIAL_MINE)
         self._stats: dict[str, int] = {'scanned': 0, 'skipped': 0, 'facets_found': 0}
 
     def reset(self) -> None:

@@ -517,14 +517,19 @@ async def certstream_monitor_multi(
     # Build Aho-Corasick automaton
     matcher = None
     if use_rust:
-        try:
-            from hledac_rust_extensions import AhoCorasickMatcher
-            # Lowercase patterns for case-insensitive matching
-            patterns_lower = [p.lower() for p in patterns]
-            matcher = AhoCorasickMatcher(patterns_lower)
-            logger.info(f'[Certstream] Rust Aho-Corasick built with {len(patterns)} patterns')
-        except Exception as e:
-            logger.warning(f'[Certstream] Rust Aho-Corasick unavailable: {e}, using Python fallback')
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        AhoCorasickMatcher = rust.raw.AhoCorasickMatcher
+        if AhoCorasickMatcher is None:
+            logger.warning('[Certstream] Rust Aho-Corasick not available, falling back to Python')
+        else:
+            try:
+                # Lowercase patterns for case-insensitive matching
+                patterns_lower = [p.lower() for p in patterns]
+                matcher = AhoCorasickMatcher(patterns_lower)
+                logger.info(f'[Certstream] Rust Aho-Corasick built with {len(patterns)} patterns')
+            except Exception as e:
+                logger.warning(f'[Certstream] Rust Aho-Corasick unavailable: {e}, using Python fallback')
 
     # Python fallback: simple substring matching
     if matcher is None:

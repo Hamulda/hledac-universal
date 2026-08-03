@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from hledac.universal.utils.async_helpers import safe_create_task
 
 if TYPE_CHECKING:
-    pass
+    from hledac.universal.core.memory_pressure import MemoryPressureLevel
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,9 @@ def _madvise_heap_critical() -> None:
     Metal/MLX tensors are synchronized before page reclamation.
     """
     try:
-        import hledac_rust_extensions as _rust
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _rust = rust.raw.module
         # madvise_free_reusable(addr=0, length=0, advice=1) applies to entire
         # process address space via madvise(MADV_DONTNEED) on Darwin.
         # addr=0 + length=0 is the canonical "whole process" madvise pattern.
@@ -158,7 +160,15 @@ class HermesModelCache:
 
     Eviction strategy:
       1. Passive: at insert-time when at capacity (LRU eviction)
-      2. Active: background monitor evicts on 'critical' pressure every interval
+      2. Active: TTL-based idle eviction via background monitor
+      3. Pressure-driven: via MemoryPressureBroadcaster callbacks (R8)
+         - on_soft_warn: TTL sweep + evict idle LoRA adapters
+         - on_warn: evict ALL LoRA adapters + oldest model
+         - on_critical: madvise + evict everything
+
+    MemoryPressureListener protocol (R8):
+      - listener_priority = 0 (highest — evicted first under pressure)
+      - listener_name = "hermes_cache"
 
     Args:
         max_size: Maximum number of cached models (default 2 for M1 8GB).
@@ -166,6 +176,7 @@ class HermesModelCache:
             memory pressure (default 1.0s).
         on_evict_model: Optional callback(key: str) invoked after model eviction.
         on_evict_lora: Optional callback(key: str) invoked after LoRA eviction.
+        auto_register: If True (default), registers with MemoryPressureBroadcaster.
     """
 
     __slots__ = (
@@ -191,6 +202,7 @@ class HermesModelCache:
         pressure_check_interval_s: float = 1.0,
         on_evict_model: Callable[[str], None] | None = None,
         on_evict_lora: Callable[[str], None] | None = None,
+        auto_register: bool = True,
     ) -> None:
         self._model_cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._lora_cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
@@ -211,6 +223,9 @@ class HermesModelCache:
         self._lora_eviction_count = 0
         # ISSUE-16: store sys.modules reference for platform checks (avoid repeated import)
         self._sys = sys
+        # R8: register with MemoryPressureBroadcaster for unified cache eviction
+        if auto_register:
+            self._register_with_broadcaster()
 
     # ─── Shared telemetry + hook helpers (Type-2 clone deduplication) ───────
 
@@ -387,7 +402,147 @@ class HermesModelCache:
             _mlx_cache_clear("clear_loras")
         return count
 
-    # ─── Pressure monitor (active eviction) ─────────────────────────────────
+    # ─── MemoryPressureListener protocol (R8) ──────────────────────────────
+
+    @property
+    def listener_priority(self) -> int:
+        """Priority 0 = highest — evicted first under memory pressure."""
+        return 0
+
+    @property
+    def listener_name(self) -> str:
+        """Human-readable name for telemetry."""
+        return "hermes_cache"
+
+    def on_soft_warn(self) -> None:
+        """
+        R8: ELEVATED pressure — TTL sweep + evict idle LoRA adapters.
+
+        Called by MemoryPressureBroadcaster via asyncio.to_thread().
+        Non-blocking: acquires lock and performs bounded work.
+        """
+        now = time.monotonic()
+        cutoff = now - _MODEL_TTL_S
+        evicted_models = 0
+        evicted_loras = 0
+
+        with self._lock:
+            # TTL sweep: evict idle model entries beyond TTL
+            stale_keys = [
+                k for k, ts in list(self._access_times.items())
+                if ts < cutoff and k in self._model_cache
+            ]
+            for key in stale_keys:
+                del self._model_cache[key]
+                self._access_times.pop(key, None)
+                self._model_eviction_count += 1
+                evicted_models += 1
+                if self._on_evict_model:
+                    self._safe_call_hook(self._on_evict_model, key)
+
+            # Evict half of LoRA adapters (keep most recently used)
+            lora_to_evict = max(1, len(self._lora_cache) // 2)
+            for _ in range(lora_to_evict):
+                self._evict_lora_internal()
+                evicted_loras += 1
+
+        if evicted_models or evicted_loras:
+            _mlx_cache_clear("soft_warn")
+            logger.info(
+                "[HermesModelCache] on_soft_warn: evicted %d model(s), %d LoRA(s)",
+                evicted_models, evicted_loras,
+            )
+
+    def on_warn(self) -> None:
+        """
+        R8: HIGH pressure — evict ALL LoRA adapters + oldest model.
+
+        Called by MemoryPressureBroadcaster via asyncio.to_thread().
+        """
+        evicted_models = 0
+        evicted_loras = 0
+
+        with self._lock:
+            # Evict all LoRA adapters
+            lora_count = len(self._lora_cache)
+            for _ in range(lora_count):
+                self._evict_lora_internal()
+                evicted_loras += 1
+
+            # Evict oldest model (keep at most 1)
+            while len(self._model_cache) > 1:
+                self._evict_model_internal()
+                evicted_models += 1
+
+        if evicted_models or evicted_loras:
+            _mlx_cache_clear("warn")
+            logger.warning(
+                "[HermesModelCache] on_warn: evicted %d model(s), %d LoRA(s)",
+                evicted_models, evicted_loras,
+            )
+        self._emit_eviction_telemetry(
+            self._model_eviction_count, "hermes.cache.model_evictions"
+        )
+        self._emit_eviction_telemetry(
+            self._lora_eviction_count, "hermes.cache.lora_evictions"
+        )
+
+    def on_critical(self) -> None:
+        """
+        R8: CRITICAL pressure — evict EVERYTHING.
+
+        madvise(DONTNEED) is handled by the broadcaster AFTER all
+        listeners have evicted (canonical order: evict first, then madvise).
+
+        Called by MemoryPressureBroadcaster via asyncio.to_thread().
+        """
+        model_count = 0
+        lora_count = 0
+
+        with self._lock:
+            model_count = len(self._model_cache)
+            lora_count = len(self._lora_cache)
+            self._model_cache.clear()
+            self._lora_cache.clear()
+            self._access_times.clear()
+            self._model_eviction_count += model_count
+            self._lora_eviction_count += lora_count
+
+        _mlx_cache_clear("critical")
+        logger.critical(
+            "[HermesModelCache] on_critical: evicted ALL (%d models, %d LoRAs)",
+            model_count, lora_count,
+        )
+        self._emit_eviction_telemetry(
+            self._model_eviction_count, "hermes.cache.model_evictions"
+        )
+        self._emit_eviction_telemetry(
+            self._lora_eviction_count, "hermes.cache.lora_evictions"
+        )
+
+    def on_normal(self) -> None:
+        """
+        R8: NORMAL pressure restored — no action needed.
+
+        Full capacity is already available; the cache naturally refills.
+        """
+        logger.debug("[HermesModelCache] on_normal: full capacity restored")
+
+    def _register_with_broadcaster(self) -> None:
+        """
+        R8: Register this cache as a listener with the MemoryPressureBroadcaster.
+
+        Fail-open: any error (e.g., broadcaster not yet initialized) is non-fatal.
+        """
+        try:
+            from hledac.universal.core.memory_pressure import MemoryPressureBroadcaster
+            broadcaster = MemoryPressureBroadcaster.get_instance()
+            broadcaster.register(self)
+            logger.debug("[HermesModelCache] registered with MemoryPressureBroadcaster")
+        except Exception:
+            logger.debug("[HermesModelCache] broadcaster registration deferred")
+
+    # ─── Pressure monitor (active eviction — TTL only now) ─────────────────
 
     async def pressure_check_loop(self) -> None:
         """
@@ -404,18 +559,17 @@ class HermesModelCache:
 
         Runs forever until cancelled.
         """
-        logger.debug("[HermesModelCache] Pressure monitor started")
+        logger.debug("[HermesModelCache] Pressure monitor started (TTL-only; pressure → broadcaster R8)")
         while True:
             try:
                 await asyncio.sleep(self._pressure_check_interval_s)
 
-                # Probe pressure OUTSIDE the lock (I/O — avoid holding lock)
-                pressure = _get_memory_pressure_level()
                 now = time.monotonic()
                 cutoff = now - _MODEL_TTL_S
 
                 with self._lock:
-                    # 1. TTL-based eviction: sweep idle model entries
+                    # TTL-based eviction: sweep idle model entries (only TTL —
+                    # pressure-driven eviction is handled by MemoryPressureBroadcaster R8)
                     stale_keys = [
                         k for k, ts in list(self._access_times.items()) if ts < cutoff and k in self._model_cache
                     ]
@@ -428,21 +582,6 @@ class HermesModelCache:
                         logger.debug(f"[HermesModelCache] TTL expired, evicted model: {key}")
                         if self._on_evict_model:
                             self._safe_call_hook(self._on_evict_model, key)
-
-                    # 2. HIGH pressure: evict all LoRA adapters (free GPU memory fast)
-                    if pressure == "high" and self._lora_cache:
-                        count = len(self._lora_cache)
-                        for _ in range(count):
-                            self._evict_lora_internal()
-                        logger.warning(f"[HermesModelCache] Pressure HIGH, evicted {count} LoRA adapters")
-
-                    # 3. CRITICAL pressure: madvise(DONTNEED) → evict largest model
-                    elif pressure == "critical":
-                        # ISSUE-16: madvise BEFORE eviction so kernel reclaims pages first
-                        _madvise_heap_critical()
-                        if self._model_cache:
-                            key = self._evict_model_internal()
-                            logger.warning(f"[HermesModelCache] Pressure CRITICAL, evicted model: {key}")
             except asyncio.CancelledError:
                 logger.debug("[HermesModelCache] Pressure monitor cancelled")
                 return
@@ -453,6 +592,8 @@ class HermesModelCache:
     def start_monitor(self, _loop: asyncio.AbstractEventLoop | None = None) -> None:
         """
         Start the background pressure monitor.
+
+        R8: Also ensures MemoryPressureBroadcaster is running (idempotent start).
 
         Args:
             _loop: Deprecated. Kept for API compat. Event loop is resolved
@@ -467,6 +608,13 @@ class HermesModelCache:
         if self._monitor_task is not None and not self._monitor_task.done():
             return  # already running
         self._monitor_task = safe_create_task(self.pressure_check_loop(), name="hermes_cache:monitor")
+        # R8: Ensure the unified MemoryPressureBroadcaster is also running
+        try:
+            from hledac.universal.core.memory_pressure import get_broadcaster
+            bc = get_broadcaster()
+            safe_create_task(bc.start(), name="memory_pressure:start")
+        except Exception:
+            pass  # Non-fatal — broadcaster may not be available
         logger.info("[HermesModelCache] Monitor task started")
 
     async def stop_monitor(self) -> None:

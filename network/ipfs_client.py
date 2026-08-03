@@ -740,8 +740,8 @@ async def fetch_findings_from_cids(cids: list[str], query: str, timeout_per_cid:
     if not cids:
         return []
     unique_cids = list(dict.fromkeys(cids))
-    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def _fetch_one(cid: str):
         nonlocal query

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 import httpx
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 logger = logging.getLogger(__name__)
 _CanonicalFinding = None
 try:
@@ -286,7 +286,7 @@ class BGPAdapter:
     def __init__(self) -> None:
         self._session: httpx.AsyncClient | None = None
         self._stats: dict[str, int] = {'ips_processed': 0, 'asns_resolved': 0, 'prefixes_collected': 0, 'errors': 0}
-        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
+        self._semaphore = get_semaphore(ConcurrencyCategory.BGP_QUERY)
         self._last_request: float = 0.0
 
     def set_session(self, session: httpx.AsyncClient) -> None:
@@ -341,7 +341,7 @@ class PassiveDNSAdapter:
     def __init__(self) -> None:
         self._session: httpx.AsyncClient | None = None
         self._stats: dict[str, int] = {'domains_processed': 0, 'records_collected': 0, 'errors': 0}
-        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.IP_QUERY)
+        self._semaphore = get_semaphore(ConcurrencyCategory.IP_QUERY)
         self._last_request: float = 0.0
 
     def set_session(self, session: httpx.AsyncClient) -> None:

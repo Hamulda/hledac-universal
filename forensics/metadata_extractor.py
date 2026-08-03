@@ -617,8 +617,8 @@ class UniversalMetadataExtractor:
         self.max_file_size = max_file_size
         self.batch_size = batch_size
         self._initialized = False
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
 
     async def initialize(self) -> None:
         """Initialize extractor and cache."""

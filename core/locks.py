@@ -458,11 +458,9 @@ def _get_rust_unfair_lock() -> Any:
     """Lazy load rust unfair_lock — voláno pouze na Darwinu."""
     global _rust_unfair_lock
     if _rust_unfair_lock is None:
-        try:
-            from hledac_rust_extensions import unfair_lock
-            _rust_unfair_lock = unfair_lock
-        except ImportError:
-            _rust_unfair_lock = False  # Mark as unavailable
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _rust_unfair_lock = rust.raw.unfair_lock or False  # False = unavailable
     return _rust_unfair_lock if _rust_unfair_lock else None
 
 

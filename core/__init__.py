@@ -21,6 +21,12 @@ __all__ = [
     "make_counter",
     "Watchdog",
     "rust_backend",
+    "ResourceLifecycleManager",
+    "require_rlm",
+    "get_current_rlm",
+    # R12: concurrency facade
+    "ConcurrencyCategory",
+    "get_semaphore",
 ]
 
 # ── PEP 810 lazy imports — nothing imported at module load time ───────────────
@@ -35,10 +41,12 @@ _sysdet_cache: dict[str, object] | None = None
 _uma_cache: dict[str, object] | None = None
 _rb: object | None = None
 _main_cache: object | None = None
+_rlm_cache: dict[str, object] | None = None
+_concurrency_cache: dict[str, object] | None = None
 
 
 def __getattr__(name: str):
-    global _lock_cache, _embed_cache, _rgov_cache, _sysdet_cache, _uma_cache, _rb, _main_cache
+    global _lock_cache, _embed_cache, _rgov_cache, _sysdet_cache, _uma_cache, _rb, _main_cache, _rlm_cache, _concurrency_cache
 
     # ── rust_backend (already lazy, keep existing pattern) ───────────────────
     if name == "rust_backend":
@@ -106,6 +114,21 @@ def __getattr__(name: str):
             _rgov_cache = {"Priority": Priority}
         return _rgov_cache[name]  # type: ignore[return-value]
 
+    # ── resource_lifecycle (R1) ──────────────────────────────────────────────
+    if name in ("ResourceLifecycleManager", "require_rlm", "get_current_rlm"):
+        if _rlm_cache is None:
+            from hledac.universal.core.resource_lifecycle import (
+                ResourceLifecycleManager,
+                require_rlm,
+                get_current_rlm,
+            )
+            _rlm_cache = {
+                "ResourceLifecycleManager": ResourceLifecycleManager,
+                "require_rlm": require_rlm,
+                "get_current_rlm": get_current_rlm,
+            }
+        return _rlm_cache[name]  # type: ignore[return-value]
+
     # ── system_detector ───────────────────────────────────────────────────────
     if name in ("SystemDetector", "get_system_detector", "get_hardware_capabilities", "HardwareCapabilities"):
         if _sysdet_cache is None:
@@ -145,5 +168,18 @@ def __getattr__(name: str):
         # both resolve to the same cached object.
         sys.modules["hledac.universal.core.__main__"] = _main_cache
         return _main_cache
+
+    # ── concurrency (R12) ───────────────────────────────────────────────────
+    if name in ("ConcurrencyCategory", "get_semaphore"):
+        if _concurrency_cache is None:
+            from hledac.universal.core.concurrency import (
+                ConcurrencyCategory,
+                get_semaphore,
+            )
+            _concurrency_cache = {
+                "ConcurrencyCategory": ConcurrencyCategory,
+                "get_semaphore": get_semaphore,
+            }
+        return _concurrency_cache[name]  # type: ignore[return-value]
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

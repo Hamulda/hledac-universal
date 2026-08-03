@@ -235,23 +235,9 @@ class MediaDecoder:
     # ── RAM guard ──────────────────────────────────────────────────────────
 
     def _check_ram_guard(self) -> bool:
-        """Check if UMA has headroom for heavy media decode."""
-        try:
-            if self._governor is None:
-                return True
-            try:
-                if self._governor.is_critical():
-                    return False
-            except AttributeError:
-                pass
-            try:
-                if self._governor.is_emergency():
-                    return False
-            except AttributeError:
-                pass
-            return True
-        except Exception:
-            return True
+        """Check UMA headroom for heavy media decode."""
+        from hledac.universal.multimodal import check_ram_guard
+        return check_ram_guard(self._governor)
 
     # ── Format probe ───────────────────────────────────────────────────────
 
@@ -497,7 +483,8 @@ class MediaDecoder:
             await self.initialize()
         if not self._speech_available or _Speech is None:
             log.debug("[SILICON-02] Speech recognizer not available")
-            return TranscriptionResult()
+            # [SILICON-02b] Fallback to WhisperEngine if available
+            return await self._transcribe_whisper_fallback(source)
 
         # Resolve source to PCM samples
         if isinstance(source, str):
@@ -614,15 +601,97 @@ class MediaDecoder:
                         pass
 
             text, confidence, segments = await asyncio.to_thread(_transcribe_sync)
-            return TranscriptionResult(
+            result = TranscriptionResult(
                 text=text,
                 confidence=confidence,
                 duration_s=dur_s,
                 segments=segments,
                 locale=self._speech_locale,
             )
+            # [SILICON-02b] If SFSpeechRecognizer returned empty text, try WhisperEngine
+            if not text.strip():
+                log.debug("[SILICON-02] SFSpeechRecognizer returned empty — trying WhisperEngine")
+                whisper_result = await self._transcribe_whisper_fallback(source)
+                if whisper_result.text.strip():
+                    return whisper_result
+            return result
         except Exception as exc:
             log.debug("[SILICON-02] transcribe failed: %s", exc)
+            # [SILICON-02b] Fallback to WhisperEngine on SFSpeechRecognizer failure
+            return await self._transcribe_whisper_fallback(source)
+
+    # ── Whisper.cpp fallback [SILICON-02b] ─────────────────────────────────
+
+    async def _transcribe_whisper_fallback(
+        self,
+        source: str | Any,
+    ) -> TranscriptionResult:
+        """
+        [SILICON-02b] Fallback transcription via whisper.cpp + CoreML/ANE.
+
+        Called when SFSpeechRecognizer is unavailable, returns empty text,
+        or raises an error. whisper.cpp supports 99 languages fully offline.
+
+        Returns:
+            TranscriptionResult or empty TranscriptionResult on failure.
+        """
+        try:
+            from hledac.universal.multimodal.whisper_transcriber import (
+                transcribe_audio as whisper_transcribe,
+            )
+
+            # Determine audio file path
+            if isinstance(source, str):
+                audio_path = source
+            elif isinstance(source, Path):
+                audio_path = str(source)
+            else:
+                # Raw samples not supported by whisper yet — skip
+                log.debug("[SILICON-02b] Raw samples not supported by WhisperEngine")
+                return TranscriptionResult()
+
+            # Call whisper transcriber
+            result = await whisper_transcribe(
+                str(audio_path),
+                language=None,  # auto-detect
+                model_size="tiny",
+            )
+
+            if result is None or not result.text.strip():
+                return TranscriptionResult()
+
+            log.info(
+                "[SILICON-02b] WhisperEngine fallback succeeded: "
+                "%d chars, lang=%s, engine=%s",
+                len(result.text),
+                result.language,
+                result.engine_detail,
+            )
+
+            # Map whisper result to MediaEngine TranscriptionResult
+            segments = [
+                {
+                    "text": seg.text,
+                    "start_s": seg.start_s,
+                    "end_s": seg.end_s,
+                    "confidence": seg.confidence,
+                }
+                for seg in (result.segments or [])
+            ]
+
+            return TranscriptionResult(
+                text=result.text,
+                confidence=result.confidence,
+                duration_s=result.duration_s,
+                segments=segments,
+                locale=f"whisper-{result.language}",
+            )
+
+        except ImportError:
+            log.debug("[SILICON-02b] WhisperEngine not importable")
+            return TranscriptionResult()
+        except Exception as exc:
+            log.debug("[SILICON-02b] WhisperEngine fallback failed: %s", exc)
             return TranscriptionResult()
 
     # ── Video keyframe extraction ──────────────────────────────────────────

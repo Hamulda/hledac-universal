@@ -43,9 +43,10 @@ def _probe_native_db() -> bool:
     if _native_db_available is not None:
         return _native_db_available
 
-    try:
-        import hledac_rust_extensions as _rust  # type: ignore[import-not-found]
-
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    _rust = rust.raw.module
+    if _rust is not None:
         _MongoDumper = getattr(_rust, "MongoDumper", None)
         _RedisDumper = getattr(_rust, "RedisDumper", None)
         _ElasticsearchDumper = getattr(_rust, "ElasticsearchDumper", None)
@@ -64,7 +65,7 @@ def _probe_native_db() -> bool:
                 "hledac_rust_extensions loaded but native_db classes missing "
                 "(compile with --features native_db)"
             )
-    except ImportError:
+    else:
         logger.debug("hledac_rust_extensions not available — using Python fallbacks")
         _native_db_available = False
 

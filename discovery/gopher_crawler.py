@@ -78,8 +78,8 @@ class GopherCrawler:
         self._max_items_per_host = max_items_per_host
         self._max_text_size = max_text_size
         self._timeout_s = timeout_s
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.GOPHER_LANE)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._semaphore = get_semaphore(ConcurrencyCategory.GOPHER_LANE)
         self._visited: dict[str, frozenset[str]] = {}
         self._item_counts: dict[str, int] = {}
 

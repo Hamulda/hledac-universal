@@ -19,7 +19,7 @@ Benefit: Eliminates ~200 lines of duplication across:
 - runtime/opsec_policy.py (TransportPolicy, RendererPolicy)
 
 M1 8GB constraints:
-- dataclass(frozen=True, slots=True) for frozen types (no GC tracking)
+- msgspec.Struct(frozen=True, gc=False) for frozen types (~40B/instance, no GC)
 - Bounded collections (MAX_BUDGET_ITEMS=512)
 - Fail-safe: every method returns sensible defaults on error
 
@@ -27,7 +27,7 @@ Invariant: Always-on, bounded, fail-safe — no feature flags.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import msgspec
 from enum import Enum, auto
 from typing import Protocol, runtime_checkable, Any
 
@@ -64,11 +64,11 @@ class LanePolicy(Protocol):
     def get_budget_fraction(self, total_budget: float) -> float: ...
 
 
-@dataclass(frozen=True, slots=True)
-class QualityScore:
+class QualityScore(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable quality score s confidence.
 
+    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
     Používá se pro lane quality assessment, source quality tracking,
     a candidate scoring.
 
@@ -80,12 +80,6 @@ class QualityScore:
     score: float          # 0.0-1.0
     confidence: float    # 0.0-1.0
     components: tuple[str, ...] = ()  # pro audit trail
-
-    def __post_init__(self) -> None:
-        if not (0.0 <= self.score <= 1.0):
-            object.__setattr__(self, 'score', max(0.0, min(1.0, self.score)))
-        if not (0.0 <= self.confidence <= 1.0):
-            object.__setattr__(self, 'confidence', max(0.0, min(1.0, self.confidence)))
 
     @staticmethod
     def compose(*scores: QualityScore) -> QualityScore:
@@ -108,11 +102,11 @@ class QualityScore:
         return self.score >= threshold and self.confidence >= 0.5
 
 
-@dataclass(frozen=True, slots=True)
-class LaneContext:
+class LaneContext(msgspec.Struct, frozen=True, gc=False):
     """
     Runtime context for lane policy evaluation.
 
+    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
     Všechny field jsou immutable (frozen=True) pro bezpečné sdílení
     mezi async tasky.
     """
@@ -149,11 +143,11 @@ class LaneContext:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class PolicyResult:
+class PolicyResult(msgspec.Struct, frozen=True, gc=False):
     """
     Výsledek policy evaluation.
 
+    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
     Sjednocuje různé policy decision typy do jednoho formátu.
     """
     decision: LaneDecision

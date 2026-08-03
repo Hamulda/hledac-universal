@@ -304,8 +304,40 @@ class AdvancedCaptchaSolver:
         solved = self._solve_stats['solved']
         return {'attempted': attempted, 'solved': solved, 'success_rate': solved / attempted if attempted > 0 else 0.0, 'by_method': self._solve_stats['by_method'].copy(), 'ocr_backend': self._ocr_pipeline.get('type') if self._ocr_pipeline else None}
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Backward-compatible wrappers — delegate to unified evasion_pipeline
+# ═══════════════════════════════════════════════════════════════════════════
+# APEX-1005/1006/1007: JavaScriptEvasion and FingerprintRandomizer are now
+# thin wrappers around the unified pipeline in evasion_pipeline.py.
+# All JS generation happens in ONE place with CSPRNG+Gaussian, no duplicates.
+#
+# BrowserProfile is a backward-compat re-export of FingerprintProfile.
+# JavaScriptEvasionConfig and FingerprintConfig are preserved for API compat
+# but no longer drive JS generation (the unified pipeline uses
+# EvasionCategory whitelists instead).
+
+# Re-export unified types under the old names for backward compatibility
+from .evasion_pipeline import (  # noqa: E402
+    EvasionCategory,
+    EvasionScript,
+    FingerprintProfile,
+    ProfileGenerator,
+    _EvasionScriptGenerator,
+    compute_detection_score,
+)
+
+# BrowserProfile = backward-compat alias
+BrowserProfile = FingerprintProfile
+
+
 class JavaScriptEvasionConfig(msgspec.Struct):
-    """Configuration for JavaScript evasion"""
+    """Configuration for JavaScript evasion (backward-compat — APEX-1005/1006).
+
+    Since the unified pipeline (evasion_pipeline.py), this config exists
+    only for API compatibility.  The actual JS generation is driven by
+    EvasionCategory whitelists, not boolean flags.
+    """
     hide_webdriver: bool = True
     hide_automation: bool = True
     spoof_plugins: bool = True
@@ -320,376 +352,322 @@ class JavaScriptEvasionConfig(msgspec.Struct):
     spoof_chrome_runtime: bool = True
     add_chrome_plugins: bool = True
 
+    def to_category_whitelist(self) -> set[EvasionCategory] | None:
+        """Convert legacy boolean flags to EvasionCategory whitelist.
+
+        Returns None if all categories are enabled (= no filtering needed).
+        """
+        mapping: list[tuple[bool, EvasionCategory]] = [
+            (self.hide_webdriver, EvasionCategory.WEBDRIVER),
+            (self.hide_automation, EvasionCategory.AUTOMATION),
+            (self.spoof_plugins, EvasionCategory.PLUGINS),
+            (self.spoof_permissions, EvasionCategory.PERMISSIONS),
+            (self.disable_webrtc, EvasionCategory.WEBRTC),
+            (self.override_canvas, EvasionCategory.CANVAS),
+            (self.override_webgl, EvasionCategory.WEBGL),
+            (self.spoof_fonts, EvasionCategory.FONTS),
+            (self.emulate_human_events, EvasionCategory.EVENTS),
+            (self.patch_detection_libs, EvasionCategory.DETECTION),
+            (self.randomize_globals, EvasionCategory.GLOBALS),
+            (self.spoof_chrome_runtime, EvasionCategory.CHROME_RUNTIME),
+            (self.add_chrome_plugins, EvasionCategory.CHROME_PLUGINS),
+        ]
+        # Screen, timezone, hardware, audio are always-on in the unified pipeline
+        always_on = {
+            EvasionCategory.SCREEN, EvasionCategory.TIMEZONE,
+            EvasionCategory.HARDWARE, EvasionCategory.AUDIO,
+        }
+        enabled = {cat for flag, cat in mapping if flag} | always_on
+        all_cats = {cat for _, cat in mapping} | always_on
+        if enabled == all_cats:
+            return None  # no filtering needed
+        return enabled
+
+
 class JavaScriptEvasion:
-    """
-    Advanced JavaScript evasion techniques for bot detection bypass.
+    """JavaScript evasion (backward-compat wrapper — delegates to evasion_pipeline).
 
-    Provides 15+ evasion scripts to defeat:
-    - Webdriver detection
-    - Automation flags
-    - Headless detection
-    - Plugin enumeration
-    - Canvas fingerprinting
-    - WebGL fingerprinting
-    - Permission API probing
-    - Chrome runtime detection
+    APEX-1005/1006/1007: This class is now a thin wrapper around
+    ``_EvasionScriptGenerator`` from ``evasion_pipeline.py``.  All JS
+    generation happens in the unified pipeline with CSPRNG + Gaussian noise.
 
-    M1 Optimized:
-    - Scripts injected before page load
-    - Minimal runtime overhead
-    - Memory-efficient execution
-
-    Profile-Aware (APEX-1005, APEX-1006):
-    - Accepts BrowserProfile from FingerprintRandomizer
-    - Canvas noise uses CSPRNG (crypto.getRandomValues) + Gaussian distribution
-    - WebGL spoof uses platform-consistent vendor/renderer from profile
-
-    Example:
+    Example (unchanged API):
         >>> evasion = JavaScriptEvasion(config, profile=browser_profile)
         >>> scripts = evasion.get_all_evasion_scripts()
-        >>> for script in scripts:
-        ...     await page.add_init_script(script)
     """
-    DETECTION_LIBS = ['botd', 'botguard', 'datadome', 'akamai', 'perimeterx', 'cloudflare', 'hcaptcha', 'recaptcha']
-    __slots__ = tuple(('_script_cache', 'config', '_profile'))
 
-    def __init__(self, config: JavaScriptEvasionConfig | None=None, profile: BrowserProfile | None=None):
+    DETECTION_LIBS = ['botd', 'botguard', 'datadome', 'akamai', 'perimeterx', 'cloudflare', 'hcaptcha', 'recaptcha']
+    __slots__ = ('config', '_profile', '_generator', '_cached_scripts', '_cached_str_scripts')
+
+    def __init__(
+        self,
+        config: JavaScriptEvasionConfig | None = None,
+        profile: BrowserProfile | None = None,
+    ) -> None:
         self.config = config or JavaScriptEvasionConfig()
-        self._profile = profile
-        self._script_cache: dict[str, str] = {}
+        self._profile: FingerprintProfile | None = profile
+        self._generator: _EvasionScriptGenerator | None = None
+        self._cached_scripts: list[EvasionScript] | None = None
+        self._cached_str_scripts: list[str] | None = None
+        if profile is not None:
+            self._generator = _EvasionScriptGenerator(profile)
 
     def set_profile(self, profile: BrowserProfile) -> None:
-        """Update the browser profile used for fingerprint-aware evasion scripts.
-
-        Clears the script cache so next call to get_all_evasion_scripts()
-        regenerates scripts with the new profile values.
-        """
+        """Update the browser profile (clears cache)."""
         self._profile = profile
-        self._script_cache.clear()
+        self._generator = _EvasionScriptGenerator(profile)
+        self._cached_scripts = None
+        self._cached_str_scripts = None
 
     def get_all_evasion_scripts(self) -> list[str]:
-        """Get all enabled evasion scripts."""
-        scripts = []
-        if self.config.hide_webdriver:
-            scripts.append(self._get_webdriver_hider())
-        if self.config.hide_automation:
-            scripts.append(self._get_automation_hider())
-        if self.config.spoof_plugins:
-            scripts.append(self._get_plugin_spoof())
-        if self.config.spoof_permissions:
-            scripts.append(self._get_permission_spoof())
-        if self.config.disable_webrtc:
-            scripts.append(self._get_webrtc_disabler())
-        if self.config.override_canvas:
-            scripts.append(self._get_canvas_override())
-        if self.config.override_webgl:
-            scripts.append(self._get_webgl_override())
-        if self.config.spoof_fonts:
-            scripts.append(self._get_font_spoof())
-        if self.config.emulate_human_events:
-            scripts.append(self._get_event_emulator())
-        if self.config.patch_detection_libs:
-            scripts.append(self._get_detection_patcher())
-        if self.config.randomize_globals:
-            scripts.append(self._get_global_randomizer())
-        if self.config.spoof_chrome_runtime:
-            scripts.append(self._get_chrome_runtime_spoof())
-        if self.config.add_chrome_plugins:
-            scripts.append(self._get_chrome_plugins())
-        return scripts
+        """Get all enabled evasion scripts (list[str] for API compat)."""
+        if self._cached_str_scripts is not None:
+            return self._cached_str_scripts
 
-    def _get_webdriver_hider(self) -> str:
-        """Hide webdriver properties."""
-        return "\n        // Hide WebDriver\n        Object.defineProperty(navigator, 'webdriver', {\n            get: () => undefined\n        });\n\n        // Remove webdriver-related properties\n        delete navigator.__webdriver_script_fn;\n        delete navigator.__selenium_evaluate;\n        delete navigator.__selenium_unwrapped;\n\n        // Chrome-only properties\n        if (window.chrome) {\n            window.chrome.runtime = window.chrome.runtime || {};\n            window.chrome.csi = window.chrome.csi || function() {};\n            window.chrome.loadTimes = window.chrome.loadTimes || function() {};\n        }\n        "
+        if self._generator is None:
+            # No profile provided — use defaults
+            from .evasion_pipeline import ProfileGenerator
+            pg = ProfileGenerator()
+            profile = pg.generate()
+            self._profile = profile
+            self._generator = _EvasionScriptGenerator(profile)
 
-    def _get_automation_hider(self) -> str:
-        """Hide automation flags."""
-        return '\n        // Hide automation flags\n        const originalQuery = window.navigator.permissions.query;\n        window.navigator.permissions.query = (parameters) => (\n            parameters.name === \'notifications\' ||\n            parameters.name === \'clipboard-read\' ||\n            parameters.name === \'clipboard-write\'\n            ? Promise.resolve({ state: Notification.permission })\n            : originalQuery(parameters)\n        );\n\n        // Override Permissions API\n        if (navigator.permissions) {\n            const originalPermissionsQuery = navigator.permissions.query;\n            navigator.permissions.query = function(parameters) {\n                if (parameters.name === \'notifications\') {\n                    return Promise.resolve({\n                        state: \'default\',\n                        onchange: null,\n                        addEventListener: function() {},\n                        removeEventListener: function() {},\n                        dispatchEvent: function() { return true; }\n                    });\n                }\n                return originalPermissionsQuery.call(this, parameters);\n            };\n        }\n\n        // Hide Playwright/Puppeteer indicators\n        Object.defineProperty(navigator, \'plugins\', {\n            get: function() {\n                return [\n                    {\n                        0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format"},  # noqa: E501\n                        description: "Portable Document Format",\n                        filename: "internal-pdf-viewer",\n                        length: 1,\n                        name: "Chrome PDF Plugin"\n                    },\n                    {\n                        0: {type: "application/pdf", suffixes: "pdf", description: "Portable Document Format"},\n                        description: "Portable Document Format",\n                        filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",\n                        length: 1,\n                        name: "Chrome PDF Viewer"\n                    }\n                ];\n            }\n        });\n\n        // Hide headless indicators\n        Object.defineProperty(navigator, \'languages\', {\n            get: () => [\'en-US\', \'en\']\n        });\n        '
-
-    def _get_plugin_spoof(self) -> str:
-        """Spoof plugin information."""
-        return '\n        // Spoof plugins to appear as regular Chrome\n        Object.defineProperty(navigator, \'plugins\', {\n            get: function() {\n                return {\n                    length: 2,\n                    item: function(index) {\n                        const plugins = [\n                            {\n                                name: "Chrome PDF Plugin",\n                                filename: "internal-pdf-viewer",\n                                description: "Portable Document Format",\n                                version: undefined,\n                                length: 1,\n                                item: function(idx) { return this[idx]; }\n                            },\n                            {\n                                name: "Chrome PDF Viewer",\n                                filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",\n                                description: "Portable Document Format",\n                                version: undefined,\n                                length: 1,\n                                item: function(idx) { return this[idx]; }\n                            }\n                        ];\n                        return plugins[index];\n                    },\n                    namedItem: function(name) {\n                        return this.item(0);\n                    },\n                    refresh: function() {}\n                };\n            }\n        });\n\n        // Spoof mimeTypes\n        Object.defineProperty(navigator, \'mimeTypes\', {\n            get: function() {\n                return {\n                    length: 2,\n                    item: function(index) {\n                        const types = [\n                            { type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: navigator.plugins[0] },  # noqa: E501\n                            { type: "application/pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: navigator.plugins[1] }  # noqa: E501\n                        ];\n                        return types[index];\n                    }\n                };\n            }\n        });\n        '
-
-    def _get_permission_spoof(self) -> str:
-        """Spoof permission API."""
-        return "\n        // Override Permissions API to appear as standard browser\n        if (navigator.permissions) {\n            const originalQuery = navigator.permissions.query;\n            navigator.permissions.query = function(parameters) {\n                // Standard permissions responses\n                const permissionOverrides = {\n                    'notifications': 'default',\n                    'camera': 'prompt',\n                    'microphone': 'prompt',\n                    'clipboard-read': 'prompt',\n                    'clipboard-write': 'granted',\n                    'geolocation': 'prompt'\n                };\n\n                if (parameters.name in permissionOverrides) {\n                    return Promise.resolve({\n                        state: permissionOverrides[parameters.name],\n                        onchange: null,\n                        addEventListener: function() {},\n                        removeEventListener: function() {},\n                        dispatchEvent: function() { return true; }\n                    });\n                }\n\n                return originalQuery.call(this, parameters);\n            };\n        }\n        "
-
-    def _get_webrtc_disabler(self) -> str:
-        """Disable WebRTC to prevent IP leaks."""
-        return '\n        // Disable WebRTC\n        if (window.RTCPeerConnection) {\n            const noop = function() {};\n            window.RTCPeerConnection = noop;\n            window.RTCPeerConnection.prototype = {};\n        }\n\n        if (window.webkitRTCPeerConnection) {\n            const noop = function() {};\n            window.webkitRTCPeerConnection = noop;\n        }\n\n        if (window.mozRTCPeerConnection) {\n            const noop = function() {};\n            window.mozRTCPeerConnection = noop;\n        }\n        '
-
-    def _get_canvas_override(self) -> str:
-        """Override canvas fingerprinting with CSPRNG + Gaussian noise.
-
-        APEX-1005 fix: Replaces Math.random() (xorshift128+, reconstructable)
-        with crypto.getRandomValues() (CSPRNG) and Box-Muller Gaussian noise
-        (μ from profile, σ=0.8) for hardware-variance realism.
-        """
-        # Get canvas noise seed from profile if available, else default (0,0,0)
-        noise_seed = (0, 0, 0)
-        if self._profile is not None:
-            noise_seed = self._profile.canvas_noise
-
-        return f"""
-        // Canvas fingerprint protection (APEX-1005: CSPRNG + Gaussian noise)
-        (function() {{
-            'use strict';
-
-            // Per-session noise seed from Python profile
-            const NOISE_SEED = {list(noise_seed)};
-
-            // Box-Muller transform for Gaussian noise using CSPRNG
-            function gaussianRandom(mean, stddev) {{
-                const buffer = new Uint32Array(2);
-                crypto.getRandomValues(buffer);
-
-                // Convert to [0, 1) range
-                const u1 = buffer[0] / 0x100000000;
-                const u2 = buffer[1] / 0x100000000;
-
-                // Box-Muller transform
-                const z0 = Math.sqrt(-2.0 * Math.log(u1 + 1e-10)) * Math.cos(2.0 * Math.PI * u2);
-                return mean + stddev * z0;
-            }}
-
-            // Add subtle Gaussian noise to ImageData
-            function addCanvasNoise(imageData) {{
-                const data = imageData.data;
-                const width = imageData.width;
-                const height = imageData.height;
-
-                // Apply Gaussian noise (μ=seed, σ=0.8) per channel
-                for (let i = 0; i < data.length; i += 4) {{
-                    // Red channel
-                    const noiseR = gaussianRandom(NOISE_SEED[0], 0.8);
-                    data[i] = Math.max(0, Math.min(255, Math.round(data[i] + noiseR)));
-
-                    // Green channel
-                    const noiseG = gaussianRandom(NOISE_SEED[1], 0.8);
-                    data[i + 1] = Math.max(0, Math.min(255, Math.round(data[i + 1] + noiseG)));
-
-                    // Blue channel
-                    const noiseB = gaussianRandom(NOISE_SEED[2], 0.8);
-                    data[i + 2] = Math.max(0, Math.min(255, Math.round(data[i + 2] + noiseB)));
-
-                    // Alpha unchanged
-                }}
-
-                return imageData;
-            }}
-
-            // Override getImageData
-            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-            CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {{
-                const imageData = originalGetImageData.call(this, sx, sy, sw, sh);
-                return addCanvasNoise(imageData);
-            }};
-
-            // Override toDataURL
-            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-            HTMLCanvasElement.prototype.toDataURL = function(type, quality) {{
-                const ctx = this.getContext('2d');
-                if (ctx) {{
-                    const imageData = ctx.getImageData(0, 0, this.width, this.height);
-                    addCanvasNoise(imageData);
-                    ctx.putImageData(imageData, 0, 0);
-                }}
-                return originalToDataURL.call(this, type, quality);
-            }};
-
-            // Override toBlob
-            const originalToBlob = HTMLCanvasElement.prototype.toBlob;
-            HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {{
-                const ctx = this.getContext('2d');
-                if (ctx) {{
-                    const imageData = ctx.getImageData(0, 0, this.width, this.height);
-                    addCanvasNoise(imageData);
-                    ctx.putImageData(imageData, 0, 0);
-                }}
-                return originalToBlob.call(this, callback, type, quality);
-            }};
-        }})();
-        """
-
-    def _get_webgl_override(self) -> str:
-        """Override WebGL fingerprinting with profile-aware vendor/renderer.
-
-        APEX-1006 fix: Uses vendor/renderer from BrowserProfile (generated by
-        FingerprintRandomizer) instead of hardcoded Intel values. Ensures
-        platform consistency (e.g., Apple M1 on macOS, not Intel Iris).
-        """
-        # Get WebGL vendor/renderer from profile if available
-        vendor = 'Intel Inc.'
-        renderer = 'Intel Iris OpenGL Engine'
-
-        if self._profile is not None:
-            vendor = self._profile.webgl_vendor or vendor
-            renderer = self._profile.webgl_renderer or renderer
-
-        return f"""
-        // WebGL fingerprint protection (APEX-1006: profile-aware spoof)
-        (function() {{
-            'use strict';
-
-            const WEBGL_VENDOR = '{vendor}';
-            const WEBGL_RENDERER = '{renderer}';
-
-            // Override WebGLRenderingContext.prototype.getParameter
-            const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function(parameter) {{
-                // UNMASKED_VENDOR_WEBGL = 37445
-                if (parameter === 37445) {{
-                    return WEBGL_VENDOR;
-                }}
-                // UNMASKED_RENDERER_WEBGL = 37446
-                if (parameter === 37446) {{
-                    return WEBGL_RENDERER;
-                }}
-                return originalGetParameter.call(this, parameter);
-            }};
-
-            // Override getExtension to return consistent vendor info
-            const originalGetExtension = WebGLRenderingContext.prototype.getExtension;
-            WebGLRenderingContext.prototype.getExtension = function(name) {{
-                const ext = originalGetExtension.call(this, name);
-                if (name === 'WEBGL_debug_renderer_info' && ext) {{
-                    // Ensure the extension returns our spoofed values
-                    const origGetParam = ext.getParameter;
-                    if (origGetParam) {{
-                        ext.getParameter = function(p) {{
-                            if (p === 37445) return WEBGL_VENDOR;
-                            if (p === 37446) return WEBGL_RENDERER;
-                            return origGetParam.call(this, p);
-                        }};
-                    }}
-                }}
-                return ext;
-            }};
-
-            // Override getShaderPrecisionFormat to add subtle variance
-            const originalGetShaderPrecisionFormat = WebGLRenderingContext.prototype.getShaderPrecisionFormat;
-            WebGLRenderingContext.prototype.getShaderPrecisionFormat = function(formatType) {{
-                const result = originalGetShaderPrecisionFormat.call(this, formatType);
-                if (result) {{
-                    // CSPRNG for precision variance
-                    const buf = new Uint32Array(1);
-                    crypto.getRandomValues(buf);
-                    const r = buf[0] / 0x100000000;
-                    const variance = r > 0.5 ? 1 : 0;
-
-                    // Add tiny variance to precision values (±1)
-                    return {{
-                        rangeMin: result.rangeMin + variance,
-                        rangeMax: result.rangeMax + variance,
-                        precision: result.precision
-                    }};
-                }}
-                return result;
-            }};
-        }})();
-        """
-
-    def _get_font_spoof(self) -> str:
-        """Spoof font enumeration."""
-        return """
-        // Font enumeration protection
-        (function() {
-            'use strict';
-
-            // CSPRNG helper for font measurement noise
-            function cryptoRandom() {
-                const buffer = new Uint32Array(1);
-                crypto.getRandomValues(buffer);
-                return buffer[0] / 0x100000000;
-            }
-
-            const originalMeasureText = CanvasRenderingContext2D.prototype.measureText;
-            const commonFonts = [
-                'Arial', 'Courier New', 'Georgia', 'Times New Roman',
-                'Verdana', 'Helvetica', 'Trebuchet MS', 'Tahoma'
-            ];
-
-            CanvasRenderingContext2D.prototype.measureText = function(text) {
-                // Randomize measurements slightly using CSPRNG
-                const result = originalMeasureText.call(this, text);
-                const originalWidth = result.width;
-
-                // Add tiny random variation (CSPRNG)
-                Object.defineProperty(result, 'width', {
-                    get: () => originalWidth + (cryptoRandom() * 0.02 - 0.01)
-                });
-
-                return result;
-            };
-
-            // Override font property to limit enumeration
-            const originalFont = Object.getOwnPropertyDescriptor(
-                CanvasRenderingContext2D.prototype, 'font'
-            );
-        })();
-        """
-
-    def _get_event_emulator(self) -> str:
-        """Emulate human-like events."""
-        return "\n        // Emulate human input events\n        (function() {\n            // Add realistic mousemove events\n            let lastMouseMove = Date.now();\n\n            document.addEventListener('mousemove', function(e) {\n                lastMouseMove = Date.now();\n            }, true);\n\n            // Override Date constructor for consistent timezone\n            const OriginalDate = Date;\n            Date = function(...args) {\n                if (args.length === 0) {\n                    return new OriginalDate(OriginalDate.now());\n                }\n                return new OriginalDate(...args);\n            };\n\n            Date.prototype = OriginalDate.prototype;\n            Date.now = OriginalDate.now;\n            Date.parse = OriginalDate.parse;\n            Date.UTC = OriginalDate.UTC;\n\n            // Ensure Date prototype is correct\n            Date.prototype.constructor = Date;\n\n            // Override performance timing\n            if (window.performance) {\n                const originalNow = performance.now;\n                performance.now = function() {\n                    return originalNow.call(performance);\n                };\n            }\n        })();\n        "
-
-    def _get_detection_patcher(self) -> str:
-        """Patch common detection libraries."""
-        return "\n        // Patch common detection libraries\n        (function() {\n            // Hook into bot detection libraries\n            const libs = ['botd', 'botguard', 'datadome', 'akamai', 'perimeterx', 'cloudflare'];\n\n            libs.forEach(lib => {\n                Object.defineProperty(window, lib, {\n                    get: () => undefined,\n                    set: () => true\n                });\n            });\n\n            // Override common detection methods\n            const methodsToOverride = [\n                'toString',\n                'toSource',\n                'constructor'\n            ];\n\n            // Ensure native code appearance\n            Function.prototype.toString = function() {\n                if (this === Function.prototype.toString) {\n                    return 'function toString() { [native code] }';\n                }\n                return 'function () { [native code] }';\n            };\n\n            // Override prototype chain inspection\n            if (window.HTMLElement) {\n                const originalHTMLElement = window.HTMLElement;\n                window.HTMLElement = function() {};\n                window.HTMLElement.prototype = originalHTMLElement.prototype;\n            }\n        })();\n        "
-
-    def _get_global_randomizer(self) -> str:
-        """Randomize global properties."""
-        return """
-        // Randomize global properties to prevent fingerprinting
-        (function() {
-            'use strict';
-
-            // CSPRNG helper
-            function cryptoRandom() {
-                const buffer = new Uint32Array(1);
-                crypto.getRandomValues(buffer);
-                return buffer[0] / 0x100000000;
-            }
-
-            // Random screen offset (within reasonable bounds) using CSPRNG
-            const screenOffset = Math.floor(cryptoRandom() * 50);
-
-            Object.defineProperty(window.screen, 'availLeft', {
-                get: () => screenOffset
-            });
-
-            Object.defineProperty(window.screen, 'availTop', {
-                get: () => screenOffset
-            });
-
-            // Memory pressure simulation
-            if (navigator.deviceMemory) {
-                Object.defineProperty(navigator, 'deviceMemory', {
-                    get: () => 8
-                });
-            }
-
-            // Hardware concurrency
-            Object.defineProperty(navigator, 'hardwareConcurrency', {
-                get: () => 8
-            });
-        })();
-        """
-
-    def _get_chrome_runtime_spoof(self) -> str:
-        """Spoof Chrome runtime environment."""
-        return '\n        // Chrome runtime spoofing\n        if (!window.chrome) {\n            window.chrome = {};\n        }\n\n        window.chrome.runtime = {\n            OnInstalledReason: {\n                CHROME_UPDATE: "chrome_update",\n                INSTALL: "install",\n                SHARED_MODULE_UPDATE: "shared_module_update",\n                UPDATE: "update"\n            },\n            OnRestartRequiredReason: {\n                APP_UPDATE: "app_update",\n                OS_UPDATE: "os_update",\n                PERIODIC: "periodic"\n            },\n            PlatformArch: {\n                ARM: "arm",\n                ARM64: "arm64",\n                MIPS: "mips",\n                MIPS64: "mips64",\n                X86_32: "x86-32",\n                X86_64: "x86-64"\n            },\n            PlatformNaclArch: {\n                ARM: "arm",\n                MIPS: "mips",\n                MIPS64: "mips64",\n                MIPS64EL: "mips64el",\n                MIPS_EL: "mipsel",\n                X86_32: "x86-32",\n                X86_64: "x86-64"\n            },\n            PlatformOs: {\n                ANDROID: "android",\n                CROS: "cros",\n                LINUX: "linux",\n                MAC: "mac",\n                OPENBSD: "openbsd",\n                WIN: "win"\n            },\n            RequestUpdateCheckStatus: {\n                NO_UPDATE: "no_update",\n                THROTTLED: "throttled",\n                UPDATE_AVAILABLE: "update_available"\n            },\n            id: undefined,\n            OnConnect: {},\n            OnConnectExternal: {},\n            OnInstalled: {},\n            OnRestartRequired: {},\n            OnStartup: {},\n            OnSuspend: {},\n            OnSuspendCanceled: {},\n            OnUpdateAvailable: {}\n        };\n\n        // Add chrome.loadTimes for older detection\n        window.chrome.loadTimes = function() {\n            return {\n                commitLoadTime: performance.timing.domContentLoadedEventStart / 1000,\n                connectionInfo: \'h2\',\n                finishDocumentLoadTime: performance.timing.domContentLoadedEventEnd / 1000,\n                finishLoadTime: performance.timing.loadEventEnd / 1000,\n                firstPaintAfterLoadTime: 0,\n                firstPaintTime: performance.timing.domContentLoadedEventStart / 1000,\n                navigationType: \'Other\',\n                npnNegotiatedProtocol: \'h2\',\n                requestTime: performance.timing.requestStart / 1000,\n                startLoadTime: performance.timing.navigationStart / 1000,\n                wasAlternateProtocolAvailable: false,\n                wasFetchedViaSpdy: true,\n                wasNpnNegotiated: true\n            };\n        };\n        '
-
-    def _get_chrome_plugins(self) -> str:
-        """Add Chrome-specific plugin indicators."""
-        return '\n        // Chrome-specific plugin indicators\n        window.chrome.app = {\n            isInstalled: false,\n            InstallState: {\n                DISABLED: "disabled",\n                INSTALLED: "installed",\n                NOT_INSTALLED: "not_installed"\n            },\n            RunningState: {\n                CANNOT_RUN: "cannot_run",\n                READY_TO_RUN: "ready_to_run",\n                RUNNING: "running"\n            }\n        };\n\n        // Chrome csi (chrome system info)\n        window.chrome.csi = function() {\n            return {\n                onloadT: Date.now(),\n                pageT: performance.now(),\n                startE: performance.timing.navigationStart,\n                transcription: \'\'\n            };\n        };\n        '
+        categories = self.config.to_category_whitelist()
+        scripts = self._generator.generate_all(categories=categories)
+        self._cached_scripts = scripts
+        self._cached_str_scripts = [s.script for s in scripts]
+        return self._cached_str_scripts
 
     def get_detection_score(self) -> dict[str, Any]:
         """Get evasion coverage score."""
-        evasions = {'webdriver_hiding': self.config.hide_webdriver, 'automation_hiding': self.config.hide_automation, 'plugin_spoofing': self.config.spoof_plugins, 'permission_spoofing': self.config.spoof_permissions, 'webrtc_disabled': self.config.disable_webrtc, 'canvas_override': self.config.override_canvas, 'webgl_override': self.config.override_webgl, 'font_spoofing': self.config.spoof_fonts, 'event_emulation': self.config.emulate_human_events, 'detection_patching': self.config.patch_detection_libs, 'global_randomization': self.config.randomize_globals, 'chrome_runtime': self.config.spoof_chrome_runtime, 'chrome_plugins': self.config.add_chrome_plugins}
-        enabled = sum((1 for v in evasions.values() if v))
-        total = len(evasions)
-        return {'coverage': enabled / total, 'enabled_count': enabled, 'total_count': total, 'evasions': evasions}
+        scripts = self._cached_scripts
+        if scripts is None:
+            _ = self.get_all_evasion_scripts()
+            scripts = self._cached_scripts
+        if scripts is not None:
+            return compute_detection_score(scripts)
+        return compute_detection_score([])
+
+    # ── Legacy _get_* methods (delegated to pipeline for introspection) ──
+    # These exist for API backward-compat; they trigger full script generation
+    # on first call but return only the matching script on subsequent calls.
+
+    def _get_webdriver_hider(self) -> str:
+        scripts = self.get_all_evasion_scripts()
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'webdriver_hider':
+                return s_ev.script
+        return ''
+
+    def _get_automation_hider(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'automation_hider':
+                return s_ev.script
+        return ''
+
+    def _get_plugin_spoof(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'plugin_spoof':
+                return s_ev.script
+        return ''
+
+    def _get_permission_spoof(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'permission_spoof':
+                return s_ev.script
+        return ''
+
+    def _get_webrtc_disabler(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'webrtc_disable':
+                return s_ev.script
+        return ''
+
+    def _get_canvas_override(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'canvas_csprng_gauss':
+                return s_ev.script
+        return ''
+
+    def _get_webgl_override(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'webgl_profile_aware':
+                return s_ev.script
+        return ''
+
+    def _get_font_spoof(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'font_spoof':
+                return s_ev.script
+        return ''
+
+    def _get_event_emulator(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'event_emulator':
+                return s_ev.script
+        return ''
+
+    def _get_detection_patcher(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'detection_patcher':
+                return s_ev.script
+        return ''
+
+    def _get_global_randomizer(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'global_randomizer':
+                return s_ev.script
+        return ''
+
+    def _get_chrome_runtime_spoof(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'chrome_runtime_spoof':
+                return s_ev.script
+        return ''
+
+    def _get_chrome_plugins(self) -> str:
+        for s_ev in self._cached_scripts or []:
+            if s_ev.script_id == 'chrome_plugins':
+                return s_ev.script
+        return ''
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FingerprintRandomizer — backward-compat wrapper
+# ═══════════════════════════════════════════════════════════════════════════
+
+class FingerprintConfig(msgspec.Struct):
+    """Configuration for fingerprint randomization (backward-compat)."""
+    randomize_canvas: bool = True
+    randomize_webgl: bool = True
+    randomize_fonts: bool = True
+    randomize_screen: bool = True
+    randomize_timezone: bool = True
+    randomize_plugins: bool = True
+    consistent_per_session: bool = True
+    session_duration: float = 3600.0
+    use_realistic_profiles: bool = True
+    platform: str | None = None
+
+
+class FingerprintRandomizer:
+    """Browser fingerprint randomization (backward-compat wrapper).
+
+    APEX-1005/1006/1007: Delegates to ``ProfileGenerator`` from
+    ``evasion_pipeline.py`` for profile generation, and uses
+    ``_EvasionScriptGenerator`` for JS production.
+
+    Example (unchanged API):
+        >>> randomizer = FingerprintRandomizer()
+        >>> profile = randomizer.get_profile()
+        >>> js = randomizer.get_js_protection_script()
+    """
+
+    SCREEN_RESOLUTIONS = ProfileGenerator.SCREEN_RESOLUTIONS
+    TIMEZONES = ProfileGenerator.TIMEZONES
+    WEBGL_PROFILES = ProfileGenerator.WEBGL_PROFILES
+    COMMON_FONTS = list(ProfileGenerator.COMMON_FONTS)
+    COMMON_PLUGINS = list(ProfileGenerator.COMMON_PLUGINS)
+
+    __slots__ = ('config', '_profile_gen', '_current_profile')
+
+    def __init__(self, config: FingerprintConfig | None = None) -> None:
+        self.config = config or FingerprintConfig()
+        self._profile_gen = ProfileGenerator(
+            platform=self.config.platform,
+            session_duration=self.config.session_duration,
+            consistent_per_session=self.config.consistent_per_session,
+            randomize_canvas=self.config.randomize_canvas,
+            randomize_webgl=self.config.randomize_webgl,
+            randomize_fonts=self.config.randomize_fonts,
+            randomize_screen=self.config.randomize_screen,
+            randomize_timezone=self.config.randomize_timezone,
+            randomize_plugins=self.config.randomize_plugins,
+        )
+        self._current_profile: FingerprintProfile | None = None
+
+    def _generate_canvas_noise(self) -> tuple[int, int, int]:
+        return self._profile_gen._generate_canvas_noise()
+
+    def _generate_screen_resolution(self) -> tuple[int, int, int, float]:
+        return self._profile_gen._generate_screen()
+
+    def _generate_timezone(self) -> tuple[str, int]:
+        return self._profile_gen._generate_timezone()
+
+    def _generate_webgl_profile(self, platform: str) -> tuple[str, str]:
+        return self._profile_gen._generate_webgl(platform)
+
+    def _generate_font_list(self) -> list[str]:
+        return self._profile_gen._generate_fonts()
+
+    def _generate_plugins(self) -> list[dict[str, str]]:
+        return self._profile_gen._generate_plugins()
+
+    def _generate_hardware_specs(self, platform: str) -> tuple[int, int, int]:
+        return self._profile_gen._generate_hardware(platform)
+
+    def generate_profile(self, force_new: bool = False) -> BrowserProfile:
+        """Generate new browser fingerprint profile."""
+        profile = self._profile_gen.generate(force_new=force_new)
+        self._current_profile = profile
+        return profile
+
+    def get_profile(self) -> BrowserProfile:
+        """Get current or new profile."""
+        return self._profile_gen.get()
+
+    def get_js_protection_script(self) -> str:
+        """Generate JavaScript fingerprint protection.
+
+        Uses the unified pipeline to produce ALL evasion scripts (not just
+        the old fingerprint-specific ones), joined into one string.
+        """
+        profile = self._profile_gen.get()
+        if self._current_profile is None:
+            self._current_profile = profile
+        scripts = profile.to_evasion_scripts()
+        return '\n'.join(s.script for s in scripts)
+
+    def _js_header(self, profile_json: str) -> str:
+        return ''
+
+    def _js_screen_override(self) -> str:
+        return ''
+
+    def _js_hardware_override(self) -> str:
+        return ''
+
+    def _js_audio_protection(self) -> str:
+        return ''
+
+    def _js_canvas_protection(self, profile: Any) -> str:
+        return ''
+
+    def _js_timezone_protection(self) -> str:
+        return ''
+
+    def _js_footer(self) -> str:
+        return ''
+
+    def get_fingerprint_hash(self) -> str:
+        """Get hash of current fingerprint."""
+        profile = self._profile_gen.get()
+        return profile.fingerprint_hash()
+
+    def rotate(self) -> BrowserProfile:
+        """Force rotation to new fingerprint."""
+        return self._profile_gen.rotate()
+
+    def get_statistics(self) -> dict[str, Any]:
+        """Get randomization statistics."""
+        return {
+            'rotation_count': self._profile_gen.rotation_count,
+            'current_profile_age': self._profile_gen.profile_age,
+            'current_fingerprint': self.get_fingerprint_hash(),
+            'consistent_mode': self.config.consistent_per_session,
+        }
+
 
 class BehaviorPattern(Enum):
     """Pre-defined behavior patterns"""
@@ -935,385 +913,6 @@ class BehaviorSimulator:
         """Get simulation statistics"""
         return {'action_count': self.action_count, 'mouse_position': self.mouse_position, 'scroll_position': self.scroll_position, 'last_action_time': self.last_action_time, 'pattern': self.config.pattern.value, 'config': {'min_delay': self.config.min_delay, 'max_delay': self.config.max_delay, 'randomness': self.config.randomness}}
 
-class FingerprintConfig(msgspec.Struct):
-    """Configuration for fingerprint randomization (from stealth_toolkit)"""
-    randomize_canvas: bool = True
-    randomize_webgl: bool = True
-    randomize_fonts: bool = True
-    randomize_screen: bool = True
-    randomize_timezone: bool = True
-    randomize_plugins: bool = True
-    consistent_per_session: bool = True
-    session_duration: float = 3600
-    use_realistic_profiles: bool = True
-    platform: str | None = None
-
-class BrowserProfile(msgspec.Struct):
-    """Browser fingerprint profile (from stealth_toolkit)"""
-    screen_width: int = 1920
-    screen_height: int = 1080
-    screen_color_depth: int = 24
-    screen_pixel_ratio: float = 1.0
-    timezone: str = 'America/New_York'
-    timezone_offset: int = -5
-    canvas_noise: tuple[int, int, int] = (0, 0, 0)
-    webgl_vendor: str = 'Apple Inc.'
-    webgl_renderer: str = 'Apple M1'
-    fonts: list[str] = field(default_factory=list)
-    plugins: list[dict[str, str]] = field(default_factory=list)
-    hardware_concurrency: int = 8
-    device_memory: int = 8
-    max_touch_points: int = 0
-
-class FingerprintRandomizer:
-    """
-    Browser fingerprint randomization (from stealth_toolkit).
-
-    Randomizes browser fingerprints to avoid tracking:
-    - Canvas fingerprinting protection
-    - WebGL fingerprint randomization
-    - Font list variation
-    - Screen resolution spoofing
-    - Timezone rotation
-
-    Example:
-        >>> randomizer = FingerprintRandomizer()
-        >>> profile = randomizer.get_profile()
-        >>> js_protection = randomizer.get_js_protection_script()
-    """
-    SCREEN_RESOLUTIONS = [(1920, 1080), (2560, 1440), (1366, 768), (1440, 900), (1680, 1050), (1280, 720), (3840, 2160)]
-    TIMEZONES = [('America/New_York', -5), ('America/Chicago', -6), ('America/Denver', -7), ('America/Los_Angeles', -8), ('Europe/London', 0), ('Europe/Paris', 1), ('Europe/Berlin', 1), ('Asia/Tokyo', 9), ('Asia/Shanghai', 8), ('Australia/Sydney', 10)]
-    WEBGL_PROFILES = {'macos': [('Apple Inc.', 'Apple M1'), ('Apple Inc.', 'Apple M1 Pro'), ('Apple Inc.', 'Apple M1 Max'), ('Apple Inc.', 'Apple M2'), ('Intel Inc.', 'Intel Iris OpenGL Engine')], 'windows': [('Google Inc. (NVIDIA)', 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Direct3D11)'), ('Google Inc. (NVIDIA)', 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11)'), ('Google Inc. (Intel)', 'ANGLE (Intel, Intel(R) UHD Graphics Direct3D11)'), ('Microsoft Corporation', 'D3D11')], 'linux': [('NVIDIA Corporation', 'NVIDIA GeForce GTX 1060/PCIe/SSE2'), ('Intel Open Source Technology Center', 'Mesa DRI Intel(R) UHD Graphics 620'), ('AMD', 'AMD Radeon Graphics')]}
-    COMMON_FONTS = ['Arial', 'Arial Black', 'Arial Narrow', 'Arial Rounded MT Bold', 'Courier', 'Courier New', 'Georgia', 'Helvetica', 'Helvetica Neue', 'Times', 'Times New Roman', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Palatino', 'Garamond', 'Bookman', 'Comic Sans MS', 'Impact', 'Segoe UI', 'Calibri', 'Cambria', 'Geneva', 'Lucida Grande', 'Lucida Sans Unicode', 'Menlo', 'Monaco', 'Consolas']
-    COMMON_PLUGINS = [{'name': 'Chrome PDF Plugin', 'filename': 'internal-pdf-viewer', 'description': 'Portable Document Format'}, {'name': 'Chrome PDF Viewer', 'filename': 'mhjfbmdgcfjbbpaeojofohoefgiehjai', 'description': 'Portable Document Format'}, {'name': 'Native Client', 'filename': 'internal-nacl-plugin', 'description': 'Native Client module'}]
-    __slots__ = tuple(('_current_profile', '_profile_timestamp', '_rotation_count', 'config'))
-
-    def __init__(self, config: FingerprintConfig | None=None):
-        self.config = config or FingerprintConfig()
-        self._current_profile: BrowserProfile | None = None
-        self._profile_timestamp: float = 0
-        self._rotation_count = 0
-
-    def _generate_canvas_noise(self) -> tuple[int, int, int]:
-        """Generate subtle canvas noise (invisible to human eye)"""
-        return (_RNG.randint(0, 2), _RNG.randint(0, 2), _RNG.randint(0, 2))
-
-    def _generate_screen_resolution(self) -> tuple[int, int, int, float]:
-        """Generate realistic screen specs"""
-        if _RNG.random() < 0.9:
-            width, height = _RNG.choice(self.SCREEN_RESOLUTIONS[:5])
-        else:
-            width, height = _RNG.choice(self.SCREEN_RESOLUTIONS)
-        color_depth = _RNG.choice([24, 32])
-        pixel_ratio = _RNG.choice([1.0, 1.0, 1.0, 1.25, 1.5, 2.0])
-        return (width, height, color_depth, pixel_ratio)
-
-    def _generate_timezone(self) -> tuple[str, int]:
-        """Generate random timezone"""
-        if not self.config.randomize_timezone:
-            import time
-            tz = time.tzname[0] if time.tzname else 'UTC'
-            offset = -time.timezone // 3600
-            return (tz, offset)
-        return _RNG.choice(self.TIMEZONES)
-
-    def _generate_webgl_profile(self, platform: str) -> tuple[str, str]:
-        """Generate WebGL vendor/renderer"""
-        if not self.config.randomize_webgl:
-            return ('', '')
-        profiles = self.WEBGL_PROFILES.get(platform, self.WEBGL_PROFILES['macos'])
-        return _RNG.choice(profiles)
-
-    def _generate_font_list(self) -> list[str]:
-        """Generate randomized font list"""
-        if not self.config.randomize_fonts:
-            return self.COMMON_FONTS[:10]
-        num_fonts = _RNG.randint(10, 15)
-        return _RNG.sample(self.COMMON_FONTS, min(num_fonts, len(self.COMMON_FONTS)))
-
-    def _generate_plugins(self) -> list[dict[str, str]]:
-        """Generate browser plugins"""
-        if not self.config.randomize_plugins:
-            return self.COMMON_PLUGINS[:2]
-        num_plugins = _RNG.randint(2, len(self.COMMON_PLUGINS))
-        return _RNG.sample(self.COMMON_PLUGINS, num_plugins)
-
-    def _generate_hardware_specs(self, platform: str) -> tuple[int, int, int]:
-        """Generate hardware specs"""
-        if platform == 'macos':
-            concurrency = _RNG.choice([8, 8, 10, 10])
-            memory = _RNG.choice([8, 16, 16, 32])
-        else:
-            concurrency = _RNG.choice([4, 4, 8, 8, 8, 16])
-            memory = _RNG.choice([4, 8, 8, 16, 16, 32])
-        touch_points = 0 if platform != 'mobile' else _RNG.choice([5, 10])
-        return (concurrency, memory, touch_points)
-
-    def generate_profile(self, force_new: bool=False) -> BrowserProfile:
-        """Generate new browser fingerprint profile"""
-        if not force_new and self.config.consistent_per_session and (self._current_profile is not None):
-            elapsed = time.time() - self._profile_timestamp
-            if elapsed < self.config.session_duration:
-                return self._current_profile
-        platform = self.config.platform
-        if platform is None:
-            platform = _RNG.choice(['macos', 'windows', 'linux'])
-        width, height, color_depth, pixel_ratio = self._generate_screen_resolution()
-        timezone, tz_offset = self._generate_timezone()
-        webgl_vendor, webgl_renderer = self._generate_webgl_profile(platform)
-        profile = BrowserProfile(screen_width=width, screen_height=height, screen_color_depth=color_depth, screen_pixel_ratio=pixel_ratio, timezone=timezone, timezone_offset=tz_offset, canvas_noise=self._generate_canvas_noise(), webgl_vendor=webgl_vendor, webgl_renderer=webgl_renderer, fonts=self._generate_font_list(), plugins=self._generate_plugins(), hardware_concurrency=self._generate_hardware_specs(platform)[0], device_memory=self._generate_hardware_specs(platform)[1], max_touch_points=self._generate_hardware_specs(platform)[2])
-        self._current_profile = profile
-        self._profile_timestamp = time.time()
-        self._rotation_count += 1
-        logger.debug(f'Generated new fingerprint profile ({platform})')
-        return profile
-
-    def get_profile(self) -> BrowserProfile:
-        """Get current or new profile"""
-        return self.generate_profile()
-
-    def get_js_protection_script(self) -> str:
-        """Generate JavaScript to apply fingerprint protection"""
-        profile = self.get_profile()
-        import msgspec.json as _json
-        
-        # Serialize profile data once
-        profile_json = _json.encode({
-            'screen': {
-                'width': profile.screen_width,
-                'height': profile.screen_height,
-                'colorDepth': profile.screen_color_depth,
-                'pixelRatio': profile.screen_pixel_ratio
-            },
-            'timezone': profile.timezone,
-            'timezoneOffset': profile.timezone_offset,
-            'hardwareConcurrency': profile.hardware_concurrency,
-            'deviceMemory': profile.device_memory,
-            'maxTouchPoints': profile.max_touch_points,
-            'canvasNoise': profile.canvas_noise
-        }).decode('utf-8')
-        
-        # Build script from components
-        parts = [
-            self._js_header(profile_json),
-            self._js_screen_override(),
-            self._js_hardware_override(),
-            self._js_audio_protection(),
-            self._js_canvas_protection(profile),
-            self._js_timezone_protection(),
-            self._js_footer()
-        ]
-        
-        return ''.join(parts)
-    
-    def _js_header(self, profile_json: str) -> str:
-        """JavaScript header with profile data injection"""
-        return f"""
-        // Fingerprint Protection Script
-        (function() {{
-            'use strict';
-            const profile = {profile_json};
-"""
-    
-    def _js_screen_override(self) -> str:
-        """Screen property overrides"""
-        return """
-            // Override screen properties
-            Object.defineProperty(screen, 'width', { get: () => profile.screen.width });
-            Object.defineProperty(screen, 'height', { get: () => profile.screen.height });
-            Object.defineProperty(screen, 'colorDepth', { get: () => profile.screen.colorDepth });
-            Object.defineProperty(screen, 'pixelDepth', { get: () => profile.screen.colorDepth });
-            
-            // Override window.devicePixelRatio
-            Object.defineProperty(window, 'devicePixelRatio', {
-                get: () => profile.screen.pixelRatio
-            });
-"""
-    
-    def _js_hardware_override(self) -> str:
-        """Hardware property overrides"""
-        return """
-            // Override hardware specs
-            Object.defineProperty(navigator, 'hardwareConcurrency', {
-                get: () => profile.hardwareConcurrency
-            });
-            Object.defineProperty(navigator, 'deviceMemory', {
-                get: () => profile.deviceMemory
-            });
-            Object.defineProperty(navigator, 'maxTouchPoints', {
-                get: () => profile.maxTouchPoints
-            });
-"""
-    
-    def _js_audio_protection(self) -> str:
-        """Comprehensive AudioContext fingerprint protection (APEX-1007)"""
-        return """
-            // AudioContext fingerprint protection - comprehensive (APEX-1007: CSPRNG + Gaussian + OfflineAudioContext)
-            // Prevents advanced servers from detecting headless browser via AudioContext/OfflineAudioContext
-            // Fixes: OfflineAudioContext.startRendering(), AudioBuffer.getChannelData(), DynamicsCompressorNode.reduction
-            // Uses CSPRNG (crypto.getRandomValues) + Box-Muller Gaussian noise (σ=0.0001 for Float32, σ=0.8 for Uint8)
-            
-            // CSPRNG-based Gaussian noise generator (Box-Muller transform)
-            function _audioGaussianNoise(mean, stddev) {
-                const buffer = new Uint32Array(2);
-                crypto.getRandomValues(buffer);
-                const u1 = buffer[0] / 0x100000000;
-                const u2 = buffer[1] / 0x100000000;
-                const z0 = Math.sqrt(-2.0 * Math.log(u1 + 1e-10)) * Math.cos(2.0 * Math.PI * u2);
-                return mean + stddev * z0;
-            }
-            
-            const _origAudioContext = window.AudioContext || window.webkitAudioContext;
-            if (_origAudioContext) {
-                const _fakeAudioCtx = _origAudioContext;
-                window.AudioContext = function() {
-                    const ctx = new _fakeAudioCtx();
-                    
-                    // Override createAnalyser to protect getByteFrequencyData with CSPRNG Gaussian noise
-                    const _origCreateAnalyser = ctx.createAnalyser;
-                    if (_origCreateAnalyser) {
-                        ctx.createAnalyser = function() {
-                            const analyser = _origCreateAnalyser.call(this);
-                            const _origGetByteFrequencyData = analyser.getByteFrequencyData;
-                            analyser.getByteFrequencyData = function(array) {
-                                const result = _origGetByteFrequencyData.call(this, array);
-                                // Gaussian noise (σ=0.8) using CSPRNG - more natural than uniform ±4
-                                for (let i = 0; i < array.length; i++) {
-                                    const noise = _audioGaussianNoise(0, 0.8);
-                                    array[i] = Math.max(0, Math.min(255, Math.round(array[i] + noise)));
-                                }
-                                return array;
-                            };
-                            return analyser;
-                        };
-                    }
-                    
-                    // Override createDynamicsCompressor to protect reduction value
-                    const _origCreateDynamicsCompressor = ctx.createDynamicsCompressor;
-                    if (_origCreateDynamicsCompressor) {
-                        ctx.createDynamicsCompressor = function() {
-                            const compressor = _origCreateDynamicsCompressor.call(this);
-                            // Override reduction getter to add micro-noise
-                            const _origReductionDescriptor = Object.getOwnPropertyDescriptor(
-                                Object.getPrototypeOf(compressor), 'reduction'
-                            );
-                            if (_origReductionDescriptor && _origReductionDescriptor.get) {
-                                Object.defineProperty(compressor, 'reduction', {
-                                    get: function() {
-                                        const realValue = _origReductionDescriptor.get.call(this);
-                                        // Add tiny Gaussian noise (σ=0.001) to reduction value
-                                        return realValue + _audioGaussianNoise(0, 0.001);
-                                    },
-                                    configurable: true
-                                });
-                            }
-                            return compressor;
-                        };
-                    }
-                    
-                    return ctx;
-                };
-                window.AudioContext.prototype = _origAudioContext.prototype;
-                window.webkitAudioContext = window.AudioContext;
-            }
-            
-            // OfflineAudioContext protection - prevents deterministic fingerprint via startRendering()
-            const _origOfflineAudioContext = window.OfflineAudioContext;
-            if (_origOfflineAudioContext) {
-                window.OfflineAudioContext = function() {
-                    const ctx = new _origOfflineAudioContext(...arguments);
-                    const _origStartRendering = ctx.startRendering;
-                    ctx.startRendering = function() {
-                        return _origStartRendering.call(this).then(function(buffer) {
-                            // Inject entropy into rendered buffer to prevent deterministic hash
-                            for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-                                const channelData = buffer.getChannelData(channel);
-                                // Add micro-noise (σ=0.0001) to Float32Array - imperceptible but breaks fingerprint
-                                for (let i = 0; i < channelData.length; i++) {
-                                    channelData[i] += _audioGaussianNoise(0, 0.0001);
-                                }
-                            }
-                            return buffer;
-                        });
-                    };
-                    return ctx;
-                };
-                window.OfflineAudioContext.prototype = _origOfflineAudioContext.prototype;
-            }
-            
-            // AudioBuffer.prototype.getChannelData protection - injects micro-noise into Float32Array
-            const _origGetChannelData = AudioBuffer.prototype.getChannelData;
-            AudioBuffer.prototype.getChannelData = function(channel) {
-                const channelData = _origGetChannelData.call(this, channel);
-                // Create a copy with micro-noise to avoid modifying original buffer
-                const noisyData = new Float32Array(channelData.length);
-                for (let i = 0; i < channelData.length; i++) {
-                    noisyData[i] = channelData[i] + _audioGaussianNoise(0, 0.0001);
-                }
-                return noisyData;
-            };
-"""
-    
-    def _js_canvas_protection(self, profile) -> str:
-        """Canvas fingerprint protection with profile noise"""
-        return f"""
-            // Canvas fingerprint protection
-            const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-            const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-            
-            HTMLCanvasElement.prototype.toDataURL = function(...args) {{
-                const ctx = this.getContext('2d');
-                if (ctx) {{
-                    const imageData = ctx.getImageData(0, 0, this.width, this.height);
-                    const data = imageData.data;
-                    // Add imperceptible noise
-                    for (let i = 0; i < data.length; i += 4) {{
-                        data[i] = Math.min(255, data[i] + {profile.canvas_noise[0]});
-                        data[i+1] = Math.min(255, data[i+1] + {profile.canvas_noise[1]});
-                        data[i+2] = Math.min(255, data[i+2] + {profile.canvas_noise[2]});
-                    }}
-                    ctx.putImageData(imageData, 0, 0);
-                }}
-                return originalToDataURL.apply(this, args);
-            }};
-"""
-    
-    def _js_timezone_protection(self) -> str:
-        """Timezone override"""
-        return """
-            // Timezone protection
-            const originalDate = Date;
-            Date = class extends originalDate {
-                constructor(...args) {
-                    super(...args);
-                }
-                getTimezoneOffset() {
-                    return profile.timezoneOffset * 60;
-                }
-            };
-"""
-    
-    def _js_footer(self) -> str:
-        """JavaScript footer"""
-        return """
-        })();
-"""
-
-    def get_fingerprint_hash(self) -> str:
-        """Get hash of current fingerprint (for tracking detection)"""
-        import hashlib
-        profile = self.get_profile()
-        fingerprint_data = {'screen': f'{profile.screen_width}x{profile.screen_height}', 'color_depth': profile.screen_color_depth, 'pixel_ratio': profile.screen_pixel_ratio, 'timezone': profile.timezone, 'fonts_hash': hash(tuple(sorted(profile.fonts))) % 10000, 'hardware': f'{profile.hardware_concurrency}c{profile.device_memory}g'}
-        fingerprint_str = orjson.dumps(fingerprint_data, option=orjson.OPT_SORT_KEYS).decode()
-        return hashlib.sha256(fingerprint_str.encode()).hexdigest()[:16]
-
-    def rotate(self) -> BrowserProfile:
-        """Force rotation to new fingerprint"""
-        return self.generate_profile(force_new=True)
-
-    def get_statistics(self) -> dict[str, Any]:
-        """Get randomization statistics"""
-        return {'rotation_count': self._rotation_count, 'current_profile_age': time.time() - self._profile_timestamp if self._profile_timestamp else 0, 'current_fingerprint': self.get_fingerprint_hash(), 'consistent_mode': self.config.consistent_per_session}
 logger = logging.getLogger(__name__)
 
 class StealthLayer:
@@ -1465,10 +1064,22 @@ class StealthLayer:
             self._captcha_solver = None
 
     async def _init_js_evasion(self) -> None:
-        """Initialize JavaScript evasion (15+ anti-detection scripts)"""
+        """Initialize JavaScript evasion (unified pipeline — APEX-1005/1006/1007).
+
+        Uses the unified ``EvasionScriptGenerator`` pipeline.  The
+        ``_fingerprint_randomizer`` provides the profile for consistency.
+        """
         if self._js_evasion is None:
             try:
-                config = JavaScriptEvasionConfig(hide_webdriver=True, hide_automation=True, spoof_plugins=True, spoof_permissions=True, disable_webrtc=True, override_canvas=True, override_webgl=True, spoof_fonts=True, emulate_human_events=True, patch_detection_libs=True, randomize_globals=True, spoof_chrome_runtime=True, add_chrome_plugins=True)
+                config = JavaScriptEvasionConfig(
+                    hide_webdriver=True, hide_automation=True,
+                    spoof_plugins=True, spoof_permissions=True,
+                    disable_webrtc=True, override_canvas=True,
+                    override_webgl=True, spoof_fonts=True,
+                    emulate_human_events=True, patch_detection_libs=True,
+                    randomize_globals=True, spoof_chrome_runtime=True,
+                    add_chrome_plugins=True,
+                )
 
                 # Get profile from FingerprintRandomizer if available
                 profile = None
@@ -1476,7 +1087,10 @@ class StealthLayer:
                     profile = self._fingerprint_randomizer.get_profile()
 
                 self._js_evasion = JavaScriptEvasion(config, profile=profile)
-                logger.info('✅ JavaScriptEvasion initialized (15+ evasion scripts, profile-aware)')
+                logger.info(
+                    '✅ JavaScriptEvasion initialized (unified pipeline, '
+                    '17 categories, CSPRNG+Gaussian)'
+                )
             except Exception as e:
                 logger.warning(f'⚠️ JavaScriptEvasion initialization failed: {e}')
                 self._js_evasion = None
@@ -1585,10 +1199,10 @@ class StealthLayer:
             if self._js_evasion:
                 js_scripts = self._js_evasion.get_all_evasion_scripts()
                 scripts.extend(js_scripts)
-                logger.debug(f'🛡️ Added {len(js_scripts)} JavaScript evasion scripts')
-            if self._fingerprint_randomizer:
-                fingerprint_script = self._fingerprint_randomizer.get_js_protection_script()
-                scripts.append(fingerprint_script)
+                logger.debug(f'🛡️ Added {len(js_scripts)} unified evasion scripts')
+            # NOTE: _fingerprint_randomizer.get_js_protection_script() is NO
+            # LONGER called here — APEX-1005/1006/1007: both now delegate to
+            # the same unified pipeline, so calling both would inject duplicates.
             for script in scripts:
                 try:
                     await page.add_init_script(script)
@@ -1693,7 +1307,14 @@ class StealthLayer:
             logger.debug(f'🔒 Session closed: {session_id}')
 
     def get_fingerprint_protection(self) -> str:
-        """Get JavaScript fingerprint protection script"""
+        """Get JavaScript fingerprint protection script (unified pipeline).
+
+        Now delegates to the unified ``EvasionScriptGenerator`` pipeline
+        (APEX-1005/1006/1007). Returns ALL evasion scripts joined as one
+        string — 17 categories with CSPRNG+Gaussian throughout.
+        """
+        if self._js_evasion:
+            return '\n'.join(self._js_evasion.get_all_evasion_scripts())
         if self._fingerprint_randomizer:
             return self._fingerprint_randomizer.get_js_protection_script()
         return ''

@@ -36,7 +36,9 @@ def _get_lmdb_dht() -> Any:
     global _lmdb_dht
     if _lmdb_dht is None:
         try:
-            from hledac.universal import hledac_rust_extensions as ext
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            ext = rust.raw.module
 
             _lmdb_dht = ext
         except ImportError:

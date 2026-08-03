@@ -291,8 +291,8 @@ class BatchDNSResolver:
         (rare in this codebase, but cheap to support).
         """
         if self._semaphore is None:
-            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-            self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
+            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            self._semaphore = get_semaphore(ConcurrencyCategory.DNS_BRUTE)
         if self._lock is None:
             self._lock = asyncio.Lock()
 

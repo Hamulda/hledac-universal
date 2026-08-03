@@ -238,23 +238,18 @@ _HOT_EDGES_COMPRESS = os.environ.get("HLEDAC_HOT_EDGES_COMPRESS", "1") not in ("
 _compress_available = False
 _decompress_available = False
 
-try:
-    from hledac_rust_extensions import batch_compress_pages as _rust_batch_compress
-    from hledac_rust_extensions import batch_decompress_pages as _rust_batch_decompress
-    from hledac_rust_extensions import compress_page as _rust_compress
-    from hledac_rust_extensions import decompress_page as _rust_decompress
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
 
-    _compress_available = True
-    _decompress_available = True
-    _batch_compress_available = True
-    _batch_decompress_available = True
-except Exception:
-    _rust_compress = None
-    _rust_decompress = None
-    _rust_batch_compress = None
-    _rust_batch_decompress = None
-    _batch_compress_available = False
-    _batch_decompress_available = False
+_rust_batch_compress = rust.raw.batch_compress_pages
+_rust_batch_decompress = rust.raw.batch_decompress_pages
+_rust_compress = rust.raw.compress_page
+_rust_decompress = rust.raw.decompress_page
+
+_compress_available = _rust_compress is not None
+_decompress_available = _rust_decompress is not None
+_batch_compress_available = _rust_batch_compress is not None
+_batch_decompress_available = _rust_batch_decompress is not None
 
 
 def _make_key(src_id: int) -> bytes:

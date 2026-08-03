@@ -1347,10 +1347,12 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pymupdf" },
+    { name = "pyobjc-framework-avfoundation", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-coreml", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-naturallanguage", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
+    { name = "pyobjc-framework-speech", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-vision", marker = "sys_platform == 'darwin'" },
     { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'" },
     { name = "pypdf" },
@@ -1527,10 +1529,12 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.0,<3.0.0" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pymupdf", specifier = ">=1.27.2.3" },
+    { name = "pyobjc-framework-avfoundation", marker = "sys_platform == 'darwin'", specifier = ">=12.2" },
     { name = "pyobjc-framework-cocoa", marker = "sys_platform == 'darwin'", specifier = ">=12.2" },
     { name = "pyobjc-framework-coreml", marker = "sys_platform == 'darwin'", specifier = ">=12.2" },
     { name = "pyobjc-framework-naturallanguage", marker = "sys_platform == 'darwin'", specifier = ">=12.2" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'", specifier = ">=12.2" },
+    { name = "pyobjc-framework-speech", marker = "sys_platform == 'darwin'", specifier = ">=12.2" },
     { name = "pyobjc-framework-vision", marker = "sys_platform == 'darwin'", specifier = ">=12.2" },
     { name = "pyobjc-framework-webkit", marker = "sys_platform == 'darwin'", specifier = ">=12.2" },
     { name = "pypdf", specifier = ">=5.0.0" },
@@ -4044,6 +4048,23 @@ wheels = [
 ]
 
 [[package]]
+name = "pyobjc-framework-avfoundation"
+version = "12.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+    { name = "pyobjc-framework-coreaudio" },
+    { name = "pyobjc-framework-coremedia" },
+    { name = "pyobjc-framework-quartz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2e/26/7616f0bc8e4eaaba948cf5d220c8f55e0f54f617a2812392a82f19c30f39/pyobjc_framework_avfoundation-12.2.1.tar.gz", hash = "sha256:2735e4f1c345d2b533541577e292f3ad2f75d19200eff99f1a2db16d78b4f1a3", size = 410329, upload-time = "2026-06-19T16:19:52.413Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/a2/4a65d749d57dd16b034ee0935b7daa1228e8a735bf920e9eab9f4aaa9f1e/pyobjc_framework_avfoundation-12.2.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:043aedd86adbc0a3bfe8f76d1a1ce920539e47b5dd5d965358f93e0063c9a53d", size = 85836, upload-time = "2026-06-19T16:06:25.377Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/49/b9e8f51821a9e5a4a76bea7ab10c2dc1b51b8a141cf4bccbba022f2db19f/pyobjc_framework_avfoundation-12.2.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:50e2b65e5c3845eb8ad0d37868a7f040656fe69e6c03f4282670e7dc52ed7a4a", size = 86173, upload-time = "2026-06-19T16:06:26.423Z" },
+]
+
+[[package]]
 name = "pyobjc-framework-cocoa"
 version = "12.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4054,6 +4075,34 @@ sdist = { url = "https://files.pythonhosted.org/packages/51/34/fbe38a204643aa4e1
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ec/c8/b90baa8f3592eded79b4be98fb59d2b8dc16b62361e34292bd95806ebd9f/pyobjc_framework_cocoa-12.2.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:b386c324d64ae565c1f6b7dfb77be68f640a1c7c23caa6966ab661131f519561", size = 388357, upload-time = "2026-06-19T16:07:43.364Z" },
     { url = "https://files.pythonhosted.org/packages/98/d8/64a94651b9294702d55e748d94de30e25bc59d0784526be7643f4467eccd/pyobjc_framework_cocoa-12.2.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:a6c584e2af0813cb2f6103b184e632665a26f58c1bd5b08ffd6e95a19c617f7b", size = 392404, upload-time = "2026-06-19T16:07:44.955Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-coreaudio"
+version = "12.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/df/f1d402bb7b437374f942bb19410a955a74291867c77a920d9c13887d9e48/pyobjc_framework_coreaudio-12.2.1.tar.gz", hash = "sha256:7dfbf1851523aed453af43a628e057d8950d6e020574aa497a2e4f559b6383c8", size = 78690, upload-time = "2026-06-19T16:20:10.586Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ad/a4/6495dd34b1ed7a0e8f6d672577da62a92b166a0bc2ded8e55e552cbe5ad2/pyobjc_framework_coreaudio-12.2.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:efb79709371f29139f44adc36bd6c32d5a3a0ff3ffd0c5f3f372275cef893b18", size = 36697, upload-time = "2026-06-19T16:08:14.407Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/9e/9f0cba5b973a5c8041edb75cf0870f40324437721428b1baceb437553e3f/pyobjc_framework_coreaudio-12.2.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:9c06b9d7ee3b2a76dd171de519f571d09bdebd85f40b5960d16f711395513cdd", size = 38300, upload-time = "2026-06-19T16:08:15.297Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-coremedia"
+version = "12.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e3/79/f501d730a9c320e0b2b3916e95f57e66dd6736d210a1aa5b63eb6c43e605/pyobjc_framework_coremedia-12.2.1.tar.gz", hash = "sha256:71b45f7cd52bd997d836c15a0e1016db90815a219dc87fd20435a6f08b87df7b", size = 98252, upload-time = "2026-06-19T16:20:15.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/dc/7083e6781fcd843d210ec6d247d28c6e1032ea1c5655b9e1182d0a85f331/pyobjc_framework_coremedia-12.2.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:84e9fb3f7b6420fc3865a5812604c63546b5777f4999e0e0e830a9a0816e8743", size = 29468, upload-time = "2026-06-19T16:08:56.129Z" },
+    { url = "https://files.pythonhosted.org/packages/11/74/edb3ec87d2e5f962c75af990207e4df39b290f11b4f4c3cc446ee141e4e7/pyobjc_framework_coremedia-12.2.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:541d64d2fc7576054bdc3508a94f37671e81e5ca1582e16ebec2c0e05dd75412", size = 29519, upload-time = "2026-06-19T16:08:56.956Z" },
 ]
 
 [[package]]
@@ -4095,6 +4144,20 @@ sdist = { url = "https://files.pythonhosted.org/packages/3b/f6/2a8b84dbf1fe7c04d
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8b/5d/85ffd9d433989205d572a50d625c63b29c05e0c5235a725f15ae1023672c/pyobjc_framework_quartz-12.2.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:ceb56939c337b36d9d81185ade31f77dc52c85cf79bb16e53e9b32f54b6bb3f5", size = 219769, upload-time = "2026-06-19T16:16:08.814Z" },
     { url = "https://files.pythonhosted.org/packages/e2/d6/b917e4b63d72ea84a27121076f3033f23f6497c0e6ce8d304766c899897f/pyobjc_framework_quartz-12.2.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:8105c98b798f2bf81c05c54bddeeadbf62f0b5dfec13bd6e719dd2cdf7e1cddf", size = 224717, upload-time = "2026-06-19T16:16:10.215Z" },
+]
+
+[[package]]
+name = "pyobjc-framework-speech"
+version = "12.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyobjc-core" },
+    { name = "pyobjc-framework-cocoa" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/99/fe/0d1f1710d77deb2aefbdcca344b682f86277a0cf2df55f49615bdee213e1/pyobjc_framework_speech-12.2.1.tar.gz", hash = "sha256:77e01c6e92b34e3bb47dc5b0c43a59cb7941a7eb6ce595ca3de3a686a5df21fa", size = 27772, upload-time = "2026-06-19T16:21:48.792Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/6b/426c949ab1a5bc59fa6fe90bdd20f59661a87816d75397787a00611ee0d1/pyobjc_framework_speech-12.2.1-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:64d44383fb9fac20f457e902e1ea4b680c871ffb9b3e88862c482dcd59da7df7", size = 9371, upload-time = "2026-06-19T16:18:05.035Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/00/6dd086d3b241648374314730f6a520e0cce309d581f9682a34d78613d66e/pyobjc_framework_speech-12.2.1-cp314-cp314t-macosx_10_15_universal2.whl", hash = "sha256:e646d8c781baf531e5943c2376c92ffeeb0a8bdf4f48d93f88e59b5033d12b55", size = 9525, upload-time = "2026-06-19T16:18:05.855Z" },
 ]
 
 [[package]]

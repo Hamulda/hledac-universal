@@ -262,7 +262,7 @@ pub struct MPSCPool {
 
 - **Rust toolchain:** stable (edition 2021), `cargo 1.75+`
 - **Maturin:** `>=1.0` — `maturin build --release --strip --target-dir target/maturin`
-- **Python:** 3.12+ (abi3-py312 stable ABI wheel)
+- **Python:** 3.14+ (cp314 native wheel — non-abi3, full Python C API access)
 - **Target:** `aarch64-apple-darwin` with `RUSTFLAGS = "-C target-cpu=apple-a14"` (neon + crypto)
 
 > **⚠️ Without `+neon`**: `core::arch::aarch64` intrinsics compile but emit **no SIMD operations** — 4-8× slower on M1.

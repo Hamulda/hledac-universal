@@ -12,7 +12,7 @@ ABSOLUTE REPO ROOT: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 
 
 
-import json
+import json as _stdlib_json
 
 
 def render_live_measurement_markdown(result) -> str:

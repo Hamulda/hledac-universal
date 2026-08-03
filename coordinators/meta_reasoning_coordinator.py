@@ -706,6 +706,9 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
 
         # UNIFIED-005: Wire checkpointing if duckdb_store is available
         checkpointer = None
+        # UNIFIED-007: msgspec.to_builtins for efficient ThoughtNode → dict
+        # conversion. Used in the hot path for LMDB incremental writes.
+        from msgspec import to_builtins as _to_builtins
         if self._duckdb_store is not None and self._sprint_id is not None:
             try:
                 from hledac.universal.coordinators.tot_checkpointer import (
@@ -745,8 +748,6 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             ]
             if not leaves:
                 leaves = [root]
-            best_path = []
-            best_value = float('-inf')
             logger.info(
                 '[UNIFIED-006] ToT resumed from checkpoint: step=%d nodes=%d leaves=%d max_depth=%d',
                 self._resume_step,
@@ -765,6 +766,12 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             )
             nodes = {'root': root}
             leaves = [root]
+
+            # UNIFIED-007: Persist root node immediately via LMDB (L0 hot path)
+            if checkpointer is not None:
+                await checkpointer.incremental_checkpoint(
+                    'root', _to_builtins(root), step=0,
+                )
 
         best_path: list[str] = []
         best_value: float = float('-inf')
@@ -874,6 +881,12 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                         )
                         leaf.children.append(child.node_id)
                         nodes[child.node_id] = child
+                        # UNIFIED-007: Persist pruned node to LMDB (L0)
+                        if checkpointer is not None:
+                            await checkpointer.incremental_checkpoint(
+                                child_id, _to_builtins(child),
+                                step=depth + 1,
+                            )
                         continue
 
                     child = ThoughtNode(
@@ -888,6 +901,13 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
                     leaf.children.append(child.node_id)
                     nodes[child.node_id] = child
                     new_leaves.append(child)
+
+                    # UNIFIED-007: Persist active node to LMDB (L0 hot path)
+                    if checkpointer is not None:
+                        await checkpointer.incremental_checkpoint(
+                            child_id, _to_builtins(child),
+                            step=depth + 1,
+                        )
 
                     # Register new branch for dead-end tracking
                     dead_end_detector.register_branch(child_id)
@@ -1171,4 +1191,5 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             'Gravity-aware strategy selection [SILICON-05]',
             'Void-aware ToT branch boosting [SILICON-05]',
             'Fetch directive generation [SILICON-05]',
+            'Multi-layer ToT crash resilience — LMDB+DuckDB+FS (UNIFIED-007/008)',
         ]

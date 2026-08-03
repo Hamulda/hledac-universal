@@ -295,7 +295,17 @@ def _so_mtime() -> float | None:
             path = ext.__file__
             # For editable installs the __file__ is the __init__.py; resolve to .so
             if path.endswith("__init__.py") or os.path.isdir(path):
-                path = os.path.join(os.path.dirname(path), "hledac_rust_extensions.abi3.so")
+                # ISSUE-014: Non-abi3 native wheel → cp314-specific .so name.
+                # Try cp314 first, fall back to abi3 for legacy compatibility.
+                candidates = [
+                    f"hledac_rust_extensions.cpython-{sys.version_info.major}{sys.version_info.minor}-darwin.so",
+                    "hledac_rust_extensions.abi3.so",
+                ]
+                for cand in candidates:
+                    cand_path = os.path.join(os.path.dirname(path), cand)
+                    if os.path.isfile(cand_path):
+                        path = cand_path
+                        break
             if os.path.isfile(path):
                 return os.path.getmtime(path)
     except Exception:

@@ -318,7 +318,11 @@ class _AhoCorasickCache:
                 return self._matcher
 
             try:
-                from hledac_rust_extensions import AhoCorasickMatcher
+                # R6: Centralized Rust access via core.rust_backend
+                from hledac.universal.core.rust_backend import rust
+                AhoCorasickMatcher = rust.raw.AhoCorasickMatcher
+                if AhoCorasickMatcher is None:
+                    raise ImportError("AhoCorasickMatcher not available")
 
                 # Build labels (parallel to patterns)
                 labels = [f"inj_{i}" for i in range(len(_INJECTION_BLACKLIST))]

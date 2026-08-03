@@ -190,22 +190,38 @@ class TwoPassPipeline:
 
 async def consumer_fn_to_thread(fn: Callable[[_T], _R], items: list[_T], *, batch_size: int=64) -> list[_R]:
     """
-    Run a CPU-bound consumer function over items via asyncio.to_thread.
+    Run a CPU-bound consumer function over items via the execution gateway.
 
-    Uses batch_size for sequential chunking (avoids unbounded task creation).
-    GIL is released during each to_thread call — parallel I/O and CPU overlap.
+    Routes to Rust rayon cpu_pool (4 P-cores, NEON SIMD) when the Rust
+    extension is available, falling back to the bounded SharedWorkerPool
+    (ThreadPoolExecutor, governor-aware, adaptive 1-5 workers).
 
-    M1 8GB: batch_size=64 is the threshold that matches compress.rs Rayon pattern.
+    Uses batch_size for sequential chunking to avoid unbounded concurrent work.
+    Each batch maps fn over items via the gateway — GIL-releasing C extensions
+    (msgspec, orjson, zstd) run on Rust rayon pool for true parallelism.
+
+    M1 8GB: batch_size=64 keeps total concurrent work bounded and matches
+    compress.rs Rayon batch pattern.
+
+    Issue 8 fix: replaced bare asyncio.to_thread() with bounded gateway dispatch.
     """
+    from hledac.universal.runtime.execution_gateway import gateway, WorkloadHint
     from hledac.universal.utils.async_helpers import parallel_ok
+
     if not items:
         return []
-    if len(items) < batch_size:
-        gathered = await parallel_ok(*[asyncio.to_thread(fn, item) for item in items])
+
+    async def _process_batch(batch: list[_T]) -> list[_R]:
+        """Process a batch of items via gateway cpu_bound (Rust rayon preferred)."""
+        gathered = await parallel_ok(*[
+            gateway.cpu_bound(fn, item, hint=WorkloadHint.GIL_RELEASING)
+            for item in batch
+        ])
         return [r for r in gathered if not isinstance(r, Exception)]
+
     results: list[_R] = []
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
-        gathered = await parallel_ok(*[asyncio.to_thread(fn, item) for item in batch])
-        results.extend((r for r in gathered if not isinstance(r, Exception)))
+        batch_results = await _process_batch(batch)
+        results.extend(batch_results)
     return results

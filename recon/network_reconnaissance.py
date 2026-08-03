@@ -238,8 +238,8 @@ class DNSEnumerator:
             for sep in separators:
                 permutations.add(f'{w1}{sep}{w2}')
         found = []
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        semaphore = get_semaphore(ConcurrencyCategory.DNS_BRUTE)
 
         async def check_perm(perm: str):
             async with semaphore:

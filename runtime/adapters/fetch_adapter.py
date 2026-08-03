@@ -55,8 +55,8 @@ class FetchCoordinatorAdapter(FetchProtocol):
         try:
             return self._coordinator.get_semaphore()
         except Exception:
-            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-            return get_semaphore_for_testing(ConcurrencyCategory.HTTP_LANE)
+            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            return get_semaphore(ConcurrencyCategory.HTTP_LANE)
 
     def get_backpressure(self) -> float | None:
         """Return coordinator's backpressure ratio."""

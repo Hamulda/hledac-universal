@@ -731,7 +731,13 @@ def get_semaphore() -> asyncio.Semaphore:
 
 
 def get_semaphore_for_testing(category: str) -> asyncio.Semaphore:
-    """Test hook for semaphore creation."""
+    """
+    DEPRECATED (R12): Dead code — no callers import this function from mlx_memory.
+
+    This was a test hook that always returned ``asyncio.Semaphore(1)`` regardless
+    of category. For production concurrency, use:
+        from hledac.universal.core.concurrency import get_semaphore
+    """
     return asyncio.Semaphore(1)
 
 

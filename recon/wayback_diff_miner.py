@@ -202,8 +202,8 @@ class WaybackDiffMiner:
         targets = domains_or_urls[:MAX_DOMAINS_PER_SPRINT]
         await self._ensure_session()
         if self._semaphore is None:
-            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-            self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         all_events: list[CDXDiffEvent] = []
         gathered_errors: list[BaseException] = []
 

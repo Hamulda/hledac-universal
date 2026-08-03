@@ -18,7 +18,7 @@
 //! ```
 //!
 //! ## Dual Backend
-//! - **GPU**: Metal compute kernel (thread-per-candidate, atomic match flag)
+//! - **GPU**: Metal compute kernel (chunk-based, threadgroup shared memory, fully unrolled MD5)
 //! - **CPU**: Rayon parallel + optimized Rust MD5/SHA-256 (NEON on M1)
 //!
 //! ## M1 8GB Constraints
@@ -34,7 +34,6 @@ use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
-use parking_lot::RwLock;
 
 // ─── M1 8GB Memory Budget ─────────────────────────────────────────────────
 
@@ -49,6 +48,16 @@ const GPU_MAX_WORD_LEN: usize = 55; // fits in single MD5 block (64 - 8 length -
 
 /// Minimum candidates for GPU path (GPU dispatch overhead ~50µs amortized at >512 candidates).
 const GPU_MIN_CANDIDATES: usize = 512;
+
+/// Chunk size for cooperative threadgroup shared-memory loading.
+/// Must match CHUNK_SIZE in shaders/crack_md5_kernel.metal.
+/// 1000 words × 16 bytes = 16 KB word data + 1 KB lengths = 17 KB threadgroup memory.
+const GPU_CHUNK_SIZE: u64 = 1000;
+
+/// Threads per threadgroup for chunk-based dispatch.
+/// Must match THREADS in shaders/crack_md5_kernel.metal.
+/// 256 threads × 32 SIMD width = 8 SIMD groups per threadgroup (M1 optimum).
+const GPU_THREADS_PER_GROUP: u64 = 256;
 
 // ─── Global Allocated Bytes Tracker ───────────────────────────────────────
 
@@ -86,10 +95,18 @@ static STATS: LazyLock<CrackerStats> = LazyLock::new(CrackerStats::default);
 
 // ─── MSL MD5 Kernel Source ────────────────────────────────────────────────
 
-/// Embedded Metal Shading Language kernel for MD5 dictionary attack.
+/// Optimized Metal Shading Language kernel for MD5 dictionary attack.
 ///
-/// One thread per candidate word. Uses atomic flag for early match
-/// termination — all threads check the flag and exit early on match.
+/// ## Architecture (SILICON-01 v2)
+/// - **Threadgroup shared memory**: 1000 words × 16 bytes = 16 KB word data
+///   + 1 KB lengths = 17 KB per threadgroup (M1 limit: 32 KB)
+/// - **Chunk-based dispatch**: ceil(N/1000) threadgroups of 256 threads
+/// - **Cooperative loading**: 256 threads collectively load 1000 words
+///   via strided access for coalesced memory reads
+/// - **Fully unrolled MD5**: all 64 rounds written inline — no macros,
+///   no function calls, maximum ILP for M1 GPU wide execution units
+/// - **Switch-based padding**: precomputed M[16] per word length (0-55)
+///   eliminates branching in the hot MD5 loop
 ///
 /// ## Memory Layout
 /// - buffer(0): concatenated word bytes (uchar*)
@@ -97,193 +114,22 @@ static STATS: LazyLock<CrackerStats> = LazyLock::new(CrackerStats::default);
 /// - buffer(2): word lengths (uint*)
 /// - buffer(3): target MD5 hash as 4 × uint32 little-endian (a,b,c,d)
 /// - buffer(4): atomic match flag (atomic_uint, 0=searching, 1=found)
-/// - buffer(5): matched candidate index (uint, valid when flag==1)
-const MD5_KERNEL_SRC: &str = r#"
-#include <metal_stdlib>
-using namespace metal;
-
-// MD5 round functions
-#define F(x, y, z) ((x & y) | (~x & z))
-#define G(x, y, z) ((x & z) | (y & ~z))
-#define H(x, y, z) (x ^ y ^ z)
-#define I(x, y, z) (y ^ (x | ~z))
-#define LEFTROTATE(x, c) (((x) << (c)) | ((x) >> (32 - (c))))
-
-// Pre-computed K constants (abs(sin(i+1)) * 2^32)
-constant uint K[64] = {
-    0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
-    0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
-    0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
-    0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
-    0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
-    0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
-    0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-    0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
-    0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
-    0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
-    0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
-    0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
-    0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
-    0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-    0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
-    0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391
-};
-
-// Shift amounts per round
-constant uint S[64] = {
-    7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,
-    5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,
-    4, 11, 16, 23,  4, 11, 16, 23,  4, 11, 16, 23,  4, 11, 16, 23,
-    6, 10, 15, 21,  6, 10, 15, 21,  6, 10, 15, 21,  6, 10, 15, 21
-};
-
-kernel void crack_md5_kernel(
-    device const uchar* worddata   [[buffer(0)]],
-    device const uint*  offsets    [[buffer(1)]],
-    device const uint*  lengths    [[buffer(2)]],
-    device const uint*  target     [[buffer(3)]],  // 4 × uint32 LE: a,b,c,d
-    device atomic_uint* found_flag [[buffer(4)]],
-    device uint*        match_idx  [[buffer(5)]],
-    uint tid [[thread_position_in_grid]]
-) {
-    // Early exit if match already found
-    if (atomic_load_explicit(found_flag, memory_order_relaxed) != 0) {
-        return;
-    }
-
-    uint offset = offsets[tid];
-    uint len = lengths[tid];
-
-    // Skip words too long for single-block MD5 (len > 55)
-    if (len > 55) return;
-
-    // Build 64-byte message block with padding
-    // Block layout: [word bytes][0x80][zeros][64-bit length in bits LE]
-    uint M[16] = {0};
-
-    // Copy word bytes
-    for (uint i = 0; i < len; i++) {
-        uint byte_val = worddata[offset + i];
-        uint shift = (i & 3) * 8;
-        M[i >> 2] |= byte_val << shift;
-    }
-
-    // Append 0x80
-    uint pad_byte = len;
-    uint pad_shift = (pad_byte & 3) * 8;
-    M[pad_byte >> 2] |= 0x80u << pad_shift;
-
-    // Append bit length at bytes 56-63 (little-endian)
-    uint64_t bit_len = (uint64_t)len * 8;
-    M[14] = (uint)(bit_len & 0xFFFFFFFF);
-    M[15] = (uint)(bit_len >> 32);
-
-    // MD5 initialization
-    uint a = 0x67452301;
-    uint b = 0xefcdab89;
-    uint c = 0x98badcfe;
-    uint d = 0x10325476;
-
-    // ── Round 1: F(b,c,d) ──
-    #define ROUND1(aa, bb, cc, dd, k, s, i) \
-        aa = bb + LEFTROTATE(aa + F(bb, cc, dd) + M[k] + K[i], s)
-
-    ROUND1(a, b, c, d,  0,  7,  0);
-    ROUND1(d, a, b, c,  1, 12,  1);
-    ROUND1(c, d, a, b,  2, 17,  2);
-    ROUND1(b, c, d, a,  3, 22,  3);
-    ROUND1(a, b, c, d,  4,  7,  4);
-    ROUND1(d, a, b, c,  5, 12,  5);
-    ROUND1(c, d, a, b,  6, 17,  6);
-    ROUND1(b, c, d, a,  7, 22,  7);
-    ROUND1(a, b, c, d,  8,  7,  8);
-    ROUND1(d, a, b, c,  9, 12,  9);
-    ROUND1(c, d, a, b, 10, 17, 10);
-    ROUND1(b, c, d, a, 11, 22, 11);
-    ROUND1(a, b, c, d, 12,  7, 12);
-    ROUND1(d, a, b, c, 13, 12, 13);
-    ROUND1(c, d, a, b, 14, 17, 14);
-    ROUND1(b, c, d, a, 15, 22, 15);
-
-    // ── Round 2: G(b,c,d) ──
-    #define ROUND2(aa, bb, cc, dd, k, s, i) \
-        aa = bb + LEFTROTATE(aa + G(bb, cc, dd) + M[k] + K[i], s)
-
-    ROUND2(a, b, c, d,  1,  5, 16);
-    ROUND2(d, a, b, c,  6,  9, 17);
-    ROUND2(c, d, a, b, 11, 14, 18);
-    ROUND2(b, c, d, a,  0, 20, 19);
-    ROUND2(a, b, c, d,  5,  5, 20);
-    ROUND2(d, a, b, c, 10,  9, 21);
-    ROUND2(c, d, a, b, 15, 14, 22);
-    ROUND2(b, c, d, a,  4, 20, 23);
-    ROUND2(a, b, c, d,  9,  5, 24);
-    ROUND2(d, a, b, c, 14,  9, 25);
-    ROUND2(c, d, a, b,  3, 14, 26);
-    ROUND2(b, c, d, a,  8, 20, 27);
-    ROUND2(a, b, c, d, 13,  5, 28);
-    ROUND2(d, a, b, c,  2,  9, 29);
-    ROUND2(c, d, a, b,  7, 14, 30);
-    ROUND2(b, c, d, a, 12, 20, 31);
-
-    // ── Round 3: H(b,c,d) ──
-    #define ROUND3(aa, bb, cc, dd, k, s, i) \
-        aa = bb + LEFTROTATE(aa + H(bb, cc, dd) + M[k] + K[i], s)
-
-    ROUND3(a, b, c, d,  5,  4, 32);
-    ROUND3(d, a, b, c,  8, 11, 33);
-    ROUND3(c, d, a, b, 11, 16, 34);
-    ROUND3(b, c, d, a, 14, 23, 35);
-    ROUND3(a, b, c, d,  1,  4, 36);
-    ROUND3(d, a, b, c,  4, 11, 37);
-    ROUND3(c, d, a, b,  7, 16, 38);
-    ROUND3(b, c, d, a, 10, 23, 39);
-    ROUND3(a, b, c, d, 13,  4, 40);
-    ROUND3(d, a, b, c,  0, 11, 41);
-    ROUND3(c, d, a, b,  3, 16, 42);
-    ROUND3(b, c, d, a,  6, 23, 43);
-    ROUND3(a, b, c, d,  9,  4, 44);
-    ROUND3(d, a, b, c, 12, 11, 45);
-    ROUND3(c, d, a, b, 15, 16, 46);
-    ROUND3(b, c, d, a,  2, 23, 47);
-
-    // ── Round 4: I(b,c,d) ──
-    #define ROUND4(aa, bb, cc, dd, k, s, i) \
-        aa = bb + LEFTROTATE(aa + I(bb, cc, dd) + M[k] + K[i], s)
-
-    ROUND4(a, b, c, d,  0,  6, 48);
-    ROUND4(d, a, b, c,  7, 10, 49);
-    ROUND4(c, d, a, b, 14, 15, 50);
-    ROUND4(b, c, d, a,  5, 21, 51);
-    ROUND4(a, b, c, d, 12,  6, 52);
-    ROUND4(d, a, b, c,  3, 10, 53);
-    ROUND4(c, d, a, b, 10, 15, 54);
-    ROUND4(b, c, d, a,  1, 21, 55);
-    ROUND4(a, b, c, d,  8,  6, 56);
-    ROUND4(d, a, b, c, 15, 10, 57);
-    ROUND4(c, d, a, b,  6, 15, 58);
-    ROUND4(b, c, d, a, 13, 21, 59);
-    ROUND4(a, b, c, d,  4,  6, 60);
-    ROUND4(d, a, b, c, 11, 10, 61);
-    ROUND4(c, d, a, b,  2, 15, 62);
-    ROUND4(b, c, d, a,  9, 21, 63);
-
-    // Final addition
-    a += 0x67452301;
-    b += 0xefcdab89;
-    c += 0x98badcfe;
-    d += 0x10325476;
-
-    // Compare with target (little-endian uint32 comparison)
-    if (a == target[0] && b == target[1] && c == target[2] && d == target[3]) {
-        // Try to claim the match (only first thread succeeds with atomic exchange)
-        uint prev = atomic_exchange_explicit(found_flag, 1u, memory_order_relaxed);
-        if (prev == 0) {
-            *match_idx = tid;
-        }
-    }
-}
-"#;
+/// - buffer(5): matched candidate global index (uint, valid when flag==1)
+/// - buffer(6): total_candidates count (constant uint) — needed for
+///   chunk-based dispatch where grid size ≠ candidate count
+///
+/// ## Threadgroup Memory (implicit, not API-allocated)
+/// - threadgroup(0): sh_words[CHUNK_SIZE * 16] = 16 KB
+/// - threadgroup(1): sh_lengths[CHUNK_SIZE] = 1 KB
+///   Declared inside kernel body — Metal driver auto-allocates.
+///
+/// ## Legacy Kernel
+/// `crack_md5_kernel_legacy` in the same .metal file provides the
+/// original one-thread-per-candidate model for reference/testing.
+///
+/// The .metal source is compiled from `shaders/crack_md5_kernel.metal`
+/// via `include_str!` at Rust compile time (no runtime filesystem access).
+const MD5_KERNEL_SRC: &str = include_str!("../shaders/crack_md5_kernel.metal");
 
 // ─── CPU Hash Implementations ────────────────────────────────────────────
 
@@ -651,6 +497,7 @@ mod gpu {
                 + 16  // target (4 × u32)
                 + 4   // atomic flag
                 + 4   // match index
+                + 4   // total_candidates constant (buffer 6)
             ) as u64;
 
             if total_alloc > GPU_BUFFER_LIMIT || !track_alloc(total_alloc) {
@@ -690,7 +537,13 @@ mod gpu {
 
             let num_candidates = candidates.len() as u64;
 
-            // Create Metal buffers (unified memory = no copy)
+            // ── Chunk-based dispatch calculation ─────────────────────
+            // Each threadgroup processes GPU_CHUNK_SIZE=1000 words using
+            // GPU_THREADS_PER_GROUP=256 threads with cooperative shared-memory loading.
+            // Grid = ceil(num_candidates / GPU_CHUNK_SIZE) threadgroups.
+            let num_chunks = (num_candidates + GPU_CHUNK_SIZE - 1) / GPU_CHUNK_SIZE;
+
+            // Create Metal buffers (unified memory = no copy on M1)
             let storage_mode = metal::MTLResourceOptions::StorageModeShared;
 
             let worddata_buf = self.device.new_buffer_with_data(
@@ -721,7 +574,15 @@ mod gpu {
             let atomic_buf = self.device.new_buffer(4, storage_mode);
             let match_buf = self.device.new_buffer(4, storage_mode);
 
-            // Get kernel function
+            // Constant: total_candidates for kernel chunk bounds checking
+            let num_candidates_u32 = num_candidates as u32;
+            let total_candidates_buf = self.device.new_buffer_with_data(
+                &num_candidates_u32 as *const u32 as *const std::ffi::c_void,
+                4, // 1 × u32
+                storage_mode,
+            );
+
+            // Get optimized kernel function (v2: chunk-based + shared memory)
             let function = self.md5_library.get_function("crack_md5_kernel", None)
                 .expect("crack_md5_kernel not found in compiled library");
 
@@ -741,15 +602,20 @@ mod gpu {
             encoder.set_buffer(3, Some(&target_buf), 0);
             encoder.set_buffer(4, Some(&atomic_buf), 0);
             encoder.set_buffer(5, Some(&match_buf), 0);
+            encoder.set_buffer(6, Some(&total_candidates_buf), 0);
 
-            // Thread group size: 256 (M1 GPU threadExecutionWidth = 32, maxTotalThreadsPerThreadgroup = 1024)
+            // Chunk-based dispatch:
+            // - Each threadgroup = GPU_THREADS_PER_GROUP (256) threads
+            // - Grid = num_chunks threadgroups
+            // - Kernel uses threadgroup shared memory (17 KB) declared in body
+            // - Metal driver auto-allocates shared memory per threadgroup
             let thread_group_size = metal::MTLSize {
-                width: 256.min(num_candidates),
+                width: GPU_THREADS_PER_GROUP,
                 height: 1,
                 depth: 1,
             };
             let thread_groups = metal::MTLSize {
-                width: (num_candidates + thread_group_size.width - 1) / thread_group_size.width,
+                width: num_chunks,
                 height: 1,
                 depth: 1,
             };
@@ -939,30 +805,64 @@ impl MetalHashCracker {
             .filter_map(|t| parse_hex_target(t))
             .collect();
 
-        // For each word, compute hash once and check against all targets
         let mut results: HashMap<String, Option<String>> = targets
             .iter()
             .map(|t| (t.clone(), None))
             .collect();
 
-        if wordlist.len() < 64 || target_set.is_empty() {
-            // Sequential
+        if target_set.is_empty() {
+            return results;
+        }
+
+        // ── Try GPU first for small target sets (≤4 targets) ──
+        // GPU kernel targets one hash per launch — for many targets,
+        // CPU is faster (single pass over wordlist). For ≤4 targets,
+        // GPU's ~20× shared-memory speedup outweighs multi-launch overhead.
+        #[cfg(feature = "metal")]
+        let gpu_used = self.gpu_available
+            && wordlist.len() >= GPU_MIN_CANDIDATES
+            && targets.len() <= 4;
+        #[cfg(not(feature = "metal"))]
+        let gpu_used = false;
+
+        if gpu_used {
+            #[cfg(feature = "metal")]
+            if let Some(ref gpu) = self.gpu {
+                for (i, target_hex) in targets.iter().enumerate() {
+                    if results[target_hex].is_some() {
+                        continue; // already found
+                    }
+                    if let Some(matched) = gpu.crack_md5_gpu(target_hex, &wordlist) {
+                        results.insert(target_hex.clone(), Some(matched));
+                    }
+                }
+                // Remove found targets from CPU fallback set
+                let remaining: Vec<&String> = targets
+                    .iter()
+                    .filter(|t| results[*t].is_none())
+                    .collect();
+                if remaining.is_empty() {
+                    return results;
+                }
+            }
+        }
+
+        // ── CPU fallback (Rayon parallel) ──
+        if wordlist.len() < 64 {
+            // Sequential for small lists
             for word in &wordlist {
                 let hash = cpu_md5(word.as_bytes());
                 for (i, target_bytes) in target_set.iter().enumerate() {
-                    if hash == *target_bytes {
+                    if hash == *target_bytes && results[&targets[i]].is_none() {
                         results.insert(targets[i].clone(), Some(word.clone()));
-                        break;
                     }
                 }
             }
         } else {
             use rayon::prelude::*;
-            // Parallel — each thread processes a chunk of words
             let matches: Vec<(usize, String)> = wordlist
                 .par_iter()
-                .enumerate()
-                .filter_map(|(_, word)| {
+                .filter_map(|word| {
                     let hash = cpu_md5(word.as_bytes());
                     for (i, target_bytes) in target_set.iter().enumerate() {
                         if hash == *target_bytes {
@@ -974,7 +874,10 @@ impl MetalHashCracker {
                 .collect();
 
             for (target_idx, word) in matches {
-                results.insert(targets[target_idx].clone(), Some(word));
+                let key = &targets[target_idx];
+                if results[key].is_none() {
+                    results.insert(key.clone(), Some(word));
+                }
             }
         }
 
@@ -1037,5 +940,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MAX_GPU_BUFFER_BYTES", GPU_BUFFER_LIMIT)?;
     m.add("MAX_GPU_TOTAL_GUARD_BYTES", GPU_TOTAL_GUARD)?;
     m.add("GPU_MIN_CANDIDATES", GPU_MIN_CANDIDATES as u64)?;
+    m.add("GPU_CHUNK_SIZE", GPU_CHUNK_SIZE)?;
+    m.add("GPU_THREADS_PER_GROUP", GPU_THREADS_PER_GROUP)?;
     Ok(())
 }

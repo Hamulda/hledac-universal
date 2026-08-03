@@ -187,7 +187,8 @@ CAPS = CapabilityRegistry()
 
 # Pre-defined capabilities
 ZSTD = Capability("zstd", "zstandard:zstd", install_hint="Python 3.14+ stdlib; older: pip install zstandard")
-# F4XX: aiohttp in fallback extras — httpx is the primary HTTP client
+# F4XX (Issue 19): aiohttp fully removed from default deps — httpx is the sole async HTTP client.
+# aiohttp capability exists only for the optional aiohttp-fallback extra.
 AIOHTTP = Capability("aiohttp", "aiohttp", install_hint="pip install aiohttp (only with --extra aiohttp-fallback)")
 CURL_CFFI = Capability("curl_cffi", "curl_cffi", install_hint="pip install curl_cffi")
 LIGHTPANDA = Capability("lightpanda", "hledac.universal.tools.lightpanda_manager:LightpandaManager")

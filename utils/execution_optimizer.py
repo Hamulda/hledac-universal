@@ -89,8 +89,8 @@ class _ConcurrencyController:
     def __init__(self, max_memory_threshold_mb: int=1024):
         self._max_memory_threshold = max_memory_threshold_mb
         self._limit = 2
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._available = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._available = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         self._monitor_task: asyncio.Task | None = None
         self._lock: asyncio.Lock | None = None
 
@@ -175,8 +175,8 @@ class ParallelExecutionOptimizer:
         creating asyncio primitives outside a running loop.
         """
         if self._pending_semaphore is None:
-            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-            self._pending_semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            self._pending_semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         return self._pending_semaphore
 
     def _resolve_max_pending_ops(self) -> int:
@@ -436,7 +436,14 @@ class ParallelExecutionOptimizer:
         Each subinterpreter has its own GIL → unlike ThreadPool, no GIL serialization.
         M1 8GB: ~1-2MB overhead per subinterpreter, max_workers capped at 2.
 
-        Falls back to ThreadPoolExecutor if InterpreterPool unavailable.
+        GATING: ``HLEDAC_ENABLE_SUBINTERPRETERS=1`` env var MUST be set.
+        Even with the import succeeding, subinterpreters require the experimental
+        CPython build flag ``--with-experimental-isolated-subinterpreters``.
+        Without it, ``interpreters.create()`` raises RuntimeError.
+
+        The runtime gate (4-stage probe via execution_gateway.subinterpreter_available())
+        validates: env flag → import → interpreters module → create/destroy roundtrip.
+        Falls back to ThreadPoolExecutor if subinterpreters aren't truly available.
 
         NOTE: This method expects tasks to be (data, func) tuples where func is a
         module-level callable that can be pickled for subinterpreter dispatch.
@@ -456,6 +463,19 @@ class ParallelExecutionOptimizer:
         if not (isinstance(first_task, tuple) and len(first_task) == 2):
             return await self._execute_round_robin(tasks, effective_workers)
         data, func = first_task
+
+        # Issue 9 fix: Runtime gate via execution_gateway probe (not just import check).
+        # Import alone is insufficient — subinterpreters need the experimental CPython
+        # build flag. The probe actually creates/destroys a subinterpreter to verify.
+        from hledac.universal.runtime.execution_gateway import subinterpreter_available
+
+        if not subinterpreter_available():
+            logger.debug(
+                'InterpreterPoolExecutor not available — '
+                'HLEDAC_ENABLE_SUBINTERPRETERS=1 + CPython --with-experimental-isolated-subinterpreters required'
+            )
+            return func(data)
+
         try:
             from concurrent.futures import InterpreterPoolExecutor
 
@@ -467,10 +487,8 @@ class ParallelExecutionOptimizer:
                     for f in futures:
                         results.extend(f.result())
                     return results
+
             return await asyncio.to_thread(_run_batch)
-        except ImportError:
-            logger.debug('InterpreterPoolExecutor not available (Python < 3.14)')
-            return func(data)
         except Exception as exc:
             logger.warning('InterpreterPoolExecutor batch failed: %s — falling back to serial', exc)
             return func(data)
@@ -1172,8 +1190,8 @@ class MemoryAwareScheduler:
     def __init__(self, max_memory_percent: float=80.0):
         self.max_memory_percent = max_memory_percent
         self.active_tasks: dict[str, dict[str, Any]] = {}
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def schedule(self, task_id: str, task_func: Callable, estimated_memory_mb: float=100):
         """Schedule task with memory awareness.

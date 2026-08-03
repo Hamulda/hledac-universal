@@ -37,16 +37,21 @@ from typing import TYPE_CHECKING
 from hledac.universal.utils.async_helpers import safe_create_task
 __all__ = ['get_uma_snapshot', 'get_uma_budget', 'get_uma_usage_mb', 'get_uma_pressure_level', 'is_uma_critical', 'is_uma_warn', 'is_uma_emergency', 'format_uma_budget_report', 'UmaWatchdog', 'UmaWatchdogCallbacks', 'UMA_WARN_GIB', 'UMA_CRITICAL_GIB', 'UMA_EMERGENCY_GIB', 'M1_FETCH_SOFT_CEILING_GB', 'GENERAL_HIGH_WATER_RATIO', 'shutdown_uma_callback_executor']
 
-# M1-01 fix: bounded executor for UMA callbacks — prevents unbounded task accumulation.
-# max_workers=2: one for current callback, one for pending (prevents head-of-line blocking).
-# Thread name prefix for debugging: ls /tmp | grep uma_cb
+# R5: UMA callback executor — managed centrally by domain_executors.
+# No local atexit registration needed — domain_executors handles shutdown.
 _uma_callback_executor: ThreadPoolExecutor | None = None
 
 
 def _get_uma_executor() -> ThreadPoolExecutor:
+    """R5: Get the bounded UMA callback executor from domain_executors.
+
+    max_workers=2: one for current callback, one for pending (prevents head-of-line blocking).
+    Managed centrally by domain_executors — no local shutdown needed.
+    """
     global _uma_callback_executor
     if _uma_callback_executor is None:
-        _uma_callback_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix='uma_cb')
+        from hledac.universal.utils.domain_executors import get_uma_callback_executor
+        _uma_callback_executor = get_uma_callback_executor()
     return _uma_callback_executor
 
 
@@ -60,11 +65,11 @@ async def _run_callback_in_executor(cb, snapshot: dict) -> None:
 
 
 def shutdown_uma_callback_executor() -> None:
-    """Shutdown the UMA callback executor. Call from UmaWatchdog.stop() or at app exit."""
-    global _uma_callback_executor
-    if _uma_callback_executor is not None:
-        _uma_callback_executor.shutdown(wait=True, cancel_futures=True)
-        _uma_callback_executor = None
+    """R5: No-op — executor managed centrally by domain_executors.
+
+    Kept for backward compatibility. Callers that previously called
+    this at exit now get a harmless no-op.
+    """
 logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from types import ModuleType

@@ -33,8 +33,8 @@ class RecordType(StrEnum):
     SOA = 'SOA'
     PTR = 'PTR'
 DOH_PROVIDERS: dict[str, str] = {'cloudflare': 'https://cloudflare-dns.com/dns-query', 'google': 'https://dns.google/resolve'}
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-_DOH_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.DNS_BRUTE)
+from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+_DOH_SEMAPHORE = get_semaphore(ConcurrencyCategory.DNS_BRUTE)
 COMMON_SUBDOMAINS: list[str] = ['www', 'mail', 'ftp', 'vpn', 'api', 'admin', 'dev', 'staging', 'beta', 'internal', 'corp', 'git', 'jira', 'confluence', 'jenkins', 'gitlab']
 
 class DOHFinding(msgspec.Struct):

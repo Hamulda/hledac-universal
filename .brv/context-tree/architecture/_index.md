@@ -1,72 +1,46 @@
 ---
-children_hash: 9cde009591055f33383169c1e3dd7fc1a9ce7bee3b084a43a282ef5d9626c1b8
-compression_ratio: 0.18946749043836422
+children_hash: bebcf399d55f2659385266517909d4aad6e8917311e2bb108d6aab576eeb5354
+compression_ratio: 0.18036595991867557
 condensation_order: 2
 covers: [context.md, core/_index.md, hledac_universal/_index.md, runtime/_index.md, transport_layers/_index.md]
-covers_token_total: 3399
+covers_token_total: 3443
 summary_level: d2
-token_count: 644
+token_count: 621
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at level d1 (domain level) for the transport_layers domain. Looking at the provided context, I need to compress the child entries into a concise overview while preserving key facts, architectural decisions, and relationships.
+The user wants me to create a concise structural summary at the domain level (d1) for transport_layers. I need to compress the child entries while preserving key facts, relationships, and patterns. Let me distill the essential information from these entries.
 
-From the child entries provided:
-1. HTTP/3 Lane with curl_cffi_opportunistic (default) and aioquic_stealth (fallback)
-2. neqo integration planned
-3. M1_BOUNDS configuration constants
-4. Dark web TLDs excluded from HTTP/3
-5. LRU caching (512 entries)
-6. Memory guard at 5.5 GiB RSS
-7. Concurrency capped at 3
-8. CAPS system for capability gating
-9. FAIL-FAST policy for curl_cffi
+Key topics to cover:
+1. HTTP/3 lane with dual strategy (curl_cffi + aioquic)
+2. M1_BOUNDS configuration constants
+3. Architecture decisions about dark web exclusion, CAPS integration, fail-fast policy
+4. Key files and their roles
+5. Reference entry names for drill-down
 
-Let me create a clean structural summary.
+I need to output ONLY the summary text, no code blocks or XML.
 </think>
 
-# architecture/transport_layers — Domain Summary
+# transport_layers
 
-## Overview
+HTTP/3 lane implementation in `transport/http3_lane.py` with dual strategy for stealth and opportunistic modes. Canonical entry: `PublicFetcher.fetch()` delegates to `FetchCoordinator.coordinated_fetch()` which routes to HTTP/3 lane via CAPS-registered capability. curl_cffi_opportunistic is default; aioquic_stealth is fallback when neqo unavailable.
 
-HTTP/3 lane implementation supporting multiple strategies with LRU caching, memory guards, and speculative Alt-Svc probing. Dark web TLDs (.onion, .i2p, .b32.i2p) are excluded from HTTP/3 due to Tor/I2P SOCKS incompatibility with QUIC/UDP.
+## Dual Strategy
 
-## Strategies
-
-| Strategy | Priority | Use Case |
-|----------|----------|----------|
-| `curl_cffi_opportunistic` | 1 | Default, JA3 spoofing via curl_cffi >= 0.7 |
-| `neqo` | 2 | Mozilla Rust QUIC, arm64 darwin priority (planned) |
-| `aioquic_stealth` | 3 | Standard fallback for stealth when neqo unavailable |
+**curl_cffi_opportunistic** (default, 0.7+): JA3 spoofing via curl_cffi. **aioquic_stealth** (fallback): Standard client hello when neqo not available. **neqo** (planned): Mozilla Rust QUIC engine for arm64 darwin, pending PyPI package. Dark web TLDs (.onion, .i2p, .b32.i2p) explicitly excluded from HTTP/3 attempts—H3 auto-skipped for Tor/I2P circuits per QUIC/UDP incompatibility.
 
 ## Configuration (M1_BOUNDS)
 
-- **LRU cache max**: 512 entries
-- **Concurrency max**: 3
-- **Timeout**: 8.0s
-- **Semaphore wait**: 2.0s
-- **Cache TTL**: 86400s (24h)
-- **RSS memory block**: 5.5 GiB
-- **Max probe tasks**: 16
+LRU cache bounded at 512 entries with 24h TTL. Concurrency limited to 3. Timeout 8.0s, semaphore wait 2.0s. Memory guard triggers RSS block at 5.5 GiB. Max probe tasks capped at 16.
 
 ## Architecture Decisions
 
-- **FAIL-FAST policy**: No silent httpx fallback when curl_cffi unavailable — JA3 spoofing guaranteed
-- **CAPS integration**: FetchCoordinator uses `CAPS.require(CURL_CFFI)` instead of availability check
-- **Fallback chain**: neqo unavailable → aioquic → curl_cffi_opportunistic
-- **LRU eviction**: O(1) via OrderedDict, bounded by `http3_lru_max`
-- **Error handling**: Any error returns `None`, never propagates
+CAPS system replaces availability checks—FetchCoordinator uses `CAPS.require(CURL_CFFI)` for gated capability. FAIL-FAST policy: no silent httpx fallback when curl_cffi unavailable, ensuring JA3 spoofing is always honored. LRU uses OrderedDict for O(1) eviction. Error propagation returns None rather than raising.
 
 ## Key Files
 
-- `transport/http3_lane.py` — HTTP/3 lane implementation
-- `fetching/public_fetcher.py` — Public fetcher entry point
-- `fetching/curl_cffi_fetch.py` — CAPS-aware curl_cffi wrapper
-- `coordinators/fetch_coordinator.py` — Fetch orchestration with CAPS checks
+`transport/http3_lane.py` implements lane. `fetching/public_fetcher.py` entry point. `fetching/curl_cffi_fetch.py` wraps curl_cffi with CAPS checks. `coordinators/fetch_coordinator.py` orchestrates with capability gating.
 
 ## Drill-Down
 
-- `http_3_lane_implementation.md` — Full strategy details, patterns, rules
-- `http_3_configuration_constants.md` — Complete M1_BOUNDS constants
-- `http_3_neqo_integration_plan.md` — neqo Rust integration roadmap
-- `issue_0_2_curl_cffi_caps_architecture_fix.md` — CAPS integration fix details
+`http_3_lane_implementation.md` covers strategy details, Alt-Svc probing, memory guards. `http_3_configuration_constants.md` lists M1_BOUNDS values. `http_3_neqo_integration_plan.md` outlines neqo Rust integration. `issue_0_2_curl_cffi_caps_architecture_fix.md` documents CAPS migration.

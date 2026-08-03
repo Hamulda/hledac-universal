@@ -6,8 +6,11 @@ build-backend = "maturin"
 # UNderscore: Python packages use underscores, NOT hyphens
 name = "hledac_rust_extensions"
 version = "0.1.0"
-# R6: PyO3 0.29 with abi3-py314: stable ABI wheel compatible with Python 3.14+
-# P6-004 FIX: abi3-py314 unlocks full Python 3.14 C API. Project requires 3.14+.
+# R6: PyO3 0.29 with extension-module ONLY (non-abi3 native wheel).
+# ISSUE-014: Non-abi3 build targets Python 3.14 specifically, producing
+# cp314-darwin-arm64 wheel with FULL Python C API access (tp_subclass,
+# tp_new, native memory-view). Since project requires >=3.14 and M1 only,
+# abi3 cross-version compatibility is unnecessary overhead.
 # Free-threaded Python (3.13+) support: py.detach() is no-op when GIL disabled.
 requires-python = ">=3.14"
 

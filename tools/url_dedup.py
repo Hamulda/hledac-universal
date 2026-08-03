@@ -97,30 +97,26 @@ import os as _os  # noqa: E402
 
 _home_at_import = _os.environ.get("HOME", "")
 
+# R6: Centralized Rust access — single entry point for all hledac_rust_extensions symbols
+from hledac.universal.core.rust_backend import rust
+
 # Rust extension import guard — BloomFilter exposed as
 # RustRotatingBloomFilter for API compatibility with probables.
 _RUST_BLOOM_AVAILABLE = False
 RustRotatingBloomFilter: Any = None
-try:
-    import hledac_rust_extensions
-
-    RustRotatingBloomFilter = hledac_rust_extensions.BloomFilter
-    _RUST_BLOOM_AVAILABLE = True
-except ImportError:
-    pass
+if rust.is_available:
+    RustRotatingBloomFilter = rust.raw.BloomFilter
+    _RUST_BLOOM_AVAILABLE = RustRotatingBloomFilter is not None
 
 # Rust UrlSet — FNV-1a hash dedup (highest ROI, HOTPATH_RUST_ANALYSIS.md)
 # Also available: MmapUrlSet for mmap-backed persistent URL dedup
 _RUST_URL_DEDUP_AVAILABLE = False
 RustUrlSet: Any = None
 RustMmapUrlSet: Any = None
-try:
-    from hledac_rust_extensions import MmapUrlSet as RustMmapUrlSet  # noqa: F811
-    from hledac_rust_extensions import UrlSet as RustUrlSet  # noqa: F811
-
-    _RUST_URL_DEDUP_AVAILABLE = True
-except ImportError:
-    pass
+if rust.is_available:
+    RustMmapUrlSet = rust.raw.MmapUrlSet
+    RustUrlSet = rust.raw.UrlSet
+    _RUST_URL_DEDUP_AVAILABLE = RustUrlSet is not None and RustMmapUrlSet is not None
 
 # Rust URL engine — normalization and fingerprinting. Annotate every
 # bound name explicitly so the sentinel `= None` branch type-checks.
@@ -135,36 +131,25 @@ rust_extract_domain: Callable[[str], str | None] | None = None
 rust_canonicalize_batch: Callable[[list[str]], list[str]] | None = None
 # Issue #16: TRACKING_PARAMS from Rust (single source of truth)
 _RUST_TRACKING_PARAMS: frozenset[str] | None = None
-try:
-    from hledac_rust_extensions import (
-        canonicalize_batch as rust_canonicalize_batch,
-    )
-    from hledac_rust_extensions import (
-        extract_domain as rust_extract_domain,
-    )
-    from hledac_rust_extensions import (
-        filter_valid_urls as rust_filter_valid,
-    )
-    from hledac_rust_extensions import (
-        fingerprint as rust_fingerprint,
-    )
-    from hledac_rust_extensions import (
-        get_tracking_params,
-    )
-    from hledac_rust_extensions import (
-        is_valid_url as rust_is_valid_url,
-    )
-    from hledac_rust_extensions import (  # noqa: F811
-        normalize as rust_normalize,
-    )
-    from hledac_rust_extensions import (
-        strip_tracking_params as rust_strip_tracking,
-    )
-
-    _RUST_URL_ENGINE_AVAILABLE = True
-    _RUST_TRACKING_PARAMS = frozenset(get_tracking_params())
-except ImportError:
-    pass
+if rust.is_available:
+    raw = rust.raw
+    rust_canonicalize_batch = raw.canonicalize_batch
+    rust_extract_domain = raw.extract_domain
+    rust_filter_valid = raw.filter_valid_urls
+    rust_fingerprint = raw.fingerprint
+    _tracking_params_fn = raw.get_tracking_params
+    rust_is_valid_url = raw.is_valid_url
+    rust_normalize = raw.normalize
+    rust_strip_tracking = raw.strip_tracking_params
+    _RUST_URL_ENGINE_AVAILABLE = all([
+        rust_canonicalize_batch, rust_extract_domain, rust_filter_valid,
+        rust_fingerprint, rust_is_valid_url, rust_normalize, rust_strip_tracking,
+    ])
+    if _tracking_params_fn is not None:
+        try:
+            _RUST_TRACKING_PARAMS = frozenset(_tracking_params_fn())
+        except Exception:
+            pass
 
 # Rust MmapBloomFilter — file-backed persistent dedup (F266-U1).
 # Persists across process restart, no Python warm-up cost, M1 8GB safe.
@@ -175,12 +160,9 @@ except ImportError:
 # typed stub, so field annotations and `_bloom_ready` narrow correctly.
 _RUST_MMAP_BLOOM_AVAILABLE = False
 MmapBloomFilter: Any = None
-try:
-    from hledac_rust_extensions import MmapBloomFilter  # noqa: F811
-
-    _RUST_MMAP_BLOOM_AVAILABLE = True
-except ImportError:
-    pass
+if rust.is_available:
+    MmapBloomFilter = rust.raw.MmapBloomFilter
+    _RUST_MMAP_BLOOM_AVAILABLE = MmapBloomFilter is not None
 
 
 def _bloom_ready(b: object) -> TypeGuard[MmapBloomFilter]:  # type: ignore[valid-type]

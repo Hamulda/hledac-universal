@@ -62,23 +62,21 @@ def _get_metal_cracker():
     """
     if not _METAL_HASHCRACK_ENABLED:
         return None
-    try:
-        from hledac_rust_extensions import MetalHashCracker
-        cracker = MetalHashCracker()
-        if cracker.is_available:
-            logger.info(
-                "MetalHashCracker initialized: device=%s, GPU opportunistic cracking enabled",
-                cracker.device_name,
-            )
-            return cracker
-        else:
-            logger.debug("MetalHashCracker: Metal GPU not available (non-macOS or no Metal device)")
-            return None
-    except ImportError:
-        logger.debug("MetalHashCracker: rust_extensions not built with --features metal")
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    MetalHashCracker = rust.raw.MetalHashCracker
+    if MetalHashCracker is None:
+        logger.warning("MetalHashCracker not available in Rust extension")
         return None
-    except Exception as exc:
-        logger.warning("MetalHashCracker init failed: %s", exc)
+    cracker = MetalHashCracker()
+    if cracker.is_available:
+        logger.info(
+            "MetalHashCracker initialized: device=%s, GPU opportunistic cracking enabled",
+            cracker.device_name,
+        )
+        return cracker
+    else:
+        logger.debug("MetalHashCracker: Metal GPU not available (non-macOS or no Metal device)")
         return None
 
 class CipherType(Enum):

@@ -1018,11 +1018,9 @@ class DomainStatsManager:
 _TOKEN_HASH_CACHE: dict[tuple[str, int], int] = {}
 _TOKEN_HASH_CACHE_LOCK = threading.Lock()
 _MAX_TOKEN_CACHE = 10000
-try:
-    import hledac_rust_extensions as _rust_ext
-    _rust_hamming_dist: Callable[[int, int], int] | None = getattr(_rust_ext, 'hamming_dist', None)
-except Exception:
-    _rust_hamming_dist = None
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
+_rust_hamming_dist: Callable[[int, int], int] | None = rust.raw.hamming_dist
 
 class TopKBucketIndex:
     """Top-K bit bucketing for O(1) near-duplicate SimHash lookup.

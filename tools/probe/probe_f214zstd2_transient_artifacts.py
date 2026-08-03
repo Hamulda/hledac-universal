@@ -22,7 +22,7 @@ Python 3.14 stdlib only: compression.zstd
 """
 import gc
 import gzip
-import json
+import json as _stdlib_json
 import time
 import tracemalloc
 from dataclasses import dataclass, field
@@ -73,18 +73,18 @@ def get_rss_kb() -> int:
 def generate_partial_artifact() -> bytes:
     """Realistic partial_artifact JSON (F214OPT314 baseline, ~3.1KB)."""
     data = {'sprint_id': 'F214ZSTD2_probe', 'is_partial': True, 'finding_count': 87, 'runtime_truth': {'total': 100, 'accepted': 87, 'rejected': 13, 'sources': {'ct': 45, 'duckdb': 30, 'mlx': 12}}, 'scorecard': {'speed': 0.85, 'memory': 0.72, 'quality': 0.91, 'throughput': 125.3, 'rss_mb': 3842}, 'partial_export': True, 'seeds': [{'ioc': f'domain{i}.io', 'type': 'domain', 'confidence': 0.9 + i * 0.001} for i in range(30)]}
-    return json.dumps(data, indent=2, default=str).encode('utf-8')
+    return _stdlib_json.dumps(data, indent=2, default=str).encode('utf-8')
 
 def generate_next_seeds() -> bytes:
     """Realistic next_seeds JSON (~4.6KB, 50 seed entries)."""
     data = {'sprint_id': 'F214ZSTD2_probe', 'seeds': [{'ioc': f'test{i}.example.com', 'type': 'domain', 'priority': i % 10, 'reason': 'ioc_followup', 'confidence': 0.7 + i % 3 * 0.1} for i in range(50)]}
-    return json.dumps(data, indent=2, default=str).encode('utf-8')
+    return _stdlib_json.dumps(data, indent=2, default=str).encode('utf-8')
 
 def generate_large_next_seeds() -> bytes:
     """Large next_seeds with full seed structure (~15KB realistic worst-case)."""
     seed_types = ['domain', 'ip', 'url', 'email', 'hash']
     data = {'sprint_id': 'F214ZSTD2_probe_large', 'seeds': [{'ioc': f'test{i}.example.com', 'type': seed_types[i % len(seed_types)], 'priority': i % 10, 'reason': ['ioc_followup', 'query_suggestion', 'source_revisit', 'low_signal_recommendation', 'branch_recommendation'][i % 5], 'confidence': 0.5 + i % 5 * 0.1, 'signal_quality': 0.3 + i % 7 * 0.1, 'reject_breakdown': {'dupe': i % 3, 'out_of_scope': i % 2}} for i in range(100)]}
-    return json.dumps(data, indent=2, default=str).encode('utf-8')
+    return _stdlib_json.dumps(data, indent=2, default=str).encode('utf-8')
 
 def benchmark_compression(raw_data: bytes, name: str, n_runs: int=100) -> dict[str, CompressionResult]:
     """

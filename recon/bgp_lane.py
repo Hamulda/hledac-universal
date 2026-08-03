@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any, cast
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
 import httpx
 from typing import TYPE_CHECKING
@@ -242,7 +242,7 @@ async def ip_bulk_to_asn(ips: list[str], session: httpx.AsyncClient, *, rate_lim
     """
     if not ips:
         return []
-    semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
+    semaphore = get_semaphore(ConcurrencyCategory.BGP_QUERY)
     last_request = 0.0
     findings: list[BGPFinding] = []
 
@@ -279,7 +279,7 @@ async def org_bulk_to_asns_with_prefixes(org_queries: list[str], session: httpx.
     """
     if not org_queries:
         return []
-    asn_semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
+    asn_semaphore = get_semaphore(ConcurrencyCategory.BGP_QUERY)
     last_request = 0.0
 
     async def _org_to_asns(org: str) -> list[BGPFinding]:
@@ -301,7 +301,7 @@ async def org_bulk_to_asns_with_prefixes(org_queries: list[str], session: httpx.
     if not all_asns:
         return []
     unique_asns = list({asn for asn, _ in all_asns})
-    prefix_semaphore = get_semaphore_for_testing(ConcurrencyCategory.BGP_QUERY)
+    prefix_semaphore = get_semaphore(ConcurrencyCategory.BGP_QUERY)
 
     async def _asn_prefixes(asn: int) -> list[BGPFinding]:
         nonlocal last_request

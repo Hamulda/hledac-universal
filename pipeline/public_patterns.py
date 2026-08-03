@@ -156,7 +156,9 @@ def _html_to_text(
         html_content = html_content[:MAX_HTML_INPUT_SIZE]
     # Fast path: try Rust lol_html backend (zero-allocation, ~2-3× faster)
     try:
-        from hledac_rust_extensions import extract_html_text
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        extract_html_text = rust.raw.extract_html_text
 
         return extract_html_text(html_content)
     except (ImportError, Exception):
@@ -196,7 +198,9 @@ def _batch_html_to_text(html_contents: list[str]) -> list[str]:
     truncated = [h[:MAX_HTML_INPUT_SIZE] for h in html_contents]
     # Fast path: try Rust batch backend (4 P-cores, rayon)
     try:
-        from hledac_rust_extensions import batch_extract_html_text
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        batch_extract_html_text = rust.raw.batch_extract_html_text
 
         return batch_extract_html_text(truncated)
     except (ImportError, Exception):

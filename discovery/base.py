@@ -66,15 +66,13 @@ class DiscoveryResult(msgspec.Struct, frozen=True):
 # RateLimiter — token-bucket rate limiter (Rust-backed)
 # -----------------------------------------------------------------------
 
-# ISSUE 24: Try to use Rust rate limiter for lock-free atomic acquire
-_RustGeneralRateLimiter: type | None = None
-try:
-    from hledac_rust_extensions import rate_limit as _rate_limit
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
 
-    if hasattr(_rate_limit, 'RustGeneralRateLimiter'):
-        _RustGeneralRateLimiter = _rate_limit.RustGeneralRateLimiter
-except Exception:
-    _RustGeneralRateLimiter = None
+_RustGeneralRateLimiter: type | None = None
+_rate_limit = rust.rate_limit
+if _rate_limit is not None:
+    _RustGeneralRateLimiter = getattr(_rate_limit, 'RustGeneralRateLimiter', None)
 
 
 class RateLimiter:

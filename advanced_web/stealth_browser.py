@@ -24,8 +24,8 @@ class MemoryPressureError(Exception):
     pass
 logger = logging.getLogger(__name__)
 _MAX_CONCURRENT_TABS = 2
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-_semaphore = get_semaphore_for_testing(ConcurrencyCategory.JS_RENDERER)
+from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+_semaphore = get_semaphore(ConcurrencyCategory.JS_RENDERER)
 _CHROME_UAS = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 12_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36']
 _TLS_FINGERPRINT_PAIRS: list[tuple[str, str]] = [('Chrome/126', 'chrome120'), ('Chrome/125', 'chrome120'), ('Chrome/124', 'chrome120'), ('Chrome/123', 'chrome120'), ('Chrome/122', 'chrome120'), ('Safari/605', 'safari17_0')]
 _TLS_FALLBACK_IMPERSONATE = 'chrome120'
@@ -61,18 +61,33 @@ def _is_curl_cffi_available() -> bool:
         _TLS_IMPERSONATE_AVAILABLE = False
     return _TLS_IMPERSONATE_AVAILABLE
 
-def _fetch_with_curl_cffi(url: str, user_agent: str, impersonate: str, timeout: float) -> tuple[int, str] | None:
-    """Synchronous curl_cffi fetch — returns (status, html) or None on failure.
+async def _fetch_with_curl_cffi_async(url: str, user_agent: str, impersonate: str, timeout: float) -> tuple[int, str] | None:
+    """Async curl_cffi fetch via canonical session cache — returns (status, html) or None.
 
-    Designed to be called via ``loop.run_in_executor()`` (curl_cffi is
-    blocking; never ``await`` directly in the event loop). Fail-soft:
-    any exception → None. Caller falls back to httpx / nodriver.
+    Uses ``transport/curl_cffi_fetch.async_get_curl_cffi_session_for_host()``
+    for per-host AsyncSession caching with JA3 consistency, TCP keep-alive,
+    and connection reuse. No ``asyncio.to_thread`` needed — fully native async
+    path on the event loop. Fail-soft: any exception → None.
+
+    Issue 18: migrated from synchronous ``curl_cffi.Session()`` +
+    ``asyncio.to_thread()`` to canonical AsyncSession.
     """
     try:
-        import curl_cffi.requests as _cffi
-        with _cffi.Session(impersonate=impersonate) as client:
-            response = client.get(url, headers={'User-Agent': user_agent}, timeout=timeout, allow_redirects=True)
-            return (response.status_code, response.text)
+        from hledac.universal.transport.curl_cffi_fetch import (
+            async_get_curl_cffi_session_for_host,
+        )
+        ok, session, _used_profile, _host = await async_get_curl_cffi_session_for_host(
+            url, impersonate,
+        )
+        if not ok or session is None:
+            return None
+        response = await session.get(
+            url,
+            headers={'User-Agent': user_agent},
+            timeout=timeout,
+            allow_redirects=True,
+        )
+        return (response.status_code, response.text)
     except Exception as e:
         logger.debug(f'curl_cffi fetch failed for {url}: {e}')
         return None
@@ -220,7 +235,7 @@ class StealthBrowser:
         try:
             curl_cffi_result: tuple[int, str] | None = None
             if _is_curl_cffi_available():
-                curl_cffi_result = await asyncio.to_thread(lambda: _fetch_with_curl_cffi(url, ua, _impersonate, float(_FETCH_TIMEOUT)))
+                curl_cffi_result = await _fetch_with_curl_cffi_async(url, ua, _impersonate, float(_FETCH_TIMEOUT))
             if curl_cffi_result is not None:
                 status, html = curl_cffi_result
                 domain_breaker_record_success(domain)

@@ -82,18 +82,24 @@ from hledac.universal.export.components.narrative_builder import (  # noqa: F401
 
 
 def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> str:
-    """Sprint F285: orjson.dumps wrapper for compatibility."""
-    try:
-        import orjson
+    """Sprint F285: Delegates to canonical codec. R13 — migrated from inline orjson."""
+    from hledac.universal.utils.codec import encode_pretty, encode_str
 
-        opts = orjson.OPT_INDENT_2 if indent else 0
-        if default:
+    if default is not None:
+        # codec doesn't support custom default= handlers — use orjson/stdlib fallback
+        try:
+            import orjson
+
+            opts = orjson.OPT_INDENT_2 if indent else 0
             return orjson.dumps(obj, default=default, option=opts).decode()
-        return orjson.dumps(obj, option=opts).decode()
-    except Exception:
-        import json
+        except Exception:
+            import json as _stdlib_json
 
-        return json.dumps(obj, indent=indent, default=default or str)
+            return _stdlib_json.dumps(obj, indent=indent, default=default)
+
+    if indent:
+        return encode_pretty(obj)
+    return encode_str(obj)
 
 
 if TYPE_CHECKING:

@@ -25,7 +25,10 @@ def _try_import_rust_feed_pipeline() -> bool:
         return True
     
     try:
-        from hledac_rust_extensions import feed_entry_pipeline, feed_batch_pipeline
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        feed_entry_pipeline = rust.raw.feed_entry_pipeline
+        feed_batch_pipeline = rust.raw.feed_batch_pipeline
         _RUST_FEED_PIPELINE = feed_entry_pipeline
         _RUST_FEED_BATCH_PIPELINE = feed_batch_pipeline
         _FEED_PIPELINE_AVAILABLE = True

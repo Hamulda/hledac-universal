@@ -85,14 +85,11 @@ from hledac.universal.pipeline._feed_dtos import (
 
 
 
-# Issue B4: Rust Aho-Corasick query-context scan + whitespace trim
-try:
-    from hledac_rust_extensions import extract_payload_context as _rust_extract_payload_context
-    from hledac_rust_extensions import scan_query_context as _rust_scan_query_context
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
 
-except ImportError:
-    _rust_scan_query_context = None
-    _rust_extract_payload_context = None
+_rust_extract_payload_context = rust.raw.extract_payload_context
+_rust_scan_query_context = rust.raw.scan_query_context
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import (

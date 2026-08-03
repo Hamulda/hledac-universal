@@ -777,12 +777,10 @@ class MetadataExtractor:
         """
         # Try Rust PDF extraction first (feature-gated, ~10× faster than Python pypdf)
         _rust_pdf_available = False
-        try:
-            import hledac_rust_extensions
-            if hasattr(hledac_rust_extensions, 'pdf'):
-                _rust_pdf_available = True
-        except (ImportError, AttributeError):
-            pass
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        if rust.is_available and rust.raw.pdf is not None:
+            _rust_pdf_available = True
 
         if _rust_pdf_available:
             try:
@@ -790,7 +788,7 @@ class MetadataExtractor:
 
                 def _extract_rust():
                     # Single-pass: extract text + IOCs together (avoids 2× PDF parsing)
-                    text, ioc_list = hledac_rust_extensions.pdf.extract_text_and_iocs_from_bytes(content_bytes)
+                    text, ioc_list = rust.raw.pdf.extract_text_and_iocs_from_bytes(content_bytes)
                     return text, len(ioc_list)
 
                 loop = asyncio.get_running_loop()
@@ -915,12 +913,9 @@ class MetadataExtractor:
         """
         # Try Rust office extraction first (feature-gated, ~5-10× faster than Python)
         _rust_office_available = False
-        try:
-            import hledac_rust_extensions
-            if hasattr(hledac_rust_extensions, 'office'):
-                _rust_office_available = True
-        except (ImportError, AttributeError):
-            pass
+        from hledac.universal.core.rust_backend import rust
+        if rust.is_available and rust.raw.office is not None:
+            _rust_office_available = True
 
         if _rust_office_available:
             try:
@@ -928,8 +923,8 @@ class MetadataExtractor:
 
                 def _extract_rust():
                     # Returns (text, ioc_count) or raises
-                    text = hledac_rust_extensions.office.extract_text_from_bytes(content_bytes, "docx")
-                    ioc_list = hledac_rust_extensions.office.extract_iocs_from_bytes(content_bytes, "docx")
+                    text = rust.raw.office.extract_text_from_bytes(content_bytes, "docx")
+                    ioc_list = rust.raw.office.extract_iocs_from_bytes(content_bytes, "docx")
                     return text, len(ioc_list)
 
                 loop = asyncio.get_running_loop()
@@ -975,20 +970,17 @@ class MetadataExtractor:
         2. Fallback to openpyxl if Rust is unavailable
         """
         _rust_office_available = False
-        try:
-            import hledac_rust_extensions
-            if hasattr(hledac_rust_extensions, 'office'):
-                _rust_office_available = True
-        except (ImportError, AttributeError):
-            pass
+        from hledac.universal.core.rust_backend import rust
+        if rust.is_available and rust.raw.office is not None:
+            _rust_office_available = True
 
         if _rust_office_available:
             try:
                 import asyncio
 
                 def _extract_rust():
-                    text = hledac_rust_extensions.office.extract_text_from_bytes(content_bytes, "xlsx")
-                    ioc_list = hledac_rust_extensions.office.extract_iocs_from_bytes(content_bytes, "xlsx")
+                    text = rust.raw.office.extract_text_from_bytes(content_bytes, "xlsx")
+                    ioc_list = rust.raw.office.extract_iocs_from_bytes(content_bytes, "xlsx")
                     return text, len(ioc_list)
 
                 loop = asyncio.get_running_loop()
@@ -1031,20 +1023,17 @@ class MetadataExtractor:
         2. Fallback to python-pptx if Rust is unavailable
         """
         _rust_office_available = False
-        try:
-            import hledac_rust_extensions
-            if hasattr(hledac_rust_extensions, 'office'):
-                _rust_office_available = True
-        except (ImportError, AttributeError):
-            pass
+        from hledac.universal.core.rust_backend import rust
+        if rust.is_available and rust.raw.office is not None:
+            _rust_office_available = True
 
         if _rust_office_available:
             try:
                 import asyncio
 
                 def _extract_rust():
-                    text = hledac_rust_extensions.office.extract_text_from_bytes(content_bytes, "pptx")
-                    ioc_list = hledac_rust_extensions.office.extract_iocs_from_bytes(content_bytes, "pptx")
+                    text = rust.raw.office.extract_text_from_bytes(content_bytes, "pptx")
+                    ioc_list = rust.raw.office.extract_iocs_from_bytes(content_bytes, "pptx")
                     return text, len(ioc_list)
 
                 loop = asyncio.get_running_loop()
@@ -1269,12 +1258,10 @@ def _read_prefix_bytes(path: str, n: int, errors: list[str], *, stat_result: os.
         return b''
 _RUST_XXHASH_AVAILABLE = False
 _content_hash_64_rust: Callable[[bytes], int] | None = None
-try:
-    from hledac_rust_extensions import content_hash_64 as _rust_content_hash_64
-    _RUST_XXHASH_AVAILABLE = True
-    _content_hash_64_rust = _rust_content_hash_64
-except ImportError:
-    pass
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
+_content_hash_64_rust = rust.raw.content_hash_64
+_RUST_XXHASH_AVAILABLE = _content_hash_64_rust is not None
 
 def _hash_bytes(data: bytes) -> str:
     """Hash bytes using Rust xxhash3-64 (SIMD NEON), Python xxhash, or sha256."""

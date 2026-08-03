@@ -23,12 +23,14 @@ K6 ANALÝZA ZÁVĚR:
       asyncio.to_thread() by byl lepší volbou.
     - Prozatím: MLXWorkerThread zůstává canonical pattern.
 
+    Issue 8 fix: dispatch_via_to_thread() now routes through the execution
+    gateway (Rust rayon cpu_pool) instead of bare asyncio.to_thread().
+
 M1 8GB safe.
 """
 
+from __future__ import annotations
 
-
-import asyncio
 import logging
 from typing import Any
 
@@ -69,12 +71,16 @@ async def dispatch_via_to_thread(
     **kwargs: Any,
 ) -> Any:
     """
-    Dispatch sync MLX inference via asyncio.to_thread().
+    Dispatch sync MLX inference via the execution gateway.
 
     Použití pouze pro SYNCHRONNÍ funkce!
     Pro async MLX inference použij dispatch_via_worker_thread().
 
-    MLX Metal releasu-je GIL během GPU ops, takže main loop zůstává volný.
+    MLX Metal releases the GIL during GPU ops, so the gateway routes to
+    Rust rayon cpu_pool (4 P-cores, NEON SIMD) for true parallelism.
+    Falls back to SharedWorkerPool when Rust extension is unavailable.
+
+    Issue 8 fix: replaced bare asyncio.to_thread() with gateway.mlx_inference().
 
     Args:
         fn: Synchronní funkce
@@ -84,14 +90,12 @@ async def dispatch_via_to_thread(
     Returns:
         Výsledek fn(*args, **kwargs)
     """
+    from hledac.universal.runtime.execution_gateway import gateway
+
     try:
-        result = await safe_wait_for(
-            asyncio.to_thread(fn, *args, **kwargs),
-            timeout=timeout, label="mlx_dispatch",
-        )
-        return result
-    except TimeoutError:
-        raise TimeoutError(f"MLX inference timed out after {timeout}s")
+        return await gateway.mlx_inference(fn, *args, timeout=timeout, **kwargs)
+    except TimeoutError as exc:
+        raise TimeoutError(f"MLX inference timed out after {timeout}s") from exc
 
 
 __all__ = [

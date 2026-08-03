@@ -1252,11 +1252,15 @@ class AcquisitionOrchestrator:
 
     def _get_adaptive_concurrency(self) -> int:
         """Get adaptive concurrency from Rust adaptive_scheduler. Default 5."""
-        try:
-            from hledac.universal.rust_extensions import hledac_rust_extensions
-            return getattr(hledac_rust_extensions, "get_adaptive_mixed_threshold", lambda: 32)()
-        except Exception:
-            return 5
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        fn = rust.raw.get_adaptive_mixed_threshold
+        if fn is not None:
+            try:
+                return fn()
+            except Exception:
+                pass
+        return 5
 
     def _build_probe_lane_coros(
         self,

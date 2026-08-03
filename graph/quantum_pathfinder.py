@@ -1036,7 +1036,9 @@ class DuckPGQGraph:
             logger.debug(f'[GRAPH] close: con.close() failed: {e}')
         # R12: Flush LRU cache and drop thread-local DuckDB connections in Rust
         try:
-            from hledac_rust_extensions import drop_connections as _rust_drop_connections
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            _rust_drop_connections = rust.raw.drop_connections
             _rust_drop_connections()
         except Exception:
             pass  # fail-soft: Rust layer unavailable
@@ -1670,7 +1672,9 @@ class DuckPGQGraph:
         """
         # R12: Try Rust rayon path first — thread-local DuckDB conn, no GIL
         try:
-            from hledac_rust_extensions import graph_traverse_single as _rust_traverse
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            _rust_traverse = rust.raw.graph_traverse_single
             result = _rust_traverse(self.db_path, value, max_hops)
             if result is not None and len(result) > 0:
                 return list(result)
@@ -1868,7 +1872,9 @@ def _graph_stats(db_path: str, con) -> dict:
     """
     # R12: Try Rust path first — thread-local DuckDB conn, rayon parallel
     try:
-        from hledac_rust_extensions import graph_stats as _rust_stats
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _rust_stats = rust.raw.graph_stats
 
         result = _rust_stats(db_path, 20)
         if result is not None and isinstance(result, dict):

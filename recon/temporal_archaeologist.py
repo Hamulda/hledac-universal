@@ -275,8 +275,8 @@ class TemporalArchaeologist:
         recovered_versions: list[ArchivedVersion] = []
         errors: list[str] = []
         sources_succeeded = 0
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_source(source: str) -> tuple[list[ArchivedVersion], str | None]:
             async with semaphore:
@@ -524,8 +524,8 @@ class TemporalArchaeologist:
                 if not cdx_entries:
                     return versions
                 if include_content:
-                    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-                    semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+                    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+                    semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
                     async def fetch_snapshot(entry: tuple[datetime, str, dict[str, str]]) -> ArchivedVersion | None:
                         timestamp, wayback_url, meta = entry
@@ -855,8 +855,13 @@ class TemporalArchaeologist:
         """
         if not snapshots:
             return []
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        group_similar_texts = rust.raw.group_similar_texts
+        if group_similar_texts is None:
+            groups: list[list[ArchivedVersion]] = []
+            return groups
         try:
-            from hledac_rust_extensions import group_similar_texts
             texts = [s.content or '' for s in snapshots]
             group_indices = group_similar_texts(texts, float(threshold))
             return [[snapshots[idx] for idx in group] for group in group_indices]

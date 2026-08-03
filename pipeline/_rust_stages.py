@@ -42,7 +42,9 @@ def try_get_domain() -> Any | None:
         return _RUST_DOMAIN
 
     try:
-        from hledac.universal.rust_extensions import hledac_rust_extensions as _ext
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _ext = rust.raw.module
 
         # Probe for pipeline_map symbol
         _probe = getattr(_ext, "pipeline_map", None)

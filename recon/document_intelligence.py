@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 # Shared across all DeepForensicsAnalyzer instances via module-level singleton
 _forensics_pool: concurrent.futures.Executor | None = None
 _forensics_pool_lock = LazyAsyncioLock()
+_forensics_pool_atexit_registered: bool = False
 
 # M1 8GB: Document-level size guard — refuse to read files above this threshold
 # before loading them into RAM. Contrast with embedded-image/zip-entry guards
@@ -69,8 +70,9 @@ def _get_forensics_pool() -> concurrent.futures.Executor:
 
     Uses spawn context on macOS to avoid fork issues with MPS/Swift libraries.
     Fail-safe: returns ThreadPoolExecutor fallback if ProcessPool creation fails.
+    Registers atexit shutdown on first creation to prevent orphaned child processes.
     """
-    global _forensics_pool
+    global _forensics_pool, _forensics_pool_atexit_registered
     if _forensics_pool is None:
         try:
             ctx = mp.get_context('spawn')
@@ -80,11 +82,35 @@ def _get_forensics_pool() -> concurrent.futures.Executor:
             )
         except Exception as e:
             logger.warning(f'[FORENSICS] ProcessPoolExecutor init failed, using ThreadPool fallback: {e}')
-            _forensics_pool = concurrent.futures.ThreadPoolExecutor(
-                max_workers=2,
-                thread_name_prefix='forensics_cpu_fallback',
-            )
+            # R5 FIX (Issue 3): Route fallback through domain_executors shared pool
+            from hledac.universal.utils.domain_executors import get_forensics_cpu_executor
+            _forensics_pool = get_forensics_cpu_executor()
+        # Register atexit shutdown on first pool creation (ISSUE-5 fix)
+        if not _forensics_pool_atexit_registered:
+            import atexit
+            atexit.register(shutdown_forensics_pool)
+            _forensics_pool_atexit_registered = True
     return _forensics_pool
+
+
+def shutdown_forensics_pool() -> None:
+    """Shutdown the shared forensics ProcessPoolExecutor gracefully.
+
+    Python 3.14+: cancel_futures=True ensures pending tasks are cancelled
+    before waiting for workers to finish. Idempotent — safe to call multiple
+    times.
+
+    Called automatically via atexit (registered on first pool creation)
+    and can also be called explicitly during sprint winddown.
+    """
+    global _forensics_pool
+    if _forensics_pool is not None:
+        try:
+            _forensics_pool.shutdown(wait=True, cancel_futures=True)
+        except Exception as e:
+            logger.warning(f'[FORENSICS] Pool shutdown error (non-fatal): {e}')
+        finally:
+            _forensics_pool = None
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
@@ -276,10 +302,9 @@ class VisionOCREngine:
                 self._batch_pool_lock = threading.Lock()
             with self._batch_pool_lock:
                 if self._batch_executor is None:
-                    self._batch_executor = concurrent.futures.ThreadPoolExecutor(
-                        max_workers=self._BATCH_MAX_WORKERS,
-                        thread_name_prefix='vision_ocr_batch',
-                    )
+                    # R5 FIX: Route through domain_executors shared pool
+                    from hledac.universal.utils.domain_executors import get_vision_ocr_batch_executor
+                    self._batch_executor = get_vision_ocr_batch_executor()
         return self._batch_executor
 
     def recognize_bytes(self, image_bytes: bytes) -> tuple[str, float]:
@@ -1706,7 +1731,7 @@ class StegdetectServer:
         Stegdetect processes are killed outright (no restart needed on shutdown).
         """
         if hasattr(self, '_thread_pool') and self._thread_pool:
-            self._thread_pool.shutdown(wait=True)
+            # R5: Shared pool — do NOT shut down (managed by domain_executors)
             self._thread_pool = None
         if hasattr(self, '_stegdetect_server') and self._stegdetect_server:
             server = self._stegdetect_server
@@ -1738,10 +1763,9 @@ class DocumentIntelligenceEngine:
         self.office_analyzer = OfficeDocumentAnalyzer()
         self.image_analyzer = ImageAnalyzer()
         self._forensics = DeepForensicsAnalyzer()
-        # Dedicated thread pool for running async forensics analysis from sync context
-        self._forensics_thread_pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix='forensics_sync_wrapper'
-        )
+        # R5 FIX: Dedicated thread pool via domain_executors shared pool
+        from hledac.universal.utils.domain_executors import get_forensics_sync_executor
+        self._forensics_thread_pool = get_forensics_sync_executor()
 
     def _run_async(self, coro) -> Any:
         """Run an async coroutine in a separate thread with its own event loop.
@@ -1856,8 +1880,9 @@ class DocumentIntelligenceEngine:
 
     def close(self) -> None:
         """Clean up resources: forensics thread pool and stegdetect server."""
+        # R5: _forensics_thread_pool is a shared pool from domain_executors —
+        # do NOT shut it down (managed centrally). Just clear local reference.
         if hasattr(self, '_forensics_thread_pool') and self._forensics_thread_pool:
-            self._forensics_thread_pool.shutdown(wait=True)
             self._forensics_thread_pool = None
         if hasattr(self, '_forensics') and self._forensics:
             steg_server = getattr(self._forensics, '_stegdetect_server', None)

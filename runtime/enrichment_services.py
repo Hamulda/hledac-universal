@@ -12,7 +12,7 @@ LMDB paths are derived from paths.py (no absolute paths).
 Migrated to ConcurrencyBudgetRegistry (F268).
 """
 import asyncio
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 import logging
 from pathlib import Path
 from typing import Any
@@ -175,7 +175,7 @@ class EnrichmentServices:
             return
         enriched_pairs: list[tuple[bytes, bytes]] = []
         try:
-            semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
+            semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
 
             async def enrich_one(finding) -> None:
                 nonlocal enriched_pairs

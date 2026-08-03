@@ -71,8 +71,12 @@ def madvise_lmdb_mmap(path: str | os.PathLike, advice: int = 1) -> bool:
     if platform.system() != "Darwin":
         return False
     path_str = str(path)
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    _rust_madvise = rust.raw.madvise_lmdb_mmap
+    if _rust_madvise is None:
+        return False
     try:
-        from hledac_rust_extensions import madvise_lmdb_mmap as _rust_madvise
         result = _rust_madvise(path_str, advice)
         return result == 0
     except Exception:  # noqa: BLE001

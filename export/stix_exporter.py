@@ -29,58 +29,19 @@ import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
-try:
-    import orjson
-    _ORJSON_AVAILABLE = True
-except ImportError:
-    _ORJSON_AVAILABLE = False
-from hledac.universal.core.rust_backend import rust as _rust_backend
+
+# R13: Canonical JSON codec — replaces local _orjson_dumps/_json_pretty_sorted/etc.
+from hledac.universal.utils.codec import (
+    decode as _json_loads,
+    encode_compact_sorted as _json_compact_sorted,
+    encode_pretty_sorted as _json_pretty_sorted,
+)
 from hledac.universal.security.pq_crypto import PostQuantumBackend, PQAvailability, PQSignature, PQStatus, create_post_quantum_backend
-_ORJSON_OPT_SORT_KEYS = None
-if _ORJSON_AVAILABLE:
-    _ORJSON_OPT_SORT_KEYS = orjson.OPT_SORT_KEYS
 
-def _orjson_dumps(data: Any, *, sort_keys: bool=False, indent: bool=False) -> str:
-    """Fast orjson.dumps with optional flags. Compact output is orjson default."""
-    opts = 0
-    if sort_keys:
-        opts |= orjson.OPT_SORT_KEYS
-    if indent:
-        opts |= orjson.OPT_INDENT_2
-    result = orjson.dumps(data, option=opts)
-    return result.decode('utf-8')
-
-def _json_pretty_sorted(data: Any) -> str:
-    """Rust serde_json pretty-print + sort_keys via rust.json. Fallback: orjson (2-3× faster)."""
-    if _rust_backend.is_available:
-        try:
-            import json as _pyjson
-            raw = _pyjson.dumps(data, sort_keys=True)
-            return _rust_backend.json.pretty_sorted(raw)
-        except Exception:
-            pass
-    if _ORJSON_AVAILABLE:
-        return _orjson_dumps(data, sort_keys=True, indent=True)
-    import json as _pyjson
-    return _pyjson.dumps(data, indent=2, sort_keys=True, ensure_ascii=False)
-
-def _orjson_loads(data: str | bytes) -> Any:
-    """Fast orjson.loads. orjson accepts both bytes and str."""
-    return orjson.loads(data)
-
-def _json_compact_sorted(data: Any) -> str:
-    """Rust serde_json compact + sort_keys via rust.json. Fallback: orjson (2-3× faster)."""
-    if _rust_backend.is_available:
-        try:
-            import json as _pyjson
-            raw = _pyjson.dumps(data, sort_keys=True)
-            return _rust_backend.json.compact_sorted(raw)
-        except Exception:
-            pass
-    if _ORJSON_AVAILABLE:
-        return _orjson_dumps(data, sort_keys=True)
-    import json as _pyjson
-    return _pyjson.dumps(data, sort_keys=True, ensure_ascii=False)
+# Legacy aliases for internal call sites that use _orjson_dumps(data, sort_keys=...)
+# or _orjson_loads(data). These forward to the canonical codec.
+_orjson_dumps = _json_compact_sorted  # compact sorted = orjson OPT_SORT_KEYS
+_orjson_loads = _json_loads           # decode = orjson.loads
 __all__ = ['render_stix_bundle', 'render_stix_bundle_json', 'render_stix_bundle_to_path', 'render_cti_stix_bundle', 'render_cti_stix_bundle_json', 'render_cti_stix_bundle_to_path', 'collect_cti_export_inputs', 'CTIExportInputs', 'render_full_stix_bundle', 'render_full_stix_bundle_json', 'render_full_stix_bundle_to_path', '_ATTACK_TTP_MAP', '_build_malware_object', '_build_tool_object', '_build_attack_pattern_object', '_build_campaign_object', '_build_intrusion_set_object']
 _STIX_SPEC_VERSION = '2.1'
 _BUNDLE_TYPE = 'bundle'
@@ -968,7 +929,7 @@ def _build_pq_extension(bundle: dict[str, Any], backend: PostQuantumBackend, key
     """
     try:
         import hashlib
-        canonical: bytes = orjson.dumps(bundle.get('objects', []), option=orjson.OPT_SORT_KEYS)
+        canonical: bytes = _json_compact_sorted(bundle.get('objects', [])).encode('utf-8')
         digest: str = hashlib.sha256(canonical).hexdigest()
         if not backend.ensure_mldsa_key(key_id, level=65):
             return None

@@ -51,6 +51,15 @@ def __getattr__(name: str):
         from .nw_connection_lane import is_nw_connection_available
 
         return is_nw_connection_available
+    # SILICON-05: Network.framework QUIC/HTTP3 lane
+    if name == 'fetch_nw_quic':
+        from .nw_quic_lane import fetch_nw_quic
+
+        return fetch_nw_quic
+    if name == 'is_nw_quic_available':
+        from .nw_quic_lane import is_nw_quic_available
+
+        return is_nw_quic_available
     # Unified transport
     if name in ('TransportKind', 'TransportPolicy', 'POLICY_CLEARNET_H2', 'POLICY_STEALTH_CHROME',
                 'POLICY_STEALTH_SAFARI', 'POLICY_TOR', 'POLICY_I2P', 'get_transport_client',
@@ -111,6 +120,22 @@ def __getattr__(name: str):
             'is_arti_available': is_arti_available,
             'is_arti_enabled': is_arti_enabled,
         }[name]
+    # R4: Unified HTTP Transport (http_client.py)
+    if name in ('HttpTransport', 'HttpResult', 'HttpTransportConfig', 'Profile', 'QoS',
+                'get_semaphore_telemetry'):
+        from .http_client import (
+            HttpTransport, HttpResult, HttpTransportConfig,
+            Profile, QoS, get_semaphore_telemetry,
+        )
+
+        return {
+            'HttpTransport': HttpTransport,
+            'HttpResult': HttpResult,
+            'HttpTransportConfig': HttpTransportConfig,
+            'Profile': Profile,
+            'QoS': QoS,
+            'get_semaphore_telemetry': get_semaphore_telemetry,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -139,6 +164,9 @@ __all__ = [
     # SILICON-03: Network.framework user-space TCP lane
     'fetch_nw_connection',
     'is_nw_connection_available',
+    # SILICON-05: Network.framework native QUIC/HTTP3 lane
+    'fetch_nw_quic',
+    'is_nw_quic_available',
     # Unified Transport (backwards compatible re-exports)
     'TransportKind',
     'TransportPolicy',
@@ -174,4 +202,11 @@ __all__ = [
     'get_arti_transport_singleton',
     'is_arti_available',
     'is_arti_enabled',
+    # R4: Unified HTTP Transport
+    'HttpTransport',
+    'HttpResult',
+    'HttpTransportConfig',
+    'Profile',
+    'QoS',
+    'get_semaphore_telemetry',
 ]

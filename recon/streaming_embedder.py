@@ -119,9 +119,12 @@ def _try_rust_text_norm(texts: list[str]) -> list[str] | None:
     Falls back to original texts on any error (fail-safe, always-on).
     Returns None if Rust pipeline unavailable.
     """
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    batch_nfc_normalize = rust.raw.batch_nfc_normalize
+    if batch_nfc_normalize is None:
+        return texts  # No Rust available, return as-is
     try:
-        from hledac_rust_extensions import batch_nfc_normalize
-
         # Direct NFC normalization via rayon — batch_nfc_normalize is the correct
         # Rust entry point for Unicode NFC normalization (text_norm.rs).
         result = batch_nfc_normalize(texts)

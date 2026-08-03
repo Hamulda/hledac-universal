@@ -114,14 +114,12 @@ def _check_rayon_availability() -> bool:
     global _RAYON_AVAILABLE
     if _RAYON_AVAILABLE is not None:
         return _RAYON_AVAILABLE
-    try:
-        from hledac_rust_extensions import (
-            cpu_pool_run,
-            io_pool_run,
-            mixed_pool_run,
-        )
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    raw = rust.raw
+    if raw.cpu_pool_run is not None and raw.io_pool_run is not None and raw.mixed_pool_run is not None:
         _RAYON_AVAILABLE = True
-    except ImportError:
+    else:
         _RAYON_AVAILABLE = False
     return _RAYON_AVAILABLE
 
@@ -185,7 +183,9 @@ def run_in_cpu_pool[T](fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | N
             return None
 
     try:
-        from hledac_rust_extensions import cpu_pool_run
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        cpu_pool_run = rust.raw.cpu_pool_run
 
         return cpu_pool_run(fn, *args, **kwargs)
     except Exception:
@@ -250,7 +250,9 @@ def run_in_io_pool[T](fn: Callable[..., T], *args: Any, **kwargs: Any) -> T | No
             return None
 
     try:
-        from hledac_rust_extensions import io_pool_run
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        io_pool_run = rust.raw.io_pool_run
 
         return io_pool_run(fn, *args, **kwargs)
     except Exception:
@@ -320,7 +322,9 @@ def run_in_mixed_pool[T](n_items: int, fn: Callable[..., T], *args: Any, **kwarg
             return None  # type: ignore[return-value]
 
     try:
-        from hledac_rust_extensions import mixed_pool_run
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        mixed_pool_run = rust.raw.mixed_pool_run
 
         return mixed_pool_run(n_items, fn, *args, **kwargs)
     except Exception:
@@ -352,6 +356,10 @@ async def run_in_cpu_pool_async(
     """
     Async wrapper for run_in_cpu_pool.
 
+    R7: Uses rayon_channel.dispatch_cpu (crossbeam-channel submit/join)
+    when available — ~5μs submit vs ~500μs thread::spawn. Falls back to
+    asyncio.to_thread + run_in_cpu_pool when channel dispatch unavailable.
+
     Runs CPU-bound fn on rayon cpu_pool without blocking the asyncio event loop.
 
     Args:
@@ -365,6 +373,12 @@ async def run_in_cpu_pool_async(
     Example:
         result = await run_in_cpu_pool_async(hash_func, data)
     """
+    # R7: Prefer rayon channel dispatch when available
+    try:
+        from hledac.universal.utils.rayon_channel import dispatch_cpu
+        return await dispatch_cpu(fn, *args, **kwargs)
+    except ImportError:
+        pass
     return await asyncio.to_thread(run_in_cpu_pool, fn, *args, **kwargs)
 
 
@@ -373,6 +387,9 @@ async def run_in_io_pool_async(
 ) -> Any:
     """
     Async wrapper for run_in_io_pool.
+
+    R7: Uses rayon_channel.dispatch_io (crossbeam-channel submit/join)
+    when available. Falls back to asyncio.to_thread otherwise.
 
     Runs I/O-bound fn on rayon io_pool without blocking the asyncio event loop.
 
@@ -387,6 +404,11 @@ async def run_in_io_pool_async(
     Example:
         result = await run_in_io_pool_async(duckdb_query, sql)
     """
+    try:
+        from hledac.universal.utils.rayon_channel import dispatch_io
+        return await dispatch_io(fn, *args, **kwargs)
+    except ImportError:
+        pass
     return await asyncio.to_thread(run_in_io_pool, fn, *args, **kwargs)
 
 
@@ -395,6 +417,9 @@ async def run_in_mixed_pool_async(
 ) -> Any:
     """
     Async wrapper for run_in_mixed_pool.
+
+    R7: Uses rayon_channel.dispatch_mixed (crossbeam-channel submit/join)
+    when available. Falls back to asyncio.to_thread otherwise.
 
     Runs mixed workload fn on rayon mixed_pool without blocking the asyncio event loop.
 
@@ -410,6 +435,11 @@ async def run_in_mixed_pool_async(
     Example:
         result = await run_in_mixed_pool_async(len(items), ioc_extract, text)
     """
+    try:
+        from hledac.universal.utils.rayon_channel import dispatch_mixed
+        return await dispatch_mixed(n_items, fn, *args, **kwargs)
+    except ImportError:
+        pass
     return await asyncio.to_thread(run_in_mixed_pool, n_items, fn, *args, **kwargs)
 
 

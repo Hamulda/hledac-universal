@@ -356,8 +356,6 @@ class StreamingMonitor:
             return False
         _mark_surface_patched("StreamingMonitor._head_check_changed")
         try:
-            import aiohttp
-
             async with self._session.head(
                 source.url,
                 timeout=httpx.Timeout(self.HEAD_CHECK_TIMEOUT),

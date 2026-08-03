@@ -3255,14 +3255,18 @@ async def run_sprint(
             "nonfeed_mission_exit_reason": getattr(result, "nonfeed_mission_exit_reason", ""),
             # Sprint P2-B: DuckDB store telemetry
             "duckdb_stats": getattr(store, "get_stats", lambda: {})(),
-            # Sprint P2-B: Rust extensions telemetry — StatCollector.inlined (no hasattr/try-except)
-            # Uses sys.modules check to avoid import overhead when extension is not built
+            # Sprint P2-B: Rust extensions telemetry — routed through core.rust_backend
+            # wrapper for ABI checking and capability scoring (ISSUE-014 fix).
             "rust_extensions": (
-                lambda: (
-                    lambda _m: (
-                        lambda _s=__import__("core.rust_backend.stats", fromlist=[""]).StatCollector: _s.StatCollector().collect(_m)
-                    )() if _m is not None else {}
-                )(getattr(__import__("sys").modules, "hledac_rust_extensions", None))
+                lambda _ext_mod=(
+                    lambda _r=__import__(
+                        "hledac.universal.core.rust_backend", fromlist=["rust"]
+                    ).rust: _r.raw.module
+                )(): (
+                    lambda _s=__import__(
+                        "core.rust_backend.stats", fromlist=[""]
+                    ).StatCollector: _s.StatCollector().collect(_ext_mod)
+                )() if _ext_mod is not None else {}
             )(),
             # Sprint F11C: EvidenceLog manifest summary (if wired)
             "evidence_manifest": (
@@ -3542,7 +3546,7 @@ async def run_sprint(
             await asyncio.to_thread(_memory_cycle.gc_cycle_maintain, force=False)
         except Exception as e:
             logger.debug(f"[TEARDOWN] gc_cycle_maintain failed: {e}")  # fail-soft
-        # UNIFIED-005: Clean up ToT checkpoints for this completed sprint.
+        # UNIFIED-007: Clean up ToT checkpoints (DuckDB + LMDB + FS) for this sprint.
         # Only runs on successful completion — if the sprint crashed, checkpoints
         # remain for next run's recovery probe.
         try:
@@ -3553,9 +3557,12 @@ async def run_sprint(
                 sprint_id=sprint_id,
                 duckdb_store=store,
                 interval_s=30.0,
+                # UNIFIED-007: All layers ON for complete cleanup
+                lmdb_incremental=True,
+                fs_fallback=True,
             )
             await _cleanup_ckpt.cleanup()
-            logger.debug("[UNIFIED-005] ToT checkpoints cleaned up for sprint=%s", sprint_id[:12])
+            logger.debug("[UNIFIED-007] ToT checkpoints cleaned up for sprint=%s (DuckDB+LMDB+FS)", sprint_id[:12])
         except Exception:
             pass  # fail-soft
         # F266-LOCK: Release sprint-level lock — must happen after all cleanup

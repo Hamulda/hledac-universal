@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 import time as _time
 from typing import TYPE_CHECKING, Any
 
@@ -175,7 +176,7 @@ class DomainReputationService:
             max_entries=_DOMAIN_REPUTATION_MEMORY_MAX,
             ttl_s=_DOMAIN_REPUTATION_MEMORY_TTL_S,
         )
-        self._evict_lock: asyncio.Lock = asyncio.Lock()
+        self._evict_lock: threading.Lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -401,7 +402,7 @@ class DomainReputationService:
 
         loop = asyncio.get_running_loop()
 
-        async def _sync_upsert() -> None:
+        def _sync_upsert() -> None:
             try:
                 self._store.ensure_connected()
                 conn = self._store._file_conn if self._store._db_path else self._store._persistent_conn  # noqa: SLF001
@@ -442,7 +443,7 @@ class DomainReputationService:
                 )
 
                 # LRU eviction: remove oldest entries if over max_rows
-                async with self._evict_lock:
+                with self._evict_lock:
                     count_result = conn.execute(
                         "SELECT COUNT(*) FROM domain_reputation"
                     ).fetchone()

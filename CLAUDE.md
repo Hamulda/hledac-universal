@@ -12,6 +12,8 @@ Orchestrátor běží v tzv. "sprint" cyklech — každý sprint zpracovává vy
 - `fetching/public_fetcher.py` — curl_cffi-based HTTP fetching s JA3 fingerprinting
 - `knowledge/graph_service.py` — DuckPGQGraph pro entity graph persistence
 - `brain/` — MLX inference, DSPy optimizer, hypothesis engine
+- `brain/whisper_engine.py` — SILICON-02b: whisper.cpp CoreML/ANE speech-to-text
+- `multimodal/whisper_transcriber.py` — SILICON-02b: Two-engine transcription router (SFSpeechRecognizer + WhisperEngine)
 - `transport/` — Tor, I2P, stealth transport adaptéry
 - `coordinators/` — FetchCoordinator, SidecarOrchestrator
 
@@ -57,8 +59,9 @@ CLI / __main__.py
 | Layer | Tech | Purpose |
 |-------|------|---------|
 | DuckDB | SQL | Canonical findings, queryable |
-| LMDB | Key-value | Entity metadata, claim metadata |
+| LMDB | Key-value | Entity metadata, claim metadata, whisper conditional cache |
 | LanceDB | ANN | RAG embeddings |
+| ~/.cache/hledac/whisper_models/ | Model cache | whisper.cpp ggml + CoreML .mlmodelc (tiny: 39 MB) |
 
 ### Brain Layer (MLX/Hermes3)
 - `brain/inference_engine.py` — Hermes3 MLX inference (lazy)
@@ -122,6 +125,7 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | HLEDAC_ENABLE_SOCIAL | 0 | Social media discovery |
 | HLEDAC_ENABLE_STEALTH_LAYER | 0 | Stealth mode |
 | HLEDAC_ENABLE_STEGANOGRAPHY | 0 | Image steganography detection |
+| HLEDAC_ENABLE_SUBINTERPRETERS | 0 | runtime | Python 3.14+ subinterpreter pool (PEP 756). Requires --with-experimental-isolated-subinterpreters CPython build. Max 2 workers on M1 8GB. Gated by 4-stage runtime probe (import → interpreters module → create → destroy roundtrip). Opt-in: 1 to enable. |
 | HLEDAC_ENABLE_SYNTHESIS | 0 | Hermes synthesis (deprecated, use HERMES_SYNTHESIS) |
 | HLEDAC_ENABLE_TEMPORAL_STORE | 0 | Temporal data store |
 | HLEDAC_ENABLE_TI_FEEDS | 0 | Threat intelligence feeds |
@@ -134,7 +138,15 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | HLEDAC_ENABLE_ZKP | 0 | Zero-knowledge proofs |
 | HLEDAC_WARC_ENABLED | 0 | archive | WARC/ISO 28500 HTTP response archival (10 GB max, gzip compressed) |
 | HLEDAC_DOMAIN_REPUTATION | 1 | fetch | UNIFIED-007/008: Persistent cross-sprint domain reputation store (DuckDB-backed) with proxy affinity, tarpit scoring, and anti-bot type tracking. Opt-out: 0 disables persistence, falls back to in-memory TTL store. |
+| HLEDAC_PROXY_ROUTES | 1 | fetch | UNIFIED-009: Persistent cross-sprint proxy route graph (DuckDB-backed). Stores per-(domain, proxy, transport) EWMA latency (p50/p95/p99), success/fail counts, and bandwidth estimates. Thompson Sampling for exploration/exploitation. Epsilon-greedy (10%) route discovery. Hot-path cache: 256 entries, 5-min TTL. Bounded: HLEDAC_PROXY_ROUTES_MAX_ROWS=10000. See: knowledge/proxy_routes.py. Opt-out: 0 disables persistence. |
+| HLEDAC_ANTI_BOT_PROFILES | 1 | fetch | UNIFIED-010: Persistent cross-sprint anti-bot fingerprint database (DuckDB-backed). Stores per-domain WAF type, challenge types, bypass strategies, required headers/cookies, JS rendering needs, stealth level. Confidence-weighted EMA merging. Auto-determines stealth escalation (none→standard→aggressive→js_render). Hot-path cache: 256 entries, 10-min TTL. Bounded: HLEDAC_ANTI_BOT_PROFILES_MAX_ROWS=5000. See: knowledge/anti_bot_profiles.py. Opt-out: 0 disables persistence. |
+| HLEDAC_ROUTE_EXPLORATION_EPSILON | 0.10 | fetch | UNIFIED-009: Epsilon-greedy exploration rate for route graph (0.0-1.0). Higher values = more exploration of new routes. Default 0.10 (10% chance random route). |
+| HLEDAC_ENABLE_TRANSPORT_RACE | 1 | fetch | R9: Parallel transport racing — race httpx, curl_cffi, nw_connection (Apple Network.framework TLS 1.3), and nw_quic (Apple Network.framework QUIC/HTTP3) concurrently per URL, first 2xx/3xx wins. Per-transport circuit breakers disable failing transports. M1 8GB bounded: 8 max concurrent races, 3-4 per-transport semaphores. Uses TransportRaceManager singleton. Opt-out: 0 falls back to sequential unified transport. |
+| HLEDAC_ENABLE_NW_QUIC | 1 | network | SILICON-05: Apple Network.framework native QUIC/HTTP3 lane. Eliminates need for aioquic (~50-80 MB RSS) and quinn (~8 MB compile) on macOS 12.0+. Uses nw_parameters_create_quic() with hardware-accelerated TLS 1.3. For non-anti-bot clearnet targets with Alt-Svc h3 advertisement. Shares connection pool with nw_connection (max 200). Opt-out: 0 disables, falls back to curl_cffi opportunistic H3 or aioquic. |
 | HLEDAC_ENABLE_METAL_HASHCRACK | 0 | crypto | SILICON-01: Opportunistic Metal GPU hash cracking during I/O wait. Requires Rust `metal` crate (`--features metal`). M1 GPU sits idle during .onion fetch (45-75s TTFB) — this uses those cycles for MD5/SHA-256 dictionary attacks. GPU: 64MB buffer limit, 256MB total guard, 512-candidate minimum. CPU fallback: Rayon + NEON (always available, no flag needed). Opt-in: 1 to enable. |
+| HLEDAC_ENABLE_METAL_HNSW | 0 | index | SILICON-02: Metal GPU-assisted HNSW index construction via MLX. Pre-computes batch pairwise distances on M1 GPU for optimal centrality-sorted insertion order (~2-3× faster USearch HNSW build). Uses M1 UMA for zero-copy CPU↔GPU transfers. GPU: 128 MiB buffer limit per batch, 256 MiB total guard, 5.5 GiB RSS memory guard, 64-vector minimum batch. CPU fallback: USearch NEON SIMD (always available). Wired into: ann_index._build_usearch_index(), rag_engine.build_hnsw_index(). Opt-in: 1 to enable. |
+| HLEDAC_ENABLE_WHISPER | 1 | speech | SILICON-02b: whisper.cpp speech-to-text with CoreML/ANE acceleration. Tiny model (39 MB) default for OSINT IOC extraction (~5% WER clean EN). Complements SFSpeechRecognizer (SILICON-02) with 99-language fully-offline support. Two-engine routing via TranscriptionRouter: SFSpeechRecognizer for fast on-device (60+ langs) → WhisperEngine fallback (99 langs). Model cache: ~/.cache/hledac/whisper_models/. Install: uv sync --extra whisper. Opt-out: HLEDAC_DISABLE_WHISPER=1. |
+| HLEDAC_ENABLE_ENTROPY_FEEDBACK | 1 | feedback | UNIFIED-003/004: Closed-loop entropy-to-fetch auto-remediation. When synthesis detects high-entropy entities (H > 1.5 bits or hallucination_risk), EntropyFetchBridge alerts FetchCoordinator which triggers micro-sprint re-fetch from alternative protocols (CT, passive DNS, Shodan, Censys, Wayback, DoH, BGP, CommonCrawl, DHT, Gopher, Blockchain). M1 8GB bounded: asyncio.Queue(maxsize=64), 30s timeout per micro-sprint, max 4 protocols per entity, exponential backoff retries (max 2). Consumer loop prunes stale pending entities every 10 iterations (120s TTL). Wired into: FetchCoordinator._do_initialize() (subscribe), _entropy_alert_consumer_loop(), _micro_sprint_worker_loop(), SynthesisRunner._synth_phase7_parse_and_validate() (emit). Opt-out: 0 disables the feedback loop (alerts silently suppressed). |
 
 ---
 
@@ -150,6 +162,8 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | IPFS sidecar | WIRED | `sidecar_orchestrator._run_ipfs_discovery_sidecar()` |
 | BGP sidecar | WIRED | `sidecar_orchestrator._run_bgp_enrichment_sidecar()` |
 | Dark pivots | WIRED | `hypothesis_engine.generate_dark_surface_queries()` |
+| NWConnection TCP | WIRED | `rust_extensions/src/nw_connection.rs::fetch()` (SILICON-03) |
+| NWConnection QUIC | WIRED | `rust_extensions/src/nw_connection.rs::fetch_quic()` (SILICON-05) |
 | Identity stitching | WIRED | `identity_stitching_canonical adapter` |
 | Asset exposure | WIRED | `ExposureCorrelatorAdapter` |
 | Leak sentinel | WIRED | `LeakSentinelAdapter` |
@@ -157,6 +171,14 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | Temporal archaeology | WIRED | `TimelineSynthesizer` |
 | Quantum pathfinder | READ-SIDE OVERLAY | `DuckPGQGraph.find_connected()` |
 | M1ResourceGovernor | WIRED | `core/resource_governor.py` |
+| MetalHNSWBuilder | WIRED (opt-in) | `knowledge/metal_hnsw.py` (HLEDAC_ENABLE_METAL_HNSW=1) |
+| WhisperEngine | WIRED (opt-in) | `brain/whisper_engine.py` (HLEDAC_ENABLE_WHISPER=1, default ON) |
+| TranscriptionRouter | WIRED (opt-in) | `multimodal/whisper_transcriber.py` (HLEDAC_ENABLE_WHISPER=1) |
+| EntropyFetchBridge | WIRED (default ON) | `brain/uncertainty_quant.py` — pub/sub bridge; producer=synthesis_runner, consumer=FetchCoordinator (HLEDAC_ENABLE_ENTROPY_FEEDBACK=1) |
+| UncertaintyQuantifier | WIRED | `brain/uncertainty_quant.py` — canonical entropy + confidence quantifier; quantify_from_text() + quantify_from_logprobs() |
+| DomainReputationService | WIRED (default ON) | `knowledge/domain_reputation.py` `get_domain_reputation_service()` (UNIFIED-007/008) |
+| RouteGraphService | WIRED (default ON) | `knowledge/proxy_routes.py` `get_route_graph_service()` (UNIFIED-009) — Thompson Sampling, EWMA latency, epsilon-greedy exploration |
+| AntiBotProfileService | WIRED (default ON) | `knowledge/anti_bot_profiles.py` `get_anti_bot_profile_service()` (UNIFIED-010) — WAF fingerprinting, stealth escalation, bypass strategies |
 
 ---
 
@@ -432,7 +454,61 @@ speculative Alt-Svc gating.
 
 ---
 
-*Last updated: F265B (2026-06-10)*
+## SILICON-02 — Metal GPU HNSW Construction (2026-07-17)
+
+Metal GPU-accelerated HNSW index construction via MLX. The M1 GPU sits
+idle during USearch HNSW builds — this uses those cycles for batch
+cosine distance computations (~10× faster index construction).
+
+### Module: `knowledge/metal_hnsw.py`
+- `MetalHNSWBuilder` — GPU-accelerated HNSW index builder
+- Offloads batch distance computations to M1 GPU via MLX `@mx.compile`
+- Keeps USearch for graph topology (proven C++ HNSW)
+- UMA zero-copy: numpy arrays → MLX arrays share physical pages
+- Pre-computes batch pairwise distances → centrality-sorted insertion order
+
+### GPU kernels (embedded, lazy-compiled)
+- `batch_cosine_distance` — (N,D) @ (D,M)^T = (N,M) cosine distances
+- `greedy_distance_step` — (D,) @ (K,D)^T = (K,) per-query distances
+- Compiled once, cached globally, pre-warmed during capability probe
+
+### Integration
+- `ann_index.py::_build_usearch_index()` — GPU path first, CPU fallback
+- `rag_engine.py::build_hnsw_index()` — GPU vector insertion path
+- `build_usearch_from_lancedb()` — convenience wrapper for LanceDB→USearch
+
+### M1 8GB constraints
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| GPU buffer limit | 128 MiB/batch | Fits within Metal cache ceiling |
+| Total Metal guard | 256 MiB | Matches SILICON-01 pattern |
+| RSS memory guard | 5.5 GiB | Rest of UMA for OS/LLM/orchestrator |
+| Min batch | 64 vectors | GPU dispatch overhead ~50µs |
+| Max batch | 256-2048 vectors | Scaled by dim (256d→2048, 768d→256) |
+| GPU power | ~3W additional | Passive cooling handles it |
+
+### Invariants
+- **Opt-in** — `HLEDAC_ENABLE_METAL_HNSW=1`; default OFF
+- **Fail-soft** — any GPU error → CPU USearch fallback (NEON SIMD)
+- **Lazy imports** — no MLX at module level; MLX loaded on first use
+- **Thread-safe** — GPU allocation tracked via atomic counter + lock
+- **No USearch fork** — graph topology stays in proven C++ USearch
+
+### Performance (estimated, M1 8GB)
+| Workload | CPU (USearch NEON) | GPU-assisted (MetalHNSWBuilder) | Speedup |
+|----------|-------------------|-------------------------------|---------|
+| 100K × 256d | ~120s | ~40-60s | 2-3× |
+| 10K × 768d | ~28s | ~10-15s | 2-3× |
+| 50K × 384d | ~45s | ~15-20s | 2-3× |
+
+*Note: Speedup comes from GPU-precomputed centrality-sorted insertion order,
+not from replacing USearch's internal search_layer (C++ CPU code). Real
+GPU acceleration of the inner greedy search would require modifying USearch
+C++ — a future optimization.*
+
+---
+
+*Last updated: SILICON-02b WhisperEngine (2026-07-27)*
 ## MCP Tools: code-review-graph
 
 **IMPORTANT: This project has a knowledge graph. ALWAYS use the

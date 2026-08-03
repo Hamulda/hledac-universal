@@ -31,7 +31,9 @@ import os
 import socket
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import field
+
+import msgspec
 from typing import Any, Protocol, runtime_checkable
 
 from cachetools import TTLCache
@@ -59,9 +61,8 @@ class FetchTransport(Protocol):
         ...
 
 
-@dataclass(frozen=True)
-class FetchOptions:
-    """Options for fetch operation."""
+class FetchOptions(msgspec.Struct, frozen=True, gc=False):
+    """Options for fetch operation. M1 8GB: msgspec.Struct for ~40B/instance, no GC tracking."""
     timeout: float = 30.0
     max_retries: int = 3
     user_agent: str | None = None
@@ -69,14 +70,13 @@ class FetchOptions:
     privacy_level: int = 0  # 0=clearnet, 1=TOR, 2=I2P
 
 
-@dataclass(frozen=True, slots=True)
-class FetchResult:
-    """Result of fetch operation."""
+class FetchResult(msgspec.Struct, frozen=True, gc=False):
+    """Result of fetch operation. M1 8GB: msgspec.Struct for built-in JSON serde + no GC."""
     success: bool
     status_code: int = 0
     content: bytes = b''
     content_type: str = ''
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = msgspec.field(default_factory=dict)
     error: str | None = None
     transport: str = 'unknown'
     fetch_time_ms: float = 0.0
@@ -390,9 +390,8 @@ class CircuitBreakerService:
 # Retry Policy Service
 # =============================================================================
 
-@dataclass(frozen=True, slots=True)
-class RetryConfig:
-    """Configuration for retry policy."""
+class RetryConfig(msgspec.Struct, frozen=True, gc=False):
+    """Configuration for retry policy. M1 8GB: msgspec.Struct for fast init."""
     max_retries: int = 3
     base_delay: float = 1.0
     max_delay: float = 30.0
@@ -453,9 +452,8 @@ class RetryPolicyService:
 # Fetch Service Registry
 # =============================================================================
 
-@dataclass(frozen=True)
-class FetchServiceConfig:
-    """Configuration for fetch services."""
+class FetchServiceConfig(msgspec.Struct, frozen=True, gc=False):
+    """Configuration for fetch services. M1 8GB: msgspec.Struct for fast init."""
     enable_tor: bool = False
     enable_i2p: bool = False
     enable_gopher: bool = False

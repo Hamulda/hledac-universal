@@ -131,7 +131,9 @@ async def create_mpsc_notifier(
 
     # Lazy import - MPSCPool je v rust_extensions
     try:
-        from hledac_rust_extensions import MPSCPool
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        MPSCPool = rust.raw.MPSCPool
     except ImportError:
         logger.error("[create_mpsc_notifier] hledac_rust_extensions not available")
         raise RuntimeError("MPSCPool requires hledac_rust_extensions")

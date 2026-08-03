@@ -11,6 +11,7 @@ ROLE:
 LANES:
   - aiohttp_default    — plain aiohttp, for general clearnet
   - nw_connection      — Apple Network.framework, user-space TCP + hw TLS (SILICON-03)
+  - nw_quic            — Apple Network.framework, native QUIC/HTTP3 (SILICON-05)
   - httpx_h2           — HTTPX with HTTP/2, env-gated, API-like URLs only
   - curl_cffi_stealth  — JA3 fingerprint spoofing, for stealth/403/429 retry
   - tor_socks          — Tor SOCKS5 proxy, .onion domains
@@ -24,10 +25,11 @@ DECISION RULES (in priority order):
   3. use_js=True       → js_renderer
   4. use_stealth=True  → curl_cffi_stealth
   5. status 403/429    → curl_cffi_stealth (retry path)
-  6. nw_connection available + non-dark clearnet → nw_connection (SILICON-03)
-  7. API-like URL + HLEDAC_ENABLE_HTTPX_H2=1 + h2 available → httpx_h2
-  8. API-like URL + HLEDAC_ENABLE_HTTPX_H3=1 + h3 available → httpx_h3
-  9. default           → aiohttp_default
+  6. nw_connection available + non-dark clearnet + no H3 cache → nw_connection (SILICON-03)
+  7. nw_quic available + H3-advertised host + non-dark → nw_quic (SILICON-05)
+  8. API-like URL + HLEDAC_ENABLE_HTTPX_H2=1 + h2 available → httpx_h2
+  9. API-like URL + HLEDAC_ENABLE_HTTPX_H3=1 + h3 available → httpx_h3
+ 10. default           → aiohttp_default
 
 CACHE RULE:
   cache_allowed=True ONLY when cache_safe=True AND lane is NOT
@@ -43,13 +45,14 @@ INVARIANTS:
 """
 import contextvars
 import re
+import sys
 import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from hledac.universal.core.env_config import ENV
 
-Lane = Literal['aiohttp_default', 'nw_connection', 'httpx_h2', 'httpx_h3', 'curl_cffi_stealth', 'tor_socks', 'i2p_socks', 'js_renderer', 'cache_safe_http', 'gopher']
+Lane = Literal['aiohttp_default', 'nw_connection', 'nw_quic', 'httpx_h2', 'httpx_h3', 'curl_cffi_stealth', 'tor_socks', 'i2p_socks', 'js_renderer', 'cache_safe_http', 'gopher']
 
 @dataclass(frozen=True, slots=True)
 class TransportDecision:
@@ -144,6 +147,8 @@ class TransportRouter:
             return _d('curl_cffi_stealth', f'retry_after_http_{retry_after_status}', 'medium')
         if self._is_nw_connection_candidate(url, hostname):
             return _d('nw_connection', 'nw_framework_user_space_tcp', 'high', cache=cache_safe)
+        if self._is_nw_quic_candidate(url, hostname):
+            return _d('nw_quic', 'nw_framework_quic_h3', 'high', cache=cache_safe)
         if self._is_httpx_h2_candidate(url, hostname):
             return _d('httpx_h2', 'api_like_httpx_h2', 'high', cache=cache_safe)
         if self._is_httpx_h3_candidate(url, hostname):
@@ -198,7 +203,6 @@ class TransportRouter:
         """
         if not ENV.get_bool("HLEDAC_ENABLE_NW_CONNECTION"):
             return False
-        import sys
         if sys.platform != "darwin":
             return False
         # Lazy check: only probe the Rust extension if we pass the cheap gates
@@ -212,6 +216,51 @@ class TransportRouter:
         try:
             from hledac.universal.transport.nw_connection_lane import is_nw_connection_available
             return is_nw_connection_available()
+        except (ValueError, OSError):
+            return False
+
+    def _is_nw_quic_candidate(self, url: str, hostname: str = "") -> bool:
+        """
+        Return True if URL is a candidate for the Network.framework QUIC/HTTP3 lane.
+
+        SILICON-05: Network.framework native QUIC (macOS 12.0+) is the
+        PREFERRED HTTP/3 path on Apple Silicon. It eliminates the need for
+        aioquic (~50-80 MB RSS) and quinn (~8 MB compile).
+
+        Preconditions:
+          - Target is clearnet (not .onion/.i2p/.freenet — checked before)
+          - HLEDAC_ENABLE_NW_QUIC is not set to 0
+          - Platform is darwin (macOS — Network.framework is macOS-only)
+          - macOS 12.0+ (nw_parameters_create_quic was added in Monterey)
+          - Host has advertised h3 via Alt-Svc (cached in http3_lane LRU)
+          - Rust extension with nw_framework feature is importable
+
+        Unlike nw_connection which is suitable for ALL clearnet URLs,
+        nw_quic is only for hosts known to support HTTP/3 (via Alt-Svc).
+        This prevents wasted QUIC handshake attempts on HTTP/1.1-only hosts.
+        """
+        if not ENV.get_bool("HLEDAC_ENABLE_NW_QUIC"):
+            return False
+        if sys.platform != "darwin":
+            return False
+        if not hostname:
+            hostname = self._classify_url(url)[1]
+        if not hostname:
+            return False
+        # Dark web check
+        if hostname.endswith((".onion", ".i2p", ".b32.i2p", ".freenet")):
+            return False
+        # Only route to QUIC if the host is known to support H3 (Alt-Svc cache)
+        try:
+            from hledac.universal.transport.http3_lane import _cache_get as _h3_cache_get
+            if _h3_cache_get(hostname) is not True:
+                return False
+        except (ValueError, OSError):
+            return False
+        # Lazy check: only probe the Rust extension if we pass the cheap gates
+        try:
+            from hledac.universal.transport.nw_quic_lane import is_nw_quic_available
+            return is_nw_quic_available()
         except (ValueError, OSError):
             return False
 

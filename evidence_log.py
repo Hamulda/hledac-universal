@@ -66,33 +66,30 @@ _ARROW_ENABLED: bool = os.environ.get('HLEDAC_ARROW_EVIDENCE', '0') == '1'
 
 
 def _ensure_duckdb_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Lazily create and return the DuckDB write executor (singleton).
+    """R5: Lazily return the DuckDB write executor from domain_executors.
 
-    C2 FIX: DuckDB is thread-safe (internal locking) — 2 workers better
+    DuckDB is thread-safe (internal locking) — 2 workers better
     utilize M1 8GB's 4P+4E cores. WAL contention is DuckDB-internal, not
-    a cross-process bottleneck. Threading lock prevents race in singleton init.
+    a cross-process bottleneck.
     """
     global _duckdb_executor
     with _duckdb_executor_lock:
         if _duckdb_executor is None:
-            _duckdb_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=2, thread_name_prefix='evidence_duckdb',
-            )
+            from hledac.universal.utils.domain_executors import get_evidence_duckdb_executor
+            _duckdb_executor = get_evidence_duckdb_executor()
         return _duckdb_executor
 
 
 def _ensure_evidence_sqlite_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Lazily create and return the SQLite write executor (singleton).
+    """R5: Lazily return the SQLite write executor from domain_executors.
 
-    C2: SQLite WAL has genuine write serialization — max_workers=1 is correct.
-    Threading lock prevents race in singleton init.
+    SQLite WAL has genuine write serialization — max_workers=1 is correct.
     """
     global _evidence_sqlite_executor
     with _evidence_sqlite_executor_lock:
         if _evidence_sqlite_executor is None:
-            _evidence_sqlite_executor = concurrent.futures.ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix='evidence_sqlite',
-            )
+            from hledac.universal.utils.domain_executors import get_evidence_sqlite_executor
+            _evidence_sqlite_executor = get_evidence_sqlite_executor()
         return _evidence_sqlite_executor
 
 
@@ -122,19 +119,17 @@ def _shutdown_executor_guarded(
 
 
 def _shutdown_executors() -> None:
-    """Shutdown module-global executors at interpreter exit.
+    """R5: No-op — executors are now centrally managed by domain_executors.
 
-    B4 FIX: Module-global ThreadPoolExecutors (_evidence_sqlite_executor,
-    _duckdb_executor) are lazily initialized and were never shut down.
-    Multiple imports during a long sprint left idle threads around.
-    This function is registered via atexit to ensure clean shutdown.
+    B4 FIX (legacy): Module-global ThreadPoolExecutors were lazily
+    initialized and shut down via atexit. Now replaced by domain_executors
+    shared pools with multi-layer shutdown (signal + atexit + weakref).
 
-    Each executor gets a bounded graceful shutdown (2s) before force-kill.
+    Kept for backward compatibility — atexit registration still exists.
     """
-    for ex in (_evidence_sqlite_executor, _duckdb_executor):
-        if ex is None:
-            continue
-        _shutdown_executor_guarded(ex, timeout_s=2.0)
+    # R5: domain_executors.shutdown_all() handles this via its own atexit.
+    # Calling it here would double-shutdown, which is harmless but unnecessary.
+    pass
 
 
 atexit.register(_shutdown_executors)
@@ -801,7 +796,9 @@ class _RustMPSCBytes:
 
     def _init_rust(self, capacity: int, asyncio_fallback: bool) -> None:
         try:
-            from hledac_rust_extensions import MPSCPool as _MPSC
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            _MPSC = rust.raw.MPSCPool
             pool = _MPSC(capacity=capacity)
             sender_ptr = pool.add_sender()
             wake_fd = pool.wake_fd()
@@ -918,7 +915,9 @@ class _RustMPSCBytes:
             return
 
         try:
-            from hledac_rust_extensions import MPSCPool as _MPSC  # type: ignore[import]
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            _MPSC = rust.raw.MPSCPool  # type: ignore[import]
             pool = _MPSC(capacity=self._capacity)
             sender_ptr = pool.add_sender()
             wake_fd = pool.wake_fd()

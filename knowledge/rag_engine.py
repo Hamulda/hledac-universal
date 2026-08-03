@@ -170,14 +170,13 @@ class BM25Index:
 # When the Rust extension is compiled WITHOUT --features fulltext, this
 # ImportError triggers the Python BM25Index fallback transparently.
 _RUST_FULLTEXT: Any = None
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
+
+_RUST_FULLTEXT = rust.fulltext
 _RUST_FULLTEXT_AVAILABLE: bool = False
-try:
-    from hledac_rust_extensions import fulltext as _rust_fulltext_module  # type: ignore[import-not-found]
-    _RUST_FULLTEXT = _rust_fulltext_module
-    _RUST_FULLTEXT_AVAILABLE = getattr(_rust_fulltext_module, 'fulltext_is_available', lambda: False)()
-except ImportError:
-    _RUST_FULLTEXT = None
-    _RUST_FULLTEXT_AVAILABLE = False
+if _RUST_FULLTEXT is not None:
+    _RUST_FULLTEXT_AVAILABLE = getattr(_RUST_FULLTEXT, 'fulltext_is_available', lambda: False)()
 
 # Environment override: set HLEDAC_DISABLE_RUST_FULLTEXT=1 to force Python BM25 fallback.
 if os.environ.get('HLEDAC_DISABLE_RUST_FULLTEXT', '0') == '1':
@@ -1254,7 +1253,52 @@ class RAGEngine:
             logger.warning('No valid embeddings found for HNSW indexing')
             return
         vectors_array = np.array(valid_vectors, dtype=np.float32)
-        self._hnsw_index.add_vectors(vectors_array, valid_ids)
+
+        # ── SILICON-02: Try GPU-accelerated vector insertion ──────
+        _gpu_inserted = False
+        if os.environ.get("HLEDAC_ENABLE_METAL_HNSW", "0") == "1":
+            try:
+                from hledac.universal.knowledge.metal_hnsw import MetalHNSWBuilder
+                gpu_builder = MetalHNSWBuilder(
+                    dim=self.config.hnsw_dim,
+                    M=self.config.hnsw_M,
+                    ef_construction=self.config.hnsw_ef_construction,
+                    max_elements=self.config.hnsw_max_elements,
+                    metric=self.config.hnsw_space,
+                )
+                if gpu_builder.gpu_enabled:
+                    # Build GPU-accelerated index with labels matching
+                    # HNSWVectorIndex._current_label so search results
+                    # resolve to correct document IDs.
+                    label_start = self._hnsw_index._current_label
+                    gpu_index = gpu_builder.build(
+                        vectors_array, valid_ids, label_offset=label_start
+                    )
+                    # Replace internal USearch index and populate mappings.
+                    # Labels in gpu_index are label_start..label_start+N-1,
+                    # matching _label_to_id keys populated below.
+                    self._hnsw_index._index = gpu_index
+                    for i, doc_id in enumerate(valid_ids):
+                        label = label_start + i
+                        self._hnsw_index._id_to_label[doc_id] = label
+                        self._hnsw_index._label_to_id[label] = doc_id
+                    self._hnsw_index._current_label = label_start + len(valid_ids)
+                    self._hnsw_index._is_initialized = True
+                    _gpu_inserted = True
+                    gpu_stats = gpu_builder.get_stats()
+                    logger.info(
+                        f"HNSW index built (Metal GPU): {gpu_stats['total_vectors']} vectors, "
+                        f"{gpu_stats['build_time_s']:.2f}s "
+                        f"(gpu_batches={gpu_stats['gpu_batches']}, "
+                        f"label_range=[{label_start}, {label_start + len(valid_ids) - 1}])"
+                    )
+            except ImportError:
+                logger.debug("[HNSW] Metal HNSW module not available")
+            except Exception as e:
+                logger.debug(f"[HNSW] Metal GPU build failed: {e}")
+
+        if not _gpu_inserted:
+            self._hnsw_index.add_vectors(vectors_array, valid_ids)
         stats = self._hnsw_index.get_stats()
         logger.info(f"HNSW index built: {stats['current_elements']} vectors, {stats['memory_usage_mb']:.2f} MB, HNSW enabled: {stats['using_hnsw']}")
 

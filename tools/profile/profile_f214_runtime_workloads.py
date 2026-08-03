@@ -21,7 +21,7 @@ Options:
 import argparse
 import asyncio
 import cProfile
-import json
+import json as _stdlib_json
 import os
 import pstats
 import resource
@@ -133,7 +133,7 @@ def workload_zstd_cache(tempfile_dir: str, profile_top: int) -> WorkloadResult:
             items = [f'item_{i}_' + 'x' * 4000 for i in range(100)]
             compressed = []
             for item in items:
-                data = orjson.dumps({'k': item})
+                data = or_stdlib_json.dumps({'k': item})
                 comp = _zstd.compress(data)
                 compressed.append(comp)
             decompressed = []
@@ -142,7 +142,7 @@ def workload_zstd_cache(tempfile_dir: str, profile_top: int) -> WorkloadResult:
                 decompressed.append(orjson.loads(data))
             return len(decompressed)
         count, top = run_cprofile(run_once, profile_top=profile_top)
-        sample_data = orjson.dumps({'k': 'x' * 4000})
+        sample_data = or_stdlib_json.dumps({'k': 'x' * 4000})
         sample_compressed = _zstd.compress(sample_data)
         ratio = len(sample_data) / len(sample_compressed) if sample_compressed else 0
         return WorkloadResult(name='zstd_cache', status='ok', median_ms=0, main_bottleneck=top[0]['function'] if top else 'unknown', findings=int(ratio * 100) // 100, cprofile_top=top)
@@ -323,7 +323,7 @@ def _zstd_cache_sync(tmpdir: str):
     items = [f'item_{i}_' + 'x' * 4000 for i in range(100)]
     compressed = []
     for item in items:
-        data = orjson.dumps({'k': item})
+        data = or_stdlib_json.dumps({'k': item})
         comp = _zstd.compress(data)
         compressed.append(comp)
     decompressed = []
@@ -408,7 +408,7 @@ def format_json(results: list[WorkloadResult]) -> str:
             all_bottlenecks.append({'workload': r.name, 'function': r.cprofile_top[0]['function'], 'cumulative_s': r.cprofile_top[0]['cumulative_s'], 'median_ms': r.median_ms})
     all_bottlenecks.sort(key=lambda x: x['cumulative_s'], reverse=True)
     output['summary']['top_bottlenecks'] = all_bottlenecks[:5]
-    return json.dumps(output, indent=2)
+    return _stdlib_json.dumps(output, indent=2)
 
 def main():
     parser = argparse.ArgumentParser(description='F214 Runtime Workload Profiler')

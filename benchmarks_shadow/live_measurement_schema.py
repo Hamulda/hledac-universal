@@ -9,7 +9,7 @@ Schema-only extractions from benchmarks/live_sprint_measurement.py:
 
 No runtime import side effects — only schema definitions.
 """
-import json
+import json as _stdlib_json
 from dataclasses import dataclass, field
 import msgspec
 from enum import Enum

@@ -11,7 +11,7 @@ M1 8GB safe: bounded fixtures, no memory blowup.
 
 import argparse
 import importlib.util
-import json
+import json as _stdlib_json
 import sys
 from pathlib import Path
 

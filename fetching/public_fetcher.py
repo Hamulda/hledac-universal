@@ -1247,6 +1247,7 @@ async def _get_tor_session():
         if not _SESSION_MGR.tor_is_healthy():
             _SESSION_MGR._tor_session = await httpx_socks_client(TOR_SOCKS_PROXY, rdns=True)
             _SESSION_MGR._tor_session_locally_created = True
+            _ensure_atexit_cleanup()  # ISSUE-7: lazy atexit registration on first session creation
     _SESSION_MGR.record_tor_source('local_tor')
     return _SESSION_MGR._tor_session
 
@@ -1271,6 +1272,7 @@ async def _get_i2p_session():
         if not _SESSION_MGR.i2p_is_healthy():
             _SESSION_MGR._i2p_session = await httpx_socks_client(I2P_SOCKS_PROXY, rdns=True)
             _SESSION_MGR._i2p_session_locally_created = True
+            _ensure_atexit_cleanup()  # ISSUE-7: lazy atexit registration on first session creation
     _SESSION_MGR.record_i2p_source('local_i2p')
     return _SESSION_MGR._i2p_session
 
@@ -1656,12 +1658,26 @@ def get_public_fetcher_session_status() -> dict:
     status = _SESSION_MGR.status_snapshot()
     return {'tor_session_present': status['tor_present'], 'tor_session_closed': status['tor_closed'], 'i2p_session_present': status['i2p_present'], 'i2p_session_closed': status['i2p_closed'], 'injected_provider_active': status['injected_active'], 'session_source_telemetry': status['telemetry']}
 
-def _register_atexit_cleanup() -> None:
-    """Lazy atexit registration to defer import cost."""
+def _ensure_atexit_cleanup() -> None:
+    """Register atexit cleanup for Tor/I2P sessions — idempotent.
+
+    ISSUE-7 fix: atexit registration is now lazy (called when sessions are
+    first created) instead of at module import time. This avoids:
+      - Dangling atexit references when the module is imported but never used
+      - Complex lifecycle coupling between import order and cleanup order
+      - Race conditions in test suites that import public_fetcher for other symbols
+
+    Idempotent via _atexit_cleanup_registered flag — safe to call from both
+    _get_tor_session() and _get_i2p_session().
+    """
+    global _atexit_cleanup_registered
+    if _atexit_cleanup_registered:
+        return
     import atexit
     atexit.register(_close_tor_session_sync)
     atexit.register(_close_i2p_session_sync)
-_register_atexit_cleanup()
+    _atexit_cleanup_registered = True
+_atexit_cleanup_registered: bool = False
 _SERP_HOST_RE = re.compile('(google\\.|bing\\.|duckduckgo\\.|yahoo\\.|baidu\\.|yandex\\.|so\\.|startpage\\.|search\\.|serp)|searchresults|webcache|googlesyndication|googletagmanager|doubleclick|search\\?q=|/search\\?|\\?q=|\\&oq=|\\&gs_l=', re.IGNORECASE)
 _CONTENT_LENGTH_RE = re.compile('content-length\\s*[=:]\\s*(\\d+)', re.IGNORECASE)
 _NOSCRIPT_RE = re.compile('<noscript[^>]*>|enable javascript', re.IGNORECASE)
@@ -1896,7 +1912,7 @@ _JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
 def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore.
 
-    F-02 NOTE: Uses get_semaphore_for_testing (fixed OK limit) rather than
+    F-02 NOTE: Uses get_semaphore (fixed OK limit) rather than
     ConcurrencyBudgetRegistry dynamic adjustment. The BrowserPool.max_active=2
     provides the M1 8GB hard cap; ConcurrencyBudgetRegistry.JS_RENDERER
     category is registered for future dynamic UMA-aware adjustment.
@@ -1907,8 +1923,8 @@ def _get_js_renderer_semaphore() -> asyncio.Semaphore:
     global _JS_RENDERER_SEMAPHORE
     if _JS_RENDERER_SEMAPHORE is not None:
         return _JS_RENDERER_SEMAPHORE
-    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-    _JS_RENDERER_SEMAPHORE = get_semaphore_for_testing(ConcurrencyCategory.JS_RENDERER)
+    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    _JS_RENDERER_SEMAPHORE = get_semaphore(ConcurrencyCategory.JS_RENDERER)
     return _JS_RENDERER_SEMAPHORE
 
 async def _teardown_browser_pool() -> None:
@@ -2334,16 +2350,22 @@ async def _fetch_core(
     max_bytes: int = MAX_BYTES_DEFAULT,
     ttfb_timeout_s: float | None = _TTFB_TIMEOUT_S,
 ) -> FetchResult:
-    """Core transport fetch — unified transport, returns FetchResult.
+    """Core transport fetch — unified transport OR transport racing, returns FetchResult.
 
     Tenacity retry (3 attempts, decorrelated jitter) wraps this call.
     Exceptions raised here trigger retry; returned FetchResult does not.
     Tarpit detection runs AFTER this (in _fetch_one) on the raw HTML text,
     so we don't retry into tarpit pages.
 
+    R9: When HLEDAC_ENABLE_TRANSPORT_RACE=1 (default), uses fetch_via_race()
+    to race httpx, curl_cffi, and nw_connection in parallel and take the
+    first success. Falls back to sequential unified transport when disabled,
+    for stealth mode, or for darknet URLs.
+
     Args:
         url: HTTP/HTTPS URL to fetch.
         policy: TransportPolicy from transport.unified_transport.  None = clearnet H2.
+            Ignored when racing is active (racing auto-selects transports).
         headers: Optional HTTP headers.
         timeout_s: Request timeout in seconds.
         max_bytes: Maximum response bytes to read.
@@ -2351,48 +2373,95 @@ async def _fetch_core(
             If the server hasn't sent the first byte within this window the
             request is cancelled immediately.  Default 1.5 s (PHYSICS-11).
             Set to None to disable (legacy behaviour — single 35 s timeout).
+            When racing is active, TTFB is applied after the race winner is
+            chosen (the race has its own per-transport timeouts).
 
     Returns:
-        FetchResult with raw decoded HTML in .text (from unified transport).
+        FetchResult with raw decoded HTML in .text (from winning transport).
         Raises _RetryableStatus for 429/502/503/504/520 status codes and
           transient transport errors (timeout, connection refused/reset, DNS failure).
         Raises TimeoutError for request timeouts.
     """
-    from hledac.universal.transport.unified_transport import (
-        POLICY_CLEARNET_H2,
-        fetch_via_unified,
+    # R9: Transport racing — race multiple transports in parallel, first success wins.
+    # Gate: HLEDAC_ENABLE_TRANSPORT_RACE=1 (default ON), off for stealth/darknet.
+    from hledac.universal.transport.transport_race import (
+        fetch_via_race,
+        is_transport_race_enabled,
     )
 
-    _policy = policy if policy is not None else POLICY_CLEARNET_H2
+    _use_racing = (
+        is_transport_race_enabled()
+        and policy is None  # racing only for default policy (clearnet)
+        and not url.lower().endswith(('.onion', '.i2p', '.b32.i2p', '.freenet'))
+    )
 
-    # PHYSICS-11: TTFB kill switch — wrap fetch_via_unified with a
-    # short deadline for the first byte.  If the server accepts the TCP
-    # connection but never sends data, we abort early instead of burning
-    # the full timeout_s (35 s) per attempt.
-    if ttfb_timeout_s is not None and ttfb_timeout_s > 0:
+    if _use_racing:
+        # R9: Racing path — TTFB guard is less relevant since the race
+        # already has per-transport timeouts, but we still apply it
+        # around the race to catch pathological cases where the winner
+        # returns headers quickly but then stalls on body.
+        race_timeout = min(timeout_s, 15.0)  # race has its own bound
         try:
-            raw = await asyncio.wait_for(
-                fetch_via_unified(
+            if ttfb_timeout_s is not None and ttfb_timeout_s > 0:
+                raw = await asyncio.wait_for(
+                    fetch_via_race(
+                        url=url,
+                        timeout_s=race_timeout,
+                        max_bytes=max_bytes,
+                        headers=headers,
+                    ),
+                    timeout=max(ttfb_timeout_s, race_timeout),
+                )
+            else:
+                raw = await fetch_via_race(
                     url=url,
-                    policy=_policy,
-                    headers=headers,
-                    timeout_s=timeout_s,
+                    timeout_s=race_timeout,
                     max_bytes=max_bytes,
-                ),
-                timeout=ttfb_timeout_s,
-            )
+                    headers=headers,
+                )
         except asyncio.TimeoutError:
             raise asyncio.TimeoutError(
-                f"ttfb_timeout:{url}:{ttfb_timeout_s:.1f}s"
+                f"race_ttfb_timeout:{url}:{ttfb_timeout_s or race_timeout:.1f}s"
             ) from None
     else:
-        raw = await fetch_via_unified(
-            url=url,
-            policy=_policy,
-            headers=headers,
-            timeout_s=timeout_s,
-            max_bytes=max_bytes,
+        # ISSUE-15: Legacy sequential path with mini-race fallback.
+        # Uses fetch_via_unified_with_race_fallback() which, when the primary
+        # transport fails, races the remaining transports in parallel.
+        from hledac.universal.transport.unified_transport import (
+            POLICY_CLEARNET_H2,
+            fetch_via_unified_with_race_fallback,
         )
+
+        _policy = policy if policy is not None else POLICY_CLEARNET_H2
+
+        # PHYSICS-11: TTFB kill switch — wrap fetch_via_unified with a
+        # short deadline for the first byte.  If the server accepts the TCP
+        # connection but never sends data, we abort early instead of burning
+        # the full timeout_s (35 s) per attempt.
+        if ttfb_timeout_s is not None and ttfb_timeout_s > 0:
+            try:
+                raw = await asyncio.wait_for(
+                    fetch_via_unified_with_race_fallback(
+                        url=url,
+                        policy=_policy,
+                        headers=headers,
+                        timeout_s=timeout_s,
+                        max_bytes=max_bytes,
+                    ),
+                    timeout=ttfb_timeout_s,
+                )
+            except asyncio.TimeoutError:
+                raise asyncio.TimeoutError(
+                    f"ttfb_timeout:{url}:{ttfb_timeout_s:.1f}s"
+                ) from None
+        else:
+            raw = await fetch_via_unified_with_race_fallback(
+                url=url,
+                policy=_policy,
+                headers=headers,
+                timeout_s=timeout_s,
+                max_bytes=max_bytes,
+            )
 
     status_code = raw.get('status_code', 0)
     transport_error = raw.get('error')
@@ -2600,6 +2669,52 @@ def _lazy_get_reputation_service() -> Any | None:
 
         _rep_service_cache = get_domain_reputation_service()
         return _rep_service_cache
+    except Exception:  # noqa: BLE001 — fail-safe; optional feature
+        return None
+
+
+# UNIFIED-009: Route graph service singleton (lazy)
+_route_graph_cache: Any = None
+
+def _lazy_get_route_graph_service() -> Any | None:
+    """Lazy-load RouteGraphService singleton.
+
+    Returns None if HLEDAC_PROXY_ROUTES=0 or service unavailable.
+    Never raises.
+    """
+    global _route_graph_cache
+    if _route_graph_cache is not None:
+        return _route_graph_cache
+    if os.getenv("HLEDAC_PROXY_ROUTES", "1") == "0":
+        return None
+    try:
+        from hledac.universal.knowledge.proxy_routes import get_route_graph_service
+
+        _route_graph_cache = get_route_graph_service()
+        return _route_graph_cache
+    except Exception:  # noqa: BLE001 — fail-safe; optional feature
+        return None
+
+
+# UNIFIED-010: Anti-bot profile service singleton (lazy)
+_anti_bot_profile_cache: Any = None
+
+def _lazy_get_anti_bot_profile_service() -> Any | None:
+    """Lazy-load AntiBotProfileService singleton.
+
+    Returns None if HLEDAC_ANTI_BOT_PROFILES=0 or service unavailable.
+    Never raises.
+    """
+    global _anti_bot_profile_cache
+    if _anti_bot_profile_cache is not None:
+        return _anti_bot_profile_cache
+    if os.getenv("HLEDAC_ANTI_BOT_PROFILES", "1") == "0":
+        return None
+    try:
+        from hledac.universal.knowledge.anti_bot_profiles import get_anti_bot_profile_service
+
+        _anti_bot_profile_cache = get_anti_bot_profile_service()
+        return _anti_bot_profile_cache
     except Exception:  # noqa: BLE001 — fail-safe; optional feature
         return None
 
@@ -2815,6 +2930,46 @@ async def async_fetch_public_text_batch(
                     )
                 except Exception:  # noqa: BLE001 — fail-safe; non-critical
                     pass
+            # UNIFIED-009: Record route performance in route graph
+            if _domain and not result.error:
+                _route_svc = _lazy_get_route_graph_service()
+                if _route_svc is not None:
+                    try:
+                        await _route_svc.record_route_success(
+                            _domain,
+                            transport=result.selected_transport or '',
+                            latency_ms=result.elapsed_ms,
+                            body_bytes=result.fetched_bytes,
+                        )
+                    except Exception:  # noqa: BLE001 — fail-safe; non-critical
+                        pass
+            elif _domain and result.error:
+                _route_svc = _lazy_get_route_graph_service()
+                if _route_svc is not None:
+                    try:
+                        await _route_svc.record_route_failure(
+                            _domain,
+                            transport=result.selected_transport or '',
+                            latency_ms=result.elapsed_ms,
+                        )
+                    except Exception:  # noqa: BLE001 — fail-safe; non-critical
+                        pass
+            # UNIFIED-010: Record anti-bot observations
+            if _domain:
+                _ab_svc = _lazy_get_anti_bot_profile_service()
+                if _ab_svc is not None:
+                    try:
+                        _anti_bot = _detect_anti_bot_type(result) if result else 'none'
+                        if result and result.error and _anti_bot != 'none':
+                            await _ab_svc.observe_challenge(
+                                _domain,
+                                waf_type=_anti_bot,
+                                challenge_type='403' if result.status_code == 403 else '429' if result.status_code == 429 else '',
+                            )
+                        elif result and not result.error:
+                            await _ab_svc.observe_bypass(_domain)
+                    except Exception:  # noqa: BLE001 — fail-safe; non-critical
+                        pass
             return idx, result
         except Exception as _e:  # noqa: BLE001 — fail-safe; never propagate
             return idx, FetchResult(

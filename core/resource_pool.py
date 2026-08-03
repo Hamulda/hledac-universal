@@ -48,6 +48,11 @@ class PoolKind(Enum):
     COREML = auto()
     CPU_IO = auto()
     CPU_BLOCKING = auto()
+    # R3: Hermes engine dedicated pools — fixed-size, M1 8GB optimized
+    HERMES_PREP = auto()       # ChatML format + tokenization (CPU, 3 workers)
+    HERMES_POST = auto()       # JSON parse + model_validate (CPU, 2 workers)
+    HERMES_INFERENCE = auto()  # MLX inference fallback (CPU, 1 worker)
+    HERMES_COMPILE = auto()    # Prompt compilation (CPU, 1 worker, lazy)
 _DUCKDB_POOL_SIZE = 4
 _DUCKDB_POOL_MAX = 8
 _MLX_POOL_SIZE = 1
@@ -287,6 +292,48 @@ class _CPUPool:
             self._semaphore = None
 _cpu_io_pool = _CPUPool(name='cpu_io', max_workers=_CPU_IO_WORKERS_DEFAULT, kind=PoolKind.CPU_IO)
 _cpu_blocking_pool = _CPUPool(name='cpu_blocking', max_workers=_CPU_BLOCKING_WORKERS_DEFAULT, kind=PoolKind.CPU_BLOCKING)
+
+# R3: Hermes engine dedicated pools — fixed worker counts optimized for M1 8GB
+# These are NOT adaptive (unlike cpu_io/cpu_blocking) — the worker counts are
+# hard-tuned for the 3-stage CPU/GPU pipeline (prep → GPU → post).
+_HERMES_PREP_WORKERS = 3
+_HERMES_POST_WORKERS = 2
+_HERMES_INFERENCE_WORKERS = 1
+_HERMES_COMPILE_WORKERS = 1
+
+_hermes_prep_pool = _CPUPool(name='hermes_prep', max_workers=_HERMES_PREP_WORKERS, kind=PoolKind.HERMES_PREP)
+_hermes_post_pool = _CPUPool(name='hermes_post', max_workers=_HERMES_POST_WORKERS, kind=PoolKind.HERMES_POST)
+_hermes_inference_pool = _CPUPool(name='hermes_inference', max_workers=_HERMES_INFERENCE_WORKERS, kind=PoolKind.HERMES_INFERENCE)
+_hermes_compile_pool = _CPUPool(name='hermes_compile', max_workers=_HERMES_COMPILE_WORKERS, kind=PoolKind.HERMES_COMPILE)
+
+
+def get_hermes_prep_executor() -> ThreadPoolExecutor:
+    """R3: Get or create the Hermes prep executor (ChatML formatting + tokenization)."""
+    return _hermes_prep_pool.get_executor()
+
+
+def get_hermes_post_executor() -> ThreadPoolExecutor:
+    """R3: Get or create the Hermes post executor (JSON parse + model_validate)."""
+    return _hermes_post_pool.get_executor()
+
+
+def get_hermes_inference_executor() -> ThreadPoolExecutor:
+    """R3: Get or create the Hermes inference executor (MLX fallback)."""
+    return _hermes_inference_pool.get_executor()
+
+
+def get_hermes_compile_executor() -> ThreadPoolExecutor:
+    """R3: Get or create the Hermes compile executor (prompt compilation, lazy)."""
+    return _hermes_compile_pool.get_executor()
+
+
+def close_hermes_pools() -> None:
+    """R3: Shutdown all Hermes executor pools. Idempotent, fail-safe."""
+    for pool in (_hermes_prep_pool, _hermes_post_pool, _hermes_inference_pool, _hermes_compile_pool):
+        try:
+            pool.shutdown(wait=False)
+        except Exception:
+            pass
 
 class _MLXPool:
     """
@@ -571,6 +618,8 @@ def _cleanup_pools() -> None:
     _duckdb_rw_pool.close_all()
     _cpu_io_pool.shutdown(wait=False)
     _cpu_blocking_pool.shutdown(wait=False)
+    # R3: Hermes engine pools
+    close_hermes_pools()
 atexit.register(_cleanup_pools)
 
 def resize_cpu_pools(preset: Any) -> None:
@@ -585,4 +634,4 @@ def resize_cpu_pools(preset: Any) -> None:
         new_max = _CPU_IO_WORKERS_DEFAULT
     _cpu_io_pool.resize(new_max)
     _cpu_blocking_pool.resize(max(1, new_max // 2))
-__all__ = ['PoolKind', 'PoolStats', 'with_resource', 'with_resource_async', 'run_in_io_pool', 'run_in_blocking_pool', 'get_pool_stats', 'resize_cpu_pools']
+__all__ = ['PoolKind', 'PoolStats', 'with_resource', 'with_resource_async', 'run_in_io_pool', 'run_in_blocking_pool', 'get_pool_stats', 'resize_cpu_pools', 'close_hermes_pools', 'get_hermes_prep_executor', 'get_hermes_post_executor', 'get_hermes_inference_executor', 'get_hermes_compile_executor']

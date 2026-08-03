@@ -9,11 +9,22 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aho-corasick = "1.1"
-# R6: PyO3 0.29 — Python::attach + py.detach API (abi3-py314).
-# P6-004 FIX: abi3-py314 unlocks full Python 3.14 C API (tp_subclass, tp_new,
-# memory-view C API changes) instead of being capped at Python 3.12 stable ABI.
+# R6: PyO3 0.29 — Python::attach + py.detach API.
+# ISSUE-014: NON-ABI3 NATIVE WHEEL for Python 3.14 on M1 (aarch64-apple-darwin).
+#
+# WHY non-abi3:
+#   - abi3 limits PyO3 to the stable ABI subset (no tp_subclass, no tp_new,
+#     no full memory-view C API, no native 3.14 optimizations).
+#   - Project already requires >=3.14 and platform is darwin/arm64 only →
+#     zero cross-compatibility benefit from abi3; pure performance loss.
+#   - Non-abi3 links against libpython3.14 dynamically, producing a
+#     cp314-specific .so that gets full Python C API access.
+#
+# TRADE-OFF: Wheel is cp314-darwin-arm64 (not abi3-py314-none-any).
+#   This is fine — we never deploy on other Python versions or platforms.
+#
 # CI ban: with_gil / allow_threads removed from all code (only comments remain).
-pyo3 = { version = "0.29", features = ["extension-module", "abi3-py314"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 rayon = "1.10"
 # GRAPH-01: petgraph for graph algorithms (PageRank, Louvain community detection)
 # Provides: GraphMap, UnGraph, DiGraph, NodeIndex, algo::kosaraju_scc
@@ -180,9 +191,11 @@ whisper-rs = { version = "0.13", optional = true }
 
 [features]
 # Default = core + data (DuckDB wired) — standard Hledac build
-# NOTE: dns feature temporarily disabled — hickory-dns is a binary crate, not lib
-# Use --features "dns" to enable DNS resolution when hickory-resolver is fixed
-default = ["core", "data", "dns", "native_db"]
+# R6: dns and native_db are OPT-IN (not default) — they add compile time + deps
+#   dns:     ~5 MB compile (hickory-dns + tokio), ~8 MB resident
+#   native_db: ~50 KB compile (pure Rust), ~200 KB resident per session
+# Enable explicitly: --features "dns,native_db" or set HLEDAC_ENABLE_DNS=1 / HLEDAC_ENABLE_NATIVE_DB=1
+default = ["core", "data"]
 
 # core: IOC extraction, URL ops, hashing, compression, HTML parsing
 # Always compiled. No heavy deps. Available even with --no-default-features.

@@ -181,8 +181,8 @@ async def async_search_wayback_sitemap(domain_or_url: str, max_results: int=50, 
     remaining_timeout = timeout_s - (time.monotonic() - start)
     per_sitemap_timeout = min(_PER_SITEMAP_TIMEOUT_S, remaining_timeout / len(sitemap_urls))
     per_sitemap_timeout = max(1.0, per_sitemap_timeout)
-    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-    semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     async def fetch_sitemap(url: str) -> tuple[str, list[str]]:
         """Fetch and parse a single sitemap."""

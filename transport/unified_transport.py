@@ -29,6 +29,7 @@ Invariant:
 """
 import asyncio
 import logging
+import os
 import time
 
 from hledac.universal.utils.locks import LazyAsyncioLock
@@ -409,6 +410,137 @@ async def fetch_via_unified(url: str, policy: TransportPolicy | None=None, heade
     except Exception as e:
         elapsed_ms = (time.monotonic() - t0) * 1000
         return {'url': url, 'final_url': url, 'status_code': 0, 'content_type': '', 'text': None, 'fetched_bytes': 0, 'declared_length': -1, 'elapsed_ms': elapsed_ms, 'error': str(e), 'failure_stage': 'fetch', 'headers': {}}
+
+
+# ISSUE-15: Mini-race fallback — when the primary transport fails, race the
+# remaining transports in parallel instead of returning immediately. Bounded:
+# at most 2 fallback transports tried concurrently, 8s total timeout.
+_MINI_RACE_TIMEOUT_S: float = min(
+    float(os.environ.get("HLEDAC_MINI_RACE_TIMEOUT_S", "8.0")), 15.0
+)
+
+
+def _is_darknet_url(url: str) -> bool:
+    """Check if URL targets darknet (Tor/I2P/Freenet). Local copy to avoid circular import."""
+    url_lower = url.lower()
+    return (
+        url_lower.endswith(".onion")
+        or url_lower.endswith(".i2p")
+        or url_lower.endswith(".b32.i2p")
+        or url_lower.endswith(".freenet")
+    )
+
+
+async def fetch_via_unified_with_race_fallback(
+    url: str,
+    policy: TransportPolicy | None = None,
+    headers: dict[str, str] | None = None,
+    timeout_s: float = 10.0,
+    max_bytes: int = 10 * 1024 * 1024,
+) -> dict[str, Any]:
+    """
+    ISSUE-15: Fetch with mini-race fallback — fires remaining transports
+    when the primary transport fails.
+
+    This wraps fetch_via_unified() with a lightweight concurrent retry:
+      1. Try the requested policy's transport
+      2. If it fails, race httpx AND curl_cffi in parallel as fallback
+      3. Return first success, or the original error if all fail
+
+    For clearnet URLs, the fallback transport race uses POLICY_CLEARNET_H2
+    and POLICY_STEALTH_CHROME concurrently. For darknet/stealth URLs, only
+    Tor/I2P-capable transports are used.
+
+    Bounds: 8.0 s mini-race timeout, 2 transports max.
+    """
+    # Step 1: Primary fetch
+    result = await fetch_via_unified(
+        url, policy=policy, headers=headers,
+        timeout_s=timeout_s, max_bytes=max_bytes,
+    )
+
+    # Success or non-retryable outcome → return immediately
+    if result.get("error") is None and result.get("status_code", 0) >= 200:
+        return result
+
+    # 4xx errors are non-retryable (client error, not transport error)
+    if 400 <= result.get("status_code", 0) < 500 and result["status_code"] != 429:
+        return result
+
+    # Step 2: Mini-race fallback — try the other transports in parallel
+    from hledac.universal.transport.unified_transport import (
+        POLICY_CLEARNET_H2,
+        POLICY_STEALTH_CHROME,
+    )
+
+    # Determine which fallback transports to try
+    fallback_policies: list[tuple[str, TransportPolicy]] = []
+    is_dark = _is_darknet_url(url)
+    primary_kind = policy.kind if policy else TransportKind.HTTPX_H2
+
+    if is_dark:
+        # Darknet: only Tor/I2P transports
+        fallback_policies.append(
+            ("tor", TransportPolicy(kind=TransportKind.CURL_CFFI_TOR, tls_profile='chrome136', timeout_s=30.0))
+        )
+    else:
+        # Clearnet: race httpx and curl_cffi
+        if primary_kind != TransportKind.HTTPX_H2:
+            fallback_policies.append(("httpx", POLICY_CLEARNET_H2))
+        if primary_kind != TransportKind.CURL_CFFI:
+            fallback_policies.append(("curl_cffi", POLICY_STEALTH_CHROME))
+
+    if not fallback_policies:
+        return result
+
+    race_timeout = min(_MINI_RACE_TIMEOUT_S, timeout_s)
+
+    async def _try_fallback(name: str, fb_policy: TransportPolicy) -> dict[str, Any] | None:
+        try:
+            fb_result = await asyncio.wait_for(
+                fetch_via_unified(
+                    url, policy=fb_policy, headers=headers,
+                    timeout_s=race_timeout, max_bytes=max_bytes,
+                ),
+                timeout=race_timeout,
+            )
+            if fb_result.get("error") is None and fb_result.get("status_code", 0) >= 200:
+                # Tag the winning transport
+                fb_result["_mini_race_winner"] = name
+                return fb_result
+            return None
+        except (asyncio.TimeoutError, Exception):
+            return None
+
+    try:
+        tasks = [
+            asyncio.ensure_future(_try_fallback(name, fb_policy))
+            for name, fb_policy in fallback_policies
+        ]
+        done, pending = await asyncio.wait(
+            tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+            timeout=race_timeout,
+        )
+        for task in done:
+            try:
+                fb_result = task.result()
+                if fb_result is not None:
+                    # Cancel remaining fallbacks
+                    for p in pending:
+                        p.cancel()
+                    return fb_result
+            except Exception:
+                pass
+        # All fallbacks failed — cancel pending and return original error
+        for p in pending:
+            p.cancel()
+    except asyncio.CancelledError:
+        for t in tasks:
+            t.cancel()
+        raise
+
+    return result
 if __name__ == '__main__':
 
     async def _smoke() -> None:

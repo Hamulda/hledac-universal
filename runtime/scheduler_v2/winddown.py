@@ -468,6 +468,8 @@ class WinddownOrchestrator:
         - hledac.universal._cache (symbol cache)
         - core.isolated_executors._ISOLATED_FUNC_REGISTRY + _ISOLATED_FUNC_NAMES
         - GlobalCacheRegistry (all registered caches via clear_all_caches())
+        - AdaptiveCache registry (cache/adaptive_cache.py local registry)
+        - R8: MemoryPressureBroadcaster (graceful shutdown of monitor loop)
 
         WeakValueDictionary in rust_backend._lazy_mod_cache auto-releases dead modules.
         """
@@ -489,6 +491,21 @@ class WinddownOrchestrator:
             import logging
             _logger = logging.getLogger(__name__)
             _logger.debug(f"[G7] GlobalCacheRegistry cleared: {_sizes}")
+        except Exception:
+            pass
+        # R8: Clear AdaptiveCache local registry (separate from GlobalCacheRegistry)
+        try:
+            from hledac.universal.cache.adaptive_cache import clear_all_caches as _clear_adaptive
+            _clear_adaptive()
+        except Exception:
+            pass
+        # R8: Graceful shutdown of MemoryPressureBroadcaster monitor loop
+        try:
+            from hledac.universal.core.memory_pressure import get_broadcaster
+            bc = get_broadcaster()
+            # Use asyncio.ensure_future to stop asynchronously (non-blocking)
+            import asyncio
+            asyncio.ensure_future(bc.stop())
         except Exception:
             pass
 

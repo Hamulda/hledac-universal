@@ -26,7 +26,12 @@ RATIONALE:
   - ProcessPoolExecutor: ~50MB RSS per worker, never actually used (dead code)
   - InterpreterPoolExecutor: PEP 756 unstable, MLX incompatible (single interpreter)
   - Rust rayon: GIL-free via PyO3 allow_threads, NEON SIMD on M1
+
+Issue 9 fix: InterpreterPoolExecutor now gated behind runtime probe
+(HLEDAC_ENABLE_SUBINTERPRETERS=1 + CPython --with-experimental-isolated-subinterpreters).
+Import alone is insufficient for Python 3.14.6.
 """
+import logging
 import math
 import os
 from collections.abc import Callable, Iterator
@@ -34,6 +39,9 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 import msgspec
 from typing import Any, TypeVar
+
+logger = logging.getLogger(__name__)
+
 __all__ = ['ChunkedExecutor', 'smart_executor', 'ExecutorType', 'get_optimal_chunksize']
 T = TypeVar('T')
 R = TypeVar('R')
@@ -131,8 +139,28 @@ class ChunkedExecutor:
         if self.executor_type == ExecutorType.PROCESS:
             self._executor = ProcessPoolExecutor(max_workers=self.max_workers)
         elif self.executor_type == ExecutorType.INTERPRETER:
-            from concurrent.futures import InterpreterPoolExecutor
-            self._executor = InterpreterPoolExecutor(max_workers=self.max_workers)
+            # Issue 9 fix: Runtime gate — InterpreterPoolExecutor requires
+            # HLEDAC_ENABLE_SUBINTERPRETERS=1 + CPython --with-experimental-isolated-subinterpreters.
+            # Import alone is NOT sufficient — the subinterpreter API is experimental
+            # in Python 3.14.6 and may fail at runtime without the build flag.
+            from hledac.universal.runtime.execution_gateway import subinterpreter_available
+
+            if not subinterpreter_available():
+                logger.debug(
+                    'InterpreterPoolExecutor requested but subinterpreter support '
+                    'not available — falling back to ThreadPoolExecutor'
+                )
+                self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
+            else:
+                try:
+                    from concurrent.futures import InterpreterPoolExecutor
+                    self._executor = InterpreterPoolExecutor(max_workers=self.max_workers)
+                except ImportError:
+                    logger.debug('InterpreterPoolExecutor import failed — falling back to ThreadPoolExecutor')
+                    self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
+                except Exception as exc:
+                    logger.warning('InterpreterPoolExecutor init failed: %s — falling back to ThreadPoolExecutor', exc)
+                    self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
         else:
             self._executor = ThreadPoolExecutor(max_workers=self.max_workers)
         return self

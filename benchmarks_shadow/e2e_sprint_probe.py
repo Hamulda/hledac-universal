@@ -17,7 +17,7 @@ Run directly:
 
 
 import asyncio
-import json
+import json as _stdlib_json
 import os
 import pathlib
 import signal

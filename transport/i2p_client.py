@@ -197,8 +197,8 @@ async def discover_eepsites() -> list[dict]:
     discovered: list[dict] = []
     if not await is_i2p_available():
         return discovered
-    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-    sem = get_semaphore_for_testing(ConcurrencyCategory.TRANSPORT_I2P)
+    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    sem = get_semaphore(ConcurrencyCategory.TRANSPORT_I2P)
 
     async def fetch_one(eepsite: dict) -> dict | None:
         async with sem:

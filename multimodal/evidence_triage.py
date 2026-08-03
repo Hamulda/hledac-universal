@@ -165,22 +165,8 @@ class EvidenceTriageCoordinator:
 
     def _check_ram_guard(self) -> bool:
         """Check if RAM permits triage processing."""
-        try:
-            if self._governor is None:
-                return True
-            try:
-                if self._governor.is_critical():
-                    return False
-            except AttributeError:
-                pass
-            try:
-                if self._governor.is_emergency():
-                    return False
-            except AttributeError:
-                pass
-            return True
-        except Exception:
-            return True
+        from hledac.universal.multimodal import check_ram_guard
+        return check_ram_guard(self._governor)
 
     async def extract_triage_facets(self, file_path: str, source_type: str) -> TriageFacets:
         """

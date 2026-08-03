@@ -60,7 +60,10 @@ def _try_import_rust_engine() -> bool:
     if _rust_engine_available:
         return True
     try:
-        from hledac_rust_extensions import compute_cooccurrence_edges_py, batch_cooccurrence_edges_py
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        compute_cooccurrence_edges_py = rust.raw.compute_cooccurrence_edges_py
+        batch_cooccurrence_edges_py = rust.raw.batch_cooccurrence_edges_py
         _compute_cooccurrence_edges_py = compute_cooccurrence_edges_py
         _batch_cooccurrence_edges_py = batch_cooccurrence_edges_py
         _rust_engine_available = True
@@ -134,7 +137,9 @@ class IOCooccurrenceMiner:
         The analyze() path uses Rust engine internally.
         """
         try:
-            from hledac_rust_extensions import extract_iocs as _extract_iocs_rust
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            _extract_iocs_rust = rust.raw.extract_iocs
             return _extract_iocs_rust(finding.payload_text or "")
         except ImportError:
             pass

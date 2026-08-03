@@ -68,11 +68,11 @@ from hledac.universal.utils.flow_trace import (
 from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
 from .base import UniversalCoordinator
 
-# ISSUE 2.2: PyAIMDController — lock-free AIMD in Rust (AtomicU64). Lazy import.
-try:
-    from hledac_rust_extensions import PyAIMDController
-except ImportError:
-    PyAIMDController = None  # type: ignore[misc,assignment]
+# R6: Centralized Rust access — all hledac_rust_extensions symbols route through
+# core.rust_backend, ensuring ABI checking, capability scoring, and graceful fallback.
+from hledac.universal.core.rust_backend import rust
+
+PyAIMDController = rust.raw.PyAIMDController  # type: ignore[assignment]  # None if N/A
 
 # CAPS-based availability flags (set after imports)
 _otel_mod = CAPS.require(OTEL)
@@ -88,7 +88,6 @@ _hints_extractor_cls = CAPS.require(HINTS)
 _zero_attr_cls = CAPS.require(ZERO_ATTR)
 
 ZSTD_AVAILABLE = CAPS.is_available('zstd')
-AIOHTTP_AVAILABLE = CAPS.is_available('aiohttp')
 LIGHTPANDA_AVAILABLE = CAPS.is_available('lightpanda')
 SESSION_AVAILABLE = CAPS.is_available('session')
 HINTS_AVAILABLE = CAPS.is_available('deep_web_hints')
@@ -146,19 +145,14 @@ def _create_dedup_strategy() -> DeduplicationStrategy:
 _CP_NOT_CALLED = object()
 _CP_RETURNED_NONE = object()
 
-# F350M-R: DNS via hickory-dns — replaces batch_dns.py triple-path duplication
-# Lazy import to avoid adding hickory-dns to the core build
-_RUST_DNS: Any = None
+# R6: DNS via hickory-dns — centralized through rust_backend
+# dns feature is opt-in (not in default Cargo features). When built with
+# --features dns, rust.dns returns the submodule; otherwise None.
+_RUST_DNS: Any = rust.dns
 _RUST_DNS_ENABLED: bool = False
-try:
-    from hledac_rust_extensions import dns as _rust_dns_module
-    _RUST_DNS = _rust_dns_module
-    # F350M-R: Runtime feature flag — can disable even if built with dns feature
+if _RUST_DNS is not None:
     import os
     _RUST_DNS_ENABLED = os.environ.get('HLEDAC_ENABLE_DNS', '1').lower() in ('1', 'true', 'yes', 'on')
-except ImportError:
-    _RUST_DNS = None  # type: ignore[assignment]
-    _RUST_DNS_ENABLED = False
 
 
 def _rust_dns_prefetch(hostnames: list[str]) -> dict[str, list[str]]:
@@ -1425,31 +1419,52 @@ class FetchCoordinator(UniversalCoordinator):
     async def _do_initialize(self) -> bool:
         """Initialize coordinator."""
         logger.info('FetchCoordinator initialized')
-        # UNIFIED-003: Subscribe to EntropyFetchBridge for high-uncertainty alerts
-        try:
-            from hledac.universal.brain.uncertainty_quant import get_entropy_bridge
-            bridge = get_entropy_bridge()
-            if bridge is not None:
-                self._entropy_bridge_queue = asyncio.Queue(maxsize=64)
-                subscribed = await bridge.subscribe('fetch_coordinator', self._entropy_bridge_queue)
-                if subscribed:
-                    logger.info('[UNIFIED-003] Subscribed to EntropyFetchBridge for entropy alerts')
-                    # Set _running flag before starting background tasks
-                    self._running = True
-                    # Start background task to consume alerts
-                    self._entropy_bridge_task = safe_create_task(
-                        self._entropy_alert_consumer_loop(),
-                        name='fetch_coordinator.entropy_consumer'
+        # UNIFIED-003: Subscribe to EntropyFetchBridge for high-uncertainty alerts.
+        # Gated by HLEDAC_ENABLE_ENTROPY_FEEDBACK (default ON). Opt-out via env=0.
+        _entropy_feedback_enabled = os.environ.get(
+            'HLEDAC_ENABLE_ENTROPY_FEEDBACK', '1',
+        ).lower() in ('1', 'true', 'yes', 'on')
+        if _entropy_feedback_enabled:
+            try:
+                from hledac.universal.brain.uncertainty_quant import get_entropy_bridge
+                bridge = get_entropy_bridge()
+                if bridge is not None:
+                    self._entropy_bridge_queue = asyncio.Queue(maxsize=64)
+                    subscribed = await bridge.subscribe(
+                        'fetch_coordinator', self._entropy_bridge_queue,
                     )
-                    # Start micro-sprint worker task
-                    self._micro_sprint_worker_task = safe_create_task(
-                        self._micro_sprint_worker_loop(),
-                        name='fetch_coordinator.micro_sprint_worker'
-                    )
-                else:
-                    logger.warning('[UNIFIED-003] Failed to subscribe to EntropyFetchBridge')
-        except Exception as e:  # noqa: BLE001 — best-effort; entropy bridge subscription failure; non-critical
-            logger.debug('[UNIFIED-003] EntropyFetchBridge subscription failed (fail-soft): %s', e)
+                    if subscribed:
+                        logger.info(
+                            '[UNIFIED-003] Subscribed to EntropyFetchBridge '
+                            'for entropy alerts',
+                        )
+                        # Set _running flag before starting background tasks
+                        self._running = True
+                        # Start background task to consume alerts
+                        self._entropy_bridge_task = safe_create_task(
+                            self._entropy_alert_consumer_loop(),
+                            name='fetch_coordinator.entropy_consumer',
+                        )
+                        # Start micro-sprint worker task
+                        self._micro_sprint_worker_task = safe_create_task(
+                            self._micro_sprint_worker_loop(),
+                            name='fetch_coordinator.micro_sprint_worker',
+                        )
+                    else:
+                        logger.warning(
+                            '[UNIFIED-003] Failed to subscribe to '
+                            'EntropyFetchBridge',
+                        )
+            except Exception as e:
+                logger.debug(
+                    '[UNIFIED-003] EntropyFetchBridge subscription failed '
+                    '(fail-soft): %s', e,
+                )
+        else:
+            logger.info(
+                '[UNIFIED-003] Entropy feedback loop disabled '
+                '(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0)',
+            )
         # F-05: RobotsParser — 15 min TTL, 1024 domain LRU cache (M1 8GB bounded)
         try:
             from ..utils.robots_parser import RobotsParser
@@ -2431,7 +2446,11 @@ class FetchCoordinator(UniversalCoordinator):
         self._frontier.clear()
         self._processed_urls = _create_dedup_strategy()
         self._cover_count = 0
-        # UNIFIED-004: Cancel entropy bridge consumer task before checkpoint loop
+        # UNIFIED-003: Stop consumer/worker loops gracefully before cancelling tasks.
+        # Sets _running=False so loops exit their while conditions naturally,
+        # then cancel for immediate teardown. Prevents CancelledError noise.
+        self._running = False
+        # UNIFIED-004: Cancel entropy bridge consumer task
         if self._entropy_bridge_task is not None:
             self._entropy_bridge_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -2742,7 +2761,15 @@ class FetchCoordinator(UniversalCoordinator):
                             break
 
                 duration_ms = (time.monotonic() - start_time) * 1000.0
-                success = best_entropy > plan.entropy
+                # UNIFIED-004: Use fixed byte-level entropy threshold for success.
+                # best_entropy is normalized Shannon entropy (0.0-1.0) from
+                # calculate_entropy(). plan.entropy is now also 0.0-1.0
+                # (implied_confidence-based). Compare same-scale values.
+                _MIN_USEFUL_BYTE_ENTROPY = 0.35
+                success = (
+                    best_entropy >= _MIN_USEFUL_BYTE_ENTROPY
+                    and best_entropy > plan.entropy
+                )
 
                 return MicroSprintResult(
                     entity_id=plan.entity_id,
@@ -2880,6 +2907,11 @@ class FetchCoordinator(UniversalCoordinator):
                         for item in result.items[:5]:
                             eid = f"shodan:{entity_id}:{item.get('ip_str', '')}"
                             evidence_ids.append(eid)
+                else:
+                    logger.debug(
+                        '[UNIFIED-004] Shodan skipped for %s (HLEDAC_ENABLE_SHODAN=0)',
+                        entity_id,
+                    )
 
             # ── Censys ────────────────────────────────────────────────
             elif protocol == 'censys':
@@ -2893,6 +2925,11 @@ class FetchCoordinator(UniversalCoordinator):
                         for item in result.items[:5]:
                             eid = f"censys:{entity_id}:{item.get('ip', '')}"
                             evidence_ids.append(eid)
+                else:
+                    logger.debug(
+                        '[UNIFIED-004] Censys skipped for %s (HLEDAC_ENABLE_CENSYS=0)',
+                        entity_id,
+                    )
 
             # ── Gopher ─────────────────────────────────────────────────
             elif protocol == 'gopher':
@@ -2903,6 +2940,11 @@ class FetchCoordinator(UniversalCoordinator):
                         result = await self._gopher_transport.fetch(entity_id)
                         if result and result.get('success'):
                             evidence_ids.append(f"gopher:{entity_id}")
+                else:
+                    logger.debug(
+                        '[UNIFIED-004] Gopher skipped for %s (HLEDAC_ENABLE_GOPHER=0)',
+                        entity_id,
+                    )
 
             # ── CommonCrawl ────────────────────────────────────────────
             elif protocol == 'commoncrawl':
@@ -2919,6 +2961,11 @@ class FetchCoordinator(UniversalCoordinator):
                         if resp.status_code == 200:
                             for line in resp.text.strip().split('\n')[:5]:
                                 evidence_ids.append(f"commoncrawl:{entity_id}:{line[:80]}")
+                else:
+                    logger.debug(
+                        '[UNIFIED-004] CommonCrawl skipped for %s (HLEDAC_ENABLE_COMMONCRAWL=0)',
+                        entity_id,
+                    )
 
             # ── DHT (Mainline BitTorrent) ─────────────────────────────
             elif protocol == 'dht':
@@ -2928,7 +2975,12 @@ class FetchCoordinator(UniversalCoordinator):
                     # In micro-sprint context, this is a lightweight probe
                     evidence_ids.append(f"dht:{entity_id}:probe")
                     logger.debug(
-                        '[UNIFIED-004] DHT probe queued for %s', entity_id
+                        '[UNIFIED-004] DHT probe queued for %s', entity_id,
+                    )
+                else:
+                    logger.debug(
+                        '[UNIFIED-004] DHT skipped for %s (HLEDAC_ENABLE_DHT=0)',
+                        entity_id,
                     )
 
             # ── Blockchain ─────────────────────────────────────────────
@@ -2938,7 +2990,12 @@ class FetchCoordinator(UniversalCoordinator):
                     # Blockchain address analysis — BTC/ETH
                     evidence_ids.append(f"blockchain:{entity_id}:lookup")
                     logger.debug(
-                        '[UNIFIED-004] Blockchain lookup queued for %s', entity_id
+                        '[UNIFIED-004] Blockchain lookup queued for %s', entity_id,
+                    )
+                else:
+                    logger.debug(
+                        '[UNIFIED-004] Blockchain skipped for %s (HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER=0)',
+                        entity_id,
                     )
 
             else:
@@ -2953,29 +3010,35 @@ class FetchCoordinator(UniversalCoordinator):
         """
         Compute entropy of evidence created during micro-sprint.
 
+        Uses canonical calculate_entropy() from brain/uncertainty_quant.py
+        which falls back to Rust NEON-accelerated compute on M1.
+
         Args:
             evidence_ids: List of evidence IDs to evaluate
 
         Returns:
-            Entropy score (0.0-1.0)
+            Normalized entropy score (0.0-1.0)
         """
         if not evidence_ids:
             return 0.0
 
         try:
+            from hledac.universal.brain.uncertainty_quant import calculate_entropy
+
             # Attempt to read evidence and compute entropy
             if self._evidence_sink is not None:
                 # Use injected evidence sink
                 total_entropy = 0.0
                 count = 0
-                for evidence_id in evidence_ids[:5]:  # Limit to 5 for performance
+                for evidence_id in evidence_ids[:5]:  # Limit to 5 for perf
                     try:
-                        evidence = await self._evidence_sink.get_evidence(evidence_id)
+                        evidence = await self._evidence_sink.get_evidence(
+                            evidence_id,
+                        )
                         if evidence and hasattr(evidence, 'payload_text'):
                             text = evidence.payload_text or ''
                             if text:
-                                # Compute Shannon entropy
-                                entropy = self._compute_shannon_entropy(text)
+                                entropy = calculate_entropy(text)
                                 total_entropy += entropy
                                 count += 1
                     except Exception:
@@ -2988,36 +3051,6 @@ class FetchCoordinator(UniversalCoordinator):
             logger.debug('[UNIFIED-004] Entropy computation failed: %s', e)
 
         return 0.0
-
-    def _compute_shannon_entropy(self, text: str) -> float:
-        """
-        Compute Shannon entropy of text (bits per character).
-
-        Args:
-            text: Input text
-
-        Returns:
-            Entropy in bits (0.0-8.0 for ASCII, normalized to 0.0-1.0)
-        """
-        if not text:
-            return 0.0
-
-        # Count character frequencies
-        freq: dict[str, int] = {}
-        for char in text:
-            freq[char] = freq.get(char, 0) + 1
-
-        # Compute entropy
-        import math
-        length = len(text)
-        entropy = 0.0
-        for count in freq.values():
-            p = count / length
-            if p > 0:
-                entropy -= p * math.log2(p)
-
-        # Normalize to 0.0-1.0 (max entropy for ASCII is ~6.5 bits)
-        return min(entropy / 6.5, 1.0)
 
     async def _entropy_alert_consumer_loop(self) -> None:
         """
@@ -3036,8 +3069,13 @@ class FetchCoordinator(UniversalCoordinator):
             logger.warning('[UNIFIED-003/004] No entropy bridge queue available')
             return
 
-        # Track entities currently in the micro-sprint queue for dedup
-        pending_entities: set[str] = set()
+        # Track entities currently queued/processing for dedup.
+        # Maps entity_id → timestamp. Entries older than _PENDING_TTL_S
+        # are auto-pruned to prevent unbounded growth.
+        _PENDING_TTL_S = 120.0   # 2 min — generous for micro-sprint timeout (30s)
+        _PRUNE_INTERVAL = 10     # prune every N iterations
+        pending_entities: dict[str, float] = {}  # entity_id → added_at
+        _loop_count = 0
 
         while self._running:
             try:
@@ -3046,6 +3084,23 @@ class FetchCoordinator(UniversalCoordinator):
 
                 if not self._running:
                     break
+
+                # Periodic pruning of stale pending entries
+                _loop_count += 1
+                if _loop_count % _PRUNE_INTERVAL == 0:
+                    _now = time.monotonic()
+                    _stale = [
+                        eid for eid, ts in pending_entities.items()
+                        if _now - ts > _PENDING_TTL_S
+                    ]
+                    for eid in _stale:
+                        del pending_entities[eid]
+                    if _stale:
+                        logger.debug(
+                            '[UNIFIED-003/004] Pruned %d stale pending entities '
+                            '(remaining=%d)', len(_stale), len(pending_entities),
+                        )
+
 
                 # Extract alert data - alert is an EntropyAlert dataclass
                 entity_id = alert.entity_id
@@ -3058,14 +3113,17 @@ class FetchCoordinator(UniversalCoordinator):
                     logger.debug('[UNIFIED-003/004] Alert missing entity_id, skipping')
                     continue
 
-                # Dedup: skip if entity already queued for micro-sprint
+                # Dedup: skip if entity already in pending (queued or processing)
                 if entity_id in pending_entities:
-                    logger.debug('[UNIFIED-003/004] Entity %s already in micro-sprint queue, skipping', entity_id)
+                    logger.debug(
+                        '[UNIFIED-003/004] Entity %s already pending, skipping',
+                        entity_id,
+                    )
                     continue
 
                 logger.info(
                     '[UNIFIED-003/004] High entropy alert: entity=%s entropy=%.3f reason=%s',
-                    entity_id, entropy, reason
+                    entity_id, entropy, reason,
                 )
 
                 # Enqueue micro-sprint request with backpressure
@@ -3079,10 +3137,13 @@ class FetchCoordinator(UniversalCoordinator):
                 try:
                     # Non-blocking put with backpressure — drop if queue full
                     self._micro_sprint_queue.put_nowait(request)
-                    pending_entities.add(entity_id)
+                    pending_entities[entity_id] = time.monotonic()
                     self._entropy_alerts_processed += 1
                 except asyncio.QueueFull:
-                    logger.debug('[UNIFIED-003/004] Micro-sprint queue full, dropping alert for %s', entity_id)
+                    logger.debug(
+                        '[UNIFIED-003/004] Micro-sprint queue full, '
+                        'dropping alert for %s', entity_id,
+                    )
 
             except asyncio.TimeoutError:
                 # Normal timeout, continue loop
@@ -3150,11 +3211,11 @@ class FetchCoordinator(UniversalCoordinator):
 
                 all_tried = previously_tried + list(result.protocols_tried)
 
-                if result.success and result.new_entropy > entropy:
+                if result.success:
                     logger.info(
                         '[UNIFIED-004] Micro-sprint improved entropy: entity=%s '
-                        'old=%.3f new=%.3f protocols=%s retries=%d',
-                        entity_id, entropy, result.new_entropy,
+                        'new_entropy=%.3f protocols=%s retries=%d',
+                        entity_id, result.new_entropy,
                         result.protocols_tried, retry_count,
                     )
                     # Success — remove from pending tracking

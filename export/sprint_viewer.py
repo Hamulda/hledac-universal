@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
+import json as _stdlib_json
 import sys
 import tarfile
 from datetime import datetime
@@ -166,13 +166,13 @@ def view_bundle(bundle_path: Path, extract_dir: Path | None = None) -> dict[str,
     # Read metadata
     metadata_path = extract_dir / "metadata.json"
     if metadata_path.exists():
-        result["metadata"] = json.loads(metadata_path.read_text())
+        result["metadata"] = _stdlib_json.loads(metadata_path.read_text())
 
     # Read and render report
     report_path = extract_dir / "report.json"
     if report_path.exists():
         try:
-            report_data = json.loads(report_path.read_text())
+            report_data = _stdlib_json.loads(report_path.read_text())
             result["markdown_report"] = _render_markdown_report(report_data)
 
             # Write markdown report
@@ -225,7 +225,7 @@ Examples:
         result = view_bundle(args.bundle, args.extract)
 
         if args.json:
-            print(json.dumps(result, indent=2))
+            print(_stdlib_json.dumps(result, indent=2))
         else:
             print(f"Bundle: {result['bundle_path']}")
             print(f"Size: {result['bundle_size']:,} bytes")

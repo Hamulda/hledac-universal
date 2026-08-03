@@ -540,16 +540,16 @@ def _get_rust_cb():
     """Lazy load Rust circuit breaker functions."""
     global _rust_cb
     if _rust_cb is None:
-        try:
-            from hledac_rust_extensions import (
-                circuit_breaker_is_open,
-                circuit_breaker_record_success,
-                circuit_breaker_record_failure,
-                circuit_breaker_half_open_probe,
-                circuit_breaker_clear_all,
-                circuit_breaker_get_stats,
-            )
-
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        raw = rust.raw
+        circuit_breaker_is_open = raw.circuit_breaker_is_open
+        circuit_breaker_record_success = raw.circuit_breaker_record_success
+        circuit_breaker_record_failure = raw.circuit_breaker_record_failure
+        circuit_breaker_half_open_probe = raw.circuit_breaker_half_open_probe
+        circuit_breaker_clear_all = raw.circuit_breaker_clear_all
+        circuit_breaker_get_stats = raw.circuit_breaker_get_stats
+        if all([circuit_breaker_is_open, circuit_breaker_record_success, circuit_breaker_record_failure]):
             _rust_cb = {
                 "is_open": circuit_breaker_is_open,
                 "record_success": circuit_breaker_record_success,
@@ -558,7 +558,7 @@ def _get_rust_cb():
                 "clear_all": circuit_breaker_clear_all,
                 "get_stats": circuit_breaker_get_stats,
             }
-        except ImportError:
+        else:
             _rust_cb = {}
     return _rust_cb
 
@@ -1252,9 +1252,9 @@ async def checked_httpx_post(
         return None, 0, "unknown_error"
 
 
-# Backward-compat alias — httpx is the primary HTTP client
+# Backward-compat alias — F4XX: now delegates to httpx (aiohttp removed from default deps)
 checked_aiohttp_get = checked_httpx_get
-"""Alias for backward compatibility with code referencing the old aiohttp name."""
+"""F4XX: alias for checked_httpx_get — kept for backward compat. Prefer checked_httpx_get in new code."""
 
 checked_aiohttp_post = checked_httpx_post
-"""F4XX: alias — httpx now replaces aiohttp."""
+"""F4XX: alias for checked_httpx_post — kept for backward compat. Prefer checked_httpx_post in new code."""

@@ -370,8 +370,8 @@ async def banner_grab_to_canonical(host: str, ports: list[int], query: str) -> l
         ports = ports[:5]
     grabber = BannerGrabber()
     findings = []
-    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-    sem = get_semaphore_for_testing(ConcurrencyCategory.BANNER_GRAB)
+    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    sem = get_semaphore(ConcurrencyCategory.BANNER_GRAB)
 
     async def _grab_one(port: int) -> BannerResult | None:
         try:

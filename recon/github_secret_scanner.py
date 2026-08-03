@@ -237,8 +237,8 @@ async def scan_repo(repo_full_name: str) -> list[SecretFinding]:
         for pattern_label, compiled_re in _API_PATTERNS:
             query_str = f'{repo_q}{pattern_label}'
             items = await _gh_search(query_str, session, max_results=30)
-            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-            _fetch_sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            _fetch_sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
             async def _fetch_one(item: dict) -> tuple[dict, str | None]:
                 async with _fetch_sem:

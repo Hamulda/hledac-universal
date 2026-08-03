@@ -129,8 +129,8 @@ class ArxivAdapter:
     __slots__ = tuple(('_cache', '_cache_ttl', '_semaphore'))
 
     def __init__(self) -> None:
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[ArxivPaper]]] = {}
         self._cache_ttl = 900.0
 

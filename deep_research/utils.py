@@ -117,8 +117,8 @@ class LinkRotDetector:
         Returns:
             List of LinkCheckResult
         """
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def check_with_limit(url: str) -> LinkCheckResult:
             async with semaphore:

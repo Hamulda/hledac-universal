@@ -141,31 +141,30 @@ def extract_pattern_hits(text: str) -> tuple[int, list[dict[str, Any]]]:
 
 
 async def fetch_via_curl_cffi(url: str, timeout: float = 10.0) -> dict[str, Any]:
-    """Fetch via curl_cffi (sync, run in thread pool), return structured dict."""
-    import curl_cffi
+    """Fetch via curl_cffi (native AsyncSession, Issue 18), return structured dict."""
+    from curl_cffi.requests import AsyncSession
 
-    loop = asyncio.get_running_loop()
-
-    def _sync_fetch():
-        session = curl_cffi.Session(impersonate="chrome110")
-        try:
-            resp = session.get(url, timeout=int(timeout))
+    try:
+        async with AsyncSession(impersonate="chrome110", timeout=timeout) as session:
+            resp = await session.get(url)
             text = resp.text
             return {
                 "status_code": resp.status_code,
                 "text": text,
                 "fetched_bytes": len(text.encode("utf-8")),
+                "selected_transport": "curl_cffi",
+                "transport_fallback_reason": None,
+                "error": None,
             }
-        finally:
-            session.close()
-
-    result = await loop.run_in_executor(None, _sync_fetch)
-    return {
-        **result,
-        "selected_transport": "curl_cffi",
-        "transport_fallback_reason": None,
-        "error": None,
-    }
+    except Exception as e:
+        return {
+            "status_code": 0,
+            "text": "",
+            "fetched_bytes": 0,
+            "selected_transport": "curl_cffi",
+            "transport_fallback_reason": None,
+            "error": str(e),
+        }
 
 
 async def fetch_via_aiohttp_raw(url: str, timeout: float = 10.0) -> dict[str, Any]:

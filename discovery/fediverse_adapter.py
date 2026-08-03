@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 import msgspec
 import httpx
-from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 FEDIVERSE_TIMEOUT = 10.0
@@ -71,7 +71,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True):
     Strategy: Use multiple public instances to avoid rate limits.
     No authentication required for public posts.
     """
-    _semaphore: asyncio.Semaphore = field(default_factory=lambda: get_semaphore_for_testing(ConcurrencyCategory.SOCIAL_MINE))
+    _semaphore: asyncio.Semaphore = field(default_factory=lambda: get_semaphore(ConcurrencyCategory.SOCIAL_MINE))
     _instance_timestamps: dict = field(default_factory=dict)
     _session_cache: httpx.AsyncClient | None = None
     _session_closed: bool = False

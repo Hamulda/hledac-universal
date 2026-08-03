@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+import msgspec
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -42,9 +42,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class DispatchContext:
-    """Immutable context passed to all dispatch operations."""
+class DispatchContext(msgspec.Struct, frozen=True, gc=False):
+    """Immutable context passed to all dispatch operations. M1 8GB: msgspec.Struct for fast init."""
     coordinator_name: str
     operation_ref: str
     operation_type: str  # 'execution', 'security', 'opsec', 'monitoring', etc.

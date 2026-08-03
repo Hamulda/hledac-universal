@@ -51,24 +51,19 @@ except ImportError:
     nn = None
     HAS_MLX = False
 
-# hledac_rust_extensions — strict import with fallback
-try:
-    import hledac_rust_extensions
-    HAS_RUST_ENCODING = True
-except ImportError:
-    hledac_rust_extensions = None
-    HAS_RUST_ENCODING = False
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
 
-# rust_calculate_entropy — strict import with fallback
-try:
-    from hledac_rust_extensions import rust_calculate_entropy
-    rust_fast_entropy_screen = rust_calculate_entropy.fast_entropy_screen if hasattr(rust_calculate_entropy, 'fast_entropy_screen') else None
-    rust_ngram_analysis = rust_calculate_entropy.ngram_analysis if hasattr(rust_calculate_entropy, 'ngram_analysis') else None
-    rust_majority_vote = rust_calculate_entropy.majority_vote if hasattr(rust_calculate_entropy, 'majority_vote') else None
-    rust_batch_entropy_analysis = rust_calculate_entropy.batch_entropy_analysis if hasattr(rust_calculate_entropy, 'batch_entropy_analysis') else None
+HAS_RUST_ENCODING = rust.is_available
+
+_entropy_mod = rust.raw.rust_calculate_entropy
+if _entropy_mod is not None and _entropy_mod:
+    rust_fast_entropy_screen = getattr(_entropy_mod, 'fast_entropy_screen', None)
+    rust_ngram_analysis = getattr(_entropy_mod, 'ngram_analysis', None)
+    rust_majority_vote = getattr(_entropy_mod, 'majority_vote', None)
+    rust_batch_entropy_analysis = getattr(_entropy_mod, 'batch_entropy_analysis', None)
     HAS_RUST_ENTROPY = True
-except ImportError:
-    rust_calculate_entropy = None
+else:
     rust_fast_entropy_screen = None
     rust_ngram_analysis = None
     rust_majority_vote = None

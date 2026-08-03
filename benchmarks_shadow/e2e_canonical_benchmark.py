@@ -19,7 +19,7 @@ Usage:
 """
 import argparse
 import asyncio
-import json
+import json as _stdlib_json
 import sys
 import time as _time
 from datetime import UTC, datetime

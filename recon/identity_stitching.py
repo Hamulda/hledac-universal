@@ -46,14 +46,11 @@ T = TypeVar('T', default=object)
 
 # --------------------------------------------------------------------------- #
 # LSH pre-filtering — O(1) candidate reduction instead of O(N²) brute-force  #
-# --------------------------------------------------------------------------- #
-try:
-    from hledac_rust_extensions import lsh_index_new, LSHIndex
-    LSH_AVAILABLE = True
-except ImportError:
-    LSH_AVAILABLE = False
-    lsh_index_new = None
-    LSHIndex = None  # type: ignore[assignment, misc]
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
+lsh_index_new = rust.raw.lsh_index_new
+LSHIndex = rust.raw.LSHIndex
+LSH_AVAILABLE = lsh_index_new is not None and LSHIndex is not None
 
 # --------------------------------------------------------------------------- #
 # Union-Find pro O(α(N)) clustering — nahrazuje O(N²) connected_components    #
@@ -536,9 +533,10 @@ class IdentityStitchingEngine:
 
     def _build_lsh_fingerprint(self, profile: IdentityProfile) -> int:
         """Build 64-bit SimHash fingerprint pro LSH candidate pre-filtering."""
-        try:
-            from hledac_rust_extensions import simhash
-        except ImportError:
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        simhash = rust.raw.simhash
+        if simhash is None:
             # Stable fallback: hash string content, NOT object identity.
             # profile.usernames is list[UsernameEntry] — extract .username strings.
             usernames_tuple = tuple(sorted(e.username for e in profile.usernames))

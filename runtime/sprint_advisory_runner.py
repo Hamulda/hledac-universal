@@ -214,8 +214,8 @@ class SprintAdvisoryRunner:
             outcome = await self._run_pivot_planner_advisory(outcome)
             outcome = await self._run_pivot_executor_advisory(outcome)
             if parallel_ok is not None:
-                from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-                sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+                from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+                sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
                 async def bounded_step(coro, step_name: str):
                     """Run a step with semaphore-bounded concurrency."""

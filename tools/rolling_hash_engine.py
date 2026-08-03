@@ -15,12 +15,12 @@ from typing import Any
 # Rust extension import guard
 # -----------------------------------------------------------------------------
 _RUST_RH_AVAILABLE = False
-try:
-    import hledac_rust_extensions
-    # Expose Rust RollingHashEngine for API compatibility
-    _RustRhEngine = hledac_rust_extensions.RollingHashEngine
-    _RUST_RH_AVAILABLE = True
-except ImportError:
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
+if rust.is_available:
+    _RustRhEngine = rust.raw.RollingHashEngine
+    _RUST_RH_AVAILABLE = _RustRhEngine is not None
+else:
     _RustRhEngine = None
 
 # -----------------------------------------------------------------------------

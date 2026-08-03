@@ -101,7 +101,9 @@ class ScanStage:
 def _get_rust_feed_domain() -> Any | None:
     """Get Rust feed_pipeline domain if available."""
     try:
-        from hledac.universal.rust_extensions import hledac_rust_extensions as _ext
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _ext = rust.raw.module
 
         probe = getattr(_ext, "feed_entry_pipeline", None)
         if probe is None:

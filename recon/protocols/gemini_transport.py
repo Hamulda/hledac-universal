@@ -344,8 +344,8 @@ async def crawl_capsule(
     to_visit: list[str] = [url]
     start_time = time.monotonic()
 
-    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-    sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     while to_visit and len(findings) < max_pages:
         if (time.monotonic() - start_time) > MAX_CRAWL_TIME:

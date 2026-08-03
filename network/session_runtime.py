@@ -319,7 +319,8 @@ async def async_get_httpx_session() -> httpx.AsyncClient:
     return await _httpx_client()
 
 
-# Backward-compat aliases
+# F4XX (Issue 19): backward-compat aliases — now delegates to httpx.AsyncClient.
+# Prefer async_get_httpx_session() and close_httpx_session_async() in new code.
 async_get_aiohttp_session = async_get_httpx_session
 
 
@@ -389,9 +390,8 @@ def close_httpx_session() -> None:
     run_sync_async(_close_httpx())
 
 
-# Alias for backward compatibility
+# F4XX (Issue 19): backward-compat alias — now delegates to close_httpx_session().
 close_aiohttp_session = close_httpx_session
-"""F4XX: alias — httpx now replaces aiohttp."""
 
 
 async def close_httpx_session_async() -> None:
@@ -415,9 +415,8 @@ async def close_httpx_session_async() -> None:
     clear_bandits()
 
 
-# Alias for backward compatibility
+# F4XX (Issue 19): backward-compat alias — now delegates to close_httpx_session_async().
 close_aiohttp_session_async = close_httpx_session_async
-"""F4XX: alias — httpx now replaces aiohttp."""
 
 
 def get_session_runtime_status() -> dict:

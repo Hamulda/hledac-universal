@@ -361,8 +361,8 @@ class LeakSentinelAdapter:
 
     def __init__(self) -> None:
         self._stats = LeakSentinelStats()
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
     def get_stats(self) -> LeakSentinelStats:
         """Return statistics from the last run."""

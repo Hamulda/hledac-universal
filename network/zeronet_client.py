@@ -255,11 +255,11 @@ class ZeroNetSiteEnumerator:
                 if kw in s["name"].lower() or kw in s.get("description", "").lower()
             ]
 
-        from hledac.universal.core.concurrency_registry import (
+        from hledac.universal.core.concurrency import (
             ConcurrencyCategory,
-            get_semaphore_for_testing,
+            get_semaphore,
         )
-        sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def _probe_site(site: dict) -> dict | None:
             async with sem:

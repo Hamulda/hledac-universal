@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import Any
 try:
     import httpx
-    AIOHTTP_AVAILABLE = True
+    HTTP_CLIENT_AVAILABLE = True
 except ImportError:
-    AIOHTTP_AVAILABLE = False
+    HTTP_CLIENT_AVAILABLE = False
 from hledac.universal.transport.session_pool import session_pool
 try:
     from hledac.universal.security.temporal_anonymizer import TemporalAnonymizer
@@ -141,8 +141,8 @@ class DataLeakHunter:
 
     async def initialize(self) -> bool:
         """Initialize security components and HTTP session"""
-        if not AIOHTTP_AVAILABLE:
-            logger.error('aiohttp not available')
+        if not HTTP_CLIENT_AVAILABLE:
+            logger.error('httpx not available')
             return False
         try:
             if SECURITY_AVAILABLE:

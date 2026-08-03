@@ -154,8 +154,8 @@ class GraphRAGOrchestrator:
                 self._score_semaphore_lock = asyncio.Lock()
             async with self._score_semaphore_lock:
                 if self._score_semaphore is None:
-                    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-                    self._score_semaphore = get_semaphore_for_testing(ConcurrencyCategory.GRAPH_RAG)
+                    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+                    self._score_semaphore = get_semaphore(ConcurrencyCategory.GRAPH_RAG)
         return self._score_semaphore
 
     async def score_path(self, path: list[str], hypothesis: str, hypothesis_emb: list[float] | None=None, max_nodes: int=10) -> float:
@@ -895,7 +895,9 @@ class GraphRAGOrchestrator:
         For large graphs (>2000 nodes), betweenness uses sampling approximation.
         """
         try:
-            import hledac_rust_extensions as _rust_ext
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            _rust_ext = rust.raw.module
             adj_list: list[tuple[str, list[str]]] = [(node_id, list(neighbors)) for node_id, neighbors in adjacency.items()]
             rust_result = _rust_ext.batch_centrality_all(adj_list)
             if rust_result:

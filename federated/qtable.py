@@ -171,7 +171,9 @@ def _get_rust_qtable() -> Any | None:
     if _rust_qtable_class is not None:
         return _rust_qtable_class
     try:
-        from hledac_rust_extensions import RustFederatedQTable as _cls  # type: ignore[attr-defined]
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _cls = rust.raw.RustFederatedQTable  # type: ignore[assignment]
         _rust_qtable_class = _cls
         return _cls
     except Exception:

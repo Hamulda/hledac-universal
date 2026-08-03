@@ -64,8 +64,8 @@ class COREAdapter:
 
     def __init__(self) -> None:
         self._api_key = _get_api_key()
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
         self._cache: dict[str, tuple[float, list[COREWork]]] = {}
         self._cache_ttl = 1800.0
 

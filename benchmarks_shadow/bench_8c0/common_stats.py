@@ -9,7 +9,7 @@ Provides:
 
 
 import gc
-import json
+import json as _stdlib_json
 import time
 from collections.abc import Callable
 from pathlib import Path

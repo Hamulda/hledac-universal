@@ -43,7 +43,7 @@ import re
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import field
 import msgspec
 from typing import Any, Final
 
@@ -94,14 +94,18 @@ STAGE_STORED: Final[str] = 'stored'
 STAGE_ACCEPTED: Final[str] = 'accepted'
 STAGE_PROVIDER_FAILED: Final[str] = 'provider_failed'
 
-@dataclass(frozen=True, order=False, slots=True)
-class LedgerRecord:
+class LedgerRecord(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint F217E: Bounded nonfeed candidate lifecycle record.
 
+    Migrated from @dataclass(frozen=True, slots=True) → msgspec.Struct.
     No full payload. No sensitive blobs. All fields are primitives.
     candidate_id is truncated BLAKE2b hash of the actual value — stable
     identifier without leaking the raw IOC.
+
+    Truncation invariants: candidate_id (≤CANDIDATE_ID_TRUNC), sample_url
+    and sample_value (≤MAX_SAMPLE_CHARS). Enforced at the single call site
+    in NonfeedCandidateLedger.add() — no __post_init__ needed.
     """
     family: str
     stage: str
@@ -114,14 +118,6 @@ class LedgerRecord:
     sample_url: str
     sample_value: str
     ts_monotonic: float
-
-    def __post_init__(self) -> None:
-        if len(self.sample_url) > MAX_SAMPLE_CHARS:
-            object.__setattr__(self, 'sample_url', self.sample_url[:MAX_SAMPLE_CHARS])
-        if len(self.sample_value) > MAX_SAMPLE_CHARS:
-            object.__setattr__(self, 'sample_value', self.sample_value[:MAX_SAMPLE_CHARS])
-        if len(self.candidate_id) > CANDIDATE_ID_TRUNC:
-            object.__setattr__(self, 'candidate_id', self.candidate_id[:CANDIDATE_ID_TRUNC])
 
 class NonfeedCandidateLedger(msgspec.Struct, gc=False):
     """

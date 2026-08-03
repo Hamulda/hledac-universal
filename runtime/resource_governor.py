@@ -39,7 +39,9 @@ import msgspec
 from hledac.universal.core.resource_governor import UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY, UMA_STATE_WARN, sample_uma_status
 from hledac.universal.core.resource_governor import PressureState, uma_state_to_pressure_state
 try:
-    from hledac_rust_extensions import sync_adaptive_state
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    sync_adaptive_state = rust.raw.sync_adaptive_state
 except Exception:
     sync_adaptive_state = None
 logger = logging.getLogger(__name__)

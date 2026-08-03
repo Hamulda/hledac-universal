@@ -300,8 +300,8 @@ class GopherTransport:
         seen_urls: set[str] = set()
         queue: list[tuple[str, int, str, int]] = [(start_host, start_port, start_selector, 0)]
         start_time = _time.monotonic()
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        sem = get_semaphore_for_testing(ConcurrencyCategory.GOPHER_LANE)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        sem = get_semaphore(ConcurrencyCategory.GOPHER_LANE)
         while queue and _time.monotonic() - start_time < max_time:
             host, port, selector, depth = queue.pop(0)
             if depth > max_hops:

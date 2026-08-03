@@ -184,7 +184,7 @@ rust_extensions/
 - PyO3 cdylib = `module-name = "hledac_rust_extensions"` v pyproject.toml
 - Python package jméno = `hledac_rust_extensions` (PODTRŽÍTKO, ne hyphen)
 - `extension-module` feature = nutný pro cdylib build (od PyO3 0.21)
-- Stable ABI (abi3) wheel vyžaduje separátní maturin build setup — není v current scope
+- ISSUE-014: Non-abi3 native wheel — builds cp314-specific .so s plným Python C API (ne stable ABI subset)
 
 ## Maturin Cheatsheet
 | Příkaz | Účel |

@@ -247,22 +247,8 @@ class MediaIocPipeline:
 
     def _check_ram_guard(self) -> bool:
         """Check UMA headroom for media decode + IOC scan."""
-        try:
-            if self._governor is None:
-                return True
-            try:
-                if self._governor.is_critical():
-                    return False
-            except AttributeError:
-                pass
-            try:
-                if self._governor.is_emergency():
-                    return False
-            except AttributeError:
-                pass
-            return True
-        except Exception:
-            return True
+        from hledac.universal.multimodal import check_ram_guard
+        return check_ram_guard(self._governor)
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -531,6 +517,7 @@ async def scan_text_for_iocs(
                     patterns=list(_IOC_PATTERNS_STR),
                     labels=list(_IOC_PATTERNS_STR),
                 )
+                # R7: IocStreamScanner dispatched via rayon channel for zero-overhead submit
                 hits = await asyncio.to_thread(scanner.scan_bytes, text_bytes)
 
                 if hits:
@@ -543,24 +530,24 @@ async def scan_text_for_iocs(
             except Exception as exc:
                 log.debug('[SILICON-07] IocStreamScanner failed: %s', exc)
 
-        # Tier 2: Rust regex extractor (fast, high precision)
+        # Tier 2: Rust regex extractor → R7: batch_ioc_extract_unified_python (zero-copy)
         try:
-            from hledac.universal.rust.ioc import extract_iocs_flat
-            flat_iocs = await asyncio.to_thread(extract_iocs_flat, text)
+            from hledac.universal.utils.ioc_extract import extract_iocs_single
+            flat_iocs = await extract_iocs_single(text)
             if flat_iocs:
                 iocs = []
-                for ioc in flat_iocs:
+                for ioc_type, ioc_value in flat_iocs:
                     iocs.append({
-                        'type': getattr(ioc, 'ioc_type', getattr(ioc, 'type', 'unknown')),
-                        'value': getattr(ioc, 'value', str(ioc)),
-                        'confidence': getattr(ioc, 'confidence', 0.9),
-                        'scanner': 'rust_regex',
+                        'type': ioc_type,
+                        'value': ioc_value,
+                        'confidence': 0.9,
+                        'scanner': 'rust_batch_zero_copy',
                     })
-                return iocs[:200], 'rust_regex', True
+                return iocs[:200], 'rust_batch_zero_copy', True
         except ImportError:
-            log.debug('[SILICON-07] Rust regex scanner not available')
+            log.debug('[SILICON-07] Rust zero-copy scanner not available')
         except Exception as exc:
-            log.debug('[SILICON-07] Rust regex scan failed: %s', exc)
+            log.debug('[SILICON-07] Rust zero-copy scan failed: %s', exc)
 
         # Tier 3: MLX NER engine (unstructured text, lower precision)
         try:

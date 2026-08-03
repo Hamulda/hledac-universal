@@ -399,11 +399,13 @@ class ContinuousPrefetchPipeline:
         """
         try:
             from hledac.universal.transport.prewarm_pool import acquire_session
-            success, session, _profile = await acquire_session('ja3_fingerprint')
+            # Issue 18: use canonical JA3 profile (chrome136) instead of
+            # invalid 'ja3_fingerprint' string. Session is AsyncSession from
+            # prewarm pool — call .get() natively, not via asyncio.to_thread.
+            success, session, _profile = await acquire_session('chrome136')
             if success and session is not None:
                 try:
-                    # session.get() is synchronous — run in thread pool to avoid blocking event loop
-                    resp = await asyncio.to_thread(session.get, url, timeout=self._fetch_timeout)
+                    resp = await session.get(url, timeout=self._fetch_timeout)
                     if resp.status_code == 200:
                         return {'url': url, 'content': resp.text, 'status': resp.status_code, 'fetched_at': time.time()}
                 except Exception:

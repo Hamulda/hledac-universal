@@ -16,6 +16,57 @@ Architecture:
   │                     json, spsc, query, text, int_counter, simd,
   │                     sprint_policies + all pure-Python fallbacks
 
+R6: SINGLE ENTRY POINT — all Rust extension access MUST go through this module.
+=================================================================================
+
+Canonical import pattern:
+    from hledac.universal.core.rust_backend import rust
+
+Domain access (typed, with Python fallback):
+    fingerprints = rust.quality.batch_dedup_fingerprints(texts)
+    urls = rust.ioc.extract_iocs_flat(html)
+    normalized = rust.url.normalize(url)
+
+Raw symbol access (for symbols not yet wrapped in a domain):
+    PyAIMDController = rust.raw.PyAIMDController  # None if N/A
+    MPSCPool = rust.raw.MPSCPool                  # None if N/A
+    result = rust.raw.batch_xxh3_64_bytes(data)    # None if N/A
+
+Feature-gated submodule access:
+    dns_mod = rust.dns              # None if 'dns' feature not built
+    stix_mod = rust.stix            # None if 'stix' feature not built
+    fulltext_mod = rust.fulltext    # None if 'fulltext' feature not built
+    native_db_mod = rust.native_db  # None if 'native_db' feature not built
+
+ANTI-PATTERN (do not use):
+    # ❌ Direct import bypasses ABI checking + capability scoring + force override
+    from hledac_rust_extensions import Something
+    try:
+        from hledac_rust_extensions import Something
+    except ImportError:
+        Something = None
+
+    # ✅ Correct:
+    from hledac.universal.core.rust_backend import rust
+    Something = rust.raw.Something  # None if N/A
+
+Migration helper — replace any `from hledac_rust_extensions import X` with:
+    from hledac.universal.core.rust_backend import rust
+    X = rust.raw.X  # None if N/A
+
+For submodule imports like `from hledac_rust_extensions import dns`:
+    dns = rust.dns  # None if feature not built
+
+For imports with `as` aliases:
+    # OLD: from hledac_rust_extensions import batch_fn as _rust_batch_fn
+    # NEW: _rust_batch_fn = rust.raw.batch_fn  # None if N/A
+
+Feature flags (Cargo.toml):
+    default = ["core", "data"]  # Standard build (~15s compile)
+    --features "dns"            # hickory-dns DoH/DoT resolution (~5MB extra)
+    --features "native_db"      # MongoDB/Redis/ES wire-protocol extraction
+    --features "full"           # Everything (~3× compile time vs default)
+
 Usage:
     from hledac.universal.core.rust_backend import get_accel
 
@@ -57,6 +108,7 @@ __all__ = [
     "AccelBackend",
     "AccelInfo",
     "RustForce",
+    "RustRawAccessor",
     "get_accel",
     "set_container",
     "reset_accel",
@@ -572,6 +624,61 @@ def reset_accel() -> None:
 # =============================================================================
 
 
+# =============================================================================
+# RustRawAccessor — safe wrapper for probe.ext
+# =============================================================================
+
+
+class RustRawAccessor:
+    """
+    Safe wrapper around the raw hledac_rust_extensions module.
+
+    Provides __getattr__ that returns None for missing attributes instead
+    of raising AttributeError. This is the canonical way to access ANY
+    raw Rust symbol through the centralized backend:
+
+        from hledac.universal.core.rust_backend import rust
+
+        PyAIMDController = rust.raw.PyAIMDController  # None if unavailable
+        dns_module = rust.raw.dns                      # None if unavailable
+        result = rust.raw.batch_xxh3_64_bytes(data)    # None if unavailable
+
+    R6: Single entry point — ALL access to hledac_rust_extensions
+    MUST go through rust.raw, never through direct import.
+    """
+
+    __slots__ = ("_ext",)
+
+    def __init__(self, ext: object | None) -> None:
+        self._ext = ext
+
+    def __getattr__(self, name: str) -> Any:
+        if self._ext is None:
+            return None
+        return getattr(self._ext, name, None)
+
+    def __repr__(self) -> str:
+        return f"RustRawAccessor(ext={'available' if self._ext is not None else 'None'})"
+
+    def __bool__(self) -> bool:
+        return self._ext is not None
+
+    @property
+    def module(self) -> object | None:
+        """Direct access to the raw extension module (advanced use only)."""
+        return self._ext
+
+    def call(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        """Safely call a function from the Rust extension, returning None on any error."""
+        fn = getattr(self._ext, name, None) if self._ext is not None else None
+        if fn is None:
+            return None
+        try:
+            return fn(*args, **kwargs)
+        except Exception:
+            return None
+
+
 class _RustCompatShim:
     """
     Backward-compatibility shim that delegates to AccelBackend.
@@ -581,15 +688,25 @@ class _RustCompatShim:
         rust.is_available
         RustBackend() → same instance
         RustBackend is RustBackend  (singleton identity)
+
+    R6: This is the SINGLE entry point for all Rust access. Submodule
+    properties (dns, rate_limit, aimd, fulltext, native_db, stix, etc.)
+    route through _ensure_probe() → probe.ext, ensuring:
+      - Lazy wheel loading (no import until first use)
+      - ABI version checking
+      - Capability scoring
+      - Container-based force override
+      - Graceful fallback to None when unavailable
     """
 
-    __slots__ = ("_accel",)
+    __slots__ = ("_accel", "_raw_accessor")
 
     def __new__(cls) -> "_RustCompatShim":
         global _rust_compat_instance
         if _rust_compat_instance is None:
             instance = super().__new__(cls)
             instance._accel = AccelBackend()
+            instance._raw_accessor = None
             _rust_compat_instance = instance
         return _rust_compat_instance
 
@@ -598,6 +715,32 @@ class _RustCompatShim:
         if hasattr(self, "_accel"):
             return
         self._accel = AccelBackend()
+        self._raw_accessor = None
+
+    def _get_raw(self) -> RustRawAccessor:
+        """Get or create the RustRawAccessor for this shim."""
+        if self._raw_accessor is None:
+            probe = self._accel._ensure_probe()
+            self._raw_accessor = RustRawAccessor(probe.ext)
+        return self._raw_accessor
+
+    # ── Sentinel for _get_submodule_attr ──────────────────────────────
+    _MISSING = object()
+
+    def _get_submodule_attr(self, submodule_name: str, attr_name: str) -> Any:
+        """Safely get an attribute from a Rust submodule via probe.ext.
+
+        Returns None if the extension or submodule or attribute is missing.
+        Used for feature-gated submodules (dns, rate_limit, fulltext, etc.).
+        """
+        probe = self._accel._ensure_probe()
+        ext = probe.ext
+        if ext is None:
+            return None
+        submod = getattr(ext, submodule_name, self._MISSING)
+        if submod is self._MISSING:
+            return None
+        return getattr(submod, attr_name, None)
 
     @property
     def is_available(self) -> bool:
@@ -608,10 +751,110 @@ class _RustCompatShim:
         return self._accel.info
 
     @property
-    def raw(self) -> Any:
-        """Direct access to hledac_rust_extensions module (for legacy callers)."""
+    def raw(self) -> RustRawAccessor:
+        """R6: Canonical access to hledac_rust_extensions symbols.
+
+        Returns a RustRawAccessor that wraps probe.ext. All attribute
+        accesses return None when the extension is unavailable —
+        no ImportError or AttributeError to catch.
+
+        Usage:
+            from hledac.universal.core.rust_backend import rust
+
+            # Type/class access
+            PyAIMDController = rust.raw.PyAIMDController         # None if N/A
+            MPSCPool = rust.raw.MPSCPool                         # None if N/A
+            AhoCorasickMatcher = rust.raw.AhoCorasickMatcher     # None if N/A
+
+            # Function access
+            result = rust.raw.batch_xxh3_64_bytes(data)          # None if N/A
+            result = rust.raw.batch_ioc_extract_unified(texts)   # None if N/A
+
+            # Submodule access
+            dns_mod = rust.raw.dns                               # None if N/A
+            rate_mod = rust.raw.rate_limit                       # None if N/A
+
+        Prefer typed domain properties (rust.bloom, rust.url, etc.)
+        for wrapped domains. Use rust.raw for symbols not yet wrapped.
+        """
+        return self._get_raw()
+
+    # ── R6: Submodule accessors for commonly-bypassed feature-gated modules ──
+    # These route through probe.ext so they benefit from ABI checking,
+    # capability scoring, and container-based force override.
+
+    @property
+    def dns(self) -> Any:
+        """Rust DNS submodule (hickory-dns based, feature-gated: 'dns').
+
+        Returns the raw dns submodule from hledac_rust_extensions,
+        or None if the extension or dns feature is unavailable.
+
+        Usage:
+            from hledac.universal.core.rust_backend import rust
+            dns_mod = rust.dns
+            if dns_mod is not None:
+                results = dns_mod.resolve_async(hosts)
+        """
         probe = self._accel._ensure_probe()
-        return probe.ext
+        if probe.ext is None:
+            return None
+        return getattr(probe.ext, "dns", None)
+
+    @property
+    def rate_limit(self) -> Any:
+        """Rust rate_limit submodule (token-bucket, feature: always compiled).
+
+        Returns the raw rate_limit submodule, or None if unavailable.
+        """
+        probe = self._accel._ensure_probe()
+        if probe.ext is None:
+            return None
+        return getattr(probe.ext, "rate_limit", None)
+
+    @property
+    def fulltext(self) -> Any:
+        """Rust fulltext_index submodule (Tantivy BM25, feature-gated: 'fulltext').
+
+        Returns the raw fulltext submodule, or None if unavailable.
+        """
+        probe = self._accel._ensure_probe()
+        if probe.ext is None:
+            return None
+        return getattr(probe.ext, "fulltext", None)
+
+    @property
+    def native_db(self) -> Any:
+        """Rust native_db submodule (MongoDB/Redis/ES wire-protocol, feature-gated: 'native_db').
+
+        Returns the raw native_db submodule, or None if unavailable.
+        """
+        probe = self._accel._ensure_probe()
+        if probe.ext is None:
+            return None
+        return getattr(probe.ext, "native_db", None)
+
+    @property
+    def stix(self) -> Any:
+        """Rust stix_2_1 submodule (STIX 2.1 encode/decode/validate, feature-gated: 'stix').
+
+        Returns the raw stix_2_1 submodule, or None if unavailable.
+        """
+        probe = self._accel._ensure_probe()
+        if probe.ext is None:
+            return None
+        return getattr(probe.ext, "stix_2_1", None)
+
+    @property
+    def simdjson(self) -> Any:
+        """Rust simdjson_extract submodule (zero-alloc JSON Pointer, feature-gated: 'simdjson').
+
+        Returns the raw simdjson_extract submodule, or None if unavailable.
+        """
+        probe = self._accel._ensure_probe()
+        if probe.ext is None:
+            return None
+        return getattr(probe.ext, "simdjson_extract", None)
 
     @property
     def bloom(self) -> Any:

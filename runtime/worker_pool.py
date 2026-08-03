@@ -276,16 +276,12 @@ def _check_rust_rayon_available() -> bool:
     global _RUST_AVAILABLE
     if _RUST_AVAILABLE is not None:
         return _RUST_AVAILABLE
-    try:
-        # ISSUE 2.3: rayon_submit_channel — crossbeam-channel dispatch to existing
-        # rayon pool dispatcher (žádný thread::spawn per task).
-        from hledac_rust_extensions import (
-            rayon_submit_channel,
-            rayon_join_channel,
-            rayon_abort_channel,
-        )
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    raw = rust.raw
+    if raw.rayon_submit_channel is not None and raw.rayon_join_channel is not None and raw.rayon_abort_channel is not None:
         _RUST_AVAILABLE = True
-    except ImportError:
+    else:
         _RUST_AVAILABLE = False
     return _RUST_AVAILABLE
 
@@ -373,11 +369,11 @@ class RustWorkerPool:
             )
             return await get_shared_pool().run(fn, *args, timeout=timeout, **kwargs)
 
-        from hledac_rust_extensions import (
-            rayon_submit_channel,
-            rayon_join_channel,
-            rayon_abort_channel,
-        )
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        rayon_submit_channel = rust.raw.rayon_submit_channel
+        rayon_join_channel = rust.raw.rayon_join_channel
+        rayon_abort_channel = rust.raw.rayon_abort_channel
 
         async_lock = await self._get_async_lock()
         async with async_lock:
@@ -446,8 +442,10 @@ class RustWorkerPool:
             # (condvar already notified, no-op after result is set).
             # This prevents dispatcher thread leaks on asyncio.timeout fires.
             try:
-                from hledac_rust_extensions import rayon_abort_channel
-                rayon_abort_channel(handle)
+                from hledac.universal.core.rust_backend import rust
+                _abort = rust.raw.rayon_abort_channel
+                if _abort is not None:
+                    _abort(handle)
             except Exception:
                 pass  # Best-effort — don't mask original errors
             async with async_lock:
@@ -466,11 +464,9 @@ class RustWorkerPool:
             except Exception:
                 return None
 
-        from hledac_rust_extensions import (
-            rayon_submit_channel,
-            rayon_join_channel,
-            rayon_abort_channel,
-        )
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        rayon_submit_channel = rust.raw.rayon_submit_channel
 
         handle = rayon_submit_channel(self._pool_type, n_items, fn, args)
         try:

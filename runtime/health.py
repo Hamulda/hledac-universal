@@ -14,13 +14,11 @@ This is the canonical health endpoint consumed by:
 
 from typing import Any
 
-# Rust extension health — single PyO3 call, <1ms
-try:
-    from hledac_rust_extensions import health_check as _rust_health_check
-    _RUST_AVAILABLE = True
-except ImportError:
-    _RUST_AVAILABLE = False
-    _rust_health_check = None
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
+
+_rust_health_check = rust.raw.health_check
+_RUST_AVAILABLE = _rust_health_check is not None
 
 
 async def collect_runtime_health() -> dict[str, Any]:

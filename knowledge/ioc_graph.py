@@ -1408,7 +1408,9 @@ class IOCGraph:
 
         # Try Rust Louvain first (petgraph, GRAPH-01 feature)
         try:
-            import hledac_rust_extensions as _rust_ext
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            _rust_ext = rust.raw.module
             result = _rust_ext.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
             if result and isinstance(result, dict):
                 communities = result.get('communities')
@@ -1509,7 +1511,9 @@ class IOCGraph:
 
         # Try Rust PageRank first
         try:
-            import hledac_rust_extensions as _rust_ext
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            _rust_ext = rust.raw.module
             result = _rust_ext.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
             if result and isinstance(result, dict):
                 pagerank = result.get('pagerank')

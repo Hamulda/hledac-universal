@@ -18,7 +18,14 @@ import threading
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
-from hledac_rust_extensions import LSHIndex, lsh_index_new, lsh_estimate_recall, batch_compute_simhash, hamming_dist
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
+_raw = rust.raw
+LSHIndex = _raw.LSHIndex
+lsh_index_new = _raw.lsh_index_new
+lsh_estimate_recall = _raw.lsh_estimate_recall
+batch_compute_simhash = _raw.batch_compute_simhash
+hamming_dist = _raw.hamming_dist
 logger = logging.getLogger(__name__)
 DEFAULT_NUM_TABLES = 16
 DEFAULT_NUM_ROWS = 4

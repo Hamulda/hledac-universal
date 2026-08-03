@@ -29,7 +29,6 @@ import os
 import re
 import threading
 import time
-import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -269,13 +268,19 @@ async def _extract_stix_nodes(
 
 
 async def _check_model_size(model_id: str, max_gb: float) -> tuple[str, float] | None:
-    """Check model size from HuggingFace API. Returns (model_id, size_bytes) or None."""
+    """Check model size from HuggingFace API via HttpTransport (R4 unified).
+
+    Returns (model_id, size_bytes) or None on any failure.
+    """
     try:
+        from hledac.universal.transport.http_client import HttpTransport
+
         api_url = f"https://huggingface.co/api/models/{model_id}"
-        r = await asyncio.to_thread(urllib.request.urlopen, api_url, timeout=15)
-        with r:
-            data = _msgspec_decode(r.read())
-            total = sum(f.get("size", 0) for f in data.get("siblings", []))
+        result = await HttpTransport.fetch_one(api_url, profile="default", timeout_s=15.0)
+        if not result.ok or not result.text:
+            return None
+        data = _msgspec_decode(result.text.encode())
+        total = sum(f.get("size", 0) for f in data.get("siblings", []))
         if total / 1e9 > max_gb:
             return None
         return (model_id, total)
@@ -702,13 +707,15 @@ class UncertaintyFlags(msgspec.Struct, gc=False):
     Fields:
         measured_entropy: Average token entropy in bits (0.0-4.0 typical range)
         entropy_stability: 1.0 - (std/mean) of per-token entropy (0.0-1.0)
-        confidence_divergence: |self_reported_confidence - entropy_implied_confidence|
+        implied_confidence: Entropy-implied confidence 0.0-1.0 (1.0 = max certainty)
+        confidence_divergence: |self_reported_confidence - implied_confidence| (0.0-1.0)
         hallucination_risk: True if divergence > threshold (>0.3)
         risk_level: "low" | "medium" | "high" based on divergence magnitude
         token_count: Number of tokens analyzed for entropy
     """
     measured_entropy: float = 0.0
     entropy_stability: float = 1.0
+    implied_confidence: float = 1.0
     confidence_divergence: float = 0.0
     hallucination_risk: bool = False
     risk_level: str = "low"
@@ -792,6 +799,7 @@ def uncertainty_gate(
         return UncertaintyFlags(
             measured_entropy=round(measured_entropy, 3),
             entropy_stability=round(entropy_stability, 3),
+            implied_confidence=round(entropy_implied_confidence, 3),
             confidence_divergence=round(confidence_divergence, 3),
             hallucination_risk=hallucination_risk,
             risk_level=risk_level,
@@ -1782,65 +1790,91 @@ class SynthesisRunner:
             )
 
             if should_emit_alerts:
-                if uncertainty_flags.hallucination_risk:
-                    logger.warning(
-                        "[SYNTHESIS] APEX-1009 hallucination_risk: "
-                        "self_reported=%.3f, measured_entropy=%.3f bits, divergence=%.3f, risk=%s",
-                        report.confidence,
-                        uncertainty_flags.measured_entropy,
-                        uncertainty_flags.confidence_divergence,
-                        uncertainty_flags.risk_level,
-                    )
-                else:
-                    logger.info(
-                        "[SYNTHESIS] UNIFIED-003 high-entropy threshold exceeded: "
-                        "measured_entropy=%.3f bits > %.1f, confidence=%.3f",
-                        uncertainty_flags.measured_entropy,
-                        _ENTROPY_THRESHOLD_BITS,
-                        report.confidence,
-                    )
+                # UNIFIED-003: Gate entropy alert emission on feature flag.
+                # HLEDAC_ENABLE_ENTROPY_FEEDBACK=1 (default ON) enables the
+                # closed-loop auto-remediation pipeline. Set to 0 to opt out.
+                _entropy_feedback_enabled = os.environ.get(
+                    'HLEDAC_ENABLE_ENTROPY_FEEDBACK', '1',
+                ).lower() in ('1', 'true', 'yes', 'on')
 
-                # UNIFIED-003: Emit EntropyAlert to trigger re-fetch via EntropyFetchBridge
-                try:
-                    from .uncertainty_quant import EntropyAlert, get_entropy_bridge
-                    bridge = get_entropy_bridge()
-                    if bridge is not None:
-                        # Emit alert for each high-uncertainty IOC entity
-                        for ioc_entity in (report.ioc_entities or [])[:5]:
-                            entity_value = getattr(ioc_entity, 'value', str(ioc_entity))
-                            ioc_type = getattr(ioc_entity, 'ioc_type', 'unknown')
-                            # UNIFIED-004: IoC-type-aware protocol selection
-                            alt_protocols = _resolve_alternative_protocols(
-                                ioc_type=ioc_type,
-                                entity_value=entity_value,
-                            )
-                            alert = EntropyAlert(
-                                entity_id=entity_value[:100],
-                                entropy=uncertainty_flags.measured_entropy,
-                                threshold_exceeded=_ENTROPY_THRESHOLD_BITS,
-                                confidence=report.confidence,
-                                risk_level=uncertainty_flags.risk_level,
-                                metadata={
-                                    "token_count": uncertainty_flags.token_count,
-                                    "stability": uncertainty_flags.entropy_stability,
-                                    "divergence": uncertainty_flags.confidence_divergence,
-                                    "ioc_type": ioc_type,
-                                    "alternative_protocols": alt_protocols,
-                                    "trigger_path": (
-                                        "hallucination_risk" if uncertainty_flags.hallucination_risk
-                                        else "high_entropy"
-                                    ),
-                                },
-                            )
-                            await bridge.emit(alert)
-                        logger.debug(
-                            "[SYNTHESIS] UNIFIED-003: Emitted %d EntropyAlert(s) to bridge "
-                            "(trigger=%s)",
-                            min(len(report.ioc_entities or []), 5),
-                            alert.metadata.get("trigger_path", "unknown"),
+                if _entropy_feedback_enabled:
+                    if uncertainty_flags.hallucination_risk:
+                        logger.warning(
+                            "[SYNTHESIS] APEX-1009 hallucination_risk: "
+                            "self_reported=%.3f, measured_entropy=%.3f bits, "
+                            "divergence=%.3f, risk=%s",
+                            report.confidence,
+                            uncertainty_flags.measured_entropy,
+                            uncertainty_flags.confidence_divergence,
+                            uncertainty_flags.risk_level,
                         )
-                except Exception as e:
-                    logger.debug(f"[SYNTHESIS] UNIFIED-003: EntropyAlert emit failed (fail-soft): {e}")
+                    else:
+                        logger.info(
+                            "[SYNTHESIS] UNIFIED-003 high-entropy threshold "
+                            "exceeded: measured_entropy=%.3f bits > %.1f, "
+                            "confidence=%.3f",
+                            uncertainty_flags.measured_entropy,
+                            _ENTROPY_THRESHOLD_BITS,
+                            report.confidence,
+                        )
+
+                    # UNIFIED-003: Emit EntropyAlert to trigger re-fetch
+                    # via EntropyFetchBridge
+                    try:
+                        from .uncertainty_quant import (
+                            EntropyAlert, get_entropy_bridge,
+                        )
+                        bridge = get_entropy_bridge()
+                        if bridge is not None:
+                            # Emit alert for each high-uncertainty IOC entity
+                            for ioc_entity in (report.ioc_entities or [])[:5]:
+                                entity_value = getattr(
+                                    ioc_entity, 'value', str(ioc_entity),
+                                )
+                                ioc_type = getattr(
+                                    ioc_entity, 'ioc_type', 'unknown',
+                                )
+                                # UNIFIED-004: IoC-type-aware protocol selection
+                                alt_protocols = _resolve_alternative_protocols(
+                                    ioc_type=ioc_type,
+                                    entity_value=entity_value,
+                                )
+                                alert = EntropyAlert(
+                                    entity_id=entity_value[:100],
+                                    entropy=round(1.0 - uncertainty_flags.implied_confidence, 3),  # UNIFIED-003: normalized 0-1
+                                    threshold_exceeded=_ENTROPY_THRESHOLD_BITS,
+                                    confidence=report.confidence,
+                                    risk_level=uncertainty_flags.risk_level,
+                                    metadata={
+                                        "token_count": uncertainty_flags.token_count,
+                                        "stability": uncertainty_flags.entropy_stability,
+                                        "divergence": uncertainty_flags.confidence_divergence,
+                                        "ioc_type": ioc_type,
+                                        "alternative_protocols": alt_protocols,
+                                        "trigger_path": (
+                                            "hallucination_risk"
+                                            if uncertainty_flags.hallucination_risk
+                                            else "high_entropy"
+                                        ),
+                                    },
+                                )
+                                await bridge.emit(alert)
+                            logger.debug(
+                                "[SYNTHESIS] UNIFIED-003: Emitted %d "
+                                "EntropyAlert(s) to bridge (trigger=%s)",
+                                min(len(report.ioc_entities or []), 5),
+                                alert.metadata.get("trigger_path", "unknown"),
+                            )
+                    except Exception as e:
+                        logger.debug(
+                            "[SYNTHESIS] UNIFIED-003: EntropyAlert emit "
+                            "failed (fail-soft): %s", e,
+                        )
+                else:
+                    logger.debug(
+                        "[SYNTHESIS] UNIFIED-003: Entropy feedback disabled "
+                        "(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0) — alert suppressed",
+                    )
             else:
                 logger.debug(
                     "[SYNTHESIS] APEX-1009 uncertainty_gate passed: "

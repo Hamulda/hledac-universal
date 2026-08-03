@@ -95,38 +95,19 @@ def _try_load_rust_extensions() -> bool:
     global build_layout_rust, chain_hash_snapshot, batch_compute_scores
     global batch_aggregate_signals, _RUST_AVAILABLE
 
-    try:
-        from hledac_rust_extensions import (  # type: ignore[import-not-found]
-            IntCounterLayoutRust as _RustLayout,
-        )
-        from hledac_rust_extensions import (
-            batch_aggregate_signals as _batch_agg,
-        )
-        from hledac_rust_extensions import (
-            batch_compute_scores as _batch_scores,
-        )
-        from hledac_rust_extensions import (
-            build_layout as _build_rust,
-        )
-        from hledac_rust_extensions import (
-            bulk_bump_aggregate as _bulk_bump,
-        )
-        from hledac_rust_extensions import (
-            bulk_snapshot_dict as _bulk_snap,
-        )
-        from hledac_rust_extensions import (
-            chain_hash_snapshot as _chain_hash,
-        )
-        IntCounterLayoutRust = _RustLayout
-        bulk_bump_aggregate = _bulk_bump
-        bulk_snapshot_dict = _bulk_snap
-        build_layout_rust = _build_rust
-        chain_hash_snapshot = _chain_hash
-        batch_compute_scores = _batch_scores
-        batch_aggregate_signals = _batch_agg
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    raw = rust.raw
+    IntCounterLayoutRust = raw.IntCounterLayoutRust
+    bulk_bump_aggregate = raw.bulk_bump_aggregate
+    bulk_snapshot_dict = raw.bulk_snapshot_dict
+    build_layout_rust = raw.build_layout
+    chain_hash_snapshot = raw.chain_hash_snapshot
+    batch_compute_scores = raw.batch_compute_scores
+    batch_aggregate_signals = raw.batch_aggregate_signals
+    if all([IntCounterLayoutRust, bulk_bump_aggregate, bulk_snapshot_dict, batch_compute_scores]):
         return True
-    except ImportError:
-        return False
+    return False
 
 
 # Apply environment override to determine final availability

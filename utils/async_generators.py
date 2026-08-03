@@ -70,9 +70,9 @@ async def async_transform[T, R](
                 result = transform(item)
             yield result
     else:
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 
-        semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         pending: set[asyncio.Task[typing.Any]] = set()
 
         async def transform_with_sem(item: T) -> R:

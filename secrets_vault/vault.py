@@ -91,7 +91,8 @@ def _init_rust_crypto() -> bool:
     """Try to import Rust batch crypto; returns True if available."""
     global _RUST_CRYPTO_AVAILABLE
     try:
-        import hledac_rust_extensions as rust
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
 
         _ = rust.batch_encrypt_aes_gcm
         _ = rust.batch_decrypt_aes_gcm
@@ -107,7 +108,8 @@ def _rust_batch_encrypt(password: str, salt: bytes, items: list[str]) -> list[by
     if not _RUST_CRYPTO_AVAILABLE:
         return []
     try:
-        import hledac_rust_extensions as rust
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
 
         result = rust.batch_encrypt_aes_gcm(password, salt, items)
         return [bytes(b) for b in result]
@@ -120,7 +122,8 @@ def _rust_batch_decrypt(password: str, salt: bytes, items: list[bytes]) -> list[
     if not _RUST_CRYPTO_AVAILABLE:
         return [None] * len(items)
     try:
-        import hledac_rust_extensions as rust
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
 
         # PyO3 Vec<Vec<u8>> accepts bytes directly — no list() conversion needed
         result = rust.batch_decrypt_aes_gcm(password, salt, items)

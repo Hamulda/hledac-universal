@@ -45,18 +45,15 @@ def _get_rust_stix():
     """Lazy-load Rust stix_2_1 module. Called on first use."""
     global _RUST_STIX
     if _RUST_STIX is None:
-        try:
-            from hledac_rust_extensions import stix_2_1 as _rust
-
-            if hasattr(_rust, "encode_finding"):
-                _RUST_STIX = _rust
-                logger.debug("[stix] Rust stix_2_1 loaded (serde_json + jsonschema)")
-            else:
-                _RUST_STIX = False  # type: ignore[assignment]
-                logger.debug("[stix] Rust stix_2_1 missing encode_finding, using Python fallback")
-        except ImportError:
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _rust = rust.stix
+        if _rust is not None and hasattr(_rust, "encode_finding"):
+            _RUST_STIX = _rust
+            logger.debug("[stix] Rust stix_2_1 loaded (serde_json + jsonschema)")
+        else:
             _RUST_STIX = False  # type: ignore[assignment]
-            logger.debug("[stix] Rust stix_2_1 not available, using Python fallback")
+            logger.debug("[stix] Rust stix_2_1 missing encode_finding, using Python fallback")
     return _RUST_STIX if _RUST_STIX else None
 
 

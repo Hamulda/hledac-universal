@@ -88,6 +88,16 @@ from .stealth_layer import (
     SimulationConfig,
     StealthLayer,
 )
+# Unified evasion pipeline (APEX-1005/1006/1007)
+from .evasion_pipeline import (
+    EvasionCategory,
+    EvasionScript,
+    FingerprintProfile,
+    ProfileGenerator,
+    _EvasionScriptGenerator,
+    compute_detection_score,
+    generate_evasion_scripts,
+)
 from .temporal_signal_layer import (
     TemporalEdgeCandidate,
     TemporalEvent,
@@ -147,6 +157,13 @@ __all__ = [
     "FingerprintRandomizer",
     "FingerprintConfig",
     "BrowserProfile",
+    # Unified Evasion Pipeline (APEX-1005/1006/1007)
+    "EvasionCategory",
+    "EvasionScript",
+    "FingerprintProfile",
+    "ProfileGenerator",
+    "generate_evasion_scripts",
+    "compute_detection_score",
     "ResearchLayer",
     "PrivacyLayer",
     "CommunicationLayer",

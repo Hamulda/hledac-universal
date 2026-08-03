@@ -458,7 +458,9 @@ class UnifiedDatabaseFacade:
         validate_batch is not yet in Rust — falls through to no-op.
         """
         try:
-            from hledac_rust_extensions import validate_batch
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            validate_batch = rust.raw.validate_batch
             validate_batch(arrow_batch, schema)
         except ImportError:
             logger.warning("[DB] validate_batch not available, skipping validation")

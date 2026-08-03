@@ -90,8 +90,8 @@ class ResearchOptimizer:
         self._query_metrics: dict[str, QueryMetrics] = {}
         self._in_flight: dict[str, asyncio.Future] = {}
         self._active_requests = 0
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        self._request_semaphore = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        self._request_semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
         self._execution_times: list[float] = []
         self._max_history = 1000
         logger.info(f'ResearchOptimizer initialized ({self.config.strategy.value})')

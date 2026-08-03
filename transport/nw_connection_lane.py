@@ -6,7 +6,8 @@ SILICON-03: Apple Network.framework user-space TCP lane.
 Network.framework (macOS 10.14+) provides:
   - User-space TCP stack — eliminates 2× kernel context switches per I/O op
   - Hardware-accelerated TLS 1.3 via Secure Transport (Apple Silicon native)
-  - Native QUIC support (future: NWParameters.quic)
+  - Native QUIC support via NWParameters.quic (SILICON-05: now implemented in
+    ``nw_connection.rs::fetch_quic()`` and ``transport/nw_quic_lane.py``)
 
 This lane is a parallel, non-anti-bot path for clearnet targets that
 don't require JA3 fingerprinting (open APIs, CT logs, NoSQL ports,
@@ -46,7 +47,6 @@ import logging
 import os
 import platform
 import sys
-import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -76,20 +76,8 @@ _NW_RSS_BLOCK_GIB: float = 5.5
 
 def _rss_over_budget() -> bool:
     """Return True if process RSS exceeds the NW lane budget."""
-    try:
-        from hledac.universal.core.psutil_shim import process as _psutil_proc
-        proc = _psutil_proc()
-        if proc is None:
-            return False
-        t0 = time.monotonic()
-        rss = proc.memory_info().rss
-        elapsed = time.monotonic() - t0
-        if elapsed > 0.01:  # 10ms — don't let RSS probe slow the fetch path
-            return False
-        gib = rss / (1024**3)
-        return gib > _NW_RSS_BLOCK_GIB
-    except Exception:
-        return False
+    from hledac.universal.transport._rss_guard import rss_over_budget as _guard
+    return _guard(_NW_RSS_BLOCK_GIB)
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,8 @@ Submoduly a jejich status (viz každý modul):
 - DistillationEngine: DORMANT — nn=None guard, žádné aktivní volání
 - ModelManager: L1 canonical (samostatný soubor, M1 lifecycle management)
 - NEREngine: EXPERIMENTAL — GLiNER-X model, velká RAM stopa
+- ANEInferenceEngine: SILICON-06 — ANE (Neural Engine) inference pro small-batch embedding (brain/ane_inference.py)
+- WhisperEngine: SILICON-02b — whisper.cpp CoreML/ANE speech-to-text (brain/whisper_engine.py)
 
 DŮLEŽITÉ: Brain facade NEPROMPTUJE žádné heavy enginy do aktivního runtime.
 Přidání nového importu sem neznamená, že je "podporováno" nebo "production-ready".
@@ -143,6 +145,20 @@ EMBEDDING_AVAILABLE = None
 load_embedding_model = None  # type: ignore[assignment,misc]
 unload_embedding_model = None  # type: ignore[assignment,misc]
 
+# SILICON-06: ANE inference engine — lazy (A2-FIX)
+# coremltools import is ~200ms; defer to first attribute access.
+ANE_AVAILABLE = None
+
+# SILICON-02b: WhisperEngine — whisper.cpp CoreML/ANE speech-to-text — lazy (A2-FIX)
+# whispercpp import is ~150ms; defer to first attribute access.
+WHISPER_AVAILABLE = None
+WhisperEngine = None  # type: ignore[assignment,misc]
+TranscriptionResult = None  # type: ignore[assignment,misc]
+TranscriptionSegment = None  # type: ignore[assignment,misc]
+get_whisper_engine = None  # type: ignore[assignment,misc]
+transcribe_audio = None  # type: ignore[assignment,misc]
+is_whisper_available = None  # type: ignore[assignment,misc]
+
 
 # ─── Engine Registry — declarative lazy-loading specification ──────────────────
 # Replaces 14 repetitive if-blocks (complexity 44→6).
@@ -196,6 +212,12 @@ _ENGINE_REGISTRY: tuple[tuple[str, str, tuple[str, ...], str | None], ...] = (
         "get_ner_engine", "reset_ner_engine", "NER_ENGINE_AVAILABLE",
     ), "ner_engine"),
     ("embedding_pipeline", "EMBEDDING_AVAILABLE", ("load_embedding_model", "unload_embedding_model", "EMBEDDING_AVAILABLE"), "embedding"),
+    # SILICON-02b: WhisperEngine — whisper.cpp CoreML/ANE speech-to-text
+    ("whisper_engine", "WHISPER_AVAILABLE", (
+        "WhisperEngine", "TranscriptionResult", "TranscriptionSegment",
+        "get_whisper_engine", "transcribe_audio", "is_whisper_available",
+        "WHISPER_AVAILABLE",
+    ), "whisper"),
 )
 
 
@@ -308,6 +330,16 @@ def __getattr__(name: str) -> object:
     if name == "LLMEngine":
         from ._inference import LLMEngine
         return LLMEngine
+    # SILICON-06: ANE availability probe — lightweight, no heavy imports
+    if name == "ANE_AVAILABLE":
+        try:
+            from .ane_inference import is_ane_available
+            g = globals()
+            g["ANE_AVAILABLE"] = is_ane_available()
+            return g["ANE_AVAILABLE"]
+        except Exception:
+            globals()["ANE_AVAILABLE"] = False
+            return False
     for module_spec, _ret_attr, exported, brain_key in _ENGINE_REGISTRY:
         if name in exported:
             return _load_engine(name, module_spec, exported, brain_key)
@@ -331,6 +363,10 @@ AVAILABLE_BRAIN_ENGINES = {
     "model_manager": None,
     "ner_engine": None,
     "embedding": None,
+    # SILICON-06: ANE (Apple Neural Engine) inference engine
+    "ane": None,
+    # SILICON-02b: WhisperEngine — whisper.cpp CoreML/ANE speech-to-text
+    "whisper": None,
 }
 
 
@@ -348,6 +384,8 @@ _ENGINE_FLAG_MAP = {
     "model_manager": "MODEL_MANAGER_AVAILABLE",
     "ner_engine": "NER_ENGINE_AVAILABLE",
     "embedding": "EMBEDDING_AVAILABLE",
+    "ane": "ANE_AVAILABLE",
+    "whisper": "WHISPER_AVAILABLE",
 }
 
 
@@ -475,6 +513,16 @@ __all__ = [
     "load_embedding_model",
     "unload_embedding_model",
     "EMBEDDING_AVAILABLE",
+    # SILICON-06: ANE (Apple Neural Engine) inference
+    "ANE_AVAILABLE",
+    # SILICON-02b: WhisperEngine — whisper.cpp CoreML/ANE speech-to-text
+    "WhisperEngine",
+    "TranscriptionResult",
+    "TranscriptionSegment",
+    "get_whisper_engine",
+    "transcribe_audio",
+    "is_whisper_available",
+    "WHISPER_AVAILABLE",
     # ARCH-SRP-001: Brain Coordinator + LLMEngine Protocol
     "BrainCoordinator",
     "LLMEngine",

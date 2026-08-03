@@ -17,12 +17,15 @@ logger = logging.getLogger(__name__)
 _RUST_AVAILABLE = False
 _IocDedupStore: Any = None
 _ioc_dedup_from_bytes: Any = None
-try:
-    import hledac_rust_extensions as _rust
-    _IocDedupStore = _rust.IocDedupStore
-    _ioc_dedup_from_bytes = _rust.ioc_dedup_from_bytes
-    _RUST_AVAILABLE = True
-except ImportError:
+# R6: Centralized Rust access via core.rust_backend
+from hledac.universal.core.rust_backend import rust
+if rust.is_available:
+    _IocDedupStore = rust.raw.IocDedupStore
+    _ioc_dedup_from_bytes = rust.raw.ioc_dedup_from_bytes
+    _RUST_AVAILABLE = _IocDedupStore is not None
+else:
+    _RUST_AVAILABLE = False
+if not _RUST_AVAILABLE:
     logger.debug('hledac_rust_extensions not available - using pure Python fallback')
 
 class IocDedupManager:

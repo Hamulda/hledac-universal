@@ -335,8 +335,8 @@ class BatchScheduler:
         if not items:
             return
         try:
-            from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-            _batch_sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            _batch_sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
             async def process_with_sem(payload: dict[str, Any]) -> tuple[dict, Any]:
                 async with _batch_sem:

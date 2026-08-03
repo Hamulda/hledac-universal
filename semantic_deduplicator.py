@@ -33,7 +33,9 @@ import numpy as np
 import psutil
 from hledac.universal.embedding_pipeline import generate_embeddings
 try:
-    from hledac_rust_extensions import compute_simhash as _rust_simhash
+    # R6: Centralized Rust access via core.rust_backend
+    from hledac.universal.core.rust_backend import rust
+    _rust_simhash = rust.raw.compute_simhash
     _SIMHASH_AVAILABLE = True
 except ImportError:
     _SIMHASH_AVAILABLE = False
@@ -364,8 +366,12 @@ def find_near_duplicates_in_batch(texts: list[str], threshold: int=3) -> list[tu
         logger.debug(f'[SIMDEDUP] find_near_duplicates_in_batch: {len(texts)} > MAX={MAX_SIMHASH_ITEMS}, skipping')
         return []
     try:
-        from hledac_rust_extensions import batch_compute_simhash as _batch_simhash
-        from hledac_rust_extensions import find_near_duplicates as _find_near_dup
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _batch_simhash = rust.raw.batch_compute_simhash
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _find_near_dup = rust.raw.find_near_duplicates
         fps = _batch_simhash(texts)
         return _find_near_dup(fps, threshold)
     except Exception:

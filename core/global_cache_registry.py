@@ -1,11 +1,12 @@
 """GlobalCacheRegistry — centralized cache lifecycle management.
 
-F350M-R / Issue #16
+F350M-R / Issue #16 / R8
 
 Architecture:
 - Single registry for all named caches in the system
 - Provides clear_all() on sprint winddown / shutdown
-- Integrates with memory pressure monitoring
+- R8: Integrates with MemoryPressureBroadcaster for active pressure-driven eviction
+  via _GlobalCacheRegistryListener bridge
 - WeakValueDictionary for caches holding only object values
 
 Usage:
@@ -29,6 +30,25 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+# R8: deferred import for MemoryPressureBroadcaster (avoid circular imports)
+_broadcaster: Any = None
+_broadcaster_lock = threading.RLock()
+
+
+def _get_broadcaster():
+    """Lazy accessor for MemoryPressureBroadcaster singleton."""
+    global _broadcaster
+    if _broadcaster is not None:
+        return _broadcaster
+    with _broadcaster_lock:
+        if _broadcaster is None:
+            try:
+                from hledac.universal.core.memory_pressure import MemoryPressureBroadcaster
+                _broadcaster = MemoryPressureBroadcaster.get_instance()
+            except Exception:
+                _broadcaster = False  # cache negative
+    return _broadcaster if _broadcaster is not False else None
 
 
 @dataclass
@@ -148,6 +168,79 @@ class GlobalCacheRegistry:
         logger.info(f"[GlobalCacheRegistry] clear_all complete: {len(sizes)} caches processed")
         return sizes
 
+    # -------------------------------------------------------------------------
+    # R8: Pressure-driven partial eviction (delegates to threshold-based clear)
+    # -------------------------------------------------------------------------
+
+    def evict_by_pressure(self, threshold: float) -> dict[str, int]:
+        """
+        R8: Evict caches that meet or exceed the given pressure threshold.
+
+        Unlike clear_all(), this only clears caches whose
+        memory_pressure_threshold >= the given threshold. This allows
+        tiered eviction:
+          - threshold=1.0 → only critical-level caches (clear none)
+          - threshold=0.85 → HIGH pressure caches
+          - threshold=0.7 → ELEVATED pressure caches
+          - threshold=0.0 → all caches (equivalent to clear_all)
+
+        Args:
+            threshold: Pressure ratio threshold (0.0-1.0). Caches with
+                memory_pressure_threshold >= threshold are evicted.
+
+        Returns:
+            Dict of cache_name → entries_before_clear.
+        """
+        sizes: dict[str, int] = {}
+        with self._lock:
+            matching = [
+                (name, entry)
+                for name, entry in self._entries.items()
+                if entry.memory_pressure_threshold >= threshold
+            ]
+
+        for name, entry in matching:
+            try:
+                size = entry.get_size()
+                sizes[name] = size
+                entry.clear()
+                logger.info(
+                    f"[GlobalCacheRegistry] pressure-evicted: {name} "
+                    f"({size} entries, threshold={entry.memory_pressure_threshold})"
+                )
+            except Exception as e:
+                logger.warning(f"[GlobalCacheRegistry] pressure-evict failed for {name}: {e}")
+                sizes[name] = -1
+
+        if sizes:
+            logger.info(
+                f"[GlobalCacheRegistry] pressure eviction complete: "
+                f"{len(sizes)} caches (threshold >= {threshold})"
+            )
+        return sizes
+
+    # -------------------------------------------------------------------------
+    # R8: Bridge to MemoryPressureBroadcaster
+    # -------------------------------------------------------------------------
+
+    def _ensure_broadcaster_registered(self) -> None:
+        """
+        R8: Register the registry as a listener with the MemoryPressureBroadcaster.
+
+        This creates a _RegistryPressureBridge that converts broadcaster
+        callbacks into threshold-based eviction on registered caches.
+
+        Idempotent — no-op if already registered.
+        """
+        bc = _get_broadcaster()
+        if bc is None:
+            return  # Broadcaster not available (e.g., during import)
+        # Check if already registered by name
+        if "global_cache_registry" in bc.list_registered():
+            return
+        bridge = _RegistryPressureBridge(self)
+        bc.register(bridge)
+
     def get_registry_stats(self) -> dict[str, dict[str, Any]]:
         """Get statistics for all registered caches.
 
@@ -203,14 +296,20 @@ def register_cache(
     """Register a cache with the global registry.
 
     Convenience wrapper around GlobalCacheRegistry.register().
+
+    R8: Also ensures the registry is registered as a listener with the
+    MemoryPressureBroadcaster (idempotent).
     """
-    _get_registry().register(
+    registry = _get_registry()
+    registry.register(
         name=name,
         get_size=get_size,
         clear=clear,
         memory_pressure_threshold=memory_pressure_threshold,
         description=description,
     )
+    # R8: ensure the bridge to MemoryPressureBroadcaster is active
+    registry._ensure_broadcaster_registered()
 
 
 def unregister_cache(name: str) -> bool:
@@ -231,6 +330,59 @@ def get_cache_stats() -> dict[str, dict[str, Any]]:
 def list_registered_caches() -> list[str]:
     """Return list of registered cache names."""
     return _get_registry().list_caches()
+
+
+def get_cache_registry() -> GlobalCacheRegistry:
+    """Return the GlobalCacheRegistry singleton instance."""
+    return _get_registry()
+
+
+# ---------------------------------------------------------------------------
+# R8: Bridge listener — converts broadcaster events to threshold-based eviction
+# ---------------------------------------------------------------------------
+
+
+class _RegistryPressureBridge:
+    """
+    R8: Bridge between MemoryPressureBroadcaster and GlobalCacheRegistry.
+
+    Implements MemoryPressureListener protocol. On each pressure event,
+    delegates to GlobalCacheRegistry.evict_by_pressure() with an appropriate
+    threshold:
+      - on_soft_warn (ELEVATED): evict caches with threshold >= 0.8
+      - on_warn (HIGH):          evict caches with threshold >= 0.85
+      - on_critical (CRITICAL):  evict ALL caches (threshold >= 0.0)
+    """
+
+    __slots__ = ("_registry",)
+
+    def __init__(self, registry: GlobalCacheRegistry) -> None:
+        self._registry = registry
+
+    @property
+    def listener_priority(self) -> int:
+        """Priority 2 = MEDIUM — clears after critical caches are done."""
+        return 2
+
+    @property
+    def listener_name(self) -> str:
+        return "global_cache_registry"
+
+    def on_soft_warn(self) -> None:
+        """ELEVATED: evict caches with threshold >= 0.8."""
+        self._registry.evict_by_pressure(0.8)
+
+    def on_warn(self) -> None:
+        """HIGH: evict caches with threshold >= 0.85."""
+        self._registry.evict_by_pressure(0.85)
+
+    def on_critical(self) -> None:
+        """CRITICAL: evict ALL registered caches."""
+        self._registry.evict_by_pressure(0.0)
+
+    def on_normal(self) -> None:
+        """NORMAL: no action — caches refill naturally."""
+        pass
 
 
 # ---------------------------------------------------------------------------

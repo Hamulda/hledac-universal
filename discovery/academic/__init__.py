@@ -92,8 +92,8 @@ async def search_all_academic(query: str, max_results_per_source: int=10, timeou
     import asyncio
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
     results: dict[str, list[CanonicalFinding]] = {}
-    from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-    semaphore = get_semaphore_for_testing(ConcurrencyCategory.ACADEMIC_SEARCH)
+    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+    semaphore = get_semaphore(ConcurrencyCategory.ACADEMIC_SEARCH)
 
     async def run_adapter(name: str, search_func, **kwargs) -> tuple[str, list[CanonicalFinding]]:
         async with semaphore:

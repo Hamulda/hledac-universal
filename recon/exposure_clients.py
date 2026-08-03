@@ -556,10 +556,12 @@ class CVIntelligenceClient:
         self._cache = ExposureCache(prefix='cve')
         # ISSUE #016: Rust token bucket — precision bez GIL overhead
         has_api_key = bool(os.environ.get('NVD_API_KEY'))
-        try:
-            from hledac_rust_extensions import create_nvd_limiter
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        create_nvd_limiter = rust.raw.create_nvd_limiter
+        if create_nvd_limiter is not None:
             self._nvd_limiter = create_nvd_limiter(has_api_key=has_api_key)
-        except ImportError:
+        else:
             # Fallback: Python asyncio.Semaphore (degraded precision)
             logger.warning('Rust NvdRateLimiter unavailable — using asyncio.Semaphore fallback')
             self._nvd_limiter = asyncio.Semaphore(self._NVD_RATE_LIMIT)

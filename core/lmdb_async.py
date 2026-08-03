@@ -49,15 +49,12 @@ _lmdb_async_rust: Any | None = None
 
 
 def _get_rust_backend() -> Any:
-    """Lazy-load Rust LMDB async backend."""
+    """Lazy-load Rust LMDB async backend via centralized rust_backend."""
     global _lmdb_async_rust
     if _lmdb_async_rust is None:
-        try:
-            from hledac.universal import hledac_rust_extensions as ext
-
-            _lmdb_async_rust = ext
-        except ImportError:
-            _lmdb_async_rust = None
+        # R6: Centralized Rust access via core.rust_backend
+        from hledac.universal.core.rust_backend import rust
+        _lmdb_async_rust = rust.raw.module  # raw extension module or None
     return _lmdb_async_rust
 
 

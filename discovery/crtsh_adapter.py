@@ -410,8 +410,8 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
         strong_error: str | None = None
         strong_outcome_tag: CTProviderStatus = CTProviderStatus.DISABLED
         _start = time.monotonic()
-        from hledac.universal.core.concurrency_registry import ConcurrencyCategory, get_semaphore_for_testing
-        _sem = get_semaphore_for_testing(ConcurrencyCategory.SCRAPE_GENERAL)
+        from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+        _sem = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
         async def _fetch_one(url: str) -> tuple[list[DiscoveryHit], str | None, CTProviderStatus]:
             async with _sem:

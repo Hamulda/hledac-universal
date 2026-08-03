@@ -147,14 +147,10 @@ class DuckDBQualityGate:
     def _is_quality_gate_available(self) -> bool:
         """Return True if Rust quality batch assessor is available."""
         if self._rust_assess_quality_batch is None:
-            try:
-                # F360M-R: hledac_rust_extensions is a compiled C extension (PyO3).
-                # Type checker cannot resolve it; use __import__ for runtime-only import.
-                _mod = __import__("hledac_rust_extensions", fromlist=["assess_findings_quality_batch"])
-                self._rust_assess_quality_batch = _mod.assess_findings_quality_batch
-                self._quality_gate_available = True
-            except ImportError:
-                self._quality_gate_available = False
+            # R6: Centralized Rust access via core.rust_backend
+            from hledac.universal.core.rust_backend import rust
+            self._rust_assess_quality_batch = rust.raw.assess_findings_quality_batch
+            self._quality_gate_available = self._rust_assess_quality_batch is not None
         return self._quality_gate_available
 
     def _assess_finding_quality(self, finding: Any) -> "FindingQualityDecision":
