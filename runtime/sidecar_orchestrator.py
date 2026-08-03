@@ -50,7 +50,7 @@ the SchedulerAdvisory Protocol in sidecar_protocol.py.
 
 import asyncio as _asyncio
 
-from hledac.universal.utils.async_helpers import parallel, safe_create_task
+from hledac.universal.utils.async_helpers import parallel, safe_create_task, _check_gathered
 from hledac.universal.runtime.scheduler_v2._task_registry import TaskScope, safe_create_task_tracked
 import logging
 import os as _os
@@ -670,6 +670,12 @@ class SidecarOrchestrator:
                             _run_bounded_sidecar(self._run_ti_feed_sidecar(), "ti_feed"),
                             name="sprint:ti_feed_sidecar",
                         )
+                    # ADVERSARY-004: Hermes3 Auto-RE for unknown binary formats
+                    if _os.environ.get("HLEDAC_ENABLE_AUTO_RE", "0") in ("1", "true", "yes"):
+                        _tg.create_task(
+                            _run_bounded_sidecar(self._run_auto_re_sidecar(), "auto_re"),
+                            name="sprint:auto_re_sidecar",
+                        )
 
             _outer_tg.create_task(
                 _run_dark_pivot_sidecars(),
@@ -1078,11 +1084,12 @@ class SidecarOrchestrator:
                 await _upsert_one(target_id)
 
         tasks = [safe_create_task_tracked(_upsert_one_bounded(tid), name=f"sidecar:upsert_target_memory:{tid}", scope=TaskScope.WINDUP_SIDECAR) for tid in all_target_ids]
-        await _asyncio.gather(*tasks, return_exceptions=True)
-        # NOTE: gather with return_exceptions=True — each _upsert_one catches all
-        # exceptions internally (pass). No exception can propagate to gather's
-        # result list, so log.error here is permanently unreachable. Kept as
-        # documentation of the intended contract.
+        gathered = await _asyncio.gather(*tasks, return_exceptions=True)
+        _, errors = _check_gathered(gathered)
+        for err in errors:
+            log.warning('[SIDECAR_ORCH] upsert_target_memory: task failed: %s', err)
+        # NOTE: each _upsert_one catches exceptions internally (pass).
+        # The _check_gathered above provides telemetry for monitoring.
 
     def teardown(self) -> None:
         """Clear in-memory state. Called on sprint teardown."""
@@ -1237,5 +1244,67 @@ class SidecarOrchestrator:
             return
         try:
             await self._scheduler._run_ti_feed_sidecar()
+        except Exception:  # noqa: BLE001
+            pass  # noqa: BLE001  # Fail-soft
+
+    # ADVERSARY-004: Hermes3 Auto-RE sidecar for unknown binary formats
+    async def _run_auto_re_sidecar(self) -> None:
+        """ADVERSARY-004: Hermes3 Auto-RE sidecar for unknown binary formats.
+
+        Converts unknown binary files (custom .dat, wallet.dat, etc.) into IOC
+        extractions via Hermes3-generated parsers. Fails soft: any exception
+        is caught and logged; returns [] to avoid aborting the sprint.
+
+        Rate-limited to 3 attempts per sprint by AutoRESidecarAdapter.
+        """
+        from hledac.universal.runtime.sidecars.forensics._auto_re import (
+            AutoRESidecarAdapter,
+        )
+        from hledac.universal.runtime.scheduler_v2.protocol import SidecarContext
+
+        adapter = AutoRESidecarAdapter()
+        if not adapter.is_available():
+            log.debug("[AUTO-RE] sidecar not available (env gate or missing deps)")
+            return
+
+        # Build minimal SidecarContext from orchestrator state.
+        # SidecarContext requires: query, sprint_id, findings, sprint_mode.
+        # Extra fields (duckdb_store, graph_service, result_sink) are passed via
+        # getattr() in the adapter since SidecarContext is a msgspec.Struct with
+        # only the 4 canonical fields.
+        ctx: SidecarContext | None = None
+        try:
+            # Pull canonical fields from the live scheduler
+            if self._scheduler is not None:
+                query = getattr(self._scheduler, "_query", "") or ""
+                sprint_id = getattr(self._scheduler, "_sprint_id", "unknown") or "unknown"
+                findings = getattr(self._scheduler, "_current_findings", []) or []
+                sprint_mode = getattr(self._scheduler, "_mode", "active") or "active"
+            else:
+                query = "auto_re"
+                sprint_id = "unknown"
+                findings = []
+                sprint_mode = "active"
+
+            ctx = SidecarContext(
+                query=str(query),
+                sprint_id=str(sprint_id),
+                findings=list(findings),
+                sprint_mode=str(sprint_mode),
+            )
+        except Exception as e:
+            log.warning("[AUTO-RE] failed to build SidecarContext: %s", e)
+            return
+
+        # Attach extra fields the adapter needs via duck-typing (SidecarContext
+        # accepts getattr() in adapter — msgspec.Struct has no fixed schema).
+        # These are optional supplements, not part of the SidecarContext spec.
+        ctx.result_sink = getattr(self, "_result", None)
+        ctx.duckdb_store = getattr(self._scheduler, "_duckdb_store", None) if self._scheduler else None
+        ctx.graph_service = getattr(self._scheduler, "_graph_service", None) if self._scheduler else None
+        ctx.governor = getattr(self, "_governor", None)
+
+        try:
+            await adapter.run_async(ctx)
         except Exception:  # noqa: BLE001
             pass  # noqa: BLE001  # Fail-soft

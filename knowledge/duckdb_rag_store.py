@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.async_helpers import parallel, _check_gathered
 
 if TYPE_CHECKING:
     pass
@@ -526,7 +526,10 @@ class DuckDBRAGStore:
         if pending:
             try:
                 async with asyncio.timeout(5.0):
-                    await asyncio.gather(*pending, return_exceptions=True)
+                    gathered = await asyncio.gather(*pending, return_exceptions=True)
+                    ok_results, errors = _check_gathered(gathered)
+                    for err in errors:
+                        _logger.debug("[DUCKDB:RAG] close: pending task failed: %s", err)
             except (asyncio.TimeoutError, Exception):
                 pass
 

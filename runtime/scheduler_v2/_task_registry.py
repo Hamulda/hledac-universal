@@ -35,7 +35,7 @@ import typing
 from typing import Any
 
 from hledac.universal.runtime.watchdog import StuckTaskDetector
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.async_helpers import parallel, _check_gathered
 
 _CancelledError: type = asyncio.CancelledError  # type: ignore[misc,assignment] — Python 3.14+: builtin
 
@@ -389,11 +389,11 @@ class TaskRegistry:
         # Wait for all with a single timeout
         try:
             async with asyncio.timeout(timeout):
-                # Use raw asyncio.gather with return_exceptions=True instead of
-                # parallel(). parallel() re-raises CancelledError per I6 invariant,
-                # which breaks cancellation wind-down where we only care that tasks
-                # complete (not whether they were cancelled).
-                await asyncio.gather(*live_tasks, return_exceptions=True)
+                gathered = await asyncio.gather(*live_tasks, return_exceptions=True)
+                _, errors = _check_gathered(gathered)
+                # NOTE: wind-down cancellation intentionally ignores individual task errors.
+                # We only care that tasks complete (not whether they raised exceptions).
+                # The error count is available in `len(errors)` for future telemetry.
         except asyncio.TimeoutError:
             timed_out = len(live_tasks)
         except asyncio.CancelledError:

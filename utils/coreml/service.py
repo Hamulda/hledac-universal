@@ -224,7 +224,7 @@ async def embed(req: EmbedRequest) -> EmbedResult:
             single = {'input_ids': tokens['input_ids'][idx:idx + 1], 'attention_mask': tokens['attention_mask'][idx:idx + 1]}
             out, _, _ = await _cache.predict(req.model_name, single, req.compute_unit)
             lhs = np.array(out['last_hidden_state'])
-            mask = tokens['attention_mask'][i:i + 1, :, np.newaxis]
+            mask = tokens['attention_mask'][idx:idx + 1, :, np.newaxis]
             pooled = (lhs * mask).sum(axis=1) / (mask.sum(axis=1) + 1e-08)
             norm = np.linalg.norm(pooled, axis=-1, keepdims=True)
             pooled = pooled / (norm + 1e-08)

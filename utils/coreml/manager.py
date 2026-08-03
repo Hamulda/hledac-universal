@@ -3,6 +3,7 @@ CoreML service lifecycle manager.
 Starts/stops the FastAPI microservice as a subprocess.
 """
 import asyncio
+from functools import lru_cache
 import logging
 import os
 import shutil
@@ -10,6 +11,21 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+
+# Cached lazy import — httpx loaded once on first call, cached thereafter.
+# Avoids repeated module-lookup cost inside polling loops (~20 calls per startup).
+@lru_cache(maxsize=1)
+def _httpx_get_sync(url: str, timeout: float) -> int | None:
+    """
+    Sync HTTP GET → status_code or None on error.
+    Cached per (url, timeout) — safe for repeated calls with same args.
+    """
+    import httpx  # noqa: F401 — loaded lazily, cached after first call
+    try:
+        return httpx.get(url, timeout=timeout).status_code
+    except Exception:
+        return None
+
 logger = logging.getLogger('coreml-manager')
 
 # E-16 FIX: auto-detect python3.12 — hardcoded py3.14-only path broke on python3.12 systems
@@ -23,7 +39,6 @@ _COREML_PYTHON: Path = (
     else (Path(_which_312) if _which_312 else _venv_python)
 )
 _SERVICE_SCRIPT = Path(__file__).resolve().parent / 'service.py'
-_PID_FILE = Path('/tmp/hledac-coreml.pid')
 _LOG_DIR = Path.home() / 'Library' / 'Logs' / 'hledac'
 _LOG_FILE = _LOG_DIR / 'coreml-service.log'
 _HEALTH_URL = 'http://127.0.0.1:8765/health'
@@ -42,11 +57,10 @@ class CoreMLServiceManager:
     Context manager support for clean teardown.
     """
     _instance: CoreMLServiceManager | None = None
-    __slots__ = tuple(('_proc', '_started'))
+    __slots__ = tuple(('_proc',))
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen[bytes] | None = None
-        self._started = False
 
     @classmethod
     def get_instance(cls) -> CoreMLServiceManager:
@@ -55,15 +69,23 @@ class CoreMLServiceManager:
         return cls._instance
 
     def is_running(self) -> bool:
-        """Check if the service process is alive and responding to /health."""
+        """Check if the service process is alive and responding to /health (sync, blocking)."""
         if self._proc is None or self._proc.poll() is not None:
             return False
         try:
-            import httpx
-            resp = httpx.get(_HEALTH_URL, timeout=2.0)
-            return resp.status_code == 200
+            resp = _httpx_get_sync(_HEALTH_URL, 2.0)
+            return resp == 200
         except Exception:
             return False
+
+    async def is_running_async(self) -> bool:
+        """
+        Check if the service process is alive and responding to /health (non-blocking).
+
+        Wraps the sync is_running() in asyncio.to_thread() so it never blocks
+        the event loop. Use this in async contexts instead of is_running().
+        """
+        return await asyncio.to_thread(self.is_running)
 
     def start(self) -> None:
         """
@@ -98,10 +120,8 @@ class CoreMLServiceManager:
             if self._proc.poll() is not None:
                 raise CoreMLServiceError(f'Service process exited immediately with code {self._proc.returncode}')
             try:
-                import httpx
-                resp = httpx.get(_HEALTH_URL, timeout=2.0)
-                if resp.status_code == 200:
-                    self._started = True
+                resp = _httpx_get_sync(_HEALTH_URL, 2.0)
+                if resp == 200:
                     logger.info('CoreML service started (pid=%d, log=%s)', self._proc.pid, _LOG_FILE)
                     return
             except Exception:
@@ -112,7 +132,7 @@ class CoreMLServiceManager:
 
     async def start_async(self) -> None:
         """Start the CoreML service subprocess — non-blocking for async contexts."""
-        if self.is_running():
+        if await self.is_running_async():
             logger.info('CoreML service already running')
             return
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -128,10 +148,8 @@ class CoreMLServiceManager:
             if self._proc.poll() is not None:
                 raise CoreMLServiceError(f'Service process exited immediately with code {self._proc.returncode}')
             try:
-                import httpx
-                resp = await asyncio.to_thread(httpx.get, _HEALTH_URL, timeout=2.0)
-                if resp.status_code == 200:
-                    self._started = True
+                resp = await asyncio.to_thread(_httpx_get_sync, _HEALTH_URL, 2.0)
+                if resp == 200:
                     logger.info('CoreML service started (pid=%d, log=%s)', self._proc.pid, _LOG_FILE)
                     return
             except Exception:
@@ -161,11 +179,10 @@ class CoreMLServiceManager:
 
     async def restart_async(self) -> None:
         """
-        ISSUE 4.4 E-18 FIX: Async restart — non-blocking for event loop.
+        Async restart — non-blocking for event loop.
 
         Stops the current service and starts it asynchronously using
-        start_async(). Eliminates the ~10s event-loop stall that sync
-        restart() causes via time.sleep() polling in start().
+        start_async(). Uses is_running_async() for non-blocking health checks.
         """
         self.stop()
         await self.start_async()
@@ -181,11 +198,22 @@ class CoreMLServiceManager:
     async def ensure_running_async(cls) -> None:
         """Auto-start helper — starts the service if not already running (async)."""
         mgr = cls.get_instance()
-        if not mgr.is_running():
+        if not await mgr.is_running_async():
             await mgr.start_async()
 
     def ensure_running(self) -> None:
-        """Auto-start helper — starts the service if not already running (sync)."""
+        """
+        Auto-start helper — starts the service if not already running (sync).
+
+        DEPRECATED: In async contexts, use ensure_running_async() instead.
+        """
+        import warnings as _w
+        _w.warn(
+            "CoreMLServiceManager.ensure_running() is deprecated in async contexts. "
+            "Use ensure_running_async() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         mgr = self.get_instance()
         if not mgr.is_running():
             mgr.start()

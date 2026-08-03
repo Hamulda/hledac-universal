@@ -51,7 +51,7 @@ from tenacity import (
 )
 
 from hledac.universal.core.rust_backend import rust as _rust_backend
-from hledac.universal.utils.async_helpers import parallel
+from hledac.universal.utils.async_helpers import parallel, _check_gathered
 
 # Context variable for passing circuit-breaker state into tenacity callbacks.
 # ISSUE-7: avoids closure capture of mutable objects across tenacity retry boundaries.
@@ -2920,6 +2920,62 @@ async def async_fetch_public_text_batch(
                         )
                 except Exception:  # noqa: BLE001 — best-effort; tarpit detection failure is non-fatal
                     pass
+            # ISSUE [ADVERSARY]-002: Cognitive tarpit detection — LLM-generated honeypot text
+            # Runs AFTER HTML tarpit check passes (i.e., only on non-tarpit HTML pages).
+            # Uses byte-entropy variance, burstiness deviation, POS trigram ratio,
+            # and optionally SmolLM pseudo-perplexity to detect LLM-fabricated IOCs.
+            # If cognitive tarpit detected: short-circuit fetch, record score=1.0, emit telemetry.
+            if result.text and not result.error and _domain and _rep_service is not None:
+                try:
+                    # Strip HTML tags before cognitive analysis — only plain text matters
+                    _plain_text = strip_html_tags(result.text)
+                    if len(_plain_text) >= 200:  # Guard in cognitive_tarpit module too, but fast check
+                        from hledac.universal.brain.adversarial.cognitive_tarpit import (
+                            cognitive_tarpit_score as _ct_score,
+                        )
+                        _ct_verdict = _ct_score(_plain_text)
+                        if _ct_verdict.is_cognitive_tarpit:
+                            _ct_score_val = _ct_verdict.cognitive_tarpit_score
+                            logger.warning(
+                                "[HONEYPOT-LLM] domain=%s url=%s "
+                                "cognitive_tarpit_score=%.3f "
+                                "entropy=%.3f burstiness=%.3f "
+                                "perplexity=%.3f reasons=%s analysis_ms=%.1f",
+                                _domain,
+                                result.url,
+                                _ct_score_val,
+                                _ct_verdict.entropy_score,
+                                _ct_verdict.burstiness_score,
+                                _ct_verdict.perplexity_score,
+                                _ct_verdict.reasons,
+                                _ct_verdict.analysis_ms,
+                            )
+                            # Record cognitive tarpit in domain reputation (score=1.0)
+                            try:
+                                _anti_bot = _detect_anti_bot_type(result)
+                                await _rep_service.record_failure(
+                                    _domain,
+                                    tarpit_score=1.0,
+                                    anti_bot_type=_anti_bot,
+                                )
+                            except Exception:  # noqa: BLE001 — fail-safe
+                                pass
+                            return idx, FetchResult(
+                                url=result.url,
+                                final_url=result.final_url,
+                                status_code=result.status_code,
+                                content_type=result.content_type,
+                                text=None,  # discard LLM honeypot content
+                                fetched_bytes=result.fetched_bytes,
+                                declared_length=result.declared_length,
+                                elapsed_ms=result.elapsed_ms,
+                                error=f'cognitive_tarpit_detected:score={_ct_score_val:.3f}',
+                                failure_stage='cognitive_tarpit',
+                                selected_transport=result.selected_transport,
+                                http_version=result.http_version,
+                            )
+                except Exception:  # noqa: BLE001 — fail-soft; cognitive detection is best-effort
+                    pass
             # UNIFIED-007/008: Record successful fetch in domain reputation
             if result.text and not result.error and _domain and _rep_service is not None:
                 try:
@@ -3405,7 +3461,10 @@ async def drain_pending_extractions(deadline_s: float=30.0) -> tuple[int, int, f
     remaining_timeout = max(0.0, deadline_abs - _t_f273c.monotonic())
     try:
         async with asyncio.timeout(remaining_timeout):
-            await asyncio.gather(*pending, return_exceptions=True)
+            gathered = await asyncio.gather(*pending, return_exceptions=True)
+            _, errors = _check_gathered(gathered)
+            for err in errors:
+                logger.debug('[FETCH] _drain_pending: task failed: %s', err)
         completed = len(pending)
         timed_out = 0
     except asyncio.TimeoutError:

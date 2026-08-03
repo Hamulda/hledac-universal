@@ -65,9 +65,7 @@ try:
 except ImportError:
     _GOVERNOR_AVAILABLE = False
 
-
-
-@dataclass
+from hledac.universal.utils.async_helpers import _check_gathered
 class PDFProcessingResult:
     """Result of processing a single PDF."""
     doc_id: str  # SHA256 hash of file path
@@ -291,11 +289,13 @@ class BatchPDFProcessor:
         # Process concurrently with semaphore
         tasks = [self._process_single_pdf(pdf_path) for pdf_path in pdf_files]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        _, errors = _check_gathered(results)
+        for err in errors:
+            logger.error(f'[BATCH:PDF] Task failed with exception: {err}')
 
         # Aggregate results
         for result in results:
             if isinstance(result, Exception):
-                logger.error(f"[BATCH:PDF] Task failed with exception: {result}")
                 self._stats.failed_count += 1
             elif isinstance(result, PDFProcessingResult):
                 if result.success:

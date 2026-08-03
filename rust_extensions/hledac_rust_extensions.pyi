@@ -627,6 +627,86 @@ def batch_extract_iocs_simd_indexed(texts: list[str]) -> list[tuple[int, str, st
     """Batch SIMD IOC extractor with text index. Returns (text_idx, ioc_value, ioc_type) tuples."""
     ...
 
+
+# ----------------------------------------------------------------------
+# ADVERSARY-003: CyberChef-Pipeline — recursive IOC deobfuscation
+# ----------------------------------------------------------------------
+
+
+class DeobfuscateResult:
+    """Result of CyberChef-Pipeline deobfuscation.
+
+    Attributes:
+        candidates: Decoded strings found in high-entropy regions.
+        layers_stripped: Total encoding layers peeled.
+        encodings_detected: Encoding types detected (base64/hex/base58/url/rot13/xor1).
+        bytes_decoded: Total bytes successfully decoded.
+    """
+
+    candidates: list[str]
+    layers_stripped: int
+    encodings_detected: list[str]
+    bytes_decoded: int
+
+    def __init__(
+        self,
+        candidates: list[str],
+        layers_stripped: int,
+        encodings_detected: list[str],
+        bytes_decoded: int,
+    ) -> None: ...
+    def __repr__(self) -> str: ...
+
+
+def decode_ioc_candidates(text: str, max_depth: int | None = None) -> DeobfuscateResult:
+    """Recursively peel encoding layers from IOC candidates in text.
+
+    ADVERSARY-003: CyberChef-Pipeline — peels Matryoshka encoding layers
+    (Base64/Hex/Base58/URL/ROT13/XOR) from high-entropy regions BEFORE the SIMD scan.
+
+    Args:
+        text: Raw text to deobfuscate (max 16 MB per call).
+        max_depth: Maximum nesting depth (default 3, covers 3-layer Base64→Hex→Base64).
+
+    Returns:
+        DeobfuscateResult with decoded candidates + telemetry.
+
+    Telemetry:
+        [DEOBFUSCATE] prefix, sampling 1:1000.
+        Fields: layers_stripped, encodings_detected, bytes_decoded.
+
+    M1 8GB budget: ≤ 25 ms per 100 KB text, ~30 MB RSS.
+    """
+    ...
+
+
+def batch_decode_ioc_candidates(
+    texts: list[str], max_depth: int | None = None
+) -> list[DeobfuscateResult]:
+    """Batch deobfuscation — parallel across texts using rayon.
+
+    Args:
+        texts: List of raw texts to deobfuscate.
+        max_depth: Maximum nesting depth (default 3).
+
+    Returns:
+        Vec of DeobfuscateResult per text (in order).
+
+    M1 8GB budget: bounded to 1000 texts per batch.
+    """
+    ...
+
+
+def deobfuscate_telemetry() -> tuple[int, int, int]:
+    """Return telemetry counters (passes, layers_stripped, bytes_decoded)."""
+    ...
+
+
+def deobfuscate_telemetry_reset() -> None:
+    """Reset telemetry counters. Call at sprint boundary."""
+    ...
+
+
 def url_normalize(url: str) -> str:
     """Alias for normalize() kept for backwards compat."""
     ...

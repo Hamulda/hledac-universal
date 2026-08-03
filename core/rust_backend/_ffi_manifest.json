@@ -58,6 +58,14 @@
       "batch_extract_iocs_simd_indexed",
       "batch_extract_iocs_simd_python"
     ],
+    "deobfuscate": [
+      "deobfuscate.register",
+      "decode_ioc_candidates",
+      "batch_decode_ioc_candidates",
+      "deobfuscate_telemetry",
+      "deobfuscate_telemetry_reset",
+      "DeobfuscateResult"
+    ],
     "pdf": [
       "extract_text",
       "extract_text_from_bytes",
@@ -489,6 +497,7 @@
     "AhoCorasickMatcher",
     "BloomFilter",
     "ContentHasher",
+    "DeobfuscateResult",
     "MmapUrlSet",
     "OfficeMetadata",
     "PatternHit",
@@ -522,6 +531,7 @@
     "batch_cosine_scores_npy",
     "batch_decompress_pages",
     "batch_decrypt_aes_gcm",
+    "batch_decode_ioc_candidates",
     "batch_dedup_fingerprints",
     "batch_dedup_fingerprints_zc",
     "batch_dedup_urls",
@@ -612,7 +622,10 @@
     "current_rss_bytes",
     "data.register_functions",
     "decompress_page",
+    "decode_ioc_candidates",
     "dedup_fingerprint",
+    "deobfuscate_telemetry",
+    "deobfuscate_telemetry_reset",
     "detect_encoding_patterns",
     "dns.register_functions",
     "dns_tunnel.register_functions",

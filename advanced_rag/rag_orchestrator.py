@@ -41,7 +41,7 @@ def _has_ram_headroom(required_gb: float=_LANCEDB_RAM_THRESHOLD_GB) -> bool:
         import psutil
         available = psutil.virtual_memory().available / 1024 ** 3
         return available >= required_gb
-    except Exception:
+    except OSError:
         return False
 
 def _get_backend_mode() -> str:

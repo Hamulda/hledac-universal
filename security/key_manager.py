@@ -2,6 +2,8 @@
 security/key_manager.py — Real key management via macOS Keychain + HKDF-SHA256 (F350M-R)
 
 M1 8GB RAM: Keychain lookup is ~1ms, HKDF-SHA256 derivation ~0.1ms.
+
+
 No secrets ever stored in LMDB or plaintext files.
 
 Real implementation:
@@ -13,6 +15,10 @@ Real implementation:
 
 ISSUE-P7-001: Derived bucket keys are now protected by KeyMaterialGuard —
 bytearray is mlock'd in RAM (no swap, no core dump), used, then secure_zero'd.
+
+ADVERSARY-005: KeyMaterialGuard now calls register_mlock_region() at lock time
+and unregister_mlock_region() at unlock time, so EphemeralStateAnnihilator
+can batch-unlock all regions during TEARDOWN.
 
 Fail-safe: raises NotImplementedError if Keychain unavailable (fail-loud, never stub keys).
 
@@ -69,6 +75,9 @@ def _key_material_guard(key_bytes: bytearray):
       3. secure_zero() — two-pass cryptographic wipe (random + zeros)
       4. munlock_key_region() — release RAM lock
 
+    ADVERSARY-005: Registers/unregisters the mlock region with
+    EphemeralStateAnnihilator so TEARDOWN can batch-unlock missed regions.
+
     On any error: proceeds to next step (fail-safe, never raises).
     On mlock unavailable (non-macOS / no permissions): skips locking, still wipes.
 
@@ -86,6 +95,16 @@ def _key_material_guard(key_bytes: bytearray):
     ml = _get_mlock()
     addr: int | None = None
 
+    # ADVERSARY-005: lazy import to avoid circular dependency
+    try:
+        from hledac.universal.security.ephemeral_wipe import (
+            register_mlock_region,
+            unregister_mlock_region,
+        )
+    except ImportError:
+        register_mlock_region = None  # type: ignore
+        unregister_mlock_region = None  # type: ignore
+
     if ml is not None:
         try:
             # Get the actual memory address of the bytearray's data buffer.
@@ -93,6 +112,9 @@ def _key_material_guard(key_bytes: bytearray):
             # ctypes.addressof gives the actual heap address (correct).
             addr = ctypes.addressof(ctypes.c_char.from_buffer(key_bytes))
             ml.madvise.mlock_key_region(addr, len(key_bytes))
+            # ADVERSARY-005: register for TEARDOWN batch-unlock
+            if register_mlock_region is not None:
+                register_mlock_region(addr, len(key_bytes))
         except Exception as exc:
             logger.debug(f"KeyMaterialGuard: mlock unavailable ({exc}), proceeding without lock")
 
@@ -120,6 +142,9 @@ def _key_material_guard(key_bytes: bytearray):
                     ml.madvise.madvise_free_reusable(addr, len(key_bytes), 0)
                 except Exception:
                     pass
+                # ADVERSARY-005: unregister from TEARDOWN tracker
+                if unregister_mlock_region is not None:
+                    unregister_mlock_region(addr, len(key_bytes))
             except Exception:
                 pass
 

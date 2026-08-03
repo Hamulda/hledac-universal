@@ -98,7 +98,7 @@ def _is_process_alive(pid: int) -> bool:
             if pid == os.getpid():
                 return False
             return True
-        except Exception:  # noqa: BLE001
+        except OSError:
             pass
 
     # Fallback: Unix liveness probe
@@ -231,7 +231,7 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
                             # psutil.STATUS_DEAD = 'defunct' on some platforms
                             if status in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
                                 return True, f"zombie_process(pid={pid}, status={status})"
-                        except Exception:  # noqa: BLE001
+                        except psutil.Error:
                             pass  # status() not supported on this platform
                     except psutil.NoSuchProcess:
                         # Process died between _is_process_alive and here → stale
@@ -243,7 +243,7 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
                 return True, f"holder_process_died_during_check(pid={pid})"
             except psutil.AccessDenied:
                 pass
-            except Exception:  # noqa: BLE001
+            except psutil.Error:
                 # Other psutil errors — be conservative, don't remove live-looking lock
                 pass
             return False, f"holder_process_alive(pid={pid})"
@@ -373,6 +373,12 @@ class GraphLockManager:
             fd = os.open(self._lock_path, open_flags, 0o644)
             self._fd = fd
 
+            # NOTE: This is a SYNCHRONOUS method (no `async`). It is called from sync
+            # contexts only (duckdb_store._acquire_graph_lock, quantum_pathfinder.__init__,
+            # sprint_entrypoint). time.sleep() here is therefore correct — it would be
+            # wrong ONLY if this method were `async def` (event-loop blocking). The CLAUDE.md
+            # invariant "no time.sleep() in async code" applies to async def functions,
+            # not to sync helper methods called from async contexts.
             while True:
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -65,6 +65,81 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 4096  # F266-U5 calibrated for M1 8GB
 TEXT_MAX_BYTES = 65536  # Rust-side cap (ioc_extract_fast.rs)
 
+# ADVERSARY-003: CyberChef-Pipeline deobfuscation
+# HLEDAC_ENABLE_DEOBFUSCATE=0 to opt out (default ON)
+_DEOBFUSCATE_ENABLED: bool | None = None
+_decode_fn: Any = None
+_decode_resolved: bool = False
+
+
+def _is_deobfuscate_enabled() -> bool:
+    """Check if deobfuscation is enabled (cached)."""
+    global _DEOBFUSCATE_ENABLED
+    if _DEOBFUSCATE_ENABLED is None:
+        import os as _os
+
+        val = _os.environ.get("HLEDAC_ENABLE_DEOBFUSCATE", "1")
+        _DEOBFUSCATE_ENABLED = val not in ("0", "false", "False", "no")
+    return _DEOBFUSCATE_ENABLED
+
+
+def _resolve_deobfuscate() -> Any:
+    """Lazily resolve decode_ioc_candidates from Rust backend."""
+    global _decode_fn, _decode_resolved
+    if _decode_resolved:
+        return _decode_fn
+    _decode_resolved = True
+    try:
+        from hledac.universal.core.rust_backend import rust
+
+        if rust.is_available and hasattr(rust, "ioc"):
+            _decode_fn = getattr(rust.ioc, "decode_ioc_candidates", None)
+        else:
+            _decode_fn = None
+    except Exception:
+        _decode_fn = None
+    return _decode_fn
+
+
+def _deobfuscate_texts(texts: list[str]) -> list[str]:
+    """Deobfuscate texts via CyberChef-Pipeline (ADVERSARY-003).
+
+    Sliding-window entropy probe → recursive decode ladder (Base64/Hex/Base58/URL/ROT13/XOR).
+    Decoded candidates are appended to the original text as a space-separated string,
+    preserving the original content for IOC scanning.
+
+    Returns texts with decoded candidates appended. If deobfuscation is disabled or
+    unavailable, returns texts unchanged.
+    """
+    if not _is_deobfuscate_enabled():
+        return texts
+    decode_fn = _resolve_deobfuscate()
+    if decode_fn is None:
+        return texts
+
+    # ADVERSARY-003: batch deobfuscation — single GIL acquisition, serial on rayon thread
+    try:
+        results = decode_fn(texts, max_depth=3)  # type: ignore[call-arg]
+        # results: list[DeobfuscateResult] or list[list[str]]
+        augmented: list[str] = []
+        for r in results:
+            if hasattr(r, "candidates"):
+                candidates: list[str] = r.candidates
+            elif isinstance(r, list):
+                candidates = r
+            else:
+                candidates = []
+            if candidates:
+                # Append decoded candidates as space-separated string
+                augmented.append(" ".join(candidates))
+            else:
+                augmented.append("")
+        # Merge augmented candidates into original texts
+        return [f"{text} {suffix}".strip() if suffix else text for text, suffix in zip(texts, augmented)]
+    except Exception:
+        logger.debug("ioc_extract: deobfuscation failed, proceeding without it", exc_info=True)
+        return texts
+
 # ---------------------------------------------------------------------------
 # Lazy Rust backend resolution — cached after first call
 # ---------------------------------------------------------------------------
@@ -123,6 +198,11 @@ def _extract_iocs_sync(texts: list[str]) -> list[list[tuple[str, str]]]:
     # Clamp batch size
     if len(texts) > MAX_BATCH_SIZE:
         texts = texts[:MAX_BATCH_SIZE]
+
+    # ADVERSARY-003: CyberChef-Pipeline — deobfuscate BEFORE extraction.
+    # Decoded candidates are appended to texts so the IOC scanner (Rust or Python)
+    # scans both the original content and the decoded payloads in a single pass.
+    texts = _deobfuscate_texts(texts)
 
     # Tier 1: Zero-copy Python → Rust → Python
     if _tier1_func is not None:

@@ -1936,6 +1936,93 @@ class SynthesisRunner:
             except Exception as e:
                 logger.debug(f"[SYNTHESIS] Hypothesis extraction skipped: {e}")
 
+        # ISSUE [ADVERSARY]-002: Drop findings sourced from cognitive tarpit domains
+        # before they reach the LLM context window. Prevents:
+        #   1. IOC poisoning (fake C2 IPs, decoy BTC addresses from honeypot forums)
+        #   2. Token waste on LLM-generated content in synthesis context
+        #   3. Cross-contamination of pivot operations with honeypot IOCs
+        #
+        # Check: any finding whose source URL domain has cognitive_tarpit_score >= 1.0
+        # is excluded from the report's ioc_entities list.
+        # Note: cognitive_tarpit_score is monotonically non-decreasing (once set, stays).
+        _ct_filter_enabled = os.environ.get(
+            'HLEDAC_ENABLE_COGNITIVE_TARPIT', '1',
+        ).lower() in ('1', 'true', 'yes', 'on')
+
+        if _ct_filter_enabled and report.ioc_entities and findings:
+            try:
+                from hledac.universal.knowledge.domain_reputation import (
+                    get_domain_reputation_service as _get_rep_svc,
+                )
+                _rep_svc = _get_rep_svc()
+                if _rep_svc is not None:
+                    # ISSUE [ADVERSARY]-002: Batch domain reputation lookups with asyncio.gather
+                    # Avoids N sequential awaits (N× latency). N=10 findings → ~50ms sequential
+                    # vs ~15ms parallel with gather.
+                    #
+                    # Step 1: extract + deduplicate domains from findings sources
+                    _domains_to_check: list[str] = []
+                    _seen: set[str] = set()
+                    for f in findings:
+                        _src_url = f.get('url') or f.get('source_url') or ''
+                        if _src_url:
+                            try:
+                                from urllib.parse import urlparse
+                                _parsed = urlparse(_src_url)
+                                _fdomain = _parsed.netloc.removeprefix('www.')
+                                if _fdomain and _fdomain not in _seen:
+                                    _seen.add(_fdomain)
+                                    _domains_to_check.append(_fdomain)
+                            except Exception:  # noqa: BLE001 — fail-soft
+                                pass
+
+                    # Step 2: parallel reputation lookup — single round-trip per domain
+                    if _domains_to_check:
+                        try:
+                            _reps = await asyncio.gather(
+                                *[_rep_svc.get(d) for d in _domains_to_check],
+                                return_exceptions=True,
+                            )
+                            _tarpit_domains: set[str] = set()
+                            for _d, _rep in zip(_domains_to_check, _reps):
+                                if (
+                                    isinstance(_rep, Exception)
+                                    or _rep is None
+                                ):
+                                    continue
+                                if _rep.cognitive_tarpit_score >= 1.0:
+                                    _tarpit_domains.add(_d)
+                        except Exception:  # noqa: BLE001 — fail-soft; gather failed
+                            _tarpit_domains = set()
+                    else:
+                        _tarpit_domains = set()
+
+                    if _tarpit_domains:
+                        _before_count = len(report.ioc_entities)
+                        # Filter ioc_entities whose source domain is in tarpit set
+                        _filtered_iocs = [
+                            ioc for ioc in report.ioc_entities
+                            if getattr(ioc, 'source_url', None) not in _tarpit_domains
+                            and getattr(ioc, 'source_domain', None) not in _tarpit_domains
+                        ]
+                        _after_count = len(_filtered_iocs)
+                        if _after_count < _before_count:
+                            _dropped = _before_count - _after_count
+                            report = msgspec.replace(
+                                report, ioc_entities=_filtered_iocs,
+                            )
+                            logger.warning(
+                                "[SYNTHESIS] [ADVERSARY]-002: Dropped %d/%d IOCs "
+                                "from cognitive tarpit domains: %s",
+                                _dropped, _before_count,
+                                sorted(_tarpit_domains),
+                            )
+            except Exception as e:
+                logger.debug(
+                    "[SYNTHESIS] [ADVERSARY]-002: tarpit domain filter failed "
+                    "(fail-soft): %s", e,
+                )
+
         return report
 
     # =======================================================================

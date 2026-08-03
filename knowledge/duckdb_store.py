@@ -20,7 +20,7 @@ import weakref
 from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.runtime.lifecycle_registry import ResourceLifecycleRegistry
-from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
+from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, _check_gathered
 from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
 from hledac.universal.knowledge.duckdb_protocol import DedupManagerProtocol, QualityGateProtocol
 
@@ -4231,11 +4231,13 @@ class DuckDBShadowStore:
         results = await asyncio.gather(
             *(_insert_chunk(c) for c in chunks), return_exceptions=True
         )
+        ok_results, errors = _check_gathered(results)
+        for err in errors:
+            logger.warning("[DUCKDB] async_ingest_findings_batch: chunk insert failed: %s", err)
         total_inserted = 0
-        for r in results:
+        for r in ok_results:
             if isinstance(r, int):
                 total_inserted += r
-            # Exceptions are silently counted as 0 inserted
         return total_inserted
 
     async def async_query_recent_findings(self, limit: int = 10) -> list[dict[str, Any]]:

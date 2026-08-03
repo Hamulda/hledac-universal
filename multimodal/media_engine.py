@@ -42,6 +42,7 @@ Lazy import: AVFoundation + Speech imported only when first method is called.
 from __future__ import annotations
 
 import asyncio
+import threading
 import logging
 import os
 import tempfile
@@ -544,16 +545,19 @@ class MediaDecoder:
                     request.setShouldReportPartialResults_(False)
                     request.setTaskHint_(_Speech.SFSpeechRecognitionTaskHintDictation)
 
-                    # Collect results synchronously via semaphore
+                    # Collect results synchronously via threading.Event.
+                    # Note: threading.Event, NOT asyncio.Event — this runs in a worker
+                    # thread (via asyncio.to_thread). asyncio.Event.wait() requires
+                    # the thread to hold the event loop; threading.Event.wait() does not.
+                    # Refs: Python 3.10+ threading.Event supports timeout param.
                     result_container: dict[str, Any] = {"text": "", "confidence": 0.0, "segments": []}
-                    done_event = asyncio.Event()
+                    done_event = threading.Event()
 
                     def _handler(result, error):
                         if error is not None:
                             log.debug("[SILICON-02] Transcription error: %s", error)
                             result_container["error"] = str(error)
-                            # Can't set event from this thread directly — use results dict
-                            result_container["done"] = True
+                            done_event.set()  # wake the polling thread
                             return
                         if result is not None:
                             result_container["text"] = str(result.bestTranscription().formattedString()) if result.bestTranscription() else ""
@@ -570,7 +574,7 @@ class MediaDecoder:
                                 confidences.append(seg.confidence())
                             if confidences:
                                 result_container["confidence"] = sum(confidences) / len(confidences)
-                        result_container["done"] = True
+                        done_event.set()  # wake the polling thread
 
                     recognizer = self._speech_recognizer
                     task = recognizer.recognitionTaskWithRequest_resultHandler_(request, _handler)
@@ -579,14 +583,17 @@ class MediaDecoder:
                         return ("", 0.0, [])
 
                     # Block until done (with timeout)
+                    # threading.Event.wait(timeout) releases the GIL while waiting —
+                    # unlike time.sleep() which keeps the GIL held.
+                    # Also: if the handler fires first, we wake immediately (no wasted sleep).
                     deadline = _time.monotonic() + _SPEECH_RECOGNITION_TIMEOUT_S
-                    while not result_container.get("done"):
+                    while not done_event.wait(timeout=0.05):
                         if _time.monotonic() > deadline:
                             task.cancel()
                             log.debug("[SILICON-02] Transcription timed out after %.0fs",
                                       _SPEECH_RECOGNITION_TIMEOUT_S)
                             break
-                        _time.sleep(0.05)
+                        # loop continues on timeout; exit when done_event.set() was called
 
                     task.finish()
                     return (

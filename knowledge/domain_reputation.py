@@ -69,11 +69,19 @@ class DomainReputation(msgspec.Struct, frozen=True, gc=False):
     total_attempts: int = 0
     successful_attempts: int = 0
     last_seen: float = 0.0  # epoch seconds
+    # ISSUE [ADVERSARY]-002: Cognitive tarpit score from LLM-honeypot detection
+    cognitive_tarpit_score: float = 0.0
+    cognitive_tarpit_reasons: str = ""
 
     @classmethod
     def empty(cls, domain: str) -> DomainReputation:
         """Factory for unknown domains — neutral reputation."""
         return cls(domain=domain)
+
+    @property
+    def is_cognitive_tarpit(self) -> bool:
+        """True if cognitive tarpit score indicates LLM-generated honeypot."""
+        return self.cognitive_tarpit_score >= 0.7
 
     @property
     def is_tarpit(self) -> bool:
@@ -238,6 +246,9 @@ class DomainReputationService:
                 tarpit_score=current.tarpit_score,
                 anti_bot_type=anti_bot_type or current.anti_bot_type,
                 challenge_type=challenge_type or current.challenge_type,
+                # ISSUE [ADVERSARY]-002: preserve cognitive_tarpit_score on success
+                cognitive_tarpit_score=current.cognitive_tarpit_score,
+                cognitive_tarpit_reasons=current.cognitive_tarpit_reasons,
             )
             await self._persist(new_rep)
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
@@ -270,6 +281,14 @@ class DomainReputationService:
             current = await self.get(domain)
             # Exponential moving average for tarpit_score
             cumulative_tarpit = current.tarpit_score * 0.7 + tarpit_score * 0.3
+            # ISSUE [ADVERSARY]-002: Handle cognitive_tarpit_score
+            # When public_fetcher detects cognitive tarpit, it calls record_failure
+            # with tarpit_score=1.0. We propagate this to cognitive_tarpit_score.
+            new_ct_score: float | None = None
+            new_ct_reasons: str | None = None
+            if tarpit_score >= 1.0:
+                new_ct_score = tarpit_score
+                new_ct_reasons = f"cognitive_tarpit_score={tarpit_score:.3f}"
             new_rep = self._compute_updated_reputation(
                 current=current,
                 success=False,
@@ -277,6 +296,8 @@ class DomainReputationService:
                 tarpit_score=max(current.tarpit_score, cumulative_tarpit),
                 anti_bot_type=anti_bot_type or current.anti_bot_type,
                 challenge_type=challenge_type or current.challenge_type,
+                cognitive_tarpit_score=new_ct_score,
+                cognitive_tarpit_reasons=new_ct_reasons,
             )
             await self._persist(new_rep)
         except Exception:  # noqa: BLE001 — fail-safe; non-critical
@@ -311,6 +332,8 @@ class DomainReputationService:
         tarpit_score: float = 0.0,
         anti_bot_type: str = "none",
         challenge_type: str = "none",
+        cognitive_tarpit_score: float | None = None,
+        cognitive_tarpit_reasons: str | None = None,
     ) -> DomainReputation:
         """Compute updated reputation record from current state + new event."""
         total = current.total_attempts + 1
@@ -334,6 +357,14 @@ class DomainReputationService:
                 if proxy in succ_proxies:
                     succ_proxies.remove(proxy)
 
+        # ISSUE [ADVERSARY]-002: Cognitive tarpit score is monotonically increasing
+        # (once detected as LLM honeypot, stays marked)
+        new_ct_score = current.cognitive_tarpit_score
+        new_ct_reasons = current.cognitive_tarpit_reasons
+        if cognitive_tarpit_score is not None and cognitive_tarpit_score > new_ct_score:
+            new_ct_score = cognitive_tarpit_score
+            new_ct_reasons = cognitive_tarpit_reasons or ""
+
         now = _time.time()
 
         return DomainReputation(
@@ -347,6 +378,8 @@ class DomainReputationService:
             total_attempts=total,
             successful_attempts=successful,
             last_seen=now,
+            cognitive_tarpit_score=round(new_ct_score, 3),
+            cognitive_tarpit_reasons=new_ct_reasons,
         )
 
     async def _get_from_duckdb(self, domain: str) -> DomainReputation | None:
@@ -366,7 +399,9 @@ class DomainReputationService:
                     "SELECT domain, tarpit_score, successful_proxies, failed_proxies, "
                     "anti_bot_type, challenge_type, success_rate, total_attempts, "
                     "successful_attempts, "
-                    "epoch_ms(last_seen) / 1000.0 "
+                    "epoch_ms(last_seen) / 1000.0, "
+                    "COALESCE(cognitive_tarpit_score, 0.0), "
+                    "COALESCE(cognitive_tarpit_reasons, '')"
                     "FROM domain_reputation WHERE domain = ?",
                     [domain],
                 ).fetchone()
@@ -383,6 +418,8 @@ class DomainReputationService:
                     total_attempts=int(result[7]),
                     successful_attempts=int(result[8]),
                     last_seen=float(result[9]) if result[9] is not None else 0.0,
+                    cognitive_tarpit_score=float(result[10]) if result[10] is not None else 0.0,
+                    cognitive_tarpit_reasons=str(result[11]) if result[11] is not None else "",
                 )
             except Exception:  # noqa: BLE001 — fail-safe; DB query failure; non-critical
                 return None
@@ -416,8 +453,9 @@ class DomainReputationService:
                     "INSERT INTO domain_reputation "
                     "(domain, tarpit_score, successful_proxies, failed_proxies, "
                     "anti_bot_type, challenge_type, success_rate, total_attempts, "
-                    "successful_attempts, last_seen, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+                    "successful_attempts, last_seen, updated_at, "
+                    "cognitive_tarpit_score, cognitive_tarpit_reasons) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?) "
                     "ON CONFLICT(domain) DO UPDATE SET "
                     "tarpit_score = excluded.tarpit_score, "
                     "successful_proxies = excluded.successful_proxies, "
@@ -428,7 +466,9 @@ class DomainReputationService:
                     "total_attempts = excluded.total_attempts, "
                     "successful_attempts = excluded.successful_attempts, "
                     "last_seen = excluded.last_seen, "
-                    "updated_at = excluded.updated_at",
+                    "updated_at = excluded.updated_at, "
+                    "cognitive_tarpit_score = excluded.cognitive_tarpit_score, "
+                    "cognitive_tarpit_reasons = excluded.cognitive_tarpit_reasons",
                     [
                         rep.domain,
                         rep.tarpit_score,
@@ -439,6 +479,8 @@ class DomainReputationService:
                         rep.success_rate,
                         rep.total_attempts,
                         rep.successful_attempts,
+                        rep.cognitive_tarpit_score,
+                        rep.cognitive_tarpit_reasons,
                     ],
                 )
 

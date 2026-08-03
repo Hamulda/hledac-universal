@@ -90,6 +90,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.utils.async_helpers import _check_gathered
+
 if TYPE_CHECKING:
     from .deephermes3_engine import DeepHermes3Engine
 
@@ -339,7 +341,10 @@ class BoundedInferencePipeline:
         if all_tasks:
             try:
                 async with asyncio.timeout(_PIPELINE_SHUTDOWN_S):
-                    await asyncio.gather(*all_tasks, return_exceptions=True)
+                    gathered = await asyncio.gather(*all_tasks, return_exceptions=True)
+                    _, errors = _check_gathered(gathered)
+                    for err in errors:
+                        logger.debug('[Pipeline] shutdown: task failed: %s', err)
             except TimeoutError:
                 logger.debug(
                     '[Pipeline] shutdown timed out after %.1fs',

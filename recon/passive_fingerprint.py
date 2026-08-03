@@ -43,6 +43,7 @@ from hledac.universal.utils.msgspec_json import decode as _msgspec_decode
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.network.favicon_hasher import _FaviconHasher
+from hledac.universal.utils.async_helpers import _check_gathered
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 logger = logging.getLogger(__name__)
@@ -933,13 +934,14 @@ async def _enrich_favicon_findings(
     if not tasks:
         return enriched
     try:
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-    except Exception:
+        gathered = await asyncio.gather(*tasks, return_exceptions=True)
+        ok_results, errors = _check_gathered(gathered)
+        if errors:
+            logger.debug('[PASSIVE_FP] favicon enrichment: %d task failures', len(errors))
+    except Exception:  # noqa: BLE001 — fail-soft: return enriched partial results
         return enriched
     ts = time.time()
-    for i, result in enumerate(results):
-        if isinstance(result, Exception):
-            continue
+    for i, result in enumerate(ok_results):
         if result is None:
             continue
         html, page_url = candidates[i]

@@ -52,6 +52,7 @@ Invariant (S-01):
 from __future__ import annotations
 
 import logging
+import math
 import os
 import pathlib
 import threading
@@ -222,7 +223,6 @@ class UnifiedLMDB:
     # ------------------------------------------------------------------ #
     def _ensure_init(self) -> None:
         """Lazy initialization — opens LMDB env on first access."""
-        import time
 
         # Fast path — check without lock
         if self._closed:
@@ -237,10 +237,13 @@ class UnifiedLMDB:
             # Wait for any in-progress reopen to complete
             spin_count = 0
             while self._reopen_in_progress:
-                if spin_count >= 50:  # 50 * 0.1s = 5s timeout
+                # Exponential backoff: 0.05s base, 2x factor, 1.0s ceiling
+                # Series: 0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.0, ... (~2.5s at 7 spins)
+                # Cap at 10 spins: 10 × 1.0s ceiling = 10s max timeout
+                if spin_count >= 10:
                     raise RuntimeError("UnifiedLMDB reopen timed out")
-                # Release lock temporarily to let reopen proceed
-                time.sleep(0.1)
+                sleep_time = min(0.05 * math.exp(0.5 * spin_count), 1.0)
+                time.sleep(sleep_time)
                 spin_count += 1
             if self._initialized:
                 return
@@ -506,11 +509,12 @@ class UnifiedLMDB:
         if target_size > self._map_size_current:
             # Grow: safe, just call set_mapsize
             try:
+                old_size = self._map_size_current
                 self._env.set_mapsize(target_size)
                 self._map_size_current = target_size
                 logger.info(
                     "[LMDB-UNIFIED] mapsize grew %dMB → %dMB (pressure: %s → %s)",
-                    self._map_size_current // (1024 * 1024),
+                    old_size // (1024 * 1024),
                     target_size // (1024 * 1024),
                     old_state,
                     state,
@@ -851,16 +855,21 @@ class UnifiedLMDB:
             sub_idx: Sub-DB index being compacted.
             temp_path: Path to the temporary compacted LMDB directory.
             sub_name: Human-readable sub-DB name for logging.
+
+        Failure recovery: if lmdb.open() fails, attempts to restore from
+        the original env (backup restore pattern, matching _emergency_shrink).
         """
         import lmdb
         import shutil
 
-        # Close the current env (this also closes all sub-DB handles)
+        # Capture old state for potential backup restore
         old_env = self._env
         old_sub_dbs = dict(self._sub_dbs)
+        old_map_size = self._map_size_current
         self._sub_dbs.clear()
         self._env = None
 
+        # Close the old env in a safe wrapper — don't let close errors propagate
         try:
             old_env.close()
         except Exception as exc:
@@ -881,14 +890,41 @@ class UnifiedLMDB:
             shutil.move(str(src_lock), str(dst_lock))
 
         # Reopen the env with the new compacted files
-        self._env = lmdb.open(
-            str(self._path),
-            map_size=self._map_size_current,
-            max_dbs=self._max_dbs,
-            writemap=False,
-            metasync=True,
-            mode=0o600,
-        )
+        try:
+            self._env = lmdb.open(
+                str(self._path),
+                map_size=self._map_size_current,
+                max_dbs=self._max_dbs,
+                writemap=False,
+                metasync=True,
+                mode=0o600,
+            )
+        except Exception as exc:
+            # Backup restore: reopen with original data
+            logger.error(
+                "[LMDB-UNIFIED] atomic_swap: env reopen failed: %s. "
+                "Attempting backup restore.",
+                exc,
+            )
+            try:
+                self._env = lmdb.open(
+                    str(self._path),
+                    map_size=old_map_size,
+                    max_dbs=self._max_dbs,
+                    writemap=False,
+                    metasync=True,
+                    mode=0o600,
+                )
+                self._reopen_sub_dbs()
+                logger.info("[LMDB-UNIFIED] atomic_swap: backup restore succeeded")
+            except Exception as restore_exc:
+                logger.error(
+                    "[LMDB-UNIFIED] atomic_swap: backup restore failed: %s. "
+                    "LMDB instance is closed.",
+                    restore_exc,
+                )
+                self._closed = True
+                return
 
         # Re-open the sub-DB handle
         self._sub_dbs[sub_idx] = self._env.open_db(str(sub_name).encode())

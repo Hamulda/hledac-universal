@@ -129,7 +129,7 @@ class SemanticStore:
         if _COREML_AVAILABLE:
             try:
                 from hledac.universal.utils.coreml import CoreMLServiceManager
-                CoreMLServiceManager.ensure_running()
+                await CoreMLServiceManager.ensure_running_async()
             except Exception:  # noqa: BLE001
                 pass
             # async get — safe to call from async context (DCLP singleton)

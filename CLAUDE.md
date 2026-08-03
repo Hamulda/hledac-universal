@@ -80,6 +80,7 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | HLEDAC_ENABLE_ACADEMIC | 0 | research | Academic research lane (R9) |
 | HLEDAC_ENABLE_ALT_PROTOCOLS | 0 | network | Gopher, Finger, etc. |
 | HLEDAC_ENABLE_ARTI | 0 | network | Arti in-process Tor (HEIST-06, mirrors I2P SAM v3) |
+| HLEDAC_ENABLE_AUTO_RE | 0 | forensic | ADVERSARY-004: Hermes3 Auto-RE for unknown binary formats (wallet.dat, custom .bin, etc.) via Hermes3-generated Python parsers with sandboxed execution + Rust IOC validation gate. Opt-in: 1 to enable. |
 | HLEDAC_ENABLE_BANNER_GRAB | 0 | network | TCP banner enumeration |
 | HLEDAC_ENABLE_BGP | 0 | intel | BGP enrichment sidecar (F234) |
 | HLEDAC_ENABLE_BGP_PDNS | 0 | intel | Passive DNS via BGP |
@@ -125,6 +126,7 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | HLEDAC_ENABLE_SOCIAL | 0 | Social media discovery |
 | HLEDAC_ENABLE_STEALTH_LAYER | 0 | Stealth mode |
 | HLEDAC_ENABLE_STEGANOGRAPHY | 0 | Image steganography detection |
+| HLEDAC_ENABLE_STEGDETECT_SIGNED | 1 | forensic | ADVERSARY-001-INTERNAL-007: Stegdetect binary bootstrap with SHA-256 integrity verification. Verifies pre-built binary via known-good SHA-256 manifest before running. Falls back to isolated git clone + build + verify when no release URL is available. Original unverified git+make path is disabled (opt-out: 0). |
 | HLEDAC_ENABLE_SUBINTERPRETERS | 0 | runtime | Python 3.14+ subinterpreter pool (PEP 756). Requires --with-experimental-isolated-subinterpreters CPython build. Max 2 workers on M1 8GB. Gated by 4-stage runtime probe (import → interpreters module → create → destroy roundtrip). Opt-in: 1 to enable. |
 | HLEDAC_ENABLE_SYNTHESIS | 0 | Hermes synthesis (deprecated, use HERMES_SYNTHESIS) |
 | HLEDAC_ENABLE_TEMPORAL_STORE | 0 | Temporal data store |
@@ -179,6 +181,8 @@ Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/
 | DomainReputationService | WIRED (default ON) | `knowledge/domain_reputation.py` `get_domain_reputation_service()` (UNIFIED-007/008) |
 | RouteGraphService | WIRED (default ON) | `knowledge/proxy_routes.py` `get_route_graph_service()` (UNIFIED-009) — Thompson Sampling, EWMA latency, epsilon-greedy exploration |
 | AntiBotProfileService | WIRED (default ON) | `knowledge/anti_bot_profiles.py` `get_anti_bot_profile_service()` (UNIFIED-010) — WAF fingerprinting, stealth escalation, bypass strategies |
+| Hermes3 Auto-RE Engine | WIRED (opt-in) | `brain/auto_re/parser_forge.py` — Hermes3 parser generation for unknown binary formats (ADVERSARY-004, HLEDAC_ENABLE_AUTO_RE=1) |
+| AutoRESidecarAdapter | WIRED (opt-in) | `runtime/sidecars/forensics/_auto_re.py` — 5-stage Auto-RE sidecar: magic router → Hermes3 → sandbox → IOC gate → audit (max 3/sprint) |
 
 ---
 
@@ -272,11 +276,14 @@ ImportError, KeyboardInterrupt, SystemExit, F221-ABORT guard, and
 
 ## Lazy Import Anti-Pattern (Issue #3)
 
-### Current State
-- **777× `except ImportError`** across **361 files**
-- Infrastructure EXISTS but underutilized:
-  - `core/capabilities.py` — CapabilityRegistry (only 3 files use it!)
-  - `utils/optional_imports.py` — `optional()` pattern (0 files use it!)
+### Current State (Updated [DOC]-015)
+- **~380× `except ImportError`** in production code (777× was outdated count)
+- **Key distinction:** Most are inside functions (correct), only a few at module level (problematic)
+- **Module-level anti-pattern (problematic):** Only 1 production file affected
+  - `tools/url_dedup.py` — **3× module-level** (xxhash, pyprobables) — **MIGROVÁNO [DOC]-015**
+- **Infrastructure EXISTS and UNDERUTILIZED:**
+  - `core/capabilities.py` — CapabilityRegistry (≈10 files use CAPS pattern)
+  - `utils/optional_imports.py` — `optional()` pattern (**1 production file now uses it:** `url_dedup.py`)
   - `utils/lazy_singleton.py` — LazySingleton/AsyncLazySingleton (15 files)
   - `core/lazy_imports.py` — PEP 810 lazy imports
 
@@ -291,7 +298,7 @@ ImportError, KeyboardInterrupt, SystemExit, F221-ABORT guard, and
 **NEVER** raw `try/except ImportError` at module level:
 
 ```python
-# WRONG (7µs cold-start penalty per file):
+# WRONG (7µs cold-start penalty per import):
 try:
     from otel import instrumented as _otel_instrumented
 except ImportError:
@@ -305,11 +312,20 @@ _otel_instrumented = optional("otel:instrumented",
 
 **ALLOWED:** `except ImportError` inside methods — legitimate runtime deferral.
 
-### Top Migration Targets
-1. `__main__.py` — 4× module-level deferred
-2. `utils/platform_info.py` — 6× module-level deferred  
-3. `tools/url_dedup.py` — 7× module-level deferred
-4. `knowledge/lancedb_store.py` — 5× module-level deferred
+### Files with Module-Level except ImportError (Priority Order)
+
+| File | Count | Status | Notes |
+|------|-------|--------|-------|
+| `tools/url_dedup.py` | 3 | ✅ MIGROVÁNO | xxhash, pyprobables/probables |
+| `brain/ane_embedder.py` | 3 | ✅ Inside functions | Correct pattern |
+| `brain/whisper_engine.py` | 2 | ✅ Inside functions | Correct pattern |
+| `context_optimization/context_cache.py` | 5 | ✅ Inside functions | Correct pattern |
+| Other files | ~380 | ✅ Mostly inside functions | Correct pattern |
+
+### What WAS Correctly Identified
+- `utils/platform_info.py` — 6× probe functions with lazy imports inside functions = **CORRECT pattern, no change needed**
+- `lancedb_store.py` — MLX block requires `@mx.compile` at import time = **LEGITIMATE eager import**
+- `__main__.py` — **NO module-level except ImportError** — CLAUDE.md was inaccurate
 
 ---
 

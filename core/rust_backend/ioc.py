@@ -107,6 +107,19 @@ class _RustIocDomain:
         """Deduplicate URLs — delegates to Rust standalone function in ioc_extract module."""
         return self._ext.batch_dedup_urls(urls)
 
+    # ADVERSARY-003: CyberChef-Pipeline — recursive IOC deobfuscation before SIMD scan.
+    # decode_ioc_candidates peels encoding layers (Base64/Hex/Base58/URL/ROT13/XOR)
+    # from high-entropy regions in text, exposing hidden IOCs to the regex engine.
+    def decode_ioc_candidates(self, text: str, max_depth: int | None = None) -> list[str]:
+        result = self._ext.deobfuscate.decode_ioc_candidates(text, max_depth)
+        return result.candidates if hasattr(result, "candidates") else []
+
+    def batch_decode_ioc_candidates(
+        self, texts: list[str], max_depth: int | None = None
+    ) -> list[list[str]]:
+        results = self._ext.deobfuscate.batch_decode_ioc_candidates(texts, max_depth)
+        return [r.candidates if hasattr(r, "candidates") else [] for r in results]
+
 
 class _PythonIocDomain:
     __slots__ = ()
@@ -153,6 +166,36 @@ class _PythonIocDomain:
     def batch_dedup_urls(urls: list[str]) -> list[str]:
         """Deduplicate URLs — pure Python fallback."""
         return _python_batch_dedup_urls(urls)
+
+    # ADVERSARY-003: Python fallback — deobfuscation not available in Python path.
+    # Returns empty list (deobfuscation requires Rust rayon pool + SIMD).
+    @staticmethod
+    def decode_ioc_candidates(text: str, max_depth: int | None = None) -> list[str]:
+        return []
+
+    @staticmethod
+    def batch_decode_ioc_candidates(
+        texts: list[str], max_depth: int | None = None
+    ) -> list[list[str]]:
+        return [[] for _ in texts]
+
+    # ADVERSARY-003: module-level telemetry helpers (work for both Rust and Python paths).
+    def deobfuscate_telemetry() -> tuple[int, int, int]:
+        """Return (passes, layers_stripped, bytes_decoded) counters.
+        Returns (0,0,0) when Rust extension is unavailable."""
+        try:
+            from hledac_rust_extensions import hledac_rust_extensions
+            return hledac_rust_extensions.deobfuscate_telemetry()  # type: ignore[attr-defined]
+        except Exception:
+            return (0, 0, 0)
+
+    def deobfuscate_telemetry_reset() -> None:
+        """Reset telemetry counters. Call at sprint boundary."""
+        try:
+            from hledac_rust_extensions import hledac_rust_extensions
+            hledac_rust_extensions.deobfuscate_telemetry_reset()  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
 
 _PY_IPV6_RE: re.Pattern | None = None

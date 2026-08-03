@@ -28,6 +28,8 @@ import os as _os
 import msgspec
 from typing import TYPE_CHECKING, Any, Iterator
 
+from hledac.universal.utils.async_helpers import _check_gathered
+
 logger = logging.getLogger(__name__)
 
 MAX_QUANTUM_NODES: int = int(_os.environ.get('QUANTUM_MAX_NODES', '4096'))
@@ -1649,6 +1651,9 @@ class DuckPGQGraph:
             ]
 
             gathered = loop.run_until_complete(asyncio.gather(*futures, return_exceptions=True))
+            _, errors = _check_gathered(gathered)
+            if errors:
+                logger.debug('[QPF] find_connected_with_similarity batch: %d task failures', len(errors))
 
             return {
                 v: r if not isinstance(r, Exception) else []

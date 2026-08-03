@@ -54,6 +54,7 @@ pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wave
 pub mod ioc_extract;
 pub mod ioc_extract_fast;
 pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata build_many (NEON on M1)
+pub mod deobfuscate;     // ADVERSARY-003: CyberChef-Pipeline — recursive IOC deobfuscation before SIMD
 pub mod ioc_stream_scan; // HEIST-01: Streaming SIMD scanner for mmap/bytes zero-copy IOC sweep
 pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
 pub mod ip_parse; // Sprint P2-3: IP address parsing, classification, CIDR containment
@@ -816,6 +817,8 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ioc_extract_fast::batch_extract_structured_entities_py, m)?)?;
     // R4.3: SIMD IOC extraction — regex-automata build_many (NEON on M1, ~5× faster for bulk text ≥4KB)
     ioc_extract_simd::register_functions(m)?;
+    // ADVERSARY-003: CyberChef-Pipeline — recursive IOC deobfuscation before SIMD scan
+    deobfuscate::register(m)?;
     // HEIST-01: Streaming mmap/bytes IOC scanner — zero-copy, 3-4 GB/s on M1 NEON Teddy
     ioc_stream_scan::register_functions(m)?;
 

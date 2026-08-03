@@ -171,6 +171,10 @@ class StealthCrawler:
         DEPRECATED: Use search_async() for async contexts.
         This sync wrapper is kept for backward compatibility only.
 
+        SAFETY (INTERNAL-014): asyncio.run() raises RuntimeError if an event loop
+        is already running. The guard below detects this and raises a TypeError
+        directing callers to search_async() instead.
+
         Args:
             query: Search query
             num_results: Number of results to return
@@ -178,7 +182,20 @@ class StealthCrawler:
 
         Returns:
             List of SearchResult
+
+        Raises:
+            TypeError: If called from within an existing async context.
+                Use search_async() directly in async code instead.
         """
+        try:
+            _ = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise TypeError(
+                "StealthCrawler.search() uses asyncio.run() internally and cannot "
+                "be called from an async context. Use search_async() instead."
+            )
         try:
             return asyncio.run(self.search_async(query, num_results, source))
         except Exception as e:
@@ -699,8 +716,33 @@ def quick_scrape(url: str, **kwargs) -> ScrapingResult:
 
     Convenience function for one-off scraping without explicit setup.
     Runs the async scrape() in a new event loop via asyncio.run().
+
+    SAFETY (INTERNAL-014): asyncio.run() raises RuntimeError if an event loop
+    is already running (Python 3.7+). The guard below detects this and raises
+    a TypeError with a clear message directing callers to the async path.
+
+    Args:
+        url: URL to scrape
+        **kwargs: Additional options forwarded to StealthWebScraper.scrape()
+
+    Returns:
+        ScrapingResult
+
+    Raises:
+        TypeError: If called from within an existing async context.
+            Use StealthWebScraper.scrape() directly in async code instead.
     """
     import asyncio
+    try:
+        _ = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise TypeError(
+            "quick_scrape() uses asyncio.run() internally and cannot be called "
+            "from an async context. Use 'scraper = StealthWebScraper(); "
+            "await scraper.scrape(url)' instead."
+        )
     scraper = StealthWebScraper()
     return asyncio.run(scrape_async_coro(scraper, url, **kwargs))
 

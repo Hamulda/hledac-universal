@@ -23,20 +23,70 @@ from hledac.universal.security.threat_intelligence import ThreatIntelligence  # 
 # ZKP research (simulation mode on M1)
 from hledac.universal.security.zkp_research_engine import ZKPResearchEngine  # noqa: F401, E402
 
+# Ephemeral state annihilation (ADVERSARY-005)
+from hledac.universal.security.ephemeral_wipe import (
+    EphemeralStateAnnihilator,
+    register_mlock_region,
+    unregister_mlock_region,
+)  # noqa: F401, E402
+
 # Real implementations from security/
 from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm  # noqa: F401, E402
 from hledac.universal.security.ram_vault import RamDiskVault  # noqa: F401, E402
 from hledac.universal.security.secrets_scrubber import scrub_dict_recursive, scrub_secrets  # noqa: F401, E402
 
+# ADVERSARY-001: Tiered media sandbox
+from hledac.universal.security.media_sandbox import (
+    MediaSandboxCoordinator,
+    SandboxTier,
+    SandboxResult,
+    FileRiskLevel,
+    MediaRiskProfile,
+    profile_file_risk,
+    get_sandbox_coordinator,
+    IsolationConfig,
+    SANDBOX_ENABLED,
+    run_whisper_in_subprocess,
+)  # noqa: F401, E402
+
+# ADVERSARY-001-INTERNAL-007: Artifact verifier
+from hledac.universal.security.artifact_verifier import (
+    ArtifactVerifier,
+    ArtifactInstallResult,
+    ArtifactManifest,
+    get_artifact_verifier,
+    VERIFIED_ARTIFACTS,
+)  # noqa: F401, E402
+
 __all__ = [
+    "ArtifactInstallResult",
+    "ArtifactManifest",
+    "ArtifactVerifier",
+    "EphemeralStateAnnihilator",
+    "FileRiskLevel",
+    "get_artifact_verifier",
+    "get_sandbox_coordinator",
+    "IsolationConfig",
     "KeyManager",
+    "MediaRiskProfile",
+    "MediaSandboxCoordinator",
     "QuantumResistantCrypto",
+    "RamDiskVault",
+    "SANDBOX_ENABLED",
+    "SandboxResult",
+    "SandboxTier",
     "StealthEngine",
     "TemporalAnonymizer",
     "ThreatIntelligence",
+    "VERIFIED_ARTIFACTS",
     "ZeroAttributionEngine",
     "ZKPResearchEngine",
     "decrypt_aes_gcm",
     "encrypt_aes_gcm",
-    "RamDiskVault",
+    "profile_file_risk",
+    "register_mlock_region",
+    "run_whisper_in_subprocess",
+    "scrub_dict_recursive",
+    "scrub_secrets",
+    "unregister_mlock_region",
 ]

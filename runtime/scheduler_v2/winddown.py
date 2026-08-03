@@ -470,12 +470,19 @@ class WinddownOrchestrator:
         - GlobalCacheRegistry (all registered caches via clear_all_caches())
         - AdaptiveCache registry (cache/adaptive_cache.py local registry)
         - R8: MemoryPressureBroadcaster (graceful shutdown of monitor loop)
+        - ADVERSARY-003: DeobfuscateResult telemetry counters (sprint boundary reset)
 
         WeakValueDictionary in rust_backend._lazy_mod_cache auto-releases dead modules.
         """
         try:
             from hledac.universal import clear_cache
             clear_cache()
+        except Exception:
+            pass
+        # ADVERSARY-003: Reset deobfuscation telemetry counters at sprint boundary
+        try:
+            from hledac.universal.core.rust_backend.ioc import get_domain
+            get_domain(None).deobfuscate_telemetry_reset()  # type: ignore[attr-defined]
         except Exception:
             pass
         try:

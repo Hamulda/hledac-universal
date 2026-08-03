@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from hledac.universal.utils.async_helpers import _check_gathered
+
 _logger = logging.getLogger(__name__)
 
 # Maximum k for ANN search (M1 8GB safety cap)
@@ -182,7 +184,10 @@ class DuckDBVectorStore:
         for batch_start in range(0, len(chunks), _CHUNK_PARALLEL_BATCH):
             batch = chunks[batch_start : batch_start + _CHUNK_PARALLEL_BATCH]
             results = await asyncio.gather(*[_upsert_chunk(c) for c in batch], return_exceptions=True)
-            rows_inserted += sum(1 for r in results if r is True)
+            ok_results, errors = _check_gathered(results)
+            for err in errors:
+                _logger.debug("[DUCKDB:VEC] upsert_rag_embeddings chunk failed: %s", err)
+            rows_inserted += sum(1 for r in ok_results if r is True)
 
         return rows_inserted
 
@@ -408,7 +413,10 @@ class DuckDBVectorStore:
         for batch_start in range(0, len(entities), _ENTITY_PARALLEL_BATCH):
             batch = entities[batch_start : batch_start + _ENTITY_PARALLEL_BATCH]
             results = await asyncio.gather(*[_upsert_entity(e) for e in batch], return_exceptions=True)
-            rows_inserted += sum(1 for r in results if r is True)
+            ok_results, errors = _check_gathered(results)
+            for err in errors:
+                _logger.debug("[DUCKDB:VEC] upsert_entity_embeddings batch failed: %s", err)
+            rows_inserted += sum(1 for r in ok_results if r is True)
 
         return rows_inserted
 

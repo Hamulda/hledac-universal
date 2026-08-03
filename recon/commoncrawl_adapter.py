@@ -16,6 +16,8 @@ import time as time_mod
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 import msgspec
+
+from hledac.universal.utils.async_helpers import _check_gathered
 try:
     import orjson
 except ImportError:
@@ -538,13 +540,11 @@ class WARCContentAdapter:
 
         tasks = [self.replay_url(r) for r in to_fetch]
         gathered = await asyncio.gather(*tasks, return_exceptions=True)
-        out: list[WARCReplayResult] = []
-        for item in gathered:
-            if isinstance(item, WARCReplayResult):
-                out.append(item)
-            elif isinstance(item, Exception):
-                self._warc_stats['warc_errors'] += 1
-                logger.debug(f'[commoncrawl] replay_urls gather exception: {item}')
+        ok_results, errors = _check_gathered(gathered)
+        for err in errors:
+            logger.debug(f'[commoncrawl] replay_urls gather exception: {err}')
+        out: list[WARCReplayResult] = [r for r in ok_results if isinstance(r, WARCReplayResult)]
+        self._warc_stats['warc_errors'] += len(errors)
         return out
 
     def get_warc_stats(self) -> dict[str, int]:

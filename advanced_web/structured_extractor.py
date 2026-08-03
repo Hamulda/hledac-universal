@@ -391,7 +391,7 @@ class StructuredExtractor:
                 entity_id = self._hash_entity(item_type, value, source_url)
                 entities.append(ExtractedEntity(entity_id=entity_id, entity_type=item_type, ioc_kind=ioc_kind, value=str(value)[:MAX_PROPERTY_LENGTH], url=url_val, properties=props, source_url=source_url, extracted_at=now))
             return (block_count, entities, relations)
-        except Exception:
+        except UnicodeDecodeError:
             pass
         try:
             from selectolax.lexbor import LexborHTMLParser
@@ -399,7 +399,7 @@ class StructuredExtractor:
             return (0, [], [])
         try:
             tree = LexborHTMLParser(html)
-        except Exception:
+        except (TypeError, ValueError):
             return (0, [], [])
         items = tree.css('[itemscope]')
         block_count = len(items)

@@ -342,9 +342,11 @@ def _validate_ggml_model(path: Path, config: dict[str, Any]) -> bool:
                      file_size_mb, expected_mb)
         return False
     # Check ggml magic number ("ggml" at offset 0 or "ggmf" for older formats)
+    # [INTERNAL]-009 perf: read only 4 bytes header, not entire file (~39-74 MB)
     try:
-        header = path.read_bytes()[:4]
-        if header not in (b'ggml', b'GGML', b'ggmf', b'GGMF'):
+        with path.open("rb") as fh:
+            header = fh.read(4)
+        if header not in (b"ggml", b"GGML", b"ggmf", b"GGMF"):
             logger.debug("[WhisperEngine] Invalid ggml magic: %r", header)
             return False
     except Exception:
@@ -519,6 +521,7 @@ class WhisperEngine:
         '_initialized',
         '_ggml_path',
         '_coreml_path',
+        '_temp_dirs',   # [INTERNAL]-009: was dynamic attribute leak — added to __slots__
     )
 
     def __init__(self) -> None:
@@ -532,6 +535,7 @@ class WhisperEngine:
         self._initialized: bool = False
         self._ggml_path: Path | None = None
         self._coreml_path: Path | None = None
+        self._temp_dirs: list[str] = []   # [INTERNAL]-009: proper init in __slots__
 
     def _get_init_lock(self) -> asyncio.Lock:
         if self._init_lock is None:
@@ -671,13 +675,12 @@ class WhisperEngine:
             self._coreml_loaded = False
 
             # Clean up temp dirs from audio conversion
-            if hasattr(self, '_temp_dirs'):
-                for tmp_dir in self._temp_dirs:
-                    try:
-                        shutil.rmtree(tmp_dir, ignore_errors=True)
-                    except Exception:
-                        pass
-                self._temp_dirs.clear()
+            for tmp_dir in self._temp_dirs:
+                try:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                except Exception:
+                    pass
+            self._temp_dirs.clear()
 
             # Release ANE slot
             try:
@@ -874,8 +877,8 @@ class WhisperEngine:
         file that the caller should clean up after transcription completes.
         """
         # Track temp dirs for cleanup — stored in instance to survive method return
-        if not hasattr(self, '_temp_dirs'):
-            self._temp_dirs: list[str] = []
+        # NOTE: _temp_dirs is in __slots__ and initialized to [] in __init__
+        # [INTERNAL]-009: no hasattr check needed — attribute is guaranteed by __slots__
 
         # Case 1: Already a file path
         if isinstance(source, (str, Path)):
@@ -892,8 +895,8 @@ class WhisperEngine:
             # Convert to WAV 16kHz
             converted = await _convert_to_wav_16khz(source_path)
             if converted is not None:
-                if converted != source_path:
-                    self._temp_dirs.append(str(converted.parent))
+                # [INTERNAL]-009: _temp_dirs is in __slots__ — guaranteed to exist
+                self._temp_dirs.append(str(converted.parent))
                 return converted
 
             # If ffmpeg unavailable, try to use original file

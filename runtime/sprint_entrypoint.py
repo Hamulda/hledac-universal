@@ -105,6 +105,7 @@ from hledac.universal.utils.async_helpers import (
     parallel_ok,
     safe_create_task,
     safe_wait_for,
+    _check_gathered,
 )
 from hledac.universal.utils.config_introspection import safe_attr_get
 
@@ -3484,6 +3485,28 @@ async def run_sprint(
         except Exception as e:
             logger.debug(f"[BLITZ-07/09] teardown maintenance/journal failed (non-fatal): {e}")  # fail-safe
 
+        # ADVERSARY-005: EphemeralStateAnnihilator — cryptographically annihilate
+        # residual ephemeral state before sprint package export.
+        # Destroys: mlock'd key material, bytearray IOC/API-key buffers,
+        # tempfile.NamedTemporaryFile artifacts, and heap pages via MADV_DONTNEED.
+        # Disabled by HLEDAC_ENABLE_EPHEMERAL_WIPE=0 (audit mode).
+        # Idempotent, fail-soft, ≤800ms budget.
+        try:
+            from hledac.universal.security.ephemeral_wipe import EphemeralStateAnnihilator
+
+            _wipe_result = await EphemeralStateAnnihilator().annihilate()
+            if _wipe_result.get("buffers_wiped", 0) > 0 or _wipe_result.get("munlock_count", 0) > 0:
+                logger.debug(
+                    f"[ADVERSARY-005] ephemeral wipe: "
+                    f"buffers={_wipe_result['buffers_wiped']} "
+                    f"munlock={_wipe_result['munlock_count']} "
+                    f"total={_wipe_result['total_ms']:.0f}ms"
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"[ADVERSARY-005] EphemeralStateAnnihilator failed (non-fatal): {e}")  # fail-soft
+
         # ISSUE-D-1: Close EvidenceLog + DuckDBStore in parallel (independent resources).
         # F285 constraint respected: scheduler already closed, no WAL write race.
         _core_close_errors: list[Exception | None] = []
@@ -3739,7 +3762,10 @@ async def _cancel_all_tasks(timeout_s: float = 5.0) -> None:
     # ISSUE-15: asyncio.wait(ALL_COMPLETED) → asyncio.TaskGroup
     try:
         async with asyncio.timeout(timeout_s):
-            await asyncio.gather(*pending, return_exceptions=True)
+            gathered = await asyncio.gather(*pending, return_exceptions=True)
+            _, errors = _check_gathered(gathered)
+            for err in errors:
+                logger.debug('[SHUTDOWN] _drain_all_tasks: task failed: %s', err)
     except asyncio.TimeoutError:
         stragglers = [t for t in pending if not t.done()]
     else:

@@ -39,7 +39,7 @@ import msgspec
 import yaml
 
 from hledac.universal.core.psutil_shim import psutil
-from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.async_helpers import safe_create_task, _check_gathered
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
 
 SKLEARN_AVAILABLE = True
@@ -564,7 +564,10 @@ class ResourceAwareScheduler:
                 task.cancel()
             try:
                 async with asyncio.timeout(5.0):
-                    await asyncio.gather(*pending, return_exceptions=True)
+                    gathered = await asyncio.gather(*pending, return_exceptions=True)
+                    _, errors = _check_gathered(gathered)
+                    for err in errors:
+                        logger.warning('ResourceAllocator: task failed during shutdown: %s', err)
             except TimeoutError:
                 pass
         self._tasks.clear()

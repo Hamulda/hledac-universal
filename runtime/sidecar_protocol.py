@@ -618,6 +618,7 @@ _ADAPTERS_MODULE: str = "runtime.sidecar_protocol_adapters"
 _ADAPTER_NAMES: tuple[str, ...] = (
     "AcademicSidecarAdapter",
     "AltProtocolSidecarAdapter",
+    "AutoRESidecarAdapter",
     "DHTSidecarAdapter",
     "FederatedResearchSidecarAdapter",
     "FediverseSidecarAdapter",

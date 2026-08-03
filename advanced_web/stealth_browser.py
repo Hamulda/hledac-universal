@@ -88,7 +88,7 @@ async def _fetch_with_curl_cffi_async(url: str, user_agent: str, impersonate: st
             allow_redirects=True,
         )
         return (response.status_code, response.text)
-    except Exception as e:
+    except OSError as e:
         logger.debug(f'curl_cffi fetch failed for {url}: {e}')
         return None
 _FETCH_TIMEOUT = 30
@@ -98,7 +98,7 @@ def _rss_gib() -> float:
     try:
         import psutil
         return psutil.Process(os.getpid()).memory_info().rss / 1024 ** 3
-    except Exception:
+    except OSError:
         return 0.0
 
 def _check_browser_memory_pressure() -> None:

@@ -13,14 +13,27 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
 
 from hledac.universal.utils.hashing import xxh3_64_hex
+from hledac.universal.utils.optional_imports import optional
 
-# xxhash for fast non-crypto hashing (10x faster than blake2b)
-try:
-    import xxhash
+# [DOC]-015: Lazy import — zero cost at module load, resolves on first call.
+# Pattern: optional() defers resolution until first access, eliminating
+# the 5-15µs cold-start penalty when module is imported but functions aren't called.
+_xxhash_resolver = optional("xxhash")
 
-    xxhash_available = True  # noqa: F811
-except ImportError:
-    xxhash_available = False
+
+def _get_xxhash():
+    """Get xxhash module if available (lazy)."""
+    return _xxhash_resolver()
+
+
+def xxhash_available() -> bool:
+    """True if xxhash is installed and available."""
+    return _xxhash_resolver.available
+
+
+def _xxhash_module():
+    """Get xxhash module if available, None otherwise."""
+    return _xxhash_resolver()
 
 if TYPE_CHECKING:
     # Static-only import — never executed at runtime. Resolves MmapBloomFilter
@@ -38,33 +51,36 @@ else:
 # rejects the sentinel `= None` assignment.
 # ---------------------------------------------------------------------------
 
-# Probables library — RotatingBloomFilter from either pyprobables (primary) or probables.
-# D7-01: pyprobables is primary (published on PyPI as "pyprobables", not "probables").
-#   code tried "probables" first but that package doesn't exist on PyPI — always fell through.
+# [DOC]-015: Lazy import with fallback chain — pyprobables → probables.
+# Zero cost until first RotatingBloomFilter instantiation.
+_RBF_PYPROB = optional("pyprobables:RotatingBloomFilter")
+_RBF_PROB = optional("probables:RotatingBloomFilter")
+
 _RotatingBloomFilter: type | None = None  # type: ignore[assignment,misc]
 _PROBABLES_AVAILABLE = False
 
-try:
-    from pyprobables import RotatingBloomFilter as _RBF
-    _RotatingBloomFilter = _RBF
-    _PROBABLES_AVAILABLE = True
-except ImportError:
-    try:
-        from probables import RotatingBloomFilter as _RBF
-        _RotatingBloomFilter = _RBF
+
+def _resolve_rbf() -> type | None:
+    """Lazy resolve RotatingBloomFilter from available source."""
+    global _RotatingBloomFilter, _PROBABLES_AVAILABLE
+    if _RotatingBloomFilter is not None:
+        return _RotatingBloomFilter
+    # Try pyprobables first (primary on PyPI), then probables fallback
+    rbf = _RBF_PYPROB() or _RBF_PROB()
+    if rbf is not None:
+        _RotatingBloomFilter = rbf
         _PROBABLES_AVAILABLE = True
-    except ImportError:
-        _RotatingBloomFilter = None
-        _PROBABLES_AVAILABLE = False
+    return _RotatingBloomFilter
 
 
 # Backward compat alias — factory function so callers can pass kwargs.
 def RotatingBloomFilter(*args: Any, **kwargs: Any) -> Any:
     """Factory — resolves and instantiates RotatingBloomFilter on first call."""
-    if _RotatingBloomFilter is None:
-        msg = "Neither 'probables' nor 'pyprobables' is installed"
+    rbf_cls = _resolve_rbf()
+    if rbf_cls is None:
+        msg = "Neither 'pyprobables' nor 'probables' is installed"
         raise ImportError(msg)
-    return _RotatingBloomFilter(*args, **kwargs)  # type: ignore[operator]
+    return rbf_cls(*args, **kwargs)  # type: ignore[operator]
 
 
 def PROBABLES_AVAILABLE() -> bool:  # noqa: N802
@@ -779,8 +795,9 @@ def fast_hash(text: str) -> str:
         except Exception:  # noqa: BLE001
             pass
     # 2. Python xxhash3-64
-    if xxhash_available:
-        return xxhash.xxh3_64(text).hexdigest()
+    xx = _xxhash_module()
+    if xx:
+        return xx.xxh3_64(text).hexdigest()
     # 3. xxh3-64 via centralized facade
     return xxh3_64_hex(text)
 
@@ -1047,7 +1064,8 @@ def fingerprint_url(url: str) -> int | None:
         except Exception:  # noqa: BLE001
             pass
     # Python fallback
-    if xxhash_available:
+    xx = _xxhash_module()
+    if xx:
         from urllib.parse import parse_qsl, urlencode, urlparse
 
         try:
@@ -1066,7 +1084,7 @@ def fingerprint_url(url: str) -> int | None:
             params = sorted(parse_qsl(parsed.query or ""))
             if params:
                 result += "?" + urlencode(params)
-            return xxhash.xxh3_64(result).intdigest()
+            return xx.xxh3_64(result).intdigest()
         except Exception:  # noqa: BLE001
             pass
     return None
