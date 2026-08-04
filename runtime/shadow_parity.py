@@ -53,7 +53,7 @@ Co se NEporovnává (deferred):
 - actual tool-level dispatch parity
 
 Phase systems (STRICTLY SEPARATED, NEVER merged into one field):
-- workflow_phase: BOOT | WARMUP | ACTIVE | WINDUP | EXPORT | TEARDOWN
+- workflow_phase: BOOT | WARMUP | ACTIVE | DEGRADED | WINDUP | EXPORT | TEARDOWN
 - control_phase: normal | prune | panic (tool/resource governance)
 - windup_local_phase: synthesis | structured | minimal (synthesis mode inside WINDUP)
 
@@ -153,7 +153,7 @@ def _check_phase_field_merge(bundle: LifecycleSnapshotBundle, mismatches: list[s
     _check_phase_field_merge_bug() which emits PHASE_FIELD_MERGE.
     """
     wf = bundle.workflow_phase.phase
-    valid_workflow_phases = {'BOOT', 'WARMUP', 'ACTIVE', 'WINDUP', 'EXPORT', 'TEARDOWN'}
+    valid_workflow_phases = {'BOOT', 'WARMUP', 'ACTIVE', 'DEGRADED', 'WINDUP', 'EXPORT', 'TEARDOWN'}
     if wf not in valid_workflow_phases:
         mismatches.append('LIFECYCLE')
         mismatch_details['workflow_phase'] = f'unexpected phase value: {wf}'

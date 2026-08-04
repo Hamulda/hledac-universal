@@ -16,6 +16,7 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -31,10 +32,16 @@ from hledac.universal.transport.circuit_breaker import (
 )
 from hledac.universal.utils.rate_limiters import get_limiter
 
+from hledac.universal.security.secrets_scrubber import redact_shodan_key, safe_error_log
+
 logger = logging.getLogger(__name__)
 
 SHODAN_SEARCH_API = "https://api.shodan.io/shodan/host/search"
 RATE_LIMIT_KEY = "shodan_api"
+
+# [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
+# Gaussian sigma = 0.8s gives decorrelated inter-request intervals.
+_SHODAN_JITTER_SIGMA_S: float = float(os.environ.get('HLEDAC_SHODAN_JITTER_SIGMA_S', '0.8'))
 
 # F266: Circuit breaker — domain for Shodan API
 _CB_DOMAIN = "api.shodan.io"
@@ -68,7 +75,15 @@ def _get_api_key() -> str | None:
     return os.environ.get("SHODAN_API_KEY") or None
 
 
-def _build_findings(query: str, raw_results: list[dict], ts_now: float) -> list[CanonicalFinding]:
+def _build_findings(query: str, raw_results: list[dict], ts_now: float, api_key: str | None = None) -> list[CanonicalFinding]:
+    """Build CanonicalFinding list from normalized Shodan results.
+
+    Args:
+        query: Search query
+        raw_results: Normalized host results from Shodan API
+        ts_now: Current timestamp
+        api_key: Optional API key to redact from any future payloads (defense-in-depth)
+    """
     findings = []
     for host in raw_results:
         ip = host.get("ip", "") or ""
@@ -126,6 +141,18 @@ async def search_shodan_lane(
     bucket = get_limiter(RATE_LIMIT_KEY)
     await bucket.acquire()
 
+    # [FINAL]-019: Gaussian jitter — decorrelates request bursts.
+    # BLITZ mode (short sprint) skips jitter per is_blitz_mode().
+    _sigma = _SHODAN_JITTER_SIGMA_S
+    if _sigma > 0:
+        try:
+            from hledac.universal.core.telemetry.context_state import is_blitz_mode
+            if not is_blitz_mode():
+                import random as _rng
+                await asyncio.sleep(abs(_rng.gauss(0.0, _sigma)))
+        except Exception:
+            pass  # fail-soft: jitter is best-effort
+
     key = api_key or _get_api_key()
 
     if not key:
@@ -177,13 +204,14 @@ async def search_shodan_lane(
                     if len(raw_results) >= limit:
                         break
 
-                findings = _build_findings(query, raw_results, ts_now)
+                findings = _build_findings(query, raw_results, ts_now, api_key=key)
                 _record_shodan_success()
                 logger.debug(f"[SHODAN] query='{query}' → {len(findings)} findings")
                 return findings, raw_results
 
     except Exception as e:
-        logger.warning(f"[SHODAN] search error: {e}")
+        # [FINAL]-019-09: safe_error_log ensures API key doesn't leak in error message
+        safe_error_log(logger, f"[SHODAN] search error: {e}")
         _record_shodan_failure(kind="exception")
         return [], []
 

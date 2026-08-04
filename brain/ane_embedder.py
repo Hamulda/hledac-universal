@@ -28,6 +28,12 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 logger = logging.getLogger(__name__)
 
+# [FINAL]-019-07: Capability cost registration for QoS ladder triage.
+# ANE embedder: rss_mb=90, peak_mb=200 (CoreML model + ANE buffer)
+from hledac.universal.core.capability_cost import register_capability_cost
+register_capability_cost("aneembedder", rss_mb=90, peak_mb=200, tier="medium", tags=("embedding", "gpu", "ane"))
+register_capability_cost("modernbert", rss_mb=400, peak_mb=600, tier="heavy", tags=("embedding", "gpu"))
+
 class _MLXFamilyMutex:
     """
     R-4: Koordinace ANE/MLX/CoreML na M1 8GB.

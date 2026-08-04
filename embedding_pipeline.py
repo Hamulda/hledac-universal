@@ -455,6 +455,17 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
         return np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)
     if batch_size is None:
         batch_size = get_adaptive_batch_size()
+    # [FINAL]-019-06: Gate embedding under CRITICAL QoS (BATTERY/EMERGENCY).
+    # Under battery-low or near-OOM conditions, the governor suspends MLX
+    # inference. Return zero vectors so callers don't crash — downstream
+    # GraphRAG and similarity search naturally degrade with zero embeddings.
+    try:
+        from hledac.universal.core.resource_governor import get_current_degradation_level, QoSLevel
+        level = get_current_degradation_level()
+        if level in (QoSLevel.EMERGENCY, QoSLevel.BATTERY):
+            return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+    except Exception:
+        pass  # fail-open: governor unavailable → allow embeddings
     original_to_unique: list[int] = []
     texts_to_embed: list[str] = texts
     dedup_happened = False

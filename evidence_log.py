@@ -21,6 +21,7 @@ import uuid
 import zlib
 from collections import deque
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 import sys as _sys
 from typing import Any, Iterator, Literal, cast
@@ -34,6 +35,207 @@ from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 # ISSUE-14: Structured logging via structlog
 # Lazy import to avoid early import overhead — structlog is optional
 _structlog: Any = None
+
+
+# ISSUE [FINAL]-019-05: Global WARC paths singleton — allows sprint_exporter to
+# discover WARC files created during a sprint without needing a direct EvidenceLog
+# reference. Thread-safe; paths appended by EvidenceLog.archive_http_response().
+# Cleared at sprint start by _clear_warc_globals() to prevent cross-sprint accumulation.
+_warc_paths_global: list[str] = []
+_warc_paths_lock = threading.Lock()
+
+
+def _clear_warc_globals() -> None:
+    """ISSUE [FINAL]-019-05: Clear global WARC state between sprints.
+
+    Called at sprint start by EvidenceLog.__init__() to prevent stale snippets
+    and paths from a previous sprint leaking into a new sprint's dashboard.
+
+    Safe to call multiple times — idempotent.
+    """
+    with _warc_paths_lock:
+        _warc_paths_global.clear()
+        _warc_snippets_global.clear()
+
+
+def get_warc_paths() -> list[str]:
+    """Return copy of globally registered WARC file paths.
+
+    Called by sprint_exporter.export_sprint() to extract snippets for the
+    WASMDashboardBuilder WARC replay panel.
+
+    Returns:
+        List of absolute WARC file paths created during this run.
+        Empty list when HLEDAC_WARC_ENABLED=0 or no successful archives.
+    """
+    with _warc_paths_lock:
+        return list(_warc_paths_global)
+
+
+# ISSUE [FINAL]-019-05: Global WARC snippets for sprint_exporter dashboard access.
+# Populated when EvidenceLog.archive_http_response() builds snippets.
+_warc_snippets_global: list[dict[str, Any]] = []
+
+
+def get_warc_snippets() -> list[dict[str, Any]]:
+    """Return copy of globally registered WARC snippets.
+
+    Called by sprint_exporter.export_sprint() to pass to WASMDashboardBuilder.
+
+    Returns:
+        List of snippet dicts: {url, timestamp, status, html, text}.
+        Empty list when HLEDAC_WARC_ENABLED=0 or no successful archives.
+    """
+    with _warc_paths_lock:
+        return list(_warc_snippets_global)
+
+
+def _append_warc_snippet(snippet: dict[str, Any]) -> None:
+    """Append a WARC snippet to the global singleton (thread-safe)."""
+    with _warc_paths_lock:
+        _warc_snippets_global.append(snippet)
+        # Bounded FIFO at 500
+        if len(_warc_snippets_global) > 500:
+            _warc_snippets_global.pop(0)
+
+
+# ISSUE [FINAL]-019-05: Cached EvidenceLog instance for archive_http_response_cached.
+# Initialized lazily on first call. Thread-safe via threading.Lock (not asyncio.Lock —
+# EvidenceLog is sync + thread-safe, so threading.Lock is both correct and simpler).
+_archive_http_elog: Any = None
+_archive_http_elog_lock = threading.Lock()
+
+
+def _get_archive_http_elog() -> EvidenceLog | None:
+    """Thread-safe lazy init of the EvidenceLog singleton for WARC archival.
+
+    Uses double-checked locking with threading.Lock because EvidenceLog.__init__
+    is a sync, thread-safe constructor (no async deps).
+    """
+    global _archive_http_elog
+    if _archive_http_elog is not None:
+        return _archive_http_elog
+    with _archive_http_elog_lock:
+        if _archive_http_elog is not None:
+            return _archive_http_elog
+        try:
+            from hledac.universal._lazy_imports import get_EvidenceLog
+            EvidenceLog = get_EvidenceLog()
+            _archive_http_elog = EvidenceLog()
+        except Exception:  # noqa: BLE001 — fail-safe; EvidenceLog unavailable
+            _archive_http_elog = None
+    return _archive_http_elog
+
+
+def _archive_sync_worker(
+    url: str,
+    timestamp: datetime,
+    http_request: bytes | None,
+    http_response: bytes,
+    content_type: str,
+) -> WarcWriteResult | None:
+    """Sync worker for WARC archival — runs in thread pool when called from async context.
+
+    This is a free function (not a closure) to avoid pickling issues with
+    loop.run_in_executor(). Called by archive_http_response_cached() in
+    both async (via loop.run_in_executor) and sync (direct call) paths.
+    """
+    try:
+        _elog = _get_archive_http_elog()
+        if _elog is None:
+            logger = _get_logger()
+            logger.warning("warc_archive_skipped_no_elog", reason="EvidenceLog singleton not available")
+            return None
+        return _elog.archive_http_response(
+            url=url,
+            timestamp=timestamp,
+            http_request=http_request,
+            http_response=http_response,
+            content_type=content_type,
+        )
+    except Exception:  # noqa: BLE001 — fail-safe
+        return None
+
+
+def archive_http_response_cached(
+    url: str,
+    timestamp: datetime | None = None,
+    http_request: bytes | None = None,
+    http_response: bytes | None = None,
+    content_type: str = "application/http;msgtype=response",
+) -> WarcWriteResult | None:
+    """
+    ISSUE [FINAL]-019-05: Thread-safe, cached EvidenceLog wrapper for HTTP fetch transport.
+
+    This is the canonical WARC archival entry point for the HTTP fetch layer
+    (curl_cffi_fetch, nw_connection, quinn, etc.). It lazily resolves the
+    EvidenceLog singleton and calls archive_http_response() with full snippet
+    building and global singleton registration.
+
+    Designed to be called from async fetch paths without blocking the event loop.
+    Uses loop.run_in_executor() (not run_coroutine_threadsafe) to offload sync
+    EvidenceLog calls to a thread pool, avoiding event-loop-thread deadlocks.
+
+    Fail-safe invariants:
+    - Returns None on any error (never raises)
+    - EvidenceLog.archive_http_response() is always wrapped in try/except
+    - Snippets are appended to global singleton even if EvidenceLog is unavailable
+    - No network, no blocking event loop, no exceptions propagate
+
+    Args:
+        url: Archived URL
+        timestamp: UTC timestamp (defaults to now)
+        http_request: Raw HTTP request bytes (optional)
+        http_response: Raw HTTP response bytes to archive
+        content_type: WARC Content-Type
+
+    Returns:
+        WarcWriteResult if archived, None on any failure
+    """
+    _ts = timestamp if timestamp is not None else datetime.now(UTC)
+
+    # Fast path: no-op if no response to archive
+    if not http_response:
+        return None
+
+    # Detect whether we're in an async context
+    _loop = None
+    try:
+        _loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass  # No running loop — use sync fallback
+
+    if _loop is not None:
+        # Async context: offload sync EvidenceLog call to thread pool.
+        # Uses run_in_executor (NOT run_coroutine_threadsafe) to avoid
+        # event-loop-thread deadlock. The executor runs _archive_sync_worker
+        # on a worker thread while the event loop thread blocks briefly on
+        # _future.result() — the worker thread does the actual I/O.
+        try:
+            _future = _loop.run_in_executor(
+                None,  # default ThreadPoolExecutor
+                _archive_sync_worker,
+                url,
+                _ts,
+                http_request,
+                http_response,
+                content_type,
+            )
+            return _future.result(timeout=3.0)
+        except Exception:  # noqa: BLE001 — fail-safe; timeout or scheduling error
+            return None
+    else:
+        # Sync context: call the worker directly
+        return _archive_sync_worker(
+            url, _ts, http_request, http_response, content_type,
+        )
+
+
+def _register_warc_path(path: str) -> None:
+    """Register a WARC file path in the global singleton."""
+    with _warc_paths_lock:
+        if path not in _warc_paths_global:
+            _warc_paths_global.append(path)
 
 
 def _get_logger() -> Any:
@@ -175,6 +377,45 @@ except ImportError:
 logger = _get_logger()
 
 
+# ISSUE [FINAL]-019-04: WARC Provenance Chain — structured provenance for court-admissible evidence
+# ISSUE [FINAL]-019-10: WarcWriteResult — msgspec.Struct with full write metadata + success field
+class WarcWriteResult(msgspec.Struct, frozen=True, kw_only=True):
+    """
+    Court-admissible provenance record for a WARC write operation.
+
+    ISSUE [FINAL]-019-04: Provides byte-level traceability — record_id, byte_offset,
+    byte_length enable direct WARC reader seeks without full file scanning.
+    ISSUE [FINAL]-019-10: Added 'success' field to track write outcome explicitly.
+
+    M1 8GB: msgspec.Struct (zero-allocation hot-path reads), stored in memory only
+    (not persisted to DuckDB/LMDB — only in evidence_log's _warc_provenance list).
+
+    Fields:
+        record_id:    URN-UUID from WARC-Record-ID header (ISO 28500 §5.2)
+        byte_offset:  Uncompressed byte offset of record start in .warc.gz
+        byte_length:  Uncompressed byte length of the full WARC record block
+        warc_path:    Absolute path to .warc.gz (captured BEFORE rotation)
+        success:       True if write succeeded, False on error
+        url:           Archived URL (WARC target-URI)
+        timestamp:     ISO-8601 string (UTC)
+        warc_type:     WARC record type: 'response' | 'request'
+        payload_digest: SHA-1 digest (WARC-Payload-Digest header)
+        status:        HTTP status code (0 = not parsed)
+    """
+    # Core write metadata (from issue spec)
+    record_id: str = ""  # URN-UUID from WARC-Record-ID header
+    byte_offset: int = 0  # Uncompressed byte offset in .warc.gz
+    byte_length: int = 0  # Uncompressed record length
+    warc_path: str = ""  # Absolute path to .warc.gz
+    success: bool = False  # ISSUE [FINAL]-019-10: Write outcome
+    # Extended provenance fields (ISO 28500 compliant)
+    url: str = ""  # Archived URL (WARC target-URI)
+    timestamp: str = ""  # ISO-8601 string (UTC)
+    warc_type: str = "response"  # 'response' | 'request'
+    payload_digest: str = ""  # sha1:hex
+    status: int = 0  # HTTP status code (0 = not parsed)
+
+
 # ISSUE-P8-001: WARC Writer — ISO 28500 compliant HTTP response archival
 # Zero-dependency: uses gzip + zlib (stdlib only) for M1 8GB compatibility
 class WARCWriter:
@@ -218,9 +459,12 @@ class WARCWriter:
         timestamp: datetime,
         http_request: bytes,
         http_response: bytes,
-    ) -> bool:
+    ) -> WarcWriteResult | None:
         """
         Write a WARC response record (ISO 28500 Section 7.2).
+
+        ISSUE [FINAL]-019-04: Now returns WarcWriteResult for byte-level provenance chain
+        instead of bare bool. This enables court-admissible evidence verification.
 
         Args:
             url: Requested URL
@@ -229,11 +473,11 @@ class WARCWriter:
             http_response: Raw HTTP response bytes (ASCII headers + body)
 
         Returns:
-            True if written, False on error (fail-safe)
+            WarcWriteResult if written successfully, None on error (fail-safe)
         """
         # Fail-safe: skip tiny responses (likely errors)
         if len(http_response) < self._MIN_PAYLOAD_SIZE:
-            return False
+            return WarcWriteResult(success=False)
 
         try:
             with self._lock:
@@ -241,10 +485,16 @@ class WARCWriter:
                 record_id = f"<urn:uuid:{uuid.uuid4()}>"
                 payload_digest = f"sha1:{hashlib.sha1(http_response).hexdigest()}"
 
+                # ISSUE [FINAL]-019-04: Track byte offset BEFORE writing (gzip is append-only)
+                byte_offset = self._current_size
+                # ISSUE [FINAL]-019-04: Capture current path BEFORE rotation (rotation invalidates _path)
+                _current_warc_path = str(self._path)
+
                 # WARC header block (Section 5.3 — CRLF as per spec)
                 header = (
                     f"{self.WARC_VERSION}\r\n"
                     f"WARC-Type: response\r\n"
+                    f"WARC-Target-URI: {url}\r\n"
                     f"WARC-Date: {timestamp.isoformat()}Z\r\n"
                     f"WARC-Record-ID: {record_id}\r\n"
                     f"Content-Length: {len(http_response)}\r\n"
@@ -259,6 +509,7 @@ class WARCWriter:
                 request_header = (
                     f"{self.WARC_VERSION}\r\n"
                     f"WARC-Type: request\r\n"
+                    f"WARC-Target-URI: {url}\r\n"
                     f"WARC-Date: {timestamp.isoformat()}Z\r\n"
                     f"WARC-Record-ID: <urn:uuid:{uuid.uuid4()}>\r\n"
                     f"Content-Length: {len(http_request)}\r\n"
@@ -280,17 +531,34 @@ class WARCWriter:
                 # 64 KB block boundaries. OS page cache handles crash safety.
                 # Final flush happens in close() at TEARDOWN + at rotation.
 
+                # ISSUE [FINAL]-019-04: Compute byte_length = full uncompressed record size
+                byte_length = len(request_block) + len(response_block)
+
                 if self._current_size > self._max_size:
                     self._rotate_unlocked()
 
-                return True
+                # ISSUE [FINAL]-019-04: Extract HTTP status code from response
+                _http_status = self._parse_http_status(http_response)
+
+                return WarcWriteResult(
+                    url=url,
+                    timestamp=timestamp.isoformat() + 'Z',
+                    record_id=record_id,
+                    byte_offset=byte_offset,
+                    byte_length=byte_length,
+                    warc_path=_current_warc_path,  # captured BEFORE rotation
+                    warc_type='response',
+                    payload_digest=payload_digest,
+                    status=_http_status,
+                    success=True,
+                )
 
         except Exception as e:  # noqa: BLE001 — fail-safe: never blocks sprint
             try:
                 self._logger.debug("warc_write_failed", url=url, error=str(e))
             except Exception:  # noqa: BLE001
                 pass
-            return False
+            return None
 
     def write_raw(
         self,
@@ -298,10 +566,11 @@ class WARCWriter:
         timestamp: datetime,
         http_response: bytes,
         content_type: str = "application/http;msgtype=response",
-    ) -> bool:
+    ) -> WarcWriteResult | None:
         """
         Write a raw HTTP response (no request record).
 
+        ISSUE [FINAL]-019-04: Now returns WarcWriteResult for byte-level provenance chain.
         Use when only response bytes are available (e.g., from cache).
 
         Args:
@@ -311,10 +580,10 @@ class WARCWriter:
             content_type: WARC Content-Type (default: HTTP response)
 
         Returns:
-            True if written, False on error (fail-safe)
+            WarcWriteResult if written successfully, None on error (fail-safe)
         """
         if len(http_response) < self._MIN_PAYLOAD_SIZE:
-            return False
+            return WarcWriteResult(success=False)
 
         try:
             with self._lock:
@@ -322,9 +591,15 @@ class WARCWriter:
                 record_id = f"<urn:uuid:{uuid.uuid4()}>"
                 payload_digest = f"sha1:{hashlib.sha1(http_response).hexdigest()}"
 
+                # ISSUE [FINAL]-019-04: Track byte offset BEFORE writing
+                byte_offset = self._current_size
+                # ISSUE [FINAL]-019-04: Capture current path BEFORE rotation
+                _current_warc_path = str(self._path)
+
                 header = (
                     f"{self.WARC_VERSION}\r\n"
                     f"WARC-Type: response\r\n"
+                    f"WARC-Target-URI: {url}\r\n"
                     f"WARC-Date: {timestamp.isoformat()}Z\r\n"
                     f"WARC-Record-ID: {record_id}\r\n"
                     f"Content-Length: {len(http_response)}\r\n"
@@ -341,17 +616,62 @@ class WARCWriter:
                 # PHYSICS-10: No per-record flush — gzip buffers naturally.
                 # Final flush happens in close() at TEARDOWN + at rotation.
 
+                # ISSUE [FINAL]-019-04: Compute byte_length
+                byte_length = len(block)
+
                 if self._current_size > self._max_size:
                     self._rotate_unlocked()
 
-                return True
+                # ISSUE [FINAL]-019-04: Extract HTTP status code
+                _http_status = self._parse_http_status(http_response)
+
+                return WarcWriteResult(
+                    url=url,
+                    timestamp=timestamp.isoformat() + 'Z',
+                    record_id=record_id,
+                    byte_offset=byte_offset,
+                    byte_length=byte_length,
+                    warc_path=_current_warc_path,  # captured BEFORE rotation
+                    warc_type='response',
+                    payload_digest=payload_digest,
+                    status=_http_status,
+                    success=True,
+                )
 
         except Exception as e:  # noqa: BLE001
             try:
                 self._logger.debug("warc_write_raw_failed", url=url, error=str(e))
             except Exception:  # noqa: BLE001
                 pass
-            return False
+            return None
+
+    def _parse_http_status(self, http_response: bytes) -> int:
+        """
+        ISSUE [FINAL]-019-04: Extract HTTP status code from response bytes.
+
+        Parses the status line from raw HTTP response bytes.
+        Handles HTTP/1.x and HTTP/2 styles.
+
+        Returns:
+            HTTP status code (e.g., 200, 404, 500) or 0 if parsing fails.
+        """
+        if not http_response:
+            return 0
+        # Find first CRLF or LF to isolate the status line
+        crlf_pos = http_response.find(b'\r\n')
+        lf_pos = http_response.find(b'\n')
+        if crlf_pos == -1 and lf_pos == -1:
+            return 0
+        end_pos = crlf_pos if crlf_pos != -1 else lf_pos
+        status_line = http_response[:end_pos]
+        # Parse "HTTP/1.1 200 OK" or "HTTP/2 200"
+        parts = status_line.split(b' ')
+        if len(parts) >= 2:
+            try:
+                return int(parts[1])
+            except ValueError:
+                return 0
+        return 0
 
     def _rotate_unlocked(self) -> None:
         """Rotate to new WARC file. Must be called with _lock held."""
@@ -1102,7 +1422,7 @@ class EvidenceLog:
     - Dotazování podle typu a confidence
     - Shrnutí pro Hermes (ne celý raw log)
     """
-    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_cancel_event', '_cancel_watcher_task', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled', '_dlq_manager', '_warc_writer', '_warc_enabled', '_warc_paths', '_warc_init_lock', '_blitz_mode')
+    __slots__ = ('_run_id', '_log', '_index_by_type', '_index_by_source', '_created_at', '_frozen', '_closed', '_total_count', '_dropped_count', '_seq', '_chain_head', '_genesis_hash', '_encrypt_at_rest', '_encryption_key', '_cipher', '_enable_persist', '_persist_path', '_persist_file', '_persist_path_str', '_mpsc', '_mpsc2', '_flush_task', '_async_write_queue', '_async_write_task', '_mpsc2_reader', '_db_path', '_db', '_initialized', '_arrow_path', '_arrow_writer', '_arrow_schema', '_closing', '_manifest_dirty', '_flush_shutdown', '_async_write_shutdown', '_cancel_event', '_cancel_watcher_task', '_loop', '_silent_failure', '_sample_rate', '_duckdb_conn', '_duckdb_enabled', '_dlq_manager', '_warc_writer', '_warc_enabled', '_warc_paths', '_warc_init_lock', '_warc_data_lock', '_blitz_mode', '_warc_provenance', '_warc_snippets')
     MAX_RAM_EVENTS = 50
     MAX_PAYLOAD_PREVIEW = 200
     JSONL_ROTATE_SIZE = 10 * 1024 * 1024
@@ -1223,9 +1543,22 @@ class EvidenceLog:
         self._warc_writer: WARCWriter | None = None
         self._warc_enabled: bool = ENV.get_bool('HLEDAC_WARC_ENABLED', default=False)
         self._warc_paths: list[str] = []
+        # ISSUE [FINAL]-019-04: In-memory provenance list for WARC records
+        self._warc_provenance: list[WarcWriteResult] = []
+        # ISSUE [FINAL]-019-05: Dashboard-ready snippet cache — populated when HTTP
+        # responses are archived. Extracted from raw WARC records for the replay panel.
+        # Bounded: max 500 snippets (WASM dashboard limit), FIFO eviction.
+        self._warc_snippets: list[dict[str, Any]] = []
         self._warc_init_lock: threading.Lock = threading.Lock()
+        # ISSUE [FINAL]-019-05: Protects _warc_provenance, _warc_snippets, _warc_paths
+        # from concurrent mutation when archive_http_response() is called from
+        # thread pool via run_in_executor (async fetch path).
+        self._warc_data_lock: threading.Lock = threading.Lock()
         # PHYSICS-09: Blitz mode — reduces per-batch flush syscall frequency
         self._blitz_mode: bool = blitz_mode
+        # ISSUE [FINAL]-019-05: Clear stale globals from previous sprint
+        if self._warc_enabled:
+            _clear_warc_globals()
 
     def _sync_close(self) -> None:
         """Synchronous cleanup: cancel flush task, close Arrow writer, sync persist."""
@@ -2410,7 +2743,7 @@ class EvidenceLog:
         payload = {'evidence_id': evidence_id, 'packet_path': packet_path, 'summary': summary}
         return self.create_event(event_type='evidence_packet', payload=payload, source_ids=source_ids, confidence=confidence)
 
-    # ISSUE-P8-001: WARC archival API
+    # ISSUE-P8-001 + ISSUE [FINAL]-019-04: WARC archival API with provenance chain
     def archive_http_response(
         self,
         url: str,
@@ -2418,9 +2751,13 @@ class EvidenceLog:
         http_request: bytes | None = None,
         http_response: bytes | None = None,
         content_type: str = "application/http;msgtype=response",
-    ) -> bool:
+    ) -> WarcWriteResult | None:
         """
         Archive raw HTTP response to WARC file (ISO 28500 compliant).
+
+        ISSUE [FINAL]-019-04: Now returns WarcWriteResult for court-admissible
+        byte-level provenance chain. The provenance record is also stored in
+        the internal _warc_provenance list for later extraction by sprint_exporter.
 
         M1 8GB optimized: uses gzip compression (native C), bounded file size
         rotation (10 GB default), fail-safe error handling.
@@ -2434,23 +2771,25 @@ class EvidenceLog:
             content_type: WARC Content-Type (default: application/http;msgtype=response)
 
         Returns:
-            True if archived successfully, False on error (fail-safe)
+            WarcWriteResult if archived successfully, None on error (fail-safe)
 
         Usage:
             warc_enabled = ENV.get_bool('HLEDAC_WARC_ENABLED', default=False)
             if warc_enabled and fetch_result.body:
-                evidence_log.archive_http_response(
+                prov = evidence_log.archive_http_response(
                     url=fetch_result.url,
                     http_response=fetch_result.body,
                     content_type=f"application/http;msgtype=response;charset={fetch_result.content_type or 'utf-8'}",
                 )
+                if prov:
+                    logger.debug("warc_archived", url=url, record_id=prov.record_id)
         """
         if not http_response:
-            return False
+            return None
         if self._silent_failure:
-            return False
+            return None
         if not self._warc_enabled:
-            return False
+            return None
 
         # ISSUE-P8-001: Lazy init on first write (thread-safe via dedicated lock)
         if self._warc_writer is None:
@@ -2458,23 +2797,178 @@ class EvidenceLog:
                 # Double-check after acquiring lock
                 if self._warc_writer is None:
                     if self._persist_path is None:
-                        return False
+                        return None
                     try:
                         self._warc_writer = WARCWriter(self._persist_path)
                     except Exception:  # noqa: BLE001
-                        return False
+                        return None
 
         _ts = timestamp if timestamp is not None else datetime.now(UTC)
 
+        prov: WarcWriteResult | None
         if http_request:
-            return self._warc_writer.write_response(url, _ts, http_request, http_response)
+            prov = self._warc_writer.write_response(url, _ts, http_request, http_response)
         else:
-            return self._warc_writer.write_raw(url, _ts, http_response, content_type)
+            prov = self._warc_writer.write_raw(url, _ts, http_response, content_type)
+
+        # ISSUE [FINAL]-019-04: Store provenance for later extraction by sprint_exporter
+        # ISSUE [FINAL]-019-10: Only store successful writes — success=False (e.g. payload
+        # too small) is not an error but is not worth recording in the provenance chain.
+        if prov is not None and prov.success:
+            # Thread-safe list access: archive_http_response() can be called from
+            # thread pool via run_in_executor (async fetch path). _warc_data_lock
+            # protects _warc_provenance, _warc_snippets, and _warc_paths from races.
+            with self._warc_data_lock:
+                self._warc_provenance.append(prov)
+                # ISSUE [FINAL]-019-05: Track WARC file paths for warc_paths property
+                if prov.warc_path and prov.warc_path not in self._warc_paths:
+                    self._warc_paths.append(prov.warc_path)
+                # Bound _warc_provenance at 500 — same as snippets for M1 8GB safety
+                if len(self._warc_provenance) > 500:
+                    self._warc_provenance.pop(0)
+                # ISSUE [FINAL]-019-05: Build dashboard-ready snippet — bounded FIFO at 500
+                _snippet = self._build_warc_snippet(prov, http_response)
+                if _snippet is not None:
+                    self._warc_snippets.append(_snippet)
+                    # Evict oldest if over limit (FIFO)
+                    if len(self._warc_snippets) > 500:
+                        self._warc_snippets.pop(0)
+            # Also append to global singleton for sprint_exporter access
+            # (globals use their own _warc_paths_lock — no deadlock with _warc_data_lock)
+            if _snippet is not None:
+                _append_warc_snippet(_snippet)
+
+        return prov
 
     @property
     def warc_paths(self) -> list[str]:
         """Return list of WARC file paths created during this run."""
-        return self._warc_paths.copy()
+        with self._warc_data_lock:
+            return self._warc_paths.copy()
+
+    @property
+    def warc_provenance(self) -> list[WarcWriteResult]:
+        """
+        ISSUE [FINAL]-019-04: Return the full WARC provenance chain.
+
+        Returns all WarcWriteResult records collected during this run.
+        Used by sprint_exporter to populate warc_snippets for the dashboard.
+
+        NOTE: Returns a copy to prevent external mutation of internal state.
+        For WARC path registration in the global singleton, call
+        _register_warc_paths_global() separately.
+        """
+        with self._warc_data_lock:
+            return self._warc_provenance.copy()
+
+    def _register_warc_paths_global(self) -> None:
+        """ISSUE [FINAL]-019-05: Register all WARC paths in the global singleton.
+
+        Called by sprint_exporter after extracting warc_provenance, so the
+        global singleton is available for other consumers that lack a direct
+        EvidenceLog reference.
+        """
+        _current_paths = self._warc_writer.path_history if self._warc_writer else []
+        for _p in _current_paths:
+            _path_str = str(_p)
+            if _path_str not in _warc_paths_global:
+                with _warc_paths_lock:
+                    if _path_str not in _warc_paths_global:
+                        _warc_paths_global.append(_path_str)
+
+    def _build_warc_snippet(
+        self, prov: WarcWriteResult, http_response: bytes
+    ) -> dict[str, Any] | None:
+        """
+        ISSUE [FINAL]-019-05: Build a dashboard-ready snippet dict from a WARC record.
+
+        Extracts readable text from raw HTTP response bytes for the WASMDashboardBuilder
+        WARC replay panel. Parses HTTP headers to find the body start, decodes as
+        UTF-8 with replacement, and returns a snippet dict matching the dashboard's
+        expected schema: {url, timestamp, status, html, text}.
+
+        Args:
+            prov: WarcWriteResult record for the archived response
+            http_response: Raw HTTP response bytes (headers + body)
+
+        Returns:
+            Snippet dict for the dashboard, or None if parsing fails.
+        """
+        try:
+            # Find body start: double CRLF separates headers from body
+            _body_start = http_response.find(b'\r\n\r\n')
+            _raw_headers = (
+                http_response[:_body_start] if _body_start >= 0 else b''
+            )
+            _body_bytes = (
+                http_response[_body_start + 4:]
+                if _body_start >= 0
+                else http_response
+            )
+
+            # Extract status from first response line
+            _status = prov.status or 0
+            if _status == 0:
+                _header_text = _raw_headers.decode('utf-8', errors='replace')
+                _first_line = _header_text.split('\r\n')[0] if _header_text else ''
+                if _first_line.startswith('HTTP/'):
+                    _parts = _first_line.split(' ', 2)
+                    if len(_parts) >= 2:
+                        _status = int(_parts[1])
+
+            # Decode body for text display (strip binary)
+            _text_content = _body_bytes.decode('utf-8', errors='replace')
+
+            # Detect HTML — extract text for preview via HTMLParser
+            _html_content: str | None = None
+            if _text_content.strip().startswith(('<', '<?', '<!')):
+                try:
+                    class _TextExtractor(HTMLParser):
+                        def __init__(self) -> None:
+                            super().__init__()
+                            self._lines: list[str] = []
+
+                        def handle_data(self, data: str) -> None:
+                            self._lines.append(data.strip())
+
+                    _parser = _TextExtractor()
+                    _parser.feed(_text_content)
+                    _html_content = '\n'.join(_parser._lines)[:5000]
+                except Exception:  # noqa: BLE001
+                    _html_content = _text_content[:5000]
+
+            # ISSUE [FINAL]-019-04: Merge provenance chain fields into snippet
+            # This ensures the dashboard receives both content AND provenance metadata
+            return {
+                'url': prov.url,
+                'timestamp': prov.timestamp,
+                'status': _status,
+                'html': _html_content or '',  # Stripped text from HTML (or raw text if not HTML)
+                'text': _text_content[:5000],  # Always full decoded text for preview
+                # ISSUE [FINAL]-019-04: Provenance chain fields
+                'record_id': prov.record_id,
+                'byte_offset': prov.byte_offset,
+                'byte_length': prov.byte_length,
+                'warc_path': prov.warc_path,
+                'payload_digest': prov.payload_digest,
+            }
+        except Exception:  # noqa: BLE001 — fail-safe; snippet building is non-critical
+            return None
+
+    @property
+    def warc_snippets(self) -> list[dict[str, Any]]:
+        """
+        ISSUE [FINAL]-019-05: Return WARC snippets for the dashboard WARC replay panel.
+
+        Returns dashboard-ready snippet dicts: {url, timestamp, status, html, text,
+        record_id, byte_offset, byte_length, warc_path, payload_digest}.
+        Populated by archive_http_response() during HTTP fetching.
+
+        Returns:
+            List of snippets, bounded at 500 (FIFO eviction).
+        """
+        with self._warc_data_lock:
+            return list(self._warc_snippets)
 
     _FORENSIC_MAX_KEYS = 30
     _FORENSIC_MAX_VALUE_LEN = 1000

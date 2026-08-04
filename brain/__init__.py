@@ -218,6 +218,11 @@ _ENGINE_REGISTRY: tuple[tuple[str, str, tuple[str, ...], str | None], ...] = (
         "get_whisper_engine", "transcribe_audio", "is_whisper_available",
         "WHISPER_AVAILABLE",
     ), "whisper"),
+    # [FINAL]-019: AbsenceMiningEngine — negative evidence / structural absence detection
+    ("absence_mining", "ABSENCE_MINING_AVAILABLE", (
+        "AbsenceMiningEngine", "AbsenceFinding", "AbsenceReport", "AbsenceType",
+        "get_absence_engine", "get_absence_engine_sync", "ABSENCE_MINING_AVAILABLE",
+    ), None),
 )
 
 

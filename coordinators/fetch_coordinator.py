@@ -2758,6 +2758,17 @@ class FetchCoordinator(UniversalCoordinator):
         """Legacy wrapper — redirect to transport-aware implementation."""
         await self._fire_cover_traffic_url(url, delay, transport)
 
+
+def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None) -> None:
+    """Non-blocking put via call_later. Used by enqueue_pivot stagger."""
+    try:
+        pivot_queue.put_nowait(task)
+        if pivot_stats is not None:
+            pivot_stats['total'] = pivot_stats.get('total', 0) + 1
+    except asyncio.QueueFull:
+        pass
+
+
     def enqueue_pivot(self, ioc_value: str, ioc_type: str, confidence: float, degree: float=1.0, task_type: str | None=None) -> None:
         """Enqueue a pivot task. Silently drops if queue is full (M1 8GB).
 
@@ -2767,8 +2778,19 @@ class FetchCoordinator(UniversalCoordinator):
         Sprint F-EXTRACT-2: moved from SprintScheduler. State
         (`_pivot_queue`, `_pivot_stats`) and helper (`_get_adaptive_priority`)
         accessed via provider callbacks.
+
+        [FINAL]-019: Cross-Lane Temporal Correlation Footprint.
+        When HLEDAC_PIVOT_STAGGER_MS > 0 (default 500ms), tasks of the same
+        IoC type are staggered with Gaussian jitter before enqueueing. This
+        breaks the zero-interval burst fingerprint that SIEM correlation rules
+        use to detect automated OSINT tooling. The stagger is per-task-type, so
+        e.g. ipv4→[ip_to_ct, ip_to_greynoise, shodan_enrich] are each delayed
+        by a decorrelated offset before hitting the pivot queue.
         """
         from hledac.universal.runtime.pivot_types import PivotTask
+        import random as _rng
+        import time as _time
+
         pivot_queue = self._pivot_queue_provider()
         if pivot_queue is None:
             return
@@ -2782,18 +2804,43 @@ class FetchCoordinator(UniversalCoordinator):
             return
         base_priority = confidence * max(1.0, float(degree))
         pivot_stats = self._pivot_stats_provider()
-        for tt in task_types_list:
+
+        # [FINAL]-019: temporal correlation decorrelation
+        # Parse stagger once per call — env lookup is relatively expensive.
+        _pivot_stagger_ms_str = os.environ.get('HLEDAC_PIVOT_STAGGER_MS', '500')
+        try:
+            _pivot_stagger_ms = float(_pivot_stagger_ms_str)
+        except ValueError:
+            _pivot_stagger_ms = 500.0
+
+        for idx, tt in enumerate(task_types_list):
             effective = self._adaptive_priority_provider(tt, base_priority)
             priority = -effective
             task = PivotTask(priority, ioc_type, ioc_value, tt)
+
+            # [FINAL]-019: stagger only between distinct task types,
+            # not after the last one. Gaussian jitter decorrelates bursts.
+            if idx < len(task_types_list) - 1 and _pivot_stagger_ms > 0:
+                # Gaussian with sigma = stagger_ms/3 gives ~99.7% within ±stagger_ms
+                jitter_s = abs(_rng.gauss(0.0, _pivot_stagger_ms / 3000.0))
+                # [FINAL]-019-02: use call_later instead of time.sleep().
+                # time.sleep() blocks the event-loop thread — all async workers
+                # are frozen for jitter_s × N calls (~1-2s total stagger).
+                # call_later() schedules a callback and immediately returns;
+                # the event loop stays responsive during the delay.
+                try:
+                    _loop = asyncio.get_running_loop()
+                    _loop.call_later(jitter_s, _put_task, task, pivot_queue, pivot_stats)
+                    continue  # call_later handles placement; skip immediate put
+                except RuntimeError:
+                    pass  # no running loop → fall through to immediate put
+            # Immediate put: last item, or fallback when no loop available
             try:
                 pivot_queue.put_nowait(task)
                 if pivot_stats is not None:
                     pivot_stats['total'] = pivot_stats.get('total', 0) + 1
             except asyncio.QueueFull:
                 pass
-
-    def enqueue_hypothesis_pivot(self, ioc_value: str, ioc_type: str='hypothesis', confidence: float=0.7, depth: int=1) -> bool:
         """Enqueue a hypothesis-driven pivot task with bounded caps.
 
         Sprint F193B: Bounded hypothesis → finding feedback loop.

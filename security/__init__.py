@@ -33,7 +33,17 @@ from hledac.universal.security.ephemeral_wipe import (
 # Real implementations from security/
 from hledac.universal.security.encryption import decrypt_aes_gcm, encrypt_aes_gcm  # noqa: F401, E402
 from hledac.universal.security.ram_vault import RamDiskVault  # noqa: F401, E402
-from hledac.universal.security.secrets_scrubber import scrub_dict_recursive, scrub_secrets  # noqa: F401, E402
+from hledac.universal.security.secrets_scrubber import (
+    redact_censys_credentials,
+    redact_env_var,
+    redact_greynoise_key,
+    redact_hibp_key,
+    redact_ipinfo_key,
+    redact_shodan_key,
+    safe_error_log,
+    scrub_dict_recursive,
+    scrub_secrets,
+)  # noqa: F401, E402
 
 # ADVERSARY-001: Tiered media sandbox
 from hledac.universal.security.media_sandbox import (
@@ -84,8 +94,15 @@ __all__ = [
     "decrypt_aes_gcm",
     "encrypt_aes_gcm",
     "profile_file_risk",
+    "redact_censys_credentials",
+    "redact_env_var",
+    "redact_greynoise_key",
+    "redact_hibp_key",
+    "redact_ipinfo_key",
+    "redact_shodan_key",
     "register_mlock_region",
     "run_whisper_in_subprocess",
+    "safe_error_log",
     "scrub_dict_recursive",
     "scrub_secrets",
     "unregister_mlock_region",

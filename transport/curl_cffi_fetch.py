@@ -14,6 +14,7 @@ Architecture (Issue 3.5 consolidation):
 
 import asyncio
 import errno
+from datetime import UTC, datetime
 import functools
 import hashlib
 import itertools
@@ -1421,6 +1422,29 @@ async def fetch_via_curl_cffi(
                 "failure_stage": None,
                 "network_error_kind": None,
             }
+
+            # ISSUE [FINAL]-019-05: Archive successful HTTP response to WARC.
+            # Wire evidence_log.archive_http_response() into the primary HTTP fetch path.
+            # Archive after success, before any processing. WARC archival is completely
+            # fail-safe — errors are suppressed and never affect the fetch result.
+            _warc_archived = False
+            if ENV.get_bool('HLEDAC_WARC_ENABLED', default=False):
+                try:
+                    from hledac.universal.evidence_log import archive_http_response_cached
+
+                    _warc_ts = datetime.now(UTC)
+                    _warc_prov = archive_http_response_cached(
+                        url=url,
+                        timestamp=_warc_ts,
+                        http_response=content_bytes,
+                        content_type="application/http;msgtype=response",
+                    )
+                    if _warc_prov is not None:
+                        _warc_archived = True
+                        result['warc_record_id'] = _warc_prov.record_id
+                except Exception:  # noqa: BLE001 — fail-safe; WARC archival never blocks fetching
+                    pass
+            result['warc_archived'] = _warc_archived
 
             # [NEXUS]-018-01: Fire-and-forget WINDOW_UPDATE worker for Safari WebKit.
             # Safari sends WINDOW_UPDATE after ~80ms pause on keep-alive connections.

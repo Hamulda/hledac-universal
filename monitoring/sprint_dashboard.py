@@ -23,13 +23,13 @@ except Exception as _rich_missing:
     Live = None
 if TYPE_CHECKING:
     from hledac.universal.runtime.scheduler_result import SprintSchedulerResult
-_PHASE_COLORS = {'BOOT': 'dim', 'WARMUP': 'yellow', 'ACTIVE': 'green', 'WINDUP': 'cyan', 'EXPORT': 'blue', 'TEARDOWN': 'magenta', 'ABORTED': 'red'}
+_PHASE_COLORS = {'BOOT': 'dim', 'WARMUP': 'yellow', 'ACTIVE': 'green', 'DEGRADED': 'bright_yellow', 'WINDUP': 'cyan', 'EXPORT': 'blue', 'TEARDOWN': 'magenta', 'ABORTED': 'red'}
 
 def _phase_style(phase: str) -> str:
     return _PHASE_COLORS.get(phase.upper(), 'white')
 
 def _phase_emoji(phase: str) -> str:
-    return {'BOOT': '⚙️', 'WARMUP': '⚡', 'ACTIVE': '🔨', 'WINDUP': '⏹', 'EXPORT': '📤', 'TEARDOWN': '✅', 'ABORTED': '❌'}.get(phase.upper(), '❓')
+    return {'BOOT': '⚙️', 'WARMUP': '⚡', 'ACTIVE': '🔨', 'DEGRADED': '⚠️', 'WINDUP': '⏹', 'EXPORT': '📤', 'TEARDOWN': '✅', 'ABORTED': '❌'}.get(phase.upper(), '❓')
 
 class SprintDashboard:
     """

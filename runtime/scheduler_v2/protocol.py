@@ -54,7 +54,7 @@ class PhaseRunner(Protocol):
         """Handle final phase transitions for teardown.
 
         If in WINDUP → EXPORT → TEARDOWN.
-        If in ACTIVE/WARMUP → TEARDOWN (abort).
+        If in ACTIVE/DEGRADED/WARMUP → TEARDOWN (abort).
         """
         ...
 

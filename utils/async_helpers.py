@@ -1957,6 +1957,12 @@ async def bounded_parallel_map[T, R](
     ordered: bool = True,
     ctx: str = "",
     logger_instance: logging.Logger | None = None,
+    # [FINAL]-019-02: optional pre-semaphore jitter for anti-SIEM decorrelation.
+    # Default 0 = no jitter (backwards-compatible). Callers that need burst
+    # decorrelation (e.g. API lane batches) pass jitter_sigma_s > 0.
+    # jitter_max_s caps per-item delay to prevent runaway delay with large N.
+    jitter_sigma_s: float = 0.0,
+    jitter_max_s: float = 2.0,
 ) -> list[R | None]:
     """ISSUE-005: Parallel async map with bounded concurrency.
 
@@ -2016,6 +2022,21 @@ async def bounded_parallel_map[T, R](
     sem = asyncio.Semaphore(concurrency)
 
     async def _run(idx: int, item: T) -> tuple[int, R | BaseException]:
+        # [FINAL]-019-02: jitter BEFORE semaphore acquisition.
+        # Semaphore only serialises the await-point, not creation time.
+        # Without pre-acquire jitter, N concurrent coroutines all hit the API
+        # within milliseconds → distinctive SIEM burst fingerprint.
+        # BLITZ mode skips jitter. Bounds: jitter_s capped to avoid runaway delay.
+        try:
+            _bpm_jitter = jitter_sigma_s
+            if _bpm_jitter > 0:
+                from hledac.universal.core.telemetry.context_state import is_blitz_mode
+                if not is_blitz_mode():
+                    import random as _rng
+                    await asyncio.sleep(min(abs(_rng.gauss(0.0, _bpm_jitter)), jitter_max_s))
+        except Exception:
+            pass  # fail-soft: jitter is best-effort
+
         async with sem:
             try:
                 return idx, await coro_fn(item)

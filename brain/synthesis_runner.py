@@ -1874,7 +1874,54 @@ class SynthesisRunner:
         report = self._parse_raw_to_osintreport(raw_dict, token_logprobs=token_logprobs)
         if report is None:
             return None
+
         report.confidence = self._compute_confidence(report, used_outlines)
+
+        # [FINAL]-019: Absence Mining Engine — run AFTER confidence computation
+        # Detects structural absences (CT-virgin domains, orphan IPs, etc.)
+        # and adjusts the computed confidence scores accordingly.
+        _absence_report = None
+        try:
+            from .absence_mining import get_absence_engine, AbsenceReport as _AbsenceReport
+            absence_enabled = os.environ.get(
+                'HLEDAC_ENABLE_ABSENCE_MINING', '1',
+            ).lower() in ('1', 'true', 'yes', 'on')
+            if absence_enabled and self._duckdb_store is not None:
+                absence_engine = await get_absence_engine(self._duckdb_store)
+                _absence_report: _AbsenceReport = await absence_engine.run(
+                    report, self._duckdb_store,
+                )
+                if _absence_report.absences:
+                    logger.info(
+                        "[SYNTHESIS] [FINAL]-019: Absence mining found %d absences "
+                        "(checked=%d, refetch=%s)",
+                        len(_absence_report.absences),
+                        _absence_report.total_checked,
+                        _absence_report.should_trigger_refetch,
+                    )
+                    # Apply absence-based confidence adjustment to computed confidence
+                    adjusted_conf = absence_engine.apply_confidence_adjustment(
+                        report, _absence_report,
+                    )
+                    if adjusted_conf != report.confidence:
+                        logger.debug(
+                            "[SYNTHESIS] [FINAL]-019: Confidence adjusted %.3f → %.3f "
+                            "due to %d absence findings",
+                            report.confidence,
+                            adjusted_conf,
+                            len(_absence_report.confidence_adjustments),
+                        )
+                        report.confidence = adjusted_conf
+        except ImportError:
+            logger.debug(
+                "[SYNTHESIS] [FINAL]-019: AbsenceMiningEngine unavailable "
+                "(dependency missing) — skipping",
+            )
+        except Exception as e:
+            logger.debug(
+                "[SYNTHESIS] [FINAL]-019: Absence mining exception (fail-soft): %s",
+                e,
+            )
 
         # APEX-1009: Run uncertainty gate — compare self-reported confidence with measured entropy
         if token_logprobs:

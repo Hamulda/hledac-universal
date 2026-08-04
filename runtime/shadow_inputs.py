@@ -25,7 +25,7 @@ Design rules:
 - Typed contracts kde existují, compat dict kde ne
 
 Phase systems (STRICTLY SEPARATED):
-- workflow_phase: BOOT | WARMUP | ACTIVE | WINDUP | EXPORT | TEARDOWN (SprintLifecycleManager)
+- workflow_phase: BOOT | WARMUP | ACTIVE | DEGRADED | WINDUP | EXPORT | TEARDOWN (SprintLifecycleManager)
 - control_phase: tool pruning / resource governance decisions (model/control split)
 - windup_local_phase: synthesis mode within windup (structured generation)
 

@@ -21,6 +21,7 @@ import os
 import time
 from typing import Any
 
+import asyncio
 import httpx
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
@@ -32,11 +33,17 @@ from hledac.universal.transport.circuit_breaker import (
 from hledac.universal.utils.async_helpers import bounded_parallel_map
 from hledac.universal.utils.rate_limiters import get_limiter
 
+from hledac.universal.security.secrets_scrubber import redact_greynoise_key, safe_error_log
+
 logger = logging.getLogger(__name__)
 
 GREYNOISE_COMMUNITY_API = "https://api.greynoise.io/v3/community/{ip}"
 GREYNOISE_FULL_API = "https://api.greynoise.io/v3/query/ip"
 RATE_LIMIT_KEY = "greynoise_api"
+
+# [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
+# Gaussian sigma = 0.6s gives decorrelated inter-request intervals.
+_GREYNOISE_JITTER_SIGMA_S: float = float(os.environ.get('HLEDAC_GREYNOISE_JITTER_SIGMA_S', '0.6'))
 
 # F266: Circuit breaker — domain for GreyNoise API
 _CB_DOMAIN = "api.greynoise.io"
@@ -122,6 +129,18 @@ async def query_greynoise_ip(
     bucket = get_limiter(RATE_LIMIT_KEY)
     await bucket.acquire()
 
+    # [FINAL]-019: Gaussian jitter — decorrelates request bursts.
+    # BLITZ mode (short sprint) skips jitter per is_blitz_mode().
+    _sigma = _GREYNOISE_JITTER_SIGMA_S
+    if _sigma > 0:
+        try:
+            from hledac.universal.core.telemetry.context_state import is_blitz_mode
+            if not is_blitz_mode():
+                import random as _rng
+                await asyncio.sleep(abs(_rng.gauss(0.0, _sigma)))
+        except Exception:
+            pass  # fail-soft: jitter is best-effort
+
     key = api_key or _get_api_key()
 
     if not key and not use_community:
@@ -180,7 +199,8 @@ async def query_greynoise_ip(
                     headers=headers,
                 ) as resp:
                     if resp.status_code == 401:
-                        logger.warning("[GREYNOISE] API key required or invalid")
+                        # [FINAL]-019-09: safe_error_log ensures API key doesn't leak
+                        safe_error_log(logger, "[GREYNOISE] API key required or invalid")
                         _record_greynoise_failure(kind="auth_error")
                         return [], {}
                     if resp.status_code == 429:
@@ -199,7 +219,8 @@ async def query_greynoise_ip(
                     return findings, data
 
     except Exception as e:
-        logger.warning(f"[GREYNOISE] query error for {ip}: {e}")
+        # [FINAL]-019-09: safe_error_log ensures API key doesn't leak in error message
+        safe_error_log(logger, f"[GREYNOISE] query error for {ip}: {e}")
         _record_greynoise_failure(kind="exception")
         return [], {}
 
@@ -235,7 +256,18 @@ async def search_greynoise_lane(
     async def _query_one(ip: str) -> tuple[list[CanonicalFinding], dict]:
         return await query_greynoise_ip(ip, api_key=key)
 
-    results = await bounded_parallel_map(ips, _query_one, concurrency=5, ctx="greynoise_lane")
+    results = await bounded_parallel_map(
+        ips,
+        _query_one,
+        concurrency=5,
+        ctx="greynoise_lane",
+        # [FINAL]-019-02: pre-semaphore jitter breaks the bounded_parallel_map
+        # burst (N tasks created simultaneously, semaphore only throttles entry).
+        # Small sigma=0.05s — just decorrelates creation timestamps.
+        # API-level jitter in query_greynoise_ip adds full decorrelation (0.6s).
+        jitter_sigma_s=0.05,
+        jitter_max_s=0.2,
+    )
 
     all_findings = []
     all_raw = []

@@ -104,6 +104,13 @@ def _mlx_available() -> bool:
         return False
 
 
+# [FINAL]-019-07: Capability cost registration for QoS ladder triage.
+# MetalHNSWBuilder: rss_mb=256, peak_mb=512 (GPU buffers + USearch graph)
+# Note: MetalHNSWEnabled is the feature flag, MetalHNSWBuilder is the class
+from hledac.universal.core.capability_cost import register_capability_cost
+register_capability_cost("metalhnswbuilder", rss_mb=256, peak_mb=512, tier="heavy", tags=("gpu", "index", "mlx"))
+
+
 # ---------------------------------------------------------------------------
 # M1 8GB memory budget (aligned with SILICON-01 / MEM-2)
 # ---------------------------------------------------------------------------

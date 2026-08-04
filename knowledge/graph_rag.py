@@ -46,6 +46,11 @@ except ImportError:
     np = None
     NUMPY_AVAILABLE = False
 
+# [FINAL]-019-07: Capability cost registration for QoS ladder triage.
+# GraphRAGOrchestrator: rss_mb=400, peak_mb=600 (embedding + k-hop traversal)
+from hledac.universal.core.capability_cost import register_capability_cost
+register_capability_cost("graphragorchestrator", rss_mb=400, peak_mb=600, tier="heavy", tags=("graph", "rag", "embedding"))
+
 def _get_numpy():
     """Lazy getter for numpy with availability check."""
     return np
@@ -63,6 +68,34 @@ def _check_ram_for_igraph() -> bool:
     except Exception:
         pass
     return True
+
+
+# ─── Governor QoS integration ─────────────────────────────────────────────────
+
+def get_degradation_safe_max_hops(requested_hops: int = 2) -> int:
+    """
+    [FINAL]-019-06: Return the governor-safe maximum hops for GraphRAG.
+
+    Called from multi_hop_search() and find_connections() to cap hops under
+    CRITICAL/MINIMAL QoS.  This reduces embedding and traversal cost when the
+    governor has flagged memory pressure.
+
+    QoS → max_hops mapping:
+        full / thermal / windup:  requested_hops (no cap, default 2)
+        battery / emergency:       1  (cap to minimal traversal)
+
+    Thread-safe: delegates to get_current_degradation_level() which reads the
+    module-level _last_qos_profile cache updated by apply_decision().
+    """
+    try:
+        from hledac.universal.core.resource_governor import QoSLevel, get_current_degradation_level
+        level = get_current_degradation_level()
+        if level is QoSLevel.EMERGENCY or level is QoSLevel.BATTERY:
+            return 1
+        return requested_hops
+    except Exception:
+        return requested_hops  # fail-open: governor unavailable → use caller's value
+
 
 class CentralityScores(msgspec.Struct, gc=False):
     """Centrality analysis results for a node."""
@@ -302,6 +335,8 @@ class GraphRAGOrchestrator:
                 - drift_events: Detected drift events (if timeline=True)
                 - narratives: Competing narratives (if contested)
         """
+        # [FINAL]-019-06: Cap hops under CRITICAL/MINIMAL QoS to reduce traversal cost.
+        hops = get_degradation_safe_max_hops(hops)
         logger.info(f"🔍 Multi-hop search: query='{query}', hops={hops}, max_nodes={max_nodes}, timeline={timeline}, prefer_recent={prefer_recent}")
         seed_entities: set[str] = set()
         visited: set[str] = set()
@@ -398,6 +433,8 @@ class GraphRAGOrchestrator:
             Dict with insights, paths, summary_text, novelty_stats, contested, counter_paths,
             timeline_points (if timeline=True), drift_events (if timeline=True), narratives (if contested)
         """
+        # [FINAL]-019-06: Cap hops under CRITICAL/MINIMAL QoS.
+        hops = get_degradation_safe_max_hops(hops)
         logger.info(f"🔍 Multi-hop search (sync): query='{query}', hops={hops}, max_nodes={max_nodes}, timeline={timeline}")
         seed_entities: set[str] = set()
         visited: set[str] = set()
@@ -584,6 +621,8 @@ class GraphRAGOrchestrator:
         Returns:
             List of connection paths
         """
+        # [FINAL]-019-06: Cap max_hops under CRITICAL/MINIMAL QoS to reduce BFS cost.
+        max_hops = get_degradation_safe_max_hops(max_hops)
         import hashlib
 
         def get_entity_id(name: str) -> str:
@@ -1694,6 +1733,8 @@ class GraphRAGOrchestrator:
         Yields:
             Dict representing a discovered node with its metadata
         """
+        # [FINAL]-019-06: Cap hops under CRITICAL/MINIMAL QoS.
+        hops = get_degradation_safe_max_hops(hops)
         queue: asyncio.Queue = asyncio.Queue(maxsize=10)
         worker_task = safe_create_task(self._traversal_worker(query, hops, max_nodes, queue))
         try:

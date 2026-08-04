@@ -70,6 +70,13 @@ _RACE_TIMEOUT_S: float = float(
     os.environ.get("HLEDAC_TRANSPORT_RACE_TIMEOUT_S", "8.0")
 )
 
+# [FINAL]-019: SIEM fingerprint defense — stagger transport launches.
+# Fires 4 TLS handshakes within ~5ms by default (no-op fallback).
+# Races 3 transports: httpx, curl_cffi, nw_connection (+ nw_quic opportunistically).
+# Each transport gets a decorrelated stagger so they don't all fire simultaneously.
+# This breaks the "exactly N TLS ClientHellos in N ms" SIEM fingerprint.
+_RACE_STAGGER_MS: float = float(os.environ.get('HLEDAC_RACE_STAGGER_MS', '0'))
+
 # ---------------------------------------------------------------------------
 # M1 8GB bounds
 # ---------------------------------------------------------------------------
@@ -525,41 +532,49 @@ class TransportRaceManager:
                 self._stats["races_all_failed"] += 1
                 return (None, "all_transports_circuit_broken")
 
-            try:
-                # Launch all eligible transports as concurrent tasks
-                tasks: dict[str, asyncio.Task[RaceResult]] = {}
-                for t_name in eligible:
-                    tasks[t_name] = asyncio.ensure_future(
-                        _run_transport(t_name)
-                    )
+            # [FINAL]-019: Launch transports with temporal stagger.
+            # Fires transports with decorrelated delays to break SIEM fingerprint
+            # "N concurrent TLS ClientHellos within milliseconds" pattern.
+            # The stagger is applied inline: each transport is awaited for a
+            # decorrelated delay before its task is created.
+            tasks: dict[str, asyncio.Task[RaceResult]] = {}
+            import random as _rng
+            for idx, t_name in enumerate(eligible):
+                # Stagger before launching each transport's task.
+                # First transport fires immediately (idx=0); rest get delays.
+                if _RACE_STAGGER_MS > 0 and idx > 0:
+                    await asyncio.sleep(abs(_rng.gauss(0.0, _RACE_STAGGER_MS / 3000.0)))
+                tasks[t_name] = asyncio.ensure_future(
+                    _run_transport(t_name)
+                )
 
+            try:
                 # Wait for first success or all failures with timeout
                 winner: RaceResult | None = None
                 pending: set[asyncio.Task[RaceResult]] = set(tasks.values())
 
-                try:
-                    async with asyncio.timeout(timeout):
-                        while pending and winner is None:
-                            done, pending = await asyncio.wait(
-                                pending,
-                                return_when=asyncio.FIRST_COMPLETED,
-                            )
-                            for task in done:
-                                try:
-                                    rr = task.result()
-                                except Exception as exc:
-                                    logger.debug(
-                                        "transport_race: task exception: %s", exc
-                                    )
-                                    continue
-                                if rr.success and winner is None:
-                                    winner = rr
-                                    break  # first success wins
+                async with asyncio.timeout(timeout):
+                    while pending and winner is None:
+                        done, pending = await asyncio.wait(
+                            pending,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for task in done:
+                            try:
+                                rr = task.result()
+                            except Exception as exc:
+                                logger.debug(
+                                    "transport_race: task exception: %s", exc
+                                )
+                                continue
+                            if rr.success and winner is None:
+                                winner = rr
+                                break  # first success wins
 
-                except asyncio.TimeoutError:
-                    self._stats["races_timeout"] += 1
-                    logger.debug("transport_race: race timeout after %.1fs for %s",
-                                timeout, url)
+            except asyncio.TimeoutError:
+                self._stats["races_timeout"] += 1
+                logger.debug("transport_race: race timeout after %.1fs for %s",
+                            timeout, url)
 
                 # Cancel all pending tasks
                 for task in pending:
@@ -574,11 +589,6 @@ class TransportRaceManager:
                 if winner is not None:
                     self.record_success(winner.transport)
                     self._stats[f"races_won_{winner.transport}"] += 1
-                    # Record failures for transports that lost (they didn't
-                    # succeed before the winner, so count as slow/non-winning
-                    # — but don't open circuits for losing racers since they
-                    # may have been about to succeed)
-                    pass
                 else:
                     # All transports failed — record failures
                     self._stats["races_all_failed"] += 1

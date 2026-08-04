@@ -24,6 +24,11 @@ from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for
 from hledac.universal.knowledge.duckdb_migrator import SchemaMigrator
 from hledac.universal.knowledge.duckdb_protocol import DedupManagerProtocol, QualityGateProtocol
 
+# [FINAL]-019-07: Capability cost registration for QoS ladder triage.
+# DuckDBShadowStore: rss_mb=200, peak_mb=512 (connection pool + in-process mode)
+from hledac.universal.core.capability_cost import register_capability_cost
+register_capability_cost("duckdbshadowstore", rss_mb=200, peak_mb=512, tier="heavy", tags=("storage", "sql"))
+
 # OTEL instrumentation — importlib chain, lookup cached once
 @functools.lru_cache(maxsize=1)
 def _otel_instrumented_factory() -> Any:

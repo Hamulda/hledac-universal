@@ -16,6 +16,7 @@ GHOST_INVARIANTS:
   - Always returns CanonicalFinding list (empty on failure)
 """
 
+import asyncio
 import base64
 import logging
 import os
@@ -32,11 +33,18 @@ from hledac.universal.transport.circuit_breaker import (
 )
 from hledac.universal.utils.rate_limiters import get_limiter
 
+from hledac.universal.security.secrets_scrubber import redact_censys_credentials, safe_error_log
+
 logger = logging.getLogger(__name__)
 
 CENSYS_SEARCH_API = "https://search.censys.io/api/v1/search/ipv4"
 CENSYS_VIEW_API = "https://search.censys.io/api/v1/view/ipv4"
 RATE_LIMIT_KEY = "censys_api"
+
+# [FINAL]-019: Anti-correlation jitter for SIEM fingerprint defense.
+# Censys free tier is 0.4 req/s (2.5s between requests). Sigma = 0.6s
+# keeps well within rate limits while decorrelating bursts.
+_CENSYS_JITTER_SIGMA_S: float = float(os.environ.get('HLEDAC_CENSYS_JITTER_SIGMA_S', '0.6'))
 
 # F266: Circuit breaker — domain for Censys API
 _CB_DOMAIN = "search.censys.io"
@@ -72,7 +80,16 @@ def _get_credentials() -> tuple[str | None, str | None]:
     return api_id, api_secret
 
 
-def _build_findings(query: str, raw_results: list[dict], ts_now: float) -> list[CanonicalFinding]:
+def _build_findings(query: str, raw_results: list[dict], ts_now: float, api_id: str | None = None, api_secret: str | None = None) -> list[CanonicalFinding]:
+    """Build CanonicalFinding list from normalized Censys results.
+
+    Args:
+        query: Search query
+        raw_results: Normalized host results from Censys API
+        ts_now: Current timestamp
+        api_id: Optional API ID to redact from any future payloads (defense-in-depth)
+        api_secret: Optional API secret to redact from any future payloads (defense-in-depth)
+    """
     findings = []
     for host in raw_results:
         ip = host.get("ip", "") or ""
@@ -132,6 +149,18 @@ async def search_censys_lane(
     bucket = get_limiter(RATE_LIMIT_KEY)
     await bucket.acquire()
 
+    # [FINAL]-019: Gaussian jitter — decorrelates request bursts.
+    # BLITZ mode (short sprint) skips jitter per is_blitz_mode().
+    _sigma = _CENSYS_JITTER_SIGMA_S
+    if _sigma > 0:
+        try:
+            from hledac.universal.core.telemetry.context_state import is_blitz_mode
+            if not is_blitz_mode():
+                import random as _rng
+                await asyncio.sleep(abs(_rng.gauss(0.0, _sigma)))
+        except Exception:
+            pass  # fail-soft: jitter is best-effort
+
     id_, secret = api_id or _get_credentials()
 
     if not id_ or not secret:
@@ -179,13 +208,14 @@ async def search_censys_lane(
                     if len(raw_results) >= limit:
                         break
 
-                findings = _build_findings(query, raw_results, ts_now)
+                findings = _build_findings(query, raw_results, ts_now, api_id=id_, api_secret=secret)
                 _record_censys_success()
                 logger.debug(f"[CENSYS] query='{query}' → {len(findings)} findings")
                 return findings, raw_results
 
     except Exception as e:
-        logger.warning(f"[CENSYS] search error: {e}")
+        # [FINAL]-019-09: safe_error_log ensures credentials don't leak in error message
+        safe_error_log(logger, f"[CENSYS] search error: {e}")
         _record_censys_failure(kind="exception")
         return [], []
 

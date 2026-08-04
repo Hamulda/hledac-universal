@@ -24,6 +24,7 @@ GHOST_INVARIANTS:
 import asyncio
 from hledac.universal.utils.async_helpers import parallel_ok
 import logging
+import os
 import time
 from dataclasses import dataclass
 import msgspec
@@ -132,6 +133,24 @@ class AutonomousPivotExecutor:
         return results
 
     async def _execute_pivot_with_semaphore(self, pivot: Any, semaphore: asyncio.Semaphore) -> PivotExecutionResult:
+        """Execute a single pivot with semaphore + jitter anti-correlation.
+
+        [FINAL]-019: Adds decorrelated Gaussian jitter before semaphore acquisition.
+        This breaks the zero-interval burst fingerprint when multiple pivots
+        in the same batch compete for the semaphore simultaneously.
+        """
+        import random as _rng
+
+        # [FINAL]-019: stagger before semaphore to decorrelate concurrent pivots
+        _pivot_jitter_s = float(os.environ.get('HLEDAC_PIVOT_EXEC_JITTER_S', '0.2'))
+        if _pivot_jitter_s > 0:
+            try:
+                from hledac.universal.core.telemetry.context_state import is_blitz_mode
+                if not is_blitz_mode():
+                    await asyncio.sleep(abs(_rng.gauss(0.0, _pivot_jitter_s)))
+            except Exception:
+                pass  # fail-soft: jitter is best-effort
+
         async with semaphore:
             return await self._execute_pivot(pivot)
 

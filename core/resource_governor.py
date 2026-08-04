@@ -659,6 +659,44 @@ _UMA_TELEMETRY_LOCK: _threading.RLock = _threading.RLock()
 register_lock(LockCategory.WAL, _io_only_latch_lock, "resource_governor._io_only_latch")
 register_lock(LockCategory.METRICS, _UMA_TELEMETRY_LOCK, "resource_governor._UMA_TELEMETRY_LOCK")
 
+# [FINAL]-019-06: Capability-tier QoS degradation level accessor.
+# Delegates to the existing [FINAL]-019 infrastructure:
+#   - _last_qos_profile: updated by apply_decision() once per evaluate() cycle
+#   - is_capability_allowed(cap): canonical capability gate for subsystems
+#   - get_qos_level(): returns QoSLevel name string
+#
+# get_current_degradation_level() returns QoSLevel enum so callers can do
+# `if get_current_degradation_level() is QoSLevel.EMERGENCY:` (identity comparison).
+#
+# graph_rag.get_degradation_safe_max_hops() and whisper_engine.is_whisper_available()
+# MUST call this — never import GovernorDecision or M1ResourceGovernor.
+
+
+def get_current_degradation_level() -> QoSLevel:
+    """
+    [FINAL]-019-06: Get the current capability-tier QoS degradation level.
+
+    Returns the QoS level most recently written by apply_decision().
+    Capability gate functions (whisper_engine.is_whisper_available(),
+    graph_rag.get_degradation_safe_max_hops()) MUST call this.
+
+    QoS levels:
+        full:       All capabilities enabled — normal operation
+        thermal:    Thermal throttling — reduced batch, shorter generations
+        windup:     Sprint wind-up — sidecars off, MLX OK
+        battery:    Battery low — all MLX suspended, I/O only
+        emergency:  Near-OOM — fetch=1, model blocked, whisper off
+
+    Delegates to _last_qos_profile (updated by apply_decision()) which is
+    thread-safe via the asyncio lock held during evaluate()→apply_decision().
+    """
+    try:
+        return QoSLevel(get_qos_level())
+    except (ValueError, AttributeError):
+        # Fail-open: if _last_qos_profile.level is somehow corrupted or the
+        # module hasn't been fully initialized, default to FULL capabilities.
+        return QoSLevel.FULL
+
 
 def _compute_io_only_latch(system_used_gib: float, current_latch: bool, swap_detected: bool = False) -> bool:
     """
@@ -703,6 +741,9 @@ _telemetry: dict[str, Any] = {
     "transition_count": 0,
     "io_only_enter_count": 0,
     "io_only_exit_count": 0,
+    "degraded_enter_count": 0,
+    "degraded_exit_count": 0,
+    "degraded_last_reason": "",
     "last_state": "ok",
 }
 
@@ -907,6 +948,120 @@ class MemoryPressureHysteresis:
         self._exit_enter_time = None
 
 
+class QoSLevel(StrEnum):
+    """
+    [FINAL]-019: Canonical QoS degradation ladder — 5-tier capability toggle ladder.
+
+    Each level disables a specific set of expensive capabilities, reducing
+    resource pressure without hard-killing the sprint. Levels are mutually
+    exclusive (only one active at a time). Transitions are ordered:
+
+        FULL → THERMAL → WINDUP → BATTERY → EMERGENCY
+
+    The governor computes the worst applicable level from all active
+    constraints (UMA state, thermal, battery, sprint phase) and propagates
+    it to subsystems via GovernorDecision.qos_level.
+
+    Capability toggles (wired in apply_decision()):
+        FULL:       all capabilities enabled
+        THERMAL:    MLX batch size reduced (via batch_scale_factor)
+        WINDUP:     sidecars reduced (via worker_scale_factor)
+        BATTERY:    all MLX inference suspended (io_only=True)
+        EMERGENCY:  fetch reduced to 1, model blocked
+
+    Integration: CapabilityToggleService (core/resource_governor.py) is the
+    canonical sink. Subsystems call get_qos_level() to gate their own
+    expensive operations. GovernorDecision.qos_profile carries the full
+    QoSProfile snapshot for inspection.
+    """
+
+    FULL = "full"       # All capabilities enabled — normal operation
+    THERMAL = "thermal" # Thermal throttling: reduced batch, shorter generations
+    WINDUP = "windup"   # Sprint windup: sidecars reduced, MLX still OK
+    BATTERY = "battery"  # Battery low: all MLX suspended, I/O only
+    EMERGENCY = "emergency"  # Near-OOM: fetch=1, model blocked
+
+    # Python 3.14 StrEnum: non-string class attributes must be wrapped with
+    # enum.nonmember() or they're treated as enum members. Severity ordering
+    # (higher index = more restrictive; 0=FULL, 4=EMERGENCY).
+    _SEVERITY: dict[str, int] = enum.nonmember({
+        "full": 0,
+        "thermal": 1,
+        "windup": 2,
+        "battery": 3,
+        "emergency": 4,
+    })
+
+    @property
+    def severity(self) -> int:
+        """Numeric severity: 0 = FULL, 4 = EMERGENCY."""
+        return self._SEVERITY[self.value]
+
+    def at_least(self, other: "QoSLevel") -> bool:
+        """True if this level is at least as restrictive as `other`.
+        
+        Example: QoSLevel.BATTERY.at_least(QoSLevel.WINDUP) → True
+        """
+        return self.severity >= other.severity
+
+    def at_most(self, other: "QoSLevel") -> bool:
+        """True if this level is no more restrictive than `other`."""
+        return self.severity <= other.severity
+
+    def __ge__(self, other: "QoSLevel") -> bool:
+        if not isinstance(other, QoSLevel):
+            return NotImplemented
+        return self.severity >= other.severity
+
+    def __le__(self, other: "QoSLevel") -> bool:
+        if not isinstance(other, QoSLevel):
+            return NotImplemented
+        return self.severity <= other.severity
+
+    def __gt__(self, other: "QoSLevel") -> bool:
+        if not isinstance(other, QoSLevel):
+            return NotImplemented
+        return self.severity > other.severity
+
+    def __lt__(self, other: "QoSLevel") -> bool:
+        if not isinstance(other, QoSLevel):
+            return NotImplemented
+        return self.severity < other.severity
+
+
+class QoSProfile(msgspec.Struct, frozen=True, gc=False):
+    """
+    [FINAL]-019: QoS profile snapshot emitted with every GovernorDecision.
+
+    Provides structured capability toggles that subsystems can consume
+    without needing to interpret raw numeric factors. The governor computes
+    which level is active and populates the corresponding flags.
+
+    Fields:
+        level:              Canonical QoS level (see QoSLevel).
+        mlx_inference_ok:  True if MLX inference is permitted.
+        sidecars_ok:        True if sidecar advisory is permitted.
+        fetch_ok:           True if network fetch is permitted.
+        embeddings_ok:      True if RAG embedding is permitted.
+        model_load_ok:      True if model loading is permitted.
+        whisper_ok:         True if Whisper STT is permitted.
+        max_workers_pct:    Max workers as percentage of nominal (0-100).
+        fetch_limit_cap:    Hard cap on concurrent fetches.
+        reason:             Human-readable reason for the active level.
+    """
+
+    level: str = "full"
+    mlx_inference_ok: bool = True
+    sidecars_ok: bool = True
+    fetch_ok: bool = True
+    embeddings_ok: bool = True
+    model_load_ok: bool = True
+    whisper_ok: bool = True
+    max_workers_pct: int = 100
+    fetch_limit_cap: int | None = None
+    reason: str = ""
+
+
 class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     """
     G-1 Fix: Canonical governor rozhodnutí s auto-apply semantics.
@@ -916,11 +1071,23 @@ class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     apply_decision() internally before returning. Callers that ignore
     the return value are in violation of the GOVERNOR AUTHORITY CONTRACT.
 
+    [FINAL]-019: Added qos_level (QoSLevel name) and qos_profile (full
+    QoSProfile snapshot) for structured capability toggle propagation.
+
+    [FINAL]-019-06: Added degradation_level (QoSLevel enum) — the canonical
+    degradation level that capability gate functions read via
+    get_current_degradation_level().
+
     fields:
         uma_state:       "ok" | "soft_warn" | "warn" | "critical" | "emergency".
         io_only:          True pokud I/O-only mód (žádné CPU-intensive operace).
         fetch_limit:      MAX souběžných fetch operací.
         block_model_load: True pokud by se neměl load nový MLX model.
+        qos_level:        [FINAL]-019: Canonical QoS level name (see QoSLevel).
+        qos_profile:      [FINAL]-019: Full QoSProfile snapshot for subsystems.
+        degradation_level: [FINAL]-019-06: QoSLevel enum — canonical degradation
+                          level. apply_decision() propagates this to the module-level
+                          _last_qos_profile which get_current_degradation_level() reads.
     """
 
     uma_state: str
@@ -942,6 +1109,13 @@ class GovernorDecision(msgspec.Struct, frozen=True, gc=False):
     # "GPU_HEAVY" = compute window (200 ms) — OK to dispatch MLX inference.
     # "IO_HEAVY" = I/O-only window (50 ms) — only network/DNS/disk, yield to event loop.
     burst_phase: str = "GPU_HEAVY"
+    # [FINAL]-019: Structured QoS ladder
+    qos_level: str = "full"  # QoSLevel name — canonical capability toggle level
+    qos_profile: QoSProfile = QoSProfile()  # Full profile snapshot for subsystems
+    # [FINAL]-019-06: Canonical QoS degradation level (enum). apply_decision()
+    # propagates this to the module-level _last_qos_profile which
+    # get_current_degradation_level() reads.
+    degradation_level: QoSLevel = QoSLevel.FULL
 
 
 class M1ThermalStatus(msgspec.Struct, frozen=True, gc=False):
@@ -1336,7 +1510,7 @@ class M1ResourceGovernor:
     _last_evaluated_memory_ratio: float = 0.0
     _decision_lock_factory: threading.Lock = threading.Lock()
     _decision_lock: asyncio.Lock | None = None
-    __slots__ = ("_hysteresis", "_legacy_cache_ttl_s", "_mpc_controller", "_thermal_monitor", "_power_monitor")
+    __slots__ = ("_hysteresis", "_legacy_cache_ttl_s", "_mpc_controller", "_thermal_monitor", "_power_monitor", "_sprint_windup_mode", "_sprint_degraded_mode")
 
     def __init__(self, cache_ttl_s: float = 5.0):
         self._legacy_cache_ttl_s = cache_ttl_s
@@ -1344,6 +1518,11 @@ class M1ResourceGovernor:
         self._mpc_controller = AdaptiveMPCController()
         self._thermal_monitor = M1ThermalMonitor()
         self._last_evaluated_memory_ratio = 0.0
+        # [FINAL]-019: Windup mode — set True when sprint enters WINDUP phase
+        self._sprint_windup_mode = False
+        # [FINAL]-019-08: Degraded mode — set True when sprint enters DEGRADED phase
+        # Tracks lifecycle-driven degradation separately from CRITICAL/EMERGENCY UMA.
+        self._sprint_degraded_mode: bool = False
         # HW-02: Lazy power monitor initialization
         self._power_monitor: "PowerStatusMonitor | None" = None
 
@@ -1367,6 +1546,209 @@ class M1ResourceGovernor:
     _TEMP_REDUCTION_MILD: float = 0.05  # mild throttle → subtract 0.05 from temperature
     _TEMP_REDUCTION_SEVERE: float = 0.1  # severe throttle → subtract 0.1 from temperature
     _DEFAULT_MAX_TOKENS: int = 2048  # reference max_tokens for DeepHermes3
+
+    def _compute_qos_level(
+        self,
+        uma_state: str,
+        thermal_throttled: bool,
+        thermal_headroom: float,
+        power_status: dict[str, bool | int | float | None],
+        io_only: bool,
+        fetch_limit: int = 20,
+    ) -> tuple[str, QoSProfile]:
+        """
+        [FINAL]-019: Compute the canonical QoS degradation level from all active constraints.
+
+        The ladder is ordered worst-first so we can short-circuit on the first match:
+            EMERGENCY > BATTERY > WINDUP > THERMAL > FULL
+
+        Each level produces a QoSProfile snapshot that subsystems can consume
+        without needing to interpret raw numeric factors.
+
+        Args:
+            uma_state:       Current UMA state ("ok", "soft_warn", "warn", "critical", "emergency").
+            thermal_throttled: Whether CPU/GPU thermal throttling is active.
+            thermal_headroom:  0.0-1.0 thermal headroom (1.0 = no throttling).
+            power_status:     Power status dict from _adjust_for_power().
+            io_only:          Whether I/O-only mode is active.
+
+        Returns:
+            tuple of (qos_level_name, QoSProfile) — level is a QoSLevel name string.
+        """
+        # EMERGENCY: Near-OOM — near-zero capabilities
+        if uma_state == "emergency":
+            return (
+                QoSLevel.EMERGENCY,
+                QoSProfile(
+                    level=QoSLevel.EMERGENCY,
+                    mlx_inference_ok=False,
+                    sidecars_ok=False,
+                    fetch_ok=True,
+                    embeddings_ok=False,
+                    model_load_ok=False,
+                    whisper_ok=False,
+                    max_workers_pct=0,
+                    fetch_limit_cap=1,
+                    reason="UMA emergency: near-OOM, all inference suspended",
+                ),
+            )
+
+        # BATTERY: MLX suspended, I/O only
+        # BATTERY: On battery with I/O-only → pause MLX, keep sidecars active.
+        # No power_factor guard: io_only is authoritative — if the governor
+        # says io_only, the QoS profile must reflect mlx_inference_ok=False.
+        if io_only and power_status.get("on_battery"):
+            power_factor = power_status.get("power_factor", 1.0)
+            return (
+                QoSLevel.BATTERY,
+                QoSProfile(
+                    level=QoSLevel.BATTERY,
+                    mlx_inference_ok=False,
+                    sidecars_ok=True,
+                    fetch_ok=True,
+                    embeddings_ok=False,
+                    model_load_ok=False,
+                    whisper_ok=False,
+                    max_workers_pct=int(max(power_factor, 0.3) * 100),
+                    fetch_limit_cap=max(1, int(fetch_limit * max(power_factor, 0.3))),
+                    reason=f"Battery at {power_status.get('battery_level', '?')}%, MLX suspended",
+                ),
+            )
+
+        # [FINAL]-019-03: When io_only is True but we didn't match BATTERY
+        # (e.g., UMA-critical pressure on AC), mlx_inference/embeddings/whisper
+        # must still be disabled. The QoS profile must match the io_only flag.
+        _mlx_ok = not io_only
+
+        # [FINAL]-019-08: DEGRADED: Governor CRITICAL/EMERGENCY during sprint ACTIVE phase.
+        # This is lifecycle-driven degradation that persists even when the sprint
+        # hasn't started its time-based windup. More aggressive than WINDUP
+        # because memory pressure is acute.
+        if self._sprint_degraded_mode:
+            return (
+                QoSLevel.WINDUP,  # Maps to WINDUP tier in the ladder
+                QoSProfile(
+                    level=QoSLevel.WINDUP,
+                    mlx_inference_ok=_mlx_ok,
+                    sidecars_ok=False,  # All sidecars off
+                    fetch_ok=True,
+                    embeddings_ok=False,  # Embeddings off in degraded
+                    model_load_ok=False,
+                    whisper_ok=False,
+                    max_workers_pct=25,
+                    fetch_limit_cap=2,
+                    reason="Governor CRITICAL/EMERGENCY: degraded mode active"
+                           + (", io_only active" if io_only else ""),
+                ),
+            )
+
+        # WINDUP: Sprint entering wind-down — reduce sidecars, still OK for MLX
+        if self._sprint_windup_mode:
+            return (
+                QoSLevel.WINDUP,
+                QoSProfile(
+                    level=QoSLevel.WINDUP,
+                    mlx_inference_ok=_mlx_ok,
+                    sidecars_ok=False,  # Sidecars off in windup
+                    fetch_ok=True,
+                    embeddings_ok=_mlx_ok,
+                    model_load_ok=False,  # No new model loads in windup
+                    whisper_ok=_mlx_ok,
+                    max_workers_pct=50,
+                    fetch_limit_cap=None,
+                    reason="Sprint wind-up: sidecars suspended"
+                           + (", io_only active" if io_only else ""),
+                ),
+            )
+
+        # THERMAL: Thermal throttling — reduce batch, shorter generations
+        if thermal_throttled and thermal_headroom < 1.0:
+            return (
+                QoSLevel.THERMAL,
+                QoSProfile(
+                    level=QoSLevel.THERMAL,
+                    mlx_inference_ok=_mlx_ok,
+                    sidecars_ok=True,
+                    fetch_ok=True,
+                    embeddings_ok=_mlx_ok,
+                    model_load_ok=_mlx_ok,
+                    whisper_ok=_mlx_ok,
+                    max_workers_pct=int(self._WORKER_SCALE_FACTOR * 100),
+                    fetch_limit_cap=None,
+                    reason=f"Thermal throttling: headroom={thermal_headroom:.0%}, batch reduced"
+                           + (", io_only active" if io_only else ""),
+                ),
+            )
+
+        # FULL: All capabilities enabled (subject to io_only gate)
+        return (
+            QoSLevel.FULL,
+            QoSProfile(
+                level=QoSLevel.FULL,
+                mlx_inference_ok=_mlx_ok,
+                sidecars_ok=True,
+                fetch_ok=True,
+                embeddings_ok=_mlx_ok,
+                model_load_ok=_mlx_ok,
+                whisper_ok=_mlx_ok,
+                max_workers_pct=100,
+                fetch_limit_cap=None,
+                reason="Normal operation" + (", io_only active" if io_only else ""),
+            ),
+        )
+
+    def set_degraded_mode(self, enabled: bool, reason: str = "") -> None:
+        """
+        [FINAL]-019-08: Set sprint degraded mode for QoS ladder.
+
+        Called by SprintLifecycleManager when the sprint enters or exits
+        DEGRADED phase (governor CRITICAL/EMERGENCY detected).
+
+        Unlike set_windup_mode() (lifecycle time-based), this is driven by
+        the governor's memory/thermal state. The governor uses this flag
+        to participate in the QoS ladder even when the sprint hasn't started
+        its time-based windup.
+
+        The reason string is recorded in telemetry for debugging.
+        """
+        if self._sprint_degraded_mode == enabled:
+            return  # No change — skip telemetry spam
+        self._sprint_degraded_mode = enabled
+        # Record in telemetry for observability.
+        try:
+            global _telemetry
+            with _UMA_TELEMETRY_LOCK:
+                if enabled:
+                    _telemetry["degraded_enter_count"] = _telemetry.get("degraded_enter_count", 0) + 1
+                    _telemetry["degraded_last_reason"] = reason
+                else:
+                    _telemetry["degraded_exit_count"] = _telemetry.get("degraded_exit_count", 0) + 1
+        except Exception:
+            pass
+
+    @property
+    def is_degraded(self) -> bool:
+        """
+        [FINAL]-019-08: True when the governor is in degraded mode.
+
+        Degraded mode is active when:
+        - The sprint lifecycle is in DEGRADED phase (governor CRITICAL/EMERGENCY
+          detected during ACTIVE phase), OR
+        - _sprint_degraded_mode was set explicitly.
+
+        Returns False when the sprint has recovered or entered WINDUP/EXPORT.
+        """
+        return self._sprint_degraded_mode
+
+    def set_windup_mode(self, enabled: bool) -> None:
+        """
+        [FINAL]-019: Set sprint windup mode for QoS ladder.
+
+        Called by SprintLifecycleManager when the sprint enters WINDUP phase.
+        This raises the QoS level to WINDUP, disabling sidecars while keeping
+        MLX inference running for final synthesis.
+        """
+        self._sprint_windup_mode = enabled
 
     def _compute_thermal_scales(self, headroom: float) -> tuple[float, float, int | None, float]:
         """
@@ -1483,6 +1865,14 @@ class M1ResourceGovernor:
             preset = ConcurrencyPreset.from_state(UMAState.OK)
             # ISSUE-015: Include thermal generation params even on fallback path
             _worker, _batch, max_tok_override, temp_reduction = self._compute_thermal_scales(thermal_status.thermal_headroom)
+            qos_level, qos_profile = self._compute_qos_level(
+                uma_state=UMAState.OK,
+                thermal_throttled=thermal_status.is_throttled,
+                thermal_headroom=thermal_status.thermal_headroom,
+                power_status={},
+                io_only=False,
+                fetch_limit=preset.fetch_limit,
+            )
             return GovernorDecision(
                 uma_state=UMAState.OK,
                 io_only=False,
@@ -1494,6 +1884,9 @@ class M1ResourceGovernor:
                 max_tokens_override=max_tok_override,
                 temperature_reduction=temp_reduction,
                 burst_phase="GPU_HEAVY",  # PHYSICS-01: safe default on fallback
+                qos_level=qos_level,
+                qos_profile=qos_profile,
+                degradation_level=QoSLevel(qos_level),
             )
         preset = ConcurrencyPreset.from_state(uma.state)
         now = time.monotonic()
@@ -1554,6 +1947,10 @@ class M1ResourceGovernor:
             max_tokens_override=max_tokens_override,
             temperature_reduction=temp_reduction,
             burst_phase=_burst_phase,
+            # [FINAL]-019: QoS level placeholder; finalised in _adjust_for_power after
+            # power constraints are evaluated (battery affects the level).
+            qos_level="_pending",
+            qos_profile=QoSProfile(),
         )
         return self._adjust_for_power(uma, base_decision)
 
@@ -1573,7 +1970,33 @@ class M1ResourceGovernor:
         - AC attached: 1.0 (žádná úspora)
         """
         if not uma.on_battery or uma.ac_attached:
-            return base_decision
+            # [FINAL]-019: Still need to compute QoS level even on AC/battery-free path
+            qos_level, qos_profile = self._compute_qos_level(
+                uma_state=base_decision.uma_state,
+                thermal_throttled=base_decision.thermal_throttled,
+                thermal_headroom=base_decision.thermal_headroom,
+                power_status={},
+                io_only=base_decision.io_only,
+                fetch_limit=base_decision.fetch_limit,
+            )
+            return GovernorDecision(
+                uma_state=base_decision.uma_state,
+                io_only=base_decision.io_only,
+                fetch_limit=base_decision.fetch_limit,
+                block_model_load=base_decision.block_model_load,
+                swap_detected=base_decision.swap_detected,
+                thermal_throttled=base_decision.thermal_throttled,
+                thermal_headroom=base_decision.thermal_headroom,
+                worker_scale_factor=base_decision.worker_scale_factor,
+                batch_scale_factor=base_decision.batch_scale_factor,
+                max_tokens_override=base_decision.max_tokens_override,
+                temperature_reduction=base_decision.temperature_reduction,
+                burst_phase=base_decision.burst_phase,
+                power_status={"on_battery": uma.on_battery, "battery_level": uma.battery_level, "ac_attached": uma.ac_attached, "power_factor": 1.0},
+                qos_level=qos_level,
+                qos_profile=qos_profile,
+                degradation_level=QoSLevel(qos_level),
+            )
 
         battery_level = uma.battery_level
         if battery_level is not None and battery_level < 20:
@@ -1584,6 +2007,18 @@ class M1ResourceGovernor:
             power_factor = 0.8
 
         adjusted_fetch = max(1, int(base_decision.fetch_limit * power_factor))
+
+        # [FINAL]-019: Compute canonical QoS level from all active constraints.
+        # This is done here (after power adjustment) because battery status
+        # is the final modifier in the ladder: EMERGENCY > BATTERY > WINDUP > THERMAL > FULL
+        qos_level, qos_profile = self._compute_qos_level(
+            uma_state=base_decision.uma_state,
+            thermal_throttled=base_decision.thermal_throttled,
+            thermal_headroom=base_decision.thermal_headroom,
+            power_status=power_status,
+            io_only=base_decision.io_only or (power_factor < 0.6),
+            fetch_limit=adjusted_fetch,
+        )
 
         return GovernorDecision(
             uma_state=base_decision.uma_state,
@@ -1604,6 +2039,9 @@ class M1ResourceGovernor:
                 "ac_attached": uma.ac_attached,
                 "power_factor": power_factor,
             },
+            qos_level=qos_level,
+            qos_profile=qos_profile,
+            degradation_level=QoSLevel(qos_level),
         )
 
     async def apply_decision(self, decision: GovernorDecision) -> None:
@@ -1667,6 +2105,15 @@ class M1ResourceGovernor:
             from hledac.universal.core.global_co_scheduler import get_co_scheduler
             scheduler = get_co_scheduler()
             asyncio.create_task(scheduler.on_pressure_change(decision.uma_state))
+        except Exception:
+            pass
+        # [FINAL]-019: Propagate QoS profile to context variable and module cache.
+        # Subsystems call is_capability_allowed() to self-gate expensive operations.
+        # ContextVar ensures thread-safety for async callers.
+        try:
+            global _last_qos_profile
+            _last_qos_profile = decision.qos_profile
+            _qos_signal.set(decision.qos_profile)
         except Exception:
             pass
 
@@ -3052,6 +3499,89 @@ def get_lane_ram_budget(lane_id: str) -> int:
         return _get(lane_id)
     except Exception:
         return 30
+
+
+# ── QoS signal context variable ─────────────────────────────────────────────────
+
+# [FINAL]-019: Context variable carrying the latest GovernorDecision QoS snapshot.
+# Any subsystem can read get_qos_signal() to check if its operation is permitted.
+# Set once per evaluation cycle in apply_decision().
+_qos_signal: contextvars.ContextVar[QoSProfile] = contextvars.ContextVar(
+    "_qos_signal", default=QoSProfile()
+)
+
+
+def get_qos_signal() -> QoSProfile:
+    """Get the current QoS profile signal (thread-safe via ContextVar)."""
+    return _qos_signal.get()
+
+
+# ── Capability toggle service ───────────────────────────────────────────────────
+
+# [FINAL]-019: Module-level cache of the last applied QoS profile.
+# Subsystems call is_capability_allowed(cap) to self-gate without hitting
+# the governor on every call. Updated once per evaluate() cycle.
+_last_qos_profile: QoSProfile = QoSProfile()
+
+
+def _is_governor_critical_or_emergency() -> bool:
+    """
+    [FINAL]-019-08: Fast synchronous probe for CRITICAL/EMERGENCY UMA state.
+
+    This is a lightweight synchronous check intended for use in the lifecycle
+    tick() loop, where async Governor.evaluate() cannot be called. It reads
+    the module-level telemetry cache which is kept up-to-date by apply_decision()
+    (called at the end of each evaluate() cycle).
+
+    Returns True if the governor's last observed UMA state was CRITICAL or
+    EMERGENCY. Returns False if the governor is OK/WARN or hasn't evaluated yet.
+    This is intentionally coarse — false positives are possible if the governor
+    has recovered but the telemetry cache hasn't been refreshed (up to 5s lag).
+
+    For accurate, up-to-date state, use ``await governor.evaluate()`` instead.
+    """
+    try:
+        state = _telemetry["last_state"]
+        return state in ("critical", "emergency")
+    except Exception:
+        return False
+
+
+def is_capability_allowed(capability: str) -> bool:
+    """
+    [FINAL]-019: Check if a named capability is allowed under the current QoS profile.
+
+    This is the canonical capability gate for subsystems. It reads from the
+    module-level cache which is updated once per governor evaluate() cycle.
+
+    Args:
+        capability: One of "mlx_inference", "sidecars", "fetch", "embeddings",
+            "model_load", "whisper".
+
+    Returns:
+        True if the capability is currently permitted, False otherwise.
+    """
+    p = _last_qos_profile
+    match capability:
+        case "mlx_inference":
+            return p.mlx_inference_ok
+        case "sidecars":
+            return p.sidecars_ok
+        case "fetch":
+            return p.fetch_ok
+        case "embeddings":
+            return p.embeddings_ok
+        case "model_load":
+            return p.model_load_ok
+        case "whisper":
+            return p.whisper_ok
+        case _:
+            return True  # Unknown capabilities are allowed by default (fail-open)
+
+
+def get_qos_level() -> str:
+    """[FINAL]-019: Get the current QoS level name (QoSLevel value)."""
+    return _last_qos_profile.level
 
 
 # ── Singleton accessor ───────────────────────────────────────────────────────────

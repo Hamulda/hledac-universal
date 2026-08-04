@@ -66,6 +66,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# [FINAL]-019-07: Capability cost registration for QoS ladder triage.
+# WASMDashboardBuilder: rss_mb=200, peak_mb=400 (template rendering + Canvas graph)
+from hledac.universal.core.capability_cost import register_capability_cost
+register_capability_cost("wasmdashboardbuilder", rss_mb=200, peak_mb=400, tier="light", tags=("export", "ui"))
+
 # ── Size bounds (M1 8GB safe) ─────────────────────────────────────────────────
 MAX_GRAPH_NODES: int = 500
 MAX_TIMELINE_EVENTS: int = 2000
@@ -370,9 +375,15 @@ _HTML_TEMPLATE = Template(r"""<!DOCTYPE html>
     align-items: center;
     gap: 12px;
     font-size: 12px;
+    flex-wrap: wrap;
   }
   .warc-url { color: var(--accent2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .warc-date { color: var(--muted); }
+  /* ISSUE [FINAL]-019-04: Provenance chain fields in WARC items */
+  .warc-meta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 10px; color: var(--muted); }
+  .warc-meta span { background: #0d1a26; padding: 2px 6px; border-radius: 3px; }
+  .warc-meta .warc-status { color: var(--success); }
+  .warc-meta .warc-record-id { color: var(--accent); }
   .warc-item-body { padding: 12px; max-height: 300px; overflow-y: auto; font-size: 12px; line-height: 1.6; }
   .warc-item-body iframe { width: 100%; height: 250px; border: none; border-radius: 4px; }
 
@@ -962,11 +973,37 @@ return alasql;
     }
     list.innerHTML = items.map(function(item) {
       var html = (item.html || '').replace(/<script[^>]*>.*?<\/script>/gi, '').substring(0, 2000);
+      // ISSUE [FINAL]-019-04: Display provenance chain (record_id, byte_offset, warc_path)
+      var recordId = item.record_id || '';
+      var byteOffset = item.byte_offset || 0;
+      var byteLen = item.byte_length || 0;
+      var warcPath = item.warc_path || '';
+      var status = item.status || item.http_status || 0;
+      var digest = item.payload_digest || '';
+      var metaHtml = '';
+      if (recordId) {
+        metaHtml = '<div class="warc-meta">' +
+          '<span class="warc-status">' + (status ? status : '—') + '</span>' +
+          '<span class="warc-record-id" title="WARC-Record-ID: ' + recordId + '">' +
+            recordId.substring(0, 20) + (recordId.length > 20 ? '…' : '') +
+          '</span>';
+        if (byteOffset || byteLen) {
+          metaHtml += '<span>offset:' + byteOffset + ' len:' + byteLen + '</span>';
+        }
+        if (warcPath) {
+          metaHtml += '<span title="WARC file: ' + warcPath + '">📁 ' + warcPath.split('/').pop() + '</span>';
+        }
+        if (digest) {
+          metaHtml += '<span title="Payload-Digest: ' + digest + '">⚿ ' + digest.substring(5, 15) + '…</span>';
+        }
+        metaHtml += '</div>';
+      }
       return '<div class="warc-item">' +
         '<div class="warc-item-header">' +
           '<span class="warc-url" title="' + (item.url || '') + '">' + (item.url || '—') + '</span>' +
           '<span class="warc-date">' + (item.timestamp || '') + '</span>' +
         '</div>' +
+        metaHtml +
         '<div class="warc-item-body">' +
           (html ? '<iframe srcdoc="' + html.replace(/"/g, '&quot;') + '" sandbox="allow-same-origin"></iframe>' : '<pre style="color:#ccc;white-space:pre-wrap;font-size:11px;">' + (item.text || '—') + '</pre>') +
         '</div>' +
@@ -1319,7 +1356,12 @@ class WASMDashboardBuilder:
     def _serialize_warc_data(
         self, warc_snippets: list[dict[str, Any]] | None
     ) -> dict[str, Any]:
-        """Serialize WARC snippets for iframe replay panel."""
+        """Serialize WARC snippets for iframe replay panel.
+
+        ISSUE [FINAL]-019-04: Now includes full provenance chain fields:
+        record_id, byte_offset, byte_length, warc_path, payload_digest.
+        These enable court-admissible byte-level evidence verification.
+        """
         if not warc_snippets:
             return {"snippets": []}
 
@@ -1329,9 +1371,15 @@ class WASMDashboardBuilder:
             normalized.append({
                 "url": s.get("url", ""),
                 "timestamp": s.get("timestamp", ""),
-                "status": s.get("status", 200),
+                "status": s.get("status", s.get("http_status", 0)),
                 "html": s.get("html", ""),
                 "text": s.get("text", s.get("content", "")),
+                # ISSUE [FINAL]-019-04: Provenance chain fields
+                "record_id": s.get("record_id", ""),
+                "byte_offset": s.get("byte_offset", 0),
+                "byte_length": s.get("byte_length", 0),
+                "warc_path": s.get("warc_path", ""),
+                "payload_digest": s.get("payload_digest", ""),
             })
 
         return {"snippets": normalized}

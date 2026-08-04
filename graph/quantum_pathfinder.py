@@ -30,6 +30,11 @@ from typing import TYPE_CHECKING, Any, Iterator
 
 from hledac.universal.utils.async_helpers import _check_gathered
 
+# [FINAL]-019-07: Capability cost registration for QoS ladder triage.
+# DuckPGQGraph: rss_mb=200, peak_mb=400 (DuckDB + PGQ graph analytics)
+from hledac.universal.core.capability_cost import register_capability_cost
+register_capability_cost("duckpgqgraph", rss_mb=200, peak_mb=400, tier="heavy", tags=("graph", "sql"))
+
 logger = logging.getLogger(__name__)
 
 MAX_QUANTUM_NODES: int = int(_os.environ.get('QUANTUM_MAX_NODES', '4096'))

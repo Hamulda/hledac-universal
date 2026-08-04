@@ -222,6 +222,10 @@ class AnomalyType(Enum):
     CONTEXTUAL = 'contextual'
     COLLECTIVE = 'collective'
     SEASONAL = 'seasonal'
+    # [FINAL]-019: Structural absence — IOC completeness violations
+    STRUCTURAL_ABSENCE = 'structural_absence'
+    # [FINAL]-019: Expected relationship missing from graph topology
+    MISSING_RELATIONSHIP = 'missing_relationship'
 
 class Event(msgspec.Struct):
     """Generic event for pattern mining."""

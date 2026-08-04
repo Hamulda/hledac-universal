@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import re
 from functools import lru_cache
 from typing import Any
@@ -318,3 +319,187 @@ def count_secrets(text: str) -> int:
     for _, pattern in _get_compiled_patterns():
         count += len(pattern.findall(text))
     return count
+
+
+# =============================================================================
+# API-Key Specific Redaction (ISSUE [FINAL]-019-09)
+# Defense-in-depth: redact environment-sourced API keys from any text that
+# might be logged or stored before scrub_secrets() patterns can match.
+# =============================================================================
+
+_REDACTED_MARKER = "[REDACTED_API_KEY]"
+
+
+def redact_env_var(text: str | bytes | None, env_var: str) -> str | bytes | None:
+    """
+    Redact a specific environment variable's value from text.
+
+    Defense-in-depth for ISSUE [FINAL]-019-09: API keys stored in environment
+    variables may appear verbatim in error responses (e.g., 401 bodies echoing
+    the invalid key). This function replaces the literal key value before any
+    generic pattern matching.
+
+    Args:
+        text: Text or bytes potentially containing the API key
+        env_var: Name of environment variable containing the key
+
+    Returns:
+        Text with the API key replaced by [REDACTED_API_KEY], or None if input
+        was None/empty
+
+    Examples:
+        >>> import os
+        >>> os.environ["SHODAN_API_KEY"] = "abc123secret"
+        >>> redact_env_var("Invalid API key: abc123secret", "SHODAN_API_KEY")
+        'Invalid API key: [REDACTED_API_KEY]'
+    """
+    if text is None:
+        return None
+    if not text:
+        return text
+
+    try:
+        key = os.environ.get(env_var)
+        if not key:
+            return text
+
+        # Handle bytes: decode -> redact -> return str (same as scrub_dict_recursive)
+        if isinstance(text, bytes):
+            decoded = text.decode("utf-8", errors="replace")
+            redacted = decoded.replace(key, _REDACTED_MARKER)
+            return redacted
+
+        # String case
+        return text.replace(key, _REDACTED_MARKER)
+    except Exception as e:
+        logger.debug("redact_env_var_failed: var=%s, err=%s", env_var, str(e))
+        return text
+
+
+def redact_shodan_key(text: str | bytes | None) -> str | bytes | None:
+    """
+    Redact SHODAN_API_KEY from text.
+
+    ISSUE [FINAL]-019-09: Shodan may echo the API key in 401/403 error
+    responses. This ensures the key never reaches payload_text or logs.
+
+    Args:
+        text: Text potentially containing the Shodan API key
+
+    Returns:
+        Text with SHODAN_API_KEY value replaced by [REDACTED_API_KEY]
+    """
+    return redact_env_var(text, "SHODAN_API_KEY")
+
+
+def redact_censys_credentials(
+    text: str | bytes | None,
+) -> str | bytes | None:
+    """
+    Redact CENSYS_API_ID and CENSYS_SECRET from text.
+
+    ISSUE [FINAL]-019-09: Censys may echo credentials in 401/403 error
+    responses. Redacts both API ID and secret.
+
+    Args:
+        text: Text potentially containing Censys credentials
+
+    Returns:
+        Text with both CENSYS_API_ID and CENSYS_SECRET values replaced
+    """
+    result = redact_env_var(text, "CENSYS_API_ID")
+    result = redact_env_var(result, "CENSYS_SECRET")
+    return result
+
+
+def redact_greynoise_key(text: str | bytes | None) -> str | bytes | None:
+    """
+    Redact GREYNOISE_API_KEY from text.
+
+    ISSUE [FINAL]-019-09: GreyNoise may echo the API key in 401/403 error
+    responses. This ensures the key never reaches payload_text or logs.
+
+    Args:
+        text: Text potentially containing the GreyNoise API key
+
+    Returns:
+        Text with GREYNOISE_API_KEY value replaced by [REDACTED_API_KEY]
+    """
+    return redact_env_var(text, "GREYNOISE_API_KEY")
+
+
+def redact_ipinfo_key(text: str | bytes | None) -> str | bytes | None:
+    """
+    Redact IPINFO_API_KEY from text.
+
+    ISSUE [FINAL]-019-09: IPInfo may echo the API key in 401/403 error
+    responses.
+
+    Args:
+        text: Text potentially containing the IPInfo API key
+
+    Returns:
+        Text with IPINFO_API_KEY value replaced by [REDACTED_API_KEY]
+    """
+    return redact_env_var(text, "IPINFO_API_KEY")
+
+
+def redact_hibp_key(text: str | bytes | None) -> str | bytes | None:
+    """
+    Redact HIBP_API_KEY from text.
+
+    ISSUE [FINAL]-019-09: HaveIBeenPwned may echo the API key in error responses.
+
+    Args:
+        text: Text potentially containing the HIBP API key
+
+    Returns:
+        Text with HIBP_API_KEY value replaced by [REDACTED_API_KEY]
+    """
+    return redact_env_var(text, "HIBP_API_KEY")
+
+
+def safe_error_log(logger: logging.Logger, message: str, *args: Any) -> None:
+    """
+    Log a message while ensuring no API keys leak through format arguments.
+
+    Defense-in-depth wrapper for ISSUE [FINAL]-019-09. Use this instead of
+    direct logger.warning/error calls when the message or args might contain
+    API key values.
+
+    Currently redacts: SHODAN_API_KEY, CENSYS_API_ID, CENSYS_SECRET,
+    GREYNOISE_API_KEY, IPINFO_API_KEY, HIBP_API_KEY
+
+    Args:
+        logger: Logger instance to use
+        message: Message template (may contain %s placeholders)
+        *args: Arguments that might include API keys
+    """
+    try:
+        # Redact from message (order matters: apply all redactions)
+        safe_msg = redact_shodan_key(message)
+        safe_msg = redact_censys_credentials(safe_msg)
+        safe_msg = redact_greynoise_key(safe_msg)
+        safe_msg = redact_ipinfo_key(safe_msg)
+        safe_msg = redact_hibp_key(safe_msg)
+
+        # Redact from each arg
+        safe_args = tuple(
+            redact_hibp_key(
+                redact_ipinfo_key(
+                    redact_greynoise_key(
+                        redact_censys_credentials(
+                            redact_shodan_key(arg) if isinstance(arg, str) else arg
+                        )
+                    )
+                )
+            )
+            if isinstance(arg, str)
+            else arg
+            for arg in args
+        )
+
+        logger.warning(safe_msg, *safe_args)
+    except Exception as e:
+        # Fail-safe: log without args rather than risk key leak
+        logger.warning("safe_error_log failed: %s", str(e))

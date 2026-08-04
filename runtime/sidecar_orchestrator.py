@@ -542,6 +542,18 @@ class SidecarOrchestrator:
         Canonical teardown entry point. Each step is fail-soft;
         CancelledError propagates to caller.
         """
+        # [FINAL]-019-06: Gate sidecars under CRITICAL QoS to avoid OOM under pressure.
+        # Sidecar gate functions (bgp, ipfs, onion, etc.) are expensive and should
+        # be skipped during WINDUP/BATTERY/EMERGENCY modes — the governor already
+        # sets sidecars_ok=False in QoSProfile for these levels.
+        try:
+            from hledac.universal.core.resource_governor import get_current_degradation_level, QoSLevel
+            level = get_current_degradation_level()
+            if level in (QoSLevel.EMERGENCY, QoSLevel.BATTERY, QoSLevel.WINDUP):
+                return  # All sidecars suppressed by QoS policy
+        except Exception:
+            pass  # fail-open: governor unavailable → allow sidecars
+
         # ISSUE #22: Parallel pre-warm of SidecarRegistry adapters (lazy imports + parallel init)
         await self.prewarm_async()
 

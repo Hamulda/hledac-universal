@@ -15,7 +15,7 @@ This module contains:
 - 15% COMPAT ALIASES → runtime/sprint_lifecycle canonical methods
 - 85% ORCHESTRATION HELPERS → not lifecycle authority (hooks, signals, watchdog)
 
-Lifecycle authority: BOOT → WARMUP → ACTIVE → WINDUP → EXPORT → TEARDOWN
+Lifecycle authority: BOOT → WARMUP → ACTIVE → DEGRADED → WINDUP → EXPORT → TEARDOWN
 Canonical: hledac.universal.runtime.sprint_lifecycle.SprintPhase enum
 Checkpoint seam: maybe_resume() free function (LMDB)
 
@@ -63,7 +63,7 @@ class SprintLifecycleManager:
     Manages sprint lifecycle state machine with fail-open design.
 
     State transitions:
-        BOOT → WARMUP → ACTIVE → WINDUP → EXPORT → TEARDOWN
+        BOOT → WARMUP → ACTIVE → DEGRADED → WINDUP → EXPORT → TEARDOWN
 
     The manager:
     - Tracks sprint start time and duration

@@ -48,6 +48,13 @@ def _otel_resolver() -> Any:
 _otel_instrumented = _otel_resolver()
 T = TypeVar('T')
 
+# [FINAL]-019-07: Capability cost registration for QoS ladder triage.
+# Hermes3 (4bit): rss_mb=2000, peak_mb=2200 (model weights + KV cache)
+# Hermes3 is the heaviest single capability — always CRITICAL tier.
+from hledac.universal.core.capability_cost import register_capability_cost
+register_capability_cost("deephermes3engine", rss_mb=2000, peak_mb=2200, tier="critical", tags=("llm", "mlx", "gpu"))
+register_capability_cost("hermes3engine", rss_mb=2000, peak_mb=2200, tier="critical", tags=("llm", "mlx", "gpu"))
+
 # R3: Hermes executor pools via centralized R1 resource pool (lazy import)
 _get_hermes_prep_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_prep_executor')
 _get_hermes_post_exec = lazy_callable('hledac.universal.core.resource_pool.get_hermes_post_executor')

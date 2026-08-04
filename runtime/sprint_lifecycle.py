@@ -1,11 +1,18 @@
 """
 SprintLifecycleManager — canonical sprint state machine.
 
-Phases: BOOT → WARMUP → ACTIVE → WINDUP → EXPORT → TEARDOWN
+Phases: BOOT → WARMUP → ACTIVE → DEGRADED → WINDUP → EXPORT → TEARDOWN
 
 Hard invariant: T-3min wind-down.
 All timing uses time.monotonic().
 No async. No threads. No I/O.
+
+[FINAL]-019-08: DEGRADED phase added between ACTIVE and WINDUP.
+DEGRADED is entered when the resource governor detects CRITICAL or EMERGENCY
+UMA state. This makes degradation visible in the lifecycle phase history
+and provides an anchor point for the QoS ladder at the sprint level.
+DEGRADED transitions to WINDUP when time expires, or back to ACTIVE
+when the governor recovers to OK.
 """
 
 
@@ -24,9 +31,37 @@ class SprintPhase(Enum):
     BOOT = auto()
     WARMUP = auto()
     ACTIVE = auto()
+    DEGRADED = auto()  # [FINAL]-019-08: entered on governor CRITICAL/EMERGENCY
     WINDUP = auto()
     EXPORT = auto()
     TEARDOWN = auto()
+
+
+# ── [FINAL]-019: Sprint QoS mode ─────────────────────────────────────────────
+
+class SprintQOSMode(Enum):
+    """
+    [FINAL]-019: Sprint-level QoS mode that signals resource pressure intent.
+
+    Mirrors the governor's QoSLevel ladder but at the sprint/lifecycle level.
+    The lifecycle manager emits these via phase callbacks, allowing subsystems
+    to react to sprint-level QoS changes without coupling to memory state.
+
+    Mapping to GovernorDecision.qos_level:
+        NORMAL  → FULL (ACTIVE)
+        REDUCED → WINDUP or DEGRADED (THERMAL/CRITICAL/EMERGENCY)
+        MINIMAL → BATTERY (or EMERGENCY)
+
+    Subsystems should prefer checking is_capability_allowed() directly
+    (which reads the governor's QoS profile) over this enum, because the
+    governor's ladder is more fine-grained and accounts for all constraints.
+    This enum is useful for lifecycle-aware orchestration (e.g., skipping
+    expensive setup in MINIMAL mode).
+    """
+
+    NORMAL = "normal"   # Full operation — all capabilities enabled
+    REDUCED = "reduced"  # Windup / mild pressure — sidecars reduced
+    MINIMAL = "minimal"  # Battery / near-OOM — inference suspended
 
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
@@ -45,6 +80,7 @@ _PHASE_ORDER = [
     SprintPhase.BOOT,
     SprintPhase.WARMUP,
     SprintPhase.ACTIVE,
+    SprintPhase.DEGRADED,   # [FINAL]-019-08
     SprintPhase.WINDUP,
     SprintPhase.EXPORT,
     SprintPhase.TEARDOWN,
@@ -85,6 +121,12 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
     _phase_history: dict = field(default_factory=dict)
     _export_started: bool = False
     _teardown_started: bool = False
+    # [FINAL]-019: Tracks whether governor windup was lowered on EXPORT.
+    # Prevents repeated set_windup_mode(False) calls every tick() cycle.
+    _governor_windup_lowered: bool = False
+    # [FINAL]-019-08: Tracks whether governor degraded mode was lowered.
+    # Prevents repeated set_degraded_mode(False) calls every tick() cycle.
+    _governor_degraded_lowered: bool = False
     _abort_requested: bool = False
     _abort_reason: str = ""
     _last_checkpoint_at: float | None = None
@@ -103,6 +145,12 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
     # exceeds with cycles_started == 0. Allows windup for cleanup even though
     # first_cycle_ran=False (F290 block is overridden for this specific case).
     _deadline_expired_pre_cycle: bool = False
+
+    # [FINAL]-019-08: DEGRADED mode state — tracks memory/thermal pressure
+    # degradation within the ACTIVE phase. When True the sprint is in DEGRADED
+    # phase. The reason string is stored for telemetry/debugging.
+    _degraded: bool = False
+    _degraded_reason: str = ""
 
     # Issue 1.2 — Phase TaskGroup callbacks
     # Invoked synchronously after _transition_to_unlocked() updates phase.
@@ -186,15 +234,85 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         Advance the state machine.
 
         Automatically enters WINDUP when remaining_time <= windup_lead_s.
+        [FINAL]-019: Notifies the resource governor when entering/leaving WINDUP
+        so the QoS ladder raises to WINDUP level (sidecars suspended).
+        [FINAL]-019-08: Detects governor CRITICAL/EMERGENCY UMA state and
+        transitions to DEGRADED phase. Detects recovery to OK and transitions
+        back to ACTIVE from DEGRADED.
         Returns the current phase after ticking.
         """
         now = _now(now_monotonic)
 
-        # Auto WINDUP guard — only if we are in ACTIVE and time has run down
-        if self._current_phase == SprintPhase.ACTIVE:
+        # [FINAL]-019-08: Governor CRITICAL/EMERGENCY → DEGRADED transition.
+        # Only fire when in ACTIVE phase (not WARMUP, WINDUP, etc.).
+        # Uses fast synchronous _is_governor_critical_or_emergency() probe.
+        if self._current_phase == SprintPhase.ACTIVE and not self._degraded:
+            try:
+                from hledac.universal.core.resource_governor import (
+                    _is_governor_critical_or_emergency,
+                )
+                if _is_governor_critical_or_emergency():
+                    self._degraded = True
+                    self._degraded_reason = "governor_critical_or_emergency"
+                    self._transition_to_unlocked(SprintPhase.DEGRADED, now)
+                    try:
+                        from hledac.universal.core.resource_governor import get_governor
+                        get_governor().set_degraded_mode(True, self._degraded_reason)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # [FINAL]-019-08: Governor recovered to OK → ACTIVE transition.
+        # Only fire when in DEGRADED phase.
+        if self._current_phase == SprintPhase.DEGRADED:
+            recovered = False
+            try:
+                from hledac.universal.core.resource_governor import (
+                    _is_governor_critical_or_emergency,
+                )
+                recovered = not _is_governor_critical_or_emergency()
+            except Exception:
+                pass
+
+            if recovered:
+                self._degraded = False
+                self._degraded_reason = ""
+                self._transition_to_unlocked(SprintPhase.ACTIVE, now)
+                try:
+                    from hledac.universal.core.resource_governor import get_governor
+                    get_governor().set_degraded_mode(False, "governor_recovered")
+                except Exception:
+                    pass
+
+        # Auto WINDUP guard — fire from ACTIVE or DEGRADED when time runs down.
+        if self._current_phase in (SprintPhase.ACTIVE, SprintPhase.DEGRADED):
             remaining = self._remaining_time_unlocked(now)
             if remaining <= self.windup_lead_s:
                 self._transition_to_unlocked(SprintPhase.WINDUP, now)
+                # [FINAL]-019: Raise governor to WINDUP QoS level
+                try:
+                    from hledac.universal.core.resource_governor import get_governor
+                    gov = get_governor()
+                    gov.set_windup_mode(True)
+                    # [FINAL]-019-08: Also clear degraded mode on windup.
+                    if not self._governor_degraded_lowered:
+                        gov.set_degraded_mode(False, "windup_entered")
+                        self._governor_degraded_lowered = True
+                except Exception:
+                    pass
+                self._degraded = False
+                self._degraded_reason = ""
+
+        # [FINAL]-019: Lower governor from WINDUP when sprint ends.
+        # Gated by flag to prevent repeated calls every tick() cycle during EXPORT.
+        if self._current_phase == SprintPhase.EXPORT and not self._governor_windup_lowered:
+            try:
+                from hledac.universal.core.resource_governor import get_governor
+                get_governor().set_windup_mode(False)
+                self._governor_windup_lowered = True
+            except Exception:
+                pass
 
         return self._current_phase
 
@@ -341,6 +459,8 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
             "abort_requested": self._abort_requested,
             "abort_reason": self._abort_reason,
             "last_checkpoint_at": self._last_checkpoint_at,
+            "degraded": self._degraded,              # [FINAL]-019-08
+            "degraded_reason": self._degraded_reason,  # [FINAL]-019-08
         }
 
     # ── recommended_tool_mode ────────────────────────────────────────────────
@@ -356,6 +476,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         Decision tree:
         - panic : abort requested OR remaining <= 30s OR thermal == 'critical'
         - prune : remaining <= windup_lead_s OR thermal in ('throttled', 'fair')
+                  OR lifecycle in DEGRADED phase
         - normal: everything else
         """
         now = _now(now_monotonic)
@@ -363,7 +484,9 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
 
         if self._abort_requested or remaining <= 30.0 or thermal_state == "critical":
             return "panic"
-        if remaining <= self.windup_lead_s or thermal_state in ("throttled", "fair"):
+        if (remaining <= self.windup_lead_s
+                or thermal_state in ("throttled", "fair")
+                or self._current_phase == SprintPhase.DEGRADED):  # [FINAL]-019-08
             return "prune"
         return "normal"
 
@@ -606,7 +729,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
             SprintPhase.WINDUP,
             SprintPhase.EXPORT,
             SprintPhase.TEARDOWN,
-        )
+        ) or self._current_phase == SprintPhase.DEGRADED  # [FINAL]-019-08: DEGRADED is also winding down
 
     # ── Public read-only surface ─────────────────────────────────────────────
 
@@ -626,6 +749,25 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         Convenience helper — equivalent to current_phase == phase.
         """
         return self._current_phase == phase
+
+    def is_degraded(self) -> bool:
+        """
+        [FINAL]-019-08: True when the sprint is in DEGRADED phase.
+
+        This signals that the sprint is operating under memory/thermal pressure
+        (governor CRITICAL/EMERGENCY) and has transitioned to reduced QoS.
+
+        Canonical alternative to checking ``in_phase(SprintPhase.DEGRADED)``.
+        """
+        return self._current_phase == SprintPhase.DEGRADED
+
+    def degraded_reason(self) -> str:
+        """
+        [FINAL]-019-08: Human-readable reason for entering DEGRADED phase.
+
+        Returns empty string if not in DEGRADED phase.
+        """
+        return self._degraded_reason if self._current_phase == SprintPhase.DEGRADED else ""
 
     # ── Read-only phase-entry seams (F166D) ─────────────────────────────────
 

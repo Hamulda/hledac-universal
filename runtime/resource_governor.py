@@ -57,8 +57,39 @@ CRITICAL_ALLOW_MODEL_LOAD = False
 _EMA_ALPHA = 0.3
 MISSION_PEAK_RSS_GIB: float = 5.5
 SIDECAR_DEFAULT_ESTIMATE_MB: int = 128
+# [FINAL]-019: HEAVY_SIDECARS now includes memory cost metadata for budget accounting.
+# In windup mode (WINDUP QoS level), these are skipped to reduce pressure.
 HEAVY_SIDECARS: tuple[str, ...] = ('embedding', 'wayback_diff', 'social_identity', 'rir_correlation')
+# [FINAL]-019: Memory cost in MB per sidecar instance. Used by sidecar_admission()
+# to compute whether the sidecar fits within the remaining budget.
+HEAVY_SIDECAR_COST_MB: dict[str, int] = {
+    'embedding': 400,       # MLX embedding generation (~0.4 GB peak)
+    'wayback_diff': 256,    # WARC replay + diff (~0.25 GB peak)
+    'social_identity': 192,  # Social graph correlation (~0.2 GB peak)
+    'rir_correlation': 256,  # BGP/RIR correlation (~0.25 GB peak)
+}
+# Light sidecar cost for budget accounting
+LIGHT_SIDECAR_COST_MB: int = 128  # Default ~0.13 GB peak
 MAX_BUDGET_EVENTS: int = 100
+
+# [FINAL]-019-07: Register sidecar costs in the global CapabilityCostRegistry.
+# This migrates from hardcoded HEAVY_SIDECAR_COST_MB to the dynamic registry.
+# QoSLadderController queries these for optimal triage decisions.
+try:
+    from hledac.universal.core.capability_cost import register_capability_cost
+    register_capability_cost("embedding", rss_mb=400, peak_mb=600, tier="heavy", tags=("mlx", "embedding"))
+    register_capability_cost("wayback_diff", rss_mb=256, peak_mb=384, tier="medium", tags=("archive", "diff"))
+    register_capability_cost("social_identity", rss_mb=192, peak_mb=256, tier="light", tags=("graph", "social"))
+    register_capability_cost("rir_correlation", rss_mb=256, peak_mb=384, tier="medium", tags=("network", "bgp"))
+    # Additional sidecars from sidecar_bus.py _HEAVY_SIDECARS
+    register_capability_cost("identity_stitching", rss_mb=192, peak_mb=256, tier="medium", tags=("graph", "identity"))
+    register_capability_cost("sprint_diff", rss_mb=128, peak_mb=192, tier="light", tags=("diff", "export"))
+    register_capability_cost("banner_grab", rss_mb=128, peak_mb=192, tier="light", tags=("network", "recon"))
+    register_capability_cost("ipv6_recon", rss_mb=128, peak_mb=192, tier="light", tags=("network", "recon"))
+    register_capability_cost("pattern_mining", rss_mb=256, peak_mb=384, tier="medium", tags=("analytics", "ml"))
+except Exception:
+    # Fail-soft: capability_cost module may not be available in all environments
+    pass
 
 class SidecarAdmission(msgspec.Struct, frozen=True, gc=False):
     """F204J: Result of sidecar admission check."""
@@ -439,34 +470,61 @@ class M1ResourceGovernor:
         """
         F204J: Check if a sidecar can be admitted given current memory state.
 
+        [FINAL]-019-07: Now queries CapabilityCostRegistry for dynamic cost metadata.
+        If a registered cost is available, uses rss_mb instead of estimated_mb.
+        This enables the QoS ladder to make optimal triage decisions.
+
         Returns SidecarAdmission with:
         - allowed: True if sidecar should run
-        - reason: human-readable denial reason
+        - reason: human-readable denial reason (now includes tier + savings info)
         - rss_gib: current RSS in GiB
         - uma_state: current UMA state
-        - estimated_mb: the estimate that was evaluated
+        - estimated_mb: the actual cost used (registered rss_mb or provided estimate)
 
         Fails soft: returns allowed=True if any check fails.
         """
+        # [FINAL]-019-07: Use registered cost if available
+        try:
+            from hledac.universal.core.capability_cost import get_capability_cost
+            cost = get_capability_cost(sidecar_name, default_rss_mb=estimated_mb)
+            actual_mb = cost.rss_mb
+        except Exception:
+            actual_mb = estimated_mb
+            cost = None
+
         try:
             uma = sample_uma_status()
             rss_gib = uma.system_used_gib / 1024 ** 3 if uma.system_used_gib else 0.0
             uma_state = uma.state
         except Exception as exc:
             logger.debug('[Governor] sidecar_admission sample_uma_status failed: %s', exc)
-            return SidecarAdmission(allowed=True, sidecar_name=sidecar_name, reason='uma_check_failed_allowing', rss_gib=0.0, uma_state='unknown', estimated_mb=estimated_mb)
+            return SidecarAdmission(allowed=True, sidecar_name=sidecar_name, reason='uma_check_failed_allowing', rss_gib=0.0, uma_state='unknown', estimated_mb=actual_mb)
+
+        # [FINAL]-019-07: Block HEAVY/CRITICAL tier capabilities under critical/emergency
         if uma_state in (UMA_STATE_CRITICAL, UMA_STATE_EMERGENCY):
-            if sidecar_name in HEAVY_SIDECARS:
-                return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason=f'uma_{uma_state}_blocking_heavy_sidecar', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=estimated_mb)
+            is_heavy = sidecar_name in HEAVY_SIDECARS
+            is_heavy_tier = cost is not None and cost.tier in ("heavy", "critical") if cost else is_heavy
+            if is_heavy or is_heavy_tier:
+                tier_info = f" ({cost.tier} tier, saves {cost.savings_mb}MB)" if cost else ""
+                return SidecarAdmission(
+                    allowed=False,
+                    sidecar_name=sidecar_name,
+                    reason=f'uma_{uma_state}_blocking_heavy_sidecar{tier_info}',
+                    rss_gib=rss_gib,
+                    uma_state=uma_state,
+                    estimated_mb=actual_mb,
+                )
         if sidecar_name in HEAVY_SIDECARS:
             try:
                 if hasattr(uma, 'high_water') and uma.high_water > 0.85:
-                    return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason='high_water_exceeded_85pct', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=estimated_mb)
+                    tier_info = f" ({cost.tier} tier)" if cost else ""
+                    return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason=f'high_water_exceeded_85pct{tier_info}', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=actual_mb)
                 if rss_gib > MISSION_PEAK_RSS_GIB - 0.5:
-                    return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason='rss_exceeds_headroom_limit', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=estimated_mb)
+                    tier_info = f" ({cost.tier} tier)" if cost else ""
+                    return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason=f'rss_exceeds_headroom_limit{tier_info}', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=actual_mb)
             except Exception:
                 pass
-        return SidecarAdmission(allowed=True, sidecar_name=sidecar_name, reason='admitted', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=estimated_mb)
+        return SidecarAdmission(allowed=True, sidecar_name=sidecar_name, reason='admitted', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=actual_mb)
 
     def _get_model_status(self) -> dict:
         """Read-only model status from canonical lifecycle API."""

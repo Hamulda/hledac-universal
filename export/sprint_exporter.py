@@ -58,6 +58,9 @@ from typing import TYPE_CHECKING, Any
 
 import aiofiles  # F350M-R: ISSUE-045 — native async file I/O, no thread pool overhead
 
+# ISSUE [FINAL]-019-04: Max WARC snippets for dashboard export
+MAX_WARC_SNIPPETS = 20
+
 # Sprint F214Q / F271E: Re-export narrative_builder helpers for formatters.py
 # compat. narrative_builder.py holds TEMPORARY stubs (Sprint F232A) for
 # functions that will be re-implemented in the components package. Until then
@@ -659,13 +662,51 @@ class JSONFormatter:
                     except Exception:
                         pass  # Non-fatal, timeline is optional
 
+                # ISSUE [FINAL]-019-05: Extract WARC snippets for dashboard WARC replay panel.
+                # Primary: warc_snippets @property from EvidenceLog (populated during fetching).
+                # warc_snippets is an @property returning list[dict], so getattr() calls the
+                # getter and returns the list directly — no callable check needed.
+                # Fallback: global singleton for cases where evidence_log is not injected.
+                warc_snippets: list[dict[str, Any]] = []
+                _snippets_candidates: list[dict[str, Any]] = []
+
+                if evidence_log is not None:
+                    try:
+                        _candidates = getattr(evidence_log, 'warc_snippets', None)
+                        if isinstance(_candidates, list):
+                            _snippets_candidates = _candidates
+                    except Exception:
+                        pass
+
+                # ISSUE [FINAL]-019-05: Global fallback — when EvidenceLog is not injected,
+                # use the global singleton populated by archive_http_response_cached().
+                if not _snippets_candidates:
+                    try:
+                        from hledac.universal.evidence_log import get_warc_snippets
+                        _snippets_candidates = get_warc_snippets()
+                    except Exception:
+                        pass
+
+                # Use discovered snippets (deduplicated by URL to avoid repeats in dashboard)
+                if _snippets_candidates:
+                    _seen_urls: set[str] = set()
+                    for _s in _snippets_candidates:
+                        _url = _s.get('url', '')
+                        if _url and _url not in _seen_urls:
+                            _seen_urls.add(_url)
+                            # ISSUE [FINAL]-019-04: Check bound BEFORE appending
+                            if len(warc_snippets) >= MAX_WARC_SNIPPETS:
+                                break
+                            warc_snippets.append(_s)
+                    logger.debug("[DASHBOARD] WARC snippets extracted: %d", len(warc_snippets))
+
                 # Build dashboard
                 dashboard_builder = WASMDashboardBuilder()
                 dashboard_html_path_raw = await dashboard_builder.build(
                     handoff=eh,
                     graph_data=graph_data,
                     timeline_data=timeline_data,
-                    warc_snippets=None,
+                    warc_snippets=warc_snippets,
                     output_path=None,
                 )
                 if dashboard_html_path_raw is not None:
@@ -1397,6 +1438,7 @@ async def export_sprint(
     sprint_id: str | None = None,
     enable_security_enrichment: bool = os.environ.get("HLEDAC_VAULT_EXPORT", "0") == "1",
     export_mode: str = "slim",
+    evidence_log: Any = None,  # ISSUE [FINAL]-019-04: EvidenceLog for WARC provenance extraction
 ) -> dict:
     """
     EXPORT fáze — JSON report, seed tasky pro příští sprint.

@@ -3411,7 +3411,11 @@ async def run_sprint(
             # Sprint F500I: Lazy import — export_sprint heavy, only needed at end of sprint
             from hledac.universal.export.sprint_exporter import export_sprint
 
-            export_result = await export_sprint(store=store, handoff=handoff, sprint_id=sprint_id)
+            # ISSUE [FINAL]-019-04: Extract EvidenceLog for WARC provenance chain
+            _elog: Any = getattr(scheduler, '_evidence_log', None)
+            _elog_instance: Any = _elog.value if _elog else None
+
+            export_result = await export_sprint(store=store, handoff=handoff, sprint_id=sprint_id, evidence_log=_elog_instance)
             logger.info(f"[EXPORT] finish layer → seeds={export_result.get('seeds_json', '')}")
 
             # Deep probe runs AFTER export completes — post-sprint, non-blocking

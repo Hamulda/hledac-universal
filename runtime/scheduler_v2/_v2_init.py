@@ -277,6 +277,20 @@ class V2Init:
         object.__setattr__(self._scheduler, "_lifecycle", _lifecycle_mgr)
         object.__setattr__(self._scheduler, "_runner", _lifecycle_mgr)
 
+        # [FINAL]-019-08: Wire DEGRADED phase transitions to rayon pool resize.
+        # When the lifecycle enters DEGRADED, RayonPoolManager drops to (2, 2)
+        # threads to reduce memory/thermal pressure. Callback fires even if
+        # the rayon manager is not yet initialized (fail-soft).
+        def _on_degraded_enter(from_phase, to_phase):
+            from hledac.universal.core.isolated_executors import get_rayon_pool_manager
+            try:
+                rm = get_rayon_pool_manager()
+                rm.set_phase("DEGRADED")
+            except Exception:
+                pass
+
+        _lifecycle_mgr.add_phase_exit_callback(_on_degraded_enter)
+
         # Acquisition plan
         _acq_plan = await self._build_acquisition_plan(query)
         object.__setattr__(self._scheduler, "_acquisition_plan", _acq_plan)

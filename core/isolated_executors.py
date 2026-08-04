@@ -926,6 +926,7 @@ _PHASE_POOL_CONFIG: dict[str, tuple[int, int]] = {
     "BOOT": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
     "WARMUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
     "ACTIVE": (_DEFAULT_CPU_THREADS, 4),  # 8 total — io-heavy fetch
+    "DEGRADED": (2, 2),  # 4 total — [FINAL]-019-08: memory/thermal pressure, minimal resources
     "SYNTHESIS": (6, _DEFAULT_IO_THREADS),  # 8 total — cpu-heavy inference
     "WINDUP": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
     "EXPORT": (_DEFAULT_CPU_THREADS, _DEFAULT_IO_THREADS),  # 6 total
@@ -948,7 +949,8 @@ class RayonPoolManager:
       | BOOT      | 4        | 2       | 6     | Bootstrap: not heavy       |
       | WARMUP    | 4        | 2       | 6     | Prelude lanes parallel      |
       | ACTIVE    | 4        | 4       | 8     | Fetch-heavy: io expands    |
-      | SYNTHESIS  | 6        | 2       | 8     | CPU-heavy: MLX inference   |
+      | DEGRADED  | 2        | 2       | 4     | Memory/thermal pressure    |
+      | SYNTHESIS | 6        | 2       | 8     | CPU-heavy: MLX inference   |
       | WINDUP    | 4        | 2       | 6     | Back to default             |
       | EXPORT    | 4        | 2       | 6     | Export I/O                 |
       | TEARDOWN  | 2        | 2       | 4     | Minimal: tear down          |
