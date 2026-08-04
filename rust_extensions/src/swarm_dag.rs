@@ -50,7 +50,7 @@
 //! - Max pool size: 6 workers (fetch) / 6 workers (parse) / 4 workers (analyze)
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use pyo3::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -274,6 +274,11 @@ impl TaskChannel {
 // Adaptive Rebalancer
 // ---------------------------------------------------------------------------
 
+/// Adaptive Rebalancer
+///
+/// Currently rebalances fetch↔parse pools based on ROI ratio.
+/// analyze and graph_insert pools are stable (not rebalanced).
+/// Future: consider analyze↔graph rebalancing when those signals mature.
 struct Rebalancer {
     fetch_workers: AtomicUsize,
     parse_workers: AtomicUsize,
@@ -308,7 +313,7 @@ impl Rebalancer {
         &self,
         fetch_roi: f64,
         parse_roi: f64,
-        _analyze_roi: f64,
+        _analyze_roi: f64,  // reserved for future analyze↔graph rebalancing
         now_secs: u64,
     ) -> bool {
         let last = self.last_rebalance.load(Ordering::Acquire);
@@ -358,6 +363,9 @@ struct WorkerContext {
 
 impl WorkerContext {
     fn run(&mut self) {
+        // Recomputed deadline at the start of each iteration.
+        // Previous version computed a single deadline that could be stale
+        // after one process_task() call — recomputing ensures fresh deadline.
         let deadline = Instant::now() + Duration::from_micros(YIELD_US);
 
         // Try local receive first
@@ -428,6 +436,8 @@ pub struct WorkStealingDAG {
     rebalancer: Rebalancer,
     /// Shutdown flag.
     running: Arc<AtomicBool>,
+    /// Worker thread handles — joined on stop().
+    workers: Mutex<Vec<thread::JoinHandle<()>>>,
     /// Python callback for task results.
     result_callback: Py<PyAny>,
     /// Stats: total submitted.
@@ -460,38 +470,8 @@ impl WorkStealingDAG {
             result_callback,
             submitted_count: AtomicU64::new(0),
             completed_count: AtomicU64::new(0),
+            workers: Mutex::new(Vec::new()),
         }
-    }
-
-    /// Allocate task types to a worker ID based on current allocation.
-    fn allocate_types(&self, worker_id: usize, total_workers: usize) -> Vec<TaskType> {
-        let alloc = self.rebalancer.get_allocation();
-        let mut types = vec![];
-
-        let mut cumsum = 0;
-        for (i, &count) in alloc.iter().enumerate() {
-            let start = cumsum;
-            let end = cumsum + count;
-            if worker_id >= start && worker_id < end {
-                types.push(match i {
-                    0 => TaskType::Fetch,
-                    1 => TaskType::Parse,
-                    2 => TaskType::Analyze,
-                    _ => TaskType::GraphInsert,
-                });
-                // Workers after their primary type also serve as steal helpers
-                // for the most-loaded type (determined by ROI)
-                break;
-            }
-            cumsum += count;
-        }
-
-        // If allocation is sparse, assign parse as default
-        if types.is_empty() {
-            types.push(TaskType::Parse);
-        }
-
-        types
     }
 
     fn start_workers(&self) {
@@ -533,7 +513,7 @@ impl WorkStealingDAG {
                 types.push(TaskType::Parse);
             }
 
-            thread::Builder::new()
+            let handle = thread::Builder::new()
                 .name(format!("hledac-swarm-{}", worker_id))
                 .stack_size(2_097_152) // 2 MiB
                 .spawn(move || {
@@ -562,6 +542,7 @@ impl WorkStealingDAG {
                     }
                 })
                 .expect("failed to spawn swarm worker");
+            self.workers.lock().push(handle);
         }
     }
 }
@@ -676,9 +657,15 @@ impl WorkStealingDAG {
     }
 
     /// Stop all workers and drain queues.
+    /// Workers are joined (blocking) to ensure clean teardown.
     fn stop(&self) {
         self.running.store(false, Ordering::Release);
-        // Workers drain and exit on next iteration
+        // Collect all thread handles and join (SWARM-STOP-01).
+        let mut handles = self.workers.lock();
+        for h in handles.drain(..) {
+            // Best-effort join — don't block forever.
+            let _ = h.join();
+        }
     }
 
     /// Check if DAG is running.

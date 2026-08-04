@@ -571,6 +571,9 @@ class FetchCoordinator(UniversalCoordinator):
         # Maps entity_id -> list of original findings (dict with source, content, confidence).
         # TTL 5 min — bounded at 256 entries (M1 8GB safe).
         self._micro_sprint_original_findings: dict[str, tuple[list[dict[str, Any]], float]] = {}
+        # SILICON-07: SwarmDAG — initialized lazily in _do_initialize()
+        self._swarm_dag: Any = None
+        self._swarm_dag_rebalance_task: asyncio.Task[None] | None = None
         self.init_session_manager()
 
     @property
@@ -1507,9 +1510,6 @@ class FetchCoordinator(UniversalCoordinator):
                 '(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0)',
             )
         # SILICON-07: Initialize SwarmDAG for dynamic lane rebalancing.
-        # Lazy: the domain is created but workers are started lazily.
-        # The rebalancer loop runs in a background task.
-        self._swarm_dag_rebalance_task: asyncio.Task[None] | None = None
         _swarm_dag_enabled = os.environ.get('HLEDAC_ENABLE_SWARM_DAG', '1') != '0'
         if _swarm_dag_enabled:
             try:
@@ -2895,12 +2895,13 @@ class FetchCoordinator(UniversalCoordinator):
             if entity_id in self._micro_sprint_original_findings:
                 cached_findings, cached_at = self._micro_sprint_original_findings[entity_id]
                 if time.monotonic() - cached_at < 300.0:  # 5 min TTL
-                    # Compute entropy from cached findings
-                    entropy = await self._compute_evidence_entropy([
-                        {'content': f['content'], 'source': f['source']}
-                        for f in cached_findings
-                    ])
+                    # Compute entropy from cached findings content
+                    contents = [f['content'] for f in cached_findings if f.get('content')]
+                    entropy = self._compute_simple_entropy(contents)
                     return cached_findings, entropy
+                else:
+                    # Cache expired, remove stale entry
+                    del self._micro_sprint_original_findings[entity_id]
 
             # Fetch from DuckDB using async path
             # Use LIKE query on payload_text to find entity-related findings
@@ -2940,11 +2941,9 @@ class FetchCoordinator(UniversalCoordinator):
                 for key in oldest_keys:
                     del self._micro_sprint_original_findings[key]
 
-            # Compute entropy
-            entropy = await self._compute_evidence_entropy([
-                {'content': f['content'], 'source': f['source']}
-                for f in findings
-            ])
+            # Compute entropy from findings content
+            contents = [f['content'] for f in findings if f.get('content')]
+            entropy = self._compute_simple_entropy(contents)
 
             logger.debug(
                 '[META-015] Fetched %d original findings for %s (entropy=%.3f)',
@@ -3087,6 +3086,53 @@ class FetchCoordinator(UniversalCoordinator):
         except Exception as e:
             logger.debug('[META-015] Contradiction detection failed: %s', e)
             return []
+
+    def _compute_simple_entropy(self, contents: list[str]) -> float:
+        """
+        Compute simple entropy from text content list.
+
+        Uses Shannon entropy on character distribution.
+        Returns 0.0-1.0 normalized score.
+
+        Args:
+            contents: List of text strings to analyze
+
+        Returns:
+            Average normalized entropy (0.0-1.0)
+        """
+        if not contents:
+            return 0.0
+
+        try:
+            import math as _math
+            from collections import Counter
+
+            total_entropy = 0.0
+            count = 0
+
+            for text in contents:
+                if not text or len(text) < 2:
+                    continue
+
+                # Use character distribution for entropy
+                char_counts = Counter(text.lower())
+                total_chars = len(text)
+
+                entropy = 0.0
+                for cnt in char_counts.values():
+                    p = cnt / total_chars
+                    if p > 0:
+                        entropy -= p * _math.log2(p)
+
+                # Normalize: max entropy for text is ~4.5 bits (English)
+                normalized = min(entropy / 4.5, 1.0)
+                total_entropy += normalized
+                count += 1
+
+            return total_entropy / count if count > 0 else 0.0
+
+        except Exception:
+            return 0.0
 
     def _extract_claims_from_content(self, content: str) -> dict[str, str]:
         """

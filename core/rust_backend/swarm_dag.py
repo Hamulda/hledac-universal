@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 import uuid
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -264,6 +265,7 @@ class PythonFallbackSwarmDAG:
                 task_type,
                 task_id,
             )
+            return task_id  # submitted=False (same as Rust)
 
         return task_id
 
@@ -282,8 +284,6 @@ class PythonFallbackSwarmDAG:
         - On window expiry: swaps the buffer to get total IOCs in window,
           computes sample = total_iocs / ROI_INTERVAL_SECS, updates EMA
         """
-        import time
-
         now = time.monotonic()
         signal = self._roi_signals.get(task_type)
         if signal is None:
@@ -468,16 +468,17 @@ def get_domain(
         if raw_dag is None:
             raise AttributeError("swarm_dag not found in hledac_rust_extensions")
 
-        # Create the Rust SwarmDAG
-        # Rust expects a result_callback(task_id, task_type, result_bytes)
-        # For the Python bridge, we don't use the callback — Python calls
-        # record_completion() explicitly after processing results.
-        # Pass a no-op callback.
-        def _noop_callback(task_id: str, task_type: int, result_bytes: bytes) -> None:
+        # SILICON-07: Rust SwarmDAG takes (enabled: bool) in constructor.
+        # The inner WorkStealingDAG needs a callback, but we pass a no-op
+        # and use explicit record_completion() from Python instead.
+        #
+        # API: SwarmDAG(enabled=True) → initialize(callback) → submit()
+        inner = raw_dag.SwarmDAG(True)
+
+        def _noop_cb(tid: str, tt: int, pb: bytes) -> None:
             pass
 
-        inner = raw_dag.SwarmDAG(_noop_callback)
-        inner.start()
+        inner.initialize(_noop_cb)
         _swarm_dag_instance = _RustSwarmDAG(inner)
         logger.info("[SwarmDAG] Rust WorkStealingDAG initialized")
         return _swarm_dag_instance

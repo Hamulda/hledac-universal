@@ -516,7 +516,7 @@ async def index_bundle_entities(
     """
     Index extracted entities into DuckDB cross_sprint_entity_index.
 
-    Uses async_upsert_cross_sprint_entity() via DuckDBShadowStore.
+    Uses _sync_upsert_cross_sprint_entity() via DuckDBShadowStore (sync method).
     Called after extract_bundle_streaming() completes.
 
     Args:
@@ -531,6 +531,7 @@ async def index_bundle_entities(
         if duckdb_store is None:
             try:
                 from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+
                 # Try the singleton pattern if available
                 duckdb_store = DuckDBShadowStore.get_shared_instance() if hasattr(
                     DuckDBShadowStore, "get_shared_instance"
@@ -542,6 +543,15 @@ async def index_bundle_entities(
             logger.debug("[BUNDLER] No DuckDB store available for entity indexing")
             return
 
+        # Resolve the upsert method (sync vs async)
+        sync_method = getattr(duckdb_store, "_sync_upsert_cross_sprint_entity", None)
+        if sync_method is None:
+            # Fallback: try async version (may exist in future)
+            sync_method = getattr(duckdb_store, "async_upsert_cross_sprint_entity", None)
+        if sync_method is None:
+            logger.debug("[BUNDLER] No cross-sprint upsert method found on store")
+            return
+
         indexed = 0
         for idx_key, entry in entity_index.items():
             try:
@@ -550,7 +560,9 @@ async def index_bundle_entities(
                     if entry["source_count"] > 0
                     else 0.5
                 )
-                await duckdb_store.async_upsert_cross_sprint_entity(
+                # _sync_upsert_cross_sprint_entity is synchronous — run in thread pool
+                ok = await asyncio.to_thread(
+                    sync_method,
                     entity_value=entry["entity_value"],
                     ioc_type=entry["ioc_type"],
                     sprint_id=sprint_id,
@@ -558,13 +570,15 @@ async def index_bundle_entities(
                     confidence=avg_confidence,
                     content_hash=entry.get("sha256"),
                 )
-                indexed += 1
+                if ok:
+                    indexed += 1
             except Exception:
                 pass
 
         logger.info(
             "[BUNDLER] Indexed %d entities from sprint %s into cross_sprint_entity_index",
-            indexed, sprint_id
+            indexed,
+            sprint_id,
         )
 
     except Exception as e:

@@ -58,6 +58,7 @@ from hledac.universal.export.dashboard_builder import (
 # ISSUE [APEX]-1010: Sprint bundle format
 from hledac.universal.export.sprint_bundler import (
     bundle_sprint,
+    bundle_and_index_sprint,
     verify_bundle,
     BUNDLE_FORMAT_VERSION,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "export_parquet_to_path",
     # Sprint bundle format [APEX]-1010
     "bundle_sprint",
+    "bundle_and_index_sprint",
     "verify_bundle",
     "BUNDLE_FORMAT_VERSION",
     "view_bundle",

@@ -443,13 +443,21 @@ class SourceReliabilityTracker:
             return self._duckdb_initialized
 
         try:
-            # Use the store's internal connection to execute DDL
-            if hasattr(self._store, "_execute_sql"):
-                await asyncio.to_thread(
-                    self._store._execute_sql, _SOURCE_RELIABILITY_DDL
-                )
-                self._duckdb_initialized = True
-                return True
+            # Access DuckDBShadowStore's _file_conn (the canonical pattern used by
+            # domain_reputation.py, proxy_routes.py, anti_bot_profiles.py)
+            conn = self._store._file_conn if self._store._db_path else self._store._persistent_conn  # noqa: SLF001
+            if conn is None:
+                return False
+
+            def _create_tables() -> None:
+                for stmt in _SOURCE_RELIABILITY_DDL.split(";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        conn.execute(stmt)
+
+            await asyncio.to_thread(_create_tables)
+            self._duckdb_initialized = True
+            return True
         except Exception as e:
             logger.debug(
                 "[SourceReliability] DuckDB table init failed (fail-soft): %s", e,
@@ -481,44 +489,58 @@ class SourceReliabilityTracker:
             if not targets:
                 return 0
 
-            written = 0
+            # Snapshot stats under lock, then write on thread (duckdb conn is sync)
             async with self._lock:
-                for source_id in targets:
-                    stats = self._sources.get(source_id)
-                    if stats is None:
-                        continue
+                snapshot = {
+                    sid: self._sources[sid]
+                    for sid in targets
+                    if sid in self._sources
+                }
+
+            if not snapshot:
+                return 0
+
+            def _write_all() -> int:
+                # Access conn on the thread where it's safe to use
+                conn = self._store._file_conn if self._store._db_path else self._store._persistent_conn  # noqa: SLF001
+                if conn is None:
+                    return 0
+
+                sql = f"""INSERT OR REPLACE INTO {_SOURCE_RELIABILITY_TABLE}
+                    (source_id, total_claims, contradiction_count, ratio,
+                     last_updated, auto_retracted, auto_retracted_at, sprint_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+
+                written = 0
+                for source_id, stats in snapshot.items():
                     ratio = (
                         stats.contradiction_count / stats.total_claims
                         if stats.total_claims > 0
                         else 0.0
                     )
                     try:
-                        if hasattr(self._store, "_execute_sql"):
-                            # DuckDB uses conn.execute(sql, [params]) — list of positional args
-                            await asyncio.to_thread(
-                                self._store._execute_sql,
-                                f"""INSERT OR REPLACE INTO {_SOURCE_RELIABILITY_TABLE}
-                                (source_id, total_claims, contradiction_count, ratio,
-                                 last_updated, auto_retracted, auto_retracted_at, sprint_id)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                                [
-                                    source_id,
-                                    stats.total_claims,
-                                    stats.contradiction_count,
-                                    ratio,
-                                    stats.last_updated,
-                                    stats.auto_retracted,
-                                    stats.auto_retracted_at if stats.auto_retracted else None,
-                                    sprint_id or None,
-                                ],
-                            )
-                            written += 1
+                        conn.execute(
+                            sql,
+                            [
+                                source_id,
+                                stats.total_claims,
+                                stats.contradiction_count,
+                                ratio,
+                                stats.last_updated,
+                                stats.auto_retracted,
+                                stats.auto_retracted_at if stats.auto_retracted else None,
+                                sprint_id or None,
+                            ],
+                        )
+                        written += 1
                     except Exception as e:
                         logger.debug(
                             "[SourceReliability] DuckDB write for %s failed: %s",
                             source_id, e,
                         )
+                return written
 
+            written = await asyncio.to_thread(_write_all)
             self._stats["db_writes"] += written
             return written
 
