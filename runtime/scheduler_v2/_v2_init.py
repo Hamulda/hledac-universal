@@ -277,6 +277,29 @@ class V2Init:
         object.__setattr__(self._scheduler, "_lifecycle", _lifecycle_mgr)
         object.__setattr__(self._scheduler, "_runner", _lifecycle_mgr)
 
+        # [ULTIMATE]-002: Wire cognitive saturation detector into lifecycle manager.
+        # The detector monitors entity discovery rate and triggers WINDUP when
+        # discovery stops for configured persistence period (default: 3 min).
+        _cs_detector = None
+        try:
+            from hledac.universal.runtime.cognitive_saturation_detector import CognitiveSaturationDetector
+            from hledac.universal.coordinators.fetch_coordinator import set_cognitive_saturation_detector
+
+            _cs_detector = CognitiveSaturationDetector()
+            _lifecycle_mgr.set_cognitive_saturation_detector(_cs_detector)
+            # Also register detector with FetchCoordinator via global registry
+            set_cognitive_saturation_detector(_cs_detector)
+            _logging.getLogger(__name__).info(
+                "[ULTIMATE]-002] CognitiveSaturationDetector wired: window=%.0fs, persist=%.0fs, min_active=%.0fs",
+                _cs_detector._window_s,
+                _cs_detector._persist_s,
+                _cs_detector._min_active_s,
+            )
+        except Exception as _cs_exc:  # noqa: BLE001 — fail-soft; cognitive saturation is non-critical
+            _logging.getLogger(__name__).warning(
+                "[ULTIMATE]-002] Failed to wire CognitiveSaturationDetector (non-critical): %s", _cs_exc
+            )
+
         # [FINAL]-019-08: Wire DEGRADED phase transitions to rayon pool resize.
         # When the lifecycle enters DEGRADED, RayonPoolManager drops to (2, 2)
         # threads to reduce memory/thermal pressure. Callback fires even if

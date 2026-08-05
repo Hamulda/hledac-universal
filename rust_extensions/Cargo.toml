@@ -83,6 +83,8 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 # Enables: rust.tls.ja4_from_client_hello(), connect_and_ja4(), batch_ja4()
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
 hex = "0.4"
+# ISSUE [ULTIMATE]-005: msgspec for zero-copy struct serialization
+msgspec = "0.13"
 
 # STIX 2.1 bundle encoding (for stix feature)
 # Feature-gated: ~2MB additional compile, M1 8GB safe

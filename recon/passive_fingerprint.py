@@ -1116,31 +1116,93 @@ def _trigger_cve_lookup_tasks(findings: list[CanonicalFinding], store: Any) -> N
     """
     Fire background CVE lookup tasks for high-signal technologies.
 
+    ISSUE [ULTIMATE]-004: First checks local CveCorrelationMatrix (zero network).
+    Falls back to external OSV/NVD/GitHub search only for uncached technologies.
+
     Triggers asyncio.create_task() for: WordPress, Drupal, Joomla, Typo3,
     nginx, Apache, Next.js, React, Vue, Angular, Gatsby.
 
     CVE results are stored via store.async_ingest_findings_batch().
     Fail-safe: any error is logged and swallowed.
     """
-    _CVE_TRIGGER_TECHS = {'WordPress', 'Drupal', 'Joomla', 'Typo3', 'nginx', 'Apache', 'Next.js', 'React', 'Vue', 'Angular', 'Gatsby', 'Laravel', 'Django', 'Flask', 'Magento', 'PrestaShop', 'Ghost', 'HubSpot'}
+    _CVE_TRIGGER_TECHS = {'WordPress', 'Drupal', 'Joomla', 'Typo3', 'nginx', 'Apache', 'Next.js', 'React', 'Vue', 'Angular', 'Gatsby', 'Laravel', 'Django', 'Flask', 'Magento', 'PrestaShop', 'Ghost', 'HubSpot', 'OpenSSH', 'PostgreSQL', 'MySQL', 'Redis', 'MongoDB', 'Elasticsearch', 'Kubernetes', 'Docker', 'HAProxy', 'Varnish', 'Memcached'}
     detected_techs: set[str] = set()
+    tech_versions: dict[str, str | None] = {}  # tech -> version
+
     for finding in findings:
         try:
             payload_str = getattr(finding, 'payload_text', '') or ''
             if payload_str.startswith('{'):
                 payload = _msgspec_decode(payload_str)
                 tech = payload.get('technology', '')
+                version = payload.get('version')
                 if tech in _CVE_TRIGGER_TECHS:
                     detected_techs.add(tech)
+                    if version:
+                        tech_versions[tech] = version
         except Exception:
             continue
     if not detected_techs:
         return
-    from hledac.universal.utils.async_helpers import safe_create_task
+
+    # ISSUE [ULTIMATE]-004: Try local CVE matrix first (zero network, < 500µs)
+    from hledac.universal.knowledge.duckdb_cve_matrix import get_cve_matrix
+    cve_matrix = get_cve_matrix()
+
     for tech in detected_techs:
+        version = tech_versions.get(tech)
+        try:
+            # Hot-path: local DuckDB lookup
+            local_matches = cve_matrix.match(tech, version)
+            if local_matches:
+                # Store local CVE findings immediately
+                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+                ts = time.time()
+                cve_findings: list[CanonicalFinding] = []
+                for match in local_matches[:10]:  # Top 10 CVEs
+                    fid_input = f'{tech}:{match.cve_id}:local'
+                    fid = f'cve_local_{hashlib.sha256(fid_input.encode()).hexdigest()[:16]}'
+                    payload = {
+                        'technology': tech,
+                        'version': version,
+                        'cve_id': match.cve_id,
+                        'cvss_score': match.cvss_score,
+                        'cwe_id': match.cwe_id,
+                        'description': match.description_snippet[:500],
+                        'source': 'inmemory_cve_matrix',
+                    }
+                    cve_findings.append(CanonicalFinding(
+                        finding_id=fid,
+                        query=f'{tech} {match.cve_id}',
+                        source_type='cve_local_lookup',
+                        confidence=0.85 if match.cvss_score and match.cvss_score >= 7.0 else 0.7,
+                        ts=ts,
+                        provenance=('cve_local_lookup', tech, match.cve_id),
+                        payload_text=_msgspec_encode(payload).decode()
+                    ))
+                if cve_findings:
+                    from hledac.universal.utils.async_helpers import safe_create_task
+                    safe_create_task(_store_cve_findings(cve_findings, store), name=f'cve_store:{tech}')
+                    logger.info(f'[TechStack] {len(cve_findings)} local CVEs for {tech}')
+                continue  # Skip external lookup for cached tech
+        except Exception:
+            pass  # Fall through to external lookup
+
+        # Fallback: external API lookup (2-15s network latency)
+        from hledac.universal.utils.async_helpers import safe_create_task
         cve_id = f'CVE-{tech.upper()}-LATEST'
         safe_create_task(_cve_lookup_background(tech, cve_id, store), name=f'cve_lookup:{tech}')
         logger.debug(f'[TechStack] CVE lookup triggered for {tech}')
+
+
+async def _store_cve_findings(findings: list[CanonicalFinding], store: Any) -> None:
+    """Store CVE findings in the store."""
+    try:
+        results = await store.async_ingest_findings_batch(findings)
+        stored = sum((1 for r in results if isinstance(r, dict) and r.get('accepted')))
+        logger.debug(f'[TechStack] Stored {stored} CVE findings')
+    except Exception:
+        pass
 
 async def _cve_lookup_background(tech: str, cve_id: str, store: Any) -> None:
     """

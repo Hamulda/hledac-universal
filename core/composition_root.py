@@ -225,6 +225,10 @@ async def _run_sprint_task(
     force: bool,
     flags: Any,
     shutdown_event: asyncio.Event,
+    # ULTIMATE-001: Deterministic cognitive replay
+    prng_seed: int | None = None,
+    replay_seed: int | None = None,
+    warc_dir: str | None = None,
 ) -> None:
     """
     Async task body that runs the sprint and waits for either
@@ -247,6 +251,10 @@ async def _run_sprint_task(
         rl_train_mode=rl_train_mode,
         force=force,
         flags=flags,
+        # ULTIMATE-001: Deterministic cognitive replay
+        prng_seed=prng_seed,
+        replay_seed=replay_seed,
+        warc_dir=warc_dir,
     )
     # F320: asyncio.create_task -> safe_create_task (eager_start, loop probe)
     sprint_task = safe_create_task(sprint_coro, name="composition_root:sprint")
@@ -292,6 +300,10 @@ def build_runtime(
     rl_train_mode: bool,
     force: bool,
     flags: Any,
+    # ULTIMATE-001: Deterministic cognitive replay
+    prng_seed: int | None = None,
+    replay_seed: int | None = None,
+    warc_dir: str | None = None,
 ) -> tuple[asyncio.AbstractEventLoop, asyncio.Task[None], asyncio.Event, Callable[[], None]]:
     """
     Build the sprint runtime: loop, shutdown event, signal restore, sprint task.
@@ -344,6 +356,10 @@ def build_runtime(
             force=force,
             flags=flags,
             shutdown_event=shutdown_event,
+            # ULTIMATE-001: Deterministic cognitive replay
+            prng_seed=prng_seed,
+            replay_seed=replay_seed,
+            warc_dir=warc_dir,
         )
     )
 

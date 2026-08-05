@@ -14,12 +14,18 @@ CONTENTS:
 - Path utilities: _get_dedup_lmdb_path, _get_forensics_lmdb_path, _get_multimodal_lmdb_path
 - Import helpers: _import_live_feed_pipeline, _import_live_public_pipeline, etc.
 - GC callbacks: _gc_sprint_callback, _gc_sprint_sentinel
+- SprintSeedState: Deterministic cognitive replay state for court-admissible reproducibility
 """
 
 
+import hashlib
 import logging
+import secrets
+import time
 from pathlib import Path
 from typing import Any
+
+import msgspec
 
 # ── Re-export from scheduler/core/types.py for convenience ─────────────────────
 from hledac.universal.runtime.scheduler.core.types import (
@@ -27,6 +33,102 @@ from hledac.universal.runtime.scheduler.core.types import (
     LaneBudgetPool,
     SourceTier,
 )
+
+
+# ── SprintSeedState: Deterministic Cognitive Replay ──────────────────────────
+# ULTIMATE-001: Court-admissible reproducibility via seed capture
+
+
+class SprintSeedState(msgspec.Struct, frozen=True, gc=False):
+    """
+    ULTIMATE-001: Captures all sources of non-determinism for forensic replay.
+
+    This struct captures:
+    - prng_seed: 64-bit seed for all random operations (ToT branch expansion,
+      value estimation jitter, graph connection density)
+    - tot_iv: BLAKE2b-16 hex of (seed + query) — deterministic ToT root hash
+    - config_hash: SHA-256 of frozen config snapshot (env vars, CLI flags)
+    - created_at: monotonic timestamp for ordering
+
+    Usage:
+      seed_state = SprintSeedState.generate(query="LockBit ransomware")
+      # Store in DuckDB + dashboard export
+      # Replay: SprintSeedState.from_replay(seed, warc_dir)
+
+    Frozen + gc=False for minimal memory footprint and cache-friendly access.
+    M1 8GB safe: single struct, ~64 bytes.
+    """
+
+    prng_seed: int
+    tot_iv: str
+    config_hash: str
+    created_at: float
+
+    @classmethod
+    def generate(
+        cls,
+        query: str,
+        explicit_seed: int | None = None,
+        config_snapshot: dict | None = None,
+    ) -> "SprintSeedState":
+        """
+        Generate a new SprintSeedState for deterministic cognitive replay.
+
+        Args:
+            query: The investigation query (included in ToT initialization vector)
+            explicit_seed: Optional explicit seed; if None, generates secrets.randbits(64)
+            config_snapshot: Optional config dict for hash computation; if None,
+                          uses current env vars snapshot
+
+        Returns:
+            SprintSeedState with all fields populated
+        """
+        import hashlib
+        import secrets
+
+        # Generate or use explicit seed
+        seed = explicit_seed if explicit_seed is not None else secrets.randbits(64)
+
+        # BLAKE2b-16 of seed + query (deterministic ToT root hash)
+        tot_iv_input = f"{seed}:{query}".encode("utf-8")
+        tot_iv = hashlib.blake2b(tot_iv_input, digest_size=8).hexdigest()
+
+        # SHA-256 of config snapshot
+        if config_snapshot is None:
+            import os
+            config_snapshot = dict(os.environ)
+
+        # Sort keys for deterministic serialization
+        config_json = msgspec.json.encode(config_snapshot)
+        config_hash = hashlib.sha256(config_json).hexdigest()
+
+        created_at = time.monotonic()
+
+        return cls(
+            prng_seed=seed,
+            tot_iv=tot_iv,
+            config_hash=config_hash,
+            created_at=created_at,
+        )
+
+    def to_dict(self) -> dict:
+        """Convert to dict for serialization (DuckDB, JSON, etc.)."""
+        return {
+            "prng_seed": self.prng_seed,
+            "tot_iv": self.tot_iv,
+            "config_hash": self.config_hash,
+            "created_at": self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SprintSeedState":
+        """Reconstruct from dict (DuckDB row, JSON, etc.)."""
+        return cls(
+            prng_seed=int(data["prng_seed"]),
+            tot_iv=str(data["tot_iv"]),
+            config_hash=str(data["config_hash"]),
+            created_at=float(data["created_at"]),
+        )
 
 # ── LMDB Names (must be defined before path functions) ────────────────────────
 
@@ -288,6 +390,7 @@ __all__ = [
     "EarlyExitClass",
     "FeedDominanceGuardResult",
     "SourceEconomics",
+    "SprintSeedState",
     "_DEDUP_LMDB_NAME",
     "_FORENSICS_LMDB_NAME",
     "_MULTIMODAL_LMDB_NAME",

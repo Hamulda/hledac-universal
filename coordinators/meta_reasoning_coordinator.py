@@ -22,6 +22,7 @@ Features:
 import asyncio
 import logging
 import os
+import random
 import secrets
 import time
 from collections import deque
@@ -48,7 +49,43 @@ except ImportError:
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
 logger = logging.getLogger(__name__)
+
+# ULTIMATE-001: Deterministic cognitive replay
+# Default RNG uses system entropy (for non-reproducible runs).
+# When SprintSeedState is present, use the seeded RNG for deterministic replay.
 _RNG = secrets.SystemRandom()
+# ULTIMATE-001: Cache the import to avoid repeated module lookups
+_SPRINT_SEED_STATE_IMPORTED = False
+
+
+def _get_seeded_rng() -> random.Random | secrets.SystemRandom:
+    """
+    ULTIMATE-001: Get the appropriate RNG based on sprint seed state.
+
+    Returns a seeded random.Random if SprintSeedState is available,
+    otherwise falls back to the system RNG.
+    """
+    global _RNG, _SPRINT_SEED_STATE_IMPORTED
+
+    if not _SPRINT_SEED_STATE_IMPORTED:
+        try:
+            from hledac.universal.runtime.sprint_entrypoint import get_sprint_seed_state
+            _SPRINT_SEED_STATE_IMPORTED = True
+        except ImportError:
+            return _RNG
+
+    try:
+        # Re-import locally to avoid keeping a reference to the module
+        from hledac.universal.runtime.sprint_entrypoint import get_sprint_seed_state
+        seed_state = get_sprint_seed_state()
+        if seed_state is not None:
+            # Use the PRNG seed from SprintSeedState for deterministic replay
+            return random.Random(seed_state.prng_seed)
+    except (ImportError, AttributeError):
+        pass
+    return _RNG
+
+
 _YIELD_EVERY_COT = 4
 _YIELD_EVERY_TOT = 16
 
@@ -427,13 +464,16 @@ class _TotValuePredictor:
     - Delegates to AdaptiveCostModel which has lazy MLX loading
     - Feature dim kept small (16) for ToT-specific predictions
     - No additional model weights — reuses existing SSM
+    - ULTIMATE-001: Caches seeded RNG to avoid repeated imports and ensure determinism
     """
-    __slots__ = ('_cost_model', '_history', '_warmup_predictions')
+    __slots__ = ('_cost_model', '_history', '_warmup_predictions', '_rng')
 
     def __init__(self, cost_model: Any | None = None) -> None:
         self._cost_model = cost_model
         self._history: deque[tuple[np.ndarray, float]] = deque(maxlen=500)
         self._warmup_predictions: list[float] = []
+        # ULTIMATE-001: Cache the RNG on first use — avoids repeated imports
+        self._rng: random.Random | secrets.SystemRandom | None = None
 
     def predict_value(
         self,
@@ -469,7 +509,10 @@ class _TotValuePredictor:
         depth_decay = 1.0 / (1.0 + 0.15 * depth)
         base_value = parent_value * depth_decay
         # Add small stochastic exploration bonus for diversity
-        exploration_bonus = _RNG.uniform(0.0, 0.15)
+        # ULTIMATE-001: Use cached seeded RNG for deterministic replay
+        if self._rng is None:
+            self._rng = _get_seeded_rng()
+        exploration_bonus = self._rng.uniform(0.0, 0.15)
         value = float(np.clip(base_value + exploration_bonus, 0.0, 1.0))
         uncertainty = 0.3 if not self._warmup_predictions else 0.1
         self._warmup_predictions.append(value)
@@ -1218,11 +1261,13 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
         nodes: dict[str, dict[str, Any]] = {}
         edges: list[tuple[str, str]] = []
         aspects = query.split()[:max_nodes]
+        # ULTIMATE-001: Use seeded RNG for deterministic graph structure
+        rng = _get_seeded_rng()
         for i, aspect in enumerate(aspects):
-            nodes[f'node_{i}'] = {'concept': aspect, 'importance': _RNG.uniform(0.3, 1.0), 'connections': []}
+            nodes[f'node_{i}'] = {'concept': aspect, 'importance': rng.uniform(0.3, 1.0), 'connections': []}
         for i in range(len(aspects)):
             for j in range(i + 1, min(i + 3, len(aspects))):
-                if _RNG.random() < config['connection_density']:
+                if rng.random() < config['connection_density']:
                     edges.append((f'node_{i}', f'node_{j}'))
                     nodes[f'node_{i}']['connections'].append(f'node_{j}')
                     nodes[f'node_{j}']['connections'].append(f'node_{i}')

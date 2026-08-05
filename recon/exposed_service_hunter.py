@@ -2492,6 +2492,263 @@ async def scan_graphql_endpoint(url: str) -> dict | None:
     async with GraphQLIntrospector() as introspector:
         result = await introspector._check_endpoint(url)
         return result.to_dict() if result else None
+
+
+# =============================================================================
+# ISSUE [ULTIMATE]-004: Banner-to-CVE Pipeline
+# =============================================================================
+
+class BannerParser:
+    """
+    Parse service banners to extract technology and version information.
+
+    Maps raw banner strings to structured (technology, version) tuples
+    for CVE correlation via CveCorrelationMatrix.
+
+    SUPPORTED BANNERS:
+        - HTTP Server headers (nginx, Apache, IIS)
+        - SSH banners (OpenSSH)
+        - SMTP banners (Postfix, Exim, Sendmail)
+        - FTP banners (vsftpd, ProFTPD)
+        - Database connection strings (MySQL, PostgreSQL, Redis)
+        - Docker/Kubernetes API responses
+        - TLS certificate Subject/CN fields
+    """
+
+    # Banner regex patterns: (tech_name, version_group, pattern)
+    _BANNER_PATTERNS: list[tuple[str, str, re.Pattern]] = [
+        # HTTP Servers
+        (r'nginx', r'nginx(?:/|\\s)([\d.]+)', None),
+        (r'Apache', r'Apache/([\d.]+)', None),
+        (r'Apache', r'Apache-Coyote/([\d.]+)', None),
+        (r'microsoft-iis', r'Microsoft-IIS/([\d.]+)', None),
+        (r'lighttpd', r'lighttpd/([\d.]+)', None),
+        (r'OpenBSD httpd', r'Server: OpenBSD httpd', None),
+
+        # SSH
+        (r'OpenSSH', r'SSH-[\d.]+-OpenSSH_([\d.]+)', None),
+        (r'OpenSSH', r'OpenSSH_([\d.]+)', None),
+
+        # Mail Servers
+        (r'Postfix', r'Postfix', None),
+        (r'Exim', r'Exim ([\d.]+)', None),
+        (r'Sendmail', r'Sendmail', None),
+        (r'Dovecot', r'Dovecot ([\d.]+)', None),
+
+        # Databases
+        (r'MySQL', r'mysql[\s]+([\d.]+)', None),
+        (r'MySQL', r'MySQL Community Server ([\d.]+)', None),
+        (r'PostgreSQL', r'PostgreSQL ([\d.]+)', None),
+        (r'PostgreSQL', r'pg[\s]+([\d.]+)', None),
+        (r'Redis', r'Redis ([\d.]+)', None),
+        (r'MongoDB', r'MongoDB ([\d.]+)', None),
+        (r'Elasticsearch', r'elasticsearch/([\d.]+)', None),
+
+        # Containers
+        (r'Docker', r'Docker', None),
+        (r'Kubernetes', r'kubernetes', None),
+
+        # Web Frameworks
+        (r'PHP', r'PHP/([\d.]+)', None),
+        (r'Node.js', r'Node\.js', None),
+        (r'Django', r'Django', None),
+        (r'Flask', r'Flask', None),
+
+        # FTP
+        (r'vsftpd', r'vsftpd ([\d.]+)', None),
+        (r'ProFTPD', r'ProFTPD ([\d.]+)', None),
+
+        # VPN
+        (r'OpenVPN', r'OpenVPN', None),
+    ]
+
+    @classmethod
+    def _init_patterns(cls) -> None:
+        """Lazily initialize compiled regex patterns."""
+        if cls._BANNER_PATTERNS[0][2] is None:
+            cls._BANNER_PATTERNS = [
+                (tech, ver, re.compile(pat, re.IGNORECASE))
+                for tech, ver, _ in cls._BANNER_PATTERNS
+            ]
+
+    @classmethod
+    def parse_banner(cls, banner: str) -> list[tuple[str, str | None]]:
+        """
+        Parse a service banner to extract technology and version.
+
+        Args:
+            banner: Raw banner string from service detection
+
+        Returns:
+            List of (technology, version) tuples. Version may be None.
+        """
+        cls._init_patterns()
+        results: list[tuple[str, str | None]] = []
+        seen: set[str] = set()
+
+        for tech, ver_pat, pattern in cls._BANNER_PATTERNS:
+            match = pattern.search(banner)
+            if match:
+                key = f"{tech}:{match.group(1) if match.lastindex else ''}"
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                version = match.group(1) if match.lastindex else None
+                results.append((tech, version))
+
+                # Also add without version for broad matching
+                if tech.lower() not in [r[0].lower() for r in results]:
+                    results.append((tech, None))
+
+        return results
+
+    @classmethod
+    def parse_http_headers(cls, headers: dict[str, str]) -> list[tuple[str, str | None]]:
+        """
+        Parse HTTP response headers for technology information.
+
+        Headers checked:
+            - Server: nginx, Apache, IIS, etc.
+            - X-Powered-By: PHP, ASP.NET, etc.
+            - X-AspNet-Version: .NET versions
+        """
+        results: list[tuple[str, str | None]] = []
+        seen: set[str] = set()
+
+        # Server header
+        server = headers.get('server', '')
+        if server:
+            for tech, ver, pattern in cls._BANNER_PATTERNS:
+                if pattern.search(server):
+                    key = f"{tech}:{ver}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    version = pattern.search(server)
+                    ver = version.group(1) if version and version.lastindex else None
+                    results.append((tech, ver))
+
+        # X-Powered-By
+        powered_by = headers.get('x-powered-by', '')
+        if powered_by:
+            if 'PHP' in powered_by:
+                match = re.search(r'PHP[/\s]([\d.]+)', powered_by, re.IGNORECASE)
+                results.append(('PHP', match.group(1) if match else None))
+            elif 'ASP.NET' in powered_by:
+                match = re.search(r'ASP\.NET[\s]([\d.]+)', powered_by, re.IGNORECASE)
+                results.append(('ASP.NET', match.group(1) if match else None))
+
+        # X-AspNet-Version
+        asp_ver = headers.get('x-aspnet-version') or headers.get('x-aspnetmvc-version')
+        if asp_ver:
+            results.append(('ASP.NET', asp_ver))
+
+        return results
+
+
+def correlate_banner_cves(banner: str) -> list[dict[str, Any]]:
+    """
+    Correlate CVEs from a banner string using CveCorrelationMatrix.
+
+    ISSUE [ULTIMATE]-004: Zero-network CVE lookup via local DuckDB matrix.
+
+    Args:
+        banner: Service banner string
+
+    Returns:
+        List of CVE match dicts with keys: cve_id, cvss_score, cwe_id, description
+    """
+    try:
+        from hledac.universal.knowledge.duckdb_cve_matrix import get_cve_matrix
+        matrix = get_cve_matrix()
+    except ImportError:
+        return []
+
+    results: list[dict[str, Any]] = []
+    parsed = BannerParser.parse_banner(banner)
+
+    for tech, version in parsed:
+        try:
+            matches = matrix.match(tech, version)
+            for match in matches[:5]:  # Top 5 per technology
+                results.append({
+                    'technology': tech,
+                    'version': version,
+                    'cve_id': match.cve_id,
+                    'cvss_score': match.cvss_score,
+                    'cwe_id': match.cwe_id,
+                    'description': match.description_snippet[:200],
+                })
+        except Exception:
+            continue
+
+    return results
+
+
+async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | None:
+    """
+    Grab service banner via TCP connection.
+
+    Attempts multiple protocols based on port:
+        - 80/443: HTTP request
+        - 22: SSH banner
+        - 25/587: SMTP banner
+        - 21: FTP banner
+        - 3306/5432/6379/27017: Database handshake
+
+    Args:
+        host: Target host
+        port: Target port
+        timeout: Connection timeout in seconds
+
+    Returns:
+        Raw banner string or None
+    """
+    import socket
+
+    if port in (80, 8080, 443, 8443):
+        # HTTP banner
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                protocol = 'https' if port in (443, 8443) else 'http'
+                resp = await client.get(f'{protocol}://{host}:{port}/', timeout=timeout)
+                headers = dict(resp.headers)
+                banner_parts = [f"HTTP/{resp.http_version} {resp.status_code}"]
+                if 'server' in headers:
+                    banner_parts.append(f"Server: {headers['server']}")
+                if 'x-powered-by' in headers:
+                    banner_parts.append(f"X-Powered-By: {headers['x-powered-by']}")
+                return '\n'.join(banner_parts)
+        except Exception:
+            pass
+    else:
+        # Raw TCP banner
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, port),
+                timeout=timeout
+            )
+            try:
+                # Send appropriate probe based on port
+                if port == 22:
+                    # SSH: just wait for banner
+                    pass
+                elif port == 21:
+                    writer.write(b'QUIT\r\n')
+                    await writer.drain()
+
+                banner = await asyncio.wait_for(reader.read(1024), timeout=timeout)
+                return banner.decode('utf-8', errors='ignore').strip()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+        except Exception:
+            pass
+
+    return None
+
+
 __all__ = [
     'ExposedServiceHunter', 'S3BucketEnumerator', 'DatabasePortScanner',
     'GraphQLIntrospector', 'CertificateTransparency', 'ContainerAPIExplorer',
@@ -2500,4 +2757,6 @@ __all__ = [
     'ServiceType', 'ExposureType', 'RiskLevel',
     'quick_hunt', 'check_s3_bucket', 'scan_graphql_endpoint',
     'search_shodan', 'search_censys', 'APICache',
+    # ISSUE [ULTIMATE]-004: Banner-to-CVE Pipeline
+    'BannerParser', 'correlate_banner_cves', 'banner_grabber',
 ]

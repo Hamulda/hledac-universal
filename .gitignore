@@ -151,3 +151,4 @@ benchmark_results/
 *.scip
 .agentsroom/handoff-transcript-*.txt
 .agentsroom/handoff-summary-*.md
+.aider*

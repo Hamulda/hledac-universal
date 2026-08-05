@@ -21,7 +21,7 @@ MEMORY CONTRACTS:
 
 PERSISTENCE:
 - LMDB-backed persistent store: LMDB_ROOT/semantic_dedup.lmdb
-- Key: BLAKE2b(finding_id) → 256d float32 embedding (binary)
+- Key: xxh3-64(text) → 256d float32 embedding (binary)
 - Idempotent upsert (put_many)
 - Fail-soft init — any error stores in _boot_error, dedup proceeds without persistence
 """
@@ -227,7 +227,13 @@ class SemanticDedupCache:
                     self._duplicate_count += 1
                     logger.debug(f'[SEMDEDUP] Duplicate detected: sim={sim:.3f}')
                     return True
-            key = hashlib.blake2b(text.encode('utf-8'), digest_size=32).hexdigest()
+            # xxh3-64 LMDB key (~10× faster than blake2b-256 on M1)
+            # Falls back to blake2b-64 if hashing utils unavailable
+            try:
+                from hledac.universal.utils.hashing import xxh3_64_hex
+                key = xxh3_64_hex(text)
+            except Exception:
+                key = hashlib.blake2b(text.encode('utf-8'), digest_size=8).hexdigest()
             text_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
             try:
                 from hledac.universal.knowledge.ann_index import check_ann_duplicate

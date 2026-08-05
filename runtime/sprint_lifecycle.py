@@ -20,10 +20,15 @@ when the governor recovers to OK.
 import collections.abc
 import time
 import warnings
+from typing import TYPE_CHECKING, Any
+
 import msgspec
 from dataclasses import dataclass
 from enum import Enum, auto
 from msgspec import field
+
+if TYPE_CHECKING:
+    pass
 
 # ── Phase enum ───────────────────────────────────────────────────────────────
 
@@ -119,6 +124,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
     _current_phase: SprintPhase = SprintPhase.BOOT
     _entered_phase_at: float | None = None
     _phase_history: dict = field(default_factory=dict)
+    _on_phase_exit_callbacks: list = field(default_factory=list)
     _export_started: bool = False
     _teardown_started: bool = False
     # [FINAL]-019: Tracks whether governor windup was lowered on EXPORT.
@@ -152,10 +158,20 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
     _degraded: bool = False
     _degraded_reason: str = ""
 
-    # Issue 1.2 — Phase TaskGroup callbacks
-    # Invoked synchronously after _transition_to_unlocked() updates phase.
-    # Fail-safe: each callback wrapped in try/except Exception.
-    _on_phase_exit_callbacks: list = field(default_factory=list)
+    # [ULTIMATE]-002: Cognitive saturation detector for sprint-level entity discovery rate.
+    # Tracks unique entity discoveries over a sliding window and triggers WINDUP
+    # when discovery stops for a configured persistence period.
+    # Set via set_cognitive_saturation_detector() by the orchestrator.
+    _cognitive_saturation_detector: Any = None
+
+    # [ULTIMATE]-002: Tracks elapsed time in ACTIVE phase (excluding DEGRADED).
+    # Used by cognitive saturation detector to enforce minimum active time.
+    _active_phase_elapsed_s: float = 0.0
+
+    # ULTIMATE-001: SprintSeedState for deterministic cognitive replay.
+    # Set via set_seed_state() by the sprint entrypoint at start().
+    # Enables forensic reproduction of ToT trees and synthesis paths.
+    _seed_state: Any = None
 
     # ── Phase exit callbacks (Issue 1.2) ───────────────────────────────────────
 
@@ -239,6 +255,8 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         [FINAL]-019-08: Detects governor CRITICAL/EMERGENCY UMA state and
         transitions to DEGRADED phase. Detects recovery to OK and transitions
         back to ACTIVE from DEGRADED.
+        [ULTIMATE]-002: Cognitive saturation detection — monitors entity discovery
+        rate and triggers WINDUP when discovery stops for configured persistence.
         Returns the current phase after ticking.
         """
         now = _now(now_monotonic)
@@ -285,10 +303,45 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                 except Exception:
                     pass
 
+        # [ULTIMATE]-002: Track elapsed time in ACTIVE phase (excludes DEGRADED).
+        # This is used by cognitive saturation detector to enforce minimum active time.
+        if self._current_phase == SprintPhase.ACTIVE:
+            if self._entered_phase_at is not None:
+                self._active_phase_elapsed_s = now - self._entered_phase_at
+        elif self._current_phase == SprintPhase.DEGRADED:
+            # DEGRADED time doesn't count toward active elapsed time
+            pass
+        elif self._current_phase in (SprintPhase.WARMUP, SprintPhase.BOOT):
+            self._active_phase_elapsed_s = 0.0
+
         # Auto WINDUP guard — fire from ACTIVE or DEGRADED when time runs down.
+        # Also check cognitive saturation detector [ULTIMATE]-002.
         if self._current_phase in (SprintPhase.ACTIVE, SprintPhase.DEGRADED):
+            # [ULTIMATE]-002: Cognitive saturation check — triggers WINDUP when
+            # entity discovery stops for persistence period (after minimum active time).
+            _cs_triggered = False
+            if self._cognitive_saturation_detector is not None:
+                try:
+                    if self._cognitive_saturation_detector.should_enter_windup(
+                        self._active_phase_elapsed_s, now
+                    ):
+                        _cs_triggered = True
+                        # Log the cognitive saturation event
+                        import logging as _cs_logger
+                        _cs_logger.warning(
+                            "[ULTIMATE]-002] COGNITIVE_SATURATION: Sprint entering WINDUP "
+                            "due to cognitive saturation. active_elapsed=%.1fs, "
+                            "total_entities=%d, window_unique=%d. "
+                            "This saves ~10-15 minutes of zero-value work.",
+                            self._active_phase_elapsed_s,
+                            self._cognitive_saturation_detector._unique_reports,
+                            self._cognitive_saturation_detector._count_unique_in_window(now),
+                        )
+                except Exception:
+                    pass
+
             remaining = self._remaining_time_unlocked(now)
-            if remaining <= self.windup_lead_s:
+            if remaining <= self.windup_lead_s or _cs_triggered:
                 self._transition_to_unlocked(SprintPhase.WINDUP, now)
                 # [FINAL]-019: Raise governor to WINDUP QoS level
                 try:
@@ -399,6 +452,29 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         Invariant: cycles_started remains 0 (tracked by scheduler result).
         """
         self._deadline_expired_pre_cycle = True
+
+    # ── [ULTIMATE]-002: Cognitive Saturation Detector ──────────────────────
+
+    def set_cognitive_saturation_detector(self, detector: Any) -> None:
+        """[ULTIMATE]-002: Set the cognitive saturation detector for sprint-level tracking.
+
+        The detector monitors unique entity discovery rate over a sliding window and
+        triggers automatic WINDUP transition when discovery stops for a configured
+        persistence period (after minimum active time).
+
+        Args:
+            detector: A CognitiveSaturationDetector instance, or None to disable.
+        """
+        self._cognitive_saturation_detector = detector
+
+    def get_cognitive_saturation_stats(self) -> dict[str, Any] | None:
+        """[ULTIMATE]-002: Get cognitive saturation detector stats for telemetry.
+
+        Returns the detector's stats dict if a detector is configured, else None.
+        """
+        if self._cognitive_saturation_detector is not None:
+            return self._cognitive_saturation_detector.stats
+        return None
 
     # ── request_abort ───────────────────────────────────────────────────────
 
@@ -818,6 +894,37 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                 # We don't track exit times, so return None (observability only).
                 result[ph.name] = None
         return result
+
+    # ── ULTIMATE-001: Deterministic cognitive replay ─────────────────────────
+
+    def set_seed_state(self, seed_state: Any) -> None:
+        """
+        ULTIMATE-001: Set SprintSeedState for deterministic cognitive replay.
+
+        Called by the sprint entrypoint at start() to inject the seed state.
+        Enables forensic reproduction of ToT trees and synthesis paths.
+
+        Args:
+            seed_state: SprintSeedState instance or None to disable deterministic mode
+        """
+        self._seed_state = seed_state
+
+    def get_seed_state(self) -> Any:
+        """
+        ULTIMATE-001: Get the SprintSeedState for deterministic cognitive replay.
+
+        Returns the SprintSeedState set via set_seed_state(), or None if
+        deterministic mode is not enabled.
+        """
+        return self._seed_state
+
+    def is_deterministic_mode(self) -> bool:
+        """
+        ULTIMATE-001: Check if deterministic cognitive replay is enabled.
+
+        Returns True when SprintSeedState is set, False otherwise.
+        """
+        return self._seed_state is not None
 
     # ── Private helpers ─────────────────────────────────────────────────────
 

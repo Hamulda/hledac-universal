@@ -70,6 +70,25 @@ from ..knowledge.cross_sprint_gate import get_cross_sprint_gate
 from ..knowledge.entity_confirmation import get_entity_confirmation_service
 from .base import UniversalCoordinator
 
+# ── Cognitive Saturation Detection ─────────────────────────────────────────────
+# Global detector registry — allows runtime/cognitive_saturation_detector.py to
+# be injected without circular imports. Set via set_cognitive_saturation_detector().
+_COGNITIVE_SATURATION_DETECTOR: Any = None
+
+
+def set_cognitive_saturation_detector(detector: Any) -> None:
+    """Set the global CognitiveSaturationDetector instance.
+    
+    Called by SprintLifecycleManager on initialization to wire the detector.
+    """
+    global _COGNITIVE_SATURATION_DETECTOR
+    _COGNITIVE_SATURATION_DETECTOR = detector
+
+
+def get_cognitive_saturation_detector() -> Any:
+    """Get the global CognitiveSaturationDetector instance, or None if not set."""
+    return _COGNITIVE_SATURATION_DETECTOR
+
 # R6: Centralized Rust access — all hledac_rust_extensions symbols route through
 # core.rust_backend, ensuring ABI checking, capability scoring, and graceful fallback.
 from hledac.universal.core.rust_backend import rust
@@ -653,6 +672,29 @@ class FetchCoordinator(UniversalCoordinator):
                     igd.report_iocs(branch_id, ioc_values)
         except Exception as e:
             logger.debug('[NEXUS]-018-02 report_iocs failed: %s', e)
+
+    # ── [ULTIMATE]-002: Cognitive Saturation Detection ────────────────────────
+
+    def report_entity_discovery(self, entity_value: str, ioc_type: str = "") -> None:
+        """[ULTIMATE]-002: Report a new entity discovery for cognitive saturation tracking.
+
+        Call this method whenever a non-duplicate entity enters the write path
+        (e.g., evidence creation, DuckDB insert). The entity is tracked in the
+        sprint-level CognitiveSaturationDetector to detect when discovery stops.
+
+        This is a fire-and-forget telemetry method. Errors are logged and
+        swallowed so that fetch work is never blocked by saturation detection.
+
+        Args:
+            entity_value: The entity value (e.g., domain, IP, URL, hash).
+            ioc_type: Optional IOC type string for telemetry (e.g., "domain", "ipv4").
+        """
+        try:
+            detector = _COGNITIVE_SATURATION_DETECTOR
+            if detector is not None and hasattr(detector, 'report_entity_discovery'):
+                detector.report_entity_discovery(entity_value, ioc_type)
+        except Exception as e:
+            logger.debug('[ULTIMATE]-002 report_entity_discovery failed: %s', e)
 
     def _check_circuit(self, domain: str) -> tuple[bool, str, float]:
         """
@@ -1998,6 +2040,11 @@ class FetchCoordinator(UniversalCoordinator):
                     if self._evidence_sink is not None:
                         with contextlib.suppress(Exception):
                             await self._evidence_sink.append_evidence(evidence_id)
+                    # [ULTIMATE]-002: Report entity discovery for cognitive saturation tracking.
+                    # Extract entity value from URL for domain-level tracking.
+                    _entity_host = _fast_url_host(url)
+                    if _entity_host:
+                        self.report_entity_discovery(_entity_host, "domain")
                 if budget_mgr:
                     allowed, reason = budget_mgr.check_snapshot_allowed()
                     if not allowed:

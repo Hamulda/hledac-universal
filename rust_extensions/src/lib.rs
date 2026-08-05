@@ -88,6 +88,7 @@ pub mod simhash_ext;
 pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
 pub mod text_similarity; // R25: Text similarity via trigram Jaccard
 pub mod text_norm;
+pub mod unicode_fingerprint; // ISSUE [ULTIMATE]-005: Zero-Width & Homoglyph Attribution Fingerprint
 #[cfg(feature = "advanced")]
 pub mod feed_decision;
 #[cfg(feature = "advanced")]

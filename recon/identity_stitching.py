@@ -52,6 +52,14 @@ lsh_index_new = rust.raw.lsh_index_new
 LSHIndex = rust.raw.LSHIndex
 LSH_AVAILABLE = lsh_index_new is not None and LSHIndex is not None
 
+# ISSUE [ULTIMATE]-005: Unicode attribution fingerprint
+from hledac.universal.core.rust_backend.unicode_fingerprint import (
+    UnicodeFingerprint,
+    get_unicode_fingerprint_domain,
+    ENABLE_UNICODE_ATTRIBUTION,
+)
+_unicode_domain = None  # Lazy initialization
+
 # --------------------------------------------------------------------------- #
 # Union-Find pro O(α(N)) clustering — nahrazuje O(N²) connected_components    #
 # --------------------------------------------------------------------------- #
@@ -428,10 +436,10 @@ class IdentityStitchingEngine:
         # Stitch identities
         stitched = engine.stitch_identities(match_threshold=0.8)
     """
-    DEFAULT_SIGNAL_WEIGHTS = {'username_exact': 1.0, 'username_similarity': 0.7, 'email_exact': 1.0, 'email_domain': 0.3, 'alias_match': 0.8, 'style_similarity': 0.5, 'stylometry': 0.6, 'temporal_overlap': 0.4, 'network_overlap': 0.6}
-    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_lsh_index', '_lsh_fingerprint_cache', '_match_cache', '_platform_index', '_profiles', '_similarity_cache', '_stats', '_username_index', '_stylometry_analyzer', '_stylometry_cache', '_transliteration_enabled', 'enable_fuzzy', 'enable_lsh', 'max_memory_mb', 'signal_weights', 'similarity_threshold'))
+    DEFAULT_SIGNAL_WEIGHTS = {'username_exact': 1.0, 'username_similarity': 0.7, 'email_exact': 1.0, 'email_domain': 0.3, 'alias_match': 0.8, 'style_similarity': 0.5, 'stylometry': 0.6, 'temporal_overlap': 0.4, 'network_overlap': 0.6, 'unicode_fingerprint': 0.8}
+    __slots__ = tuple(('_alias_index', '_email_index', '_identity_graph', '_lsh_index', '_lsh_fingerprint_cache', '_match_cache', '_platform_index', '_profiles', '_similarity_cache', '_stats', '_username_index', '_stylometry_analyzer', '_stylometry_cache', '_transliteration_enabled', '_unicode_fingerprint_cache', 'enable_fuzzy', 'enable_lsh', 'enable_unicode_attribution', 'max_memory_mb', 'signal_weights', 'similarity_threshold'))
 
-    def __init__(self, similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True, enable_transliteration: bool=True, enable_stylometry: bool=True):
+    def __init__(self, similarity_threshold: float=0.7, signal_weights: dict[str, float] | None=None, max_memory_mb: int=512, enable_fuzzy: bool=True, enable_transliteration: bool=True, enable_stylometry: bool=True, enable_unicode_attribution: bool=True):
         """
         Initialize the Identity Stitching Engine.
 
@@ -445,11 +453,16 @@ class IdentityStitchingEngine:
                                    (Cyrillic, Arabic, CJK → Latin). ISSUE-008.
             enable_stylometry: Enable multi-dimensional stylometry analysis.
                                ISSUE-007.
+            enable_unicode_attribution: Enable Unicode fingerprint attribution.
+                                       ISSUE [ULTIMATE]-005.
         """
         self.similarity_threshold = similarity_threshold
         self.signal_weights = signal_weights or self.DEFAULT_SIGNAL_WEIGHTS.copy()
         self.max_memory_mb = max_memory_mb
         self.enable_fuzzy = enable_fuzzy and RAPIDFUZZ_AVAILABLE
+        # ISSUE [ULTIMATE]-005: Unicode attribution fingerprint
+        self.enable_unicode_attribution: bool = enable_unicode_attribution and ENABLE_UNICODE_ATTRIBUTION
+        self._unicode_fingerprint_cache: dict[str, UnicodeFingerprint] = {}
         # LSH pre-filter: O(1) candidate reduction místo O(N²) brute-force
         self.enable_lsh: bool = LSH_AVAILABLE
         self._lsh_index: Any | None = lsh_index_new(num_tables=16, num_rows=4) if LSH_AVAILABLE else None
@@ -471,7 +484,7 @@ class IdentityStitchingEngine:
         self._stylometry_cache: _IdentityCache[float] = _IdentityCache[float](
             max_size=2048, ttl_s=7200, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8,
         ) if enable_stylometry else _IdentityCache[float](max_size=0, ttl_s=0, max_memory_mb=max_memory_mb, memory_pressure_threshold=0.8)
-        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh}, translit={self._transliteration_enabled}, stylometry={enable_stylometry})')
+        logger.info(f'IdentityStitchingEngine initialized (threshold={similarity_threshold}, fuzzy={self.enable_fuzzy}, lsh={self.enable_lsh}, translit={self._transliteration_enabled}, stylometry={enable_stylometry}, unicode_attr={self.enable_unicode_attribution})')
 
     def add_profile(self, profile: IdentityProfile) -> bool:
         """
@@ -825,6 +838,62 @@ class IdentityStitchingEngine:
         words = re.findall('\\b[a-zA-Z]{3,}\\b', text.lower())
         return set(words)
 
+    # ISSUE [ULTIMATE]-005: Unicode attribution fingerprint similarity
+    def _get_unicode_domain(self) -> Any:
+        """Get or initialize the Unicode fingerprint domain."""
+        global _unicode_domain
+        if _unicode_domain is None:
+            ext = getattr(rust, '_ext', None)
+            _unicode_domain = get_unicode_fingerprint_domain(ext)
+        return _unicode_domain
+
+    def compute_unicode_fingerprint_similarity(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> float:
+        """
+        Compute Unicode fingerprint similarity between two profiles.
+
+        ISSUE [ULTIMATE]-005: Extracts invisible character patterns as
+        author-attribution watermarks for cross-platform identity linking.
+
+        Args:
+            profile_a: First identity profile
+            profile_b: Second identity profile
+
+        Returns:
+            Similarity score [0, 1]; returns 0 if attribution disabled or no fingerprints
+        """
+        if not self.enable_unicode_attribution:
+            return 0.0
+
+        # Get text samples from profiles
+        text_samples_a = profile_a.attributes.get('text_samples', []) if profile_a.attributes else []
+        text_samples_b = profile_b.attributes.get('text_samples', []) if profile_b.attributes else []
+
+        if not text_samples_a or not text_samples_b:
+            return 0.0
+
+        # Get the unicode domain (Rust or Python fallback)
+        domain = self._get_unicode_domain()
+
+        # Extract fingerprints for both profiles
+        # Use all text samples combined for better fingerprint coverage
+        combined_a = '\n\n'.join(text_samples_a) if isinstance(text_samples_a, list) else str(text_samples_a)
+        combined_b = '\n\n'.join(text_samples_b) if isinstance(text_samples_b, list) else str(text_samples_b)
+
+        # Extract fingerprints
+        fp_a = domain.extract_fingerprint(combined_a)
+        fp_b = domain.extract_fingerprint(combined_b)
+
+        # If both fingerprints are empty, return 0 (no signal)
+        if fp_a.is_empty and fp_b.is_empty:
+            return 0.0
+
+        # Compute similarity
+        return domain.compute_similarity(fp_a, fp_b)
+
     def compute_temporal_overlap(self, activity1: list[datetime], activity2: list[datetime], window_days: int=30) -> float:
         """
         Compute temporal overlap between two activity timelines.
@@ -933,6 +1002,12 @@ class IdentityStitchingEngine:
             if stylometry_score > 0.3:
                 signals['stylometry'] = stylometry_score
                 evidence.append(f'Writing style similarity: {stylometry_score:.2f}')
+        # ISSUE [ULTIMATE]-005: Unicode fingerprint attribution signal
+        if self.enable_unicode_attribution:
+            unicode_score = self.compute_unicode_fingerprint_similarity(profile_a, profile_b)
+            if unicode_score > 0.1:  # Low threshold - any match is significant
+                signals['unicode_fingerprint'] = unicode_score
+                evidence.append(f'Unicode fingerprint similarity: {unicode_score:.2f}')
         # Also check legacy 'style_similarity' in attributes (backward compat)
         style_a = profile_a.attributes.get('style_similarity') if profile_a.attributes else None
         style_b = profile_b.attributes.get('style_similarity') if profile_b.attributes else None

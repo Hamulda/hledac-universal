@@ -2823,6 +2823,8 @@ class EvidenceLog:
                 # ISSUE [FINAL]-019-05: Track WARC file paths for warc_paths property
                 if prov.warc_path and prov.warc_path not in self._warc_paths:
                     self._warc_paths.append(prov.warc_path)
+                    # ISSUE [FINAL]-019-05: Register in global singleton
+                    _register_warc_path(prov.warc_path)
                 # Bound _warc_provenance at 500 — same as snippets for M1 8GB safety
                 if len(self._warc_provenance) > 500:
                     self._warc_provenance.pop(0)
@@ -3915,6 +3917,9 @@ class EvidenceLog:
                     if str(p) not in self._warc_paths:
                         self._warc_paths.append(str(p))
                 logger.info("warc_writer_closed", warc_paths=self._warc_paths)
+                # ISSUE [FINAL]-019-05: Register paths in global singleton
+                # for consumers without direct EvidenceLog reference
+                self._register_warc_paths_global()
             except Exception as e:  # noqa: BLE001
                 logger.warning("failed_to_close_warc", error=str(e))
             finally:

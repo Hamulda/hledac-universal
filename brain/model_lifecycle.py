@@ -34,6 +34,7 @@ F6.5 LAYER MAPPING — MUST NOT BE CONFLATED:
 
 from __future__ import annotations
 
+import functools
 import gc
 import logging
 import os
@@ -68,6 +69,7 @@ def request_emergency_unload() -> None:
     global _EMERGENCY_UNLOAD_REQUESTED
     with _UNLOAD_LOCK:
         _EMERGENCY_UNLOAD_REQUESTED = True
+    get_model_lifecycle_status.cache_clear()  # Invalidate cache on state change
     logger.warning("[LIFECYCLE] Emergency unload requested via emergency seam")
 
 
@@ -158,6 +160,7 @@ def register_model(path: str) -> None:
     global _MX_LOADED, _MX_MODEL_PATH
     _MX_LOADED = True
     _MX_MODEL_PATH = path
+    get_model_lifecycle_status.cache_clear()  # Invalidate cache on state change
     _trigger_emergency_seam_clear()
 
 
@@ -167,6 +170,7 @@ def unregister_model() -> None:
     _MX_LOADED = False
     _MX_MODEL_PATH = None
     _MX_LAST_UNLOAD = _now()
+    get_model_lifecycle_status.cache_clear()  # Invalidate cache on state change
 
 
 def _trigger_emergency_seam_clear() -> None:
@@ -175,6 +179,7 @@ def _trigger_emergency_seam_clear() -> None:
     if _EMERGENCY_UNLOAD_REQUESTED:
         with _UNLOAD_LOCK:
             _EMERGENCY_UNLOAD_REQUESTED = False
+        get_model_lifecycle_status.cache_clear()  # Invalidate cache on state change
 
 
 def _now() -> float:
@@ -208,9 +213,14 @@ def get_emergency_unload_requested() -> bool:
     return _EMERGENCY_UNLOAD_REQUESTED
 
 
+@functools.lru_cache(maxsize=1)
 def get_model_lifecycle_status() -> dict:
     """
     Role 4: Shadow-state dump — returns full lifecycle status as dict.
+
+    Uses lru_cache for performance: called frequently (e.g., resource_governor
+    polling) but shadow state changes infrequently. Cache invalidated on each
+    new sprint via model_unload_request() which clears the cache.
 
     Used by:
       - runtime/resource_governor.py:472

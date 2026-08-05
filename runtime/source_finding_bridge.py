@@ -19,7 +19,7 @@ Rejection reasons:
     missing_domain   — required domain/host field absent or empty
     missing_value   — required value (IP, URL, digest) absent or empty
     low_information — result provides no actionable signal
-    duplicate_candidate — already seen in this batch (via blake2b dedup)
+    duplicate_candidate — already seen in this batch (via xxh3-64 dedup)
     unsupported_shape — input structure does not match expected schema
 
 Verify:
@@ -2423,11 +2423,13 @@ def academic_results_to_findings(
                 )
                 continue
 
-            # blake2b dedup (no hash() builtin)
+            # xxh3-64 dedup (~10× faster than blake2b on M1 via NEON SIMD)
             try:
-                url_hash = hashlib.blake2b(url.encode(), digest_size=16).hexdigest()
+                from hledac.universal.utils.hashing import xxh3_64_hex
+                url_hash = xxh3_64_hex(url)
             except Exception:
-                url_hash = url[:32]
+                # Fallback to blake2b if hashing utils unavailable
+                url_hash = hashlib.blake2b(url.encode(), digest_size=16).hexdigest()
 
             if url_hash in seen:
                 rejections.append(

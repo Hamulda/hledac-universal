@@ -357,7 +357,7 @@ class StructuredExtractor:
 
     @staticmethod
     def _hash_entity(entity_type: str, canonical: str, source_url: str) -> str:
-        """Deterministic BLAKE2b entity id."""
+        """Deterministic blake2b entity id with domain separation via pipe-separated input."""
         h = hashlib.blake2b(f'{entity_type}|{canonical}|{source_url}'.encode(), digest_size=16)
         return h.hexdigest()
 

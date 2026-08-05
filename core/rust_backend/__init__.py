@@ -142,6 +142,8 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "int_counter", "simd", "sprint_policies", "html", "metal",
     # TLS 1.3 JA4 fingerprinting (rustls-based)
     "tls",
+    # ISSUE [ULTIMATE]-005: Unicode attribution fingerprint
+    "unicode_fingerprint",
     # misc is used for _TlsDomain backward-compat and html property routing
     "misc",
 )

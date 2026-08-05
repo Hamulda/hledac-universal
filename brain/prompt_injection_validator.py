@@ -9,6 +9,7 @@ Layer 1: Unicode Normalization (Rust text_norm)
   - NFC normalization (canonical composition)
   - Homoglyph detection and replacement (Cyrillic→Latin, Greek→Latin)
   - Unicode whitespace → ASCII space
+  - ISSUE [ULTIMATE]-005: Unicode fingerprint extraction BEFORE stripping
 
 Layer 2: Aho-Corasick Multi-Pattern (Rust aho_corasick)
   - 10k+ blacklisted phrases, O(n) single scan
@@ -34,6 +35,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import msgspec
+
+# ISSUE [ULTIMATE]-005: Unicode fingerprint extraction before stripping
+from hledac.universal.core.rust_backend.unicode_fingerprint import (
+    get_unicode_fingerprint_domain,
+    ENABLE_UNICODE_ATTRIBUTION,
+)
+_unicode_domain = None  # Lazy initialization
 
 __all__ = [
     'PromptInjectionValidationResult',
@@ -198,25 +206,68 @@ class PromptInjectionValidationResult(msgspec.Struct, frozen=True, gc=False):
     homoglyph_replacements: int = 0
     rust_aho_used: bool = False
     layers_passed: int = 1  # 1-3 depending on which layers ran
+    # ISSUE [ULTIMATE]-005: Unicode fingerprint for attribution
+    unicode_fingerprint: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
 # Layer 1: Unicode Normalization (Python fallback when Rust unavailable)
 # ---------------------------------------------------------------------------
 
-def _normalize_unicode(text: str) -> tuple[str, int]:
+# ISSUE [ULTIMATE]-005: Lazy domain initialization
+_unicode_domain = None
+
+
+def _get_unicode_domain():
+    """Get or initialize the Unicode fingerprint domain."""
+    global _unicode_domain
+    if _unicode_domain is None:
+        from hledac.universal.core.rust_backend import rust
+        ext = getattr(rust, '_ext', None)
+        from hledac.universal.core.rust_backend.unicode_fingerprint import get_unicode_fingerprint_domain
+        _unicode_domain = get_unicode_fingerprint_domain(ext)
+    return _unicode_domain
+
+
+def _extract_unicode_fingerprint(text: str) -> dict[str, Any]:
+    """
+    Extract Unicode fingerprint BEFORE stripping invisible characters.
+
+    This preserves attribution signals that would otherwise be lost.
+    Returns a dict with fingerprint data for storage in profile attributes.
+    Respects HLEDAC_ENABLE_UNICODE_ATTRIBUTION feature flag (default ON).
+    """
+    # ISSUE [ULTIMATE]-005: Respect feature flag
+    from hledac.universal.core.rust_backend.unicode_fingerprint import ENABLE_UNICODE_ATTRIBUTION
+    if not ENABLE_UNICODE_ATTRIBUTION:
+        return {}
+    
+    try:
+        domain = _get_unicode_domain()
+        fingerprint = domain.extract_fingerprint(text)
+        return fingerprint.to_dict()
+    except Exception:
+        return {}
+
+
+def _normalize_unicode(text: str) -> tuple[str, int, dict[str, Any]]:
     """
     Normalize Unicode text to defeat homoglyph and whitespace bypass.
 
     Steps:
+    0. Extract Unicode fingerprint BEFORE stripping (for attribution) - ISSUE [ULTIMATE]-005
     1. NFC normalization (canonical composition)
     2. Homoglyph replacement (Cyrillic/Greek → ASCII)
     3. Unicode whitespace → ASCII space
+    4. Remove zero-width and directional characters
 
-    Returns (normalized_text, num_replacements).
+    Returns (normalized_text, num_replacements, unicode_fingerprint).
     """
     replacements = 0
     result = text
+
+    # Step 0: ISSUE [ULTIMATE]-005: Extract fingerprint BEFORE stripping
+    unicode_fingerprint = _extract_unicode_fingerprint(result)
 
     # Step 1: NFC normalization
     result = unicodedata.normalize('NFC', result)
@@ -238,7 +289,7 @@ def _normalize_unicode(text: str) -> tuple[str, int]:
         if zw in result:
             result = result.replace(zw, '')
 
-    return result, replacements
+    return result, replacements, unicode_fingerprint
 
 
 # ---------------------------------------------------------------------------
@@ -511,12 +562,13 @@ class PromptInjectionValidator:
         try:
             # ===== LAYER 1: Unicode Normalization =====
             try:
-                normalized, homoglyph_replacements = _normalize_unicode(text)
+                normalized, homoglyph_replacements, unicode_fingerprint = _normalize_unicode(text)
                 normalization_applied = True
                 layers_passed = 1
             except Exception:
                 normalized = text
                 homoglyph_replacements = 0
+                unicode_fingerprint = {}
 
             # ===== LAYER 2: Aho-Corasick Scan =====
             is_malicious, matched_patterns, rust_aho_used = _scan_aho_corasick(normalized)
@@ -559,6 +611,7 @@ class PromptInjectionValidator:
                 homoglyph_replacements=homoglyph_replacements,
                 rust_aho_used=rust_aho_used,
                 layers_passed=layers_passed,
+                unicode_fingerprint=unicode_fingerprint,
             )
 
         except Exception:
@@ -570,6 +623,7 @@ class PromptInjectionValidator:
                 original_chars=original_chars,
                 final_chars=min(original_chars, max_chars),
                 reason='internal_error_fallback',
+                unicode_fingerprint={},
             )
 
 

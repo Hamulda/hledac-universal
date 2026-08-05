@@ -1104,7 +1104,9 @@ class SynthesisRunner:
                  # Cached Metal memory probe (Issue #20-A: avoid per-call Rust FFI)
                  "_metal_probe_cache",
                  # L-05: Synthesis strategy for _race_inference dispatch
-                 "_synthesis_strategy")
+                 "_synthesis_strategy",
+                 # ULTIMATE-001: Seed state for deterministic cognitive replay
+                 "_seed_state")
 
 
     def __init__(self, lifecycle: ModelLifecycle) -> None:
@@ -1170,6 +1172,9 @@ class SynthesisRunner:
         self._speculative_urls: list[str] = []
         self._speculative_ips: list[str] = []
 
+        # ULTIMATE-001: Seed state for deterministic cognitive replay
+        self._seed_state: Any | None = None
+
     # ISSUE-009: Public accessors for speculative detection results
     def get_speculative_urls(self) -> list[str]:
         """Return URLs detected during streaming generation."""
@@ -1210,6 +1215,16 @@ class SynthesisRunner:
         Also accepts direct runtime SprintLifecycleManager instances.
         """
         self._lifecycle_adapter = adapter
+
+    def inject_seed_state(self, seed_state: Any) -> None:
+        """
+        ULTIMATE-001: Inject SprintSeedState for deterministic cognitive replay.
+
+        When seed_state is present, the synthesis race uses deterministic cascade
+        order (xgrammar → streaming → structured) instead of race-first-wins.
+        This enables forensic replay of the exact synthesis path.
+        """
+        self._seed_state = seed_state
 
     # ------------------------------------------------------------------
     # P2-1: Hermes3Engine lazy init for continuous batching
@@ -2617,8 +2632,17 @@ class SynthesisRunner:
             is still serialized at the Metal level — but I/O overlap across
             engines can still reduce effective latency vs sequential cascade.
 
+        ULTIMATE-001: When SprintSeedState is present, always use deterministic
+        sequential cascade regardless of strategy setting. This ensures reproducible
+        synthesis order for forensic replay.
+
         Returns (raw_dict, engine_name, token_logprobs). On all failure: (None, "none", []).
         """
+        # ULTIMATE-001: Deterministic mode when seed state is present
+        if self._seed_state is not None:
+            logger.debug("[SYNTHESIS] [ULTIMATE-001] Using deterministic cascade (seed present)")
+            return await self._race_inference_sequential(prompt)
+
         strategy = self._synthesis_strategy
         if strategy == "race_first_wins":
             return await self._race_inference_first_wins(prompt)

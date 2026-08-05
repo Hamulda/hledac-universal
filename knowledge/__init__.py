@@ -78,6 +78,12 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     "DuckDBEntityStore": "knowledge.duckdb_rag_store",
     "get_identity_store": "knowledge.duckdb_rag_store",
     "get_rag_store": "knowledge.duckdb_rag_store",
+    # ISSUE [ULTIMATE]-004: DuckDB CVE/CWE Correlation Matrix
+    "CveCorrelationMatrix": "knowledge.duckdb_cve_matrix",
+    "CveMatch": "knowledge.duckdb_cve_matrix",
+    "get_cve_matrix": "knowledge.duckdb_cve_matrix",
+    # ISSUE [ULTIMATE]-004: CVE Data Loader
+    "update_cve_matrix": "knowledge.cve_data_loader",
 }
 
 # Legacy compat — same names used by _LazyLegacyCompatModule
