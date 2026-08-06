@@ -17,7 +17,6 @@
 //!   GC.T5  rayon parallel across nodes for independent centrality metrics
 //!   GC.T6  Betweenness uses Brandes algorithm with early termination cutoff
 
-use crate::io_pool;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rayon::prelude::*;
@@ -84,7 +83,7 @@ pub fn batch_centrality_all<'py>(
     // Build adjacency as indices for fast neighbor lookup
     let adj_idx: Vec<Vec<usize>> = adjacency
         .iter()
-        .map(|(node_id, neighbors)| {
+        .map(|(_, neighbors)| {
             neighbors
                 .iter()
                 .filter_map(|n| idx_map.get(n).copied())
@@ -356,8 +355,8 @@ pub fn batch_centrality_all<'py>(
 /// Single-node betweenness centrality via Brandes (B7 pattern).
 #[pyfunction]
 #[pyo3(signature = (adjacency, source_node, /))]
-pub fn betweenness_single<'py>(
-    py: Python<'py>,
+pub fn betweenness_single(
+    _py: Python<'_>,
     adjacency: Vec<(String, Vec<String>)>,
     source_node: String,
 ) -> PyResult<f64> {

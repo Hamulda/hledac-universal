@@ -364,8 +364,9 @@ class JSONFormatter:
                 """Post-process: PQ encrypt JSON report if enabled.
                 PHYSICS-08: Uses pre-serialized _json_bytes — no re-serialization."""
                 try:
-                    import os as _os
-                    if _os.environ.get("HLEDAC_ENABLE_PQ_EXPORT") != "1":
+                    # SWARM-010: Use FeatureFlags for registry compliance
+                    from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+                    if not FeatureFlags.get(FeatureFlag.ENABLE_PQ_EXPORT):
                         return None
                     import base64
                     import time
@@ -402,11 +403,12 @@ class JSONFormatter:
             async def _write_vault_encrypted() -> str | None:
                 """Post-process: Vault encrypt JSON report if enabled."""
                 try:
-                    import os as _os
+                    # SWARM-010: Use FeatureFlags for registry compliance
+                    from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
                     import shutil
                     import tempfile
                     from pathlib import Path
-                    if _os.environ.get("HLEDAC_VAULT_EXPORT") != "1" or not report_path:
+                    if not FeatureFlags.get(FeatureFlag.VAULT_EXPORT) or not report_path:
                         return None
                     from hledac.universal.security.vault_manager import LootManager
                     with tempfile.TemporaryDirectory() as _tmp_vault:
@@ -1439,7 +1441,8 @@ async def export_sprint(
     store: Any,
     handoff: ExportHandoff,  # type: ignore[name-defined]
     sprint_id: str | None = None,
-    enable_security_enrichment: bool = os.environ.get("HLEDAC_VAULT_EXPORT", "0") == "1",
+    # SWARM-010: Use FeatureFlags for registry compliance
+    enable_security_enrichment: bool = False,  # Default to False, controlled via HLEDAC_VAULT_EXPORT
     export_mode: str = "slim",
     evidence_log: Any = None,  # ISSUE [FINAL]-019-04: EvidenceLog for WARC provenance extraction
 ) -> dict:

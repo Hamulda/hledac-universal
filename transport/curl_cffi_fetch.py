@@ -12,6 +12,11 @@ Architecture (Issue 3.5 consolidation):
   - curl_cffi_runtime.py is a backward-compat re-export alias (deleted in v3.0)
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+import threading
+
 import asyncio
 import errno
 from datetime import UTC, datetime
@@ -37,6 +42,16 @@ from hledac.universal.utils.async_helpers import safe_create_task
 from hledac.universal.utils.encoding import decode_response_bytes, parse_charset_from_content_type
 
 from .body_limiter import read_body_with_cap
+from ._tcp_keepalive import (
+    CURLOPT_TCP_KEEPALIVE,
+    CURLOPT_TCP_KEEPIDLE,
+    CURLOPT_TCP_KEEPINTVL,
+    CURLOPT_TCP_KEEPCNT,
+    TCP_KEEPALIVE_CURL_OPTIONS,  # ISSUE-P6-001: single source of truth
+    KEEPALIVE_IDLE_S,
+    KEEPALIVE_INTERVAL_S,
+    KEEPALIVE_MAX_PROBES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,35 +105,6 @@ _I2P_CURL_PROXY: str = ENV.get_str("I2P_SOCKS_PROXY_URL", "socks5h://127.0.0.1:4
 
 # Tor-specific circuit tracking for curl_cffi Tor fetcher
 _tor_curl_request_count: int = 0
-
-# --- TCP keep-alive constants (macOS/Linux BSD-compatible) --------------------------
-# macOS: TCP_KEEPIDLE = 0x10 (16), TCP_KEEPINTVL = 0x101 (257), TCP_KEEPCNT = 0x102 (258)
-# Linux: TCP_KEEPIDLE = 4, TCP_KEEPINTVL = 5, TCP_KEEPCNT = 6
-# Using raw values for cross-platform compatibility.
-_TCP_KEEPALIVE_ENABLE: int = 1  # SOL_SOCKET / SO_KEEPALIVE
-_TCP_KEEPIDLE: int = 0x10  # 16 — seconds before first probe (macOS Darwin)
-_TCP_KEEPINTVL: int = 0x101  # 257 — seconds between probes
-_TCP_KEEPCNT: int = 0x102  # 258 — max probe count before giving up
-# curl_easy_setopt constants for TCP keep-alive
-_CURLOPT_TCP_KEEPALIVE: int = 288  # 0x120 — enable TCP keep-alive
-_CURLOPT_TCP_KEEPIDLE: int = 256  # 0x100 — idle time before first probe
-_CURLOPT_TCP_KEEPINTVL: int = 257  # 0x101 — interval between probes
-_CURLOPT_TCP_KEEPCNT: int = 258  # 0x102 — number of probes
-# Keep-alive timings (seconds): first probe after 60s idle, then every 30s, give up after 3 probes
-_KEEPALIVE_IDLE_S: int = 60  # TCP_KEEPIDLE — start probing after 60s idle
-_KEEPALIVE_INTERVAL_S: int = 30  # TCP_KEEPINTVL — probe interval
-_KEEPALIVE_MAX_PROBES: int = 3  # TCP_KEEPCNT — give up after 3 missed probes
-
-# ISSUE-P6-001: TCP keep-alive curl_options injected into every AsyncSession.
-# Defeats TIME_WAIT pool exhaustion by detecting dead connections proactively.
-# macOS kernel default TIME_WAIT = 60s; keep-alive probes detect dead peers at 60+30+30=120s.
-_TCP_KEEPALIVE_CURL_OPTIONS: dict[int, int] = {
-    _CURLOPT_TCP_KEEPALIVE: _TCP_KEEPALIVE_ENABLE,
-    _CURLOPT_TCP_KEEPIDLE: _KEEPALIVE_IDLE_S,
-    _CURLOPT_TCP_KEEPINTVL: _KEEPALIVE_INTERVAL_S,
-    _CURLOPT_TCP_KEEPCNT: _KEEPALIVE_MAX_PROBES,
-}
-
 
 # --- JA3 / TLS fingerprint rotation pool (Sprint F265A) ---------------------------
 # Cycle through distinct browser-family TLS profiles so the JA3 fingerprint
@@ -177,6 +163,7 @@ def _get_webkit_h2_settings(profile: str) -> dict[str, Any] | None:
     - initial_window_size: 4,194,304 (Safari) vs 65,535 (curl_cffi default)
     - max_header_list_size: 100,000 (Safari 18) / 80,000 (Safari 17)
     - no_priority: True for Safari 18+ (RFC 9218 strict)
+    - curl_options: dict with CurlOpt.HTTP2_SETTINGS for curl_options injection
     """
     if not HLEDAC_H2_WEBKIT_PRESET:
         return None
@@ -190,11 +177,21 @@ def _get_webkit_h2_settings(profile: str) -> dict[str, Any] | None:
         preset = _rust_get_webkit_preset(profile)
         if preset is None:
             return None
+        
+        # [NEXUS]-018-01 FIX: Build HTTP/2 SETTINGS wire format for curl_cffi
+        # curl_cffi >= 0.15.0 supports CURLOPT_HTTP2_SETTINGS via curl_options.
+        # Format: list of (setting_id: int, value: int) tuples
+        # Wire format is built by curl from this list.
+        _settings_list = []
+        for setting_id, value in preset.settings:
+            _settings_list.append((setting_id, value))
+        
         return {
             "initial_window_size": preset.settings[3][1] if len(preset.settings) > 3 else 4_194_304,
             "max_header_list_size": preset.settings[5][1] if len(preset.settings) > 5 else 100_000,
             "no_priority": preset.no_priority,
             "window_increment": preset.window_increment,
+            "settings_list": _settings_list,  # Raw settings for curl_options injection
         }
     except ImportError:
         # Rust extension not built — fail soft, use default
@@ -204,82 +201,92 @@ def _get_webkit_h2_settings(profile: str) -> dict[str, Any] | None:
         return None
 
 
-async def _webkit_window_update_worker(
-    session: Any,
+def _log_webkit_window_update(
     host: str,
     increment: int = _WEBKIT_WINDOW_INCREMENT,
-    delay_ms: int = 80,
 ) -> None:
-    """Fire-and-forget WINDOW_UPDATE worker for Safari WebKit back-pressure signal.
-    
-    Safari WebKit sends WINDOW_UPDATE frames with +1,048,304 byte increments
-    after ~80ms pauses between requests on keep-alive connections.
-    
-    This repliates the WebKit back-pressure signal to avoid detection by
-    anti-bot systems that analyze HTTP/2 frame sequences.
-    
+    """Telemetry marker for Safari WebKit HTTP/2 WINDOW_UPDATE pattern.
+
+    [NEXUS]-018-01: Logs Safari WebKit HTTP/2 profile usage for telemetry.
+
+    Note: WINDOW_UPDATE frames are handled by libcurl's HTTP/2 stack automatically.
+    Safari WebKit sends +1,048,304 byte increments after ~80ms pauses on keep-alive.
+    The actual HTTP/2 SETTINGS (INITIAL_WINDOW_SIZE=4,194,304) are applied via
+    CurlOpt.HTTP2_SETTINGS in the session's curl_options.
+
+    This is a synchronous telemetry marker only — no actual frame handling occurs.
+
     Args:
-        session: curl_cffi AsyncSession (for connection reuse)
         host: Target host for connection tracking
         increment: WINDOW_UPDATE increment in bytes (default 1,048,304)
-        delay_ms: Delay before sending WINDOW_UPDATE (default 80ms)
-    
-    Note:
-        This is a best-effort signal. curl_cffi doesn't expose raw frame
-        control, so this serves as a placeholder for future curl_cffi 0.8.x
-        http2_settings hook integration.
     """
-    try:
-        await asyncio.sleep(delay_ms / 1000.0)
-        # Note: curl_cffi 0.7.x doesn't expose WINDOW_UPDATE frames directly.
-        # This will be wired to http2_settings kwarg in curl_cffi >= 0.8.x.
-        # For now, log the intent for telemetry.
-        logger.debug(
-            f"[NEXUS-018-01] WINDOW_UPDATE intent for {host}: "
-            f"+{increment} bytes (Safari WebKit profile)"
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception:  # noqa: BLE001
-        pass  # Fail-soft: never propagate errors from background workers
+    # [NEXUS]-018-01: WINDOW_UPDATE telemetry for Safari WebKit profile usage.
+    # Actual frame handling is done by libcurl's HTTP/2 stack.
+    logger.debug(
+        f"[NEXUS-018-01] Safari WebKit keep-alive for {host}: "
+        f"WINDOW_UPDATE increment={increment} bytes"
+    )
 
 
 # [NEXUS]-018-01: WebKit transport telemetry counters (in transport layer).
-# These counters are incremented here and read by public_fetcher.get_webkit_transport_stats().
-_webkit_transport_count: int = 0
-_webkit_transport_success: int = 0
-_webkit_transport_failure: int = 0
+# Thread-safe via threading.Lock to prevent race conditions on counter updates.
+# These counters are read by public_fetcher.get_webkit_transport_stats().
+@dataclass
+class WebkitTransportTelemetry:
+    """Thread-safe telemetry counters for Safari WebKit HTTP/2 profile usage."""
+    
+    count: int = 0
+    success: int = 0
+    failure: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    
+    def increment(self, success: bool) -> None:
+        """Thread-safe increment of telemetry counters."""
+        with self._lock:
+            self.count += 1
+            if success:
+                self.success += 1
+            else:
+                self.failure += 1
+    
+    def get_snapshot(self) -> dict[str, int]:
+        """Return a snapshot of telemetry counters."""
+        with self._lock:
+            return {
+                "webkit_count": self.count,
+                "webkit_success": self.success,
+                "webkit_failure": self.failure,
+            }
+    
+    def reset(self) -> None:
+        """Thread-safe reset of all counters."""
+        with self._lock:
+            self.count = 0
+            self.success = 0
+            self.failure = 0
+
+
+# Module-level singleton for WebKit telemetry
+_webkit_telemetry = WebkitTransportTelemetry()
 
 
 def _increment_webkit_telemetry(success: bool) -> None:
     """Increment WebKit telemetry counters (called from the fetch hot path)."""
-    global _webkit_transport_count, _webkit_transport_success, _webkit_transport_failure
-    _webkit_transport_count += 1
-    if success:
-        _webkit_transport_success += 1
-    else:
-        _webkit_transport_failure += 1
+    _webkit_telemetry.increment(success)
 
 
 def get_webkit_transport_telemetry() -> dict[str, int]:
     """Return WebKit HTTP/2 transport telemetry snapshot.
     
     Returns:
-        dict with keys: count, success, failure
+        dict with keys: webkit_count, webkit_success, webkit_failure
     """
-    return {
-        "webkit_count": _webkit_transport_count,
-        "webkit_success": _webkit_transport_success,
-        "webkit_failure": _webkit_transport_failure,
-    }
+    return _webkit_telemetry.get_snapshot()
 
 
 def _reset_webkit_transport_telemetry() -> None:
     """Reset WebKit transport telemetry counters (call at sprint winddown)."""
-    global _webkit_transport_count, _webkit_transport_success, _webkit_transport_failure
-    _webkit_transport_count = 0
-    _webkit_transport_success = 0
-    _webkit_transport_failure = 0
+    _webkit_telemetry.reset()
 
 
 def next_ja3_profile() -> str:
@@ -590,11 +597,21 @@ async def _get_or_create_resolved_session(
         from curl_cffi.requests import AsyncSession as _AsyncSession
 
         resolve_str_list = _resolve_dict_to_curl_format(resolve)
+        
+        # [NEXUS]-018-01: Build curl_options with TCP keep-alive + CURLOPT_RESOLVE + WebKit HTTP/2 SETTINGS
+        _session_curl_options: dict[int, Any] = dict(TCP_KEEPALIVE_CURL_OPTIONS)
+        _session_curl_options[curl.CurlOpt.RESOLVE] = resolve_str_list
+        
+        # Add WebKit HTTP/2 SETTINGS for Safari profiles
+        _webkit_curl_opts = _build_webkit_curl_options(profile)
+        if _webkit_curl_opts:
+            _session_curl_options.update(_webkit_curl_opts)
+        
         session = _AsyncSession(
             impersonate=profile,
             timeout=timeout_s,
             max_clients=10,
-            curl_options={curl.CurlOpt.RESOLVE: resolve_str_list},
+            curl_options=_session_curl_options,
         )
     except asyncio.CancelledError:
         raise
@@ -623,6 +640,50 @@ async def _get_or_create_resolved_session(
         logger.debug(f"[F-03] resolved session cached: {host} (profile={profile})")
 
     return session, profile
+
+
+def _build_webkit_curl_options(profile: str) -> dict[int, Any] | None:
+    """Build curl_options dict with WebKit HTTP/2 SETTINGS for Safari profiles.
+    
+    This is a centralized helper to ensure consistent HTTP/2 SETTINGS injection
+    across all AsyncSession creation points in curl_cffi_fetch.py.
+    
+    Args:
+        profile: TLS impersonation profile name (e.g., "safari18_0", "safari17_4")
+    
+    Returns:
+        dict of curl options (CurlOpt -> value) or None if not a WebKit profile
+        or if WebKit preset is disabled/unavailable.
+    
+    [NEXUS]-018-01: Applies Safari WebKit HTTP/2 SETTINGS fingerprint:
+    - INITIAL_WINDOW_SIZE=4,194,304 (vs curl_cffi default 65,535)
+    - HTTP2_NO_PRIORITY for Safari 18+ (RFC 9218 strict)
+    """
+    _webkit_preset = _get_webkit_h2_settings(profile)
+    if not _webkit_preset:
+        return None
+    
+    try:
+        from curl_cffi import const
+        
+        _curl_options: dict[int, Any] = {}
+        
+        # Inject HTTP/2 SETTINGS: list of (setting_id, value) tuples
+        if "settings_list" in _webkit_preset:
+            _curl_options[const.CurlOpt.HTTP2_SETTINGS] = _webkit_preset["settings_list"]
+        
+        # Inject HTTP2_NO_PRIORITY if Safari suppresses PRIORITY frames
+        if _webkit_preset.get("no_priority"):
+            _curl_options[const.CurlOpt.HTTP2_NO_PRIORITY] = True
+        
+        return _curl_options if _curl_options else None
+        
+    except ImportError:
+        # curl_cffi const not available — skip HTTP/2 SETTINGS
+        return None
+    except Exception:  # noqa: BLE001
+        # Fail soft — don't break session creation
+        return None
 
 
 def _resolve_dict_to_curl_format(resolve: dict[str, str]) -> list[str]:
@@ -882,24 +943,31 @@ async def _get_or_create_session(profile: str) -> Any | None:
 
             from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]
 
-            # [NEXUS]-018-01: Safari WebKit HTTP/2 SETTINGS preset.
+            # [NEXUS]-018-01: Build curl_options with TCP keep-alive + WebKit HTTP/2 SETTINGS.
             # Safari 18.0/17.4 uses INITIAL_WINDOW_SIZE=4,194,304 (4 MiB) vs
             # curl_cffi's default 65,535. This prevents anti-bot systems from
             # detecting automation via HTTP/2 frame fingerprinting.
-            # Note: curl_cffi 0.7.x doesn't expose http2_settings kwarg.
-            # This will be wired to curl_cffi >= 0.8.x http2_settings hook.
-            _webkit_preset = _get_webkit_h2_settings(profile)
+            # 
+            # curl_cffi >= 0.15.0 supports HTTP/2 SETTINGS via curl_options
+            # using CurlOpt.HTTP2_SETTINGS and CurlOpt.HTTP2_NO_PRIORITY.
+            _session_curl_options = dict(TCP_KEEPALIVE_CURL_OPTIONS)
+            
+            # [NEXUS]-018-01: Add WebKit HTTP/2 SETTINGS for Safari profiles
+            _webkit_curl_opts = _build_webkit_curl_options(profile)
+            if _webkit_curl_opts:
+                _session_curl_options.update(_webkit_curl_opts)
+                logger.debug(
+                    f"[NEXUS-018-01] WebKit HTTP/2 preset applied for: {profile} "
+                    f"(INITIAL_WINDOW_SIZE=4194304, no_priority=True)"
+                )
+            
             _session_kwargs: dict[str, Any] = {
                 "impersonate": profile,
                 "timeout": 10.0,
                 "max_clients": 25,  # connection pool size (keepalive connections)
                 "http2": True,  # P3-04: HTTP/2 for multiplexing and connection reuse
-                "curl_options": _TCP_KEEPALIVE_CURL_OPTIONS,  # ISSUE-P6-001: TCP keep-alive on sockets
+                "curl_options": _session_curl_options,  # TCP keep-alive + WebKit HTTP/2 SETTINGS
             }
-            # curl_cffi >= 0.8.x will support http2_settings kwarg:
-            # if _webkit_preset:
-            #     _session_kwargs["http2_settings"] = _webkit_preset
-            #     logger.debug(f"curl_cffi session with WebKit HTTP/2 preset for: {profile}")
             new_session = AsyncSession(**_session_kwargs)
             _curl_cffi_sessions[profile] = new_session
             _curl_cffi_profiles_order.append(profile)
@@ -1040,7 +1108,14 @@ async def _blocking_altsvc_probe_for_url(url: str) -> Any:
         return None
 
     try:
-        sess: Any = AsyncSession(impersonate="chrome124", timeout=4.0, max_clients=2)
+        # Use TCP keep-alive curl_options for consistency with other sessions
+        _session_curl_options = dict(TCP_KEEPALIVE_CURL_OPTIONS)
+        sess: Any = AsyncSession(
+            impersonate="chrome124",
+            timeout=4.0,
+            max_clients=2,
+            curl_options=_session_curl_options,
+        )
         try:
             # ISSUE-044: asyncio.wait_for → asyncio.timeout (Python 3.11+)
             # PEP 654 asyncio.TimeoutError is NOT subclass of CancelledError,
@@ -1446,16 +1521,13 @@ async def fetch_via_curl_cffi(
                     pass
             result['warc_archived'] = _warc_archived
 
-            # [NEXUS]-018-01: Fire-and-forget WINDOW_UPDATE worker for Safari WebKit.
-            # Safari sends WINDOW_UPDATE after ~80ms pause on keep-alive connections.
-            # This repliates the WebKit back-pressure signal to avoid detection.
+            # [NEXUS]-018-01: Telemetry marker for Safari WebKit HTTP/2 WINDOW_UPDATE.
+            # libcurl handles WINDOW_UPDATE frames automatically.
+            # This logs the pattern for telemetry purposes.
             if _is_webkit_h2_profile(used_profile):
                 _parsed = urllib.parse.urlparse(url)
                 _host = _parsed.netloc or url
-                safe_create_task(
-                    _webkit_window_update_worker(session, _host, _WEBKIT_WINDOW_INCREMENT),
-                    name=f"webkit-h2-winupdate:{_host}",
-                )
+                _log_webkit_window_update(_host, _WEBKIT_WINDOW_INCREMENT)
                 # [NEXUS]-018-01: Track Safari WebKit HTTP/2 profile usage
                 # Telemetry consumed by get_webkit_transport_telemetry().
                 _increment_webkit_telemetry(success=True)

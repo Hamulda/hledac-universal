@@ -70,6 +70,7 @@ class WinddownOrchestrator:
         run() → _run_winddown_sequence()
             → _maybe_call_pressure_relief()
             → runner.teardown()
+            → _boost_duckdb_threads_for_teardown()  # ISSUE-022-05: 2→4 threads for high-throughput
             → _run_export(lifecycle)
             → _await_synthesis()
             → _run_vacuum()
@@ -84,11 +85,62 @@ class WinddownOrchestrator:
             → _cancel_bg_tasks()
             → _graceful_sidecar_shutdown()
             → _close_duckdb()
+            → _restore_duckdb_threads_after_teardown()  # ISSUE-022-05: 4→2 threads for next sprint
     """
     __slots__ = ()
 
     def __init__(self) -> None:
         pass
+
+    def _boost_duckdb_threads_for_teardown(self, ctx: Any) -> None:
+        """
+        ISSUE-022-05: Boost DuckDB threads for high-throughput teardown.
+
+        During sprint winddown with 500+ pending findings, the default 2-thread
+        limit becomes a bottleneck (500 findings × ~15ms = 7.5s ingestion latency).
+        This method boosts DuckDB threads from 2→4 during teardown when I/O is
+        the only active work (no MLX inference competing for resources).
+
+        Boost triggers:
+            - _run_vacuum (post-export space reclamation)
+            - _close_dedup (dedup LMDB sync)
+            - _close_graph (DuckPGQ relationship writes)
+            - _run_delta_sync (cross-sprint entity sync)
+
+        Called BEFORE Phase 1 parallel operations to maximize parallelism during
+        the I/O-bound teardown phase.
+
+        M1 8GB safety: 4 threads is safe — MLX is already unloaded before winddown.
+        """
+        _store = getattr(ctx, 'duckdb_store', None)
+        if _store is not None and hasattr(_store, 'set_thread_count'):
+            try:
+                _store.set_thread_count(4)
+                _logger = __import__("logging").getLogger(__name__)
+                _logger.info("[ISSUE-022-05] DuckDB threads boosted: 2 → 4 (teardown)")
+            except Exception:
+                pass
+
+    def _restore_duckdb_threads_after_teardown(self, ctx: Any) -> None:
+        """
+        ISSUE-022-05: Restore DuckDB threads to baseline for next sprint.
+
+        After teardown completes, restore DuckDB threads from 4→2 to ensure
+        the next sprint starts with the correct RAM-safety configuration.
+
+        Called AFTER _close_duckdb() to ensure no more DuckDB operations occur
+        before the thread count is restored. Safe even if _close_duckdb() failed.
+
+        M1 8GB safety: 2 threads is the baseline for memory-constrained operation.
+        """
+        _store = getattr(ctx, 'duckdb_store', None)
+        if _store is not None and hasattr(_store, 'set_thread_count'):
+            try:
+                _store.set_thread_count(2)
+                _logger = __import__("logging").getLogger(__name__)
+                _logger.info("[ISSUE-022-05] DuckDB threads restored: 4 → 2 (baseline)")
+            except Exception:
+                pass
 
     async def run(self, ctx: Any, lifecycle: Any, query: str) -> WinddownPhaseResult:
         _t_winddown_start = _time.monotonic()
@@ -121,6 +173,11 @@ class WinddownOrchestrator:
         _maybe_call_pressure_relief(ctx)
         if ctx.runner:
             ctx.runner.teardown()
+
+        # ISSUE-022-05: Boost DuckDB threads for high-throughput teardown.
+        # Boost from 2→4 BEFORE Phase 1 parallel operations. MLX is unloaded,
+        # so 4 threads is safe on M1 8GB during I/O-bound teardown.
+        self._boost_duckdb_threads_for_teardown(ctx)
 
         # Phase 1: Parallel I/O-bound winddown using TaskGroup
         # NOTE: _graceful_sidecar_shutdown runs AFTER the parallel phase due to
@@ -179,6 +236,10 @@ class WinddownOrchestrator:
 
         # Phase 4: DuckDB close - MUST be last
         await self._close_duckdb(ctx)
+
+        # ISSUE-022-05: Restore DuckDB threads to baseline for next sprint.
+        # Restore from 4→2 AFTER _close_duckdb() to ensure correct config for next sprint.
+        self._restore_duckdb_threads_after_teardown(ctx)
 
         # Final cleanup
         self._maybe_launch_enhanced_research(ctx)

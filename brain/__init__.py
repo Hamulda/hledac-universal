@@ -108,6 +108,14 @@ MoERouter = None  # type: ignore[assignment,misc]
 MoERouterConfig = None  # type: ignore[assignment,misc]
 create_moe_router = None  # type: ignore[assignment,misc]
 
+# Micro Model Swarm — lazy (SYSTEM-008 refactor)
+MICRO_MODEL_SWARM_AVAILABLE = None
+MicroModelSwarmRouter = None  # type: ignore[assignment,misc]
+MicroModelPool = None  # type: ignore[assignment,misc]
+ContentRouter = None  # type: ignore[assignment,misc]
+ResourceGovernor = None  # type: ignore[assignment,misc]
+TaskType = None  # type: ignore[assignment,misc]
+
 # Distillation Engine — lazy (A2-FIX)
 DISTILLATION_AVAILABLE = None
 CriticMLP = None  # type: ignore[assignment,misc]
@@ -195,6 +203,11 @@ _ENGINE_REGISTRY: tuple[tuple[str, str, tuple[str, ...], str | None], ...] = (
         "HYPOTHESIS_AVAILABLE",
     ), "hypothesis"),
     ("moe_router", "MOE_AVAILABLE", ("MoERouter", "MoERouterConfig", "create_moe_router", "MOE_AVAILABLE"), "moe"),
+    # Micro Model Swarm — SYSTEM-008 refactor (three modules)
+    ("micro_model_pool", "MICRO_MODEL_SWARM_AVAILABLE", ("MicroModelPool", "MicroModelSpec", "TaskType", "MICRO_MODELS", "MICRO_MODEL_SWARM_AVAILABLE"), "micro_model_swarm"),
+    ("content_router", "MICRO_MODEL_SWARM_AVAILABLE", ("ContentRouter", "classify_content", "get_preferred_model", "route_content"), None),
+    ("micro_model_swarm", "MicroModelSwarmRouter", ("MicroModelSwarmRouter", "create_swarm_router"), None),
+    ("moe_swarm_integration", "ResourceGovernor", ("ResourceGovernor", "MoERouterSwarmMixin", "SwappableMicroModelPool"), None),
     ("distillation_engine", "DISTILLATION_AVAILABLE", (
         "CriticMLP", "DistillationEngine", "DistillationExample",
         "create_distillation_engine", "DISTILLATION_AVAILABLE",
@@ -363,6 +376,7 @@ AVAILABLE_BRAIN_ENGINES = {
     "inference": None,
     "hypothesis": None,
     "moe": None,
+    "micro_model_swarm": None,
     "distillation": None,
     "modernbert": None,
     "model_manager": None,
@@ -487,6 +501,20 @@ __all__ = [
     "MoERouterConfig",
     "create_moe_router",
     "MOE_AVAILABLE",
+    # Micro Model Swarm — SYSTEM-008 refactor
+    "MicroModelSwarmRouter",
+    "MicroModelPool",
+    "MicroModelSpec",
+    "ContentRouter",
+    "classify_content",
+    "get_preferred_model",
+    "route_content",
+    "ResourceGovernor",
+    "SwappableMicroModelPool",
+    "MoERouterSwarmMixin",
+    "TaskType",
+    "MICRO_MODELS",
+    "MICRO_MODEL_SWARM_AVAILABLE",
     # Distillation Engine
     "DistillationEngine",
     "DistillationExample",

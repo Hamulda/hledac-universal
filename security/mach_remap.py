@@ -60,13 +60,13 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     pass
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
 logger = logging.getLogger(__name__)
 
 # ─── Feature Gates ───────────────────────────────────────────────────────────
 
-_HLEDAC_ENABLE_MACH_REMAP: bool = (
-    os.environ.get("HLEDAC_ENABLE_MACH_REMAP", "0") == "1"
-)
+_HLEDAC_ENABLE_MACH_REMAP: bool = FeatureFlags.get(FeatureFlag.MACH_REMAP, default=False)
 
 # Minimum file size (bytes) before attempting Mach remap.
 # Below this, tempfile path is always faster (no fork overhead).

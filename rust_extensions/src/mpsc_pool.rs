@@ -1,4 +1,5 @@
 //! Bounded MPSC Pool — evidence_log IOC stream replacement for asyncio.Queue
+#![allow(dead_code)]
 //!
 //! Replaces `asyncio.Queue(maxsize=500)` in evidence_log.py with a lock-free
 //! bounded multi-producer single-consumer ring buffer backed by `crossbeam-channel`.

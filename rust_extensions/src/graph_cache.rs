@@ -278,7 +278,7 @@ impl PyGraphLRUCache {
             entry.last_access = counter_val;
             entry.frequency += 1;
             let value = entry.value.clone();
-            drop(entry);
+            // Entry borrow ends here automatically
             cache.admission.record(key_bytes.as_bytes());
             return Some(value);
         }
@@ -311,11 +311,11 @@ impl PyGraphLRUCache {
         if let Some(existing) = cache.entries.get_mut(&key) {
             // Update existing entry - extract values while we have the borrow
             let old_size = existing.size_bytes;
-            let existing_value = std::mem::replace(&mut existing.value, value);
+            let _existing_value = std::mem::replace(&mut existing.value, value);
             existing.frequency = 1;
             existing.last_access = counter_val;
             existing.size_bytes = size;
-            drop(existing);
+            // existing borrow ends here automatically
             
             cache.current_bytes = cache.current_bytes.saturating_sub(old_size) + size;
             cache.admission.record(key_bytes.as_bytes());

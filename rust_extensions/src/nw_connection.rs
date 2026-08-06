@@ -1,4 +1,5 @@
 //! rust/nw_connection.rs — Apple Network.framework user-space networking
+#![allow(dead_code)]
 //!
 //! SILICON-03: Bypass BSD sockets entirely. Network.framework provides:
 //!   - User-space TCP stack (no kernel context switches per packet)
@@ -47,23 +48,32 @@ type DispatchDataT = *mut c_void;
 type NwContentContextT = *mut c_void; // nw_content_context_t
 
 // nw_connection_state_t enum values
+#[allow(dead_code)]
 const NW_CONNECTION_STATE_INVALID: i32 = 0;
+#[allow(dead_code)]
 const NW_CONNECTION_STATE_WAITING: i32 = 1;
+#[allow(dead_code)]
 const NW_CONNECTION_STATE_PREPARING: i32 = 2;
+#[allow(dead_code)]
 const NW_CONNECTION_STATE_READY: i32 = 3;
+#[allow(dead_code)]
 const NW_CONNECTION_STATE_FAILED: i32 = 4;
+#[allow(dead_code)]
 const NW_CONNECTION_STATE_CANCELLED: i32 = 5;
 
 // ---------------------------------------------------------------------------
 // M1 8GB bounds
 // ---------------------------------------------------------------------------
 /// Maximum concurrent connections (200 per issue spec: 200 × 50 KB = 10 MB).
+#[allow(dead_code)]
 const MAX_CONCURRENT_CONNECTIONS: usize = 200;
 
 /// Maximum response body size in bytes (10 MB).
+#[allow(dead_code)]
 const MAX_RESPONSE_BODY: usize = 10 * 1024 * 1024;
 
 /// Default timeout in seconds.
+#[allow(dead_code)]
 const DEFAULT_TIMEOUT_S: f64 = 10.0;
 
 // ---------------------------------------------------------------------------
@@ -178,6 +188,7 @@ impl NwResponse {
 // ---------------------------------------------------------------------------
 
 /// Shared connection state, signalled by Network.framework state-change blocks.
+#[allow(dead_code)]
 struct ConnectionState {
     /// Current nw_connection_state_t value.
     state: Mutex<i32>,
@@ -281,8 +292,10 @@ impl ConnectionState {
 static CONNECTION_SEM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Pool stats for telemetry.
+#[allow(dead_code)]
 static POOL_STATS: OnceLock<Mutex<PoolStats>> = OnceLock::new();
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 struct PoolStats {
     total_fetches: u64,
@@ -903,6 +916,7 @@ fn h3_data_frame(data: &[u8]) -> Vec<u8> {
 // ---------------------------------------------------------------------------
 
 /// Parsed HTTP/3 response from raw bytes received on a QUIC stream.
+#[allow(dead_code)]
 struct H3Response {
     status: u16,
     headers: Vec<(String, String)>,

@@ -52,14 +52,19 @@ struct CoOccurrencePair {
     ioc_type_a: String,
     ioc_type_b: String,
     support: usize,
+    #[allow(dead_code)]
     confidence_a_to_b: f64,
+    #[allow(dead_code)]
     confidence_b_to_a: f64,
+    #[allow(dead_code)]
     score: f64,
 }
 
 /// Input: a CanonicalFinding serialized as dict (msgspec.to_builtins output).
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
-struct FindingInput {
+pub struct FindingInput {
+    #[allow(dead_code)]
     finding_id: String,
     payload_text: Option<String>,
 }

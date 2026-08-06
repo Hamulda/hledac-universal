@@ -38,13 +38,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
 logger = logging.getLogger(__name__)
 
 # ─── Feature Gate ──────────────────────────────────────────────────────────────
 
-_SIGNED_ARTIFACTS_ENABLED: bool = (
-    os.environ.get("HLEDAC_ENABLE_STEGDETECT_SIGNED", "1") == "1"
-)
+_SIGNED_ARTIFACTS_ENABLED: bool = FeatureFlags.get(FeatureFlag.STEGDETECT_SIGNED, default=True)
 
 # ─── Artifact Manifest ─────────────────────────────────────────────────────────
 # Known-good SHA-256 for stegdetect binary built from abeluck/stegdetect.

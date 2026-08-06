@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
-import os
 import socket
 import threading
 import time
@@ -47,6 +46,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from cachetools import TTLCache
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.async_helpers import async_getaddrinfo, parallel
 
 logger = logging.getLogger(__name__)
@@ -475,13 +475,13 @@ class FetchServiceConfig(msgspec.Struct, frozen=True, gc=False):
     def from_env(cls) -> FetchServiceConfig:
         """Create config from environment variables."""
         return cls(
-            enable_tor=os.environ.get('HLEDAC_ENABLE_TOR') == '1',
-            enable_i2p=os.environ.get('HLEDAC_ENABLE_I2P') == '1',
-            enable_gopher=os.environ.get('HLEDAC_ENABLE_GOPHER') == '1',
-            enable_captcha=os.environ.get('HLEDAC_ENABLE_CAPTCHA_DETECTION') == '1',
-            rate_limit_rps=float(os.environ.get('HLEDAC_RATE_LIMIT_RPS', '0.5')),
-            max_retries=int(os.environ.get('HLEDAC_MAX_RETRIES', '3')),
-            timeout=float(os.environ.get('HLEDAC_FETCH_TIMEOUT', '30.0')),
+            enable_tor=FeatureFlags.get(FeatureFlag.TOR),
+            enable_i2p=FeatureFlags.get(FeatureFlag.I2P),
+            enable_gopher=FeatureFlags.get(FeatureFlag.GOPHER),
+            enable_captcha=FeatureFlags.get(FeatureFlag.CAPTCHA_DETECTION),
+            rate_limit_rps=FeatureFlags.get_float(FeatureFlag.RATE_LIMIT_RPS, 0.5),
+            max_retries=FeatureFlags.get_int(FeatureFlag.MAX_RETRIES, 3),
+            timeout=FeatureFlags.get_float(FeatureFlag.FETCH_TIMEOUT, 30.0),
         )
 
 

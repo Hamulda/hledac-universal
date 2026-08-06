@@ -300,7 +300,6 @@ _OUTLINES: Any = None
 _INIT_LOCK = threading.Lock()
 register_lock(LockCategory.MPC, _INIT_LOCK, "_mlx_dispatcher._INIT_LOCK")
 _INITIALIZED = False
-_HLEDAC_MLX_ENABLED = os.environ.get('HLEDAC_MLX', '0') == '1'
 _MLX_CORE: Any | None = None
 
 def _get_mx() -> Any | None:
@@ -316,7 +315,8 @@ def _get_mx() -> Any | None:
 
 def _is_mlx_enabled() -> bool:
     """Globální MLX routing gate — nastavuje celý brain/ do MLX-only režimu."""
-    return _HLEDAC_MLX_ENABLED
+    from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+    return FeatureFlags.get(FeatureFlag.MLX)
 
 def _check_mlx_availability() -> None:
     """Jednorázová kontrola MLX knihoven — thread-safe DCLP."""

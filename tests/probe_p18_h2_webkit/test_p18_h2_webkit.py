@@ -216,35 +216,18 @@ class TestPublicFetcherTelemetry:
 
 
 class TestWINDOWUPDATEWorker:
-    """Test WINDOW_UPDATE fire-and-forget worker."""
+    """Test WINDOW_UPDATE telemetry marker.
 
-    @pytest.mark.asyncio
-    async def test_webkit_window_update_worker_runs(self):
-        """Verify _webkit_window_update_worker executes without error."""
-        from hledac.universal.transport.curl_cffi_fetch import _webkit_window_update_worker
+    [NEXUS]-018-01: WINDOW_UPDATE frames are handled by libcurl automatically.
+    This test verifies the telemetry marker function executes without error.
+    """
 
-        class MockSession:
-            pass
+    def test_log_webkit_window_update_direct(self):
+        """Verify _log_webkit_window_update telemetry marker."""
+        from hledac.universal.transport.curl_cffi_fetch import _log_webkit_window_update
 
-        session = MockSession()
-        await _webkit_window_update_worker(session, "example.com", 1_048_304, 10)
-
-    @pytest.mark.asyncio
-    async def test_webkit_window_update_worker_cancelled(self):
-        """Verify _webkit_window_update_worker handles CancelledError."""
-        from hledac.universal.transport.curl_cffi_fetch import _webkit_window_update_worker
-        import asyncio
-
-        class MockSession:
-            pass
-
-        session = MockSession()
-        worker = asyncio.create_task(
-            _webkit_window_update_worker(session, "example.com", 1_048_304, 5000)
-        )
-        worker.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await worker
+        # Should not raise
+        _log_webkit_window_update("test.host", 1_048_304)
 
 
 class TestH2SettingsFingerprint:

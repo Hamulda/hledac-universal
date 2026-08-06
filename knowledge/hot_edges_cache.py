@@ -136,7 +136,9 @@ _KEY_PREFIX: bytes = b"hot:"
 
 MAX_HOT_NEIGHBORS_PER_NODE: int = 50
 MAX_HOT_NODES: int = 10_000
-HOT_EDGES_ENABLED: bool = os.environ.get("HLEDAC_HOT_EDGES", "1") == "1"
+# SWARM-010: Use FeatureFlags for hot edges enable
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+HOT_EDGES_ENABLED: bool = FeatureFlags.get(FeatureFlag.HOT_EDGES)
 
 # Counter encoding — 8 bytes unsigned int, little-endian.
 # Picked for: zero allocations, native int.from_bytes on M1 ARM64.
@@ -234,7 +236,9 @@ def _dec_node_count(env) -> int:
 # Sprint F265B-III: Compress LMDB pages with lz4 (fast) + zstd (ratio).
 # Wire format: [marker=0x00/0x01/0x02][payload].
 # Opt-in via HLEDAC_HOT_EDGES_COMPRESS=1 (default ON when rust ext available).
-_HOT_EDGES_COMPRESS = os.environ.get("HLEDAC_HOT_EDGES_COMPRESS", "1") not in ("0", "no", "off")
+# SWARM-010: Use FeatureFlags for compression enable
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+_HOT_EDGES_COMPRESS = FeatureFlags.get(FeatureFlag.HOT_EDGES_COMPRESS)
 _compress_available = False
 _decompress_available = False
 

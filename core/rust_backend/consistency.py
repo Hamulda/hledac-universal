@@ -47,14 +47,12 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
 logger = logging.getLogger(__name__)
 
 # Env gate
-import os
-_ENABLING_CONSISTENCY_VERIFIER = (
-    os.environ.get("HLEDAC_ENABLE_CONSISTENCY_VERIFIER", "1").lower()
-    in ("1", "true", "yes", "on")
-)
+_ENABLING_CONSISTENCY_VERIFIER = FeatureFlags.get(FeatureFlag.CONSISTENCY_VERIFIER, default=True)
 
 # ISSUE [SWARM]-005: FFI Circuit Breaker
 try:

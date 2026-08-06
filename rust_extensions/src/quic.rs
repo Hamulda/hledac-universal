@@ -1,4 +1,5 @@
 //! rust/quic.rs — QUIC/HTTP3 fetcher via quinn
+#![allow(dead_code)]
 //!
 //! F350M-R: Real HTTP/3 over QUIC as Rust extension.
 //!

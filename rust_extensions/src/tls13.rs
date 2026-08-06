@@ -361,6 +361,7 @@ pub struct TlsFingerprintResult {
 /// (dangerous::dangerous()). For OSINT use only.
 
 /// No-op certificate verifier — accepts all certificates (OSINT use only).
+#[allow(dead_code)]
 struct NoVerifier;
 #[cfg(feature = "tls13")]
 impl danger::ServerCertVerifier for NoVerifier {

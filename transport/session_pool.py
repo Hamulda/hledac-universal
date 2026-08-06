@@ -52,6 +52,15 @@ import msgspec
 
 from hledac.universal.utils.async_helpers import safe_create_task
 from hledac.universal.utils.locks import LazyAsyncioLock
+from ._tcp_keepalive import (
+    SO_KEEPALIVE,
+    TCP_KEEPIDLE,
+    TCP_KEEPINTVL,
+    TCP_KEEPCNT,
+    KEEPALIVE_IDLE_S,
+    KEEPALIVE_INTERVAL_S,
+    KEEPALIVE_MAX_PROBES,
+)
 
 if TYPE_CHECKING:
     import httpx
@@ -66,21 +75,6 @@ class PoolKind(Enum):
     HTTPX = "httpx"
     HTTPX_SOCKS = "httpx_socks"
     CURL_CFFI = "curl_cffi"
-
-
-# =============================================================================
-# TCP Keep-Alive constants (macOS/Linux BSD-compatible) — ISSUE-P6-001
-# =============================================================================
-# macOS: TCP_KEEPIDLE = 0x10 (16), TCP_KEEPINTVL = 0x101 (257), TCP_KEEPCNT = 0x102 (258)
-# SO_KEEPALIVE = 0x0008 (8) — enable TCP keep-alive at socket level
-_SO_KEEPALIVE: int = socket.SO_KEEPALIVE  # 8
-_TCP_KEEPIDLE: int = 0x10  # 16 — seconds before first probe (macOS Darwin)
-_TCP_KEEPINTVL: int = 0x101  # 257 — seconds between probes
-_TCP_KEEPCNT: int = 0x102  # 258 — max probe count before giving up
-# Keep-alive timings: first probe after 60s idle, then every 30s, give up after 3 probes
-_TCP_KEEPALIVE_IDLE_S: int = 60
-_TCP_KEEPALIVE_INTERVAL_S: int = 30
-_TCP_KEEPALIVE_MAX_PROBES: int = 3
 
 
 def _patch_existing_httpx_sockets(client: httpx.AsyncClient) -> None:
@@ -138,10 +132,10 @@ def _patch_socket_keepalive(sock: socket.socket) -> None:
     remains usable without keep-alive.
     """
     try:
-        sock.setsockopt(socket.SOL_SOCKET, _SO_KEEPALIVE, 1)
-        sock.setsockopt(socket.IPPROTO_TCP, _TCP_KEEPIDLE, _TCP_KEEPALIVE_IDLE_S)
-        sock.setsockopt(socket.IPPROTO_TCP, _TCP_KEEPINTVL, _TCP_KEEPALIVE_INTERVAL_S)
-        sock.setsockopt(socket.IPPROTO_TCP, _TCP_KEEPCNT, _TCP_KEEPALIVE_MAX_PROBES)
+        sock.setsockopt(socket.SOL_SOCKET, SO_KEEPALIVE, 1)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPIDLE, KEEPALIVE_IDLE_S)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPINTVL, KEEPALIVE_INTERVAL_S)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPCNT, KEEPALIVE_MAX_PROBES)
     except OSError as e:
         # Platform-specific: some options not supported on all systems
         import logging

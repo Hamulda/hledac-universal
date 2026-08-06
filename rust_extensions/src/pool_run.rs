@@ -1,4 +1,5 @@
 //! pool_run — Python-callable rayon pool runners (channel-based dispatch)
+#![allow(dead_code)]
 //!
 //! CONSOLIDATED (R2 fix): Merged rayon_dispatch.rs into pool_run.rs.
 //! Previously there were two identical implementations — pool_run.rs (with dead

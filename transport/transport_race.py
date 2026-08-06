@@ -80,6 +80,31 @@ _RACE_TIMEOUT_S: float = float(
 _RACE_STAGGER_MS: float = float(os.environ.get('HLEDAC_RACE_STAGGER_MS', '0'))
 
 # ---------------------------------------------------------------------------
+# ISSUE-022-04: Pre-race gate thresholds
+# ---------------------------------------------------------------------------
+# Use RouteGraphService as a pre-race gate to avoid wasted parallel fetches.
+# If a transport has high confidence (>95% success rate, <500ms p50 latency,
+# >=3 observations), skip the race and use that transport directly.
+# Only race when no transport meets the high-confidence threshold.
+
+_PRE_RACE_GATE_ENABLED: bool = (
+    os.environ.get("HLEDAC_PRE_RACE_GATE", "1").lower()
+    in ("1", "true", "yes", "on")
+)
+_PRE_RACE_MIN_SUCCESS_RATE: float = float(
+    os.environ.get("HLEDAC_PRE_RACE_MIN_SUCCESS_RATE", "0.95")
+)  # 95% success rate threshold
+_PRE_RACE_MAX_P50_LATENCY_MS: float = float(
+    os.environ.get("HLEDAC_PRE_RACE_MAX_P50_LATENCY_MS", "500.0")
+)  # 500ms p50 latency cap
+_PRE_RACE_MIN_OBSERVATIONS: int = int(
+    os.environ.get("HLEDAC_PRE_RACE_MIN_OBS", "3")
+)  # minimum observations before trusting
+_PRE_RACE_CONFIDENCE_THRESHOLD: float = float(
+    os.environ.get("HLEDAC_PRE_RACE_CONFIDENCE_THRESHOLD", "0.80")
+)  # 80% confidence to skip race
+
+# ---------------------------------------------------------------------------
 # M1 8GB bounds
 # ---------------------------------------------------------------------------
 
@@ -124,7 +149,48 @@ _WINNER_CACHE_STATS: dict[str, int] = {
     "hits": 0,
     "misses": 0,
     "fastpath_failures": 0,
+    "fastpath_timeouts": 0,  # ISSUE-022-04: track timeouts separately
 }
+
+# ISSUE-022-04: Pre-race gate stats
+_PRE_RACE_GATE_STATS: dict[str, int] = {
+    "gate_hits": 0,           # transport found via pre-race gate
+    "gate_skips": 0,          # skipped (confidence < threshold)
+    "gate_no_data": 0,        # no route graph data for domain
+    "gate_errors": 0,         # errors accessing route graph
+    "gate_timeout_fallbacks": 0,  # pre-race candidate timed out
+}
+_pre_race_gate_lock = asyncio.Lock()
+
+# RouteGraphService singleton reference (lazy-initialized)
+_route_graph_service: "RouteGraphService | None" = None
+_route_graph_service_lock = asyncio.Lock()
+
+
+def _get_route_graph_service() -> "RouteGraphService | None":
+    """Get or create the RouteGraphService singleton.
+    
+    Lazy initialization to avoid circular imports and expensive DuckDB setup
+    on every transport_race import.
+    """
+    global _route_graph_service
+    if _route_graph_service is not None:
+        return _route_graph_service
+    # Import here to avoid circular imports
+    try:
+        from hledac.universal.knowledge.proxy_routes import RouteGraphService
+        from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+        
+        # Try to get a shared DuckDB store
+        store = DuckDBShadowStore.get_shared_instance()
+        if store is not None:
+            _route_graph_service = RouteGraphService(store=store)
+        else:
+            _route_graph_service = RouteGraphService()  # in-memory only
+        return _route_graph_service
+    except Exception:  # noqa: BLE001 — fail-soft: RouteGraphService unavailable
+        return None
+
 
 # Transport aliases map for canonical names
 _WINNER_CANONICAL_TRANSPORTS: frozenset[str] = frozenset({
@@ -194,6 +260,7 @@ def _winner_cache_stats() -> dict[str, int]:
         "winner_cache_hits": _WINNER_CACHE_STATS["hits"],
         "winner_cache_misses": _WINNER_CACHE_STATS["misses"],
         "winner_cache_fastpath_failures": _WINNER_CACHE_STATS["fastpath_failures"],
+        "winner_cache_fastpath_timeouts": _WINNER_CACHE_STATS["fastpath_timeouts"],
     }
 
 
@@ -204,6 +271,49 @@ def _reset_winner_cache() -> None:
     _WINNER_CACHE_STATS["hits"] = 0
     _WINNER_CACHE_STATS["misses"] = 0
     _WINNER_CACHE_STATS["fastpath_failures"] = 0
+    _WINNER_CACHE_STATS["fastpath_timeouts"] = 0
+
+
+def _reset_pre_race_gate_stats() -> None:
+    """Reset pre-race gate stats (for testing)."""
+    _PRE_RACE_GATE_STATS["gate_hits"] = 0
+    _PRE_RACE_GATE_STATS["gate_skips"] = 0
+    _PRE_RACE_GATE_STATS["gate_no_data"] = 0
+    _PRE_RACE_GATE_STATS["gate_errors"] = 0
+    _PRE_RACE_GATE_STATS["gate_timeout_fallbacks"] = 0
+
+
+# ISSUE-022-04: Transport name mapping from RouteGraphService to transport_race
+_ROUTEGRAPH_TRANSPORT_MAP: dict[str, str] = {
+    "httpx": "httpx",
+    "curl_cffi": "curl_cffi",
+    "curl": "curl_cffi",  # alias
+    "nw_connection": "nw_connection",
+    "network_framework": "nw_connection",  # alias
+    "nw_quic": "nw_quic",
+    "quic": "nw_quic",  # alias
+    "playwright": "playwright",
+}
+
+
+def _map_routegraph_transport(rg_transport: str) -> str | None:
+    """Map RouteGraphService transport name to transport_race canonical name.
+
+    Returns None if the transport is not supported in racing.
+    """
+    if not rg_transport:
+        return None
+    # Direct match
+    if rg_transport in _WINNER_CANONICAL_TRANSPORTS:
+        return rg_transport
+    # Alias lookup
+    return _ROUTEGRAPH_TRANSPORT_MAP.get(rg_transport.lower())
+
+
+def _pre_race_gate_stats() -> dict[str, int]:
+    """Return pre-race gate telemetry snapshot."""
+    return dict(_PRE_RACE_GATE_STATS)
+
 
 # ---------------------------------------------------------------------------
 # Transport race result
@@ -356,6 +466,162 @@ class TransportRaceManager:
         if breaker is not None:
             breaker.record_success()
 
+    # ------------------------------------------------------------------
+    # ISSUE-022-04: Pre-race gate using RouteGraphService
+    # ------------------------------------------------------------------
+
+    async def _check_pre_race_gate(
+        self,
+        url: str,
+        domain: str,
+    ) -> tuple[str | None, float]:
+        """Check RouteGraphService for high-confidence transport selection.
+
+        Uses RouteGraphService as a pre-race gate to avoid wasted parallel
+        fetches. If a transport has:
+          - >95% success rate
+          - <500ms p50 latency
+          - >=3 observations
+        Then use that transport directly instead of racing all transports.
+
+        Args:
+            url: The target URL
+            domain: Normalized domain (e.g. "example.com")
+
+        Returns:
+            (transport_name, confidence) — transport_name is None if race
+            should proceed normally. confidence is 0.0-1.0 indicating
+            confidence in the recommendation.
+        """
+        if not _PRE_RACE_GATE_ENABLED:
+            return (None, 0.0)
+
+        service = _get_route_graph_service()
+        if service is None:
+            return (None, 0.0)
+
+        try:
+            edges = await service.get_route_stats(domain)
+        except Exception:  # noqa: BLE001
+            async with _pre_race_gate_lock:
+                _PRE_RACE_GATE_STATS["gate_errors"] += 1
+            return (None, 0.0)
+
+        if not edges:
+            async with _pre_race_gate_lock:
+                _PRE_RACE_GATE_STATS["gate_no_data"] += 1
+            return (None, 0.0)
+
+        # Map RouteGraphService transport names to our transport names
+        # RouteGraphService may track (transport, proxy) pairs; we care about transport
+        transport_scores: dict[str, tuple[float, float, int]] = {}  # transport → (score, confidence, obs)
+
+        for edge in edges:
+            if not edge.transport:
+                continue
+            # Map RouteGraphService transport to our canonical transport
+            mapped = _map_routegraph_transport(edge.transport)
+            if mapped is None:
+                continue
+
+            # Check if this transport meets the high-confidence threshold
+            if (
+                edge.total_attempts < _PRE_RACE_MIN_OBSERVATIONS
+            ):
+                continue
+
+            success_rate = edge.success_rate
+            p50_latency = edge.p50_latency_ms
+
+            if (
+                success_rate >= _PRE_RACE_MIN_SUCCESS_RATE
+                and p50_latency > 0
+                and p50_latency <= _PRE_RACE_MAX_P50_LATENCY_MS
+            ):
+                # Calculate confidence based on observations
+                confidence = min(0.95, edge.total_attempts / 10.0)
+                # Composite score: success_rate × latency_score
+                latency_score = 1.0 / (1.0 + p50_latency / 500.0)
+                score = success_rate * 0.6 + latency_score * 0.4
+
+                if mapped not in transport_scores or score > transport_scores[mapped][0]:
+                    transport_scores[mapped] = (score, confidence, edge.total_attempts)
+
+        if not transport_scores:
+            async with _pre_race_gate_lock:
+                _PRE_RACE_GATE_STATS["gate_skips"] += 1
+            return (None, 0.0)
+
+        # Pick the best transport
+        best_transport = max(transport_scores, key=lambda t: transport_scores[t][0])
+        best_score, best_confidence, best_obs = transport_scores[best_transport]
+
+        # Only use pre-race gate if confidence is high enough
+        if best_confidence < _PRE_RACE_CONFIDENCE_THRESHOLD:
+            async with _pre_race_gate_lock:
+                _PRE_RACE_GATE_STATS["gate_skips"] += 1
+            return (None, 0.0)
+
+        # Check circuit breaker
+        if not self.transport_check(best_transport):
+            async with _pre_race_gate_lock:
+                _PRE_RACE_GATE_STATS["gate_skips"] += 1
+            return (None, 0.0)
+
+        async with _pre_race_gate_lock:
+            _PRE_RACE_GATE_STATS["gate_hits"] += 1
+
+        logger.debug(
+            "transport_race: pre-race gate → %s (confidence=%.2f, obs=%d) for %s",
+            best_transport, best_confidence, best_obs, domain,
+        )
+        return (best_transport, best_confidence)
+
+    async def _record_to_route_graph(
+        self,
+        transport: str,
+        domain: str,
+        success: bool,
+        latency_ms: float = 0.0,
+    ) -> None:
+        """Record fetch result to RouteGraphService for improved recommendations.
+
+        This enables RouteGraphService to build up statistics for smarter
+        pre-race gate decisions on future requests to the same domain.
+
+        Args:
+            transport: Transport name (e.g. "httpx", "curl_cffi")
+            domain: Normalized domain (e.g. "example.com")
+            success: Whether the fetch succeeded
+            latency_ms: Actual latency of the fetch in milliseconds
+        """
+        service = _get_route_graph_service()
+        if service is None:
+            return
+
+        try:
+            # RouteGraphService expects the domain without port
+            clean_domain = domain.split(":")[0].lower()
+            if not clean_domain:
+                return
+
+            if success:
+                await service.record_route_success(
+                    domain=clean_domain,
+                    proxy="",  # No proxy for direct transports
+                    transport=transport,
+                    latency_ms=latency_ms,
+                )
+            else:
+                await service.record_route_failure(
+                    domain=clean_domain,
+                    proxy="",  # No proxy for direct transports
+                    transport=transport,
+                    latency_ms=latency_ms,
+                )
+        except Exception:  # noqa: BLE001 — fail-soft: don't let recording failures affect the main flow
+            pass
+
     def record_failure(
         self, transport: str, is_timeout: bool = False
     ) -> None:
@@ -436,16 +702,38 @@ class TransportRaceManager:
                             self, _cached_transport, url, headers,
                             max_bytes, timeout,
                         )
+                    # Detect if fast path timed out
+                    _fast_is_timeout = (
+                        _fast_result is not None
+                        and _fast_result.result is not None
+                        and "timeout" in (_fast_result.result.get("error") or "").lower()
+                    )
                     if _fast_result is not None and _fast_result.success:
                         self.record_success(_cached_transport)
                         self._stats[f"races_won_{_cached_transport}"] += 1
+                        # Record to RouteGraphService for improved recommendations
+                        await self._record_to_route_graph(
+                            _cached_transport, _cache_host, success=True,
+                            latency_ms=_fast_result.elapsed_ms,
+                        )
                         return (_fast_result.result, _cached_transport)
                     # Cached winner failed — evict from cache and retry full race
                     async with _winner_cache_lock:
                         _WINNER_CACHE_STATS["fastpath_failures"] += 1
+                        if _fast_is_timeout:
+                            _WINNER_CACHE_STATS["fastpath_timeouts"] += 1
                         _WINNER_CACHE.pop(_cache_host, None)
                         if _cache_host in _winner_access_order:
                             _winner_access_order.remove(_cache_host)
+                    # ISSUE-022-04: Record failure to RouteGraphService
+                    # This helps RouteGraphService learn that this transport may be
+                    # degraded for this specific domain
+                    await self._record_to_route_graph(
+                        _cached_transport, _cache_host, success=False,
+                        latency_ms=_fast_result.elapsed_ms if _fast_result else 0.0,
+                    )
+                    # Also record to circuit breaker with timeout flag
+                    self.record_failure(_cached_transport, is_timeout=_fast_is_timeout)
                     logger.debug(
                         "transport_race: winner cache fast path failed for %s "
                         "(%s), falling through to full race",
@@ -460,6 +748,57 @@ class TransportRaceManager:
             else:
                 async with _winner_cache_lock:
                     _WINNER_CACHE_STATS["misses"] += 1
+
+        # ── ISSUE-022-04: Pre-race gate ─────────────────────────────────
+        # After winner cache miss, check RouteGraphService for high-confidence
+        # transport. If a transport has >95% success rate and <500ms p50 latency
+        # for this domain, skip the race and use that transport directly.
+        # Only race when confidence is low across all transports.
+        # Note: _cache_host was computed above in winner cache section.
+        if not _auto_js and not use_stealth:
+            _pre_race_transport, _pre_race_confidence = await self._check_pre_race_gate(
+                url, _cache_host
+            )
+            if _pre_race_transport is not None:
+                # Try the high-confidence transport directly
+                async with self._global_sem:
+                    self._stats["races_run"] += 1
+                    _pre_race_result = await _run_transport_standalone(
+                        self, _pre_race_transport, url, headers,
+                        max_bytes, timeout,
+                    )
+                if _pre_race_result is not None and _pre_race_result.success:
+                    self.record_success(_pre_race_transport)
+                    self._stats[f"races_won_{_pre_race_transport}"] += 1
+                    # Update winner cache for future fast-path hits
+                    if _pre_race_transport in _WINNER_CANONICAL_TRANSPORTS:
+                        await _winner_cache_set(_cache_host, _pre_race_transport)
+                    # Record to RouteGraphService for improved recommendations
+                    await self._record_to_route_graph(
+                        _pre_race_transport, _cache_host, success=True,
+                        latency_ms=_pre_race_result.elapsed_ms,
+                    )
+                    logger.debug(
+                        "transport_race: pre-race gate win for %s → %s",
+                        _cache_host, _pre_race_transport,
+                    )
+                    return (_pre_race_result.result, _pre_race_transport)
+                # Pre-race candidate failed — record failure and fall through to race
+                # Detect timeout from result error field
+                _is_timeout = (
+                    _pre_race_result is not None
+                    and _pre_race_result.result is not None
+                    and "timeout" in (_pre_race_result.result.get("error") or "").lower()
+                )
+                self.record_failure(_pre_race_transport, is_timeout=_is_timeout)
+                # Record failure to RouteGraphService
+                await self._record_to_route_graph(
+                    _pre_race_transport, _cache_host, success=False,
+                )
+                logger.debug(
+                    "transport_race: pre-race gate miss for %s (%s), racing all transports",
+                    _cache_host, _pre_race_transport,
+                )
 
         async with self._global_sem:
             self._stats["races_run"] += 1
@@ -554,6 +893,7 @@ class TransportRaceManager:
                 # Wait for first success or all failures with timeout
                 winner: RaceResult | None = None
                 pending: set[asyncio.Task[RaceResult]] = set(tasks.values())
+                _race_host = _extract_host_for_winner_cache(url)
 
                 async with asyncio.timeout(timeout):
                     while pending and winner is None:
@@ -573,42 +913,17 @@ class TransportRaceManager:
                                 winner = rr
                                 break  # first success wins
 
-            except asyncio.TimeoutError:
-                self._stats["races_timeout"] += 1
-                logger.debug("transport_race: race timeout after %.1fs for %s",
-                            timeout, url)
-
-                # Cancel all pending tasks
-                for task in pending:
-                    task.cancel()
-                # Also cancel any winner's siblings that may still be running
-                if winner is not None:
-                    for t_name, task in tasks.items():
-                        if t_name != winner.transport and not task.done():
-                            task.cancel()
-
-                # Record results for circuit breaker telemetry
-                if winner is not None:
+                # Winner found normally — record success and return
+                if winner is not None and winner.result is not None:
                     self.record_success(winner.transport)
                     self._stats[f"races_won_{winner.transport}"] += 1
-                else:
-                    # All transports failed — record failures
-                    self._stats["races_all_failed"] += 1
-                    for t_name, task in tasks.items():
-                        if task.done() and not task.cancelled():
-                            try:
-                                rr = task.result()
-                                if rr.error:
-                                    self.record_failure(
-                                        t_name,
-                                        is_timeout="timeout" in (rr.error or "").lower(),
-                                    )
-                            except Exception:
-                                self.record_failure(t_name)
-
-                if winner is not None and winner.result is not None:
+                    # ISSUE-022-04: Record winner success to RouteGraphService
+                    # This is critical for the learning loop to improve future pre-race gate decisions
+                    await self._record_to_route_graph(
+                        winner.transport, _race_host, success=True,
+                        latency_ms=winner.elapsed_ms,
+                    )
                     # NEXUS-018-011: Cache the winning transport for this host
-                    _race_host = _extract_host_for_winner_cache(url)
                     # Only cache canonical clearnet transports (not stealth/playwright)
                     if winner.transport in _WINNER_CANONICAL_TRANSPORTS:
                         await _winner_cache_set(_race_host, winner.transport)
@@ -616,7 +931,31 @@ class TransportRaceManager:
                             "transport_race: winner cache set %s → %s",
                             _race_host, winner.transport,
                         )
+                    # Cancel remaining pending tasks (they lost the race)
+                    for t_name, task in tasks.items():
+                        if t_name != winner.transport and not task.done():
+                            task.cancel()
                     return (winner.result, winner.transport)
+
+                # No winner found — fall through to timeout/error handling
+                # Record failures for all completed transports
+                self._stats["races_all_failed"] += 1
+                for t_name, task in tasks.items():
+                    if task.done() and not task.cancelled():
+                        try:
+                            rr = task.result()
+                            if rr.error:
+                                self.record_failure(
+                                    t_name,
+                                    is_timeout="timeout" in (rr.error or "").lower(),
+                                )
+                                # ISSUE-022-04: Record failure to RouteGraphService
+                                await self._record_to_route_graph(
+                                    t_name, _race_host, success=False,
+                                    latency_ms=rr.elapsed_ms,
+                                )
+                        except Exception:
+                            self.record_failure(t_name)
 
                 # Try to return a partial result from any non-cancelled transport
                 # (e.g., 4xx/5xx with content for analysis)
@@ -625,9 +964,53 @@ class TransportRaceManager:
                         try:
                             rr = task.result()
                             if rr.result is not None:
+                                # ISSUE-022-04: Record partial success/failure to RouteGraphService
+                                _status = rr.result.get("status_code", 0)
+                                _is_success = 200 <= _status < 400
+                                await self._record_to_route_graph(
+                                    t_name, _race_host, success=_is_success,
+                                    latency_ms=rr.elapsed_ms,
+                                )
                                 return (rr.result, t_name)
                         except Exception:
                             pass
+
+                return (None, "all_transports_failed")
+
+            except asyncio.TimeoutError:
+                # Timeout before any transport completed — this is a network/system issue
+                self._stats["races_timeout"] += 1
+                logger.debug("transport_race: race timeout after %.1fs for %s",
+                            timeout, url)
+
+                # Cancel all pending tasks
+                for task in pending:
+                    task.cancel()
+                # Cancel any winner's siblings that may still be running
+                if winner is not None:
+                    for t_name, task in tasks.items():
+                        if t_name != winner.transport and not task.done():
+                            task.cancel()
+
+                # Record timeout to circuit breaker for all transports
+                for t_name in eligible:
+                    self.record_failure(t_name, is_timeout=True)
+                    # ISSUE-022-04: Record timeout to RouteGraphService
+                    await self._record_to_route_graph(
+                        t_name, _race_host, success=False,
+                    )
+
+                # If we have a partial result from winner, return it
+                if winner is not None and winner.result is not None:
+                    self.record_success(winner.transport)
+                    self._stats[f"races_won_{winner.transport}"] += 1
+                    await self._record_to_route_graph(
+                        winner.transport, _race_host, success=True,
+                        latency_ms=winner.elapsed_ms,
+                    )
+                    if winner.transport in _WINNER_CANONICAL_TRANSPORTS:
+                        await _winner_cache_set(_race_host, winner.transport)
+                    return (winner.result, winner.transport)
 
                 return (None, "all_transports_failed")
 
@@ -896,6 +1279,8 @@ class TransportRaceManager:
         Tor/I2P-routed transports are eligible. Races curl_cffi_tor against
         direct Tor fetch to get the fastest response.
 
+        ISSUE-022-04: Records results to RouteGraphService for improved routing.
+
         Returns (result_dict, winning_transport) or (None, error_reason).
         """
         t = timeout_s if timeout_s is not None else _RACE_TIMEOUT_S
@@ -912,6 +1297,9 @@ class TransportRaceManager:
         # For darknet, we use a longer timeout (Tor TTFB can be 5-15s)
         dark_timeout = max(t, 30.0) if t < 30.0 else t
 
+        # ISSUE-022-04: Extract domain for RouteGraphService
+        _darknet_host = _extract_host_for_winner_cache(url)
+
         async def _try_tor() -> dict[str, Any] | None:
             try:
                 return await self._fetch_one(
@@ -922,12 +1310,28 @@ class TransportRaceManager:
 
         try:
             async with asyncio.timeout(dark_timeout):
+                t_start = time.monotonic()
                 result = await _try_tor()
+                _latency_ms = (time.monotonic() - t_start) * 1000
                 if result is not None and result.get("status_code", 0) >= 200:
                     self._stats["races_won_curl_cffi_tor"] += 1
+                    # ISSUE-022-04: Record darknet success to RouteGraphService
+                    await self._record_to_route_graph(
+                        "curl_cffi_tor", _darknet_host, success=True,
+                        latency_ms=_latency_ms,
+                    )
                     return (result, "curl_cffi_tor")
+                # Record darknet failure to RouteGraphService
+                await self._record_to_route_graph(
+                    "curl_cffi_tor", _darknet_host, success=False,
+                    latency_ms=_latency_ms,
+                )
         except asyncio.TimeoutError:
             self._stats["races_timeout"] += 1
+            # ISSUE-022-04: Record timeout to RouteGraphService
+            await self._record_to_route_graph(
+                "curl_cffi_tor", _darknet_host, success=False,
+            )
 
         # Fallback to single transport
         return await self._fallback_single(url, headers, timeout_s, max_bytes)
@@ -946,12 +1350,22 @@ class TransportRaceManager:
                 fetch_via_unified,
             )
             t = timeout_s if timeout_s is not None else _RACE_TIMEOUT_S
+            t_start = time.monotonic()
             result = await fetch_via_unified(
                 url=url,
                 policy=POLICY_STEALTH_CHROME,
                 headers=headers,
                 timeout_s=t,
                 max_bytes=max_bytes,
+            )
+            _latency_ms = (time.monotonic() - t_start) * 1000
+            _status = result.get("status_code", 0) if isinstance(result, dict) else 0
+            _is_success = 200 <= _status < 400 if isinstance(result, dict) else False
+            # ISSUE-022-04: Record fallback result to RouteGraphService
+            _host = _extract_host_for_winner_cache(url)
+            await self._record_to_route_graph(
+                "curl_cffi_stealth", _host, success=_is_success,
+                latency_ms=_latency_ms,
             )
             return (result, "curl_cffi_stealth")
         except Exception as e:
@@ -967,6 +1381,8 @@ class TransportRaceManager:
         stats = dict(self._stats)
         # NEXUS-018-011: merge winner cache stats
         stats.update(_winner_cache_stats())
+        # ISSUE-022-04: merge pre-race gate stats
+        stats.update(_pre_race_gate_stats())
         return stats
 
     def reset_stats(self) -> None:
@@ -974,6 +1390,8 @@ class TransportRaceManager:
         self._stats = {k: 0 for k in self._stats}
         # NEXUS-018-011: also reset winner cache
         _reset_winner_cache()
+        # ISSUE-022-04: also reset pre-race gate stats
+        _reset_pre_race_gate_stats()
 
 
 # ---------------------------------------------------------------------------
@@ -1181,4 +1599,7 @@ __all__ = [
     "_winner_cache_stats",
     "_reset_winner_cache",
     "_extract_host_for_winner_cache",
+    # ISSUE-022-04: pre-race gate exports
+    "_pre_race_gate_stats",
+    "_reset_pre_race_gate_stats",
 ]

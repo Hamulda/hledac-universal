@@ -98,17 +98,12 @@ else:
 # Constants — thresholds derived from LLM vs human corpora analysis
 # ---------------------------------------------------------------------------
 
-# Feature gate
-_COGNITIVE_TARPIT_ENABLED: Final[bool] = (
-    os.environ.get("HLEDAC_ENABLE_COGNITIVE_TARPIT", "1").lower()
-    in ("1", "true", "yes", "on")
-)
+# Feature gate — SWARM-010 compliant via FeatureFlags
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+_COGNITIVE_TARPIT_ENABLED: Final[bool] = FeatureFlags.get(FeatureFlag.COGNITIVE_TARPIT)
 
-# POS tagging gate (heavy, off by default)
-_POS_TAGGING_ENABLED: Final[bool] = (
-    os.environ.get("HLEDAC_ENABLE_POS_TAGGING", "0").lower()
-    in ("1", "true", "yes", "on")
-)
+# POS tagging gate (heavy, off by default) — SWARM-010 compliant via FeatureFlags
+_POS_TAGGING_ENABLED: Final[bool] = FeatureFlags.get(FeatureFlag.POS_TAGGING)
 
 # Cognitive tarpit abort threshold
 _COGNITIVE_TARPIT_THRESHOLD: Final[float] = 0.7

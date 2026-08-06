@@ -95,7 +95,7 @@ logger = logging.getLogger(__name__)
 
 
 class FlagCategory(Enum):
-    """8-group taxonomy matching Q1 probe requirements."""
+    """10-group taxonomy matching Q1 probe requirements."""
 
     NETWORK = auto()
     BRAIN = auto()
@@ -105,6 +105,8 @@ class FlagCategory(Enum):
     FORENSICS = auto()
     STEALTH = auto()
     SYSTEM = auto()
+    SECURITY = auto()  # Security/sandboxing flags
+    PIPELINE = auto()  # Pipeline/processing flags
 
 
 # ============================================================================
@@ -326,6 +328,63 @@ class FeatureFlag(Enum):
     WHISPER = "HLEDAC_ENABLE_WHISPER"
     METAL_GEMM = "HLEDAC_ENABLE_METAL_GEMM"
 
+    # ─── MLX / Apple Silicon Flags ───────────────────────────────────────
+
+    MLX = "HLEDAC_MLX"
+    MLX_PREWARM = "HLEDAC_MLX_PREWARM"
+
+    # ─── Brain / Processing Flags ────────────────────────────────────────
+
+    COGNITIVE_TARPIT = "HLEDAC_ENABLE_COGNITIVE_TARPIT"
+    POS_TAGGING = "HLEDAC_ENABLE_POS_TAGGING"
+    TRIAGE_DISABLED = "HLEDAC_TRIAGE_DISABLED"
+    TRIAGE_TIER2 = "HLEDAC_TRIAGE_TIER2"
+    DISABLE_SPEC_DECODE = "HLEDAC_DISABLE_SPEC_DECODE"
+    ENABLE_SPEC_DECODE = "HLEDAC_ENABLE_SPEC_DECODE"
+
+    # ─── Knowledge / RAG Flags ──────────────────────────────────────────
+
+    HOT_EDGES = "HLEDAC_HOT_EDGES"
+    HOT_EDGES_COMPRESS = "HLEDAC_HOT_EDGES_COMPRESS"
+    HOT_EDGES_L1_FLUSH = "HLEDAC_HOT_EDGES_L1_FLUSH"
+    HOT_EDGES_MAP_SIZE_MB = "HLEDAC_HOT_EDGES_MAP_SIZE_MB"
+    RAG_ULTRA_CONTEXT = "HLEDAC_RAG_ULTRA_CONTEXT"
+    RAG_SECURE_ENCLAVE = "HLEDAC_RAG_SECURE_ENCLAVE"
+    RAG_SPR_COMPRESSION = "HLEDAC_RAG_SPR_COMPRESSION"
+    RAG_HYBRID_RETRIEVAL = "HLEDAC_RAG_HYBRID_RETRIEVAL"
+    RAG_COMPRESSION_THRESHOLD = "HLEDAC_RAG_COMPRESSION_THRESHOLD"
+    RAG_MAX_TOKENS = "HLEDAC_RAG_MAX_TOKENS"
+    RAG_DENSE_WEIGHT = "HLEDAC_RAG_DENSE_WEIGHT"
+    RAG_SPARSE_WEIGHT = "HLEDAC_RAG_SPARSE_WEIGHT"
+    RAG_BM25_K1 = "HLEDAC_RAG_BM25_K1"
+    RAG_BM25_B = "HLEDAC_RAG_BM25_B"
+    RAG_CHUNK_SIZE = "HLEDAC_RAG_CHUNK_SIZE"
+    RAG_CHUNK_OVERLAP = "HLEDAC_RAG_CHUNK_OVERLAP"
+    RAG_USE_HNSW = "HLEDAC_RAG_USE_HNSW"
+    RAG_HNSW_DIM = "HLEDAC_RAG_HNSW_DIM"
+    RAG_HNSW_MAX_ELEMENTS = "HLEDAC_RAG_HNSW_MAX_ELEMENTS"
+    RAG_HNSW_M = "HLEDAC_RAG_HNSW_M"
+    RAG_HNSW_EF_CONSTRUCTION = "HLEDAC_RAG_HNSW_EF_CONSTRUCTION"
+    RAG_HNSW_EF_SEARCH = "HLEDAC_RAG_HNSW_EF_SEARCH"
+    RAG_HNSW_INDEX_PATH = "HLEDAC_RAG_HNSW_INDEX_PATH"
+    RAG_HNSW_SPACE = "HLEDAC_RAG_HNSW_SPACE"
+    DISABLE_RUST_FULLTEXT = "HLEDAC_DISABLE_RUST_FULLTEXT"
+    VECTOR_BACKEND = "HLEDAC_VECTOR_BACKEND"
+
+    # ─── Network / Transport Flags ───────────────────────────────────────
+
+    ENABLE_QUIC = "HLEDAC_ENABLE_QUIC"
+
+    # ─── Export / Security Flags ─────────────────────────────────────────
+
+    ENABLE_PQ_EXPORT = "HLEDAC_ENABLE_PQ_EXPORT"
+    VAULT_EXPORT = "HLEDAC_VAULT_EXPORT"
+
+    # ─── Evidence / Logging Flags ───────────────────────────────────────
+
+    ARROW_EVIDENCE = "HLEDAC_ARROW_EVIDENCE"
+    EVIDENCE_DUCKDB = "HLEDAC_EVIDENCE_DUCKDB"
+
     # ─── DuckDB / Storage Config Flags ──────────────────────────────────
 
     DUCKDB_INPROCESS = "HLEDAC_DUCKDB_INPROCESS"
@@ -352,6 +411,91 @@ class FeatureFlag(Enum):
     DISABLE_WHISPER = "HLEDAC_DISABLE_WHISPER"
     BLITZ_TRIAGE = "HLEDAC_ENABLE_BLITZ_TRIAGE"
     NETWORK_ANALYTICS = "HLEDAC_ENABLE_NETWORK_ANALYTICS"
+
+    # ─── Browser / Stealth Config ─────────────────────────────────────────
+
+    BROWSER_MEM_THRESHOLD_GIB = "HLEDAC_BROWSER_MEM_THRESHOLD_GIB"
+
+    # ─── Security / Sandboxing Flags ──────────────────────────────────────
+
+    MACH_REMAP = "HLEDAC_ENABLE_MACH_REMAP"
+    DOC_SANDBOX = "HLEDAC_ENABLE_DOC_SANDBOX"
+    EPHEMERAL_WIPE = "HLEDAC_ENABLE_EPHEMERAL_WIPE"
+    NATIVE_EXTRACTION = "HLEDAC_ENABLE_NATIVE_EXTRACTION"
+
+    # ─── Cognitive / Runtime Flags ─────────────────────────────────────────
+
+    COGNITIVE_SATURATION = "HLEDAC_ENABLE_COGNITIVE_SATURATION"
+    AUTO_RE = "HLEDAC_ENABLE_AUTO_RE"
+    SUBINTERPRETERS = "HLEDAC_ENABLE_SUBINTERPRETERS"
+
+    # ─── Async / Logging Flags ─────────────────────────────────────────────
+
+    ASYNC_LOG = "HLEDAC_ASYNC_LOG"
+
+    # ─── Deobfuscation / Pipeline ─────────────────────────────────────────
+
+    ENABLE_DEOBFUSCATE = "HLEDAC_ENABLE_DEOBFUSCATE"
+
+    # ─── Deep Research Config ─────────────────────────────────────────────
+
+    DEEP_RESEARCH = "HLEDAC_DEEP_RESEARCH"
+
+    # ─── Async / Logging Config ───────────────────────────────────────────
+
+    ASYNC_LOG_DROP_OLDEST = "HLEDAC_ASYNC_LOG_DROP_OLDEST"
+    MAX_PENDING_OPS = "HLEDAC_MAX_PENDING_OPS"
+
+    # ─── IPFS Config ──────────────────────────────────────────────────────
+
+    IPFS_GATEWAY_URL = "HLEDAC_IPFS_GATEWAY_URL"
+
+    # ─── Memory / Budget Config ────────────────────────────────────────────
+
+    PEAK_BUDGET_GIB = "HLEDAC_PEAK_BUDGET_GIB"
+
+    # ─── Deduplication Config ─────────────────────────────────────────────
+
+    DEDUP_DISK = "HLEDAC_DEDUP_DISK"
+    DEDUP_SIZE_MB = "HLEDAC_DEDUP_SIZE_MB"
+    DEDUP_DIR = "HLEDAC_DEDUP_DIR"
+    DEDUP_MAX_NGRAMS = "HLEDAC_DEDUP_MAX_NGRAMS"
+
+    # ─── Captcha Config ───────────────────────────────────────────────────
+
+    ENABLE_CAPTCHA = "HLEDAC_ENABLE_CAPTCHA"
+
+    # ─── LanceDB Quantization Config ─────────────────────────────────────
+
+    LANCEDB_IVFPQ_NUM_SUB_VECTORS = "HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS"
+    LANCEDB_IVFPQ_NUM_PARTITIONS = "HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS"
+
+    # ─── Storage Paths ────────────────────────────────────────────────────
+
+    DUCKDB_STORE = "HLEDAC_DUCKDB_STORE"
+    LANCEDB_STORE = "HLEDAC_LANCEDB_STORE"
+    LMDB_STORE = "HLEDAC_LMDB_STORE"
+    SPRINT_STORE = "HLEDAC_SPRINT_STORE"
+
+    # ─── Whois Config ─────────────────────────────────────────────────────
+
+    WHOIS_API = "HLEDAC_WHOIS_API"
+    WHOIS_API_KEY = "HLEDAC_WHOIS_API_KEY"
+
+    # ─── Network / Retry Config ───────────────────────────────────────────
+
+    MAX_RETRIES = "HLEDAC_MAX_RETRIES"
+    FETCH_TIMEOUT = "HLEDAC_FETCH_TIMEOUT"
+
+    # ─── Telemetry / Observability ───────────────────────────────────────
+
+    OTEL_SAMPLE_RATIO = "HLEDAC_OTEL_SAMPLE_RATIO"
+    OTEL_SLOW_SPAN_MS = "HLEDAC_OTEL_SLOW_SPAN_MS"
+
+    # ─── Acquisition / RL Config ─────────────────────────────────────────
+
+    ACQUISITION_PROFILE = "HLEDAC_ACQUISITION_PROFILE"
+    RL_TRAIN = "HLEDAC_RL_TRAIN"
 
 
 # ============================================================================
@@ -518,6 +662,112 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_CENSYS_JITTER_SIGMA_S": FlagCategory.STEALTH,
         "HLEDAC_RACE_STAGGER_MS": FlagCategory.STEALTH,
         "HLEDAC_PIVOT_EXEC_JITTER_S": FlagCategory.STEALTH,
+        # MLX / Apple Silicon
+        "HLEDAC_MLX": FlagCategory.BRAIN,
+        "HLEDAC_MLX_PREWARM": FlagCategory.BRAIN,
+        # Brain / Processing
+        "HLEDAC_ENABLE_COGNITIVE_TARPIT": FlagCategory.BRAIN,
+        "HLEDAC_ENABLE_POS_TAGGING": FlagCategory.BRAIN,
+        "HLEDAC_TRIAGE_DISABLED": FlagCategory.BRAIN,
+        "HLEDAC_TRIAGE_TIER2": FlagCategory.BRAIN,
+        "HLEDAC_DISABLE_SPEC_DECODE": FlagCategory.BRAIN,
+        "HLEDAC_ENABLE_SPEC_DECODE": FlagCategory.BRAIN,
+        # Knowledge / RAG
+        "HLEDAC_HOT_EDGES": FlagCategory.STORAGE,
+        "HLEDAC_HOT_EDGES_COMPRESS": FlagCategory.STORAGE,
+        "HLEDAC_HOT_EDGES_L1_FLUSH": FlagCategory.STORAGE,
+        "HLEDAC_HOT_EDGES_MAP_SIZE_MB": FlagCategory.STORAGE,
+        "HLEDAC_RAG_ULTRA_CONTEXT": FlagCategory.BRAIN,
+        "HLEDAC_RAG_SECURE_ENCLAVE": FlagCategory.BRAIN,
+        "HLEDAC_RAG_SPR_COMPRESSION": FlagCategory.BRAIN,
+        "HLEDAC_RAG_HYBRID_RETRIEVAL": FlagCategory.BRAIN,
+        "HLEDAC_RAG_COMPRESSION_THRESHOLD": FlagCategory.BRAIN,
+        "HLEDAC_RAG_MAX_TOKENS": FlagCategory.BRAIN,
+        "HLEDAC_RAG_DENSE_WEIGHT": FlagCategory.BRAIN,
+        "HLEDAC_RAG_SPARSE_WEIGHT": FlagCategory.BRAIN,
+        "HLEDAC_RAG_BM25_K1": FlagCategory.BRAIN,
+        "HLEDAC_RAG_BM25_B": FlagCategory.BRAIN,
+        "HLEDAC_RAG_CHUNK_SIZE": FlagCategory.BRAIN,
+        "HLEDAC_RAG_CHUNK_OVERLAP": FlagCategory.BRAIN,
+        "HLEDAC_RAG_USE_HNSW": FlagCategory.BRAIN,
+        "HLEDAC_RAG_HNSW_DIM": FlagCategory.BRAIN,
+        "HLEDAC_RAG_HNSW_MAX_ELEMENTS": FlagCategory.BRAIN,
+        "HLEDAC_RAG_HNSW_M": FlagCategory.BRAIN,
+        "HLEDAC_RAG_HNSW_EF_CONSTRUCTION": FlagCategory.BRAIN,
+        "HLEDAC_RAG_HNSW_EF_SEARCH": FlagCategory.BRAIN,
+        "HLEDAC_RAG_HNSW_INDEX_PATH": FlagCategory.BRAIN,
+        "HLEDAC_RAG_HNSW_SPACE": FlagCategory.BRAIN,
+        "HLEDAC_DISABLE_RUST_FULLTEXT": FlagCategory.BRAIN,
+        "HLEDAC_VECTOR_BACKEND": FlagCategory.STORAGE,
+        # Network / Transport
+        "HLEDAC_ENABLE_QUIC": FlagCategory.NETWORK,
+        # Export / Security
+        "HLEDAC_ENABLE_PQ_EXPORT": FlagCategory.STORAGE,
+        "HLEDAC_VAULT_EXPORT": FlagCategory.STORAGE,
+        # Evidence / Logging
+        "HLEDAC_ARROW_EVIDENCE": FlagCategory.STORAGE,
+        "HLEDAC_EVIDENCE_DUCKDB": FlagCategory.STORAGE,
+        # Browser / Stealth
+        "HLEDAC_BROWSER_MEM_THRESHOLD_GIB": FlagCategory.STEALTH,
+        # Deobfuscation / Pipeline
+        "HLEDAC_ENABLE_DEOBFUSCATE": FlagCategory.FORENSICS,
+        # Deep Research
+        "HLEDAC_DEEP_RESEARCH": FlagCategory.BRAIN,
+        # Async / Logging
+        "HLEDAC_ASYNC_LOG_DROP_OLDEST": FlagCategory.SYSTEM,
+        "HLEDAC_MAX_PENDING_OPS": FlagCategory.SYSTEM,
+        # IPFS
+        "HLEDAC_IPFS_GATEWAY_URL": FlagCategory.NETWORK,
+        # Memory / Budget
+        "HLEDAC_PEAK_BUDGET_GIB": FlagCategory.SYSTEM,
+        # Deduplication
+        "HLEDAC_DEDUP_DISK": FlagCategory.STORAGE,
+        "HLEDAC_DEDUP_SIZE_MB": FlagCategory.STORAGE,
+        "HLEDAC_DEDUP_DIR": FlagCategory.STORAGE,
+        "HLEDAC_DEDUP_MAX_NGRAMS": FlagCategory.STORAGE,
+        # Captcha
+        "HLEDAC_ENABLE_CAPTCHA": FlagCategory.FORENSICS,
+        # LanceDB Quantization
+        "HLEDAC_LANCEDB_IVFPQ_NUM_SUB_VECTORS": FlagCategory.STORAGE,
+        "HLEDAC_LANCEDB_IVFPQ_NUM_PARTITIONS": FlagCategory.STORAGE,
+        # Storage Paths
+        "HLEDAC_DUCKDB_STORE": FlagCategory.STORAGE,
+        "HLEDAC_LANCEDB_STORE": FlagCategory.STORAGE,
+        "HLEDAC_LMDB_STORE": FlagCategory.STORAGE,
+        "HLEDAC_RAMDISK": FlagCategory.STORAGE,
+        # Whois
+        "HLEDAC_WHOIS_API": FlagCategory.INTELLIGENCE_APIS,
+        "HLEDAC_WHOIS_API_KEY": FlagCategory.INTELLIGENCE_APIS,
+        # Network / Retry
+        "HLEDAC_MAX_RETRIES": FlagCategory.NETWORK,
+        "HLEDAC_FETCH_TIMEOUT": FlagCategory.NETWORK,
+        # Telemetry
+        "HLEDAC_OTEL_SAMPLE_RATIO": FlagCategory.SYSTEM,
+        "HLEDAC_OTEL_SLOW_SPAN_MS": FlagCategory.SYSTEM,
+        # Acquisition / RL
+        "HLEDAC_ACQUISITION_PROFILE": FlagCategory.SYSTEM,
+        "HLEDAC_RL_TRAIN": FlagCategory.SYSTEM,
+        "HLEDAC_RAMDISK_AUTO_CREATE": FlagCategory.STORAGE,
+        # Graph Store
+        "HLEDAC_ENABLE_GRAPH_ANALYSIS": FlagCategory.STORAGE,
+        "HLEDAC_ENABLE_GRAPH_PATHS": FlagCategory.STORAGE,
+        # Sprint
+        "HLEDAC_ENABLE_TIMELINE_SPLICER": FlagCategory.STORAGE,
+        # Security / Sandboxing
+        "HLEDAC_ENABLE_MACH_REMAP": FlagCategory.SECURITY,
+        "HLEDAC_ENABLE_DOC_SANDBOX": FlagCategory.SECURITY,
+        "HLEDAC_ENABLE_EPHEMERAL_WIPE": FlagCategory.SECURITY,
+        "HLEDAC_ENABLE_NATIVE_EXTRACTION": FlagCategory.FORENSICS,
+        # Cognitive / Runtime
+        "HLEDAC_ENABLE_COGNITIVE_SATURATION": FlagCategory.BRAIN,
+        "HLEDAC_ENABLE_AUTO_RE": FlagCategory.BRAIN,
+        "HLEDAC_ENABLE_SUBINTERPRETERS": FlagCategory.SYSTEM,
+        # Async / Logging
+        "HLEDAC_ASYNC_LOG": FlagCategory.SYSTEM,
+        # Browser
+        "HLEDAC_BROWSER_MEM_THRESHOLD_GIB": FlagCategory.SYSTEM,
+        # Deobfuscation
+        "HLEDAC_ENABLE_DEOBFUSCATE": FlagCategory.PIPELINE,
     }
 
     # Default values (boolean flags default to False unless specified)
@@ -554,6 +804,21 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_CONDITIONAL_CACHE": True,
         "HLEDAC_HTTP_CACHE": True,
         "HLEDAC_BLITZ_FETCH": True,
+        # New: Brain / Processing
+        "HLEDAC_ENABLE_COGNITIVE_TARPIT": True,  # ON by default
+        "HLEDAC_ENABLE_POS_TAGGING": False,  # Heavy, OFF by default
+        "HLEDAC_TRIAGE_TIER2": True,  # ON by default
+        "HLEDAC_DISABLE_SPEC_DECODE": True,  # Safe mode on M1 8GB
+        # New: Knowledge / RAG
+        "HLEDAC_HOT_EDGES": True,  # ON by default
+        "HLEDAC_HOT_EDGES_COMPRESS": True,  # ON by default
+        "HLEDAC_RAG_ULTRA_CONTEXT": True,  # ON by default
+        "HLEDAC_RAG_SECURE_ENCLAVE": True,  # ON by default
+        "HLEDAC_RAG_SPR_COMPRESSION": True,  # ON by default
+        "HLEDAC_RAG_HYBRID_RETRIEVAL": True,  # ON by default
+        "HLEDAC_RAG_USE_HNSW": True,  # ON by default
+        # New: Network / Transport
+        "HLEDAC_ENABLE_QUIC": True,  # ON by default
     }
 
     # Implication rules (flag → list of required flags)
@@ -567,6 +832,10 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_ENABLE_DEEP_RESEARCH": ("HLEDAC_ENABLE_LLM",),
         "HLEDAC_ENABLE_HERMES_SYNTHESIS": ("HLEDAC_ENABLE_LLM",),
         "HLEDAC_LANCEDB_AUTO_TUNE": ("HLEDAC_LANCEDB_QUANTIZE",),
+        # MLX implies LLM (for inference)
+        "HLEDAC_MLX": ("HLEDAC_ENABLE_LLM",),
+        # RAG implies LLM for synthesis
+        "HLEDAC_RAG_ULTRA_CONTEXT": ("HLEDAC_ENABLE_LLM",),
     }
 
     # Conflict pairs (mutual exclusion)
@@ -579,6 +848,8 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_ENABLE_FEDERATED_P2P": ("HLEDAC_ENABLE_FEDERATED_HYBRID",),
         "HLEDAC_ENABLE_SYNTHESIS": ("HLEDAC_ENABLE_HERMES_SYNTHESIS",),
         "HLEDAC_ENABLE_HERMES_SYNTHESIS": ("HLEDAC_ENABLE_SYNTHESIS",),
+        # Spec decode conflicts with disable flag (obviously)
+        "HLEDAC_ENABLE_SPEC_DECODE": ("HLEDAC_DISABLE_SPEC_DECODE",),
     }
 
     # RAM requirements (MB)
@@ -861,6 +1132,9 @@ class FeatureFlags:
             "HLEDAC_LANCEDB",
             "HLEDAC_RAMDISK",
             "HLEDAC_SPRINT",
+            "HLEDAC_RAG_",
+            "HLEDAC_MLX",
+            "HLEDAC_HOT_EDGES",
         )
         for env_key in os.environ:
             if env_key.startswith("HLEDAC_"):

@@ -56,6 +56,62 @@ import msgspec
 
 logger = logging.getLogger(__name__)
 
+# ─── Sandbox Integration ───────────────────────────────────────────────────────
+# ADVERSARY-001: Unified sandbox integration via MediaSandboxCoordinator.
+# Lazy-load to avoid circular dependency; media_sandbox.py is optional.
+_coordinator: Any | None = None
+_coordinator_available: bool | None = None
+
+
+def _get_sandbox_coordinator():
+    """
+    Lazy-load MediaSandboxCoordinator singleton from media_sandbox.py.
+    
+    Returns (coordinator, is_available) tuple.
+    Uses the unified coordinator for all sandbox operations including whisper.
+    """
+    global _coordinator, _coordinator_available
+    if _coordinator_available is not None:
+        return _coordinator, _coordinator_available
+    
+    _coordinator_available = False
+    try:
+        from hledac.universal.security.media_sandbox import (
+            MediaSandboxCoordinator,
+            SANDBOX_ENABLED,
+        )
+        _coordinator = MediaSandboxCoordinator(enabled=SANDBOX_ENABLED)
+        _coordinator_available = True
+        
+        if _coordinator._seatbelt_available:
+            logger.info(
+                "[TranscriptionRouter] MediaSandboxCoordinator ready — "
+                "whisper transcription will be sandboxed (ADVERSARY-001)"
+            )
+        else:
+            logger.warning(
+                "[TranscriptionRouter] Seatbelt unavailable — "
+                "whisper will run without kernel isolation (ADVERSARY-001 RISK)"
+            )
+    except ImportError as exc:
+        logger.warning(
+            "[TranscriptionRouter] MediaSandboxCoordinator not available — "
+            "whisper will run without sandbox isolation (ADVERSARY-001 RISK): %s",
+            exc,
+        )
+        _coordinator = None
+        _coordinator_available = False
+    except Exception as exc:
+        logger.warning(
+            "[TranscriptionRouter] MediaSandboxCoordinator init failed — "
+            "whisper will run without sandbox isolation (ADVERSARY-001 RISK): %s",
+            exc,
+        )
+        _coordinator = None
+        _coordinator_available = False
+    
+    return _coordinator, _coordinator_available
+
 # ─── M1 8GB bounds ───────────────────────────────────────────────────────────
 
 _MAX_AUDIO_FILE_BYTES = 100 * 1024 * 1024      # 100 MB
@@ -435,7 +491,88 @@ class TranscriptionRouter:
         language: str | None,
         model_size: Literal["tiny", "base"],
     ) -> TranscriptionResult | None:
-        """Transcribe via WhisperEngine. Returns None on failure."""
+        """
+        Transcribe via WhisperEngine with unified sandbox isolation (ADVERSARY-001).
+
+        ADVERSARY-001: Now delegates to MediaSandboxCoordinator for:
+        - Single sandbox entry point (no duplicate paths)
+        - Unified statistics collection
+        - Consistent risk profiling
+        - Future extensibility for PDF/image analysis
+
+        Returns None on failure.
+        """
+        # ── ADVERSARY-001: Unified sandbox via MediaSandboxCoordinator ────────
+        coordinator, coordinator_available = _get_sandbox_coordinator()
+        
+        if coordinator is not None:
+            try:
+                # Delegate to coordinator's unified whisper transcription
+                whisper_result = await coordinator.run_whisper_transcription(
+                    audio_path=str(source_path),
+                    model_size=model_size,
+                    language=language,
+                    timeout_s=_TRANSCRIBE_TIMEOUT_S,
+                )
+                
+                # Parse coordinator result
+                if whisper_result.text:
+                    seatbelt_note = " +Seatbelt" if whisper_result.seatbelt_used else ""
+                    sandbox_note = "" if whisper_result.sandboxed else " [UNSANDBOXED - SECURITY RISK]"
+                    return TranscriptionResult(
+                        text=whisper_result.text,
+                        language=whisper_result.language or language or "en",
+                        duration_s=whisper_result.duration_s,
+                        confidence=whisper_result.confidence,
+                        segments=[
+                            TranscriptionSegment(
+                                start_s=s.get("start_s", 0.0),
+                                end_s=s.get("end_s", 0.0),
+                                text=s.get("text", ""),
+                                confidence=s.get("confidence", 0.0),
+                            )
+                            for s in whisper_result.segments
+                        ],
+                        engine=TranscriptionEngine.WHISPER_CPP,
+                        engine_detail=(
+                            f"whisper.cpp {model_size}"
+                            f"{seatbelt_note}{sandbox_note}"
+                        ),
+                    )
+                elif whisper_result.error:
+                    logger.warning(
+                        "[TranscriptionRouter] Whisper transcription failed: %s",
+                        whisper_result.error,
+                    )
+                    return None
+                    
+            except Exception as exc:
+                logger.warning(
+                    "[TranscriptionRouter] Coordinator error, trying direct engine: %s",
+                    exc,
+                )
+        else:
+            logger.warning(
+                "[TranscriptionRouter] ADVERSARY-001: whisper running "
+                "WITHOUT sandbox isolation (security risk!)"
+            )
+        
+        # ── Final Fallback: Direct whisper engine (no sandbox) ───────────────
+        # Only used when coordinator is unavailable or failed
+        return await self._transcribe_whisper_direct(source_path, language, model_size)
+
+    async def _transcribe_whisper_direct(
+        self,
+        source_path: Path,
+        language: str | None,
+        model_size: Literal["tiny", "base"],
+    ) -> TranscriptionResult | None:
+        """
+        Direct WhisperEngine execution without sandbox (final fallback).
+        
+        ADVERSARY-001 SECURITY: This path should only be used when sandbox
+        infrastructure is unavailable. Logs security warning.
+        """
         try:
             from hledac.universal.brain.whisper_engine import (
                 get_whisper_engine,
@@ -469,11 +606,11 @@ class TranscriptionRouter:
                 confidence=raw.confidence,
                 segments=segments,
                 engine=TranscriptionEngine.WHISPER_CPP,
-                engine_detail=f"whisper.cpp {model_size}{coreml_note}",
+                engine_detail=f"whisper.cpp {model_size}{coreml_note} [UNSANDBOXED - SECURITY RISK]",
             )
 
         except Exception as exc:
-            logger.debug("[TranscriptionRouter] WhisperEngine error: %s", exc)
+            logger.debug("[TranscriptionRouter] WhisperEngine direct error: %s", exc)
             return None
 
     async def _extract_iocs_from_text(

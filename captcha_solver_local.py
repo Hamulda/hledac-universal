@@ -26,6 +26,8 @@ from dataclasses import dataclass
 import msgspec
 from typing import TYPE_CHECKING
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
 if TYPE_CHECKING:
     pass
 
@@ -41,8 +43,7 @@ def _check_enabled() -> bool:
     global _LOCAL_ENABLED
     if _LOCAL_ENABLED:
         return True
-    import os
-    _LOCAL_ENABLED = os.environ.get("HLEDAC_ENABLE_CAPTCHA_LOCAL", "0") == "1"
+    _LOCAL_ENABLED = FeatureFlags.get(FeatureFlag.CAPTCHA_LOCAL, default=False)
     return _LOCAL_ENABLED
 
 

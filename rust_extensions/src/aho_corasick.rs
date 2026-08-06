@@ -1,4 +1,5 @@
 //! Aho-Corasick multi-pattern matcher implementation.
+#![allow(dead_code)]
 //!
 //! Architecture (Issue #37 zero-copy upgrade):
 //!

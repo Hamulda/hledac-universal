@@ -1,4 +1,5 @@
 //! F273F + P3-2 + ISSUE-P7-001: Darwin madvise syscalls for M1 8GB page cache management.
+#![allow(dead_code)]
 //!
 //! Provides:
 //!   - MADV_FREE_REUSABLE — tells kernel pages are clean/reusable

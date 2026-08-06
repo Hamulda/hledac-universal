@@ -109,6 +109,23 @@ tantivy = { version = "0.22", optional = true }
 # This avoids any conflict with arti-client's rusqlite dependency.
 # Rustls is used for TLS (rustls-platform-verifier on macOS).
 hickory-resolver = { version = "0.26", optional = true, features = ["tokio", "rustls-platform-verifier"] }
+
+# HEIST-02: Embedded Tor via Arti — in-process Tor client.
+# Feature-gated: ~15MB additional compile, M1 8GB safe (~25-30MB resident).
+# Enables: rust.arti_bridge.ArtiNode — in-process Tor with direct circuit access.
+# Provides: 3-5x higher throughput vs subprocess, per-circuit control, connection pooling.
+# Python fallback: transport/arti_transport.py uses external `tor` binary.
+#
+# IMPORTANT: arti-client depends on rusqlite for persistent state.
+# rusqlite MUST NOT be compiled when tor is built (SQLite version conflict).
+# The hickory-resolver crate does NOT use SQLite, so no conflict there.
+# But if you enable BOTH embedded_tor AND hickory-dns-server, you'll get
+# SQLite version conflicts. Use hickory-resolver (stateless) instead.
+# arti-client 0.11: In-process Tor client (HEIST-02).
+# Features: tokio runtime, native TLS, onion proxy for .onion access.
+# rusqlite dep is used for persistent state cache - no conflict with other deps.
+arti-client = { version = "0.11", optional = true, default-features = false, features = ["tokio", "native-tls"] }
+tor-rtcompat = { version = "0.9", optional = true, default-features = false, features = ["runtime-tokio-native-tls"] }
 # P1-UPGRADE: tokio 1.x → 1.40+ (2026-07-27)
 # Backward compatible for standard runtime builder APIs in dns.rs and quic.rs.
 # io-util added for HEIST-02 Arti bridge (AsyncReadExt/AsyncWriteExt).
@@ -129,13 +146,6 @@ zstd = "0.13"
 # than serde_json on aarch64, zero-alloc via BorrowedValue.
 simd-json = { version = "0.14", optional = true }
 dirs = "5"
-
-# HEIST-02: Embedded Tor via Arti (Rust Tor client, feature-gated).
-# Eliminates external tor binary subprocess + SOCKS5 IPC overhead.
-# M1 8GB: ~20-30 MB resident (consensus cache + circuits), ~15 MB compile.
-# Python fallback: TorTransport (external tor binary + SOCKS5 proxy).
-arti-client = { version = "0.22", optional = true, default-features = false, features = ["tokio", "native-tls"] }
-tor-rtcompat = { version = "0.22", optional = true }
 
 # SILICON-03: Apple Network.framework bindings — user-space TCP + hardware TLS 1.3.
 # objc2 provides safe Objective-C runtime bindings; block2 enables block/closure
@@ -293,6 +303,24 @@ dns = [
     "dep:tokio",
 ]
 
+# HEIST-02: Embedded Tor via Arti — in-process Tor client.
+# Feature-gated: ~15MB additional compile, ~25-30MB resident.
+# Adds: rust.arti_bridge.ArtiNode — full in-process Tor with circuit control.
+# Benefits: 3-5x throughput vs subprocess, per-request circuit selection,
+#   connection pooling, circuit pre-building, lower latency (no IPC overhead).
+# M1 8GB: tokio runtime (2 workers), 3 concurrent circuits, LRU eviction.
+# Python fallback: transport/arti_transport.py uses external `tor` binary.
+#
+# CRITICAL: arti-client depends on rusqlite for persistent state cache.
+# Compile time: ~15MB. Memory: ~25-30MB resident (consensus cache + circuits).
+# Enable explicitly: --features "embedded_tor" or HLEDAC_ENABLE_EMBEDDED_TOR=1
+embedded_tor = [
+    "dep:arti-client",
+    "arti-client/tokio",
+    "dep:tor-rtcompat",
+    "dep:tokio",
+]
+
 # Individual module features — the actual gating is via #[cfg(feature)] in lib.rs.
 # Only stubs that are referenced by a composite feature need to stay here.
 # Empty stubs (X = []) have NO effect on compilation.
@@ -390,17 +418,6 @@ quic = [
 # ISSUE-011: Replace Python in-memory BM25Index with mmap-backed Tantivy index
 fulltext = [
     "dep:tantivy",
-]
-
-# HEIST-02: embedded_tor — in-process Tor via Arti (Rust Tor client).
-# Eliminates external tor binary subprocess + SOCKS5 IPC overhead.
-# M1 8GB: ~20-30 MB resident (consensus cache + circuits), ~15 MB compile.
-# Python fallback: TorTransport (external tor binary) provides identical API.
-# Requires: tokio runtime (shared with dns feature).
-embedded_tor = [
-    "dep:arti-client",
-    "dep:tor-rtcompat",
-    "dep:tokio",
 ]
 
 # SILICON-03: nw_framework — Apple Network.framework user-space networking.
@@ -503,5 +520,4 @@ unwrap_used = "warn"
 # Use explicit target triple [target.aarch64-apple-darwin] rather than
 # [target.'cfg(target_arch = "aarch64")'] — the latter's rustflags key
 # is silently ignored by Cargo (confirmed by "unused manifest key" warning).
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "target-feature=+neon,+crypto"]
+# NOTE: [target.aarch64-apple-darwin] rustflags moved to .cargo/config.toml

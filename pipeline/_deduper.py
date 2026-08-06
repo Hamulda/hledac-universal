@@ -43,10 +43,11 @@ from pathlib import Path
 import diskcache
 if typing.TYPE_CHECKING:
     from diskcache import Cache
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 logger = logging.getLogger("hledac.universal.pipeline.deduper")
-_DEDUP_DISK: bool = bool(int(os.environ.get("HLEDAC_DEDUP_DISK", "0")))
-_DEDUP_SIZE_MB: int = int(os.environ.get("HLEDAC_DEDUP_SIZE_MB", "64"))
-_DEDUP_DIR: str = os.path.expanduser(os.environ.get("HLEDAC_DEDUP_DIR", "~/.cache/hledac/dedup"))
+_DEDUP_DISK: bool = FeatureFlags.get(FeatureFlag.DEDUP_DISK)
+_DEDUP_SIZE_MB: int = FeatureFlags.get_int(FeatureFlag.DEDUP_SIZE_MB, 64)
+_DEDUP_DIR: str = os.path.expanduser(FeatureFlags.get_str(FeatureFlag.DEDUP_DIR, "~/.cache/hledac/dedup"))
 _dedup_cache: 'Cache | None' = None
 _size_warning_logged: bool = False
 _stats_hits: int = 0

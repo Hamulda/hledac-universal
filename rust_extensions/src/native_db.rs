@@ -38,7 +38,6 @@
 //!
 //! Each PyClass method is BLOCKING (no async Rust) — Python calls via
 //! `asyncio.to_thread()` which runs on the default ThreadPoolExecutor.
-//! This matches the ArtiNode pattern (arti_bridge.rs).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};

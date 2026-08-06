@@ -38,6 +38,8 @@ import sys
 import time
 from typing import Final
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
 __all__ = [
     "EphemeralStateAnnihilator",
     "register_mlock_region",
@@ -49,9 +51,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Flag gates
 # ---------------------------------------------------------------------------
-_HLEDAC_ENABLE_EPHEMERAL_WIPE: Final[int] = int(
-    os.environ.get("HLEDAC_ENABLE_EPHEMERAL_WIPE", "1")
-)
+_HLEDAC_ENABLE_EPHEMERAL_WIPE: Final[bool] = FeatureFlags.get(FeatureFlag.EPHEMERAL_WIPE, default=True)
 """Default ON for all profiles. OFF for --audit runs that want post-sprint
 inspection. Set HLEDAC_ENABLE_EPHEMERAL_WIPE=0 to disable."""
 

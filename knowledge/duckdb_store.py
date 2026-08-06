@@ -2218,6 +2218,104 @@ class DuckDBShadowStore:
         """Return currently configured UMA state."""
         return self._uma_state
 
+    def set_thread_count(self, n: int) -> None:
+        """
+        ISSUE-022-05: Dynamic DuckDB thread count for high-throughput teardown.
+
+        During sprint winddown with 500+ pending findings, the default 2-thread limit
+        becomes a bottleneck. This method boosts DuckDB threads to handle I/O-bound
+        teardown operations (vacuum, dedup sync, graph writes) in parallel.
+
+        Thread count lifecycle:
+            - Sprint ACTIVE: 2 threads (RAM safety)
+            - Sprint TEARDOWN: 4 threads (I/O is the only work)
+            - Next sprint: 2 threads (restored by WinddownOrchestrator)
+
+        Applies PRAGMA threads to ALL active DuckDB connections:
+            - _persistent_conn (memory mode)
+            - _file_conn (file mode)
+            - _read_pool connections
+            - DuckDBQueryExecutor connection via _qe()
+
+        Also boosts _shared_executor worker count for full parallelism.
+
+        Args:
+            n: Target thread count (M1 8GB: 2=baseline, 4=teardown boost).
+
+        Raises:
+            ValueError: If n is outside safe range [1, 8].
+        """
+        validated = _validate_duckdb_threads(n, "set_thread_count")
+        _logger = logging.getLogger(__name__)
+        _logger.debug("[DuckDB] set_thread_count: %d", validated)
+
+        # Sync thread count to _duckdb_settings for consistency with get_thread_count()
+        if not hasattr(self, "_duckdb_settings"):
+            self._duckdb_settings = {}
+        self._duckdb_settings["threads"] = validated
+
+        # Apply PRAGMA threads to each active connection
+        for _conn in self._iter_active_connections():
+            try:
+                _conn.execute(f"PRAGMA threads = {validated}")
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+                pass
+
+        # Boost executor pool workers alongside DuckDB PRAGMA for full effect
+        # This enables concurrent write tasks (vacuum, dedup sync, graph writes)
+        if hasattr(self, "_shared_executor") and self._shared_executor is not None:
+            try:
+                current = self._shared_executor._max_workers
+                # Executor workers don't need to match DuckDB threads 1:1
+                # 4 DuckDB threads with 4 executor workers = max parallel I/O
+                if validated >= 4 and current < 4:
+                    self._shared_executor._max_workers = 4
+                    _logger.debug("[DuckDB] executor workers: %d -> 4 (thread boost)", current)
+                elif validated <= 2 and current != 2:
+                    self._shared_executor._max_workers = 2
+                    _logger.debug("[DuckDB] executor workers: %d -> 2 (thread restore)", current)
+            except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
+                pass
+
+    def _iter_active_connections(self) -> Iterator[Any]:
+        """
+        Yield all active DuckDB connections for bulk operations (e.g., PRAGMA).
+
+        Connections are iterated in priority order:
+            1. _file_conn (file mode - persistent)
+            2. _persistent_conn (memory mode - persistent)
+            3. _read_pool connections (read-only pool)
+
+        Note: DuckDBQueryExecutor._conn() delegates to store's _file_conn/_persistent_conn,
+        so we don't yield it separately to avoid duplicates.
+
+        Yields:
+            Each active DuckDB connection, or nothing if connection is None.
+        """
+        # File connection (file mode) - primary write path
+        if self._file_conn is not None:
+            yield self._file_conn
+
+        # Persistent connection (memory mode)
+        if self._persistent_conn is not None:
+            yield self._persistent_conn
+
+        # Read pool connections (read-only pool)
+        if self._read_pool:
+            for _rp_conn in self._read_pool:
+                if _rp_conn is not None:
+                    yield _rp_conn
+
+    def get_thread_count(self) -> int:
+        """
+        Return current DuckDB thread count from _duckdb_settings or default.
+
+        Returns:
+            Configured thread count (default: 2).
+        """
+        settings = getattr(self, "_duckdb_settings", {})
+        return settings.get("threads", 2)
+
     def get_stats(self) -> dict[str, Any]:
         """
         Sprint P2-B: Return store statistics for sprint report.
@@ -2230,7 +2328,8 @@ class DuckDBShadowStore:
             graph_stats = {}
         total_iocs = graph_stats.get("nodes", 0) if isinstance(graph_stats, dict) else 0
         try:
-            conn = self._qe()._conn if hasattr(self, "_qe") else None
+            # ISSUE-022-05 AUDIT FIX: _conn is a METHOD, not attribute - must call with ()
+            conn = self._qe()._conn() if hasattr(self, "_qe") else None
             total_findings = conn.execute("SELECT COUNT(*) FROM canonical_findings").fetchone()[0] if conn else 0
         except Exception:  # noqa: BLE001 — best-effort; IOC extraction failure; non-critical
             total_findings = 0
@@ -2373,7 +2472,8 @@ class DuckDBShadowStore:
         with ioc, source_type, query, and confidence fields.
         """
         try:
-            conn = self._qe()._conn if hasattr(self, "_qe") else None
+            # ISSUE-022-05 AUDIT FIX: _conn is a METHOD, not attribute - must call with ()
+            conn = self._qe()._conn() if hasattr(self, "_qe") else None
             if conn is None:
                 return []
             from time import perf_counter_ns

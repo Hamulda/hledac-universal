@@ -187,12 +187,12 @@ async def _create_session(profile: str) -> Any | None:
         return None
 
     # ISSUE-P6-001: TCP keep-alive options — imported lazily to avoid
-    # circular import. Both constants are module-level in curl_cffi_fetch.
+    # circular import. Single source of truth is _tcp_keepalive module.
     try:
-        from hledac.universal.transport.curl_cffi_fetch import (
-            _TCP_KEEPALIVE_CURL_OPTIONS,
+        from hledac.universal.transport._tcp_keepalive import (
+            TCP_KEEPALIVE_CURL_OPTIONS,
         )
-        _tcp_opts = _TCP_KEEPALIVE_CURL_OPTIONS
+        _tcp_opts = TCP_KEEPALIVE_CURL_OPTIONS
     except Exception:  # noqa: BLE001
         _tcp_opts = {}
 

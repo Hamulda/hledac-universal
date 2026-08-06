@@ -1,4 +1,5 @@
 //! Propositional Consistency Verifier — META-007 Core
+#![allow(dead_code)]
 //!
 //! Detects propositional contradictions between sources — the "confident liar" problem
 //! that Shannon entropy and logprob divergence cannot catch.

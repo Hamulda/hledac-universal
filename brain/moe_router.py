@@ -21,7 +21,7 @@ Features:
 - Sekvenční zpracování
 - Agresivní cleanup
 - Memory-aware routing (Sprint 8TD)
-- SWARM-001: Micro-model routing s <100ms hot-swap
+- SWARM-001: Micro-model routing s <1ms TRUE ZERO-COPY hot-swap
 - SWARM-002: Multilingual embedding routing (BGE-M3 for non-English)
 
 SWARM-001 Integration:
@@ -163,6 +163,9 @@ class MoERouter:
         '_sanitize_for_llm',
         '_swarm_router',
         '_swarm_enabled',
+        # MoERouterSwarmMixin slots (must be declared in concrete class)
+        '_swarm_lock',
+        '_swarm_initialized',
         'config',
     ))
 
@@ -231,11 +234,12 @@ class MoERouter:
             return
         
         try:
-            # Create swarm router with 3.2 GB budget for micro-models
-            # (M1 8GB: 2GB for DeepHermes-3B, 2.5GB for micro-models, 1.5GB reserve)
+            # Create swarm router with adaptive budget for micro-models
+            # (ResourceGovernor calculates optimal: ~3.2GB for M1 8GB)
             self._swarm_router = create_swarm_router(
-                memory_budget_mb=3200,
+                memory_budget_mb=None,  # Use adaptive budget
                 preload_models=True,
+                use_adaptive_budget=True,
             )
             logger.info('[SWARM-001] MicroModelSwarmRouter initialized')
             

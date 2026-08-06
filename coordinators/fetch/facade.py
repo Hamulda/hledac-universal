@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from collections import deque
 from collections.abc import Callable
@@ -29,6 +28,7 @@ import msgspec
 from typing import Any, cast
 
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.utils.async_helpers import parallel
 
 from .services import (
@@ -91,10 +91,10 @@ class FetchCoordinatorFacade:
             return True
 
         config = FetchServiceConfig(
-            enable_tor=os.environ.get('HLEDAC_ENABLE_TOR') == '1',
-            enable_i2p=os.environ.get('HLEDAC_ENABLE_I2P') == '1',
-            enable_gopher=os.environ.get('HLEDAC_ENABLE_GOPHER') == '1',
-            enable_captcha=os.environ.get('HLEDAC_ENABLE_CAPTCHA_DETECTION') == '1',
+            enable_tor=FeatureFlags.get(FeatureFlag.TOR),
+            enable_i2p=FeatureFlags.get(FeatureFlag.I2P),
+            enable_gopher=FeatureFlags.get(FeatureFlag.GOPHER),
+            enable_captcha=FeatureFlags.get(FeatureFlag.CAPTCHA_DETECTION),
             rate_limit_rps=self._config.rate_limit_rps,
             max_retries=self._config.max_retries,
             timeout=self._config.timeout,

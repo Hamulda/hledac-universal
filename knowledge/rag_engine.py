@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
 from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.core.lazy_imports import lazy
+# SWARM-010: Feature flag imports for registry compliance
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
 if TYPE_CHECKING:
     pass
 _dd_int: defaultdict[str, int] = defaultdict(int)
@@ -53,27 +55,31 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 class RAGConfig(msgspec.Struct, gc=False):
-    """Konfigurace pro RAG — Sprint F330: env var defaults consistent with knowledge/ pattern."""
-    enable_ultra_context: bool = os.environ.get('HLEDAC_RAG_ULTRA_CONTEXT', '1') == '1'
-    enable_spr_compression: bool = os.environ.get('HLEDAC_RAG_SPR_COMPRESSION', '1') == '1'
-    enable_secure_enclave: bool = os.environ.get('HLEDAC_RAG_SECURE_ENCLAVE', '1') == '1'
-    compression_threshold: int = int(os.environ.get('HLEDAC_RAG_COMPRESSION_THRESHOLD', '50'))
-    max_tokens: int = int(os.environ.get('HLEDAC_RAG_MAX_TOKENS', '128000'))
-    enable_hybrid_retrieval: bool = os.environ.get('HLEDAC_RAG_HYBRID_RETRIEVAL', '1') == '1'
-    dense_weight: float = float(os.environ.get('HLEDAC_RAG_DENSE_WEIGHT', '0.5'))
-    sparse_weight: float = float(os.environ.get('HLEDAC_RAG_SPARSE_WEIGHT', '0.5'))
-    bm25_k1: float = float(os.environ.get('HLEDAC_RAG_BM25_K1', '1.5'))
-    bm25_b: float = float(os.environ.get('HLEDAC_RAG_BM25_B', '0.75'))
-    chunk_size: int = int(os.environ.get('HLEDAC_RAG_CHUNK_SIZE', '512'))
-    chunk_overlap: int = int(os.environ.get('HLEDAC_RAG_CHUNK_OVERLAP', '128'))
-    use_hnsw: bool = os.environ.get('HLEDAC_RAG_USE_HNSW', '1') == '1'
-    hnsw_dim: int = int(os.environ.get('HLEDAC_RAG_HNSW_DIM', '384'))
-    hnsw_max_elements: int = int(os.environ.get('HLEDAC_RAG_HNSW_MAX_ELEMENTS', '100000'))
-    hnsw_M: int = int(os.environ.get('HLEDAC_RAG_HNSW_M', '16'))
-    hnsw_ef_construction: int = int(os.environ.get('HLEDAC_RAG_HNSW_EF_CONSTRUCTION', '200'))
-    hnsw_ef_search: int = int(os.environ.get('HLEDAC_RAG_HNSW_EF_SEARCH', '50'))
-    hnsw_index_path: str | None = os.environ.get('HLEDAC_RAG_HNSW_INDEX_PATH')
-    hnsw_space: str = os.environ.get('HLEDAC_RAG_HNSW_SPACE', 'cosine')
+    """Konfigurace pro RAG — Sprint F330: env var defaults consistent with knowledge/ pattern.
+    
+    SWARM-010: All flags now use FeatureFlags for registry compliance.
+    """
+    # SWARM-010: Use FeatureFlags getters for type-appropriate access
+    enable_ultra_context: bool = FeatureFlags.get(FeatureFlag.RAG_ULTRA_CONTEXT)
+    enable_spr_compression: bool = FeatureFlags.get(FeatureFlag.RAG_SPR_COMPRESSION)
+    enable_secure_enclave: bool = FeatureFlags.get(FeatureFlag.RAG_SECURE_ENCLAVE)
+    compression_threshold: int = FeatureFlags.get_int(FeatureFlag.RAG_COMPRESSION_THRESHOLD, 50)
+    max_tokens: int = FeatureFlags.get_int(FeatureFlag.RAG_MAX_TOKENS, 128000)
+    enable_hybrid_retrieval: bool = FeatureFlags.get(FeatureFlag.RAG_HYBRID_RETRIEVAL)
+    dense_weight: float = FeatureFlags.get_float(FeatureFlag.RAG_DENSE_WEIGHT, 0.5)
+    sparse_weight: float = FeatureFlags.get_float(FeatureFlag.RAG_SPARSE_WEIGHT, 0.5)
+    bm25_k1: float = FeatureFlags.get_float(FeatureFlag.RAG_BM25_K1, 1.5)
+    bm25_b: float = FeatureFlags.get_float(FeatureFlag.RAG_BM25_B, 0.75)
+    chunk_size: int = FeatureFlags.get_int(FeatureFlag.RAG_CHUNK_SIZE, 512)
+    chunk_overlap: int = FeatureFlags.get_int(FeatureFlag.RAG_CHUNK_OVERLAP, 128)
+    use_hnsw: bool = FeatureFlags.get(FeatureFlag.RAG_USE_HNSW)
+    hnsw_dim: int = FeatureFlags.get_int(FeatureFlag.RAG_HNSW_DIM, 384)
+    hnsw_max_elements: int = FeatureFlags.get_int(FeatureFlag.RAG_HNSW_MAX_ELEMENTS, 100000)
+    hnsw_M: int = FeatureFlags.get_int(FeatureFlag.RAG_HNSW_M, 16)
+    hnsw_ef_construction: int = FeatureFlags.get_int(FeatureFlag.RAG_HNSW_EF_CONSTRUCTION, 200)
+    hnsw_ef_search: int = FeatureFlags.get_int(FeatureFlag.RAG_HNSW_EF_SEARCH, 50)
+    hnsw_index_path: str | None = FeatureFlags.get_str(FeatureFlag.RAG_HNSW_INDEX_PATH, None)
+    hnsw_space: str = FeatureFlags.get_str(FeatureFlag.RAG_HNSW_SPACE, 'cosine')
 
 class Document(msgspec.Struct, gc=False):
     """Document for retrieval"""
@@ -187,7 +193,8 @@ if _RUST_FULLTEXT is not None:
     _RUST_FULLTEXT_AVAILABLE = getattr(_RUST_FULLTEXT, 'fulltext_is_available', lambda: False)()
 
 # Environment override: set HLEDAC_DISABLE_RUST_FULLTEXT=1 to force Python BM25 fallback.
-if os.environ.get('HLEDAC_DISABLE_RUST_FULLTEXT', '0') == '1':
+# SWARM-010: Use FeatureFlags for registry compliance
+if FeatureFlags.get(FeatureFlag.DISABLE_RUST_FULLTEXT):
     _RUST_FULLTEXT_AVAILABLE = False
     _RUST_FULLTEXT = None
 

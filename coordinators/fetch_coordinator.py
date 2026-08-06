@@ -49,6 +49,7 @@ from hledac.universal.core.capabilities import (
     ZSTD,
 )
 from hledac.universal.core.constants import NETWORK
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 from hledac.universal.runtime.logging_setup import get_logger
 from hledac.universal.runtime.privacy_budget import PrivacyBudgetAllocator, make_privacy_allocator
 from hledac.universal.tools.file_cache import apply_fcntl_nocache as _apply_fcntl_nocache
@@ -119,7 +120,7 @@ HINTS_AVAILABLE = CAPS.is_available('deep_web_hints')
 
 _ZERO_ATTR_ENGINE = _zero_attr_cls
 
-_COVER_RATE = min(max(float(os.environ.get('HLEDAC_COVER_TRAFFIC_RATE', '0.05')), 0.0), 1.0)
+_COVER_RATE = min(max(FeatureFlags.get_float(FeatureFlag.COVER_TRAFFIC_RATE, 0.05), 0.0), 1.0)
 _COVER_MAX = 2
 
 
@@ -176,8 +177,7 @@ _CP_RETURNED_NONE = object()
 _RUST_DNS: Any = rust.dns
 _RUST_DNS_ENABLED: bool = False
 if _RUST_DNS is not None:
-    import os
-    _RUST_DNS_ENABLED = os.environ.get('HLEDAC_ENABLE_DNS', '1').lower() in ('1', 'true', 'yes', 'on')
+    _RUST_DNS_ENABLED = FeatureFlags.get(FeatureFlag.DNS)
 
 
 def _rust_dns_prefetch(hostnames: list[str]) -> dict[str, list[str]]:
@@ -256,7 +256,7 @@ BLITZ_CONCURRENCY_CLEARNET = 16
 BLITZ_CONCURRENCY_TOR = 8
 # Env var gate — BLITZ-13: ON by default. Set HLEDAC_BLITZ_FETCH=0 to opt out.
 #   When ON, AIMD starts at BLITZ_CONCURRENCY_CLEARNET (16) instead of CONCURRENCY_CLEARNET (12).
-_ENV_BLITZ_FETCH = os.environ.get('HLEDAC_BLITZ_FETCH', '1')
+_ENV_BLITZ_FETCH = FeatureFlags.get_str(FeatureFlag.BLITZ_FETCH, '1')
 
 
 def _try_load_aimd_controller(initial_window: float) -> AIMDWindow | PyAIMDController:
@@ -504,7 +504,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._effective_ua: str | None = None  # F-05: active UA for robots.txt matching; set by _do_start
         self._tor_transport: Any = None
         self._tor_transport_enabled: bool = False
-        if os.environ.get('HLEDAC_ENABLE_TOR') == '1':
+        if FeatureFlags.get(FeatureFlag.TOR):
             try:
                 from ..transport.tor_transport import TorTransport
                 self._tor_transport = TorTransport()
@@ -517,7 +517,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._tor_transport_enabled = False
         self._gopher_transport: Any = None
         self._gopher_transport_enabled: bool = False
-        if os.environ.get('HLEDAC_ENABLE_GOPHER') == '1':
+        if FeatureFlags.get(FeatureFlag.GOPHER):
             try:
                 from ..transport.gopher_transport import GopherTransport
                 self._gopher_transport = GopherTransport()
@@ -527,10 +527,10 @@ class FetchCoordinator(UniversalCoordinator):
                 logger.warning('GopherTransport init failed: %s', e)
                 self._gopher_transport_enabled = False
         self._http_cache_transport: Any = None
-        self._http_cache_enabled: bool = os.environ.get('HLEDAC_HTTP_CACHE', '1') != '0'
+        self._http_cache_enabled: bool = FeatureFlags.get(FeatureFlag.HTTP_CACHE)
         self._captcha_detector: Any | None = None
         self._captcha_detections: int = 0
-        if os.environ.get('HLEDAC_ENABLE_CAPTCHA_DETECTION') == '1':
+        if FeatureFlags.get(FeatureFlag.CAPTCHA_DETECTION):
             try:
                 from ..security.captcha_detector import CaptchaDetector
                 self._captcha_detector = CaptchaDetector()
@@ -540,7 +540,7 @@ class FetchCoordinator(UniversalCoordinator):
                 self._captcha_detector = None
         # F-07: Cloudflare / DataDome clearance cookie jar
         self._clearance_jar: Any | None = None
-        if os.environ.get('HLEDAC_ENABLE_CAPTCHA', '0') == '1':
+        if FeatureFlags.get(FeatureFlag.ENABLE_CAPTCHA):
             try:
                 from ..security.clearance_cookie_jar import get_clearance_jar
                 self._clearance_jar = get_clearance_jar()
@@ -573,7 +573,7 @@ class FetchCoordinator(UniversalCoordinator):
         self._per_host_gate = BoundedPerHostGate(max_hosts=512, per_host_limit=self._per_host_limit)
         # CB-02: Per-domain rate limiter — 0.5 RPS default (1 req / 2s)
         # Configurable via HLEDAC_RATE_LIMIT_RPS env var
-        _rate_limit_rps = float(os.environ.get("HLEDAC_RATE_LIMIT_RPS", "0.5"))
+        _rate_limit_rps = FeatureFlags.get_float(FeatureFlag.RATE_LIMIT_RPS, 0.5)
         self._domain_rate_limiter = DomainRateLimiter(rate=_rate_limit_rps, max_hosts=512)
         self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0, 'cross_sprint_skipped': 0, 'entity_confirmation_skipped': 0}
         # CB-04: Retry budget per domain — track total retries in last 60s to prevent amplification
@@ -1421,8 +1421,9 @@ class FetchCoordinator(UniversalCoordinator):
             dict with url, content, status_code, headers, error keys, or None on failure.
         """
         # F350M-R: Runtime feature flag — can disable even if built with quic feature
-        import os
-        if os.environ.get('HLEDAC_ENABLE_QUIC', '1').lower() not in ('1', 'true', 'yes', 'on'):
+        # SWARM-010: Use FeatureFlags for registry compliance
+        from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+        if not FeatureFlags.get(FeatureFlag.ENABLE_QUIC):
             logger.debug('[QUINN] Disabled via HLEDAC_ENABLE_QUIC=0')
             return None
         try:
@@ -1516,17 +1517,23 @@ class FetchCoordinator(UniversalCoordinator):
         ).lower() in ('1', 'true', 'yes', 'on')
         if _entropy_feedback_enabled:
             try:
-                from hledac.universal.brain.uncertainty_quant import get_entropy_bridge
+                from hledac.universal.brain.uncertainty_quant import (
+                    get_entropy_bridge,
+                    SeverityPriorityQueue,
+                )
                 bridge = get_entropy_bridge()
                 if bridge is not None:
-                    self._entropy_bridge_queue = asyncio.Queue(maxsize=64)
+                    # ISSUE-022-03 FIX: Use SeverityPriorityQueue instead of asyncio.Queue
+                    # for priority-based overflow handling. High-severity alerts
+                    # (contradictions, high entropy) are preserved when queue saturates.
+                    self._entropy_bridge_queue = SeverityPriorityQueue(maxsize=64)
                     subscribed = await bridge.subscribe(
                         'fetch_coordinator', self._entropy_bridge_queue,
                     )
                     if subscribed:
                         logger.info(
                             '[UNIFIED-003] Subscribed to EntropyFetchBridge '
-                            'for entropy alerts',
+                            'for entropy alerts (severity-priority queue enabled)',
                         )
                         # Set _running flag before starting background tasks
                         self._running = True
@@ -1556,7 +1563,7 @@ class FetchCoordinator(UniversalCoordinator):
                 '(HLEDAC_ENABLE_ENTROPY_FEEDBACK=0)',
             )
         # SILICON-07: Initialize SwarmDAG for dynamic lane rebalancing.
-        _swarm_dag_enabled = os.environ.get('HLEDAC_ENABLE_SWARM_DAG', '1') != '0'
+        _swarm_dag_enabled = FeatureFlags.get(FeatureFlag.SWARM_DAG)
         if _swarm_dag_enabled:
             try:
                 from ..core.rust_backend.swarm_dag import get_domain
@@ -1638,7 +1645,7 @@ class FetchCoordinator(UniversalCoordinator):
         # [META]-002: Configure and load DeltaSyncEngine KnownGoodCache at sprint prelude.
         # Sprint ID and DuckDB store come from orchestrator context.
         # SprintDeltaIndex injection (for CrossSprintGate) happens in _do_initialize.
-        _delta_enabled = os.environ.get('HLEDAC_ENABLE_CROSS_SPRINT_GATE', '1').lower() in ('1', 'true', 'yes', 'on')
+        _delta_enabled = FeatureFlags.get(FeatureFlag.CROSS_SPRINT_GATE)
         if _delta_enabled and self._orchestrator is not None:
             try:
                 _duckdb = getattr(self._orchestrator, '_duckdb_store', None)
@@ -2858,7 +2865,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
 
         # [FINAL]-019: temporal correlation decorrelation
         # Parse stagger once per call — env lookup is relatively expensive.
-        _pivot_stagger_ms_str = os.environ.get('HLEDAC_PIVOT_STAGGER_MS', '500')
+        _pivot_stagger_ms = FeatureFlags.get_int(FeatureFlag.PIVOT_STAGGER_MS, 500)
         try:
             _pivot_stagger_ms = float(_pivot_stagger_ms_str)
         except ValueError:
@@ -3324,12 +3331,18 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             # Create and emit alert with high severity
             max_severity = max(c.get('severity', 0.0) for c in contradictions)
 
+            # ISSUE-022-03 FIX (secondary): Use 'critical' risk_level for contradictions.
+            # This matches META-008 comment: contradictions are highest priority.
+            # [META-008]: contradictions should use 'critical' risk_level.
             alert = EntropyAlert(
                 entity_id=entity_id,
-                entropy=max_severity * 2.0,  # Scale to entropy range
+                entropy=min(max_severity * 2.0, 1.0),  # Cap at 1.0 to stay in valid range
                 threshold_exceeded=1.5,
-                confidence=1.0 - max_severity,  # Inverse: high severity = low confidence
-                risk_level='high',
+                # ISSUE-022-03 FIX (secondary): Low confidence in original finding
+                # means we distrust the conflicting source. This drives re-fetch
+                # via the entropy feedback loop.
+                confidence=1.0 - max_severity,
+                risk_level='critical',  # [META-008] Contradictions = highest priority
                 timestamp=time.time(),
                 metadata=metadata,
                 contradiction_source_id=contradiction_source,
@@ -3553,7 +3566,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             # ── BGP enrichment ────────────────────────────────────────
             elif protocol == 'bgp':
                 import os
-                if os.environ.get('HLEDAC_ENABLE_BGP', '0') == '1':
+                if FeatureFlags.get(FeatureFlag.BGP):
                     from ..sidecar_orchestrator import SidecarOrchestrator
                     # Lightweight BGP prefix lookup — not full sidecar
                     # Uses existing BGP data if available
@@ -3566,7 +3579,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             # ── Shodan ────────────────────────────────────────────────
             elif protocol == 'shodan':
                 import os
-                if os.environ.get('HLEDAC_ENABLE_SHODAN', '0') == '1':
+                if FeatureFlags.get(FeatureFlag.SHODAN):
                     from ..recon.shodan_lane import ShodanLane
                     lane = ShodanLane()
                     result = await lane.search_ip(entity_id, max_results=5)
@@ -3583,7 +3596,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             # ── Censys ────────────────────────────────────────────────
             elif protocol == 'censys':
                 import os
-                if os.environ.get('HLEDAC_ENABLE_CENSYS', '0') == '1':
+                if FeatureFlags.get(FeatureFlag.CENSYS):
                     # Censys uses the exposure_clients module
                     from ..recon.exposure_clients import CensysClient
                     client = CensysClient()
@@ -3600,8 +3613,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
 
             # ── Gopher ─────────────────────────────────────────────────
             elif protocol == 'gopher':
-                import os
-                if os.environ.get('HLEDAC_ENABLE_GOPHER', '0') == '1':
+                if FeatureFlags.get(FeatureFlag.GOPHER):
                     # Gopher protocol fetch — historical data discovery
                     if self._gopher_transport is not None:
                         result = await self._gopher_transport.fetch(entity_id)
@@ -3616,7 +3628,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             # ── CommonCrawl ────────────────────────────────────────────
             elif protocol == 'commoncrawl':
                 import os
-                if os.environ.get('HLEDAC_ENABLE_COMMONCRAWL', '0') == '1':
+                if FeatureFlags.get(FeatureFlag.COMMONCRAWL):
                     # CommonCrawl Index API — lightweight URL search
                     import httpx
                     cc_url = (
@@ -3637,7 +3649,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             # ── DHT (Mainline BitTorrent) ─────────────────────────────
             elif protocol == 'dht':
                 import os
-                if os.environ.get('HLEDAC_ENABLE_DHT', '0') == '1':
+                if FeatureFlags.get(FeatureFlag.DHT):
                     # DHT discovery — hash-based entity lookups
                     # In micro-sprint context, this is a lightweight probe
                     evidence_ids.append(f"dht:{entity_id}:probe")
@@ -3653,7 +3665,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             # ── Blockchain ─────────────────────────────────────────────
             elif protocol == 'blockchain':
                 import os
-                if os.environ.get('HLEDAC_ENABLE_BLOCKCHAIN_ANALYZER', '0') == '1':
+                if FeatureFlags.get(FeatureFlag.BLOCKCHAIN_ANALYZER):
                     # Blockchain address analysis — BTC/ETH
                     evidence_ids.append(f"blockchain:{entity_id}:lookup")
                     logger.debug(
@@ -3779,6 +3791,11 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         3. Deduplicating by entity_id to prevent redundant re-fetches
 
         Runs only while _running is True. Cancelled automatically on shutdown.
+
+        ISSUE-022-03 FIX: Uses SeverityPriorityQueue which delivers alerts in
+        priority order (highest severity first). This ensures critical alerts
+        (contradictions) are processed before lower-priority ones when the
+        bridge queue saturates.
         """
         logger.info('[UNIFIED-003/004] Entropy alert consumer loop started')
         queue = getattr(self, '_entropy_bridge_queue', None)
@@ -3797,6 +3814,8 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         while self._running:
             try:
                 # Wait for alert with timeout to allow graceful shutdown
+                # ISSUE-022-03 FIX: SeverityPriorityQueue.get() returns EntropyAlert
+                # directly (unpacked from tuple). Alerts arrive in priority order.
                 alert = await asyncio.wait_for(queue.get(), timeout=5.0)
 
                 if not self._running:
@@ -3857,9 +3876,15 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                     pending_entities[entity_id] = time.monotonic()
                     self._entropy_alerts_processed += 1
                 except asyncio.QueueFull:
-                    logger.debug(
-                        '[UNIFIED-003/004] Micro-sprint queue full, '
-                        'dropping alert for %s', entity_id,
+                    # ISSUE-022-03: Micro-sprint queue saturation warning
+                    # This is a different backpressure point from the entropy bridge queue
+                    logger.warning(
+                        '[ISSUE-022-03] Micro-sprint queue FULL (%d/%d), '
+                        'dropping alert for entity=%s (high-entropy:%s)',
+                        self._micro_sprint_queue.qsize(),
+                        self._micro_sprint_queue.maxsize,
+                        entity_id,
+                        alert.risk_level,
                     )
 
             except asyncio.TimeoutError:

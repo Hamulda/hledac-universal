@@ -132,8 +132,12 @@ VectorBackend = Literal["sqlite-vec", "lancedb", "auto"]
 
 
 def _resolve_backend() -> VectorBackend:
-    """Resolve HLEDAC_VECTOR_BACKEND to concrete backend."""
-    backend = os.environ.get("HLEDAC_VECTOR_BACKEND", "auto").lower()
+    """Resolve HLEDAC_VECTOR_BACKEND to concrete backend.
+    
+    SWARM-010: Use FeatureFlags.get_str() for registry compliance.
+    """
+    from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+    backend = FeatureFlags.get_str(FeatureFlag.VECTOR_BACKEND, "auto").lower()
     if backend not in ("sqlite-vec", "lancedb", "auto"):
         logger.warning(
             "[VectorIndex] Unknown HLEDAC_VECTOR_BACKEND=%r, defaulting to auto",

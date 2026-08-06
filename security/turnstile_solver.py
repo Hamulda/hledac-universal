@@ -44,6 +44,8 @@ import os
 import re
 from typing import TYPE_CHECKING
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
 if TYPE_CHECKING:
     from typing import Any
 
@@ -54,7 +56,7 @@ logger = logging.getLogger(__name__)
 
 def is_enabled() -> bool:
     """Check if CAPTCHA solving is enabled via env var."""
-    return os.environ.get("HLEDAC_ENABLE_CAPTCHA", "0") in ("1", "true", "yes", "on")
+    return FeatureFlags.get(FeatureFlag.ENABLE_CAPTCHA, default=False)
 
 
 # --- Constants ---

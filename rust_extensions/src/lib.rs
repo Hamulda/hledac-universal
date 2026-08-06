@@ -1,18 +1,26 @@
 //! hledac-rust-extensions - High-performance Rust extensions for hledac OSINT platform.
 //!
-//! Provides native-speed implementations of:
-//! - Aho-Corasick multi-pattern matching
-//! - BloomFilter for URL deduplication
-//! - Rolling hash for content fingerprinting
-//! - IOC extraction and URL normalization
-//! - IOC deduplication (cross-sprint persistence)
-//! - xxHash3-64 for non-cryptographic hashing
-//! - SimHash for near-duplicate document detection
+//! ## Architecture
+//!
+//! The crate is organized into logical module groups for improved navigability:
+//!
+//! | Group | Modules | Purpose |
+//! |-------|---------|---------|
+//! | [`ioc`] | extract, patterns, dedup, cooccurrence | IOC extraction & processing |
+//! | [`pools`] | cpu, io, mixed, elastic | Unified thread pool management |
+//! | graph | analytics, centrality, cache | Graph algorithms |
+//! | network | dns, tls_metadata, ip_parse | Network utilities |
+//! | text | html_parse, text_norm, text_similarity | Text processing |
+//! | crypto | crypto_accelerate, xxhash_ext, content_hasher | Cryptographic utilities |
+//!
+//! ## Quick Links
+//!
+//! - [`ioc::extract`] - Unified IOC extraction facade
+//! - [`pools::cpu`] - CPU-bound thread pool
+//! - [`pools::io`] - I/O-bound thread pool
 
+#![allow(dead_code)]
 #![recursion_limit = "512"]
-//! - URL classification by transport class (onion/i2p/freenet/clearnet)
-//! - SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup)
-//! - BLAKE2b-128 quality-gate fingerprint + entropy + text normalization (Sprint P1-5)
 
 use pyo3::prelude::*;
 use rayon::ThreadPool;
@@ -25,148 +33,238 @@ use std::sync::LazyLock;
 // [META]-004: elastic_pool provides dynamic pool resize (RwLock-wrapped ThreadPools).
 // cpu_pool()/io_pool() below delegate to it for backward compatibility with
 // existing callers throughout the codebase.
-pub mod finding_collapser; // NEXUS-018-04: Pre-LLM synthesis map-reduce collapser — deterministic single-pass
-pub mod consistency_verifier; // META-007: Propositional consistency verifier — "confident liar" detection
-pub mod aho_corasick;
-pub mod query_terms; // B4: Aho-Corasick query-context scan + whitespace trim
-#[cfg(feature = "bloom")]
-pub mod bloom;
-pub mod compress;
-#[cfg(feature = "advanced")]
-pub mod regex_lz4; // LZ4-compressed pattern store for 10k+ patterns
-#[cfg(feature = "advanced")]
-pub mod content_hasher;
-#[cfg(feature = "core")]
-pub mod crypto_accelerate;
-pub mod xxhash_ext; // xxHash3-64 for non-cryptographic content hashing
-// ISSUE-014: adaptive_scheduler is always compiled — used by always-compiled modules
-// (claims_extraction, health). Previously gated behind advanced feature.
-pub mod adaptive_scheduler;
-#[cfg(feature = "advanced")]
-pub mod swarm_dag; // SILICON-07: Work-stealing task DAG with ROI-based adaptive pool sizing
-#[cfg(feature = "data")]
-pub mod rolling_hash; // P3-3: Rolling hash for content fingerprinting
-pub mod graph_traverse;
-#[cfg(feature = "graph")]
-pub mod graph_centrality;
-#[cfg(feature = "graph")]
-pub mod graph_analytics; // GRAPH-01: petgraph-based PageRank + Louvain + SCC
-#[cfg(feature = "graph")]
-pub mod hot_edges_rs;
-pub mod html_parse;
-pub mod int_counter_layout;
-pub mod xml_sanitize; // R7c: XML sanitization — strip DOCTYPE/ENTITY declarations
-pub mod ioc_dedup;
-pub mod ioc_patterns;
-pub mod ioc_patterns_generated; // Issue #031: generated from ioc_patterns.rs (codegen)
-pub mod dns_tunnel; // ISSUE #33: DNS tunneling detection (entropy, n-gram, wavelet)
-pub mod ioc_extract;
-pub mod ioc_extract_fast;
-pub mod ioc_extract_simd; // R4.3: SIMD IOC extraction via regex-automata build_many (NEON on M1)
-pub mod deobfuscate;     // ADVERSARY-003: CyberChef-Pipeline — recursive IOC deobfuscation before SIMD
-pub mod ioc_stream_scan; // HEIST-01: Streaming SIMD scanner for mmap/bytes zero-copy IOC sweep
-pub mod ioc_cooccurrence_rs; // Issue 4.1: Rust HashMap<->BitSet co-occurrence engine
-pub mod ip_parse; // Sprint P2-3: IP address parsing, classification, CIDR containment
-pub mod lmdb_dht; // ISSUE-004: Rust LMDB backend for DHT — eliminates asyncio.to_thread overhead
-pub mod madvise;
-pub mod os_unfair_lock; // ISSUE 4.3: Darwin os_unfair_lock (~5ns) vs parking_lot::Mutex (~25ns)
-pub mod memory;
-#[cfg(feature = "metal")]
-pub mod metal_compute; // R22: Metal GPU batch matmul for MoE router (CPU fallback always available)
-#[cfg(feature = "metal")]
-pub mod metal_hashcrack; // SILICON-01: Metal GPU opportunistic hash cracking during I/O wait
-#[cfg(feature = "metal")]
-pub mod metal_shared_buf; // SILICON-04: Shared Metal buffer for Rust↔Python↔MLX zero-copy
-#[cfg(feature = "accelerate")]
-pub mod accelerate; // R22: Accelerate/vDSP FFI for NER cosine similarity (scalar fallback on non-macOS)
-pub mod quality_gate;
-pub mod _entropy; // Shared entropy helpers — broken out to avoid circular quality_gate ↔ zero_copy
-#[cfg(feature = "advanced")]
-pub mod signal_batch;
-#[cfg(feature = "advanced")]
-pub mod simd_similarity;
-pub mod simhash_ext;
-#[cfg(feature = "graph")]
-pub mod lsh_index; // F320+: LSH index for O(1) near-duplicate detection at scale
-pub mod text_similarity; // R25: Text similarity via trigram Jaccard
-pub mod text_norm;
-pub mod unicode_fingerprint; // ISSUE [ULTIMATE]-005: Zero-Width & Homoglyph Attribution Fingerprint
-#[cfg(feature = "advanced")]
-pub mod feed_decision;
-#[cfg(feature = "advanced")]
-pub mod feed_pipeline;
-#[cfg(feature = "advanced")]
-pub mod pipeline_compose; // Multi-stage pipeline operators via rayon
-pub mod url_engine;
-pub mod url_ops;
-pub mod url_set;
-pub mod zero_copy;
-pub mod serde_json_rs;
-#[cfg(feature = "simdjson")]
-pub mod simdjson_extract;  // HEIST-05: zero-alloc JSON Pointer extraction via simd-json
-#[cfg(feature = "stix")]
-pub mod stix_2_1;
-#[cfg(feature = "data")]
-pub mod arrow_batch_builder;
-#[cfg(feature = "data")]
-pub mod parquet_reader; // F320+: Lazy parquet reader — paginated Arrow, 100GB+ IOC history bez OOM
-pub mod sendfile; // ISSUE 4.4: sendfile(2) zero-copy file-to-socket transfer (Darwin only)
-pub mod spsc_queue;
-pub mod mpsc_pool; // Bounded MPSC pool — replaces asyncio.Queue in evidence_log
-#[cfg(feature = "advanced")]
-pub mod federated_qtable; // ISSUE-23: Rust Q-table with rayon parallel batch updates
-pub mod simd; // ISSUE-023: Modular SIMD — NEON on M1, scalar fallback
-#[cfg(feature = "advanced")]
-pub mod graph_cache;    // TinyLFU LRU cache pro graph operations
-// dedup_bloom is always compiled — used by health (always compiled).
-// Previously gated behind advanced feature but health.rs calls dedup_bloom::global_stats().
-pub mod sprint_policies; // RL sprint policy layer
-pub mod dedup_bloom;    // Distribuovaný BloomFilter s Count-Min Sketch
-pub mod rate_limit;     // ISSUE #016: NVD API rate limiter — token bucket + MPSC
-pub mod telemetry_agg;  // Real-time metrics aggregation
-pub mod health;         // Issue #22: health_check() endpoint
-#[cfg(feature = "otel")]
-pub mod tracing;        // R24: OpenTelemetry tracing for Rust-side observability
-#[cfg(feature = "advanced")]
-pub mod circuit_breaker;
-#[cfg(feature = "data")]
-pub mod aimd_controller; // ISSUE 2.2: Lock-free AIMD controller replacing Python AIMDWindow + _AIMDSlotController
-pub mod claims_extraction; // ISSUE-27: CPU-bound claims extraction (polarity, confidence, sentence split)
-pub mod tls_metadata;    // Issue B5: TLS cert metadata — single Rust call replacing 5-level Python fallback
-#[cfg(feature = "quic")]
-pub mod quic;           // QUIC/HTTP3 via quinn + h3 — F350M-R: real HTTP/3 fallback
-pub mod nw_connection;  // SILICON-03: Apple Network.framework user-space TCP + hardware TLS
-pub mod tls13;          // TLS 1.3 JA4 fingerprinting + ECH detection via rustls
-pub mod h2_safari_preset; // [NEXUS]-018-01: Safari WebKit HTTP/2 SETTINGS presets
-#[cfg(feature = "mach")]
-pub mod mach_remap;        // [NEXUS]-018-03: Mach vm_remap zero-copy remapping (opt-in, macOS only)
-#[cfg(feature = "pdf")]
-pub mod pdf;            // PDF text extraction + IOC extraction via lopdf
-#[cfg(feature = "office")]
-pub mod office;        // Office document text extraction (.docx, .xlsx, .pptx) via docx-rs + calamine
-#[cfg(feature = "dns")]
-pub mod dns;            // DoH/DoT/DoQ DNS via hickory-dns — replaces batch_dns.py triplicate paths
-pub mod gil;            // F5.2: GIL management — std::thread + rayon pools (ne pyo3-async)
-pub mod pool_run;      // R2: Rayon pool runners — GIL wrappers + channel-based dispatch (consolidated)
-pub mod elastic_pool;  // [META]-004: Dynamic rayon pool resizing — phase-aware elasticity
-pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
-#[cfg(feature = "ane")]
-pub mod ane;           // Apple Neural Engine bindings — model registry, batch validation, telemetry
-// pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe (dir)
-#[cfg(feature = "data")]
-pub mod async_query; // R26: Async DuckDB queries via Rust executor
-pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
-pub mod onion_validation; // GRAPH-03: .onion v3 address validation (Ed25519 checksum)
-#[cfg(feature = "native_db")]
-pub mod native_db;      // HEIST-03: Wire-protocol DB extraction (MongoDB, Redis, Elasticsearch)
-#[cfg(feature = "embedded_tor")]
-pub mod arti_bridge; // HEIST-02: Embedded Tor via Arti — in-process .onion fetching
-#[cfg(feature = "fulltext")]
-pub mod fulltext_index;  // ISSUE-011: Tantivy fulltext search (mmap-backed, zero-copy BM25)
 
-// ---------------------------------------------------------------------------
-// Rayon thread pools — M1 8GB safe, P/E core optimized
-// ---------------------------------------------------------------------------
+// ============================================================================
+// IOC Extraction Group - Unified Facade with Specialized Implementations
+// ============================================================================
+
+// Public facade - use this for IOC extraction
+pub mod ioc;
+
+// Individual modules (kept for backward compatibility and direct access)
+pub mod ioc_extract;           // Standard IOC extraction
+pub mod ioc_extract_fast;      // Fast Aho-Corasick extraction
+pub mod ioc_extract_simd;     // SIMD NEON extraction (M1 optimized)
+pub mod ioc_patterns;         // Pattern definitions (single source of truth)
+pub mod ioc_patterns_generated; // Generated patterns (codegen)
+pub mod ioc_dedup;           // IOC deduplication (cross-sprint persistence)
+pub mod ioc_cooccurrence_rs;  // IOC co-occurrence analysis
+pub mod ioc_stream_scan;      // Streaming SIMD scanner (mmap/bytes zero-copy)
+pub mod deobfuscate;          // CyberChef-style IOC deobfuscation
+
+// ============================================================================
+// Thread Pool Group - Unified Pool Management
+// ============================================================================
+
+// Public facade - use this for pool operations
+pub mod pools;
+
+// Individual pool modules (kept for backward compatibility)
+pub mod elastic_pool;         // Phase-aware dynamic resizing
+pub mod adaptive_scheduler;   // Memory-pressure aware thresholds
+pub mod pool_run;             // GIL wrappers & channel dispatch
+pub mod mpsc_pool;           // Bounded MPSC queue pool
+pub mod gil;                 // GIL management utilities
+
+// ============================================================================
+// Graph Analytics Group
+// ============================================================================
+
+pub mod finding_collapser;    // NEXUS-018-04: Pre-LLM synthesis collapser
+pub mod consistency_verifier;  // META-007: "confident liar" detection
+pub mod graph_analytics;      // GRAPH-01: PageRank, Louvain, SCC
+pub mod graph_centrality;     // Centrality metrics
+pub mod graph_traverse;       // DuckPGQ graph traversal
+pub mod graph_cache;          // TinyLFU LRU cache
+pub mod lsh_index;           // LSH near-duplicate detection
+pub mod hot_edges_rs;         // Hot edge counter
+
+// ============================================================================
+// Aho-Corasick & Pattern Matching
+// ============================================================================
+
+pub mod aho_corasick;         // Multi-pattern matching
+pub mod query_terms;          // Query-context scanning
+
+// ============================================================================
+// Data Structures & Storage
+// ============================================================================
+
+#[cfg(feature = "bloom")]
+pub mod bloom;                // BloomFilter for URL dedup
+pub mod compress;             // LZ4/Zstd compression
+#[cfg(feature = "advanced")]
+pub mod regex_lz4;            // LZ4-compressed pattern store
+#[cfg(feature = "advanced")]
+pub mod content_hasher;       // SHA-256, BLAKE3 hashing
+pub mod xxhash_ext;           // xxHash3-64 non-cryptographic hash
+#[cfg(feature = "data")]
+pub mod rolling_hash;        // P3-3: Rabin-Karp rolling hash
+pub mod url_set;             // Mmap-backed URL set
+pub mod url_engine;          // URL parsing & classification
+pub mod url_ops;             // URL operations & normalization
+pub mod zero_copy;           // Zero-copy PyO3 batch utilities
+pub mod serde_json_rs;       // JSON serialization (STIX export)
+pub mod spsc_queue;         // Lock-free SPSC queue
+
+// ============================================================================
+// Cryptography & Security
+// ============================================================================
+
+#[cfg(feature = "core")]
+pub mod crypto_accelerate;   // CommonCrypto SHA-256 (M1 optimized)
+pub mod tls_metadata;       // TLS cert metadata extraction
+#[cfg(feature = "tls13")]
+pub mod tls13;              // TLS 1.3 JA4 fingerprinting
+#[cfg(feature = "quic")]
+pub mod quic;               // QUIC/HTTP3 via Quinn+H3
+pub mod nw_connection;      // Apple Network.framework TCP
+pub mod h2_safari_preset;   // Safari WebKit HTTP/2 presets
+pub mod onion_validation;   // GRAPH-03: .onion v3 validation
+pub mod circuit_breaker;    // Circuit breaker pattern
+
+// ============================================================================
+// Network & Transport (HEIST-02: Embedded Tor)
+// ============================================================================
+
+#[cfg(feature = "embedded_tor")]
+pub mod arti_bridge;        // HEIST-02: In-process Tor via Arti (PyO3 bindings)
+
+// ============================================================================
+// Text Processing
+// ============================================================================
+
+pub mod html_parse;          // HTML parsing & link extraction
+pub mod text_similarity;     // R25: Trigram Jaccard similarity
+pub mod text_norm;          // Unicode NFC/NFD normalization
+pub mod unicode_fingerprint; // Zero-width & homoglyph fingerprint
+pub mod xml_sanitize;       // R7c: XML sanitization
+
+// ============================================================================
+// System & Platform
+// ============================================================================
+
+pub mod int_counter_layout; // SoA buffer for integer counters
+pub mod madvise;          // Darwin madvise (MADV_FREE_REUSABLE)
+pub mod memory;           // Memory statistics via sysinfo
+pub mod os_unfair_lock;   // ISSUE-4.3: os_unfair_lock (~5ns)
+pub mod sendfile;         // ISSUE-4.4: sendfile(2) zero-copy
+
+// ============================================================================
+// Quality & Signal Processing
+// ============================================================================
+
+pub mod quality_gate;         // Quality gate kernels
+pub mod _entropy;             // Entropy helpers
+pub mod claims_extraction;    // ISSUE-27: Claims extraction (CPU-bound sentence splitting)
+#[cfg(feature = "advanced")]
+pub mod signal_batch;        // ARM NEON signal aggregation
+#[cfg(feature = "advanced")]
+pub mod simd_similarity;     // SIMD cosine similarity
+pub mod simhash_ext;         // SimHash near-duplicate detection
+pub mod telemetry_agg;       // Real-time metrics aggregation
+pub mod rate_limit;          // ISSUE-016: NVD API rate limiter
+pub mod sprint_policies;     // RL sprint policy layer
+
+// ============================================================================
+// Advanced Features (Feature-Gated)
+// ============================================================================
+
+#[cfg(feature = "advanced")]
+pub mod swarm_dag;           // SILICON-07: Work-stealing DAG
+#[cfg(feature = "advanced")]
+pub mod feed_decision;       // Feed decision classifiers
+#[cfg(feature = "advanced")]
+pub mod feed_pipeline;       // Feed pipeline operators
+#[cfg(feature = "advanced")]
+pub mod pipeline_compose;    // Multi-stage pipeline operators
+#[cfg(feature = "advanced")]
+pub mod federated_qtable;    // ISSUE-023: Federated Q-table
+
+// ============================================================================
+// Data Processing
+// ============================================================================
+
+#[cfg(feature = "data")]
+pub mod arrow_batch_builder; // Arrow ArrayBuilder batch construction
+#[cfg(feature = "data")]
+pub mod parquet_reader;      // F320+: Lazy parquet reader
+
+#[cfg(feature = "data")]
+pub mod aimd_controller;     // ISSUE-2.2: AIMD controller
+#[cfg(feature = "data")]
+pub mod async_query;         // R26: Async DuckDB queries
+pub mod data;                // DuckDB bridge
+pub mod dedup_bloom;         // Distributed BloomFilter + Count-Min Sketch
+
+// ============================================================================
+// ML/AI Infrastructure
+// ============================================================================
+
+pub mod mlx_bridge;          // ISSUE-015: MLX async token streaming
+#[cfg(feature = "ane")]
+pub mod ane;                 // Apple Neural Engine bindings
+#[cfg(feature = "accelerate")]
+pub mod accelerate;         // R22: Accelerate/vDSP FFI
+#[cfg(feature = "metal")]
+pub mod metal_compute;       // R22: Metal GPU matmul
+#[cfg(feature = "metal")]
+pub mod metal_hashcrack;    // SILICON-01: GPU hash cracking
+#[cfg(feature = "metal")]
+pub mod metal_shared_buf;   // SILICON-04: Shared Metal buffer
+pub mod simd;               // ISSUE-023: Modular SIMD (NEON fallback)
+
+// ============================================================================
+// Network Protocols
+// ============================================================================
+
+#[cfg(feature = "dns")]
+pub mod dns;                // DoH/DoT/DoQ DNS resolution
+pub mod dns_tunnel;         // ISSUE-033: DNS tunneling detection
+
+// ============================================================================
+// Document Processing
+// ============================================================================
+
+#[cfg(feature = "pdf")]
+pub mod pdf;               // PDF text extraction
+#[cfg(feature = "office")]
+pub mod office;            // Office document extraction
+
+// ============================================================================
+// Database & Search
+// ============================================================================
+
+pub mod lmdb_dht;          // ISSUE-004: Rust LMDB DHT backend
+#[cfg(feature = "native_db")]
+pub mod native_db;         // HEIST-03: Wire-protocol DB extraction
+#[cfg(feature = "fulltext")]
+pub mod fulltext_index;   // ISSUE-011: Tantivy fulltext search
+
+// ============================================================================
+// External Integrations
+// ============================================================================
+
+#[cfg(feature = "simdjson")]
+pub mod simdjson_extract;  // HEIST-05: simdjson JSON extraction
+#[cfg(feature = "stix")]
+pub mod stix_2_1;         // STIX 2.1 encode/decode
+#[cfg(feature = "otel")]
+pub mod tracing;          // R24: OpenTelemetry tracing
+
+// IP parsing (network utility)
+pub mod ip_parse;          // Sprint P2-3: IP parsing & classification
+
+// Health & telemetry
+pub mod health;            // Issue #22: Health endpoint
+
+// MLX integration (depends on metal feature)
+#[cfg(feature = "metal")]
+pub mod mlx_bridge;
+
+// ============================================================================
+// Rayon Thread Pools - M1 8GB safe, P/E core optimized
+// ============================================================================
 //
 // M1 Air: 4P + 4E cores = 8 logical CPUs.
 // MacBook Pro M3 Pro: 6P + 6E = 12 logical CPUs.
@@ -238,6 +336,7 @@ fn detect_p_core_count() -> usize {
     // Fallback: total physical CPUs (may include E-cores on big.LITTLE)
     let mut size2: libc::size_t = std::mem::size_of::<u32>();
     let mut value2: u32 = 0;
+
     let ret2 = unsafe {
         libc::sysctlbyname(
             b"hw.physicalcpu\0".as_ptr() as *const libc::c_char,
@@ -489,7 +588,6 @@ pub fn apply_thread_qos(pthread_id: usize, qos_class: i32) -> i32 {
 pub fn apply_thread_qos(_pthread_id: usize, _qos_class: i32) -> i32 {
     0 // No-op on non-macOS
 }
-
 
 #[cfg(test)]
 mod lib_tests {
@@ -887,6 +985,12 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "dns")]
     dns::register_functions(m)?;
 
+    // HEIST-02: In-process Tor via Arti — replaces subprocess tor binary.
+    // rust.arti_bridge.ArtiNode — full circuit control, connection pooling,
+    // circuit pre-building. 3-5× throughput vs subprocess, ~40-50% lower latency.
+    #[cfg(feature = "embedded_tor")]
+    arti_bridge::register(m)?;
+
     // F275: CommonCrypto SHA-256 hardware acceleration on Apple Silicon (~3× vs sha2 crate).
     crypto_accelerate::register_functions(m)?;
     // adaptive_scheduler is always compiled — no feature gate needed
@@ -944,11 +1048,6 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Wire format: [marker=0x00/0x01/0x02/0x03][payload] — lz4 fast path, zstd fallback,
     // 0x03 = zstd_with_dict (HEIST-07).
     compress::register_functions(m)?;
-
-    // HEIST-02: Embedded Tor via Arti — in-process .onion fetching
-    // Feature-gated: embedded_tor = ["dep:arti-client", "dep:tor-rtcompat", "dep:tokio"]
-    #[cfg(feature = "embedded_tor")]
-    arti_bridge::register(m)?;
 
     // HEIST-03: Native DB wire-protocol extraction (MongoDB, Redis, Elasticsearch)
     // No external crate deps — pure Rust std + crossbeam-channel.

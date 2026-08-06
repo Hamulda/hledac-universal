@@ -1523,9 +1523,9 @@ class SynthesisRunner:
         Fail-safe: any error → returns all findings unfiltered (conservative).
         """
         from hledac.universal.brain.fast_path_triage import FastPathTriage
-        import os
+        from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
 
-        if os.environ.get("HLEDAC_TRIAGE_DISABLED", "0") == "1":
+        if FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED):
             return findings, {"total_triaged": len(findings), "filtered_out": 0}
 
         try:

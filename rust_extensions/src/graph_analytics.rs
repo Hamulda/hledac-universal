@@ -21,7 +21,6 @@ use petgraph::graph::{DiGraph, NodeIndex, UnGraph};
 use petgraph::algo::kosaraju_scc;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use rayon::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -312,7 +311,7 @@ pub fn rust_pagerank<'py>(
     }
 
     // Use petgraph's pagerank if graph is suitable, otherwise manual implementation
-    let mut pagerank_scores: Vec<f64> = if n <= MAX_NODES && !edges.is_empty() {
+    let pagerank_scores: Vec<f64> = if n <= MAX_NODES && !edges.is_empty() {
         // Clamp parameters
         let damping = damping.clamp(0.0, 1.0);
         let tol = tol.max(1e-10);
@@ -606,8 +605,9 @@ fn compute_pagerank_on_adj(
 }
 
 /// Compute SCC on a pre-built directed graph (helper for rust_graph_analytics_all).
+#[allow(dead_code)]
 fn compute_scc_impl(
-    node_indices: &HashMap<u64, NodeIndex>,
+    _node_indices: &HashMap<u64, NodeIndex>,
     graph: &DiGraph<IOCNode, IOCEdge>,
 ) -> Vec<Vec<u64>> {
     if graph.node_count() == 0 {

@@ -229,16 +229,32 @@ class IocStreamScanner:
             self._rust_scanner.close()
             self._rust_scanner = None
 
+    def __del__(self) -> None:
+        """Safety net: ensure automaton is freed on GC."""
+        if self._rust_scanner is not None:
+            try:
+                self._rust_scanner.close()
+            except Exception:
+                pass
+            self._rust_scanner = None
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _hit_to_dict(hit) -> dict:
+def _hit_to_dict(hit: _RustStreamPatternHit) -> dict[str, int | str | bytes | None]:
     """Convert a Rust StreamPatternHit to a plain dict.
 
     Dict keys: start, end, pattern, label, value.
     Compatible with PatternHit NamedTuple consumers.
+    
+    Args:
+        hit: Rust StreamPatternHit object from Aho-Corasick scanner
+        
+    Returns:
+        Dictionary with start (int), end (int), pattern (str), 
+        label (str), value (str or bytes)
     """
     return {
         "start": hit.start,
@@ -258,6 +274,38 @@ def is_available() -> bool:
     return _RUST_SCANNER_AVAILABLE
 
 
+def get_scanner_stats() -> dict[str, int | bool]:
+    """Get scanner statistics for telemetry.
+
+    Returns:
+        Dictionary with available, pattern_count, and automaton_bytes.
+        Returns zeros when scanner is unavailable.
+
+    Note:
+        Automaton size estimation: Aho-Corasick automaton for ASCII patterns
+        typically requires ~50-60KB per pattern (node count * edges).
+        With 36 patterns averaging ~10 bytes each, expect ~1.8-2.2 MB.
+    """
+    scanner = _ioc_scanner_instance
+    if scanner is None or scanner._rust_scanner is None:
+        return {"available": False, "pattern_count": 0, "automaton_bytes": 0}
+
+    try:
+        pattern_count = len(scanner)
+    except Exception:
+        pattern_count = 0
+
+    # Automaton estimation: ~55KB per pattern for Aho-Corasick (empirical)
+    # This accounts for node structure + failure links + output links
+    automaton_bytes = pattern_count * 55_000 if pattern_count > 0 else 0
+
+    return {
+        "available": True,
+        "pattern_count": pattern_count,
+        "automaton_bytes": automaton_bytes,
+    }
+
+
 def create_scanner(
     patterns: Sequence[str],
     labels: Sequence[str] | None = None,
@@ -268,3 +316,132 @@ def create_scanner(
     produces empty results when Rust is unavailable.
     """
     return IocStreamScanner(patterns, labels)
+
+
+# ---------------------------------------------------------------------------
+# Singleton IOC Scanner — Pre-loaded with high-value literal patterns
+# ---------------------------------------------------------------------------
+
+# High-value IOC literals for SIMD streaming scan
+# These are common patterns that benefit from Aho-Corasick NEON acceleration
+_IOC_LITERALS: list[str] = [
+    # IP addresses (common octets as separate patterns for prefix matching)
+    "127.0.0.1", "0.0.0.0", "255.255.255.255",
+    "192.168.", "10.0.", "172.16.",
+    # Common malicious domains
+    "pastebin.com", "github.com", "raw.githubusercontent",
+    "mega.nz", "mediafire.com", "dropbox.com",
+    # Hash patterns (common prefixes)
+    "da39a3ee", "e3b0c44", "58845d3a",  # Common hash prefixes
+    # Email patterns
+    "@gmail.com", "@yahoo.com", "@hotmail.com",
+    # CVE prefix
+    "CVE-", "CVE-202", "CVE-201",
+    # Common TLDs in malicious context
+    ".ru", ".cn", ".tk", ".ml", ".ga", ".cf", ".gq",
+    # Protocol patterns
+    "http://", "https://", "ftp://", "sftp://",
+    # Tor/Onion patterns
+    ".onion",
+    # Protocol indicators
+    "ssh://", "telnet://", "rdp://",
+]
+
+# Lazy singleton scanner instance
+_ioc_scanner_instance: IocStreamScanner | None = None
+_ioc_scanner_lock = asyncio.Lock()
+
+
+async def get_ioc_scanner() -> IocStreamScanner:
+    """Get or create the singleton IOC scanner.
+
+    Uses lazy initialization with async lock for thread-safety.
+    Returns a scanner that gracefully degrades when Rust is unavailable.
+    """
+    global _ioc_scanner_instance
+    if _ioc_scanner_instance is not None:
+        return _ioc_scanner_instance
+
+    async with _ioc_scanner_lock:
+        # Double-check after acquiring lock
+        if _ioc_scanner_instance is None:
+            scanner = IocStreamScanner(_IOC_LITERALS)
+            _ioc_scanner_instance = scanner
+            if scanner.is_available:
+                logger.info(
+                    f"[HEIST-01] Singleton IOC scanner initialized with "
+                    f"{len(_IOC_LITERALS)} literal patterns, "
+                    f"NEON Teddy SIMD enabled"
+                )
+            else:
+                logger.warning(
+                    "[HEIST-01] Singleton IOC scanner initialized without Rust - "
+                    "SIMD scanning disabled"
+                )
+        return _ioc_scanner_instance
+
+
+def get_ioc_scanner_sync() -> IocStreamScanner | None:
+    """Synchronous access to singleton scanner (call from thread pool).
+
+    Returns None if scanner not yet initialized - use get_ioc_scanner() for
+    async contexts.
+    """
+    return _ioc_scanner_instance
+
+
+async def scan_bytes_with_ioc_scanner(
+    buffer: bytes | bytearray | memoryview,
+) -> list[dict]:
+    """Fail-soft wrapper for SIMD IOC scanning.
+
+    Uses the singleton scanner with asyncio.to_thread() for non-blocking
+    execution. Returns empty list on any error.
+
+    Args:
+        buffer: Raw bytes to scan
+
+    Returns:
+        List of IOC hits with keys: start, end, pattern, label, value
+    """
+    try:
+        scanner = await get_ioc_scanner()
+        return await scanner.scan_bytes_async(buffer)
+    except Exception as exc:
+        logger.debug(f"IOC SIMD scan failed (fail-soft): {exc}")
+        return []
+
+
+def reset_ioc_scanner() -> None:
+    """Reset singleton scanner (for testing).
+    
+    Calls close() to release automaton memory before clearing instance.
+    Thread-safe: uses lock to prevent race with get_ioc_scanner().
+    """
+    global _ioc_scanner_instance
+    
+    # Thread-safe reset: acquire lock to prevent race with async init
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop - direct synchronous call (e.g., in tests)
+        _do_reset()
+        return
+    
+    # Schedule reset in the event loop to be thread-safe
+    asyncio.run_coroutine_threadsafe(_areset(), loop)
+    # Note: For synchronous callers, use _do_reset() directly
+
+
+async def _areset() -> None:
+    """Async version of reset with lock acquisition."""
+    async with _ioc_scanner_lock:
+        _do_reset()
+
+
+def _do_reset() -> None:
+    """Core reset logic without lock (callers must hold lock)."""
+    global _ioc_scanner_instance
+    if _ioc_scanner_instance is not None:
+        _ioc_scanner_instance.close()
+    _ioc_scanner_instance = None

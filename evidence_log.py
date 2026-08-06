@@ -270,7 +270,9 @@ _arrow = None
 #         in hot-path _get_arrow() (called 3x per flush cycle in sprint).
 #         _ARROW_ENABLED is evaluated once at import; subsequent _get_arrow()
 #         calls skip the env lookup entirely (fast-path: _arrow cached).
-_ARROW_ENABLED: bool = os.environ.get('HLEDAC_ARROW_EVIDENCE', '0') == '1'
+# SWARM-010: Use FeatureFlags for registry compliance
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+_ARROW_ENABLED: bool = FeatureFlags.get(FeatureFlag.ARROW_EVIDENCE)
 
 
 def _ensure_duckdb_executor() -> concurrent.futures.ThreadPoolExecutor:
@@ -1722,7 +1724,8 @@ class EvidenceLog:
             self._db_path = evidence_dir / f'{self._run_id}.db'
 
         # ISSUE-11: DuckDB Arrow IPC path
-        use_duckdb = os.environ.get('HLEDAC_EVIDENCE_DUCKDB', '0') == '1'
+        # SWARM-010: Use FeatureFlags for registry compliance
+        use_duckdb = FeatureFlags.get(FeatureFlag.EVIDENCE_DUCKDB)
         if use_duckdb:
             try:
                 import duckdb

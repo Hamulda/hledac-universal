@@ -49,10 +49,9 @@ from hledac.universal.security.media_sandbox import (
     FileRiskLevel,
     get_sandbox_coordinator,
     SANDBOX_ENABLED,
-    IsolationConfig,
     _write_sandbox_profile,
     _build_image_sandbox_profile,
-    _run_subprocess_isolation_sync,
+    run_pymupdf_sandboxed,
 )
 import hashlib
 import io
@@ -204,154 +203,6 @@ def _check_mps_available():
         pass
     return False
 MAX_IMAGE_SIZE = 2048
-
-# ── ADVERSARY-001: PDF sandbox analysis script (Tier-B subprocess isolation) ──
-
-_PDF_ANALYSIS_SCRIPT = """
-import sys, json, os, hashlib, re, tempfile
-
-# Minimal analysis script run in sandboxed subprocess
-PYMUPDF_AVAILABLE = False
-try:
-    import fitz
-    PYMUPDF_AVAILABLE = True
-except ImportError:
-    pass
-
-EMAIL_PATTERN = re.compile('[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\.[a-zA-Z]{2,}')
-IP_PATTERN = re.compile('\\\\b(?:[0-9]{1,3}\\\\.){3}[0-9]{1,3}\\\\b')
-URL_PATTERN = re.compile('https?://[^\\\\s<>\\\\"{}|\\\\\\\\^`\\\\[\\\\]]+')
-
-def _guard_file_size(path):
-    stat = os.stat(path)
-    if stat.st_size > 100 * 1024 * 1024:
-        raise ValueError(f'Document too large: {stat.st_size} bytes')
-
-def analyze_pdf(file_path):
-    '''Minimal sandboxed PDF analysis.'''
-    _guard_file_size(file_path)
-    if not PYMUPDF_AVAILABLE:
-        with open(file_path, 'rb') as f:
-            content = f.read()
-        text = content.decode('utf-8', errors='ignore')
-        return {
-            'metadata': {'file_hash_sha256': hashlib.sha256(content).hexdigest()},
-            'embedded_objects': [],
-            'hyperlinks': URL_PATTERN.findall(text)[:50],
-            'email_addresses': EMAIL_PATTERN.findall(text)[:20],
-            'ip_addresses': IP_PATTERN.findall(text)[:20],
-            'suspicious_indicators': [],
-            'canary_tokens': [],
-            'ocg_layers': [],
-            'redaction_failures': [],
-            'suppressed_annotations': [],
-        }
-    doc = fitz.open(file_path)
-    # Basic metadata
-    meta = doc.metadata
-    full_text = ''
-    for page in doc:
-        full_text += page.get_text()
-    # Extract embedded images info (no binary extraction in sandbox)
-    embedded = []
-    for xref in range(1, doc.xref_length()):
-        try:
-            info = doc.xref_get_key(xref, 'Type')
-            if info == '/Image':
-                embedded.append({'xref': xref, 'type': 'image'})
-        except Exception:
-            pass
-    doc.close()
-    # Read file content for hashing (after doc is closed)
-    file_content = open(file_path, 'rb').read()
-    sha256_hash = hashlib.sha256(file_content).hexdigest()
-    md5_hash = hashlib.md5(file_content).hexdigest()
-    return {
-        'metadata': {
-            'file_hash_md5': md5_hash,
-            'file_hash_sha256': sha256_hash,
-            'title': meta.get('title', ''),
-            'author': meta.get('author', ''),
-            'creator': meta.get('creator', ''),
-        },
-        'embedded_objects': embedded[:100],
-        'hyperlinks': URL_PATTERN.findall(full_text)[:50],
-        'email_addresses': EMAIL_PATTERN.findall(full_text)[:20],
-        'ip_addresses': IP_PATTERN.findall(full_text)[:20],
-        'suspicious_indicators': [kw for kw in ['confidential', 'classified', 'secret'] if kw in full_text.lower()],
-        'canary_tokens': [],
-        'ocg_layers': [],
-        'redaction_failures': [],
-        'suppressed_annotations': [],
-    }
-"""
-
-
-def _run_subprocess_isolation_sync(
-    args: list[str],
-    config: IsolationConfig | None = None,
-    timeout_s: float = 30.0,
-) -> tuple[int, bytes, bytes]:
-    """
-    ADVERSARY-001: Synchronous subprocess isolation wrapper.
-
-    Runs a command with resource limits (rlimit) in a subprocess.
-    Stripped of environment variables to prevent credential leakage.
-    This is the sync version for use in ProcessPoolExecutor context.
-    """
-    if config is None:
-        config = IsolationConfig()
-
-    # Build stripped environment
-    run_env = {k: v for k, v in os.environ.items()
-               if not k.startswith(('HLEDAC_', 'SHODAN', 'CENSYS', 'GREYNOISE', 'API_', 'KEY_', 'SECRET', 'TOKEN'))}
-
-    # Check for sandbox-exec
-    import shutil
-    use_sandbox = shutil.which('sandbox-exec') is not None
-
-    cmd = args
-    if use_sandbox:
-        profile = f"""(version 1)
-(allow default)
-(deny network*)
-(deny file-write* (subpath "{os.fspath(Path.home())}/.hledac"))
-(deny file-write* (subpath "{os.fspath(Path.home())}/sprint_state"))
-(deny file-write* (subpath "{os.fspath(Path.home())}/Library"))
-(deny sysctl-write)
-(deny process*)
-(allow file-read*)
-(allow file-write* (subpath "/tmp"))
-"""
-        profile_path = tempfile.NamedTemporaryFile(
-            suffix='.sb', mode='w', delete=False, dir=tempfile.gettempdir()
-        )
-        profile_path.write(profile)
-        profile_path.close()
-        os.chmod(profile_path.name, 0o600)
-        cmd = ['sandbox-exec', '-p', profile_path.name] + cmd
-
-    try:
-        proc = __import__('subprocess').run(
-            cmd,
-            capture_output=True,
-            timeout=timeout_s,
-            env=run_env,
-        )
-        return proc.returncode, proc.stdout, proc.stderr
-    except __import__('subprocess').TimeoutExpired:
-        return -1, b'', b'timeout'
-    except FileNotFoundError:
-        return -1, b'', b'sandbox-exec not found'
-    except OSError as e:
-        return -1, b'', str(e).encode()
-    finally:
-        if use_sandbox:
-            try:
-                os.unlink(profile_path.name)
-            except OSError:
-                pass
-
 
 # M1 8GB: Per-image and per-stream size caps to prevent OOM from decoded content.
 # PyMuPDF's extract_image() returns FULLY DECODED image bytes — a 1KB JPEG
@@ -858,8 +709,9 @@ class PDFAnalyzer:
         """
         Analyze PDF document with sandbox-aware risk routing.
 
-        ADVERSARY-001: Routes to subprocess isolation when file is
-        high-entropy, from untrusted source (Tor/I2P), or unknown format.
+        ADVERSARY-001: Routes ALL PDFs to subprocess isolation when SANDBOX_ENABLED.
+        PyMuPDF runs in sandboxed subprocess with Seatbelt containment.
+        A crafted PDF cannot exploit PyMuPDF/mupdf CVEs to pivot to orchestrator.
 
         Args:
             file_path: Path to PDF file, bytes, or file-like object
@@ -868,6 +720,8 @@ class PDFAnalyzer:
         Returns:
             DocumentAnalysis with all extracted data
         """
+        import asyncio
+        
         # ── ADVERSARY-001: Risk classification before parsing ──────────────
         if isinstance(file_path, (str, Path)):
             risk = profile_file_risk(file_path, source)
@@ -881,14 +735,31 @@ class PDFAnalyzer:
                 risk.entropy_bits_per_byte,
                 tier.name,
             )
-            # High-risk PDF → subprocess isolation (Tier-B)
-            if (
-                SANDBOX_ENABLED
-                and risk.risk_level in (FileRiskLevel.UNTRUSTED, FileRiskLevel.UNKNOWN)
-                and tier != SandboxTier.NONE
-            ):
-                return self._analyze_in_subprocess_sandbox(str(file_path), risk)
-
+        
+        # Check for sandbox-enabled async path first
+        if SANDBOX_ENABLED and isinstance(file_path, (str, Path)):
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If we're already in an async context, schedule the coroutine
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(
+                            asyncio.run,
+                            run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
+                        )
+                        result_data = future.result(timeout=65.0)  # Slightly higher than subprocess timeout
+                        return self._convert_sandbox_result(result_data)
+                else:
+                    # No running loop - use asyncio.run
+                    result_data = asyncio.run(
+                        run_pymupdf_sandboxed(str(file_path), source, timeout_s=60.0)
+                    )
+                    return self._convert_sandbox_result(result_data)
+            except Exception as e:
+                logger.warning(f"[ADVERSARY-001] PyMuPDF sandbox failed: {e}, fallback to in-process")
+        
+        # Fallback to in-process analysis (no sandbox or sandbox failed)
         if not PYMUPDF_AVAILABLE:
             return self._basic_pdf_analysis(file_path)
         try:
@@ -937,6 +808,109 @@ class PDFAnalyzer:
         except Exception as e:
             logger.warning(f'PDF analysis failed: {e}')
             return DocumentAnalysis(metadata=DocumentMetadata(), embedded_objects=[], hyperlinks=[], email_addresses=[], ip_addresses=[], suspicious_indicators=[])
+
+    def _convert_sandbox_result(self, result_data: dict) -> DocumentAnalysis:
+        """Convert sandboxed PyMuPDF result to DocumentAnalysis.
+        
+        ADVERSARY-001: Maps the sandbox subprocess JSON output to the
+        in-process DocumentAnalysis structure.
+        """
+        if not result_data:
+            logger.warning("[ADVERSARY-001] Empty sandbox result, returning empty analysis")
+            return DocumentAnalysis(
+                metadata=DocumentMetadata(),
+                embedded_objects=[],
+                hyperlinks=[],
+                email_addresses=[],
+                ip_addresses=[],
+                suspicious_indicators=[],
+            )
+        
+        # Check for error in sandbox result (set by _error_result in media_sandbox.py)
+        meta_dict = result_data.get('metadata', {})
+        if meta_dict.get('error'):
+            logger.warning(f"[ADVERSARY-001] Sandbox returned error: {meta_dict.get('error')}")
+            # Still return partial result - the error message will be in analysis_stats
+            # This allows the caller to decide whether to retry with fallback
+        
+        # Also check analysis_stats for errors
+        analysis_stats = result_data.get('analysis_stats', {})
+        if analysis_stats.get('error'):
+            logger.warning(f"[ADVERSARY-001] Sandbox analysis error: {analysis_stats.get('error')}")
+        
+        # Parse creation/modification dates if present
+        creation_date = None
+        mod_date = None
+        if meta_dict.get('creation_date'):
+            creation_date = self._parse_pdf_date(meta_dict.get('creation_date'))
+        if meta_dict.get('modification_date'):
+            mod_date = self._parse_pdf_date(meta_dict.get('modification_date'))
+        
+        # Build DocumentMetadata
+        try:
+            # Parse keywords
+            keywords_str = meta_dict.get('keywords', '')
+            keywords_list = [k.strip() for k in keywords_str.split(',') if k.strip()] if keywords_str else []
+            
+            metadata = DocumentMetadata(
+                file_hash_md5=meta_dict.get('file_hash_md5', ''),
+                file_hash_sha1='',  # sha1 not available from sandbox subprocess
+                file_hash_sha256=meta_dict.get('file_hash_sha256', ''),
+                file_size_bytes=meta_dict.get('file_size_bytes', 0),
+                file_type=DocumentType.PDF,
+                file_extension='.pdf',
+                title=meta_dict.get('title', ''),
+                author=meta_dict.get('author', ''),
+                creator=meta_dict.get('creator', ''),
+                creating_application=meta_dict.get('producer', ''),
+                creation_date=creation_date,
+                modification_date=mod_date,
+                subject=meta_dict.get('subject', ''),
+                keywords=keywords_list,
+                # Store sandbox analysis stats in raw_metadata for forensics
+                raw_metadata={
+                    **meta_dict,
+                    **analysis_stats,  # Includes page_count, pymupdf_available, embedded_objects_count
+                    'sandboxed': True,  # Mark as sandboxed result
+                },
+            )
+        except Exception:
+            metadata = DocumentMetadata()
+        
+        # Convert embedded objects
+        embedded_objects = []
+        for obj in result_data.get('embedded_objects', []):
+            if isinstance(obj, dict):
+                embedded_objects.append(EmbeddedObject(
+                    object_type=obj.get('object_type', 'unknown'),
+                    object_name=obj.get('xref', str(obj.get('xref', ''))),
+                    content_type=obj.get('ext'),
+                    size_bytes=obj.get('size_bytes', 0),
+                    extracted_content=b'',  # Not extracted in sandbox mode for security
+                    metadata=obj,
+                ))
+        
+        # ADVERSARY-001: Canary tokens from sandbox are list of strings (matching DocumentAnalysis type)
+        # Sandbox returns list of strings in format "type:value"
+        canary_tokens_raw = result_data.get('canary_tokens', [])
+        if canary_tokens_raw and isinstance(canary_tokens_raw[0], dict):
+            # Convert from dict format to string format
+            canary_tokens = [t.get('type', 'unknown') + ':' + t.get('value', '')[:50] for t in canary_tokens_raw]
+        else:
+            canary_tokens = canary_tokens_raw
+
+        return DocumentAnalysis(
+            metadata=metadata,
+            embedded_objects=embedded_objects,
+            hyperlinks=result_data.get('hyperlinks', []),
+            email_addresses=result_data.get('email_addresses', []),
+            ip_addresses=result_data.get('ip_addresses', []),
+            suspicious_indicators=result_data.get('suspicious_indicators', []),
+            canary_tokens=canary_tokens,
+            ocg_layers=result_data.get('ocg_layers', []),
+            redaction_failures=result_data.get('redaction_failures', []),
+            suppressed_annotations=result_data.get('suppressed_annotations', []),
+        )
 
     def _probe_pdf(self, doc) -> dict:
         """
@@ -1324,179 +1298,6 @@ class PDFAnalyzer:
         text_lower = text.lower()
         return [kw for kw in self.suspicious_keywords if kw in text_lower]
 
-    # ── ADVERSARY-001: Subprocess sandbox for high-risk PDFs ─────────────────
-
-    # [NEXUS]-018-03: MachRemap threshold — zero-copy for files >= 100 MB.
-    # Below this, tempfile path is faster (no fork overhead).
-    _MACH_REMAP_MIN_SIZE: int = int(
-        os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))
-    )
-
-    def _analyze_in_subprocess_sandbox(
-        self, file_path: str, risk: MediaRiskProfile
-    ) -> DocumentAnalysis:
-        """
-        ADVERSARY-001 Tier-B: Run PDF analysis in subprocess isolation.
-
-        [NEXUS]-018-03: For files >= 100 MB, attempts Mach vm_remap zero-copy
-        first. On failure (any reason), falls back to tempfile.NamedTemporaryFile.
-
-        Spawns a child Python process with resource limits (rlimit, memory cap)
-        to contain PyMuPDF CVEs. PyMuPDF CVE cannot pivot to orchestrator.
-        """
-        import time
-        start = time.monotonic()
-
-        # ── [NEXUS]-018-03: MachRemap for large files ────────────────────────
-        # Check file size before any I/O
-        file_size = 0
-        try:
-            file_size = os.path.getsize(file_path)
-        except OSError:
-            pass
-
-        use_mach_remap = (
-            file_size >= self._MACH_REMAP_MIN_SIZE
-            and sys.platform == "darwin"
-        )
-
-        if use_mach_remap:
-            try:
-                from hledac.universal.security.mach_remap import get_mach_remap_bridge
-                bridge = get_mach_remap_bridge()
-                remap_result = bridge.remap_for_sandbox(file_path, file_size)
-                if remap_result is not None:
-                    logger.info(
-                        "[MACH-REMAP] PDF sandbox zero-copy: pid=%d size=%d path=%s",
-                        remap_result.child_pid, file_size, Path(file_path).name,
-                    )
-                    # Fall through to tempfile path — MachRemap handles exec internally
-                    # TODO: wire full remap->exec pipeline when Rust bridge is complete
-            except Exception as exc:
-                logger.debug(
-                    "[MACH-REMAP] PDF remap unavailable: %s — tempfile path",
-                    exc,
-                )
-                use_mach_remap = False
-
-        # ── Serialize analysis to a temp script ──────────────────────────────
-        tmp_script = tempfile.NamedTemporaryFile(
-            suffix='_pdf_sandbox.py', mode='w', delete=False, dir=tempfile.gettempdir()
-        )
-        try:
-            tmp_script.write(_PDF_ANALYSIS_SCRIPT)
-            tmp_script.write(f'\nresult = analyze_pdf({repr(file_path)})\nimport json, sys\njson.dump(result, sys.stdout)\n')
-            tmp_script.close()
-
-            config = IsolationConfig(
-                max_memory_mb=512,
-                max_cpu_seconds=30.0,
-                max_file_size_mb=100,
-                no_network=True,
-                read_only_fs=True,
-            )
-
-            # ADVERSARY-001: Run in subprocess with sandbox
-            returncode, stdout, stderr = _run_subprocess_isolation_sync(
-                [sys.executable, tmp_script.name],
-                config=config,
-                timeout_s=30.0,
-            )
-
-            elapsed_ms = (time.monotonic() - start) * 1000
-            logger.info(
-                "[ADVERSARY-001] PDF sandbox: path=%s rc=%s elapsed=%.1fms entropy=%.2f "
-                "size=%d mach=%s",
-                Path(file_path).name, returncode, elapsed_ms, risk.entropy_bits_per_byte,
-                file_size, use_mach_remap,
-            )
-
-            if returncode == 0 and stdout:
-                try:
-                    import json as _json
-                    data = _json.loads(stdout.decode('utf-8', errors='replace'))
-                    return DocumentAnalysis(
-                        metadata=DocumentMetadata(**data.get('metadata', {})),
-                        embedded_objects=data.get('embedded_objects', []),
-                        hyperlinks=data.get('hyperlinks', []),
-                        email_addresses=data.get('email_addresses', []),
-                        ip_addresses=data.get('ip_addresses', []),
-                        suspicious_indicators=data.get('suspicious_indicators', []),
-                        canary_tokens=data.get('canary_tokens', []),
-                        ocg_layers=data.get('ocg_layers', []),
-                        redaction_failures=data.get('redaction_failures', []),
-                        suppressed_annotations=data.get('suppressed_annotations', []),
-                    )
-                except Exception:
-                    pass
-
-            # Fallback to in-process on failure
-            logger.warning(
-                "[ADVERSARY-001] PDF sandbox fallback (rc=%s, stderr=%r), in-process",
-                returncode, stderr[:200] if stderr else b'',
-            )
-            return self._analyze_inprocess_fallback(file_path)
-        except Exception as e:
-            logger.warning("[ADVERSARY-001] PDF subprocess sandbox error: %s", e)
-            return self._analyze_inprocess_fallback(file_path)
-        finally:
-            try:
-                os.unlink(tmp_script.name)
-            except OSError:
-                pass
-
-    def _analyze_inprocess_fallback(self, file_path: str) -> DocumentAnalysis:
-        """In-process PyMuPDF fallback after sandbox failure."""
-        if not PYMUPDF_AVAILABLE:
-            return self._basic_pdf_analysis(file_path)
-        try:
-            doc = fitz.open(file_path)
-            metadata = self._extract_pdf_metadata(doc, file_path)
-            probe_result = self._probe_pdf(doc)
-            SIGNAL_THRESHOLD = 0.5
-            full_text = ''
-            if probe_result['signal_score'] >= SIGNAL_THRESHOLD:
-                deep_texts = self._deep_parse_pages(doc, probe_result['candidate_pages'])
-                full_text = ' '.join(deep_texts)
-            else:
-                for page_num in probe_result['candidate_pages']:
-                    if page_num < len(doc):
-                        page = doc[page_num]
-                        full_text += page.get_text()
-            embedded_objects = self._extract_pdf_objects(doc)
-            hyperlinks = self.URL_PATTERN.findall(full_text)
-            emails = self.EMAIL_PATTERN.findall(full_text)
-            ip_addresses = self.IP_PATTERN.findall(full_text)
-            suspicious = self._detect_suspicious_content(full_text)
-            from forensics.canary_detector import scan_for_canary_tokens
-            canary_detection = scan_for_canary_tokens(full_text)
-            canary_tokens = canary_detection.tokens if canary_detection.detected else []
-            ocg_layers = self._extract_ocg_layers(doc)
-            redaction_failures = self._detect_redaction_failures(doc)
-            suppressed_annotations = self._extract_suppressed_annotations(doc)
-            doc.close()
-            return DocumentAnalysis(
-                metadata=metadata,
-                embedded_objects=embedded_objects,
-                hyperlinks=hyperlinks,
-                email_addresses=emails,
-                ip_addresses=ip_addresses,
-                suspicious_indicators=suspicious,
-                canary_tokens=canary_tokens,
-                ocg_layers=ocg_layers,
-                redaction_failures=redaction_failures,
-                suppressed_annotations=suppressed_annotations,
-            )
-        except Exception as e:
-            logger.warning("[ADVERSARY-001] PDF inprocess fallback failed: %s", e)
-            return DocumentAnalysis(
-                metadata=DocumentMetadata(), embedded_objects=[],
-                hyperlinks=[], email_addresses=[], ip_addresses=[],
-                suspicious_indicators=[],
-            )
-
-    # ── Basic fallback ──────────────────────────────────────────────────────
-
     def _basic_pdf_analysis(self, file_path) -> DocumentAnalysis:
         """Fallback basic analysis without PyMuPDF."""
         if isinstance(file_path, str):
@@ -1513,6 +1314,7 @@ class PDFAnalyzer:
         text = content.decode('utf-8', errors='ignore')
         metadata = DocumentMetadata(file_hash_md5=md5_hash, file_hash_sha1=sha1_hash, file_hash_sha256=sha256_hash, file_size_bytes=len(content), file_type=DocumentType.PDF, file_extension='.pdf')
         return DocumentAnalysis(metadata=metadata, hyperlinks=self.URL_PATTERN.findall(text), email_addresses=self.EMAIL_PATTERN.findall(text))
+
 
 class OfficeDocumentAnalyzer:
     """

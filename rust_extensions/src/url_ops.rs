@@ -278,6 +278,7 @@ pub struct UrlClassifyCache {
     evictions: usize,
 }
 
+#[allow(dead_code)]
 impl UrlClassifyCache {
     #[inline]
     fn kind_to_str(kind: u8) -> &'static str {

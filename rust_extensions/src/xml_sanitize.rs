@@ -16,8 +16,10 @@ use crate::gil::release_gil;
 const MAX_INPUT_LEN: usize = 1_048_576;
 
 #[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
 const IS_AARCH64: bool = true;
 #[cfg(not(target_arch = "aarch64"))]
+#[allow(dead_code)]
 const IS_AARCH64: bool = false;
 
 /// Fast path check — whether input needs any processing.

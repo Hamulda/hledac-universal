@@ -40,7 +40,11 @@ import typing
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+import msgspec
+
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +96,7 @@ def _check_wasmtime() -> bool:
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
-SANDBOX_ENABLED: bool = (
-    os.environ.get("HLEDAC_ENABLE_DOC_SANDBOX", "1") == "1"
-)
+SANDBOX_ENABLED: bool = FeatureFlags.get(FeatureFlag.DOC_SANDBOX, default=True)
 
 SANDBOX_ALLOW_FALLBACK: bool = (
     os.environ.get("HLEDAC_SANDBOX_ALLOW_FALLBACK", "1") == "1"
@@ -511,24 +513,33 @@ _WHISPER_SUBPROCESS_SCRIPT = """
 import sys
 import json
 import os
-import tempfile
 import asyncio
 import argparse
+from pathlib import Path
+
+# Ensure hledac module is importable from project root
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent if '__file__' in dir() else Path.cwd()
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 async def main():
     parser = argparse.ArgumentParser(description='Sandboxed whisper transcription')
     parser.add_argument('audio_path', type=str)
     parser.add_argument('--language', type=str, default=None)
     parser.add_argument('--model-size', type=str, default='tiny')
-    parser.add_argument('--output-json', type=str, default=None)
-    args = parser.parse_args()
+    parser.add_argument('--working-dir', type=str, default=None)
+    args, unknown = parser.parse_known_args()
+
+    # Change working directory if specified
+    if args.working_dir and Path(args.working_dir).is_dir():
+        os.chdir(args.working_dir)
 
     # Strip sensitive env vars
     for key in list(os.environ):
         if any(k in key for k in ('API', 'KEY', 'TOKEN', 'SECRET', 'HLEDAC')):
             del os.environ[key]
 
-    result = {'text': '', 'language': None, 'duration_s': 0.0, 'confidence': 0.0, 'error': None}
+    result = {'text': '', 'language': None, 'duration_s': 0.0, 'confidence': 0.0, 'error': None, 'segments': []}
 
     try:
         from hledac.universal.brain.whisper_engine import WhisperEngine
@@ -545,6 +556,17 @@ async def main():
             result['language'] = raw.language
             result['duration_s'] = raw.duration_s
             result['confidence'] = raw.confidence
+            # Include segments for full fidelity
+            if hasattr(raw, 'segments') and raw.segments:
+                result['segments'] = [
+                    {
+                        'start_s': s.start_s,
+                        'end_s': s.end_s,
+                        'text': s.text,
+                        'confidence': s.confidence,
+                    }
+                    for s in raw.segments
+                ]
         await engine.close()
     except Exception as e:
         result['error'] = str(e)
@@ -572,7 +594,7 @@ async def run_whisper_in_subprocess(
     - Resource limits
 
     Returns:
-        dict with 'text', 'language', 'duration_s', 'confidence', 'error'
+        dict with 'text', 'language', 'duration_s', 'confidence', 'error', 'segments'
 
     M1 8GB overhead: ~15-30ms fork+exec, no additional RAM in orchestrator.
     """
@@ -594,7 +616,13 @@ async def run_whisper_in_subprocess(
     use_sandbox = False
     profile_path = None
     try:
-        cmd = [sys.executable, script_path.name, audio_path, '--model-size', model_size]
+        # Pass current working directory to subprocess for correct relative paths
+        cwd = os.getcwd()
+        cmd = [
+            sys.executable, script_path.name, audio_path,
+            '--model-size', model_size,
+            '--working-dir', cwd,
+        ]
         if language:
             cmd += ['--language', language]
 
@@ -696,6 +724,42 @@ class SandboxResult:
     sandboxed: bool = True  # Was isolation actually applied?
 
 
+class SandboxStats(msgspec.Struct, frozen=True, gc=False, kw_only=True):
+    """
+    Unified statistics for sandbox operations.
+    
+    ADVERSARY-001: Extended with whisper-specific fields.
+    For adapter-specific stats, see whisper_sandbox_adapter.SandboxStats.
+    """
+    total: int = 0
+    seatbelt: int = 0
+    subprocess: int = 0
+    zero_copy: int = 0
+    wasm: int = 0
+    fallback: int = 0
+    errors: int = 0
+    whisper_sandboxed: int = 0
+    whisper_fallback: int = 0
+
+
+@dataclass
+class WhisperTranscriptionResult:
+    """
+    ADVERSARY-001: Unified result from sandboxed whisper transcription.
+    
+    Uses dataclass with kw_only=True for consistent keyword-argument construction
+    matching the msgspec.Struct style used elsewhere in the module.
+    """
+    text: str = ""
+    language: str | None = None
+    duration_s: float = 0.0
+    confidence: float = 0.0
+    error: str | None = None
+    sandboxed: bool = False
+    seatbelt_used: bool = False
+    segments: list[Any] = field(default_factory=list)
+
+
 class MediaSandboxCoordinator:
     """
     Tiered sandbox coordinator for document/media analysis.
@@ -705,10 +769,23 @@ class MediaSandboxCoordinator:
       2. File format
       3. Whether sandbox is enabled (HLEDAC_ENABLE_DOC_SANDBOX)
 
+    ADVERSARY-001: Now unified with whisper transcription via run_whisper_transcription()
+    to avoid duplicate sandbox paths between TranscriptionRouter and this coordinator.
+
     Usage:
         coordinator = MediaSandboxCoordinator()
         result = await coordinator.run_pdf_analysis("/path/to/file.pdf")
+        whisper_result = await coordinator.run_whisper_transcription("/path/to/audio.mp3")
     """
+
+    __slots__ = (
+        '_enabled',
+        '_allow_fallback',
+        '_seatbelt_available',
+        '_wasm_available',
+        '_stats',
+        '_whisper_stats',
+    )
 
     def __init__(
         self,
@@ -728,6 +805,12 @@ class MediaSandboxCoordinator:
             "fallback": 0,
             "errors": 0,
         }
+        # ADVERSARY-001: Separate whisper statistics
+        self._whisper_stats = {
+            "sandboxed": 0,
+            "fallback": 0,
+            "errors": 0,
+        }
 
         logger.info(
             "[SANDBOX] MediaSandboxCoordinator init: enabled=%s, "
@@ -736,9 +819,206 @@ class MediaSandboxCoordinator:
         )
 
     @property
-    def stats(self) -> dict[str, int]:
-        """Return usage statistics."""
-        return {**self._stats}
+    def stats(self) -> SandboxStats:
+        """Return unified usage statistics (including whisper)."""
+        return SandboxStats(
+            total=self._stats["total"],
+            seatbelt=self._stats["seatbelt"],
+            subprocess=self._stats["subprocess"],
+            zero_copy=self._stats["zero_copy"],
+            wasm=self._stats["wasm"],
+            fallback=self._stats["fallback"],
+            errors=self._stats["errors"],
+            whisper_sandboxed=self._whisper_stats["sandboxed"],
+            whisper_fallback=self._whisper_stats["fallback"],
+        )
+
+    @property
+    def is_sandboxed(self) -> bool:
+        """Whether sandboxing is available and enabled."""
+        return self._enabled and self._seatbelt_available
+
+    # ADVERSARY-001: Unified whisper transcription method
+    async def run_whisper_transcription(
+        self,
+        audio_path: str | Path,
+        model_size: Literal["tiny", "base"] = "tiny",
+        language: str | None = None,
+        timeout_s: float = 120.0,
+    ) -> WhisperTranscriptionResult:
+        """
+        ADVERSARY-001 Tier-A/B: Unified whisper transcription with sandbox isolation.
+
+        This is the SINGLE entry point for all whisper transcription that ensures:
+        - Seatbelt kernel-level isolation when available
+        - Statistics collection for monitoring
+        - Risk profiling via profile_file_risk()
+        - Consistent fallback behavior
+
+        Integrates directly with WhisperEngine after sandbox setup.
+
+        Args:
+            audio_path: Path to audio file
+            model_size: whisper model size ("tiny" or "base")
+            language: ISO-639-1 code or None for auto-detect
+            timeout_s: Transcription timeout
+
+        Returns:
+            WhisperTranscriptionResult with transcription or error details
+        """
+        import time
+        start = time.monotonic()
+        audio_path_str = str(audio_path)
+
+        # Profile the audio file for risk assessment
+        risk = profile_file_risk(audio_path_str, source="user")
+        logger.debug(
+            "[SANDBOX] Whisper risk: path=%s risk=%s entropy=%.2f",
+            Path(audio_path).name, risk.risk_level.name, risk.entropy_bits_per_byte,
+        )
+
+        # Step 1: Try sandboxed subprocess execution (Tier-B)
+        sandboxed_result = await run_whisper_in_subprocess(
+            audio_path=audio_path_str,
+            model_size=model_size,
+            language=language,
+            timeout_s=timeout_s,
+        )
+
+        if sandboxed_result and not sandboxed_result.get('error'):
+            elapsed_ms = (time.monotonic() - start) * 1000
+            self._whisper_stats["sandboxed"] += 1
+            self._stats["total"] += 1
+            self._stats["seatbelt"] += 1
+            logger.info(
+                "[ADVERSARY-001] Whisper sandboxed transcription: path=%s "
+                "elapsed=%.1fms text_len=%d",
+                Path(audio_path).name, elapsed_ms,
+                len(sandboxed_result.get('text', '')),
+            )
+            return WhisperTranscriptionResult(
+                text=sandboxed_result.get('text', ''),
+                language=sandboxed_result.get('language'),
+                duration_s=sandboxed_result.get('duration_s', 0.0),
+                confidence=sandboxed_result.get('confidence', 0.0),
+                sandboxed=True,
+                seatbelt_used=self._seatbelt_available,
+                error=None,
+                segments=sandboxed_result.get('segments', []),
+            )
+
+        # Step 2: Fallback to direct engine execution
+        if sandboxed_result and sandboxed_result.get('error'):
+            logger.warning(
+                "[ADVERSARY-001] Whisper subprocess failed: %s — trying direct engine",
+                sandboxed_result.get('error'),
+            )
+
+        direct_result = await self._run_whisper_direct_engine(
+            audio_path=audio_path_str,
+            model_size=model_size,
+            language=language,
+            timeout_s=timeout_s,
+        )
+
+        if direct_result.text:
+            self._whisper_stats["fallback"] += 1
+            return direct_result
+
+        # Step 3: Complete failure
+        self._whisper_stats["errors"] += 1
+        self._stats["errors"] += 1
+        error_msg = sandboxed_result.get('error') if sandboxed_result else 'unknown'
+        logger.error(
+            "[ADVERSARY-001] Whisper transcription failed: %s",
+            error_msg,
+        )
+        return WhisperTranscriptionResult(
+            text="",
+            language=None,
+            duration_s=0.0,
+            confidence=0.0,
+            sandboxed=False,
+            seatbelt_used=False,
+            error=error_msg,
+        )
+
+    async def _run_whisper_direct_engine(
+        self,
+        audio_path: str,
+        model_size: Literal["tiny", "base"],
+        language: str | None,
+        timeout_s: float,
+    ) -> WhisperTranscriptionResult:
+        """
+        ADVERSARY-001 Fallback: Direct WhisperEngine execution without sandbox.
+
+        Only used when subprocess sandboxing fails. Logs security warning.
+        """
+        import time
+        start = time.monotonic()
+
+        logger.warning(
+            "[ADVERSARY-001 SECURITY] Whisper running WITHOUT sandbox isolation. "
+            "Audio: %s",
+            Path(audio_path).name,
+        )
+
+        try:
+            from hledac.universal.brain.whisper_engine import get_whisper_engine
+
+            engine = await get_whisper_engine()
+            raw = await asyncio.wait_for(
+                engine.transcribe(
+                    audio_path,
+                    model_size=model_size,
+                    language=language,
+                ),
+                timeout=timeout_s,
+            )
+
+            if raw is None or not raw.text:
+                return WhisperTranscriptionResult(
+                    text="",
+                    error="engine returned empty result",
+                )
+
+            elapsed_ms = (time.monotonic() - start) * 1000
+            coreml_note = " +CoreML/ANE" if raw.coreml_used else ""
+            logger.info(
+                "[ADVERSARY-001] Whisper direct engine: path=%s "
+                "elapsed=%.1fms coreml=%s",
+                Path(audio_path).name, elapsed_ms, raw.coreml_used,
+            )
+
+            return WhisperTranscriptionResult(
+                text=raw.text,
+                language=raw.language,
+                duration_s=raw.duration_s,
+                confidence=raw.confidence,
+                sandboxed=False,
+                seatbelt_used=False,
+                segments=[
+                    {
+                        "start_s": s.start_s,
+                        "end_s": s.end_s,
+                        "text": s.text,
+                        "confidence": s.confidence,
+                    }
+                    for s in raw.segments
+                ],
+            )
+
+        except asyncio.TimeoutError:
+            return WhisperTranscriptionResult(
+                text="",
+                error=f"timeout after {timeout_s}s",
+            )
+        except Exception as exc:
+            return WhisperTranscriptionResult(
+                text="",
+                error=str(exc),
+            )
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -1297,6 +1577,362 @@ except Exception as e:
             return SandboxTier.SUBPROCESS
         else:  # UNKNOWN
             return SandboxTier.SUBPROCESS
+
+
+# ─── PyMuPDF Subprocess Analysis ───────────────────────────────────────────────
+# ADVERSARY-001: All PyMuPDF calls run in subprocess with Seatbelt containment.
+
+# Resource limits (M1 8GB safe)
+_PYMUPDF_MAX_DOCUMENT_SIZE = 100 * 1024 * 1024
+_PYMUPDF_MAX_EMBEDDED_IMAGE_BYTES = 50 * 1024 * 1024
+_PYMUPDF_MAX_PAGES = 500
+_PYMUPDF_MAX_EMBEDDED_OBJECTS = 500
+_PYMUPDF_MAX_TEXT_LENGTH = 10 * 1024 * 1024
+
+
+def _build_pymupdf_analysis_script(temp_file_path: str) -> str:
+    lines = [
+        "import sys, json, os, re, hashlib",
+        "from pathlib import Path as _Path",
+        "",
+        f"_MAX_DOC = {_PYMUPDF_MAX_DOCUMENT_SIZE}",
+        f"_MAX_IMG = {_PYMUPDF_MAX_EMBEDDED_IMAGE_BYTES}",
+        f"_MAX_PAGES = {_PYMUPDF_MAX_PAGES}",
+        f"_MAX_OBJS = {_PYMUPDF_MAX_EMBEDDED_OBJECTS}",
+        f"_MAX_TEXT = {_PYMUPDF_MAX_TEXT_LENGTH}",
+        "",
+        "EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}')",
+        'IP_RE = re.compile(r"\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b")',
+        'URL_RE = re.compile(r"https?://[^\\s<>\\"{}|\\\\^`\\[\\]]+")',
+        "SUSPICIOUS = ['confidential', 'classified', 'secret']",
+        "",
+        "def _check_size(path):",
+        "    if os.stat(path).st_size > _MAX_DOC:",
+        "        raise ValueError('Too large')",
+        "",
+        "def _safe_image(doc, xref):",
+        "    try:",
+        "        img = doc.extract_image(xref)",
+        "        if img and len(img.get('image', b'')) <= _MAX_IMG:",
+        "            return img",
+        "    except:",
+        "        pass",
+        "    return None",
+        "",
+        f"file_path = {repr(temp_file_path)}",
+        "_check_size(file_path)",
+        "",
+        "result = {",
+        "    'metadata': {},",
+        "    'embedded_objects': [],",
+        "    'hyperlinks': [],",
+        "    'email_addresses': [],",
+        "    'ip_addresses': [],",
+        "    'suspicious_indicators': [],",
+        "    'canary_tokens': [],",
+        "    'ocg_layers': [],",
+        "    'redaction_failures': [],",
+        "    'suppressed_annotations': [],",
+        "    'analysis_stats': {},",
+        "}",
+        "",
+        "with open(file_path, 'rb') as f:",
+        "    data = f.read()",
+        "result['metadata']['file_hash_sha256'] = hashlib.sha256(data).hexdigest()",
+        "result['metadata']['file_hash_md5'] = hashlib.md5(data).hexdigest()",
+        "result['metadata']['file_size_bytes'] = len(data)",
+        "",
+        "try:",
+        "    import fitz",
+        "    HAS_FITZ = True",
+        "except:",
+        "    HAS_FITZ = False",
+        "",
+        "if not HAS_FITZ:",
+        "    text = data.decode('utf-8', errors='ignore')",
+        "    result['hyperlinks'] = URL_RE.findall(text)[:50]",
+        "    result['email_addresses'] = EMAIL_RE.findall(text)[:20]",
+        "    result['ip_addresses'] = IP_RE.findall(text)[:20]",
+        "    result['analysis_stats']['pymupdf_available'] = False",
+        "    json.dump(result, sys.stdout)",
+        "    sys.exit(0)",
+        "",
+        "doc = fitz.open(file_path)",
+        "result['analysis_stats']['pymupdf_available'] = True",
+        "result['analysis_stats']['page_count'] = len(doc)",
+        "",
+        "meta = doc.metadata or {}",
+        "result['metadata']['title'] = meta.get('title', '') or ''",
+        "result['metadata']['author'] = meta.get('author', '') or ''",
+        "result['metadata']['creator'] = meta.get('creator', '') or ''",
+        "result['metadata']['producer'] = meta.get('producer', '') or ''",
+        "result['metadata']['creation_date'] = meta.get('creationDate', '') or ''",
+        "result['metadata']['modification_date'] = meta.get('modDate', '') or ''",
+        "result['metadata']['subject'] = meta.get('subject', '') or ''",
+        "result['metadata']['keywords'] = meta.get('keywords', '') or ''",
+        "",
+        "text_parts = []",
+        "text_len = 0",
+        "for i in range(min(len(doc), _MAX_PAGES)):",
+        "    if text_len >= _MAX_TEXT:",
+        "        break",
+        "    try:",
+        "        page_text = doc[i].get_text() or ''",
+        "        if len(page_text) > 50000:",
+        "            page_text = page_text[:50000]",
+        "        text_parts.append(page_text)",
+        "        text_len += len(page_text)",
+        "    except:",
+        "        pass",
+        "",
+        "full_text = ' '.join(text_parts)",
+        "result['hyperlinks'] = URL_RE.findall(full_text)[:100]",
+        "result['email_addresses'] = EMAIL_RE.findall(full_text)[:50]",
+        "result['ip_addresses'] = IP_RE.findall(full_text)[:50]",
+        "",
+        "text_lower = full_text.lower()",
+        "result['suspicious_indicators'] = [kw for kw in SUSPICIOUS if kw in text_lower]",
+        "",
+        "obj_count = 0",
+        "for xref in range(1, min(doc.xref_length(), _MAX_OBJS + 1)):",
+        "    if obj_count >= _MAX_OBJS:",
+        "        break",
+        "    try:",
+        "        subtype = doc.xref_get_key(xref, 'Subtype')",
+        "        if subtype[1] == 'Image':",
+        "            img = _safe_image(doc, xref)",
+        "            if img:",
+        "                obj_count += 1",
+        "                result['embedded_objects'].append({",
+        "                    'object_type': 'image',",
+        "                    'xref': xref,",
+        "                    'width': img.get('width'),",
+        "                    'height': img.get('height'),",
+        "                    'ext': img.get('ext'),",
+        "                    'size_bytes': len(img.get('image', b'')),",
+        "                })",
+        "    except:",
+        "        pass",
+        "",
+        "result['analysis_stats']['embedded_objects_count'] = obj_count",
+        "",
+        "try:",
+        "    ocgs = doc.get_ocgs()",
+        "    if ocgs:",
+        "        for xref, info in list(ocgs.items())[:10]:",
+        "            result['ocg_layers'].append({",
+        "                'xref': xref,",
+        "                'name': info.get('name', 'Unnamed'),",
+        "                'on': info.get('on', True),",
+        "            })",
+        "except:",
+        "    pass",
+        "",
+        "try:",
+        "    for i in range(min(len(doc), 50)):",
+        "        if len(result['redaction_failures']) >= 100:",
+        "            break",
+        "        page = doc[i]",
+        "        for annot in (page.annots() or []):",
+        "            try:",
+        "                if annot.type and annot.type[0] == 14:",
+        "                    rect = annot.rect",
+        "                    if rect:",
+        "                        text_dict = page.get_text('dict', clip=rect)",
+        "                        hidden = []",
+        "                        for block in text_dict.get('blocks', []):",
+        "                            if block.get('type') == 0:",
+        "                                for line in block.get('lines', []):",
+        "                                    for span in line.get('spans', []):",
+        "                                        t = span.get('text', '').strip()",
+        "                                        if t:",
+        "                                            hidden.append(t)",
+        "                        if hidden:",
+        "                            result['redaction_failures'].append('Page ' + str(i+1) + ': ' + ' '.join(hidden)[:200])",
+        "            except:",
+        "                pass",
+        "except:",
+        "    pass",
+        "",
+        "try:",
+        "    for i in range(min(len(doc), 50)):",
+        "        if len(result['suppressed_annotations']) >= 200:",
+        "            break",
+        "        page = doc[i]",
+        "        for annot in (page.annots() or []):",
+        "            try:",
+        "                flags = annot.flags",
+        "                if flags in (2, 6):",
+        "                    content_val = (annot.info.get('content', '') if annot.info else '')[:500]",
+        "                    result['suppressed_annotations'].append({",
+        "                        'page': i + 1,",
+        "                        'type': annot.type[1] if annot.type else 'Unknown',",
+        "                        'content': content_val,",
+        "                        'flags': flags,",
+        "                    })",
+        "            except:",
+        "                pass",
+        "except:",
+        "    pass",
+        "",
+        "CANARY_PATTERNS = [",
+        "    (r'[a-zA-Z0-9]{20,}@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}', 'email_canary'),",
+        "    (r'https?://[a-z0-9]{20,64}\\.(?:dns\\.)?(?:canarytokens?|canary\\.token|callback|track)\\.[a-z.]+', 'dns_canary'),",
+        "    (r'https?://[a-zA-Z0-9.-]+/[a-zA-Z0-9_-]*(?:token|track|beacon|canary|pixel)[a-zA-Z0-9_-]*[/?][a-zA-Z0-9]{8,}', 'url_canary'),",
+        "    (r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', 'uuid_canary'),",
+        "    (r'[A-Za-z0-9]{32,48}', 'token_canary'),",
+        "    (r'<img[^>]+src=[^>]*?(?:token|tracker|beacon|track|canary|pixel)', 'html_img_canary'),",
+        "    (r'<(?:script|link)[^>]+(?:src|href)=[^>]*?(?:token|tracker|canary)', 'html_tag_canary'),",
+        "    (r'\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}[/:][0-9]{4,5}\\b', 'ip_port_canary'),",
+        "]",
+        "search_text = full_text",
+        "try:",
+        "    search_text = full_text + data.decode('latin-1', errors='ignore')",
+        "except:",
+        "    pass",
+        "for pattern, canary_type in CANARY_PATTERNS:",
+        "    matches = re.findall(pattern, search_text, re.IGNORECASE)",
+        "    for match in matches[:10]:",
+        "        result['canary_tokens'].append(canary_type + ':' + match[:100])",
+        "",
+        "doc.close()",
+        "json.dump(result, sys.stdout)",
+    ]
+    return '\n'.join(lines)
+
+
+SANDBOX_MACH_REMAP_MIN_SIZE = int(
+    os.environ.get("HLEDAC_MACH_REMAP_MIN_SIZE", str(100 * 1024 * 1024))
+)
+
+
+async def run_pymupdf_sandboxed(
+    file_path: str | Path,
+    source: str = "unknown",
+    timeout_s: float = 60.0,
+) -> dict[str, Any]:
+    """ADVERSARY-001: PyMuPDF in sandboxed subprocess."""
+    file_path = Path(file_path)
+    
+    logger.info(
+        "[PYMUPDF-SANDBOX] Starting: path=%s source=%s timeout=%.1fs",
+        file_path.name, source, timeout_s,
+    )
+
+    file_size = None
+    try:
+        file_size = file_path.stat().st_size
+    except OSError:
+        pass
+
+    safe_env = {
+        k: v for k, v in os.environ.items()
+        if not any(
+            prefix in k
+            for prefix in ("API_", "KEY_", "TOKEN", "SECRET", "HLEDAC_", "SHODAN", "CENSYS", "GREYNOISE")
+        )
+    }
+
+    home = os.fspath(Path.home())
+    pdf_profile = _build_pdf_sandbox_profile(home, str(file_path))
+    profile_name = f"pymupdf_{file_path.stem}_{os.getpid()}"
+    profile_path = _write_sandbox_profile(profile_name, pdf_profile)
+
+    try:
+        if file_size and file_size >= SANDBOX_MACH_REMAP_MIN_SIZE and sys.platform == "darwin":
+            bridge = _get_mach_remap_bridge()
+            if bridge:
+                try:
+                    remap_result = await asyncio.to_thread(
+                        bridge.remap_for_sandbox, str(file_path), file_size,
+                    )
+                    if remap_result:
+                        logger.info("[PYMUPDF-SANDBOX] MachRemap: pid=%d size=%d",
+                            remap_result.child_pid, file_size)
+                        script = _build_pymupdf_analysis_script(str(file_path))
+                        stdout_data, returncode = await _collect_pymupdf_mach_child(
+                            remap_result.child_pid, timeout_s, script,
+                        )
+                        if returncode == 0 and stdout_data:
+                            try:
+                                return json.loads(stdout_data.decode("utf-8", errors="replace"))
+                            except json.JSONDecodeError:
+                                pass
+                except Exception as exc:
+                    logger.debug("[PYMUPDF-SANDBOX] MachRemap failed: %s", exc)
+
+        tmp = tempfile.NamedTemporaryFile(suffix=file_path.suffix, mode="wb", delete=False)
+        tmp.write(file_path.read_bytes())
+        tmp.close()
+        temp_path = Path(tmp.name)
+
+        try:
+            script = _build_pymupdf_analysis_script(str(temp_path))
+            cmd = ["sandbox-exec", "-p", str(profile_path), sys.executable, "-c", script]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=safe_env,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+
+            if proc.returncode == 0 and stdout:
+                try:
+                    return json.loads(stdout.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    logger.warning("[PYMUPDF-SANDBOX] JSON parse error")
+            logger.warning("[PYMUPDF-SANDBOX] Failed: rc=%s", proc.returncode)
+            return _error_result(stderr.decode("utf-8", errors="replace")[:500])
+        finally:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    except asyncio.TimeoutError:
+        logger.warning("[PYMUPDF-SANDBOX] Timeout after %.1fs", timeout_s)
+        return _error_result("timeout")
+    except Exception as exc:
+        logger.warning("[PYMUPDF-SANDBOX] Error: %s", exc)
+        return _error_result(str(exc))
+    finally:
+        try:
+            profile_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _error_result(error_msg: str) -> dict[str, Any]:
+    return {
+        "metadata": {"error": error_msg},
+        "embedded_objects": [],
+        "hyperlinks": [],
+        "email_addresses": [],
+        "ip_addresses": [],
+        "suspicious_indicators": [],
+        "canary_tokens": [],
+        "ocg_layers": [],
+        "redaction_failures": [],
+        "suppressed_annotations": [],
+        "analysis_stats": {"error": error_msg},
+    }
+
+
+async def _collect_pymupdf_mach_child(child_pid: int, timeout_s: float, script: str) -> tuple[bytes, int]:
+    import time
+    script_path = f"/tmp/hledac_mach_script_{child_pid}"
+    sfd = os.open(script_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    os.write(sfd, script.encode("utf-8"))
+    os.close(sfd)
+    result_path = f"/tmp/hledac_mach_result_{child_pid}"
+    start = time.monotonic()
+    while time.monotonic() - start < timeout_s:
+        try:
+            result_data = os.read(os.open(result_path, os.O_RDONLY), 1024 * 1024)
+            os.unlink(result_path)
+            return result_data, 0
+        except (FileNotFoundError, OSError):
+            await asyncio.sleep(0.01)
+    return b'{"error": "timeout"}', -1
 
 
 # ─── Module-level singleton ───────────────────────────────────────────────────

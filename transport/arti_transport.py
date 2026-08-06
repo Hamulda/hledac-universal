@@ -26,7 +26,8 @@ ARCHITECTURAL ALIGNMENT WITH I2P SAM v3:
     1. Lighter subprocess (Rust, ~10-20MB vs ~50MB for C Tor)
     2. Faster startup (no consensus download delay — uses cached state)
     3. Direct SOCKS5 handshake (no httpx wrapper overhead)
-    4. Future: in-process embedding via arti_bridge.rs PyO3 bindings
+    4. Note: In-process embedding via PyO3 was considered but not implemented
+       — subprocess path provides sufficient performance with simpler maintenance
 
 TRANSPORT MODES (priority order):
   - arti mode: Arti subprocess + direct SOCKS5 via asyncio (primary)

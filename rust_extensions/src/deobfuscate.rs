@@ -108,7 +108,8 @@ fn byte_entropy(data: &[u8]) -> f64 {
 struct CandidateRegion {
     start: usize,
     end: usize,
-    entropy: f64,
+    #[allow(dead_code)]
+    entropy: f64, // Stored for potential future use
 }
 
 impl CandidateRegion {

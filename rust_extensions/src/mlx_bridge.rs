@@ -1,4 +1,5 @@
 //! MLX Bridge -- async token streaming + adaptive buffering pro MLX LLM inference.
+#![allow(dead_code)]
 //!
 //! ## Architecture
 //!

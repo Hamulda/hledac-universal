@@ -27,12 +27,14 @@ static MD5_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::n
 static SHA1_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(SHA1_PAT).unwrap());
 static SHA256_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(SHA256_PAT).unwrap());
 static EMAIL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(EMAIL_PAT).unwrap());
+#[allow(dead_code)]
+static HASH_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(HASH_PAT).unwrap());
 static CVE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(CVE_PAT).unwrap());
 static URL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(URL_PAT).unwrap());
-static HASH_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(HASH_PAT).unwrap());
 static ENCODING_BASE32_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_BASE32_PAT).unwrap());
 static ENCODING_BASE64_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_BASE64_PAT).unwrap());
 static ENCODING_HEX_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_HEX_PAT).unwrap());
+#[allow(dead_code)]
 static ENCODING_HIGH_ENTROPY_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| Regex::new(ENCODING_HIGH_ENTROPY_PAT).unwrap());
 
 /// Register all IOC extraction functions with Python module.

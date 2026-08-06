@@ -1,7 +1,8 @@
-"""Match stage — PatternMatcher dispatch for public OSINT pipeline.
+"""Match stage — PatternMatcher + SIMD IOC scanning for public OSINT pipeline.
 
 Responsibilities:
 - Dispatch pattern matching to PatternMatcher (offloaded to thread pool)
+- Parallel SIMD IOC scanning via Rust Aho-Corasick NEON (HEIST-01)
 
 - Batch process multiple URLs concurrently
 - Track matched pattern counts and labels
@@ -15,6 +16,11 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.core.rust_backend.ioc_stream import (
+    get_ioc_scanner,
+    get_scanner_stats,
+    scan_bytes_with_ioc_scanner,
+)
 from hledac.universal.pipeline._soa_types import MatchedBatch, ScoredBatch
 from hledac.universal.utils.async_helpers import parallel_ok
 
@@ -91,6 +97,11 @@ class MatchStage:
                 usable_indices_list.append(idx)
 
         # Match patterns concurrently
+        # HEIST-01: Parallel SIMD IOC scan via Rust Aho-Corasick NEON
+        simd_results = await _simd_scan_batch(
+            texts=usable_texts,
+            concurrency=self._match_concurrency,
+        )
         match_results = await _match_batch(
             texts=usable_texts,
             concurrency=self._match_concurrency,
@@ -101,21 +112,48 @@ class MatchStage:
         matched_pattern_labels: list[list[str]] = [[] for _ in input_batch.urls]
         errors: list[str | None] = [None] * len(input_batch.urls)
 
+        # HEIST-01: Merge SIMD results with PatternMatcher results
+        simd_total = 0
         for i, idx in enumerate(usable_indices_list):
             if idx < len(matched_pattern_counts):
                 result = match_results[i]
-                matched_pattern_counts[idx] = result["count"]
-                matched_pattern_labels[idx] = result["labels"]
+                simd_result = simd_results[i] if i < len(simd_results) else {"count": 0, "labels": []}
+
+                # Combine regex + SIMD hits
+                combined_count = result["count"] + simd_result["count"]
+                
+                # Deduplicate labels across both scanners (case-insensitive)
+                seen_labels: set[str] = set()
+                combined_labels: list[str] = []
+                for label in result["labels"] + simd_result["labels"]:
+                    label_lower = label.lower()
+                    if label_lower not in seen_labels:
+                        seen_labels.add(label_lower)
+                        combined_labels.append(label)
+
+                matched_pattern_counts[idx] = combined_count
+                matched_pattern_labels[idx] = combined_labels
                 errors[idx] = result.get("error")
 
-                if result["count"] > 0:
+                simd_total += simd_result["count"]
+
+                if combined_count > 0:
                     telemetry["pages_matched"] += 1
-                    telemetry["total_matches"] += result["count"]
+                    telemetry["total_matches"] += combined_count
                 else:
                     telemetry["pages_no_match"] += 1
 
                 if result.get("error"):
                     telemetry["match_errors"] += 1
+
+        # HEIST-01: Telemetry for SIMD scan stats
+        telemetry["simd_total_hits"] = simd_total
+        
+        # Scanner stats: availability, pattern count, automaton size
+        scanner_stats = get_scanner_stats()
+        telemetry["simd_scanner_available"] = scanner_stats["available"]
+        telemetry["simd_scanner_pattern_count"] = scanner_stats["pattern_count"]
+        telemetry["simd_scanner_automaton_bytes"] = scanner_stats["automaton_bytes"]
 
         batch = MatchedBatch(
             urls=input_batch.urls,
@@ -162,11 +200,7 @@ async def _match_batch(
     # F3XX: parallel_ok() replaces asyncio.gather — returns list[T] in original order.
     results = await parallel_ok(*tasks, label="match_stage")
 
-    output: list[dict[str, Any]] = []
-    for result in results:
-        output.append(result)
-
-    return output
+    return list(results)
 
 
 def _sync_match_text(text: str, idx: int) -> dict[str, Any]:
@@ -194,3 +228,59 @@ def _sync_match_text(text: str, idx: int) -> dict[str, Any]:
     except Exception as exc:
         logger.warning(f"Pattern match failed for text[{idx}]: {exc}")
         return {"count": 0, "labels": [], "error": str(exc)}
+
+
+# HEIST-01: SIMD IOC Scanning via Rust Aho-Corasick NEON
+# ---------------------------------------------------------------------------
+
+
+async def _simd_scan_batch(
+    texts: list[str],
+    concurrency: int = _DEFAULT_MATCH_CONCURRENCY,
+) -> list[dict[str, Any]]:
+    """Batch SIMD IOC scan using Rust Aho-Corasick streaming scanner.
+
+    Uses asyncio.to_thread() for non-blocking execution on M1.
+    Falls back to empty results if Rust extension unavailable.
+
+    Args:
+        texts: List of text strings to scan
+        concurrency: Max concurrent scan operations
+
+    Returns:
+        List of scan results (one per text) with keys: count, labels
+    """
+    if not texts:
+        return []
+
+    # Pre-encode texts once to avoid repeated encoding in async tasks
+    # This is an optimization: encoding is done once upfront
+    encoded_texts: list[bytes] = [t.encode("utf-8") for t in texts]
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def simd_scan_one(buffer: bytes, idx: int) -> dict[str, Any]:
+        async with semaphore:
+            try:
+                hits = await scan_bytes_with_ioc_scanner(buffer)
+
+                # Extract labels from hits (deduplicated, order preserved, case-insensitive)
+                seen: set[str] = set()
+                labels: list[str] = []
+                for hit in hits:
+                    label = hit.get("label", "unknown")
+                    label_lower = label.lower()
+                    if label_lower not in seen:
+                        seen.add(label_lower)
+                        labels.append(label)  # Keep original case from first hit
+
+                return {"count": len(hits), "labels": labels, "error": None}
+
+            except Exception as exc:
+                logger.debug(f"SIMD scan failed for text[{idx}]: {exc}")
+                return {"count": 0, "labels": [], "error": str(exc)}
+
+    tasks = [simd_scan_one(buffer, i) for i, buffer in enumerate(encoded_texts)]
+    results = await parallel_ok(*tasks, label="simd_scan")
+
+    return list(results)

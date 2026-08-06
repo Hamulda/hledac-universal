@@ -206,14 +206,16 @@ if TYPE_CHECKING:
     from .swarm_dag import SwarmDAG, PythonFallbackSwarmDAG, get_domain as _swarm_dag_get_domain
     from .link_predictor import _LinkPredictorDomain
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Force flags (mirrors original HLEDAC_FORCE_PYTHON / HLEDAC_FORCE_RUST)
 # =============================================================================
 
-_FORCE_PYTHON: bool = os.environ.get("HLEDAC_FORCE_PYTHON", "0") == "1"
-_FORCE_RUST: bool = os.environ.get("HLEDAC_FORCE_RUST", "0") == "1"
+_FORCE_PYTHON: bool = FeatureFlags.get(FeatureFlag.FORCE_PYTHON, default=False)
+_FORCE_RUST: bool = FeatureFlags.get(FeatureFlag.FORCE_RUST, default=False)
 
 # =============================================================================
 # AccelBackend — public facade

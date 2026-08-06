@@ -289,7 +289,10 @@ except ImportError:
     HypothesisSignature = None
     _DSPY_AVAILABLE = False
 HLEDAC_ENABLE_DSPY = os.environ.get('HLEDAC_ENABLE_DSPY', '0') == '1' and _DSPY_AVAILABLE
-_MLX_PREWARM_ENABLED = os.environ.get('HLEDAC_MLX_PREWARM', '0') == '1'
+
+# SWARM-010: Use FeatureFlags for MLX prewarm
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+_MLX_PREWARM_ENABLED = FeatureFlags.get(FeatureFlag.MLX_PREWARM)
 _MLX_PREWARM_LAST_UNLOAD_TIME: float | None = None
 _MLX_PREWARM_SKIP_THRESHOLD_S = 60.0
 _mlx_prewarm_active: bool = False
@@ -1579,7 +1582,9 @@ class DeepHermes3Engine:
                     logger.warning(f'Outlines init failed: {e}, continuing without it')
                     self._outlines_model = None
             _skip_draft = False
-            if os.environ.get('HLEDAC_DISABLE_SPEC_DECODE', '1') != '0':
+            # SWARM-010: Use FeatureFlags for spec decode disable
+            from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+            if FeatureFlags.get(FeatureFlag.DISABLE_SPEC_DECODE):
                 logger.info('[HERMES] Speculative decoding disabled by default on M1 8GB (HLEDAC_DISABLE_SPEC_DECODE=1)')
                 _skip_draft = True
             if is_emergency_unload_requested is not None and is_emergency_unload_requested():
@@ -1634,10 +1639,12 @@ class DeepHermes3Engine:
             pass
 
         # Check if speculative decoding is explicitly enabled
-        enable_spec = os.environ.get('HLEDAC_ENABLE_SPEC_DECODE', '0')
+        # SWARM-010: Use FeatureFlags for spec decode enable
+        from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+        enable_spec = FeatureFlags.get(FeatureFlag.ENABLE_SPEC_DECODE)
 
         # Neither spec decode nor blitz triage — skip model load entirely
-        if enable_spec != '1' and not _blitz_triage:
+        if not enable_spec and not _blitz_triage:
             self._speculative_enabled = False
             self._draft_model_name = None
             self._draft_model_obj = None
@@ -4138,8 +4145,8 @@ class DeepHermes3Engine:
         Runs in thread pool. Fail-safe: returns all findings on any error.
         Gated by HLEDAC_TRIAGE_DISABLED=1 env var.
         """
-        import os
-        if os.environ.get("HLEDAC_TRIAGE_DISABLED", "0") == "1":
+        from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+        if FeatureFlags.get(FeatureFlag.TRIAGE_DISABLED):
             return findings
         if len(findings) <= 3:
             return findings  # too few to bother — all relevant by default

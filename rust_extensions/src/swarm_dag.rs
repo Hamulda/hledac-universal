@@ -1,4 +1,5 @@
 //! Work-Stealing Task DAG — SILICON-07: Dynamic lane rebalancing for M1 8GB
+#![allow(dead_code)]
 //!
 //! Solves [META]-003: Static lane allocation cannot respond to mid-sprint data bonanzas.
 //!
