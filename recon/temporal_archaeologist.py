@@ -2,6 +2,16 @@
 Temporal Archaeologist
 ======================
 
+
+
+
+
+
+
+
+
+
+
 Advanced temporal content recovery and timeline reconstruction system.
 
 Features:
@@ -79,7 +89,7 @@ class EntityType(Enum):
     CONTENT_HASH = 'content_hash'
     REPOSITORY = 'repository'
 
-class ArchivedVersion(msgspec.Struct):
+class ArchivedVersion(msgspec.Struct, gc=False):
     """Represents a single archived version of content."""
     url: str
     timestamp: datetime
@@ -101,7 +111,7 @@ class ArchivedVersion(msgspec.Struct):
     def to_dict(self) -> dict[str, Any]:
         return {'url': self.url, 'timestamp': self.timestamp.isoformat(), 'content_hash': self.content_hash, 'source': self.source, 'is_deleted': self.is_deleted, 'metadata': self.metadata, 'age_days': self.age_days}
 
-class EntitySnapshot(msgspec.Struct):
+class EntitySnapshot(msgspec.Struct, gc=False):
     """Snapshot of an entity at a specific point in time."""
     timestamp: datetime
     identifier: str
@@ -109,7 +119,7 @@ class EntitySnapshot(msgspec.Struct):
     content_preview: str
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class IdentityChange(msgspec.Struct):
+class IdentityChange(msgspec.Struct, gc=False):
     """Represents an identity change event."""
     from_identifier: str
     to_identifier: str
@@ -118,7 +128,7 @@ class IdentityChange(msgspec.Struct):
     confidence: float
     evidence: list[str] = field(default_factory=list)
 
-class TemporalGap(msgspec.Struct, frozen=True):
+class TemporalGap(msgspec.Struct, frozen=True, gc=False):
     """Represents a gap in temporal data."""
     start_time: datetime
     end_time: datetime
@@ -126,7 +136,7 @@ class TemporalGap(msgspec.Struct, frozen=True):
     gap_type: str
     severity: float
 
-class EntityTimeline(msgspec.Struct, frozen=True):
+class EntityTimeline(msgspec.Struct, frozen=True, gc=False):
     """Complete timeline for an entity."""
     entity_id: str
     entity_type: str
@@ -158,7 +168,7 @@ class EntityTimeline(msgspec.Struct, frozen=True):
             return (self.last_seen - self.first_seen).days
         return 0
 
-class TemporalAnomaly(msgspec.Struct, frozen=True):
+class TemporalAnomaly(msgspec.Struct, frozen=True, gc=False):
     """Detected temporal anomaly."""
     type: str
     description: str
@@ -170,7 +180,7 @@ class TemporalAnomaly(msgspec.Struct, frozen=True):
     def to_dict(self) -> dict[str, Any]:
         return {'type': self.type, 'description': self.description, 'severity': self.severity, 'timestamp': self.timestamp.isoformat() if self.timestamp else None, 'evidence': self.evidence, 'affected_snapshots': self.affected_snapshots}
 
-class TemporalCorrelation(msgspec.Struct, frozen=True):
+class TemporalCorrelation(msgspec.Struct, frozen=True, gc=False):
     """Correlation between two entities across time."""
     entity_a: str
     entity_b: str
@@ -179,7 +189,7 @@ class TemporalCorrelation(msgspec.Struct, frozen=True):
     shared_attributes: dict[str, Any] = field(default_factory=dict)
     temporal_proximity: list[dict[str, Any]] = field(default_factory=list)
 
-class ResolvedEntity(msgspec.Struct, frozen=True):
+class ResolvedEntity(msgspec.Struct, frozen=True, gc=False):
     """Result of temporal entity resolution."""
     canonical_id: str
     all_identifiers: set[str]
@@ -187,7 +197,7 @@ class ResolvedEntity(msgspec.Struct, frozen=True):
     resolution_confidence: float
     resolution_method: str
 
-class RecoveryResult(msgspec.Struct, frozen=True):
+class RecoveryResult(msgspec.Struct, frozen=True, gc=False):
     """Result of content recovery operation."""
     success: bool
     recovered_versions: list[ArchivedVersion]

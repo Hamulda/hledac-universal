@@ -2,6 +2,7 @@
 runtime/finding_pipeline.py
 ===========================
 
+
 ISSUE-024: Producer-consumer finding pipeline with Rust MPSC backpressure.
 
 Architecture

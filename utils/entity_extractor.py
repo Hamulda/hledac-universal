@@ -2,6 +2,8 @@
 🔄 ALTERNATIVA - Regex-based Entity Extractor (RegexHunter)
 ===========================================================
 
+
+
 Toto je ALTERNATIVNÍ implementace entity extraction založená na regexech.
 
 Pro plnohodnotné NER použijte CANONICAL verzi:
@@ -50,7 +52,7 @@ class PatternType(Enum):
     URL = 'url'
     PHONE = 'phone'
 
-class ExtractedEntity(msgspec.Struct):
+class ExtractedEntity(msgspec.Struct, gc=False):
     """Extracted entity with metadata."""
     pattern_type: PatternType
     value: str
@@ -67,7 +69,7 @@ class EntityExtractor:
     Extracts emails, crypto addresses, API keys, and other sensitive data
     from text using optimized regex patterns.
     """
-    __slots__ = tuple(('_stats',))
+    __slots__ = tuple(('_stats', 'patterns'))
 
     def __init__(self):
         """Initialize regex patterns for entity extraction."""
@@ -90,7 +92,6 @@ class EntityExtractor:
             List of extracted entities
         """
         entities = []
-        text.split('\n')
         self._stats['total_scans'] = int(self._stats.get('total_scans', 0)) + 1
         for pattern_type, pattern in self.patterns.items():
             for match in pattern.finditer(text):
@@ -170,7 +171,7 @@ class EntityExtractor:
         critical_types = {PatternType.PRIVATE_KEY, PatternType.PASSWORD, PatternType.AWS_KEY, PatternType.GOOGLE_KEY, PatternType.STRIPE_KEY, PatternType.API_KEY_GENERIC}
         all_entities = self.extract_all(text)
         critical = [e for e in all_entities if e.pattern_type in critical_types]
-        return (critical, critical)
+        return (bool(critical), critical)
 
     def get_stats(self) -> dict[str, Any]:
         """Get extraction statistics."""

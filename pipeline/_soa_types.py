@@ -2,6 +2,14 @@
 
 These msgspec Structs represent batched data passed between pipeline stages.
 Using SoA (not AoS) enables:
+
+
+
+
+
+
+
+
 - Zero-copy Arrow conversion for Rust/MLX stages
 - SIMD vectorization in Rust rayon stages
 - Cache-friendly memory layout

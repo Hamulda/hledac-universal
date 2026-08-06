@@ -2,6 +2,8 @@
 Forensics Enrichment Service
 ============================
 
+
+
 Enriches accepted CanonicalFindings with forensics analysis.
 Wraps UniversalMetadataExtractor, steganography_detector, and digital_ghost_detector.
 
@@ -191,7 +193,7 @@ def _extract_domain_from_url(url: str | None) -> str | None:
         pass
     return None
 
-class ForensicsResult(msgspec.Struct):
+class ForensicsResult(msgspec.Struct, gc=False):
     """
     Sprint F198B: Typed forensics enrichment result.
 

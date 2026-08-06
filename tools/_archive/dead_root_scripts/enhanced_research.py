@@ -2,6 +2,21 @@
 EnhancedResearch - Dormant Canonical Provider Candidate
 =====================================================
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 CLASSIFICATION (Sprint F11 Containment):
 ----------------------------------------
 Tento modul obsahuje DVA odlišné surface:
@@ -143,7 +158,7 @@ class SourceFamily(Enum):
     OSINT = 'osint'
     LOCAL_CORPUS = 'local_corpus'
 
-class UnifiedResearchConfig(msgspec.Struct):
+class UnifiedResearchConfig(msgspec.Struct, gc=False):
     """Configuration for unified research engine.
 
     M1 Adaptive: All memory/concurrency settings tuned based on detected RAM tier.
@@ -201,7 +216,7 @@ class UnifiedResearchConfig(msgspec.Struct):
         required_depth = tool_depth_map.get(tool_name, ResearchDepth.BASIC)
         return self.depth.value >= required_depth.value
 
-class ResearchFinding(msgspec.Struct):
+class ResearchFinding(msgspec.Struct, gc=False):
     """A single research finding with rich metadata."""
     id: str
     title: str
@@ -218,7 +233,7 @@ class ResearchFinding(msgspec.Struct):
     def to_dict(self) -> dict[str, Any]:
         return {'id': self.id, 'title': self.title, 'content': self.content[:500] if self.content else '', 'url': self.url, 'source': self.source, 'source_type': self.source_type, 'timestamp': self.timestamp.isoformat(), 'relevance_score': self.relevance_score, 'credibility_score': self.credibility_score, 'metadata': self.metadata}
 
-class UnifiedResearchResult(msgspec.Struct):
+class UnifiedResearchResult(msgspec.Struct, gc=False):
     """Complete result from unified research."""
     query: str
     depth: ResearchDepth
@@ -242,7 +257,7 @@ class UnifiedResearchResult(msgspec.Struct):
     def to_dict(self) -> dict[str, Any]:
         return {'query': self.query, 'depth': self.depth.name, 'query_type': self.query_type.value, 'findings_count': len(self.findings), 'sources_used': self.sources_used, 'total_sources': self.total_sources_found, 'unique_sources': self.unique_sources, 'execution_time': self.execution_time_seconds, 'confidence': self.confidence_score, 'coverage': self.coverage_score, 'completed_at': self.completed_at.isoformat()}
 
-class EnhancedResearchConfig(msgspec.Struct):
+class EnhancedResearchConfig(msgspec.Struct, gc=False):
     """Configuration for enhanced research workflow with advanced features.
 
     DEPRECATED: Use UnifiedResearchConfig instead for new code.
@@ -1727,7 +1742,7 @@ def create_unified_research_engine(depth: ResearchDepth=ResearchDepth.ADVANCED, 
     config = UnifiedResearchConfig(depth=depth, **kwargs)
     return UnifiedResearchEngine(config=config)
 
-class SourcePlan(msgspec.Struct, frozen=True):
+class SourcePlan(msgspec.Struct, frozen=True, gc=False):
     """Immutable source plan — which families, engines, why, and conditions.
 
     PROVIDER-OWNED INTERNAL SEAM: Toto je read-only planning artifact,
@@ -1841,7 +1856,7 @@ def _build_source_plan(query_type: QueryType, depth: ResearchDepth, config: Unif
     reasoning = f'depth={depth.name}, query_type={query_type.value}, families={len(families)}, engines={len(engines)}'
     return SourcePlan(families=tuple(families), engines=tuple(engines), reasoning=reasoning, conditions=tuple(conditions), excluded=tuple(excluded))
 
-class DeepResearchRequest(msgspec.Struct):
+class DeepResearchRequest(msgspec.Struct, gc=False):
     """
     Request wrapper for deep research provider seam.
 
@@ -1874,7 +1889,7 @@ class DeepResearchRequest(msgspec.Struct):
                 kwargs['grounding_hints'] = _canonical_hints
         return kwargs
 
-class DeepResearchResponse(msgspec.Struct):
+class DeepResearchResponse(msgspec.Struct, gc=False):
     """
     Response wrapper for deep research provider seam.
 
@@ -1896,7 +1911,7 @@ class DeepResearchResponse(msgspec.Struct):
         """Create from UnifiedResearchResult."""
         return cls(findings=result.findings, fused_results=result.fused_results, confidence_score=result.confidence_score, execution_time_seconds=result.execution_time_seconds, sources_used=result.sources_used, tools_executed=result.tools_executed)
 
-class _BudgetHints(msgspec.Struct, frozen=True):
+class _BudgetHints(msgspec.Struct, frozen=True, gc=False):
     """Internal budget hints for DeepResearch session.
 
     Not a canonical contract — internal to enhanced_research.py.
@@ -1904,7 +1919,7 @@ class _BudgetHints(msgspec.Struct, frozen=True):
     stagnation_tolerance: int = 0
     confidence_boost: float = 0.0
 
-class _EvidenceHints(msgspec.Struct, frozen=True):
+class _EvidenceHints(msgspec.Struct, frozen=True, gc=False):
     """Internal evidence/logging hints for DeepResearch session.
 
     Not a canonical contract — internal to enhanced_research.py.
@@ -1912,7 +1927,7 @@ class _EvidenceHints(msgspec.Struct, frozen=True):
     log_level: str = 'INFO'
     detail_depth: str = 'standard'
 
-class _PolicyFlags(msgspec.Struct, frozen=True):
+class _PolicyFlags(msgspec.Struct, frozen=True, gc=False):
     """Internal execution policy flags for DeepResearch session.
 
     Not a canonical contract — internal to enhanced_research.py.
@@ -1920,7 +1935,7 @@ class _PolicyFlags(msgspec.Struct, frozen=True):
     skip_stagnation_check: bool = False
     force_exhaustive: bool = False
 
-class DeepResearchGroundingShim(msgspec.Struct):
+class DeepResearchGroundingShim(msgspec.Struct, gc=False):
     """
     Minimal internal grounding adapter for DeepResearch.
 
@@ -2004,7 +2019,7 @@ async def deep_research_provider_seam(request: DeepResearchRequest, grounding: D
     finally:
         await engine.cleanup()
 
-class TriadAdmissionDescriptor(msgspec.Struct, frozen=True):
+class TriadAdmissionDescriptor(msgspec.Struct, frozen=True, gc=False):
     """
     Read-only admission metadata for DeepResearch provider candidate.
 
@@ -2041,7 +2056,7 @@ class TriadAdmissionDescriptor(msgspec.Struct, frozen=True):
         return '\n'.join(lines)
 DEEP_RESEARCH_ADMISSION = TriadAdmissionDescriptor()
 
-class LocalCorpusConsumerDescriptor(msgspec.Struct, frozen=True):
+class LocalCorpusConsumerDescriptor(msgspec.Struct, frozen=True, gc=False):
     """
     Read-only consumer seam for local corpus search plane.
 

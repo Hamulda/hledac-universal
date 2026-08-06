@@ -2,6 +2,9 @@
 SourceReliabilityTracker — META-008 cross-sprint source reliability scoring.
 
 Tracks source_contradiction_count / source_total_claims ratio per source
+
+
+
 across sprints. Sources with ratio > AUTO_RETRACT_RATIO are flagged for
 auto-retraction at SYNTHESIS phase.
 

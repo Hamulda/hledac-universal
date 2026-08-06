@@ -8,10 +8,11 @@
 
 use lol_html::send::HtmlRewriter;
 use lol_html::{element, doc_text, text, Settings};
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::collections::{BTreeSet, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::gil::release_gil;
 
@@ -163,7 +164,7 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
                                 || resolved.starts_with("//")
                             {
                                 let url = resolved.strip_prefix("//").unwrap_or(&resolved);
-                                let _ = links.lock().map(|mut g| g.insert(url.to_string()));
+                                links.lock().insert(url.to_string());
                             }
                         }
                     }
@@ -173,7 +174,7 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
                     if let Some(href) = el.get_attribute("href") {
                         if let Some(resolved) = base.join(&href).ok().map(|u| u.to_string()) {
                             if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                                let _ = links.lock().map(|mut g| g.insert(resolved));
+                                links.lock().insert(resolved);
                             }
                         }
                     }
@@ -183,7 +184,7 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
                     if let Some(src) = el.get_attribute("src") {
                         if let Some(resolved) = base.join(&src).ok().map(|u| u.to_string()) {
                             if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                                let _ = links.lock().map(|mut g| g.insert(resolved));
+                                links.lock().insert(resolved);
                             }
                         }
                     }
@@ -193,7 +194,7 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
                     if let Some(src) = el.get_attribute("src") {
                         if let Some(resolved) = base.join(&src).ok().map(|u| u.to_string()) {
                             if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                                let _ = links.lock().map(|mut g| g.insert(resolved));
+                                links.lock().insert(resolved);
                             }
                         }
                     }
@@ -208,10 +209,7 @@ pub fn extract_links(html: &str, base_url: &str) -> Vec<String> {
         let _ = rewriter.end();
     }));
 
-    let mut sorted: Vec<String> = links
-        .lock()
-        .map(|g| g.iter().cloned().collect())
-        .unwrap_or_default();
+    let mut sorted: Vec<String> = links.lock().iter().cloned().collect();
     sorted.sort();
     sorted
 }
@@ -256,17 +254,18 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
     let anchor_url: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let anchor_text: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    // HTML parsing in closure - catch_unwind handles panics
+    let _did_not_panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let settings = Settings {
             element_content_handlers: vec![
                 // ── <a href> — emit prev anchor, then capture new URL ────────────
                 element!("a[href]", |el| {
                     // Emit previous anchor if any
                     if let (Some(url), text) = (
-                        anchor_url.lock().unwrap().take(),
-                        anchor_text.lock().unwrap().split_whitespace().collect::<String>(),
+                        anchor_url.lock().take(),
+                        anchor_text.lock().split_whitespace().collect::<String>(),
                     ) {
-                        links.lock().unwrap().insert((url, text));
+                        links.lock().insert((url, text));
                     }
                     // Capture new URL and reset text
                     if let Some(href) = el.get_attribute("href") {
@@ -275,16 +274,16 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
                                 .strip_prefix("//")
                                 .unwrap_or(&resolved)
                                 .to_string();
-                            *anchor_url.lock().unwrap() = Some(url);
-                            anchor_text.lock().unwrap().clear();
+                            *anchor_url.lock() = Some(url);
+                            anchor_text.lock().clear();
                         }
                     }
                     Ok(())
                 }),
                 // ── inline text within <a> — accumulate ─────────────────────────
                 text!("a", |tc: &mut lol_html::html_content::TextChunk| {
-                    if anchor_url.lock().unwrap().is_some() {
-                        anchor_text.lock().unwrap().push_str(tc.as_str());
+                    if anchor_url.lock().is_some() {
+                        anchor_text.lock().push_str(tc.as_str());
                     }
                     Ok(())
                 }),
@@ -293,7 +292,7 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
                     if let Some(href) = el.get_attribute("href") {
                         if let Some(resolved) = base.join(&href).ok().map(|u| u.to_string()) {
                             if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                                links.lock().unwrap().insert((resolved, String::new()));
+                                links.lock().insert((resolved, String::new()));
                             }
                         }
                     }
@@ -303,7 +302,7 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
                     if let Some(src) = el.get_attribute("src") {
                         if let Some(resolved) = base.join(&src).ok().map(|u| u.to_string()) {
                             if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                                links.lock().unwrap().insert((resolved, String::new()));
+                                links.lock().insert((resolved, String::new()));
                             }
                         }
                     }
@@ -313,7 +312,7 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
                     if let Some(src) = el.get_attribute("src") {
                         if let Some(resolved) = base.join(&src).ok().map(|u| u.to_string()) {
                             if resolved.starts_with("http://") || resolved.starts_with("https://") {
-                                links.lock().unwrap().insert((resolved, String::new()));
+                                links.lock().insert((resolved, String::new()));
                             }
                         }
                     }
@@ -328,17 +327,18 @@ pub fn extract_links_with_text(html: &str, base_url: &str) -> Vec<(String, Strin
         let _ = rewriter.end();
         // Emit any remaining anchor at document end
         if let (Some(url), text) = (
-            anchor_url.lock().unwrap().take(),
-            anchor_text.lock().unwrap().split_whitespace().collect::<String>(),
+            anchor_url.lock().take(),
+            anchor_text.lock().split_whitespace().collect::<String>(),
         ) {
-            links.lock().unwrap().insert((url, text));
+            links.lock().insert((url, text));
         }
-    }));
+    })).is_ok();
 
-    links
-        .lock()
-        .map(|g| g.iter().cloned().collect())
-        .unwrap_or_default()
+    // E0597 fix: explicit scope ensures MutexGuard is dropped before return
+    let result = {
+        links.lock().iter().cloned().collect::<Vec<_>>()
+    };
+    result
 }
 
 /// Batch extract links with anchor text from a vector of (html, base_url) tuples.
@@ -712,13 +712,13 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
                     let itemtype = el.get_attribute("itemtype");
                     if let Some(it) = itemtype {
                         // Finalize previous item if any
-                        let was_in = *in_itemscope.lock().unwrap();
+                        let was_in = *in_itemscope.lock();
                         if was_in {
-                            let t = item_type.lock().unwrap().take();
-                            let p = props.lock().unwrap().split_off(0);
+                            let t = item_type.lock().take();
+                            let p = props.lock().split_off(0);
                             if let Some(tt) = t {
-                                if items.lock().unwrap().len() < MAX_MICRODATA_ITEMS {
-                                    items.lock().unwrap().push(MicrodataItem {
+                                if items.lock().len() < MAX_MICRODATA_ITEMS {
+                                    items.lock().push(MicrodataItem {
                                         item_type: tt,
                                         properties: p,
                                     });
@@ -726,15 +726,15 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
                             }
                         }
                         // Start new itemscope
-                        *in_itemscope.lock().unwrap() = true;
-                        *item_type.lock().unwrap() = Some(it);
-                        props.lock().unwrap().clear();
+                        *in_itemscope.lock() = true;
+                        *item_type.lock() = Some(it);
+                        props.lock().clear();
                     }
                     Ok(())
                 }),
                 // Handle itemprop on various elements
                 element!("[itemprop]", |el| {
-                    let in_scope = *in_itemscope.lock().unwrap();
+                    let in_scope = *in_itemscope.lock();
                     if !in_scope {
                         return Ok(());
                     }
@@ -768,7 +768,7 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
                     };
 
                     if let Some(val) = prop_value {
-                        let mut guard = props.lock().unwrap();
+                        let mut guard = props.lock();
                         if guard.len() < MAX_MICRODATA_PROPS {
                             guard.push((prop_name, val));
                         }
@@ -784,11 +784,11 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
         let _ = rewriter.end();
 
         // Finalize last item
-        if *in_itemscope.lock().unwrap() {
-            let t = item_type.lock().unwrap().take();
-            let p = props.lock().unwrap().split_off(0);
+        if *in_itemscope.lock() {
+            let t = item_type.lock().take();
+            let p = props.lock().split_off(0);
             if let Some(tt) = t {
-                items.lock().unwrap().push(MicrodataItem {
+                items.lock().push(MicrodataItem {
                     item_type: tt,
                     properties: p,
                 });
@@ -796,7 +796,9 @@ pub fn extract_microdata(html: &str) -> Vec<MicrodataItem> {
         }
     }));
 
-    items.lock().map(|g| g.clone()).unwrap_or_default()
+    // E0597 fix: explicit scope ensures MutexGuard is dropped before return
+    let result = items.lock().clone();
+    result
 }
 
 /// Extract the property value from an element with itemprop attribute.

@@ -1,15 +1,16 @@
 """
-Tests for StorageTrinity — Unified write boundary for DuckDB + LMDB + LanceDB.
+Tests for StorageTrinity — Unified write boundary for DuckDB + LMDB + LanceDB + DuckPGQGraph.
 
 ARCH-STR-001: Storage Trinity synchronization gaps.
 
 Tests verify:
-    1. Phase ordering: DuckDB → LMDB → LanceDB (enforced).
-    2. DuckDB failure rolls back nothing (no prior phases) but LanceDB never runs.
+    1. Phase ordering: DuckDB → LMDB → LanceDB → DuckPGQGraph (enforced).
+    2. DuckDB failure rolls back nothing (no prior phases) but LanceDB/Graph never run.
     3. LanceDB failure preserves DuckDB + LMDB (canonical path intact).
-    4. Ghost entity prevention: LanceDB writes only after DuckDB confirmed.
-    5. Bounded queue: MAX_LANCE_QUEUE limits pending embeddings.
-    6. Fail-open: LanceDB failures never propagate to caller.
+    4. DuckPGQGraph failure preserves DuckDB + LMDB + LanceDB (canonical path intact).
+    5. Ghost entity prevention: LanceDB writes only after DuckDB confirmed.
+    6. Bounded queue: MAX_LANCE_QUEUE limits pending embeddings.
+    7. Fail-open: LanceDB/Graph failures never propagate to caller.
 """
 
 import asyncio
@@ -49,6 +50,14 @@ def mock_semantic_store():
     store.flush = AsyncMock(return_value=10)
     store.initialize = AsyncMock()
     return store
+
+
+@pytest.fixture
+def mock_graph_service():
+    """Mock GraphService (DuckPGQGraph-backed)."""
+    service = MagicMock()
+    service.upsert_ioc = MagicMock(return_value=True)
+    return service
 
 
 @pytest.fixture
@@ -419,3 +428,120 @@ class TestTrinityEdgeCases:
         assert "Write failed" in repr(err)
         assert err.phase == "duckdb"
         assert err.records == 5
+
+
+class TestTrinityDuckPGQGraph:
+    """DuckPGQGraph integration in StorageTrinity (Phase 4)."""
+
+    @pytest.mark.asyncio
+    async def test_graph_injection(self, mock_duckdb_store, mock_graph_service):
+        """inject_graph_service must store the graph service."""
+        trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
+        trinity.inject_graph_service(mock_graph_service)
+
+        assert trinity._graph_service is mock_graph_service
+
+    @pytest.mark.asyncio
+    async def test_graph_phase_runs_after_duckdb(
+        self, mock_duckdb_store, mock_semantic_store, mock_graph_service
+    ):
+        """DuckPGQGraph upsert must run after DuckDB."""
+        trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
+        trinity.inject_semantic_store(mock_semantic_store)
+        trinity.inject_graph_service(mock_graph_service)
+
+        findings = [MagicMock(payload_text="test", finding_id="f1", source_type="osint")]
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
+            MagicMock(accepted=True)
+        ])
+
+        await trinity.upsert_findings_batch(findings)
+
+        # Graph upsert_ioc must be called
+        assert mock_graph_service.upsert_ioc.called
+
+    @pytest.mark.asyncio
+    async def test_graph_skip_when_not_injected(self, mock_duckdb_store, mock_semantic_store):
+        """Graph phase must skip when not injected."""
+        trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
+        trinity.inject_semantic_store(mock_semantic_store)
+        # No graph_service injected
+
+        findings = [MagicMock(payload_text="test", finding_id="f1")]
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
+            MagicMock(accepted=True)
+        ])
+
+        result = await trinity.upsert_findings_batch(findings)
+
+        # Graph phase should be success with error message
+        assert result.graph is not None
+        assert result.graph.success is True
+        assert result.graph.error == "graph_service_not_injected"
+
+    @pytest.mark.asyncio
+    async def test_graph_fail_preserves_canonical_path(
+        self, mock_duckdb_store, mock_semantic_store, mock_graph_service
+    ):
+        """DuckPGQGraph failure must not affect DuckDB/LanceDB."""
+        trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
+        trinity.inject_semantic_store(mock_semantic_store)
+        trinity.inject_graph_service(mock_graph_service)
+
+        findings = [MagicMock(payload_text="test", finding_id="f1", source_type="osint")]
+        mock_duckdb_store.async_ingest_findings_batch = AsyncMock(return_value=[
+            MagicMock(accepted=True)
+        ])
+        mock_graph_service.upsert_ioc = MagicMock(side_effect=RuntimeError("Graph DB error"))
+
+        # Must not raise
+        result = await trinity.upsert_findings_batch(findings)
+
+        # DuckDB must succeed
+        assert result.duckdb.success is True
+        # Graph phase must fail but not propagate
+        assert result.graph.success is False
+        assert "Graph DB error" in str(result.graph.error)
+
+    def test_extract_ioc_value(self, trinity):
+        """_extract_ioc_value must handle various field names."""
+        # Test with value attribute
+        f = MagicMock(value="192.168.1.1")
+        assert trinity._extract_ioc_value(f) == "192.168.1.1"
+
+        # Test with domain attribute
+        f = MagicMock(domain="evil.com")
+        assert trinity._extract_ioc_value(f) == "evil.com"
+
+        # Test with payload_text fallback
+        f = MagicMock(payload_text="malware.exe\nsome other text")
+        assert trinity._extract_ioc_value(f) == "malware.exe"
+
+        # Test with no IOC
+        f = MagicMock()
+        assert trinity._extract_ioc_value(f) is None
+
+    def test_extract_ioc_type(self, trinity):
+        """_extract_ioc_type must handle various field names."""
+        f = MagicMock(ioc_type="domain")
+        assert trinity._extract_ioc_type(f) == "domain"
+
+        f = MagicMock(type="ip")
+        assert trinity._extract_ioc_type(f) == "ip"
+
+        f = MagicMock()
+        assert trinity._extract_ioc_type(f) == "unknown"
+
+    def test_trinity_write_result_has_graph_phase(self, mock_duckdb_store):
+        """TrinityWriteResult must include graph phase."""
+        trinity = StorageTrinity(duckdb_store=mock_duckdb_store)
+
+        result = TrinityWriteResult(
+            duckdb=TrinityPhaseResult(phase="duckdb", success=True),
+            graph=TrinityPhaseResult(phase="graph", success=True),
+        )
+
+        assert result.graph is not None
+        assert result.graph.phase == "graph"
+        assert result.accepted is True
+

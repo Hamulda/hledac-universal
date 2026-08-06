@@ -2,6 +2,9 @@
 MLXModelPool - Unified LRU Model Pool for M1 8GB
 Issue #18: Memory-optimized model loading
 
+
+
+
 Zajišťuje:
 - Unified LRU eviction pro všechny MLX modely (Hermes, Embedder, NER)
 - Hard memory budget enforcement

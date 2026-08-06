@@ -2,6 +2,11 @@
 PyCacheDict — Bounded TTL LRU cache replacing functools.lru_cache
 =================================================================
 
+
+
+
+
+
 M1 8GB safe: bounded OrderedDict with TTL eviction.
 Thread-safe via threading.RLock (reentrant — safe from signal handlers).
 
@@ -20,9 +25,11 @@ Never use this for coroutine objects — use async_lru from cachetools instead.
 
 import threading
 import time
+from collections import OrderedDict
 from typing import Any, TypeVar
 
-from hledac.universal.utils.lru_cache import LRUCache
+# Use unified LRUCache from new package
+from utils.cache import LRUCache
 
 K = TypeVar("K", default=object)
 V = TypeVar("V", default=object)

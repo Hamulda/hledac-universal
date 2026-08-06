@@ -296,7 +296,7 @@ pub fn batch_extract_claims_inner(
         // Issue #6: GIL released so rayon workers can truly run in parallel.
         let pool = mixed_pool(n);
         let results: Vec<Vec<Claim>> = Python::attach(|py| {
-            release_gil(py, || {
+            release_gil(py, move || {
                 pool.install(|| {
                     packets
                         .par_iter()
@@ -354,7 +354,7 @@ pub fn batch_extract_claims<'py>(
         // R4-02 FIX: GIL released for CPU-bound extract_claims_from_text (regex/splitting).
         // R4-02: Added py.detach() wrapper for serial path — CPU-bound work can run
         // without GIL, allowing other Python coroutines to progress on this thread.
-        return crate::gil::release_gil(py, || {
+        return crate::gil::release_gil(py, move || {
             texts
                 .iter()
                 .flat_map(|(text, title, summary, source_type, evidence_type)| {

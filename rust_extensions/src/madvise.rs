@@ -50,6 +50,10 @@ struct CachedMmap {
     mapped_len: usize,
 }
 
+/// SAFETY: We only use this from one thread at a time via the Mutex<LruCache>.
+/// The raw pointer is valid for the lifetime of the mmap handle (owned elsewhere).
+unsafe impl Send for CachedMmap {}
+
 impl CachedMmap {
     fn new(file_size: usize, mapped_ptr: *mut libc::c_void, mapped_len: usize) -> Self {
         Self { file_size, mapped_ptr, mapped_len }
@@ -58,7 +62,7 @@ impl CachedMmap {
 
 /// Get or create the global LRU cache (32 entries).
 fn get_mmap_cache() -> &'static Mutex<LruCache<String, CachedMmap>> {
-    MMAP_CACHE.get_or_init(|| Mutex::new(LruCache::new(32)))
+    MMAP_CACHE.get_or_init(|| Mutex::new(LruCache::new(std::num::NonZero::new(32).unwrap())))
 }
 
 /// MADV_DONTNEED — value 4 on Darwin.
@@ -415,7 +419,7 @@ pub fn mmap_hugepage(path: &str, read_only: bool) -> (usize, usize) {
     match ffi_safe!({
         let cpath = std::ffi::CString::new(path)
             .ok()
-            .unwrap_or_else(|_| std::ffi::CString::new("").unwrap());
+            .unwrap_or_else(|| std::ffi::CString::new("").unwrap());
 
         let open_flags = if read_only {
             libc::O_RDONLY

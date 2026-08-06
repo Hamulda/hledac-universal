@@ -2,6 +2,7 @@
 runtime/adapters/duckdb_adapter.py — F270: DuckDB Storage Adapter
 =============================================================
 
+
 Adapter implementing StorageProtocol for DuckDBShadowStore.
 Non-breaking: wraps existing DuckDBShadowStore without changes.
 

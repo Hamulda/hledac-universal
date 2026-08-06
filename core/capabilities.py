@@ -2,6 +2,8 @@
 core.capabilities — Centralized optional dependency registry.
 F350M-R: Replaces scattered try/except ImportError chains.
 
+
+
 Usage:
     from hledac.universal.core.capabilities import CAPS, ZSTD, AIOHTTP, LIGHTPANDA
 

@@ -2,6 +2,8 @@
 SourceBandit – UCB1 bandit pro adaptivní výběr zdrojů.
 Perzistentní v LMDB, učí se napříč běhy.
 Sprint 42: LinUCB contextual bandit přidán.
+
+
 Sprint 43: Geo + Language context features (14 dim).
 Sprint 3D: Uses open_lmdb() from paths.py for env-driven discipline.
 """

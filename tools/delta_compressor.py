@@ -2,6 +2,7 @@
 Delta Compressor - Text delta using unified_diff + zlib compression.
 
 Implements:
+
 - make_text_delta: Create delta from base and newer text
 - apply_text_delta: Apply delta to reconstruct newer text
 

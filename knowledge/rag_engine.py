@@ -2,6 +2,14 @@
 RAGEngine - Ultra Context + SPR Compression + Hybrid Retrieval + HNSW Vector Search
 
 ROLE: Grounding Authority (NOT identity/entity store)
+
+
+
+
+
+
+
+
 ====================================================
 Tento modul je grounding authority pro context augmentation.
 NENÍ owner identity/entity resolution - to je lancedb_store.

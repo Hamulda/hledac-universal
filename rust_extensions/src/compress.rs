@@ -18,7 +18,6 @@
 //!   - Never panics — all errors return a meaningful Python exception.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::sync::{LazyLock, Mutex};
 
 use pyo3::prelude::*;

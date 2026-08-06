@@ -2,6 +2,8 @@
 core/python_otel_bridge.py — Rust → Python OTel Bridge
 =====================================================
 
+
+
 Role: Zero-copy bridge mezi Rust telemetry_agg.rs a Python OpenTelemetry pipeline.
 
 Funkce:

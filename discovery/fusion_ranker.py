@@ -3,6 +3,8 @@ Discovery Result Fusion Ranker — RRF + MMR + Source-Family Diversity.
 
 Sprint F206AP: Providerless Discovery Fusion Ranker
 
+
+
 Algorithm:
   1. URL-normalised dedup (using existing _normalize_url_for_dedup)
   2. RRF over provider rank (k=60)

@@ -2,6 +2,7 @@
 """
 XML/HTML entity sanitization and escaping.
 Used for safely processing XML content from external sources.
+
 """
 
 from __future__ import annotations

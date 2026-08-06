@@ -2,6 +2,8 @@
 Hypothesis Generator — F202G.
 
 Bounded heuristic hypothesis generation from sprint findings.
+
+
 Fail-soft: always returns >= 1 hypothesis even if DSPy unavailable.
 
 hledac_hypothesis/hypothesisgenerator.py
@@ -20,7 +22,7 @@ MAX_SEEDS_PER_HYPOTHESIS = 5
 MAX_EXTRACTS_PER_TYPE = 1000
 HLEDAC_ENABLE_DSPY = os.environ.get('HLEDAC_ENABLE_DSPY', '').lower() in ('1', 'true', 'yes')
 
-class ResearchHypothesis(msgspec.Struct, frozen=True):
+class ResearchHypothesis(msgspec.Struct, frozen=True, gc=False):
     """Single research hypothesis produced by HypothesisGenerator."""
     hypothesis_text: str
     confidence: float

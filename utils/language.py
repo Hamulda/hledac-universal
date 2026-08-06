@@ -2,6 +2,8 @@ import hashlib
 import logging
 from typing import Any
 logger = logging.getLogger(__name__)
+
+
 try:
     from fast_langdetect import detect as fast_detect
     FAST_LANGDETECT_AVAILABLE = True

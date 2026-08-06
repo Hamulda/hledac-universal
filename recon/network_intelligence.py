@@ -187,7 +187,8 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
             try:
                 # Make DoH query for A records
                 query = dns.message.make_query(domain, dns.rdatatype.A)
-                response = dns.query.https(
+                # dnspython 3.x: dns.query.http() replaces deprecated dns.query.https()
+                response = dns.query.http(
                     query,
                     doh_url,
                     timeout=10,
@@ -202,7 +203,8 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
 
                 # Also try MX
                 mx_query = dns.message.make_query(domain, dns.rdatatype.MX)
-                mx_response = dns.query.https(
+                # dnspython 3.x: dns.query.http() replaces deprecated dns.query.https()
+                mx_response = dns.query.http(
                     mx_query,
                     doh_url,
                     timeout=10,
@@ -215,7 +217,8 @@ async def resolve_dns_doh(domain: str) -> dict[str, list[str]]:
 
                 # Also try TXT
                 txt_query = dns.message.make_query(domain, dns.rdatatype.TXT)
-                txt_response = dns.query.https(
+                # dnspython 3.x: dns.query.http() replaces deprecated dns.query.https()
+                txt_response = dns.query.http(
                     txt_query,
                     doh_url,
                     timeout=10,

@@ -2,6 +2,9 @@
 WorkflowEngine - DAG-based workflow execution z WorkflowOrchestrator
 
 Funkce:
+
+
+
 - DAG-based task definition
 - Topological ordering (native Python - no networkx dependency)
 - Parallel/sequential execution
@@ -38,7 +41,7 @@ class TaskStatus(Enum):
     FAILED = 'failed'
     SKIPPED = 'skipped'
 
-class Task(msgspec.Struct):
+class Task(msgspec.Struct, gc=False):
     """Úkol ve workflow"""
     id: str
     name: str
@@ -88,7 +91,7 @@ class Task(msgspec.Struct):
             return self.end_time - self.start_time
         return None
 
-class Workflow(msgspec.Struct, frozen=True):
+class Workflow(msgspec.Struct, frozen=True, gc=False):
     """Workflow definice"""
     id: str
     name: str

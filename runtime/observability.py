@@ -2,6 +2,11 @@
 runtime/observability.py — Unified observability hub
 
 Single source of truth for sprint health: metrics + traces + logs aggregation.
+
+
+
+
+
 Aggregates from all telemetry sources:
   - TelemetryLogger / SprintMetrics (runtime/telemetry.py)
   - DuckDB shadow store metrics (knowledge/duckdb_store.py)

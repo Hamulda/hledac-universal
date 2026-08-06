@@ -10,10 +10,13 @@ Public API: configure(), is_configured(), instrument_duckdb_connection(), instru
 Env vars:
   HLEDAC_OTEL_ENABLED=1        — OTel on/off (default 1)
   HLEDAC_OTEL_EXPORTER          — stdout|otlp|duckdb|none|ring (default stdout)
+
+
   HLEDAC_OTEL_ENDPOINT          — OTLP endpoint
   HLEDAC_OTEL_PROFILE=0        — M1-safe auto-instr: httpx only (~1MB, default 0)
   HLEDAC_LOG_LEVEL=INFO         — DEBUG|INFO|WARNING|ERROR
   HLEDAC_LOG_FORMAT=json        — json|plain
+
   HLEDAC_LOGFIRE_TOKEN          — optional Logfire token
 
 M1 8GB constraints:

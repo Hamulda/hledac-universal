@@ -2,6 +2,9 @@
 Audit Forensics - Audit Trail pro Ultra Deep Research
 
 Pro:
+
+
+
 - Auditování výzkumných operací
 - Forenzní analýza
 - Compliance reporting
@@ -43,7 +46,7 @@ class AuditEventType(Enum):
     SECURITY_ALERT = 'security_alert'
     SYSTEM_EVENT = 'system_event'
 
-class AuditEvent(msgspec.Struct):
+class AuditEvent(msgspec.Struct, gc=False):
     """Audit událost"""
     timestamp: datetime
     event_type: AuditEventType
@@ -72,7 +75,7 @@ class AuditEvent(msgspec.Struct):
         """Export jako slovník"""
         return {'timestamp': self.timestamp.isoformat(), 'event_type': self.event_type.value, 'action': self.action, 'resource': self.resource, 'user_id': self.user_id, 'session_id': self.session_id, 'details': self.details, 'level': self.level.value, 'hash': self.hash}
 
-class AuditConfig(msgspec.Struct):
+class AuditConfig(msgspec.Struct, gc=False):
     """Konfigurace auditu"""
     db_path: str = 'storage/audit.db'
     min_level: AuditLevel = AuditLevel.INFO

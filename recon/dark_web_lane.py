@@ -2,6 +2,7 @@
 intelligence/dark_web_lane.py — F320+: Dark Web Intelligence Lane
 
 Thin subclass of BaseIntelligenceLane for Tor/.onion crawling.
+
 Wraps DarkWebCrawler + TorProxyManager from dark_web_intelligence.py.
 
 LaneSpec:

@@ -2,6 +2,7 @@
 
 Architecture (F350M-R):
     Single facade replacing dual-path architecture:
+
         - forensics/ioc_extractor.py (cold path) — had broken Rust check
         - core/rust_backend/ioc.py Python domain (cold path fallback)
 
@@ -272,14 +273,12 @@ class IOCProcessor:
         Uses Rust url_normalize when available.
         Falls back to pure Python normalization.
         """
-        if self.is_rust_available:
-            try:
-                # Use AccelBackend's url domain for normalization
-                url_domain = self._accel.url
-                if url_domain is not None:
-                    return url_domain.normalize(url)
-            except Exception:
-                pass
+        try:
+            url_domain = self._accel.url
+            if url_domain is not None:
+                return url_domain.normalize(url)
+        except Exception:
+            pass
 
         return _python_url_normalize(url)
 
@@ -291,9 +290,8 @@ class IOCProcessor:
         """
         if self.is_rust_available:
             try:
-                ioc_domain = self._accel.ioc
-                if ioc_domain is not None:
-                    return ioc_domain.batch_dedup_urls(urls)
+                # is_rust_available already guarantees ioc is not None
+                return self._accel.ioc.batch_dedup_urls(urls)
             except Exception:
                 pass
 
@@ -405,12 +403,20 @@ def _iocs_to_findings(
 
 # Module-level singleton processor — thread-safe, lazy
 _processor: IOCProcessor | None = None
+_processor_lock: _threading.Lock | None = None
 
 
 def _get_processor() -> IOCProcessor:
-    global _processor
+    global _processor, _processor_lock
+    if _processor_lock is None:
+        import threading as _threading
+
+        _processor_lock = _threading.Lock()
     if _processor is None:
-        _processor = IOCProcessor()
+        with _processor_lock:
+            # Double-check after acquiring lock
+            if _processor is None:
+                _processor = IOCProcessor()
     return _processor
 
 

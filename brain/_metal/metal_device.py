@@ -2,6 +2,8 @@
 metal_device.py — Metal GPU Device Abstraction
 ==============================================
 
+
+
 PEP 698: Extracted from DeepHermes3Engine._get_gpu_memory, _get_metal_tier_thresholds
 M1 8GB UMA-aware memory management.
 

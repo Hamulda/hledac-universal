@@ -2,6 +2,8 @@
 brain.modernbert_engine — ModernBERT extractive summarization for P14 pipeline.
 
 Pipeline usage (live_public_pipeline.py:2180-2185):
+
+
     modernbert = ModernBertEngine()
     report_text = await modernbert.summarize(context_items)
 

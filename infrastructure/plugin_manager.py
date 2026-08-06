@@ -2,6 +2,9 @@
 Ghost Plugin Manager - Dynamic Plugin System
 ============================================
 Project: Hledac v18.0 (Ghost Prime Edition)
+
+
+
 Target: MacBook M1 (8GB RAM) - Maximum Performance
 
 Description:
@@ -53,7 +56,7 @@ class PluginType(Enum):
     UTILITY = 'utility'
     INTEGRATION = 'integration'
 
-class PluginMetadata(msgspec.Struct):
+class PluginMetadata(msgspec.Struct, gc=False):
     """Plugin metadata structure"""
     name: str
     version: str
@@ -66,7 +69,7 @@ class PluginMetadata(msgspec.Struct):
     permissions: list[str] = field(default_factory=list)
     config_schema: dict[str, Any] | None = None
 
-class LoadedPlugin(msgspec.Struct, frozen=True):
+class LoadedPlugin(msgspec.Struct, frozen=True, gc=False):
     """Loaded plugin container"""
     metadata: PluginMetadata
     module: Any

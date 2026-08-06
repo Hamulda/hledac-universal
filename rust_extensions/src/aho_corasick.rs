@@ -102,6 +102,7 @@ pub struct AhoCorasickMatcher {
     /// Interned labels — shared store, labels interned once at construction.
     /// Each label is Box::leak'd once and reused across all scan() calls.
     /// Eliminates Python-side dict lookup + sys.intern() in hot path (Issue #37).
+    #[allow(dead_code)]
     intern_store: InternStore,
     /// Labels parallel to `patterns` — interned &'static str references.
     /// Retrieved from intern_store at construction; zero-cost in scan().

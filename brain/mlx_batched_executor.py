@@ -2,6 +2,7 @@
 MLXBatchedExecutor — Smart MLX inference router with continuous batching seam.
 
 Provides a `execute_callback` shim for the existing pure-asyncio BatchScheduler
+
 (F226H) so concurrent Hermes3 inference requests can be routed through the
 scheduler for adaptive flush, priority, and backpressure. The actual MLX
 workload remains single-threaded (MLX is single-threaded by design), but

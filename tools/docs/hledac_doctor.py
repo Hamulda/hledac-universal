@@ -2,6 +2,8 @@
 hledac_doctor.py — Dependency availability checker
 ==================================================
 
+
+
 Sprint F207N-B: Build Truth
 
 Purpose:
@@ -40,7 +42,7 @@ class OutputFormat(Enum):
     MARKDOWN = 'markdown'
     JSON = 'json'
 
-class DepStatus(msgspec.Struct):
+class DepStatus(msgspec.Struct, gc=False):
     """Status for a single dependency."""
     name: str
     import_name: str
@@ -50,7 +52,7 @@ class DepStatus(msgspec.Struct):
     install_hint: str | None
     extra: str | None
 
-class DoctorReport(msgspec.Struct, frozen=True):
+class DoctorReport(msgspec.Struct, frozen=True, gc=False):
     """Full doctor report."""
     python_version: str
     platform: str

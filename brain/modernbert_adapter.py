@@ -2,6 +2,7 @@
 ModernBertModelAdapter — Sprint F222
 =====================================
 
+
 Bridges ModernBertEngine → ModelEngine protocol.
 
 Usage:

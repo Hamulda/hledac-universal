@@ -2,6 +2,10 @@
 Secure Enclave abstraction — hardware-backed key/signing backend.
 
 Apple Secure Enclave on M1 is NOT a text processing engine.
+
+
+
+
 It provides hardware-backed key storage, signing, and audit integrity.
 This module provides a fail-soft internal abstraction.
 
@@ -32,7 +36,7 @@ class EnclaveAvailability(Enum):
     SIGNED = 'signed'
     FAIL_SOFT = 'fail_soft'
 
-class EnclaveStatus(msgspec.Struct):
+class EnclaveStatus(msgspec.Struct, gc=False):
     """Current status of the secure enclave backend."""
     availability: EnclaveAvailability = EnclaveAvailability.DISABLED
     backend_name: str = 'null'
@@ -40,14 +44,14 @@ class EnclaveStatus(msgspec.Struct):
     signed_batch_digest: str | None = None
     chunk_count: int = 0
 
-class SignedDigest(msgspec.Struct, frozen=True):
+class SignedDigest(msgspec.Struct, frozen=True, gc=False):
     """A single Secure Enclave signature over a canonical batch digest."""
     batch_digest: str
     signature: bytes
     backend_name: str
     chunk_count: int
 
-class BatchManifest(msgspec.Struct, frozen=True):
+class BatchManifest(msgspec.Struct, frozen=True, gc=False):
     """Canonical manifest for a chunk batch — used for signing."""
     chunk_count: int
     chunk_hashes: list[str]

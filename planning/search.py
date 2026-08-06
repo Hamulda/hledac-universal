@@ -2,6 +2,7 @@
 Anytime beam search s budget‑aware a heuristikou value / cost.
 """
 import logging
+
 import time
 from collections.abc import Callable
 from typing import Any

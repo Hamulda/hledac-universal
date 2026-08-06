@@ -455,7 +455,7 @@ impl MmapIocDedupStore {
         }
         // Phase 1: parallel xxhash3-64 normalization + hashing — GIL released for Rayon workers.
         // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
-        let prepped: Vec<(usize, u64, String, IocType, f32)> = crate::gil::release_gil(py, || {
+        let prepped: Vec<(usize, u64, String, IocType, f32)> = crate::gil::release_gil(py, move || {
             items
                 .par_iter()
                 .map(|(value, ioc_type_str, confidence)| {
@@ -524,7 +524,7 @@ impl MmapIocDedupStore {
 
         // Phase 1: Parallel xxhash3-64 normalization + hashing (no lock needed) — GIL released for Rayon workers.
         // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
-        let prepped: Vec<(u64, bool)> = crate::gil::release_gil(py, || {
+        let prepped: Vec<(u64, bool)> = crate::gil::release_gil(py, move || {
             items
                 .par_iter()
                 .map(|(value, ioc_type_str)| {
@@ -660,7 +660,7 @@ impl IocDedupStore {
         }
         // Phase 1: parallel xxhash3-64 normalization + hashing — GIL released for Rayon workers.
         // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
-        let prepped: Vec<(u64, IocType, String, f32)> = crate::gil::release_gil(py, || {
+        let prepped: Vec<(u64, IocType, String, f32)> = crate::gil::release_gil(py, move || {
             items
                 .par_iter()
                 .map(|(value, ioc_type_str, confidence)| {
@@ -715,7 +715,7 @@ impl IocDedupStore {
 
         // Phase 1: Parallel xxhash3-64 normalization + hashing (no lock needed) — GIL released for Rayon workers.
         // R4-05 FIX: make_ioc_key avoids 2 string allocs per item.
-        let prepped: Vec<(u64, bool)> = crate::gil::release_gil(py, || {
+        let prepped: Vec<(u64, bool)> = crate::gil::release_gil(py, move || {
             items
                 .par_iter()
                 .map(|(value, ioc_type_str)| {

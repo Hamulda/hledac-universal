@@ -2,6 +2,7 @@
 """
 JS Renderer Capability Tracker for public_fetcher.
 
+
 Replaces module-level globals:
 - _js_renderer_capability dict
 - _js_renderer_capability_lock

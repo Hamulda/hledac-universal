@@ -2,6 +2,15 @@
 Isolated executors — backed by RustWorkerPool (rayon thread pool).
 
 Provides CPU/IO-bound workload distribution using Rust rayon thread pools
+
+
+
+
+
+
+
+
+
 instead of Python's PEP 734 concurrent.interpreters (which is NOT in
 Python 3.14 stdlib — it is a separate package that must be installed).
 
@@ -87,6 +96,9 @@ __all__ = [
     # [META]-004: Elastic rayon pool manager
     "RayonPoolManager",
     "get_rayon_pool_manager",
+    # ISSUE [SWARM]-005: FFI Circuit Breaker Exceptions
+    "CircuitBreakerOpenError",
+    "FallbackActivatedError",
 ]
 
 # -----------------------------------------------------------------------------
@@ -134,6 +146,85 @@ class InterpreterStartError(IsolatedExecutorError):
 
 class InterpreterChannelError(IsolatedExecutorError):
     """Raised when inter-interpreter communication fails."""
+
+
+# ISSUE [SWARM]-005: FFI Circuit Breaker Exceptions
+# ============================================================================
+
+
+class CircuitBreakerOpenError(IsolatedExecutorError):
+    """
+    Raised when the FFI circuit breaker is OPEN for a Rust module.
+    
+    This indicates that the Rust SIMD path is currently blocked due to
+    repeated failures (panics, serialization errors, poisoned mutexes).
+    The Python fallback path should be used instead.
+    
+    Attributes:
+        module: The Rust module name (e.g., "graph_traverse", "finding_collapser")
+        recovery_timeout_s: Seconds until circuit breaker allows retry
+        reason: The last failure reason
+    """
+
+    __slots__ = ("module", "recovery_timeout_s", "reason")
+
+    def __init__(
+        self,
+        module: str,
+        recovery_timeout_s: float = 30.0,
+        reason: str = "",
+    ) -> None:
+        super().__init__(
+            f"FFI circuit breaker OPEN for module={module!r} "
+            f"(retry in {recovery_timeout_s:.1f}s): {reason}"
+        )
+        self.module = module
+        self.recovery_timeout_s = recovery_timeout_s
+        self.reason = reason
+
+
+class FallbackActivatedError(IsolatedExecutorError):
+    """
+    Raised when FFI fallback cascade is activated (Rust → Python → No-op).
+    
+    This is an informational exception indicating that:
+    1. The Rust SIMD path failed (panic or exception)
+    2. Python native fallback was activated
+    3. Data may be incomplete or degraded
+    
+    Attributes:
+        module: The Rust module name
+        rust_error: Error message from Rust path
+        fallback_path: Which fallback was used: "python_native" or "noop"
+        data_degraded: Whether the result is potentially incomplete
+    """
+
+    __slots__ = ("module", "rust_error", "fallback_path", "data_degraded")
+
+    def __init__(
+        self,
+        module: str,
+        rust_error: str = "",
+        fallback_path: str = "python_native",
+        data_degraded: bool = False,
+    ) -> None:
+        path_desc = {
+            "rust_simd": "Rust SIMD",
+            "python_native": "Python Native",
+            "noop": "No-op (degraded)",
+        }.get(fallback_path, fallback_path)
+        
+        msg = f"FFI fallback activated for module={module!r}: {path_desc}"
+        if rust_error:
+            msg += f" (Rust error: {rust_error})"
+        if data_degraded:
+            msg += " [DATA DEGRADED]"
+        
+        super().__init__(msg)
+        self.module = module
+        self.rust_error = rust_error
+        self.fallback_path = fallback_path
+        self.data_degraded = data_degraded
 
 
 # -----------------------------------------------------------------------------

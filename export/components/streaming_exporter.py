@@ -2,12 +2,15 @@
 Streaming export — yields sections as they complete.
 
 API:
+
     async def export_sprint_streaming(
         store: Any,
         handoff: ExportHandoff,
         sprint_id: str | None = None,
         output_path: str | Path | None = None,
     ) -> AsyncGenerator[tuple[str, str], None]
+
+    __slots__ = ('_nodes',)
 
 Yields (section_name, section_markdown) tuples in order:
     1. executive_summary

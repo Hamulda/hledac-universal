@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use petgraph::graph::{DiGraph, NodeIndex, UnGraph};
 use petgraph::algo::kosaraju_scc;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 use rayon::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -295,7 +295,7 @@ fn louvain_communities_impl(
 /// Returns:
 ///     Dict[node_id, float] of PageRank scores
 #[pyfunction]
-#[pyo3(signature = (nodes, edges, /, damping: f64 = PAGERANK_DAMPING, tol: f64 = PAGERANK_TOLERANCE, max_iter: usize = PAGERANK_MAX_ITER))]
+#[pyo3(signature = (nodes, edges, /, damping = PAGERANK_DAMPING, tol = PAGERANK_TOLERANCE, max_iter = PAGERANK_MAX_ITER))]
 pub fn rust_pagerank<'py>(
     py: Python<'py>,
     nodes: Vec<(u64, String, String)>,
@@ -415,7 +415,7 @@ pub fn rust_pagerank<'py>(
 /// Returns:
 ///     Dict[node_id, community_id] - community IDs are 0-indexed consecutive integers
 #[pyfunction]
-#[pyo3(signature = (nodes, edges, /, resolution: f64 = LOUVAIN_RESOLUTION, max_iter: usize = LOUVAIN_MAX_ITER))]
+#[pyo3(signature = (nodes, edges, /, resolution = LOUVAIN_RESOLUTION, max_iter = LOUVAIN_MAX_ITER))]
 pub fn rust_louvain_communities<'py>(
     py: Python<'py>,
     nodes: Vec<(u64, String, String)>,
@@ -453,9 +453,9 @@ pub fn rust_scc<'py>(
     let (node_indices, graph) = build_graph(&nodes, &edges);
     let sccs = compute_scc_impl(&node_indices, &graph);
 
-    let result = PyList::new(py, &[]);
+    let result = PyList::empty(py);
     for component in sccs {
-        let _ = result.append(PyList::new(py, &component));
+        let _ = result.append(PyList::new(py, component)?);
     }
     Ok(result)
 }
@@ -474,7 +474,7 @@ pub fn rust_scc<'py>(
 /// Returns:
 ///     Dict with keys: "pagerank", "communities", "scc"
 #[pyfunction]
-#[pyo3(signature = (nodes, edges, /, damping: f64 = PAGERANK_DAMPING, resolution: f64 = LOUVAIN_RESOLUTION))]
+#[pyo3(signature = (nodes, edges, /, damping = PAGERANK_DAMPING, resolution = LOUVAIN_RESOLUTION))]
 pub fn rust_graph_analytics_all<'py>(
     py: Python<'py>,
     nodes: Vec<(u64, String, String)>,
@@ -530,9 +530,9 @@ pub fn rust_graph_analytics_all<'py>(
     }
 
     // SCC as list of components
-    let py_scc = PyList::new(py, &[]);
+    let py_scc = PyList::empty(py);
     for component in sccs {
-        let _ = py_scc.append(PyList::new(py, &component));
+        let _ = py_scc.append(PyList::new(py, component)?);
     }
 
     let result = PyDict::new(py);
@@ -631,8 +631,8 @@ fn compute_scc_impl(
 
     let sccs: Vec<Vec<NodeIndex>> = kosaraju_scc(&pet_graph);
 
-    let reverse_map: HashMap<petgraph::graph::NodeIndex, u64> =
-        idx_map.iter().map(|(&k, &v)| (v, k)).collect();
+    let reverse_map: HashMap<NodeIndex, u64> =
+        idx_map.iter().map(|(&k, &v)| (v, k.index() as u64)).collect();
 
     sccs
         .into_iter()

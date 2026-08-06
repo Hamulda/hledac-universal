@@ -2,6 +2,7 @@
 SystemMonitor - System monitoring pro UniversalResearchOrchestrator
 
 CONTAINMENT METADATA (Sprint perf_c):
+
 - ROLE: Bounded health observation surface (sync check_health model)
 - IS NOT: Canonical system monitor, execution authority, scheduler, or control surface
 - AUTHORITY: Read-only health checks via psutil; callbacks for notification only

@@ -2,6 +2,9 @@
 Context Compressor with MLX Embeddings (M1-primary)
 ============================================
 
+
+
+
 MLXEmbeddingManager is primary for M1. FastEmbed removed P0-1.
 
 This module provides memory-efficient context compression using MLX embeddings
@@ -65,7 +68,7 @@ class CompressionLevel(Enum):
     IMPORTANT = IMPORTANT
     ABSTRACT = ABSTRACT
 
-class CompressedContext(msgspec.Struct):
+class CompressedContext(msgspec.Struct, gc=False):
     """Compressed context container."""
     context_id: str
     original_size: int
@@ -81,7 +84,7 @@ class CompressedContext(msgspec.Struct):
     sentence_scores: list[float] | None = None
     cluster_info: dict[str, Any] | None = None
 
-class DecompressionResult(msgspec.Struct):
+class DecompressionResult(msgspec.Struct, gc=False):
     """Result of context decompression."""
     content: str
     detail_level: str

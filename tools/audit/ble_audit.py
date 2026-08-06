@@ -2,6 +2,8 @@
 """
 BLE001 Audit Tool — Issue D5
 
+
+
 Replaces static per-file-ignores for BLE001 (bare except) in pyproject.toml
 with a smart AST-based audit that allows:
   1. Exception tuples:  except (X, Y, Z):

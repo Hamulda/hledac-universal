@@ -2,6 +2,13 @@
 Temporal Analysis Engine
 =========================
 
+
+
+
+
+
+
+
 From deep_research/temporal_analyzer.py comments:
 - Historical trend analysis
 - Current state analysis
@@ -37,7 +44,7 @@ class PatternType(Enum):
     RANDOM = 'random'
     STEP_CHANGE = 'step_change'
 
-class TrendAnalysis(msgspec.Struct):
+class TrendAnalysis(msgspec.Struct, gc=False):
     """Result of trend analysis."""
     direction: TrendDirection
     strength: float
@@ -47,7 +54,7 @@ class TrendAnalysis(msgspec.Struct):
     end_value: float
     time_period_days: int
 
-class TemporalPattern(msgspec.Struct):
+class TemporalPattern(msgspec.Struct, gc=False):
     """Detected temporal pattern."""
     pattern_type: PatternType
     period_days: int | None
@@ -55,7 +62,7 @@ class TemporalPattern(msgspec.Struct):
     confidence: float
     description: str
 
-class CausalEvent(msgspec.Struct, frozen=True):
+class CausalEvent(msgspec.Struct, frozen=True, gc=False):
     """Event in causal chain."""
     timestamp: datetime
     event: str
@@ -63,7 +70,7 @@ class CausalEvent(msgspec.Struct, frozen=True):
     lag_days: int
     evidence: list[str] = field(default_factory=list)
 
-class Scenario(msgspec.Struct, frozen=True):
+class Scenario(msgspec.Struct, frozen=True, gc=False):
     """Future scenario projection."""
     name: str
     probability: float
@@ -72,7 +79,7 @@ class Scenario(msgspec.Struct, frozen=True):
     implications: str
     time_horizon_days: int
 
-class TurningPoint(msgspec.Struct, frozen=True):
+class TurningPoint(msgspec.Struct, frozen=True, gc=False):
     """Detected turning point in time series."""
     timestamp: datetime
     significance: float
@@ -80,7 +87,7 @@ class TurningPoint(msgspec.Struct, frozen=True):
     before_trend: TrendDirection
     after_trend: TrendDirection
 
-class TemporalAnalysisResult(msgspec.Struct, frozen=True):
+class TemporalAnalysisResult(msgspec.Struct, frozen=True, gc=False):
     """Complete temporal analysis result."""
     query: str
     timestamp: datetime

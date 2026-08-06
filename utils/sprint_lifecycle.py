@@ -2,6 +2,7 @@
 Sprint Lifecycle Manager — COMPAT SHIM ONLY.
 
 ================================================================
+
 DEPRECATED — DO NOT USE IN NEW CODE
 Canonical lifecycle authority: runtime/sprint_lifecycle.SprintLifecycleManager
 ================================================================

@@ -2,6 +2,7 @@
 BatchScheduler — Pure asyncio continuous batch scheduler.
 
 No MLX/GPU dependencies. Schedules structured output requests with:
+
 - Priority queue (lower = higher priority, priority=0 bypasses batch)
 - Schema boundary segregation (don't mix Pydantic/msgspec types)
 - Prompt hash boundary segregation (don't mix system prompts)

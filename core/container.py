@@ -3,6 +3,8 @@
 F350M-R / A3: Nahrazuje 5 izolovaných registry/singletonů jedním konzistentním
 kontraktem.
 
+
+
 Registry které migrujeme:
   1. core/inference_coordinator  — _COORDINATOR singleton → container.get('inference.coordinator')
   2. core/isolated_executors     — 3 pool singletony     → container.get('executor.duckdb')

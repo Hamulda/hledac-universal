@@ -2,6 +2,8 @@
 Platform Information Helper
 ============================
 Lightweight platform/dependency truth without heavy imports.
+
+
 Provides actionable status for optional acceleration dependencies.
 
 Designed to be:
@@ -25,7 +27,7 @@ class DepCategory(Enum):
     PLATFORM_GUARDED = "platform_guarded"         # Depends on platform (e.g. MPS)
 
 
-class AccelerationStatus(msgspec.Struct, frozen=True):
+class AccelerationStatus(msgspec.Struct, frozen=True, gc=False):
     """Status for a single acceleration dependency."""
     name: str
     available: bool
@@ -35,7 +37,7 @@ class AccelerationStatus(msgspec.Struct, frozen=True):
     platform_note: str | None
 
 
-class PlatformReport(msgspec.Struct, frozen=True):
+class PlatformReport(msgspec.Struct, frozen=True, gc=False):
     """Full platform acceleration report."""
     statuses: dict[str, AccelerationStatus]
     summary: str

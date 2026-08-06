@@ -2,6 +2,7 @@
 secrets_vault/vault.py — Canonical password vault with AES-256-GCM (F350M-R)
 
 M1 8GB RAM: ~20 MB resident for 1000 credentials (each ~20 KB encrypted blob).
+
 Rust batch AES-GCM: ~3-5× faster than pure Python (hardware-accelerated AES-NI on M1).
 
 Key features:

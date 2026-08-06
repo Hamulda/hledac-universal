@@ -3,6 +3,12 @@ RustMiner - Lightweight Data Mining for M1 Optimization
 ======================================================
 Memory-efficient content extraction using lightweight libraries.
 
+
+
+
+
+
+
 Optimization Strategy:
 - Uses trafilex (Rust-based) or traflatura in minimal mode
 - No large DOM trees - streaming processing
@@ -73,7 +79,7 @@ _NH3_FALLBACK_PATTERNS: list[tuple[re.Pattern, str]] = [
 _TAG_STRIP_PATTERN = re.compile(r'<[^>]+>')
 _MULTI_SPACE_PATTERN = re.compile(r'\s+')
 
-class MiningResult(msgspec.Struct):
+class MiningResult(msgspec.Struct, gc=False):
     """Result of content mining operation"""
     content: str
     title: str = ''
@@ -625,7 +631,7 @@ def create_rust_miner(prefer_rust: bool=True) -> RustMiner:
     """
     return RustMiner(prefer_rust=prefer_rust)
 
-class FeedDiscoveryResult(msgspec.Struct, frozen=True):
+class FeedDiscoveryResult(msgspec.Struct, frozen=True, gc=False):
     """Result of feed discovery."""
     feed_urls: list[str]
     source_url: str
@@ -702,7 +708,7 @@ class FeedDiscoverer:
             return urljoin(base_url, href)
         return ''
 
-class ExtractedMetadata(msgspec.Struct, frozen=True):
+class ExtractedMetadata(msgspec.Struct, frozen=True, gc=False):
     """Metadata extracted from non-HTML documents."""
     content_type: str
     file_size: int

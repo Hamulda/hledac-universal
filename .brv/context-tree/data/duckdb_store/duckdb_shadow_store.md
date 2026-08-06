@@ -2,7 +2,7 @@
 title: DuckDB Shadow Store
 summary: DuckDB shadow store with 3-tier facts hierarchy, IOC extraction fallback chain, and query cache (L1/L2)
 tags: []
-related: []
+related: [data/duckdb_store/duckdb_shadow_store_architecture.md]
 keywords: []
 createdAt: '2026-07-11T14:50:41.388Z'
 updatedAt: '2026-07-11T14:50:41.388Z'

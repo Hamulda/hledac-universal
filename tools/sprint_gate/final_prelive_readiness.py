@@ -2,6 +2,8 @@
 
 One definitive operator answer: READY_TO_RUN_NOW / READY_TO_RESTART_AND_RUN /
 BLOCKED_BY_CONTRACT / BLOCKED_BY_MEMORY / BLOCKED_BY_ARTIFACTS /
+
+
 BLOCKED_BY_PROVIDER_SURFACE / BLOCKED_BY_UNKNOWN
 
 No live execution. No network. No MLX.
@@ -42,14 +44,14 @@ class NextAction(StrEnum):
     RUN_MISSING_PROBE = 'RUN_MISSING_PROBE'
     FIX_CONTRACT_GATE = 'FIX_CONTRACT_GATE'
 
-class Blocker(msgspec.Struct):
+class Blocker(msgspec.Struct, gc=False):
     category: str
     severity: str
     detail: str
     current_swap_gib: float | None = None
     threshold_gib: float | None = None
 
-class ReadinessResult(msgspec.Struct, frozen=True):
+class ReadinessResult(msgspec.Struct, frozen=True, gc=False):
     verdict: Verdict
     live_allowed: bool
     next_action: NextAction

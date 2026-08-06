@@ -2,10 +2,14 @@
 
 F350M-R / Issue #P2.
 
+
+
 Extracts acquisition phase logic from runtime/sprint_scheduler.py:
     - _run_one_cycle (~110 lines, dispatcher stable/aggressive)
     - _run_one_cycle_stable (~830 lines, sequential feed → public)
     - _run_one_cycle_aggressive (~950 lines, concurrent feed/public/CT branches)
+
+
     - The while-not-terminal acquisition loop from _run_internal
 
 Design:
@@ -173,7 +177,7 @@ class AcquisitionOrchestrator:
             name="sprint:synthesis_windup",
             scope=TaskScope.WINDUP_SYNTHESIS,
         )
-        ctx._cycle.synth_windup_task = _synth_task
+        ctx.cycle.synth_windup_task = _synth_task
 
         # Await synthesis before returning (prevents runner.close() race on M1 8GB)
         try:
@@ -330,17 +334,17 @@ class AcquisitionOrchestrator:
                 _barrier_required = getattr(_barrier_result, "required_lanes", ())
 
                 if _barrier_required and not _barrier_satisfied:
-                    _barrier_retry_count = ctx._cycle.barrier_retry_count + 1
+                    _barrier_retry_count = ctx.cycle.barrier_retry_count + 1
                     _barrier_max_retries = 3
                     _barrier_hard_timeout_s = 30.0
-                    ctx._cycle.barrier_retry_count = _barrier_retry_count
+                    ctx.cycle.barrier_retry_count = _barrier_retry_count
 
                     if _barrier_retry_count > _barrier_max_retries:
                         _barrier_satisfied = True
                     elif (now_monotonic - _wall_clock_start) > _barrier_hard_timeout_s:
                         _barrier_satisfied = True
-                    elif not ctx._cycle.prewindup_barrier_delayed:
-                        ctx._cycle.prewindup_barrier_delayed = True
+                    elif not ctx.cycle.prewindup_barrier_delayed:
+                        ctx.cycle.prewindup_barrier_delayed = True
                         _result.prewindup_barrier_delayed_cycle = True
                         continue
 
@@ -659,8 +663,8 @@ class AcquisitionOrchestrator:
             _result.branch_timeout_count += 1
 
         # P2-1: AIMD telemetry — capture window + counters for benchmark
-        # Fetch from ctx._cycle if set by a previous run, else use FetchCoordinator
-        _aimd_telemetry = getattr(ctx._cycle, "_aimd_telemetry", None)
+        # Fetch from ctx.cycle if set by a previous run, else use FetchCoordinator
+        _aimd_telemetry = getattr(ctx.cycle, "_aimd_telemetry", None)
         _aimd_window_val = getattr(_aimd_telemetry, "window", 0.0) if _aimd_telemetry else 0.0
         _aimd_successes_val = getattr(_aimd_telemetry, "successes", 0) if _aimd_telemetry else 0
         _aimd_failures_val = getattr(_aimd_telemetry, "failures", 0) if _aimd_telemetry else 0
@@ -806,7 +810,7 @@ class AcquisitionOrchestrator:
 
     def _get_effective_max_cycles(self, ctx: Any) -> int:
         """Adaptive max_cycles based on cycle_time EMA."""
-        _cyc = ctx._cycle
+        _cyc = ctx.cycle  # FIX: renamed from ctx._cycle to ctx.cycle
         if _cyc.last_cycle_start is not None:
             _elapsed = max(0.1, min(10.0, _time.monotonic() - _cyc.last_cycle_start))
             _cyc.cycle_time_ema = 0.7 * _cyc.cycle_time_ema + 0.3 * _elapsed
@@ -1250,7 +1254,7 @@ class AcquisitionOrchestrator:
         _sprint_id = getattr(ctx, "sprint_id", "") or "unknown"
         _mode = ctx.config.aggressive_mode and "aggressive" or "active"
         # ISSUE #011 FIX: pressure_ratio does not exist on _CycleState — always 0.0
-        _pressure = getattr(ctx._cycle, "pressure_ratio", 0.0)
+        _pressure = getattr(ctx.cycle, "pressure_ratio", 0.0)
 
         return SidecarContext(
             query=_query,
@@ -1317,16 +1321,18 @@ class AcquisitionOrchestrator:
         _concurrency = self._get_adaptive_concurrency()
 
         # Remaining time budget per lane — 5% of remaining sprint time, min 2s
-        _wall_clock_start = ctx._cycle.wall_clock_start if ctx._cycle else 0.0
+        _wall_clock_start = ctx.cycle.wall_clock_start if ctx.cycle else 0.0
         _remaining = ctx.config.sprint_duration_s - (_time.monotonic() - _wall_clock_start)
         _lane_budget = max(_remaining * 0.05, 2.0)
 
         # ISSUE #011 FIX: Use SidecarRegistry — the canonical discovery path.
         # Avoids broken factory __import__ paths for pdns/doh/ipfs/bgp.
+        # FIX: Make memory_budget_mb configurable via config (default 512 for M1 8GB)
         try:
             from hledac.universal.runtime.sidecar_protocol import SidecarRegistry, ensure_adapters_registered
             ensure_adapters_registered()
-            _available = SidecarRegistry.get_available(memory_budget_mb=512)
+            _memory_budget = getattr(ctx.config, 'sidecar_memory_budget_mb', 512)
+            _available = SidecarRegistry.get_available(memory_budget_mb=_memory_budget)
         except Exception:
             _available = []
 

@@ -2,6 +2,11 @@
 Circuit Breaker — transport resilience pattern.
 
 Prevents cascading failures by opening the circuit after repeated
+
+
+
+
+
 consecutive failures/timeouts for a given domain.
 
 Sprint F204B — Production OPSEC Domain Circuit Breaker

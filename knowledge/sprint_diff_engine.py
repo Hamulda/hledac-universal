@@ -2,6 +2,8 @@
 
 Boundaries:
     MAX_DIFF_FINDINGS=100   — cap new/disappeared lists
+
+
     MAX_PROFILE_ENTRIES=500 — cap entity summary
 
 Diff logic:

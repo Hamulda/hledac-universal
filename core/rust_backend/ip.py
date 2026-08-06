@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
+
 if TYPE_CHECKING:
     from hledac_rust_extensions import hledac_rust_extensions
 

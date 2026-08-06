@@ -2,6 +2,7 @@
 hledac_hypothesis/eig.py — Expected Information Gain calculator.
 
 Cutting-edge: pure-Python entropy estimation over Dempster-Shafer belief
+
 masses. No numpy — M1-8GB-safe. Used in OSINT hypothesis selection
 (entropy-reduction maximisation across candidate action sets).
 

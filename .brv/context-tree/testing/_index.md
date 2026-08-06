@@ -1,55 +1,62 @@
 ---
-children_hash: 9eb83f8d60ebd279a00bcd5805dc2f1dd87892cdbec93fc1eeddd8e855d4665b
-compression_ratio: 0.14959531119173877
+children_hash: fecec0a6540254be92e33d3f5d081d9c0f77024c947873f248287d1f9c35bc00
+compression_ratio: 0.13760186263096624
 condensation_order: 2
-covers: [conftest/_index.md, discovery_adapter_tests/_index.md, discovery_adapters/_index.md, exit_codes/_index.md, memory_leaks/_index.md, url_dedup/_index.md, url_dedup_tests/_index.md]
-covers_token_total: 3583
+covers: [conftest/_index.md, discovery_adapter_tests/_index.md, discovery_adapters/_index.md, exit_codes/_index.md, f350m_r_regression_tests/_index.md, memory_leaks/_index.md, url_dedup/_index.md, url_dedup_tests/_index.md]
+covers_token_total: 4295
 summary_level: d2
-token_count: 536
+token_count: 591
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at level d1 (domain level) from the child entries. I need to preserve key facts, architectural decisions, and relationships while compressing to ~20-30% of the original token count. I should reference entry names for drill-down.
+The user is asking me to create a structural summary at the d1 level (domain level) for the `url_dedup_tests` domain. Looking at the `_index.md` metadata, this domain has:
+- 1 child entry: `url_deduplication_tests.md`
+- Compression ratio: 0.9146757679180887 (very high, meaning most content is being preserved)
+- Token count: 536
+- Summary level: d1
 
-Let me analyze the single child entry:
+I need to create a concise structural summary that references the child entry for drill-down and preserves key facts, architectural decisions, and relationships while compressing to ~20-30% of the original token count (536 tokens → ~160-270 tokens).
 
-**url_deduplication_tests.md** - A test suite for URL deduplication with the following key points:
-- Test file: tests/test_f_a5_url_dedup.py
-- 13 tests in 5 sections
-- Tests RotatingBloomFilterAdapter isolation
-- dedupe_url_list returns (unique_list, dropped_count)
-- Edge cases like unparseable URLs, None filter fallback
-- Fresh filter fixture pattern for hermetic tests
+Let me identify the key information:
+1. **Domain**: url_dedup_tests
+2. **Source**: tests/test_f_a5_url_dedup.py
+3. **Key function**: dedupe_url_list with normalize parameter
+4. **Returns**: tuple[unique_urls, dropped_count]
+5. **Bloom filter**: RotatingBloomFilterAdapter for state management
+6. **Isolation pattern**: fresh_filter fixture
+7. **Edge case**: Unparseable URLs kept in output but NOT added to filter
+8. **Test count**: 13 tests in 5 sections
+9. **Normalization**: lowercases scheme/host when normalize=True
 
-I'll create a concise structural summary.
+Let me write a concise summary at d1 level.
 </think>
 
-## URL Deduplication Tests
+## url_dedup_tests
 
-**Source:** `tests/test_f_a5_url_dedup.py` — Hermetic test suite validating URL dedup behavior with bloom filter integration.
+**Source:** `tests/test_f_a5_url_dedup.py` — 13 tests validating URL deduplication with bloom filter integration.
 
-### Test Organization (13 tests across 5 sections)
+### Core API
 
-- **Basic correctness** (5 tests): Verify first-seen-wins ordering, correct unique/dropped counts, normalize flag collapsing scheme/host
-- **Filter mutation contract** (2 tests): Assert filter is mutated after dedupe
-- **Edge cases** (3 tests): Unparseable URLs kept in output but NOT added to filter (poisoning prevention), empty strings dropped
-- **None filter fallback** (1 test): In-list dedup without mutation
-- **Real-world scenario** (1 test): 1800 raw URLs → 600 unique across 3 query batches
+`dedupe_url_list(urls, filter=None, normalize=True)` returns `(unique_urls, dropped_count)`.
 
-### Key API Contract
-
-- `dedupe_url_list(urls, filter=None, normalize=True)` returns `tuple[unique_urls, dropped_count]`
+**Normalization behavior:**
 - `normalize=True`: lowercases scheme/host before comparison
 - `normalize=False`: preserves raw strings verbatim
 
-### Isolation Pattern
+### Test Structure (5 sections)
 
-`fresh_filter` pytest fixture provides per-test `RotatingBloomFilterAdapter` instance, preventing singleton state leakage across tests.
+| Section | Tests | Focus |
+|---------|-------|-------|
+| Basic correctness | 5 | First-seen-wins ordering, counts, normalize flag |
+| Filter mutation contract | 2 | Filter state changes after dedupe |
+| Edge cases | 3 | Unparseable URLs kept in output but excluded from filter |
+| None filter fallback | 1 | In-list dedup without mutation |
+| Real-world scenario | 1 | 1800 raw URLs → 600 unique across batches |
 
-### Edge Case Rules
+### Key Design Decisions
 
-1. Unparseable URLs remain in output but are excluded from filter
-2. Empty strings count as dropped URLs
-3. None filter falls back to list-only dedup without side effects
+**Unparseable URL handling:** Retained in output to avoid silent data loss; excluded from filter to prevent poisoning.
 
-**Drill-down:** See `url_deduplication_tests.md` for full test implementations and examples.
+**Isolation pattern:** `fresh_filter` fixture provides per-test `RotatingBloomFilterAdapter` instance.
+
+**Drill-down:** `url_deduplication_tests.md` contains full test implementations and examples.

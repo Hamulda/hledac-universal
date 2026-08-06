@@ -2,6 +2,8 @@
 Exception Policy — centralized exception handling for Hledac Universal.
 
 Architecture (P1-01):
+
+
     - HOT_PATH (fetching, IOC extraction, evidence log): re_raise=False, always log with exc_info
     - COLD_PATH (initialization, shutdown): re_raise=True, surface to caller
     - NEVER bare `except: pass` — use explicit exception types

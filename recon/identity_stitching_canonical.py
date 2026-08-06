@@ -2,6 +2,8 @@
 Identity Stitching Canonical Adapter — Sprint F202B
 ===================================================
 
+
+
 Canonical adapter wrapping IdentityStitchingEngine for the sprint pipeline.
 
 Responsibilities:
@@ -44,7 +46,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-class IdentityCandidate(msgspec.Struct):
+class IdentityCandidate(msgspec.Struct, gc=False):
     """
     A derived identity candidate produced by the stitching engine.
 

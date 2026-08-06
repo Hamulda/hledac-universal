@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.archive_discovery
-from recon.archive_discovery import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

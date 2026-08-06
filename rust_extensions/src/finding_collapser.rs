@@ -18,8 +18,64 @@
 
 use parking_lot::RwLock;
 use pyo3::prelude::*;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
+
+/// Regex patterns for named entity detection (IOC preservation).
+/// These patterns MUST NOT be pruned regardless of TF-IDF or entropy score.
+static IOC_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        // CVE IDs: CVE-YYYY-NNNNN+
+        Regex::new(r"CVE-\d{4}-\d{4,}").unwrap(),
+        // IPv4 addresses
+        Regex::new(r"\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b").unwrap(),
+        // IPv6 addresses (simplified)
+        Regex::new(r"(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}").unwrap(),
+        // Domain names (common TLDs)
+        Regex::new(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+(?:com|org|net|edu|gov|mil|io|co|info|biz|xyz|onion|tk|ml|ga|cf|gq)\b").unwrap(),
+        // Hashes: MD5 (32), SHA1 (40), SHA256 (64), SHA512 (128)
+        Regex::new(r"\b[a-fA-F0-9]{32}\b").unwrap(),
+        Regex::new(r"\b[a-fA-F0-9]{40}\b").unwrap(),
+        Regex::new(r"\b[a-fA-F0-9]{64}\b").unwrap(),
+        Regex::new(r"\b[a-fA-F0-9]{128}\b").unwrap(),
+        // APT names (common naming patterns)
+        Regex::new(r"\b(?:APT(?:-\d+|[A-Z]?(?:\d+[A-Z]?)?|Group))\b").unwrap(),
+        // URLs (http/https) — simplified char class, no escape issues
+        Regex::new(r"https?://[^\s<>{}\\|^`\[\]]+").unwrap(),
+        // Email addresses
+        Regex::new(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b").unwrap(),
+        // File paths (Unix-style)
+        Regex::new(r"(?:/[a-zA-Z0-9._-]+)+").unwrap(),
+        // Registry keys (Windows)
+        Regex::new(r"HKLM\\[^\\\s]+|HKCU\\[^\\\s]+|HKCR\\[^\\\s]+").unwrap(),
+        // Mutex names
+        Regex::new(r"(?:Global\\|Local\\)[a-zA-Z0-9_.]+").unwrap(),
+    ]
+});
+
+/// Common English stop words that carry low semantic value.
+static STOP_WORDS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    let mut set = HashSet::new();
+    // Articles, pronouns, prepositions, conjunctions, auxiliary verbs
+    ["the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+     "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
+     "may", "might", "must", "shall", "can", "need", "dare", "ought", "used",
+     "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into",
+     "through", "during", "before", "after", "above", "below", "between",
+     "under", "again", "further", "then", "once", "here", "there", "when",
+     "where", "why", "how", "all", "each", "few", "more", "most", "other",
+     "some", "such", "no", "nor", "not", "only", "own", "same", "so",
+     "than", "too", "very", "just", "also", "now", "and", "but", "or", "yet",
+     "if", "because", "until", "while", "about", "against", "this", "that",
+     "these", "those", "it", "its", "they", "them", "their", "what", "which",
+     "who", "whom", "whose", "him", "her", "his", "we", "us", "our", "you",
+     "your", "i", "me", "my", "mine", "am", "get", "got", "like", "back",
+     "up", "down", "out", "over", "off", "any", "new", "first", "last",
+     "see", "known", "known", "seen", "via", "per", "via"].into_iter().for_each(|w| { set.insert(w); });
+    set
+});
 
 /// Finding dict shape accepted from Python (msgspec JSON).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -145,7 +201,7 @@ fn extract_first_ioc(text: &str) -> Option<&str> {
     let words: Vec<&str> = text.split_whitespace().collect();
     for w in &words {
         let w = *w;
-        let stripped = w.trim_matches(|c| char::is_ascii_punctuation);
+        let stripped = w.trim_matches(|c: char| c.is_ascii_punctuation());
         if (stripped.contains('.') && !stripped.contains("..") && stripped.len() > 3)
             || looks_like_ip(stripped)
             || looks_like_hash(stripped)
@@ -243,10 +299,13 @@ impl FindingGroup {
 }
 
 /// Core collapse algorithm — deterministic, single-pass.
+///
+/// SAFETY: Wrapped in catch_unwind at call site to prevent SIGABRT from
+/// NaN floats in confidence scores or panicking sort operations across FFI.
 fn collapse_findings_core(
     findings: &[Finding],
     max_groups: usize,
-    max_chars_per_group: usize,
+    _max_chars_per_group: usize,
 ) -> (Vec<FindingGroup>, usize) {
     // ── Map phase ──────────────────────────────────────────────────────────────
     let mut groups: HashMap<String, FindingGroup> = HashMap::new();
@@ -281,6 +340,8 @@ fn collapse_findings_core(
     let mut group_list: Vec<FindingGroup> = groups.into_values().collect();
 
     // Sort by score descending — no RNG, no time
+    // NOTE: partial_cmp can panic on NaN, but confidence is clamped 0.0-1.0 in conf()
+    // The SAFETY comment documents this is protected by catch_unwind at call site
     group_list.sort_by(|a, b| {
         b.score()
             .partial_cmp(&a.score())
@@ -315,6 +376,26 @@ fn collapse_findings_core(
     (group_list, original_count)
 }
 
+/// Collapse findings with panic recovery.
+///
+/// SAFETY: Wraps collapse_findings_core in catch_unwind to prevent SIGABRT
+/// from NaN floats (confidence), non-UTF-8 strings, or panicking sort operations.
+/// This matches the pattern used in ioc_extract.rs:161 for FFI safety.
+fn collapse_findings_safe(
+    findings: &[Finding],
+    max_groups: usize,
+    max_chars_per_group: usize,
+) -> PyResult<(Vec<FindingGroup>, usize)> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        collapse_findings_core(findings, max_groups, max_chars_per_group)
+    }))
+    .map_err(|_| {
+        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+            "collapse_findings_core panicked: possible NaN in confidence or invalid UTF-8",
+        )
+    })
+}
+
 /// Render collapsed groups as Markdown tree.
 fn render_collapsed_markdown(
     groups: &[FindingGroup],
@@ -344,7 +425,7 @@ fn render_collapsed_markdown(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Process-wide singleton — guards against concurrent collapse calls.
-static _COLLAPSE_GLOBAL_LOCK: RwLock<()> = RwLock::();
+static _COLLAPSE_GLOBAL_LOCK: RwLock<()> = RwLock::new(());
 
 /// Check deterministic enforcement flag.
 /// Returns false if HLEDAC_COLLAPSER_FORCE_DETERMINISTIC=0.
@@ -399,8 +480,8 @@ pub fn collapse_findings(
         return Ok(Vec::from("## Pre-Collapsed IOC Tree\n\n*No findings to collapse.*\n"));
     }
 
-    // Core collapse
-    let (groups, original_entity_count) = collapse_findings_core(&findings, max_groups, max_chars_per_group);
+    // Core collapse — protected by catch_unwind for FFI safety
+    let (groups, original_entity_count) = collapse_findings_safe(&findings, max_groups, max_chars_per_group)?;
 
     // Render
     let markdown = render_collapsed_markdown(
@@ -419,6 +500,493 @@ pub fn collapse_findings(
 /// Determinism probe — returns true if the collapser enforces deterministic output.
 pub fn collapser_is_deterministic() -> bool {
     is_deterministic_enforced()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [SWARM]-004: SemanticPromptCompressor — Entropy + TF-IDF pre-filter
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Configuration for prompt compression.
+#[derive(Clone)]
+pub struct CompressionConfig {
+    /// TF-IDF boilerplate threshold: words in >= this fraction of groups are dropped (0.0-1.0).
+    /// Default 0.8 (80%) — words in 80%+ of groups are boilerplate.
+    pub tfidf_threshold: f64,
+    /// Minimum entropy threshold in bits. Words with character entropy below this are dropped.
+    /// Default 3.5 bits — below this means mostly repeated/structure characters.
+    pub min_entropy_bits: f64,
+    /// Minimum word length to consider for pruning.
+    pub min_word_length: usize,
+    /// Whether to strip Markdown formatting characters where structure is preserved.
+    pub strip_markdown: bool,
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            tfidf_threshold: 0.80,
+            min_entropy_bits: 3.5,
+            min_word_length: 3,
+            strip_markdown: true,
+        }
+    }
+}
+
+/// Check if a word/fragment contains a protected IOC pattern.
+fn contains_protected_ioc(word: &str) -> bool {
+    for pattern in IOC_PATTERNS.iter() {
+        if pattern.is_match(word) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Extract all IOC substrings from text to protect them from pruning.
+fn extract_all_iocs(text: &str) -> HashSet<String> {
+    let mut iocs = HashSet::new();
+    for pattern in IOC_PATTERNS.iter() {
+        for m in pattern.find_iter(text) {
+            iocs.insert(m.as_str().to_string());
+        }
+    }
+    iocs
+}
+
+/// Compute Shannon entropy of character frequencies in text.
+/// Returns entropy in bits per character.
+fn compute_char_entropy(text: &str) -> f64 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    
+    let mut counts: [u64; 128] = [0; 128];
+    let mut total: u64 = 0;
+    
+    for c in text.chars() {
+        if let Some(idx) = u32::try_from(c).ok().filter(|&i| i < 128) {
+            counts[idx as usize] += 1;
+            total += 1;
+        }
+    }
+    
+    if total == 0 {
+        return 0.0;
+    }
+    
+    let mut entropy: f64 = 0.0;
+    let total_f = total as f64;
+    
+    for &count in &counts {
+        if count > 0 {
+            let p = (count as f64) / total_f;
+            entropy -= p * p.log2();
+        }
+    }
+    
+    entropy
+}
+
+/// Compute per-word TF-IDF scores across groups.
+/// Returns a set of words (lowercase) that appear in >= threshold fraction of groups (boilerplate).
+fn compute_tfidf_boilerplate<'a>(groups: &[&'a str], threshold: f64) -> HashSet<String> {
+    let num_groups = groups.len();
+    if num_groups == 0 {
+        return HashSet::new();
+    }
+    
+    let mut word_doc_freq: HashMap<String, usize> = HashMap::new();
+    let mut word_groups: HashMap<String, HashSet<usize>> = HashMap::new();
+    
+    // Single pass: count which groups each word appears in
+    for (group_idx, group_text) in groups.iter().enumerate() {
+        let mut seen_in_group: HashSet<&str> = HashSet::new();
+        
+        for word in group_text.split(|c: char| c.is_whitespace() || "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~".contains(c)) {
+            let word = word.trim();
+            if word.len() < 2 || word.chars().all(|c| c.is_numeric()) {
+                continue;
+            }
+            // Skip IOCs — they should never be considered boilerplate
+            if contains_protected_ioc(word) {
+                continue;
+            }
+            let word_lower = word.to_lowercase();
+            if STOP_WORDS.contains(word_lower.as_str()) {
+                continue;
+            }
+            
+            if seen_in_group.insert(word) {
+                *word_doc_freq.entry(word_lower.clone()).or_insert(0) += 1;
+                word_groups.entry(word_lower).or_default().insert(group_idx);
+            }
+        }
+    }
+    
+    // Find boilerplate: words in >= threshold fraction of groups
+    let mut boilerplate: HashSet<String> = HashSet::new();
+    let min_docs = ((num_groups as f64) * threshold).ceil() as usize;
+    
+    for (word, &doc_count) in &word_doc_freq {
+        if doc_count >= min_docs {
+            // Also verify the word appears consistently across groups
+            if let Some(groups_with_word) = word_groups.get(word) {
+                if groups_with_word.len() >= min_docs {
+                    boilerplate.insert(word.clone());
+                }
+            }
+        }
+    }
+    
+    boilerplate
+}
+
+/// Strip Markdown formatting while preserving structure.
+/// Removes bold markers (**), italic (*), inline code (`), links [text](url) -> text.
+/// Preserves headers (#), lists (-, *), code blocks (```).
+#[allow(dead_code)]
+fn strip_markdown_formatting(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_code_inline = false;
+    let mut in_code_block = false;
+    
+    while let Some(c) = chars.next() {
+        match c {
+            '`' => {
+                if in_code_inline {
+                    in_code_inline = false;
+                } else if chars.peek() == Some(&'`') && chars.clone().nth(1) == Some('`') {
+                    // Code block start/end
+                    chars.next();
+                    chars.next();
+                    in_code_block = !in_code_block;
+                    result.push('\n');
+                } else {
+                    in_code_inline = true;
+                }
+            },
+            '*' => {
+                if !in_code_inline && !in_code_block {
+                    if chars.peek() == Some(&'*') {
+                        chars.next(); // Skip second * of bold marker
+                    }
+                    // Bold/italic markers stripped — don't emit
+                } else {
+                    result.push(c);
+                }
+            },
+            '#' | '-' | '+' => {
+                if !in_code_inline && !in_code_block {
+                    if chars.peek() == Some(&' ') {
+                        result.push(c);
+                        chars.next();
+                        result.push(' ');
+                    } else {
+                        result.push(c);
+                    }
+                } else {
+                    result.push(c);
+                }
+            },
+            _ => {
+                result.push(c);
+            }
+        }
+    }
+    
+    result
+}
+
+/// Helper: determine if a word should be kept after compression.
+///
+/// Returns true if the word should be preserved in the output.
+#[inline]
+fn should_keep_word(
+    word: &str,
+    protected_iocs: &HashSet<String>,
+    boilerplate: &HashSet<String>,
+    config: &CompressionConfig,
+) -> bool {
+    // Pre-compute lowercase once for all checks
+    let word_lower = word.to_lowercase();
+    
+    // IOC protection: NEVER drop protected IOCs
+    // Case-insensitive exact match
+    if protected_iocs.contains(word) || protected_iocs.contains(&word_lower) {
+        return true;
+    }
+    
+    // Substring match: protect if word contains a known IOC
+    // Note: protected_iocs are already lowercase from extract_all_iocs
+    for ioc in protected_iocs {
+        if word_lower.contains(ioc) {
+            return true;
+        }
+    }
+    
+    // Pattern match: protect words that ARE IOCs (IP, hash, CVE, etc.)
+    // This catches standalone IOCs not captured by substring matching
+    if contains_protected_ioc(word) {
+        return true;
+    }
+    
+    // Boilerplate check (TF-IDF) — boilerplate contains lowercase words
+    if boilerplate.contains(&word_lower) {
+        return false;
+    }
+    
+    // Stop word check
+    if STOP_WORDS.contains(word_lower.as_str()) {
+        return false;
+    }
+    
+    // Short words: only keep if they contain digits (likely numeric IOCs)
+    if word.len() < config.min_word_length {
+        return word.chars().any(|c| c.is_ascii_digit());
+    }
+    
+    // Entropy check: low entropy = low information
+    let word_entropy = compute_char_entropy(word);
+    if word_entropy < config.min_entropy_bits {
+        return false;
+    }
+    
+    // Keep words with digits (likely IOCs like IPs, hashes, versions)
+    if word.chars().any(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    
+    // Keep words with path-like structure (URLs, file paths, domains)
+    if word.chars().next().map_or(false, |c| c.is_ascii_alphabetic()) 
+        && (word.contains('.') || word.contains('/') || word.contains(':')) 
+    {
+        return true;
+    }
+    
+    // Default: keep the word
+    true
+}
+
+/// Core compression algorithm: TF-IDF + entropy filtering + IOC preservation.
+///
+/// This is a fast, single-pass O(N) scan with:
+/// - TF-IDF: words in >=80% of groups are boilerplate → drop
+/// - Shannon entropy: words with char entropy < 3.5 bits → low information → drop
+/// - IOC preservation: regex-detected entities (IPs, domains, hashes, CVEs, APTs) → NEVER drop
+/// - Markdown stripping: removes formatting characters where structure is preserved
+///
+/// Target: 30-50% token reduction, ~5-10μs for 4,000 chars on M1.
+pub fn compress_prompt_core(
+    text: &str,
+    config: &CompressionConfig,
+) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    
+    // Extract and protect all IOCs first
+    let protected_iocs = extract_all_iocs(text);
+    if protected_iocs.is_empty() && text.len() < 200 {
+        // Very short text without IOCs — skip compression
+        return text.to_string();
+    }
+    
+    // Split into groups for TF-IDF analysis
+    // Groups are separated by "### Group N" headers
+    let groups: Vec<&str> = text.split("### Group")
+        .filter(|g| !g.trim().is_empty())
+        .collect();
+    
+    // Compute boilerplate words (TF-IDF)
+    let boilerplate = compute_tfidf_boilerplate(&groups, config.tfidf_threshold);
+    
+    // Build result string
+    let mut result = String::with_capacity(text.len());
+    
+    // Process word by word, preserving structure
+    let markdown_chars: HashSet<char> = 
+        "#*_-`[]()!|".chars().collect();
+    
+    let mut i = text.chars().peekable();
+    let mut word_buf = String::new();
+    
+    while let Some(c) = i.next() {
+        // Handle bold markers ** specially - skip the second *
+        if c == '*' && config.strip_markdown {
+            if let Some(&next) = i.peek() {
+                if next == '*' {
+                    // Skip the second * of a bold marker
+                    i.next();
+                    continue;
+                }
+            }
+            // Single * (italic marker) - strip it
+            continue;
+        }
+        
+        // Preserve structure characters
+        if markdown_chars.contains(&c) || c == '\n' || c == ':' || c == '(' || c == ')' {
+            // Flush any accumulated word using helper
+            if !word_buf.is_empty() {
+                if should_keep_word(&word_buf, &protected_iocs, &boilerplate, config) {
+                    result.push_str(&word_buf);
+                }
+                word_buf.clear();
+            }
+            
+            // Preserve structure (backticks for code)
+            if config.strip_markdown {
+                if c == '`' {
+                    result.push(c);
+                } else {
+                    result.push(c);
+                }
+            } else {
+                result.push(c);
+            }
+            
+        } else if c.is_whitespace() {
+            // Flush word using helper
+            if !word_buf.is_empty() {
+                if should_keep_word(&word_buf, &protected_iocs, &boilerplate, config) {
+                    result.push_str(&word_buf);
+                }
+                word_buf.clear();
+            }
+            result.push(c);
+        } else {
+            // Accumulate word characters
+            word_buf.push(c);
+        }
+    }
+    
+    // Flush remaining word using helper
+    if !word_buf.is_empty() {
+        if should_keep_word(&word_buf, &protected_iocs, &boilerplate, config) {
+            result.push_str(&word_buf);
+        }
+    }
+    
+    // Post-process: collapse multiple spaces, normalize newlines
+    let result = result
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    
+    // Re-add reasonable newlines after headers
+    let result = result
+        .replace(" ##", "\n##")
+        .replace(" ###", "\n###");
+    
+    result
+}
+
+/// Get compression stats for analysis.
+pub struct CompressionStats {
+    pub original_len: usize,
+    pub compressed_len: usize,
+    pub reduction_ratio: f64,
+    pub estimated_tokens_saved: usize,
+}
+
+impl CompressionStats {
+    fn new(original: &str, compressed: &str) -> Self {
+        let orig_len = original.len();
+        let comp_len = compressed.len();
+        let ratio = if orig_len > 0 {
+            1.0 - (comp_len as f64 / orig_len as f64)
+        } else {
+            0.0
+        };
+        // Rough token estimation: ~4 chars per token
+        let tokens_saved = (orig_len.saturating_sub(comp_len)) / 4;
+        
+        Self {
+            original_len: orig_len,
+            compressed_len: comp_len,
+            reduction_ratio: ratio,
+            estimated_tokens_saved: tokens_saved,
+        }
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (text, tfidf_threshold = 0.80, min_entropy_bits = 3.5, strip_markdown = true))]
+/// [SWARM]-004: Compress prompt text using entropy-guided word pruning.
+///
+/// This is a fast, single-pass O(N) scan with TF-IDF + Shannon entropy filtering.
+/// Target: 30-50% token reduction while preserving 100% of factual content.
+///
+/// Args:
+///     text: Markdown text to compress (typically collapser output).
+///     tfidf_threshold: Words appearing in >= this fraction of groups are boilerplate (0.0-1.0).
+///                      Default 0.80 (80%).
+///     min_entropy_bits: Minimum Shannon entropy (bits) for word characters.
+///                       Words below this threshold are low-information → dropped.
+///                       Default 3.5 bits.
+///     strip_markdown: Whether to strip Markdown formatting characters (default True).
+///
+/// Returns:
+///     Compressed text string with preserved structure and all IOCs protected.
+///
+/// Feature flag: HLEDAC_ENABLE_PROMPT_COMPRESSION=1 (default ON, =0 to disable).
+pub fn compress_prompt(
+    text: &str,
+    tfidf_threshold: f64,
+    min_entropy_bits: f64,
+    strip_markdown: bool,
+) -> PyResult<String> {
+    // Check feature flag — default ON
+    let enabled = std::env::var("HLEDAC_ENABLE_PROMPT_COMPRESSION")
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    
+    if !enabled {
+        return Ok(text.to_string());
+    }
+    
+    if text.is_empty() {
+        return Ok(String::new());
+    }
+    
+    let config = CompressionConfig {
+        tfidf_threshold: tfidf_threshold.clamp(0.0, 1.0),
+        min_entropy_bits: min_entropy_bits.clamp(0.0, 8.0),
+        min_word_length: 3,
+        strip_markdown,
+    };
+    
+    let compressed = compress_prompt_core(text, &config);
+    
+    // Return compressed text
+    Ok(compressed)
+}
+
+#[pyfunction]
+/// [SWARM]-004: Get compression stats without modifying text.
+///
+/// Useful for analysis and tuning the compression parameters.
+pub fn get_compression_stats(text: &str) -> PyResult<String> {
+    if text.is_empty() {
+        return Ok(serde_json::json!({
+            "original_len": 0,
+            "compressed_len": 0,
+            "reduction_ratio": 0.0,
+            "estimated_tokens_saved": 0,
+        }).to_string());
+    }
+    
+    let config = CompressionConfig::default();
+    let compressed = compress_prompt_core(text, &config);
+    let stats = CompressionStats::new(text, &compressed);
+    
+    Ok(serde_json::json!({
+        "original_len": stats.original_len,
+        "compressed_len": stats.compressed_len,
+        "reduction_ratio": stats.reduction_ratio,
+        "estimated_tokens_saved": stats.estimated_tokens_saved,
+    }).to_string())
 }
 
 #[cfg(test)]

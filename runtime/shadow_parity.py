@@ -2,6 +2,7 @@
 Sprint F3.5: Shadow Scheduler Parity — Fact Parity Only
 ========================================================
 
+
 **VERDICT: ACTIVE (diagnostic only)** — 2026-04-27, F206B
 
 Tento modul je ACTIVE diagnostic — shadow parity runner čte facts a porovnává je.

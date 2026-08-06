@@ -2,6 +2,12 @@
 
 F350M-R / Issue #P2.
 
+
+
+
+
+
+
 Defines the Protocol interfaces that each phase orchestrator must implement,
 and the shared SprintContext passed to all phases.
 """
@@ -252,32 +258,32 @@ class WinddownPhaseResult(msgspec.Struct, gc=False):
     teardown_duration_s: float | None = None
     error: str | None = None
 
-class _CycleState(msgspec.Struct, gc=False):
+class CycleState(msgspec.Struct, gc=False):
     """Per-cycle mutable state — isolated to prevent cross-cycle leakage.
 
-    Unlike SprintContext (which is immutable/frozen), _CycleState IS mutable
+    Unlike SprintContext (which is immutable/frozen), CycleState IS mutable
     because per-cycle state changes frequently within a single cycle (e.g.,
     barrier_retry_count increments, cycle_time_ema updates).
 
-    Lifecycle: a fresh _CycleState is created at the START of each cycle
-    (acquisition, winddown) and passed via SprintContext._cycle. This prevents
+    Lifecycle: a fresh CycleState is created at the START of each cycle
+    (acquisition, winddown) and passed via SprintContext.cycle. This prevents
     cross-cycle state leakage while keeping the phase orchestrator API clean.
 
     SC-05 FIX: duckdb_store was REMOVED from here.
     Rationale: DuckDB is a sprint-scoped singleton set once at sprint start.
     It must live in SprintContext.duckdb_store (InitResult-wrapped) and
     accessed via SprintContext.duckdb_store (convenience property) or
-    ctx.duckdb_store (raw store). Storing it in _CycleState caused:
-    - Triplication: self._duckdb_store + ctx.duckdb_store + ctx._cycle.duckdb_store
-    - init_duckdb_store writes to _CycleState, inject_duckdb_store writes to
-      _CycleState, and with_cycle(duckdb_store=...) also writes to _CycleState
+    ctx.duckdb_store (raw store). Storing it in CycleState caused:
+    - Triplication: self._duckdb_store + ctx.duckdb_store + ctx.cycle.duckdb_store
+    - init_duckdb_store writes to CycleState, inject_duckdb_store writes to
+      CycleState, and with_cycle(duckdb_store=...) also writes to CycleState
     - AcquisitionOrchestrator.run() receives duckdb_store as explicit param AND
-      ctx._cycle.duckdb_store — two sources of truth.
+      ctx.cycle.duckdb_store — two sources of truth.
 
     Usage::
 
         ctx = ctx.with_cycle(barrier_retry_count=2)
-        ctx._cycle.barrier_retry_count += 1  # mutate in-place within cycle
+        ctx.cycle.barrier_retry_count += 1  # mutate in-place within cycle
     """
     wall_clock_start: float = 0.0
     'Monotonic timestamp when sprint started.'
@@ -327,6 +333,8 @@ class _CycleState(msgspec.Struct, gc=False):
     'Analyst workbench. May be None.'
     forensics_enricher: Any = None
     'Forensics enricher. May be None.'
+    export_result: dict[str, Any] | None = None
+    'Export result from winddown. Set by WinddownOrchestrator._run_export_as_task.'
 
 class SprintContext(msgspec.Struct, frozen=True, gc=False):
     """Shared immutable context passed to all phase orchestrators.
@@ -338,9 +346,9 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
     All mutable fields (result, bg_tasks, cancel_event) are passed as
     explicit references, not hidden state.
 
-    Per-cycle mutable state is stored in `_cycle` field. Type checker
+    Per-cycle mutable state is stored in `cycle` field. Type checker
     prevents accidental field addition to this class — new per-cycle fields
-    MUST be added to _CycleState and accessed via ctx._cycle.FIELD.
+    MUST be added to CycleState and accessed via ctx.cycle.FIELD.
     """
     config: SprintSchedulerConfig
     'Sprint configuration (duration, windup lead, etc.).'
@@ -348,7 +356,7 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
     'Original sprint query string.'
     result: SprintSchedulerResult
     'Sprint result — written by all phases (ctx.result.X = Y).'
-    duckdb_store: InitResult[Any] | None = None
+    duckdb_store_result: InitResult[Any] | None = None
     'DuckDBShadowStore init result. Access .value if .ok, else handle .error.'
     graph_service: Any = None
     'DuckPGQGraph instance. May be None if graph disabled.'
@@ -370,13 +378,13 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
     'Set of background asyncio.Task objects tracked by the scheduler.'
     container: Any = None
     'F350M-R: ServiceContainer for rust.force and other sprint-scoped services.'
-    _cycle: _CycleState = msgspec.field(default_factory=_CycleState)
-    'Per-cycle state — see _CycleState docstring.'
+    cycle: CycleState = msgspec.field(default_factory=CycleState)
+    'Per-cycle state — see CycleState docstring.'
 
     @property
     def wall_clock_start(self) -> float:
         """Wall clock start — monotonic timestamp when sprint started."""
-        return self._cycle.wall_clock_start
+        return self.cycle.wall_clock_start
 
     @property
     def duckdb_store(self) -> Any:
@@ -384,17 +392,10 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
 
         Convenience accessor for the common case of accessing the live store.
         Returns the store directly or None if not initialized.
-
-        Note: In a msgspec.Struct, a field and property with the same name cause
-        the field to shadow the property (field is returned directly). To handle
-        this, we detect whether the retrieved value is an InitResult (field) or
-        already the raw store (set directly), and unwrap accordingly.
         """
-        _val = object.__getattribute__(self, 'duckdb_store')
-        # If it's an InitResult, unwrap it; otherwise return as-is (already raw)
+        _val = object.__getattribute__(self, 'duckdb_store_result')
         if isinstance(_val, InitResult):
             return _val.value if _val else None
-        # Already raw duckdb store (direct injection in tests)
         return _val
 
     @property
@@ -409,7 +410,7 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
         Usage::
 
             ctx = SprintContext.build(config, query, result)
-            ctx = ctx.with_services(duckdb_store=store, governor=gov)
+            ctx = ctx.with_services(duckdb_store=store_result, governor=gov)
         """
         return cls(config=config, query=query, result=result, ct_log_client=ct_log_client, graph_service=graph_service)
 
@@ -421,8 +422,10 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
 
         F350M-R: container field wires ServiceContainer into SprintContext for
         rust.force resolution in AccelBackend.
+        
+        NOTE: duckdb_store param maps to duckdb_store_result field (SC-05 fix).
         """
-        return struct_replace(self, duckdb_store=duckdb_store, graph_service=graph_service, hermes_engine=hermes_engine, governor=governor, evidence_log=evidence_log, runner=runner, lifecycle=lifecycle, container=container)
+        return struct_replace(self, duckdb_store_result=duckdb_store, graph_service=graph_service, hermes_engine=hermes_engine, governor=governor, evidence_log=evidence_log, runner=runner, lifecycle=lifecycle, container=container)
 
     def with_cycle(self, **kwargs: Any) -> 'SprintContext':
         """Return a new SprintContext with updated per-cycle state.
@@ -432,25 +435,30 @@ class SprintContext(msgspec.Struct, frozen=True, gc=False):
             ctx = ctx.with_cycle(wall_clock_start=ts, lifecycle=lifecycle_mgr)
             ctx = ctx.with_cycle(stop_requested=True, barrier_retry_count=2)
         """
-        _new_cycle = struct_replace(self._cycle, **kwargs)
-        return struct_replace(self, _cycle=_new_cycle)
+        _new_cycle = struct_replace(self.cycle, **kwargs)
+        return struct_replace(self, cycle=_new_cycle)
+
+    # ── Convenience helpers ──────────────────────────────────────────────────
+
+    def duckdb_raw(self) -> Any:
+        """Alias for duckdb_store property — raw DuckDB store unwrapped from InitResult."""
+        return self.duckdb_store
 
 
-def dataclass_replace(obj: Any, **changes: Any) -> Any:
-    """Polyglot replace: delegates to msgspec.structs.replace for msgspec.Struct,
-    otherwise falls back to the dataclass logic for real @dataclass types.
+def _unwrap_init_result(value: Any) -> Any:
+    """Unwrap InitResult to raw value, or return value as-is.
 
-    This is the bridge for code that may work with both dataclasses and msgspec
-    Structs. For new code targeting only msgspec.Struct, prefer ``struct_replace``
-    directly.
+    Pattern: InitResult[T] | None → T | None
+    Used throughout v2 to extract raw services from InitResult fields.
     """
-    import dataclasses as _dataclasses
-    import msgspec as _msgspec
-
-    if isinstance(obj, _msgspec.Struct):
-        return _msgspec.structs.replace(obj, **changes)
-
-    # Real dataclass — use standard library
-    if not isinstance(obj, type) and hasattr(obj, '__dataclass_fields__'):
-        return _dataclasses.replace(obj, **changes)
-    raise TypeError(f"{obj!r} is neither a msgspec.Struct nor a dataclass")
+    if isinstance(value, InitResult):
+        return value.value if value else None
+    return value
+    """Unwrap InitResult to raw value, or return value as-is.
+    
+    Pattern: InitResult[T] | None → T | None
+    Used throughout v2 to extract raw services from InitResult fields.
+    """
+    if isinstance(value, InitResult):
+        return value.value if value else None
+    return value

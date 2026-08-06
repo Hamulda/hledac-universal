@@ -2,6 +2,7 @@
 BenchmarkHarness — sprint performance measurement with warmup, latency percentiles,
 RSS delta tracking, and findings_count.
 
+
 Schema version 2.0 — output JSON always contains "schema_version": "2.0".
 """
 import gc

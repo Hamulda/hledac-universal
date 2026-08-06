@@ -25,6 +25,7 @@
 //! ## Fail-soft Invariant
 //! Never raises. Errors return empty bytes/strings.
 
+use pyo3::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -127,7 +128,7 @@ pub fn encode_indicator(finding: &Map<String, Value>) -> Option<Value> {
     // Build pattern based on IOC type
     let pattern = build_cybox_pattern(ioc_type, ioc_value)?;
     let stix_type = ioc_type_to_stix_type(ioc_type);
-    let stix_id = format!("{stix_type}--{new_uuid()}");
+    let stix_id = format!("{}-{}", stix_type, new_uuid());
     let now = iso8601_timestamp();
 
     // SCO for the observable
@@ -275,7 +276,7 @@ fn build_cybox_pattern(ioc_type: &str, ioc_value: &str) -> Option<String> {
 pub fn encode_note(query: &str, summary: &str, finding_id: &str) -> Value {
     let mut note = Map::new();
     note.insert("type".to_string(), Value::String("note".to_string()));
-    note.insert("id".to_string(), Value::String(format!("note--{new_uuid()}")));
+    note.insert("id".to_string(), Value::String(format!("note--{}", new_uuid())));
     note.insert("spec_version".to_string(), Value::String("2.1".to_string()));
     note.insert("created".to_string(), Value::String(iso8601_timestamp()));
     note.insert("modified".to_string(), Value::String(iso8601_timestamp()));

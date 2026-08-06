@@ -2,6 +2,8 @@
 MLX Embedding Manager — lazy ModernBERT via mlx-embeddings.
 
 Single source of truth for embedding lifecycle (load/encode/unload/prewarm).
+
+
 Metal buffers pre-warmed on load; mx.eval([]) barrier before clear_cache().
 
 Streaming batcher: AdaptiveEmbeddingBatcher with per-batch memory pressure feedback

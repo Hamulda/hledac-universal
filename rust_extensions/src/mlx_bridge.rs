@@ -46,8 +46,7 @@
 //! Always-on, fail-safe, M1 8GB bounded.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
-use rayon::prelude::*;
+use pyo3::types::{PyDict, PyList};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -491,35 +490,27 @@ pub fn batch_tokenize_(
         ));
     }
 
-    // R4-04 FIX: Collect ALL Bound references under a SINGLE GIL acquisition.
-    // Each tokenizers[i] is cloned_ref so the original Py<PyAny> stays valid.
-    let bound_tokenizers: Vec<Bound<'_, PyAny>> = tokenizers
-        .iter()
-        .map(|t| Py::clone_ref(t, py).into_bound(py))
-        .collect();
-
-    // R4-04 FIX: Release GIL for parallel work. rayon par_iter runs on worker
-    // threads with no Python interpreter — safe because we hold no GIL-dependent
-    // state. Results are Vec<Vec<u32>> (plain Rust types, no Python objects).
-    let results: Vec<Vec<u32>> = crate::gil::release_gil(py, || {
-        bound_tokenizers
-            .par_iter()
-            .zip(prompts.par_iter())
-            .map(|(tok, prompt)| {
-                let result = match tok.call_method1("encode", (prompt,)) {
-                    Ok(r) => r,
-                    Err(_) => return vec![],
-                };
-                if result.is_instance_of::<PyList>() {
-                    result.extract::<Vec<u32>>().unwrap_or_default()
-                } else if result.is_instance_of::<PyTuple>() {
-                    result.extract::<Vec<u32>>().unwrap_or_default()
-                } else {
-                    vec![]
-                }
-            })
-            .collect()
-    });
+    // Process tokenizers sequentially while holding GIL.
+    // Py<PyAny> is not Send, so we cannot use release_gil with parallel iteration.
+    // Tokenizer encode() is typically fast enough that sequential processing is acceptable.
+    let mut results: Vec<Vec<u32>> = Vec::with_capacity(tokenizers.len());
+    for (tok, prompt) in tokenizers.iter().zip(prompts.iter()) {
+        // Get a Python reference from the Py<PyAny>
+        let tok_ref = tok.as_ref();
+        // Call tokenizer.encode(prompt) - returns Py<PyAny>
+        let result = match tok_ref.call_method1(py, "encode", (prompt,)) {
+            Ok(r) => r,
+            Err(_) => {
+                results.push(vec![]);
+                continue;
+            }
+        };
+        // Extract Vec<u32> from result
+        match result.extract::<Vec<u32>>(py) {
+            Ok(v) => results.push(v),
+            Err(_) => results.push(vec![]),
+        }
+    }
 
     let py_list = PyList::new(py, &results)?;
     Ok(py_list)

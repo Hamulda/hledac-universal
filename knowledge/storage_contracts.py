@@ -2,6 +2,11 @@
 Storage Trinity Schema Contracts — ISSUE [ARCH-DB-001]
 
 Unified validation layer for the Storage Trinity:
+
+
+
+
+
   Layer    | Tech    | Purpose
   ---------|---------|-------------------------------
   LMDB     | Key-val | WAL truth records (finding:{id})

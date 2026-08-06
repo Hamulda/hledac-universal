@@ -2,6 +2,10 @@
 Alerting Infrastructure for Anti-Pattern Detection.
 
 Sprint F-Alert — 2026-06-29
+
+
+
+
 Monitors 4 critical anti-patterns:
 1. Sprint with 0 findings after 60s
 2. DuckDB lock contention > 5/sec
@@ -29,7 +33,7 @@ class AlertSeverity(Enum):
     CRITICAL = 'critical'
     INFO = 'info'
 
-class Alert(msgspec.Struct, frozen=True):
+class Alert(msgspec.Struct, frozen=True, gc=False):
     """Structured alert — immutable, hashable."""
     alert_id: str
     severity: AlertSeverity

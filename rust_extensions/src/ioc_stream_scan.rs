@@ -156,6 +156,7 @@ impl StreamPatternHit {
 pub struct StreamingIocScanner {
     automaton: AhoCorasick,
     patterns: Vec<String>,
+    #[allow(dead_code)]
     intern_store: InternStore,
     interned_labels: Vec<Option<&'static str>>,
 }

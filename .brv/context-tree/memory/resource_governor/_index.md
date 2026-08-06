@@ -1,85 +1,128 @@
 ---
-children_hash: df7edaa99cedc523142638b4efca2ea5ed01cd367c1761cebd96e3c84de211ea
-compression_ratio: 0.2800409941070971
+children_hash: 94d1a7ba47f0c0211a455f5345a5e6315d06039c9f5b1528a039987a0a52f7b8
+compression_ratio: 0.2763830259942235
 condensation_order: 1
-covers: [context.md, issue_007_mpsc_batch_send_optimization.md, m1-8gb-memory-budget-fragmentation.md, m1-8gb-unified-memory-as-system-wide-constraint.md, m1-bounds-configuration-fragmentation.md, m1_8gb_ram_priority_optimizations.md, m1resourcegovernor_implementation.md, rust_mpsc_architecture_issue_007.md, zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md]
-covers_token_total: 3903
+covers: [batch-operations-as-gil-mitigation-pattern.md, context.md, issue_007_mpsc_batch_send_optimization.md, m1-8gb-memory-budget-fragmentation.md, m1-8gb-unified-memory-as-system-wide-constraint.md, m1-8gb-unified-memory-constrains-3-subsystems.md, m1-bounds-configuration-fragmentation.md, m1_8gb_ram_priority_optimizations.md, m1resourcegovernor_implementation.md, rust_mpsc_architecture_issue_007.md, zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md]
+covers_token_total: 4501
 summary_level: d1
-token_count: 1093
+token_count: 1244
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries. These are all related to memory/resource_governor topic.
+The user wants me to create a structural summary at level d1 (domain level) from the provided child entries. Let me analyze the entries to identify patterns, relationships, and key facts.
 
-Let me analyze the key content:
+**Key themes across entries:**
 
-1. **context.md** - Overview of UMA memory management with threshold configuration, concurrency control, swap safety policies, and dual-channel TTL cache
+1. **M1 8GB Unified Memory Architecture (UMA)** - A recurring constraint that shapes:
+   - DuckDB limits (600MB/2 threads)
+   - Metal cache ceiling (1.5 GiB)
+   - HTTP/3 transport (5.5 GiB RSS)
+   - Memory budget fragmentation across 4+ domains
 
-2. **issue_007_mpsc_batch_send_optimization.md** - MPSC batch send optimization with 2048 slots, 512B per slot, ~1 MiB budget, single Python→Rust call, GIL overhead reduction
+2. **MPSC Batch Send Optimization (Issue-007)** - Performance optimization:
+   - 2048 slots × 512B = ~1 MiB budget
+   - ~1µs/event vs 5µs for single sends
+   - crossbeam bounded channels
+   - Zero-copy via msgspec.msgpack.encode()
 
-3. **m1-8gb-memory-budget-fragmentation.md** - Memory budget fragmentation across domains (DuckDB 600MB, Metal cache formula, etc.)
+3. **Batch Operations as GIL Mitigation** - Pattern across subsystems:
+   - Arrow RecordBatches (100k rows/batch) in duckdb_store
+   - MPSC 2048 slots × 512B in memory/resource_governor
 
-4. **m1-8gb-unified-memory-as-system-wide-constraint.md** - M1 8GB hardware limit affecting all subsystems with 5-state hysteresis
+4. **Zero-Copy IPC via msgspec** - Used in both:
+   - MPSC batch communication
+   - LayerStack UDS IPC
 
-5. **m1-bounds-configuration-fragmentation.md** - Configuration fragmentation across duckdb_store, transport_layers, resource_governor
+5. **ResourceGovernor** - 5-state hysteresis:
+   - NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED
+   - Concurrency presets with worker limits
 
-6. **m1_8gb_ram_priority_optimizations.md** - P0-P3 priority matrix with msgspec gc=False, GHOST_INVARIANTS CI, Rust graph analytics
+**Relationships:**
+- issue_007_mpsc_batch_send_optimization ↔ rust_mpsc_architecture_issue_007
+- m1resourcegovernor_implementation ↔ m1_8gb_ram_priority_optimizations
+- Multiple syntheses referencing duckdb_store, memory/resource_governor, transport_layers
 
-7. **m1resourcegovernor_implementation.md** - ResourceGovernor implementation with 5-state machine, dual-channel TTL cache, concurrency presets
-
-8. **rust_mpsc_architecture_issue_007.md** - Rust MPSC architecture with crossbeam bounded channels
-
-9. **zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md** - msgspec zero-copy spanning memory and architecture
-
-Key patterns:
-- M1 8GB UMA budget is the core constraint
-- ResourceGovernor manages memory via 5-state hysteresis (NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED)
+**Key architectural decisions:**
+- msgspec.Struct gc=False for hot-path DTOs
 
 
-- MPSC optimization reduces batch sends to a single Python→Rust call with ~1µs/event, and msgspec with gc=False provides zero-copy benefits. Configuration values are scattered across DuckDB (600MB/2threads), Metal cache (1.5GiB), MPSC pool (1 MiB), and RSS (5.5GiB/512 LRU), creating fragmentation. The 5-state machine controls concurrency through presets like emergency=0 workers, critical=1, warn=3, soft_warn=5, ok=5, and dual-channel TTL cache manages memory with swap tiered policy.
+- GHOST_INVARIANTS CI enforcement
+- Rust graph analytics (10-100× speedup potential)
+
+Now I'll synthesize this into a cohesive d1 summary that captures the UMA constraint hierarchy and how batch operations mitigate GIL contention across storage, IPC, and compute layers.
 </think>
 
-# Resource Governor
+# Resource Governor & Memory Architecture
 
-UMA memory management for M1 8GB unified memory — threshold configuration, concurrency control, swap safety policies, and MPSC batch optimization.
+## Overview
+Memory management across Hledac Universal centers on the M1 8GB Unified Memory Architecture (UMA) as a hard constraint, MPSC batch communication for GIL mitigation, and a 5-state ResourceGovernor hysteresis system.
 
-## Core Architecture
+## M1 8GB Unified Memory — Cross-Subsystem Constraints
 
-- **5-State Hysteresis Machine**: NORMAL→ELEVATED→CRITICAL→EMERGENCY→CIRED
-- **Dual-Channel TTL Cache**: Alongside swap tiered policy for memory reclamation
-- **Concurrency Presets**: emergency=0, critical=1, warn=3, soft_warn=5, ok=5 workers
-- **Flow**: memory_check → hysteresis_state → concurrency_adjust → action_take
+The ~6.25GB usable budget is split across three subsystems without a canonical source of truth:
 
-## Key Subsystems
+| Subsystem | Limit | Key Config |
+|-----------|-------|------------|
+| DuckDB | 600MB, 2 threads | chunk_size=500, temp_limit=1GB |
+| Metal Cache | 1.5 GiB | kv_bits=4, max_kv_size=8192 |
+| HTTP/3 Transport | 5.5 GiB RSS | LRU 512 entries, concurrency=3 |
 
-### MPSC Batch Optimization (Issue-007)
-- **m1resourcegovernor_implementation.md**: ResourceGovernor 5-state machine with swap tiers, thermal 82°C, lock ordering rules
-- **rust_mpsc_architecture_issue_007.md**: Crossbeam bounded channel architecture
-- **issue_007_mpsc_batch_send_optimization.md**: Batch send optimization — 2048 slots × 512B = ~1 MiB budget, ~1µs/event vs 5µs
-- **zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md**: msgspec gc=False zero-copy spanning memory and LayerStack UDS IPC
+This fragmentation spans 4+ domains (duckdb_store, transport_layers, memory/resource_governor, facts/project) with conflicting hardcoded values.
 
-## M1 8GB Constraints
+## MPSC Batch Send Optimization (Issue-007)
 
-### Fragmentation Issues
-- **m1-8gb-memory-budget-fragmentation.md**: DuckDB claims 600MB but duckdb_store.py overrides to 2 threads; no canonical budget doc
-- **m1-bounds-configuration-fragmentation.md**: Thresholds scattered across 4+ domains without shared constants
+Single Python→Rust call for N items reduces GIL acquisition overhead from N× to 1×:
 
-### Hardware Context
-- **m1-8gb-unified-memory-as-system-wide-constraint.md**: ~6.25GB usable, swap_detected at 3.8 GiB, affects storage/concurrency/ML/testing
-- **m1_8gb_ram_priority_optimizations.md**: P0 msgspec gc=False (~200B/future), P0 GHOST_INVARIANTS CI, P1 Rust graph analytics 10-100× speedup
+- **Architecture**: crossbeam bounded MPSC + pipe wake-up fd
+- **Capacity**: 2048 slots × 512B = ~1 MiB total budget
+- **Performance**: ~1µs/event vs 5µs for N× individual calls
+- **Zero-copy**: msgspec.msgpack.encode() on hot-path DTOs
+- **Constraint**: Receiver<QueueItem> NOT Send — requires `#[pyclass(unsendable)]`
 
-## Memory Budget Distribution
+## ResourceGovernor 5-State Hysteresis
 
-| Subsystem | Limit | Config |
-|-----------|-------|--------|
-| DuckDB | 600MB, 2 threads | facts/project |
-| Metal Cache | 1.5 GiB, kv_bits=4 | resource_governor |
-| MPSC Pool | ~1 MiB | rust_extensions |
-| RSS Block | 5.5 GiB, LRU 512 | transport_layers |
+States: NORMAL → ELEVATED → CRITICAL → EMERGENCY → CIRED
 
-## Related Entries
+| State | Workers | Action |
+|-------|---------|--------|
+| NORMAL | 5 | normal operation |
+| ELEVATED | 3 | warn fetch limits |
+| CRITICAL | 1 | emergency fetch limits |
+| EMERGENCY | 0 | halt acquisition |
+| CIRED | 0 | CI environment safety |
 
-- `data/duckdb_store/duckdb_thread_count_and_settings.md` — DuckDB 600MB/2threads
-- `architecture/transport_layers/http_3_configuration_constants.md` — RSS 5.5 GiB config
-- `facts/project/configuration_constants.md` — HLEDAC_M1_MEMORY_* env vars
-- `facts/project/m1_8gb_unified_memory.md` — Hardware baseline
+Swap detected at 3.8 GiB threshold.
+
+## Batch Operations as GIL Mitigation Pattern
+
+Two implementations share the batch-first design:
+
+- **duckdb_store**: Arrow RecordBatches (100k rows/batch), 1.5-2× faster than executemany
+- **MPSC**: 2048×512B slots, ~1µs/event vs 5µs single-send
+
+## Key Files
+
+- `rust_extensions/src/mpsc_pool.rs` — MPSC batch channel implementation
+- `evidence_log.py` — Python batch send wrapper (`_RustMPSCBytes.send_batch`)
+- `memory/resource_governor/m1resourcegovernor_implementation.md` — 5-state hysteresis
+- `memory/resource_governor/m1_8gb_ram_priority_optimizations.md` — P0-P3 priority matrix
+
+## Priority Optimizations (Meadows Leverage)
+
+| Priority | Optimization | Impact |
+|----------|--------------|--------|
+| P0 | msgspec.Struct gc=False | ~200 bytes/future saved |
+| P0 | GHOST_INVARIANTS CI enforcement | catches I6, I4 violations |
+| P1 | Per-lane RSS delta telemetry | ResourceGovernor visibility |
+| P1 | Rust graph analytics | 10-100× speedup over igraph |
+
+## Child Entry Mapping
+
+- `batch-operations-as-gil-mitigation-pattern.md` — cross-domain synthesis
+- `issue_007_mpsc_batch_send_optimization.md` — Python batch API
+- `rust_mpsc_architecture_issue_007.md` — Rust crossbeam architecture
+- `m1-8gb-unified-memory-constrains-3-subsystems.md` — constraint breakdown
+- `m1-8gb-unified-memory-as-system-wide-constraint.md` — hardware context
+- `m1_8gb_ram_priority_optimizations.md` — optimization roadmap
+- `m1resourcegovernor_implementation.md` — state machine details
+- `zero-copy-ipc-via-msgspec-msgpack-spans-memory-architecture.md` — msgspec usage

@@ -2,6 +2,9 @@
 Lazy Imports - On-Demand Module Loading
 =======================================
 
+
+
+
 Integrated from hledac/utils/lazy_imports.py
 
 Lazy module loader that only imports when accessed.
@@ -31,7 +34,7 @@ def _validate_lazy_module(name: str) -> None:
     if name not in _ALLOWED_LAZY_MODULES:
         raise ImportError(f"Module '{name}' not in whitelist. Dynamic module loading requires explicit allowlisting. Allowed modules: {(sorted(_ALLOWED_LAZY_MODULES) if len(_ALLOWED_LAZY_MODULES) <= 20 else 'see _ALLOWED_LAZY_MODULES')}")
 
-class LazyLoadStats(msgspec.Struct):
+class LazyLoadStats(msgspec.Struct, gc=False):
     """Statistics for lazy loading performance."""
     total_loads: int = 0
     total_time: float = 0.0

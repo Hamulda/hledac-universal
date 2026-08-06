@@ -2,6 +2,8 @@
 FastFilter — URL filtering stub.
 
 Provides URL blocking with binary fuse filter and LRU cache.
+
+
 This is a fail-safe stub: all methods return safe defaults.
 """
 from __future__ import annotations

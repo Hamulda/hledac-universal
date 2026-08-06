@@ -2,6 +2,8 @@
 utils/lazy_singleton.py — Thread-safe lazy singleton factory.
 
 Provides:
+
+
 - LazySingleton[T]: thread-safe deferred initialization with DCLP
 - AsyncLazySingleton[T]: per-task instances via ContextVar
 

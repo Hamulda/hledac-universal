@@ -2,6 +2,7 @@
 Live Memory Preflight Wrapper — Sprint F207N-E
 ==============================================
 
+
 In-boundary wrapper for memory preflight checks.
 
 Verdicts:
@@ -86,7 +87,7 @@ def _operator_action_for_verdict(verdict: str) -> str:
         return 'close some apps to clear swap; rerun preflight'
     return 'memory state OK — ready for active300 sprint'
 
-class PreflightResult(msgspec.Struct):
+class PreflightResult(msgspec.Struct, gc=False):
     verdict: str
     uma_state: str
     system_used_gib: float

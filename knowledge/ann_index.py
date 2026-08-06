@@ -2,6 +2,7 @@
 Sprint Vector-Storage-Optimization — USEARCH Primary ANN with LanceDB Persistence
 ==================================================================================
 
+
 ROLE: Optional fast-path ANN index layered over SemanticDedupCache.
 Does NOT replace LMDB persistence — adds cosine-similarity ANN search
 for sub-1ms duplicate detection on cross-run data.
@@ -12,7 +13,13 @@ OPTIMIZATION (2026-06-24):
 - MLX cosine re-ranking: @mx.compile for exact similarity on GPU
 - IVF-PQ tuned: num_partitions=128, num_sub_vectors=8 (optimal for 256d)
 
+SWARM-002: Multilingual Support
+- Dual-index architecture: English (256d) + Multilingual (256d via MRL)
+- Configurable embedding dimensions for different embedding models
+- Language-tagged indexes for cross-lingual threat intelligence
+
 DIMENSION CONTRACT: 256d float32 (matches embedding_pipeline._EMBEDDING_DIM)
+Multilingual: BGE-M3 1024d → MRL truncate to 256d
 
 FAIL-OPEN: Any init/query error → returns duplicate=False, never raises.
 ANN init failure stored in _ann_boot_error; all methods check this and
@@ -124,6 +131,7 @@ class _ANNIndex:
         "_db_path",
         "_db",
         "_table",
+        "_table_multilingual",  # SWARM-002: multilingual LanceDB table
         "_embed_dim",
         "_boot_error",
         "_initialized",
@@ -132,6 +140,9 @@ class _ANNIndex:
         "_usearch_index",
         "_usearch_loaded",
         "_usearch_labels",  # List[str] mapping index position to finding_key
+        # SWARM-002: USEARCH multilingual index
+        "_usearch_index_multilingual",
+        "_usearch_labels_multilingual",
         # STORAGE-FIX-2: compaction scheduler state (bounded)
         "_insert_count_since_compact",
         "_last_compact_ts",
@@ -143,13 +154,16 @@ class _ANNIndex:
         "_ivfpq_trained",
         # Sprint F264E: adaptive auto-tuner
         "_autotune",
+        # SWARM-002: multilingual settings
+        "_multilingual_table_name",
     )
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, embed_dim: int = _EMBEDDING_DIM) -> None:
         self._db_path: Path = db_path
         self._db: object | None = None  # lancedb.LanceDBConnection
         self._table: object | None = None  # lancedb.Table
-        self._embed_dim: int = _EMBEDDING_DIM
+        self._table_multilingual: object | None = None  # SWARM-002: multilingual table
+        self._embed_dim: int = embed_dim  # SWARM-002: configurable dimension
         self._boot_error: str | None = None
         self._initialized: bool = False
         self._lock = threading.Lock()
@@ -158,6 +172,13 @@ class _ANNIndex:
         self._usearch_index = None  # usearch.index.Index
         self._usearch_loaded: bool = False
         self._usearch_labels: list[str] = []  # parallel to usearch index positions
+
+        # SWARM-002: USEARCH multilingual index
+        self._usearch_index_multilingual = None
+        self._usearch_labels_multilingual: list[str] = []
+
+        # SWARM-002: Multilingual table name
+        self._multilingual_table_name = "semantic_dedup_multilingual_v1"
 
         # STORAGE-FIX-2: compaction scheduler
         self._insert_count_since_compact: int = 0
@@ -233,12 +254,33 @@ class _ANNIndex:
 
                 schema = pa.schema([
                     pa.field("finding_key", pa.string()),  # BLAKE2b key
-                    pa.field("vector", pa.list_(pa.float32(), _EMBEDDING_DIM)),
+                    pa.field("vector", pa.list_(pa.float32(), self._embed_dim)),
                     pa.field("text_hash", pa.string()),  # SHA256 of original text
                     pa.field("added_at", pa.float64()),  # timestamp for LRU eviction
                 ])
                 self._table = self._db.create_table(_TABLE_NAME, schema=schema)
                 logger.info(f"[ANN] Created new table at {self._db_path}")
+
+            # SWARM-002: Initialize multilingual table
+            try:
+                self._table_multilingual = self._db.open_table(self._multilingual_table_name)
+                row_count = self._table_multilingual.count_rows()
+                logger.info(f"[ANN] Opened multilingual table with {row_count} rows")
+            except Exception:
+                # Create multilingual table with language field
+                import pyarrow as pa
+
+                schema_multi = pa.schema([
+                    pa.field("finding_key", pa.string()),  # BLAKE2b key
+                    pa.field("vector", pa.list_(pa.float32(), self._embed_dim)),
+                    pa.field("text_hash", pa.string()),  # SHA256 of original text
+                    pa.field("added_at", pa.float64()),  # timestamp for LRU eviction
+                    pa.field("language", pa.string()),  # SWARM-002: detected language
+                ])
+                self._table_multilingual = self._db.create_table(
+                    self._multilingual_table_name, schema=schema_multi
+                )
+                logger.info(f"[ANN] Created multilingual table at {self._db_path}")
 
             self._initialized = True
             self._boot_error = None
@@ -263,13 +305,30 @@ class _ANNIndex:
         (HLEDAC_ENABLE_METAL_HNSW=1), falls back to CPU USearch.
         GPU path pre-computes pairwise distances for optimal insertion
         ordering (~2-3× faster index build via centrality sorting).
+
+        SWARM-002: Builds both English and multilingual indexes.
         """
         if self._table is None:
             return
+
+        # Build English index
+        self._build_single_index(self._table, is_multilingual=False)
+
+        # SWARM-002: Build multilingual index
+        if self._table_multilingual is not None:
+            self._build_single_index(self._table_multilingual, is_multilingual=True)
+
+    def _build_single_index(self, table, is_multilingual: bool = False) -> None:
+        """Build USEARCH index for a single table.
+
+        Args:
+            table: LanceDB table to build index from.
+            is_multilingual: True if building multilingual index.
+        """
         try:
-            row_count = self._table.count_rows()
+            row_count = table.count_rows()
             if row_count < 100:  # Too few entries for meaningful index
-                logger.debug(f"[ANN] USEARCH skipped: only {row_count} rows")
+                logger.debug(f"[ANN] USEARCH skipped ({'multilingual' if is_multilingual else 'english'}): only {row_count} rows")
                 return
 
             # ── SILICON-02: Try GPU-accelerated build (opt-in) ──────
@@ -286,23 +345,27 @@ class _ANNIndex:
             if METAL_HNSW_ENABLED and build_usearch_from_lancedb is not None:
                 try:
                     gpu_index, gpu_labels, gpu_stats = build_usearch_from_lancedb(
-                        self._table,
+                        table,
                         dim=self._embed_dim,
                         M=_USEARCH_CONNECTIVITY,
                         ef_construction=_USEARCH_EXPANSION_ADD,
                         max_elements=_MAX_ENTRIES,
                     )
                     if gpu_index is not None and gpu_labels:
-                        self._usearch_index = gpu_index
-                        self._usearch_labels = gpu_labels
+                        if is_multilingual:
+                            self._usearch_index_multilingual = gpu_index
+                            self._usearch_labels_multilingual = gpu_labels
+                        else:
+                            self._usearch_index = gpu_index
+                            self._usearch_labels = gpu_labels
                         gpu_built = True
                         logger.info(
-                            f"[ANN] Metal GPU HNSW built: {len(gpu_labels)} vectors "
-                            f"in {gpu_stats.get('build_time_s', 0):.2f}s "
+                            f"[ANN] Metal GPU HNSW built ({'multilingual' if is_multilingual else 'english'}): "
+                            f"{len(gpu_labels)} vectors in {gpu_stats.get('build_time_s', 0):.2f}s "
                             f"(gpu_batches={gpu_stats.get('gpu_batches', 0)})"
                         )
                 except Exception as e:
-                    logger.debug(f"[ANN] Metal GPU HNSW build failed: {e}")
+                    logger.debug(f"[ANN] Metal GPU HNSW build failed ({'multilingual' if is_multilingual else 'english'}): {e}")
 
             if gpu_built:
                 return
@@ -311,14 +374,14 @@ class _ANNIndex:
             from usearch.index import Index
 
             # Fetch embeddings from LanceDB
-            data = self._table.to_lance().to_table(
+            data = table.to_lance().to_table(
                 columns=['finding_key', 'vector']
             ).to_pydict()
 
             if len(data.get('vector', [])) == 0:
                 return
 
-            self._usearch_index = Index(
+            usearch_index = Index(
                 ndim=self._embed_dim,
                 metric='cos',
                 dtype='f32',
@@ -328,23 +391,34 @@ class _ANNIndex:
             )
 
             # Build label mapping
-            self._usearch_labels = []
+            usearch_labels = []
             vectors = []
             for i, (fk, emb) in enumerate(zip(data['finding_key'], data['vector'])):
-                self._usearch_labels.append(fk)
+                usearch_labels.append(fk)
                 vectors.append(np.array(emb, dtype=np.float32))
-                self._usearch_index.add(i, vectors[-1])
+                usearch_index.add(i, vectors[-1])
+
+            if is_multilingual:
+                self._usearch_index_multilingual = usearch_index
+                self._usearch_labels_multilingual = usearch_labels
+            else:
+                self._usearch_index = usearch_index
+                self._usearch_labels = usearch_labels
 
             logger.info(
-                f"[ANN] USEARCH index built (CPU): {len(vectors)} vectors, "
-                f"connectivity={_USEARCH_CONNECTIVITY}"
+                f"[ANN] USEARCH index built (CPU, {'multilingual' if is_multilingual else 'english'}): "
+                f"{len(vectors)} vectors, connectivity={_USEARCH_CONNECTIVITY}"
             )
         except ImportError:
-            logger.debug("[ANN] USEARCH not available, using LanceDB brute-force only")
+            logger.debug(f"[ANN] USEARCH not available ({'multilingual' if is_multilingual else 'english'}), using LanceDB brute-force only")
         except Exception as e:
-            logger.debug(f"[ANN] USEARCH build failed: {e}")
-            self._usearch_index = None
-            self._usearch_labels = []
+            logger.debug(f"[ANN] USEARCH build failed ({'multilingual' if is_multilingual else 'english'}): {e}")
+            if is_multilingual:
+                self._usearch_index_multilingual = None
+                self._usearch_labels_multilingual = []
+            else:
+                self._usearch_index = None
+                self._usearch_labels = []
 
     def _log_table_opened(self) -> None:
         """Log 'lancedb.table_opened' event with size_mb."""
@@ -552,6 +626,69 @@ class _ANNIndex:
             logger.debug(f"[ANN] graph_filter failed: {e}")
             return candidates
 
+    # SWARM-002: Multilingual index search helpers
+    def _collect_usearch_candidates_multilingual(
+        self, query_np: np.ndarray, fetch_limit: int
+    ) -> dict[str, tuple[list[float], str, float]]:
+        """Collect ANN candidates from multilingual USEARCH index (M1 Metal SIMD).
+
+        Returns empty dict on any error (fail-open).
+        """
+        if self._usearch_index_multilingual is None:
+            return {}
+        try:
+            matches = self._usearch_index_multilingual.search(query_np, fetch_limit)
+            candidates: dict[str, tuple[list[float], str, float]] = {}
+            for match in matches:
+                idx = int(match.key)
+                if idx < len(self._usearch_labels_multilingual):
+                    fk = self._usearch_labels_multilingual[idx]
+                    score = float(1.0 - match.distance)
+                    candidates[fk] = ([], "", score)
+            return candidates
+        except Exception as e:
+            logger.debug(f"[ANN] Multilingual USEARCH search failed: {e}")
+            return {}
+
+    def _collect_lancedb_candidates_multilingual(
+        self, emb_norm: np.ndarray, fetch_limit: int
+    ) -> dict[str, tuple[list[float], str, float]]:
+        """Collect ANN candidates from multilingual LanceDB fallback.
+
+        Returns empty dict on any error (fail-open).
+        """
+        if self._table_multilingual is None:
+            return {}
+        with self._lock:
+            try:
+                results = (
+                    self._table_multilingual.search(emb_norm.tolist(), vector_column_name="vector")
+                    .metric("cosine")
+                    .nprobes(_IVF_PQ_NPROBES_DEFAULT)
+                    .limit(fetch_limit)
+                    .to_list()
+                )
+            except TypeError:
+                # Fallback for LanceDB versions without nprobes on builder
+                results = (
+                    self._table_multilingual.search(emb_norm.tolist(), vector_column_name="vector")
+                    .metric("cosine")
+                    .limit(fetch_limit)
+                    .to_list()
+                )
+
+        candidates: dict[str, tuple[list[float], str, float]] = {}
+        for r in results:
+            fk = r.get("finding_key", "") or r.get("id", "")
+            if not fk:
+                continue
+            vec = r.get("vector", [])
+            th = r.get("text_hash", "")
+            dist = r.get("_distance", 1.0)
+            if vec:
+                candidates[fk] = (vec, th, dist)
+        return candidates
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -561,12 +698,18 @@ class _ANNIndex:
         embedding: np.ndarray,
         top_k: int = 5,
         graph_filter: Callable[[list[str]], list[str]] | None = None,
+        language: str | None = None,
     ) -> list[dict]:
         """
         Hybrid ANN search: USEARCH (primary) → MLX cosine (exact re-rank).
 
         OPTIMIZATION: USEARCH provides ~10x faster ANN than LanceDB brute-force
         on M1 Metal. MLX provides exact cosine re-ranking on GPU.
+
+        SWARM-002: Language-aware search:
+        - If language is 'en' or None → search English index (ModernBERT)
+        - If language is non-English → search multilingual index (BGE-M3)
+        - Cross-lingual: searches both indexes and merges results
 
         P2-3 Enhancement — Graph-aware filtering:
           When ``graph_filter`` is provided, ANN candidates are expanded through
@@ -598,13 +741,25 @@ class _ANNIndex:
             # Collect candidates: USEARCH primary → LanceDB fallback
             candidates: dict[str, tuple[list[float], str, float]] = {}
 
-            # Step 1: Try USEARCH (M1 Metal SIMD accelerated)
-            query_np = np.array(emb_norm, dtype=np.float32)
-            candidates = self._collect_usearch_candidates(query_np, fetch_limit)
+            # SWARM-002: Determine which indexes to search based on language
+            search_english = language is None or language == 'en'
+            search_multilingual = language is not None and language != 'en'
 
-            # Step 2: Fall back to LanceDB if USEARCH unavailable or returned nothing
-            if not candidates:
-                candidates = self._collect_lancedb_candidates(emb_norm, fetch_limit)
+            query_np = np.array(emb_norm, dtype=np.float32)
+
+            # Step 1: Search English index (USEARCH or LanceDB)
+            if search_english:
+                english_candidates = self._collect_usearch_candidates(query_np, fetch_limit)
+                if not english_candidates:
+                    english_candidates = self._collect_lancedb_candidates(emb_norm, fetch_limit)
+                candidates.update(english_candidates)
+
+            # SWARM-002: Search multilingual index
+            if search_multilingual:
+                multilingual_candidates = self._collect_usearch_candidates_multilingual(query_np, fetch_limit)
+                if not multilingual_candidates:
+                    multilingual_candidates = self._collect_lancedb_candidates_multilingual(emb_norm, fetch_limit)
+                candidates.update(multilingual_candidates)
 
             if not candidates:
                 return []
@@ -631,7 +786,12 @@ class _ANNIndex:
                 fk, (_, th, _dist) = candidate_items[idx]
                 score = max(0.0, min(1.0, score))
                 if score >= _MIN_SCORE:
-                    output.append({"finding_key": fk, "text_hash": th or "", "score": score})
+                    output.append({
+                        "finding_key": fk,
+                        "text_hash": th or "",
+                        "score": score,
+                        "language": language or "en"
+                    })
 
             return output
 
@@ -639,9 +799,17 @@ class _ANNIndex:
             logger.debug(f"[ANN] ann_search failed: {e}")
             return []
 
-    def upsert(self, finding_key: str, embedding: np.ndarray, text_hash: str) -> bool:
+    def upsert(
+        self,
+        finding_key: str,
+        embedding: np.ndarray,
+        text_hash: str,
+        language: str | None = None,
+    ) -> bool:
         """
         Upsert into both USEARCH (primary) and LanceDB (persistence).
+
+        SWARM-002: If language is non-English, upserts to multilingual index.
 
         Returns True on success, False on error (fail-open).
         Thread-safe via lock.
@@ -658,6 +826,12 @@ class _ANNIndex:
             if emb.ndim == 2:
                 emb = emb.squeeze(0)
 
+            # SWARM-002: Route to appropriate table based on language
+            is_multilingual = language is not None and language != 'en'
+            target_table = self._table_multilingual if is_multilingual else self._table
+            target_usearch = self._usearch_index_multilingual if is_multilingual else self._usearch_index
+            target_labels = self._usearch_labels_multilingual if is_multilingual else self._usearch_labels
+
             # Add to LanceDB (source of truth for persistence)
             row = {
                 "finding_key": finding_key,
@@ -665,16 +839,18 @@ class _ANNIndex:
                 "text_hash": text_hash,
                 "added_at": time.time(),
             }
+            if is_multilingual:
+                row["language"] = language
 
             with self._lock:
-                self._table.add([row])
+                target_table.add([row])
 
             # Add to USEARCH index (primary ANN)
-            if self._usearch_index is not None:
+            if target_usearch is not None:
                 try:
-                    new_idx = len(self._usearch_labels)
-                    self._usearch_labels.append(finding_key)
-                    self._usearch_index.add(new_idx, emb)
+                    new_idx = len(target_labels)
+                    target_labels.append(finding_key)
+                    target_usearch.add(new_idx, emb)
                 except Exception as e:
                     logger.debug(f"[ANN] USEARCH upsert failed: {e}")
 
@@ -711,7 +887,8 @@ class _ANNIndex:
             return False
 
     def _maybe_evict(self) -> None:
-        """Evict oldest entries if table exceeds MAX_ENTRIES."""
+        """Evict oldest entries if table exceeds MAX_ENTRIES (both English and multilingual)."""
+        # Evict English index
         try:
             count = self._table.count_rows()
             if count > _MAX_ENTRIES:
@@ -722,8 +899,37 @@ class _ANNIndex:
                     keys_to_delete = oldest_ts["finding_key"].to_pylist()
                     for key in keys_to_delete:
                         self._table.delete(f"finding_key = '{key}'")
+                        # Also remove from USEARCH index
+                        if key in self._usearch_labels:
+                            idx = self._usearch_labels.index(key)
+                            try:
+                                self._usearch_index.remove(idx)
+                            except Exception:
+                                pass
+                            self._usearch_labels.remove(key)
         except Exception as e:
-            logger.debug(f"[ANN] evict failed: {e}")
+            logger.debug(f"[ANN] English evict failed: {e}")
+
+        # SWARM-002: Evict multilingual index
+        try:
+            if self._table_multilingual is not None:
+                count_multi = self._table_multilingual.count_rows()
+                if count_multi > _MAX_ENTRIES:
+                    to_delete = int(count_multi * 0.1)
+                    oldest_multi = self._table_multilingual.to_arrow().sort_by([("added_at", "asc")]).slice(0, to_delete)
+                    keys_to_delete = oldest_multi["finding_key"].to_pylist()
+                    for key in keys_to_delete:
+                        self._table_multilingual.delete(f"finding_key = '{key}'")
+                        # Also remove from multilingual USEARCH index
+                        if key in self._usearch_labels_multilingual:
+                            idx = self._usearch_labels_multilingual.index(key)
+                            try:
+                                self._usearch_index_multilingual.remove(idx)
+                            except Exception:
+                                pass
+                            self._usearch_labels_multilingual.remove(key)
+        except Exception as e:
+            logger.debug(f"[ANN] Multilingual evict failed: {e}")
 
     def _maybe_compact_blocking(self) -> None:
         """LanceDB compaction trigger (sync, fail-soft)."""
@@ -799,8 +1005,11 @@ class _ANNIndex:
                     pass
             self._db = None
             self._table = None
+            self._table_multilingual = None  # SWARM-002
             self._usearch_index = None
             self._usearch_labels = []
+            self._usearch_index_multilingual = None  # SWARM-002
+            self._usearch_labels_multilingual = []
             self._boot_error = None
             self._initialized = False
 
@@ -813,9 +1022,11 @@ _ann_index: _ANNIndex | None = None
 _ann_index_lock = threading.Lock()
 
 
-def get_ann_index() -> _ANNIndex:
+def get_ann_index(embed_dim: int = _EMBEDDING_DIM) -> _ANNIndex:
     """
     Get the singleton ANN index instance (sync, thread-safe).
+
+    SWARM-002: embed_dim parameter for configurable embedding dimensions.
 
     Lazy-init on first call. Thread-safe via threading.Lock double-checked locking.
     """
@@ -826,7 +1037,7 @@ def get_ann_index() -> _ANNIndex:
                 from hledac.universal.paths import PATHS
 
                 db_path = PATHS.hledac_home / "ann_index"
-                _ann_index = _ANNIndex(db_path)
+                _ann_index = _ANNIndex(db_path, embed_dim=embed_dim)
                 _ann_index.init()
     return _ann_index
 
@@ -834,9 +1045,11 @@ def get_ann_index() -> _ANNIndex:
 _ann_index_async_lock = LazyAsyncioLock()
 
 
-async def get_ann_index_async() -> _ANNIndex:
+async def get_ann_index_async(embed_dim: int = _EMBEDDING_DIM) -> _ANNIndex:
     """
     Get the singleton ANN index instance (async-safe).
+
+    SWARM-002: embed_dim parameter for configurable embedding dimensions.
 
     Lazy-init on first call. Async-safe via asyncio.Lock double-checked locking.
     """
@@ -847,7 +1060,7 @@ async def get_ann_index_async() -> _ANNIndex:
                 from hledac.universal.paths import PATHS
 
                 db_path = PATHS.hledac_home / "ann_index"
-                _ann_index = _ANNIndex(db_path)
+                _ann_index = _ANNIndex(db_path, embed_dim=embed_dim)
                 _ann_index.init()
     return _ann_index
 
@@ -857,9 +1070,12 @@ def check_ann_duplicate(
     text_hash: str,
     finding_key: str,
     graph_filter: Callable[[list[str]], list[str]] | None = None,
+    language: str | None = None,
 ) -> bool:
     """
     Check if an embedding matches any existing entry in ANN index.
+
+    SWARM-002: language parameter for cross-lingual duplicate detection.
 
     Flow:
     1. USEARCH search for top-(top_k × 2) similar vectors (or graph-filtered pool)
@@ -877,13 +1093,13 @@ def check_ann_duplicate(
         if ann._boot_error is not None:
             return False
 
-        results = ann.ann_search(embedding, top_k=5, graph_filter=graph_filter)
+        results = ann.ann_search(embedding, top_k=5, graph_filter=graph_filter, language=language)
         for r in results:
             if r.get("text_hash") == text_hash and r.get("score", 0) >= _MIN_SCORE:
                 logger.debug(f"[ANN] Duplicate detected: key={finding_key[:16]}, score={r['score']:.3f}")
                 return True
 
-        ann.upsert(finding_key, embedding, text_hash)
+        ann.upsert(finding_key, embedding, text_hash, language=language)
         return False
 
     except Exception as e:

@@ -2,6 +2,8 @@
 Passive DNS — DoH (DNS-over-HTTPS) resolver and CIRCL PDNS lookup with HackerTarget fallback.
 
 Providers:
+
+
   - cloudflare: https://cloudflare-dns.com/dns-query
   - google:     https://dns.google/resolve
   - CIRCL PDNS: https://www.circl.lu/pdns/query (primary, may return 401 if rate-limited)
@@ -71,7 +73,7 @@ async def _fallback_hackertarget_pdns(domain: str, session: httpx.AsyncClient) -
         elapsed = time.monotonic() - start
         return ([], PassiveDNSOutcome(attempted=True, query=domain, result_count=0, error=str(e), duration_s=elapsed))
 
-class CIRCLPDNSRecord(msgspec.Struct, frozen=True):
+class CIRCLPDNSRecord(msgspec.Struct, frozen=True, gc=False):
     """Parsed CIRCL PDNS record — F207F."""
     ip: str
     rrname: str
@@ -129,7 +131,7 @@ def parse_circl_pdns_text(text: str, max_results: int=50) -> list[CIRCLPDNSRecor
         records.append(CIRCLPDNSRecord(ip=ip, rrname=rrname, rrtype=rrtype))
     return records
 
-class PassiveDNSOutcome(msgspec.Struct, frozen=True):
+class PassiveDNSOutcome(msgspec.Struct, frozen=True, gc=False):
     """
     Normalized PassiveDNS adapter outcome — F207F.
 

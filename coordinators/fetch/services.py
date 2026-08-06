@@ -2,6 +2,15 @@
 Fetch Services — Service Layer for FetchCoordinator
 =================================================
 
+
+
+
+
+
+
+
+
+
 Provides isolated, testable components for the fetch pipeline:
 - TransportRouter: transport selection (Tor/I2P/clearnet/gopher)
 - RateLimiter: per-host and domain rate limiting

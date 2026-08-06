@@ -2,6 +2,7 @@
 knowledge/duckdb_migrator.py — DuckDB Schema Migration System (P0-8)
 
 Migrates the DuckDB schema from a monolithic inline _SCHEMA_SQL to a
+
 versioned migration directory at knowledge/duckdb_migrations/.
 
 Design

@@ -2,6 +2,11 @@
 Data Leak Hunter - Breach and Data Leak Monitoring System
 ==========================================================
 
+
+
+
+
+
 Integrated from stealth_osint/data_leak_hunter.py:
 - Breach API integration (HaveIBeenPwned, DeHashed, Intelligence X)
 - Dark web monitoring (Tor/I2P breach forums)
@@ -53,7 +58,7 @@ class LeakSource(Enum):
     PUBLIC_RECORDS = 'public_records'
     HACKER_FORUM = 'hacker_forum'
 
-class LeakAlert(msgspec.Struct):
+class LeakAlert(msgspec.Struct, gc=False):
     """Data leak alert"""
     alert_id: str
     timestamp: datetime
@@ -66,7 +71,7 @@ class LeakAlert(msgspec.Struct):
     raw_sample: str | None = None
     url: str | None = None
 
-class MonitoringTarget(msgspec.Struct, frozen=True):
+class MonitoringTarget(msgspec.Struct, frozen=True, gc=False):
     """Target to monitor for leaks"""
     target_id: str
     value: str
@@ -76,7 +81,7 @@ class MonitoringTarget(msgspec.Struct, frozen=True):
     last_check: datetime | None = None
     alert_count: int = 0
 
-class BreachAPIConfig(msgspec.Struct, frozen=True):
+class BreachAPIConfig(msgspec.Struct, frozen=True, gc=False):
     """Configuration for breach APIs"""
     haveibeenpwned_api_key: str | None = None
     dehashed_api_key: str | None = None

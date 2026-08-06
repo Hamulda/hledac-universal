@@ -2,6 +2,7 @@
 WeasyPrint converts HTML to PDF — cross-platform, no extra browser binary.
 Falls back to macos_webkit_renderer if weasyprint unavailable.
 M1 8GB: weasyprint uses cairo/pango which are system libraries — acceptable RAM.
+
 """
 import tempfile
 from pathlib import Path

@@ -2,6 +2,9 @@
 PatternMatcher singleton — Rust Aho-Corasick backend.
 
 Pattern intelligence baseline — §8 first sprint.
+
+
+
 Scope: ONLY this module and tests/probe_8x/.
 No AO imports, no transport imports, no network access.
 
@@ -44,14 +47,17 @@ _RUST_IMPORT_ERROR: str | None = None
 try:
     # R6: Centralized Rust access via core.rust_backend
     from hledac.universal.core.rust_backend import rust
+
     # Expose Rust classes as RustAhoCorasickMatcher for API compatibility
     RustAhoCorasickMatcher = rust.raw.AhoCorasickMatcher
     _RUST_ACO_AVAILABLE = True
-    # Issue #15: check for unified structured entity extractor
-    if hasattr(hledac_rust_extensions, "extract_structured_entities_py"):
+
+    # Issue #15: check for unified structured entity extractor via rust.raw
+    _raw = rust.raw
+    if _raw is not None and hasattr(_raw, "extract_structured_entities_py"):
         _RUST_STRUCTURED_EXTRACTOR_AVAILABLE = True
-        _rust_extract_structured = hledac_rust_extensions.extract_structured_entities_py
-        _rust_batch_extract_structured = hledac_rust_extensions.batch_extract_structured_entities_py
+        _rust_extract_structured = _raw.extract_structured_entities_py
+        _rust_batch_extract_structured = _raw.batch_extract_structured_entities_py
     else:
         _rust_extract_structured = None
         _rust_batch_extract_structured = None

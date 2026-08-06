@@ -3,6 +3,7 @@
 Sprint F222: Extract shared scoring/normalization logic from live_public_pipeline.py
 and live_feed_pipeline.py into a single module. Both pipelines import from it.
 
+
 Invariant: scoring logic lives in ONE place. Tests for scoring live in one place.
 """
 

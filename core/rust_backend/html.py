@@ -2,6 +2,7 @@
 """
 HTML parsing via Rust lol_html with selectolax fallback.
 Tier 1: Rust lol_html (5× faster than BS4)
+
 Tier 2: selectolax (10× faster than BS4, M1-friendly)
 Tier 3: stdlib regex (ultimate fallback)
 """

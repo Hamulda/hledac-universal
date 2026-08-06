@@ -3,6 +3,7 @@
 Role: Fetch stage přijímá URLy z DedupStage, fetchuje je s AIMD rate limiting
 a posílá PageResult do MatchStage přes bounded queue.
 
+
 Wires existující _fetch_and_process_page() z public_fetch module.
 """
 from __future__ import annotations

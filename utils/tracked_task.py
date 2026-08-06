@@ -2,6 +2,7 @@
 TrackedTask — Structured Concurrency wrapper for asyncio.Task (PEP 654).
 
 Provides:
+
 - Automatic task tracking in a registry set
 - Context manager for lifecycle management
 - Done-callback cleanup

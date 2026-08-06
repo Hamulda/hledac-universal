@@ -2,6 +2,13 @@
 runtime/acquisition/nonfeed_outcomes.py
 
 Nonfeed outcome structures and nonfeed plan debug.
+
+
+
+
+
+
+
 Extracted from acquisition_strategy.py (original L1138-1296 + L2338-2801).
 
 MODERNIZATION (Issue #18):

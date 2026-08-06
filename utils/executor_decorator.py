@@ -2,6 +2,7 @@
 
 Provides:
   @offload_to("pool_name") — decorátor pro async funkce běžící v named pool
+
   get_named_pool()         — lazy singleton pro každý named pool
 
 Pool sizing (M1 8GB, total ≤ 8 threads):

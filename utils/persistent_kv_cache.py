@@ -2,6 +2,8 @@
 PersistentKVCache — Sprint KV Cache Persistence.
 
 Persistent KV cache napříč sprinty pomocí LMDB metadata index +
+
+
 safetensors na disku. Eliminuje repeated prefill náklady při
 restartování procesu.
 

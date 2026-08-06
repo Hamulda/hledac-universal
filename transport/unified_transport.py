@@ -2,6 +2,9 @@
 transport/unified_transport.py
 
 Unified HTTP Transport Factory — Sprint Issue #7
+
+
+
 ================================================
 
 Single entry point for all HTTP fetching. Replaces 3-stack matrix:
@@ -59,7 +62,7 @@ class TransportKind(Enum):
     CURL_CFFI_H3_TOR = auto()
     CURL_CFFI_H3_I2P = auto()
 
-class TransportPolicy(msgspec.Struct, frozen=True):
+class TransportPolicy(msgspec.Struct, frozen=True, gc=False):
     """
     Policy that determines which transport to use.
 
@@ -272,10 +275,23 @@ async def close_all_transports() -> None:
 
 async def prefetch_dns(urls: list[str]) -> None:
     """
-    Prefetch DNS for top-50 unique hosts from URL list.
+    Prefetch DNS for top-500 unique hosts from URL list.
 
-    Call at acquisition prelude before parallel fetch phase.
-    Fire-and-forget: errors are swallowed, never blocks transport.
+    OPTIMIZATION #2: Fire-and-forget DNS prefetch — NEVER blocks transport.
+    
+    Implementation details:
+      - Bounded semaphore (50 concurrent) prevents DoT resolver overload
+      - Skips darknet hosts (.onion, .i2p) — Tor/I2P handle DNS internally
+      - Bounded to 500 unique hosts per call (prevents memory bloat)
+      - Rust DNS via DoT (bypasses mDNSResponder) when available
+      - Falls back to async_getaddrinfo() if rust.dns unavailable
+    
+    Invariant [UT-6]: This never blocks the transport — caller continues
+    immediately while DNS resolution happens in background tasks.
+    
+    Usage:
+        await prefetch_dns([url1, url2, ...])  # Fire-and-forget
+        # Transport continues immediately, DNS resolves in background
     """
     await _dns_cache.prefetch(urls)
 
@@ -514,7 +530,7 @@ async def fetch_via_unified_with_race_fallback(
 
     try:
         tasks = [
-            asyncio.ensure_future(_try_fallback(name, fb_policy))
+            safe_create_task(_try_fallback(name, fb_policy), name=f"transport_fallback:{name}")
             for name, fb_policy in fallback_policies
         ]
         done, pending = await asyncio.wait(

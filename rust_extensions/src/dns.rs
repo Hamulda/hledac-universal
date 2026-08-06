@@ -247,8 +247,8 @@ async fn resolve_host_async(
     cache: Arc<RwLock<DnsCache>>,
     semaphore: Arc<tokio::sync::Semaphore>,
 ) -> Result<Vec<String>, DnsError> {
-    use hickory::proto::rr::RecordType;
-    use hickory::resolver::{Resolver, ResolverConfig, ResolverOpts};
+    use hickory_resolver::proto::rr::RecordType;
+    use hickory_resolver::resolver::{Resolver, ResolverConfig, ResolverOpts};
 
     // Check cache first (fast path, read lock)
     {
@@ -427,17 +427,43 @@ impl DnsResolver {
     ///
     /// [PHYSICS]-03/04: Uses multi-threaded runtime (4 workers) so JoinSet
     /// parallelism works. 4 threads × ~2MB stack = ~8MB — M1 8GB safe.
+    ///
+    /// [SWARM]-009 FIX: Graceful degradation on OOM. Falls back to minimal 1-thread
+    /// runtime if full multi-thread build fails (OOM on M1 8GB).
     pub fn new() -> Self {
+        Self::try_new().unwrap_or_else(|e| {
+            eprintln!("dns_resolver: full 4-thread runtime failed ({}), falling back to 1-thread", e);
+            Self::new_fallback()
+        })
+    }
+
+    /// [SWARM]-009 FIX: Try to create resolver with full 4-thread runtime.
+    /// Returns Result for callers who want explicit error handling.
+    pub fn try_new() -> Result<Self, DnsError> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(4) // M1 P-core count, bounded for 8GB UMA
             .enable_all()
             .build()
-            .expect("dns_resolver: tokio runtime creation failed");
+            .map_err(|e| DnsError::Runtime(format!("tokio multi-thread build failed: {}", e)))?;
 
-        Self {
+        Ok(Self {
             runtime,
             cache: Arc::new(RwLock::new(DnsCache::new(1024))),
             semaphore: Arc::new(tokio::sync::Semaphore::new(50)), // Max 50 concurrent
+        })
+    }
+
+    /// [SWARM]-009 FIX: Minimal fallback runtime for OOM conditions.
+    /// Uses single thread — acceptable for low-throughput scenarios.
+    fn new_fallback() -> Self {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("dns_resolver: current-thread fallback runtime failed — this should never happen");
+        Self {
+            runtime,
+            cache: Arc::new(RwLock::new(DnsCache::new(1024))),
+            semaphore: Arc::new(tokio::sync::Semaphore::new(10)), // Reduced concurrent limit
         }
     }
 
@@ -538,7 +564,15 @@ impl DnsResolver {
             while let Some(_) = set.join_next().await {}
         });
 
-        Arc::try_unwrap(results).unwrap().into_inner()
+        // [SWARM]-009 FIX: Arc::try_unwrap can fail if closures hold references.
+        // Graceful degradation: return empty map on failure.
+        match Arc::try_unwrap(results) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(_) => {
+                eprintln!("dns_resolver::prefetch: Arc::try_unwrap failed — references still held");
+                HashMap::new()
+            }
+        }
     }
 
     /// Resolve many (hostname, qtype) pairs in parallel.
@@ -577,7 +611,15 @@ impl DnsResolver {
             while let Some(_) = set.join_next().await {}
         });
 
-        Arc::try_unwrap(results).unwrap().into_inner()
+        // [SWARM]-009 FIX: Arc::try_unwrap can fail if closures hold references.
+        // Graceful degradation: return empty map on failure.
+        match Arc::try_unwrap(results) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(_) => {
+                eprintln!("dns_resolver::resolve_many: Arc::try_unwrap failed — references still held");
+                HashMap::new()
+            }
+        }
     }
 }
 
@@ -607,49 +649,49 @@ pub struct DnsStats {
 #[pymethods]
 impl DnsStats {
     /// Get current cache hit count.
-    #[pyo3(get)]
+    #[getter]
     fn cache_hits(&self) -> u64 {
         self.cache_hits.load(Ordering::Relaxed)
     }
 
     /// Set cache hit count.
-    #[pyo3(set)]
+    #[setter]
     fn set_cache_hits(&self, value: u64) {
         self.cache_hits.store(value, Ordering::Relaxed);
     }
 
     /// Get current cache miss count.
-    #[pyo3(get)]
+    #[getter]
     fn cache_misses(&self) -> u64 {
         self.cache_misses.load(Ordering::Relaxed)
     }
 
     /// Set cache miss count.
-    #[pyo3(set)]
+    #[setter]
     fn set_cache_misses(&self, value: u64) {
         self.cache_misses.store(value, Ordering::Relaxed);
     }
 
     /// Get total query count.
-    #[pyo3(get)]
+    #[getter]
     fn queries_total(&self) -> u64 {
         self.queries_total.load(Ordering::Relaxed)
     }
 
     /// Set total query count.
-    #[pyo3(set)]
+    #[setter]
     fn set_queries_total(&self, value: u64) {
         self.queries_total.store(value, Ordering::Relaxed);
     }
 
     /// Get total error count.
-    #[pyo3(get)]
+    #[getter]
     fn errors_total(&self) -> u64 {
         self.errors_total.load(Ordering::Relaxed)
     }
 
     /// Set total error count.
-    #[pyo3(set)]
+    #[setter]
     fn set_errors_total(&self, value: u64) {
         self.errors_total.store(value, Ordering::Relaxed);
     }

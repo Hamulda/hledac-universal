@@ -3,6 +3,12 @@ probe_f214r_annotationlib_introspection.py — Sprint F214R
 =======================================================
 Probe: Python 3.14 annotationlib compatibility audit.
 
+
+
+
+
+
+
 Tests annotation introspection patterns found in Hledac codebase:
 - typing.get_type_hints() vs annotationlib.get_annotations() with various formats
 - Forward reference handling
@@ -46,13 +52,13 @@ class ActivationResult(TypedDict, total=False):
 try:
     import msgspec
 
-    class IOCEntity(msgspec.Struct):
+    class IOCEntity(msgspec.Struct, gc=False):
         value: str
         ioc_type: str
         severity: str
         context: str
 
-    class OSINTReport(msgspec.Struct):
+    class OSINTReport(msgspec.Struct, gc=False):
         query: str
         ioc_entities: list[IOCEntity]
         threat_summary: str

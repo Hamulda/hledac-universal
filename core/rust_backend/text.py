@@ -2,6 +2,7 @@
 """
 Unicode text normalization and diacritic handling.
 Used for consistent text comparison across different Unicode representations.
+
 """
 
 from __future__ import annotations

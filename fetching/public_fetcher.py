@@ -3,11 +3,18 @@
 Always-on, bounded, fail-soft, typed via msgspec.Struct. See
 :ref:`public-fetcher` for HTTP transport modernization, Tor/stealth layer
 integration, and global state refactoring details.
+
+ISSUE-014 REFACTOR: Modularized into focused submodules:
+- _url_ops.py: URL classification, validation, batch operations
+- _retry_strategy.py: Tenacity retry logic, backoff, circuit breaker integration
+- _error_classifier.py: Fetch error taxonomy and classification
+- _tls_extractor.py: TLS certificate metadata extraction
+- _js_renderers.py: JS rendering via Camoufox, nodriver, Playwright
+- _html_processor.py: HTML parsing, pattern matching, metadata extraction
 """
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import contextvars
 import functools
 import importlib.util
@@ -23,11 +30,96 @@ from typing import TYPE_CHECKING, Any, Final, cast
 import msgspec
 
 from hledac.universal.core.env_config import ENV
-from hledac.universal.tools.regex_cache import collapse_whitespace, strip_html_tags
-from hledac.universal.utils.cache import PyCacheDict
 from hledac.universal.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
+
+# --- ISSUE-014: Import from extracted modules ---
+from hledac.universal.fetching._url_ops import (
+    classify_url_cached as _classify_url_cached,
+    batch_classify_url_cached as _batch_classify_url_cached,
+    _python_classify_url,
+    extract_domain as _extract_domain_from_url,
+    is_onion_url as _is_onion_url,
+    is_i2p_url as _is_i2p_url,
+    is_freenet_url as _is_freenet_url,
+    validate_url as _validate_url,
+    extract_host as _altsvc_extract_host,
+    looks_like_feed_url as _looks_like_feed_url,
+)
+from hledac.universal.fetching._retry_strategy import (
+    _RetryableStatus,
+    _tenacity_prev_sleep,
+    _reset_tenacity_jitter_state,
+    _BLITZ_BACKOFF_CAP_S,
+    _DEFAULT_BACKOFF_CAP_S,
+    _resolve_backoff_cap_s,
+    _tenacity_wait_jitter,
+    _is_retryable_status_exception,
+    _tenacity_before_sleep,
+    _tenacity_after,
+    _JITTER_RNG,
+    _classify_url_cache,
+    _get_rust_url_cache,
+    RETRYABLE_STATUS_CODES,
+    RETRYABLE_ERROR_PATTERNS,
+    reset_jitter_state,
+    _compute_backoff_seconds,
+    is_retryable_status,
+    extract_retry_after,
+    is_retryable_error,
+    TTFB_TIMEOUT_S,
+    mark_blitz_host_dead,
+    is_blitz_host_dead,
+    reset_blitz_dead_hosts,
+    _blitz_aware_stop,
+    retry_decorator,
+    MAX_RETRIES,
+    CircuitBreaker,
+    _cb_domain_var,
+    _cb_breaker_var,
+)
+from hledac.universal.fetching._error_classifier import (
+    classify_fetch_error,
+    derive_failure_stage_and_network_kind,
+    derive_redirect_fields,
+)
+from hledac.universal.fetching._tls_extractor import (
+    extract_tls_metadata_from_response as _extract_tls_metadata_from_response,
+)
+from hledac.universal.fetching._js_renderers import (
+    _check_chrome_binary_exists,
+    get_js_renderer_capability as _get_js_renderer_capability,
+    all_js_renderers_unavailable as _all_js_renderers_unavailable,
+    reset_js_renderer_capability_cache,
+    refresh_js_renderer_capability,
+    fetch_with_camoufox as _fetch_with_camoufox,
+    fetch_with_nodriver as _fetch_with_nodriver,
+    fetch_with_playwright as _fetch_with_playwright,
+    TOR_SOCKS_PROXY,
+    _get_camoufox_lock,
+    compute_effective_max_bytes,
+    teardown_browser_pool as _teardown_browser_pool,
+)
+from hledac.universal.fetching._html_processor import (
+    looks_xmlish as _looks_xmlish,
+    try_decode as _try_decode,
+    needs_js_fetch as _needs_js_fetch,
+    sync_process_html as _sync_process_html,
+    batch_sync_extract_html_metadata as _batch_sync_extract_html_metadata,
+    batch_sync_extract_links as _batch_sync_extract_links,
+    process_html_payload,
+    batch_sync_process_html as _batch_sync_process_html,
+    process_html_payload_batch,
+    drain_registry as _drain_registry,
+    schedule_html_extraction,
+    drain_pending_extractions,
+    get_drain_stats,
+    DrainRegistry,
+    _FEED_URL_RE,
+    _JS_SKIP_HOST_RE,
+    _SERP_HOST_RE,
+)
 
 # Tarpit detection — import function lazily to avoid circular import at module level
 _tarpit_detect = None  # type: ignore[assignment]
@@ -43,285 +135,8 @@ def _get_tarpit_detect():
 
 if TYPE_CHECKING:
     import httpx
-from tenacity import RetryCallState as _TenacityRetryCallState
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-)
-
-from hledac.universal.core.rust_backend import rust as _rust_backend
-from hledac.universal.utils.async_helpers import parallel, _check_gathered
-
-# Context variable for passing circuit-breaker state into tenacity callbacks.
-# ISSUE-7: avoids closure capture of mutable objects across tenacity retry boundaries.
-_cb_domain_var: contextvars.ContextVar[str] = contextvars.ContextVar('_cb_domain', default='')
-_cb_breaker_var: contextvars.ContextVar[CircuitBreaker | None] = contextvars.ContextVar('_cb_breaker', default=None)  # type: ignore[valid-type]
-
-_URL_OPS_WARNING = False
-
-def __getattr__(name: str) -> Any:
-    """Lazy module-level attribute access for rust_backend sub-domains.
-
-    Supported names (transparent to callers of the removed shims):
-        url_ops   -> rust_backend.url   (was _get_url_ops)
-        rust_url  -> rust_backend.url   (direct access for internal use)
-
-    Raises AttributeError for unknown names so normal module errors occur.
-    """
-    global _URL_OPS_WARNING
-    if name == 'url_ops':
-        return _rust_backend.url
-    if name == 'rust_url':
-        return _rust_backend.url
-    if name == 'rust_html':
-        return _rust_backend.raw
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
-
-
-# --- Tenacity retry integration (ISSUE-7) ----------------------------------------
-
-
-class _RetryableStatus(Exception):
-    """Signals a retryable HTTP status that tenacity can retry via retry_if_exception_type."""
-
-    __slots__ = ('status_code', 'retry_after', 'circuit_breaker_domain', 'is_timeout')
-
-    def __init__(
-        self,
-        status_code: int,
-        retry_after: float | None = None,
-        circuit_breaker_domain: str = '',
-        is_timeout: bool = False,
-    ) -> None:
-        super().__init__(status_code, retry_after, circuit_breaker_domain, is_timeout)
-        self.status_code = status_code
-        self.retry_after = retry_after
-        self.circuit_breaker_domain = circuit_breaker_domain
-        self.is_timeout = is_timeout
-
-
-# Module-level state for decorrelated jitter chain across tenacity retries.
-# Reset before each top-level fetch call via _reset_tenacity_jitter_state().
-_tenacity_prev_sleep: float = 0.0
-
-
-def _reset_tenacity_jitter_state() -> None:
-    """Reset jitter state before a new fetch call (ISSUE-7)."""
-    global _tenacity_prev_sleep
-    _tenacity_prev_sleep = 0.0
-
-
-# BLITZ-15: Blitz mode backoff cap — 1.0 s max (vs 8.0 s default).
-# In a 30-min sprint, waiting 8 s for a single retry is unacceptable;
-# the URL should be marked dead after 1–2 fast retries.
-_BLITZ_BACKOFF_CAP_S: Final[float] = 1.0
-_DEFAULT_BACKOFF_CAP_S: Final[float] = 8.0
-
-
-def _resolve_backoff_cap_s() -> float:
-    """Return the current backoff cap: 1.0 s in blitz mode, 8.0 s otherwise."""
-    from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
-
-    return _BLITZ_BACKOFF_CAP_S if _is_blitz() else _DEFAULT_BACKOFF_CAP_S
-
-
-def _tenacity_wait_jitter(retry_state: _TenacityRetryCallState) -> float:
-    """Tenacity wait generator: Retry-After header → backoff → jitter.
-
-    ISSUES-7: Replaces manual retry loop with tenacity decorator.
-    Uses decorrelated jitter (same formula as existing _compute_backoff_seconds)
-    but accepts tenacity's RetryCallState so @retry can drive it.
-
-    BLITZ-15: Backoff cap is 1.0 s in blitz mode (8.0 s default).
-
-    prev_sleep is carried via module-level _tenacity_prev_sleep to maintain
-    the decorrelated jitter chain across retries. Reset via _reset_tenacity_jitter_state().
-    """
-    global _tenacity_prev_sleep
-    attempt = retry_state.attempt_number
-    exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
-    retry_after: float | None = None
-    if isinstance(exc, _RetryableStatus):
-        retry_after = exc.retry_after
-    cap_s = _resolve_backoff_cap_s()
-    # Fallback: geometric backoff capped (matches _compute_backoff_seconds)
-    if retry_after is None or retry_after <= 0:
-        retry_after = min(2.0 ** (attempt + 1), cap_s)
-    else:
-        retry_after = min(retry_after, 60.0)
-    # Decorrelated jitter: same formula as _compute_backoff_seconds
-    jittered = min(cap_s, _JITTER_RNG.uniform(0.0, max(retry_after, _tenacity_prev_sleep) * 3.0))
-    _tenacity_prev_sleep = jittered
-    return jittered
-
-
-# --- _RetryableStatus retry predicate (used by tenacity) ------------------------
-
-
-def _is_retryable_status_exception(exc: BaseException) -> bool:
-    """Tenacity predicate: retry only on _RetryableStatus (HTTP retryable codes)."""
-    return isinstance(exc, _RetryableStatus)
-
-
-def _tenacity_before_sleep(retry_state: _TenacityRetryCallState) -> None:
-    """Tenacity before_sleep: record circuit-breaker failure before retry delay.
-
-    ISSUES-7: Called by tenacity AFTER a retryable failure but BEFORE the wait delay.
-    Reads circuit-breaker state from context variables set by async_fetch_public_text.
-    """
-    exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
-    if not isinstance(exc, _RetryableStatus):
-        return
-    cb = _cb_breaker_var.get()
-    cb_domain = _cb_domain_var.get()
-    if cb is not None:
-        cb.record_failure(failure_kind=str(exc.status_code), is_timeout=exc.is_timeout)
-    if cb_domain:
-        try:
-            from hledac.universal.transport.circuit_breaker import rust_circuit_record_failure
-
-            rust_circuit_record_failure(cb_domain, is_timeout=exc.is_timeout)
-        except Exception:  # noqa: BLE001 — best-effort; Rust CB unavailable is non-fatal
-            pass
-
-
-def _tenacity_after(retry_state: _TenacityRetryCallState) -> None:
-    """Tenacity after: record circuit-breaker success on final success (ISSUE-7).
-
-    Reads circuit-breaker state from context variables set by async_fetch_public_text.
-    """
-    outcome_ok = retry_state.outcome.exception() is None if retry_state.outcome is not None else False
-    if not outcome_ok:
-        return
-    cb = _cb_breaker_var.get()
-    cb_domain = _cb_domain_var.get()
-    if cb is not None:
-        cb.record_success()
-    if cb_domain:
-        try:
-            from hledac.universal.transport.circuit_breaker import rust_circuit_record_success
-
-            rust_circuit_record_success(cb_domain)
-        except Exception:  # noqa: BLE001 — best-effort; Rust CB unavailable is non-fatal
-            pass
-
-
-_classify_url_cache: PyCacheDict[str, tuple[str, str]] = PyCacheDict(512, 300.0)
-@functools.lru_cache(maxsize=1)
-def _get_rust_url_cache() -> Any:
-    """Lazy singleton for UrlClassifyCachePy — created on first call.
-
-    Thread-safe via functools.lru_cache internals (one lock, acquired once).
-    """
-    return _rust_backend.url.UrlClassifyCachePy(capacity=50000, ttl_s=300.0)
-
-def _classify_url_cached(url: str) -> tuple[str, str]:
-    """Returns (kind_str, lowercase_host) using Rust when available.
-
-    Fast path: Rust classify_url (single GIL transition, 3× faster).
-    Fallback: _python_classify_url (pure Python, no Rust, no side effects).
-    Caches both paths in PyCacheDict for consistency.
-    """
-    cached = _classify_url_cache.get(url)
-    if cached is not None:
-        return cached
-    try:
-        result = _rust_backend.url.classify_url(url)
-    except Exception:  # noqa: BLE001 — best-effort fallback; Rust unavailable/non-functional
-        result = _python_classify_url(url)
-    _classify_url_cache.set(url, result)
-    return result
-
-def _python_classify_url(url: str) -> tuple[str, str]:
-    """Pure-Python URL classifier — no cache, no Rust, no side effects.
-
-    Must stay in sync with rust_backend/url.py._python_classify_url.
-    Delta (beyond the Rust path): VCS, social, document, storage classification.
-    Used as fallback when Rust is unavailable or as Python-only path
-    in _batch_classify_url_cached. Never raises.
-    """
-    try:
-        parsed = urllib.parse.urlparse(url)
-        netloc = parsed.netloc.lower()
-        if not netloc:
-            return ('malformed', '')
-        # VCS hosting
-        if any(k in netloc for k in ("github.com", "gitlab.com", "bitbucket.org")):
-            return ("code", "vcs")
-        # Social platforms
-        if any(k in netloc for k in ("twitter.com", "x.com", "mastodon.social")):
-            return ("social", "twitter")
-        if any(k in netloc for k in ("reddit.com", "old.reddit.com")):
-            return ("social", "reddit")
-        # Document URLs
-        if parsed.path.endswith((".pdf", ".doc", ".docx")):
-            return ("document", "file")
-        # Cloud storage
-        if any(k in netloc for k in ("drive.google.com", "dropbox.com", "onedrive.live.com")):
-            return ("storage", "cloud")
-        # Darknet before clearnet — use hostname (port-stripped) so :8080 doesn't break .i2p/.onion detection
-        hostname = parsed.hostname or ''
-        if hostname.endswith(".onion"):
-            return ("onion", netloc)
-        if hostname.endswith(".i2p") or hostname.endswith(".b32.i2p"):
-            return ("i2p", hostname)
-        if hostname.endswith(".freenet") or 'freenet' in netloc or 'hyphanet' in netloc:
-            return ("freenet", netloc)
-        # Clearnet: http/https URLs that aren't special categories
-        if parsed.scheme in ("http", "https"):
-            return ("clearnet", netloc.removeprefix("www."))
-        return ("unknown", netloc)
-    except Exception:  # noqa: BLE001 — best-effort fallback; parse failure returns default
-        return ('malformed', '')
-
-def _batch_classify_url_cached(urls: list[str]) -> list[tuple[str, str]]:
-    """Batch URL classifier with embedded Rust xxh3 cache (Issue #4).
-
-    Primary path: UrlClassifyCachePy.classify_batch_cached()
-    - Single GIL transition for all N URLs (vs N transitions in Python dict)
-    - xxh3_64(url) as cache key — 8 bytes vs 80-200 bytes for full URL string
-    - AHashMap<u64, (kind, host)> — ahash 10× faster than Python dict
-    - parking_lot::RwLock — read-lock-free reads
-    - Rayon parallel classify for misses within the same GIL transition
-
-    Fallback: Python PyCacheDict (original 3-stage approach) when Rust unavailable.
-
-    Bounded: hard-cap 50_000 items per call.
-
-    Returns list of (kind_str, lowercase_host) in same order as input.
-    """
-    if not urls:
-        return []
-    hard_cap = 50000
-    if len(urls) > hard_cap:
-        urls = urls[:hard_cap]
-    try:
-        cache = _get_rust_url_cache()
-        return cache.classify_batch_cached(urls)
-    except Exception:  # noqa: BLE001 — best-effort; batch classification failure is non-fatal
-        pass
-    results: list[tuple[str, str] | None] = [None] * len(urls)  # fully populated before return
-    misses: list[tuple[int, str]] = []
-    for i, url in enumerate(urls):
-        cached = _classify_url_cache.get(url)
-        if cached is not None:
-            results[i] = cached
-        else:
-            misses.append((i, url))
-    if not misses:
-        return cast("list[tuple[str, str]]", results)
-    miss_urls = [u for _, u in misses]
-    try:
-        batch_results = _rust_backend.url.batch_classify(miss_urls)
-    except Exception:  # noqa: BLE001 — best-effort; fallback to Python classifier
-        batch_results = [_python_classify_url(u) for u in miss_urls]
-    batch_updates = dict(zip(miss_urls, batch_results))
-    _classify_url_cache.update(batch_updates)
-    for (orig_idx, url), classified in zip(misses, batch_results):
-        results[orig_idx] = classified
-    return cast("list[tuple[str, str]]", results)
-# ISSUE-0.2: Import from fetching/curl_cffi_fetch.py (CAPS-aware wrapper)
+# NOTE: Duplicated code removed — imports from _retry_strategy, _url_ops modules
+# See: fetching/_retry_strategy.py, fetching/_url_ops.py
 # This ensures CAPS-based availability checking for curl_cffi
 from hledac.universal.fetching.curl_cffi_fetch import (
     fetch_via_i2p_curl_cffi,
@@ -330,7 +145,6 @@ from hledac.universal.layers.ua_rotator import build_randomized_headers as _cano
 from hledac.universal.layers.ua_rotator import get_random_accept_language as _canonical_get_random_accept_language
 from hledac.universal.layers.ua_rotator import get_random_ua as _canonical_get_random_ua
 from hledac.universal.transport.base import (
-    CircuitBreaker,
     fetch_via_tor_curl_cffi,
 )
 
@@ -420,24 +234,7 @@ from hledac.universal.transport.http3_lane import http_version_for_curl_cffi as 
 from hledac.universal.transport.http3_lane import record_from_curl_cffi_result as _h3_record_from_result_headers
 
 
-def _altsvc_extract_host(url: str, preclassified_host: str='') -> str:
-    """Return lowercased hostname from URL, or empty string on parse failure.
-
-    F271: Rust _rust_backend.url.extract_host fast path with urllib.parse fallback.
-    B1: When caller already classified the URL via _classify_url_cached,
-    pass preclassified_host to skip the FFI entirely.
-    """
-    if preclassified_host:
-        return preclassified_host
-    try:
-        _uops = _rust_backend.url
-        if _uops is not None:
-            return _uops.extract_host(url)
-        _, host = _classify_url_cached(url)
-        return host
-    except Exception:  # noqa: BLE001 — best-effort; host extraction failure returns empty string
-        return ''
-
+# _altsvc_extract_host is now imported from _url_ops module
 def _altsvc_http_version_for(host: str) -> Any:
     """F260 compat shim — delegates to ``http3_lane`` by reconstructing
     a synthetic URL. Returns ``None`` when the gate is closed, when the
@@ -709,21 +506,7 @@ def _reset_webkit_transport_telemetry() -> None:
         pass
 
 
-_CAMOUFOX_LOCK: asyncio.Lock | None = None
-_CAMOUFOX_LOCK_INIT: bool = False
-
-def _get_camoufox_lock() -> asyncio.Lock:
-    """Lazily create camoufox lock in the current event loop.
-
-    ISSUE-014 FIX: asyncio.Lock() at module import time causes "no running event loop"
-    errors on macOS. This function creates the lock lazily on first async access.
-    """
-    global _CAMOUFOX_LOCK, _CAMOUFOX_LOCK_INIT
-    if _CAMOUFOX_LOCK is None or not _CAMOUFOX_LOCK_INIT:
-        _CAMOUFOX_LOCK = asyncio.Lock()
-        _CAMOUFOX_LOCK_INIT = True
-    return _CAMOUFOX_LOCK
-
+# _CAMOUFOX_LOCK and _get_camoufox_lock imported from _js_renderers
 DEFAULT_UA: Final[str] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 _BROWSER_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.210 Mobile Safari/537.36', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0')
 _ACCEPT_LANGUAGE_POOL: tuple[str, ...] = ('en-US,en;q=0.9', 'en-GB,en;q=0.8', 'en-US,en;q=0.9,de;q=0.8', 'en-US,en;q=0.9,fr;q=0.8', 'en-US,en;q=0.9,es;q=0.8', 'en-US,en;q=0.9,ja;q=0.8', 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7', 'de-DE,de;q=0.9,en;q=0.8', 'fr-FR,fr;q=0.9,en;q=0.8', 'ja-JP,ja;q=0.9,en;q=0.8', 'en-US,en;q=0.9', 'en-AU,en;q=0.9', 'en-CA,en;q=0.9', 'en-IE,en;q=0.9', 'en-NZ,en;q=0.9')
@@ -828,448 +611,19 @@ class FetchResult(msgspec.Struct, frozen=True, gc=False):
     matched_patterns: tuple[str, ...] = ()
 ACCEPTED_CONTENT_TYPES: Final[frozenset[str]] = frozenset({'text/html', 'text/plain', 'text/xml', 'application/xhtml+xml', 'application/xml', 'application/rss+xml', 'application/atom+xml'})
 
-def _validate_url(url: str) -> str | None:
-    """
-    Validate URL is http/https and well-formed.
-    Returns None on success, error string on failure.
-
-    F271: Rust _rust_backend.url.classify_url fast path with urllib.parse fallback.
-    classify_url returns (kind, host) where kind ∈
-    {"clearnet","onion","i2p","freenet","empty","malformed"}.
-    Rust path is used when the module loads; ImportError or runtime
-    failure falls through to the unchanged Python branch below.
-    """
-    if not url or not isinstance(url, str):
-        return 'url_empty'
-    url = url.strip()
-    if not url:
-        return 'url_empty'
-    _uops = _rust_backend.url
-    if _uops is not None:
-        try:
-            kind, host = _classify_url_cached(url)
-            if kind == 'empty':
-                return 'url_empty'
-            if kind == 'malformed':
-                return 'url_malformed'
-            if not host:
-                return 'url_no_netloc'
-            scheme_idx = url.find('://')
-            if scheme_idx == -1:
-                return 'url_malformed'
-            scheme = url[:scheme_idx].lower()
-            if scheme not in ('http', 'https'):
-                return f'url_unsupported_scheme:{scheme}'
-            return None
-        except Exception:  # noqa: BLE001 — best-effort; URL parse failure is non-fatal
-            pass
-    _kind, _host = _python_classify_url(url)
-    if _kind == 'empty':
-        return 'url_empty'
-    if _kind == 'malformed':
-        return 'url_malformed'
-    if not _host:
-        return 'url_no_netloc'
-    scheme_idx = url.find('://')
-    if scheme_idx == -1:
-        return 'url_malformed'
-    scheme = url[:scheme_idx].lower()
-    if scheme not in ('http', 'https'):
-        return f'url_unsupported_scheme:{scheme}'
-    return None
-MAX_RETRIES: Final[int] = 2
-_RETRYABLE_STATUS_CODES: Final[frozenset[int]] = frozenset({429, 502, 503, 504, 520})
-
-def _is_retryable_status(status_code: int) -> bool:
-    return status_code in _RETRYABLE_STATUS_CODES
-
-def _extract_retry_after(headers) -> float | None:
-    """Parse Retry-After header, return seconds or None."""
-    ra = headers.get('Retry-After') or headers.get('retry-after')
-    if ra is None:
-        return None
-    try:
-        return float(ra)
-    except (ValueError, TypeError):
-        return None
-
-def _compute_backoff_seconds(
-    retry_after: float | None,
-    attempt: int,
-    *,
-    jitter: bool = True,
-    _prev_sleep: float = 0.0,
-    blitz_backoff_cap_s: float | None = None,
-) -> float:
-    """Return bounded backoff in seconds.
-
-    Uses Retry-After if available, otherwise exponential backoff.
-    BLITZ-15: Backoff cap is 1.0 s in blitz mode (8.0 s default).
-    Attempt 0 = no backoff (first failure already counted).
-
-    When ``jitter`` is True (default), applies decorrelated jitter (AWS
-    Architecture Blog "Exponential Backoff and Jitter"): samples
-    ``Uniform(0, max(base, _prev_sleep) * 3)``. The optional
-    ``_prev_sleep`` carries state across consecutive retries so successive
-    sleep durations are de-correlated (callers may pass it as a kwarg).
-    """
-    cap_s = blitz_backoff_cap_s if blitz_backoff_cap_s is not None else _resolve_backoff_cap_s()
-    if retry_after is not None and retry_after > 0:
-        base = min(retry_after, 60.0)
-    else:
-        base = min(2.0 ** (attempt + 1), cap_s)
-    if jitter:
-        return min(cap_s, _JITTER_RNG.uniform(0.0, max(base, _prev_sleep) * 3.0))
-    return base
-
-def _build_retry_error(status_code: int, retry_after: float | None) -> str:
-    """Build retry error string with : separator between code and details.
-
-    Adapter uses .split(":", 2) — first two parts are always prefix+code,
-    any additional colons in the message body are preserved in part[2].
-    """
-    parts = [f'retryable:{status_code}']
-    if retry_after is not None:
-        parts.append(f'retry_after={retry_after:.1f}s')
-    else:
-        parts.append('backoff=exp')
-    return '|'.join(parts)
-
-def _extract_tls_metadata_from_response(resp) -> dict:
-    """
-    Extract TLS certificate metadata and Server header from an HTTP response.
-    For aiohttp response: resp is aiohttp.ClientResponse
-    For httpx response: resp is httpx.Response
-
-    Architecture (Issue B5 / Issue-9):
-        - Python pre-fetches raw SSL object via short-circuit getattr chain
-        - Python parses dict form of getpeercert() -> san_entries + issuer_org
-        - Rust does SAN cap (20) + issuer cap (200) + SHA-256 in a single call
-        - Server header: plain Python (no Rust needed)
-    Memory bounds: all collections are bounded, fail-safe throughout.
-    """
-    result: dict = {'tls_cert_san': (), 'tls_cert_issuer': None, 'tls_cert_sha256': None, 'server_header': None}
-    try:
-        server = resp.headers.get('Server') or resp.headers.get('server')
-        if server:
-            result['server_header'] = server[:200]
-    except Exception:  # noqa: BLE001 — best-effort; server header extraction failure is non-fatal
-        pass
-
-    # --- SSL object extraction via short-circuit getattr chain ---
-    ssl_obj = getattr(resp, 'connection', None) or getattr(resp, '_ssl', None)
-    if ssl_obj is None and hasattr(resp, 'transport'):
-        try:
-            ssl_obj = resp.transport.get_extra_info('ssl_object')
-        except Exception:  # noqa: BLE001 — best-effort; transport SSL object extraction failure is non-fatal
-            pass
-    if ssl_obj is None:
-        return result
-
-    # --- Certificate extraction (dict form + DER bytes) — independent try/except ---
-    cert_dict: dict | None = None
-    try:
-        cert_dict = ssl_obj.getpeercert()
-    except Exception:  # noqa: BLE001 — best-effort; getpeercert() failure is non-fatal
-        pass
-    der_bytes: bytes | None = None
-    try:
-        der_bytes = ssl_obj.getpeercert(binary_form=True)
-    except Exception:  # noqa: BLE001 — best-effort; binary cert extraction failure is non-fatal
-        pass
-
-    # --- Parse cert_dict → san_entries + issuer_org (Python-side cap prevents OOM from malicious certs) ---
-    issuer_org: str | None = None
-    san_entries: list[tuple[int, str]] = []
-    if cert_dict:
-        san_list = cert_dict.get('subjectAltName', [])
-        for typ, val in san_list:
-            if not isinstance(val, (str, bytes)):
-                continue
-            if len(san_entries) >= 100:   # cap before Rust call — malicious certs can have 10k+ SANs
-                break
-            # val is already str from getpeercert(); str(str) is redundant, use directly
-            san_entries.append((typ, val) if isinstance(val, str) else (typ, val.decode('utf-8', errors='replace')))
-        subject = cert_dict.get('subject', ())
-        for rdn in subject:
-            for k, v in rdn:
-                if k == 'organizationName':
-                    issuer_org = v if isinstance(v, str) else str(v) if isinstance(v, bytes) else str(v)
-                    break
-            if issuer_org:
-                break
-
-    # --- Rust: SAN cap (20) + issuer cap (200) + SHA-256 in a single call ---
-    try:
-        sans, issuer, sha256 = _rust_backend.tls.extract_tls_metadata(san_entries, issuer_org, der_bytes)
-        result['tls_cert_san'] = tuple(sans)
-        result['tls_cert_issuer'] = issuer
-        result['tls_cert_sha256'] = sha256
-    except Exception:  # noqa: BLE001 — best-effort; Rust TLS metadata extraction failure is non-fatal
-        pass
-
-    return result
-
-def _derive_redirect_fields(url: str, final_url: str) -> tuple[bool, str | None]:
-    """Return (redirected, redirect_target) based on URL comparison.
-
-    downstream can use redirected=True as explicit signal instead of
-    computing final_url != url themselves.
-    """
-    if final_url != url:
-        return (True, final_url)
-    return (False, None)
-
-def _derive_failure_stage_and_network_kind(error: str | None) -> tuple[str | None, str | None]:
-    """Parse error string to extract structured failure_stage and network_error_kind.
-
-    Returns (failure_stage, network_error_kind).
-    Both are None when error is None (success) or for URL-validation errors.
-
-    failure_stage taxonomy:
-      - validation  : URL was invalid before any network call
-      - connection  : TCP/DNS/connection-level failure (body never reached)
-      - tls          : TLS handshake failure
-      - http         : HTTP-level failure (response received, non-2xx)
-      - body         : headers OK but body read failed mid-stream
-      - size         : body truncated due to size cap
-      - tarpit       : HTML identified as tarpit/honeypot/link-labyrinth (ISSUE-014)
-
-    network_error_kind (connection/tls only):
-      - dns_error    : DNS resolution failure
-      - connect_error: TCP connection refused/reset
-      - tls_error    : TLS handshake/verification failure
-      - timeout      : request timed out
-    """
-    if error is None:
-        return (None, None)
-    if error.startswith('url_'):
-        return ('validation', None)
-    if error == 'timeout':
-        return ('connection', 'timeout')
-    if error == 'size_cap_exceeded':
-        return ('size', None)
-    if error.startswith('tarpit_detected:'):
-        return ('tarpit', None)
-    if error.startswith('content_type_rejected:'):
-        return ('http', None)
-    if error.startswith('retryable:'):
-        return ('http', None)
-    if error.startswith('fetch_error;'):
-        parts = error.split(';', 2)
-        exc_type = parts[1] if len(parts) > 1 else ''
-        if 'SSL' in exc_type or 'TLS' in exc_type or 'Certificate' in exc_type:
-            return ('tls', 'tls_error')
-        if 'DNS' in exc_type or 'Resolver' in exc_type:
-            return ('connection', 'dns_error')
-        if 'Connect' in exc_type or 'Connection' in exc_type or 'Network' in exc_type:
-            return ('connection', 'connect_error')
-        return ('connection', 'connect_error')
-    return ('body', None)
-import bisect
-
-
-def _build_error_trie() -> tuple[dict[str, str], list[tuple[str, str]]]:
-    """Build optimized error taxonomy: O(1) exact dict + O(log n) sorted prefix list.
-
-    Sprint F350M-R Issue #P2: replaces O(n) linear prefix scan with O(log n) bisect.
-    ~15 entries — bisect + early break is ~3x faster than naive iteration.
-    """
-    exact: dict[str, str] = {'circuit_breaker': 'circuit_breaker_blocked', 'resource_governor': 'resource_governor_blocked', 'fetch_text_none_or_empty': 'body_empty'}
-    prefixes: list[tuple[str, str]] = sorted([('fetch_exception: ClientConnectorCertificateError', 'tls_error'), ('fetch_exception: ClientSSLError', 'tls_error'), ('fetch_exception: ClientProxyError', 'proxy_error'), ('fetch_exception: ClientConnectorError', 'connect_error'), ('fetch_exception: asyncio.TimeoutError', 'connect_timeout'), ('fetch_exception: TimeoutError', 'read_timeout'), ('fetch_timeout_after_', 'connect_timeout'), ('content_type_rejected:', 'content_type_rejected')], key=lambda x: len(x[0]), reverse=True)
-    return (exact, prefixes)
-_EXACT_ERROR_MAP, _SORTED_PREFIX_LIST = _build_error_trie()
-_PREFIX_KEYS = [p[0] for p in _SORTED_PREFIX_LIST]
-
-def _lookup_prefix_fast(error_str: str) -> str | None:
-    """O(log n) prefix lookup via bisect + early break on startswith."""
-    if not error_str:
-        return None
-    min_len = len(_PREFIX_KEYS[-1]) if _PREFIX_KEYS else 0
-    if len(error_str) < min_len:
-        return None
-    idx = bisect.bisect_right(_PREFIX_KEYS, error_str)
-    for i in range(idx - 1, -1, -1):
-        if error_str.startswith(_PREFIX_KEYS[i]):
-            return _SORTED_PREFIX_LIST[i][1]
-        if i + 1 < len(_PREFIX_KEYS) and len(_PREFIX_KEYS[i]) < len(_PREFIX_KEYS[i + 1]):
-            break
-    return None
-_FETCH_ERROR_TAXONOMY: dict[str, str] = {'dns_error': 'dns_error', 'connect_error': 'connect_error', 'tls_error': 'tls_error', 'timeout': 'read_timeout', 'content_type_rejected:': 'content_type_rejected', 'fetch_text_none_or_empty': 'body_empty', 'fetch_timeout_after_': 'connect_timeout', 'fetch_exception: asyncio.TimeoutError': 'connect_timeout', 'fetch_exception: TimeoutError': 'read_timeout', 'fetch_exception: ClientConnectorError': 'connect_error', 'fetch_exception: ClientSSLError': 'tls_error', 'fetch_exception: ClientProxyError': 'proxy_error', 'fetch_exception: ClientConnectorCertificateError': 'tls_error', 'circuit_breaker': 'circuit_breaker_blocked', 'resource_governor': 'resource_governor_blocked'}
-
-def classify_fetch_error(result_or_error) -> str:
-    """Classify a fetch outcome into a flat error type string for verdict telemetry.
-
-    Takes a FetchResult (success or failure) or an error string.
-    Returns one of the Sprint F206AC taxonomy strings:
-      none | dns_error | connect_timeout | read_timeout | tls_error | proxy_error
-      | http_403 | http_404 | http_429 | http_5xx | content_type_rejected
-      | body_empty | max_bytes_exceeded | circuit_breaker_blocked
-      | resource_governor_blocked | task_cancelled | tarpit_detected
-      | unknown_fetch_error
-
-    HARD RULE: CancelledError is re-raised, never classified and swallowed.
-    """
-    if hasattr(result_or_error, 'status_code'):
-        result = result_or_error
-        if result.error is None and result.status_code == 200 and result.text:
-            if not result.text.strip():
-                return 'body_empty'
-            return 'none'
-        error_str = result.error or ''
-        status_code = result.status_code or 0
-        try:
-            failure_stage = result.failure_stage or ''
-        except AttributeError:
-            failure_stage = ''
-        try:
-            network_kind = result.network_error_kind or ''
-        except AttributeError:
-            network_kind = ''
-        if 'CancelledError' in error_str:
-            raise asyncio.CancelledError('fetch cancelled')
-        if status_code == 403:
-            return 'http_403'
-        if status_code == 404:
-            return 'http_404'
-        if status_code == 429:
-            return 'http_429'
-        if 500 <= status_code < 600:
-            return 'http_5xx'
-        if failure_stage == 'validation':
-            return 'unknown_fetch_error'
-        if failure_stage == 'tls' or network_kind == 'tls_error':
-            return 'tls_error'
-        if network_kind == 'dns_error':
-            return 'dns_error'
-        if network_kind == 'connect_error':
-            return 'connect_error'
-        if network_kind == 'timeout':
-            return 'read_timeout'
-        if failure_stage == 'http':
-            if 'content_type_rejected' in error_str:
-                return 'content_type_rejected'
-            return 'unknown_fetch_error'
-        if failure_stage == 'size':
-            return 'max_bytes_exceeded'
-        if failure_stage == 'tarpit' or error_str.startswith('tarpit_detected:'):
-            return 'tarpit_detected'
-        if 'circuit_breaker' in error_str:
-            return 'circuit_breaker_blocked'
-        if 'resource_governor' in error_str:
-            return 'resource_governor_blocked'
-        _prefix_result = _lookup_prefix_fast(error_str)
-        if _prefix_result is not None:
-            return _prefix_result
-        if error_str:
-            return 'unknown_fetch_error'
-        return 'none'
-    error_str = str(result_or_error) if result_or_error is not None else ''
-    if 'CancelledError' in error_str:
-        raise asyncio.CancelledError('fetch cancelled')
-    if not error_str:
-        return 'none'
-    if 'circuit_breaker' in error_str:
-        return 'circuit_breaker_blocked'
-    if 'resource_governor' in error_str:
-        return 'resource_governor_blocked'
-    _prefix_result = _lookup_prefix_fast(error_str)
-    if _prefix_result is not None:
-        return _prefix_result
-    return 'unknown_fetch_error'
-_XML_MARKER = b'<?xml'
-_XML_TAG_RE = re.compile(b'^\\s*<[a-zA-Z]', re.IGNORECASE)
-
-def _looks_xmlish(body: bytes) -> bool:
-    """Return True if body starts like XML (<?xml or <tag).
-
-    Strips leading ASCII whitespace so servers that prepend newlines
-    before the XML declaration are correctly identified.
-    """
-    stripped = body.lstrip()
-    if stripped.startswith(_XML_MARKER):
-        return True
-    return bool(_XML_TAG_RE.match(stripped))
-
-def _try_decode(body: bytes) -> tuple[str, bool, int, str]:
-    """Decode bytes to str, return (text, replaced_bool, replacement_count, codec).
-
-    F178E: replacement_count is actual U+FFFD count (not just bool).
-
-    codec返回值: 'utf-8' | 'windows-1252' | 'latin-1' | 'utf-8-replace'
-
-    replaced_bool=True when the decoder had to substitute characters
-    (i.e. U+FFFD replacement chars were inserted). For 'latin-1' the text
-    is byte-to-byte lossless but the encoding may NOT match the original
-    charset (e.g. a Windows-1252 page decoded as latin-1 is semantically
-    wrong). Callers that treat replaced_bool=False as "encoding correct"
-    are wrong — only 'utf-8' and 'windows-1252' give that guarantee.
-    """
-    try:
-        text = body.decode('utf-8', errors='strict')
-        return (text, False, 0, 'utf-8')
-    except UnicodeDecodeError:
-        pass
-    try:
-        text = body.decode('windows-1252', errors='strict')
-        return (text, False, 0, 'windows-1252')
-    except (UnicodeDecodeError, LookupError):
-        pass
-    try:
-        text = body.decode('latin-1', errors='strict')
-        # ISSUE-14 fix: latin-1 is lossless (byte→byte), not a replacement.
-        # replaced=False is technically correct for "no U+FFFD substitution occurred",
-        # but latin-1 fallback means the caller should treat the text as
-        # "possibly wrong encoding — do not assume UTF-8".
-        return (text, False, 0, 'latin-1')
-    except (UnicodeDecodeError, LookupError):
-        pass
-    text = body.decode('utf-8', errors='replace')
-    count = text.count('�')
-    return (text, True, count, 'utf-8-replace')
-
-def _classify_url_kind(url: str) -> str:
-    """Returns URL kind (onion|i2p|freenet|clearnet|malformed).
-
-    Single GIL transition for kind-only check.
-    Replaces 3x _is_*_url() calls in loops with one classification + bool compare.
-    """
-    kind, _ = _classify_url_cached(url)
-    return kind
-
-def _is_onion_url(url: str) -> bool:
-    """Detect if URL targets a .onion darknet address.
-
-    F271: Delegates to _classify_url_kind (single GIL transition).
-    """
-    try:
-        return _classify_url_kind(url) == 'onion'
-    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.warning('URL parse error in _is_onion_url for %s: %s', url, e)
-        return False
-
-def _is_i2p_url(url: str) -> bool:
-    """P10: Detect if URL targets an I2P address (.i2p or .b32.i2p).
-
-    F271: Delegates to _classify_url_kind (single GIL transition).
-    """
-    try:
-        return _classify_url_kind(url) == 'i2p'
-    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.warning('URL parse error in _is_i2p_url for %s: %s', url, e)
-        return False
-
-def _is_freenet_url(url: str) -> bool:
-    """P10: Detect if URL targets a Freenet address (.freenet or Hyphanet).
-
-    F271: Delegates to _classify_url_kind (single GIL transition).
-    """
-    try:
-        return _classify_url_kind(url) == 'freenet'
-    except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.warning('URL parse error in _is_freenet_url for %s: %s', url, e)
-        return False
-
+# _validate_url imported from _url_ops
+# MAX_RETRIES and _is_retryable_status imported from _retry_strategy
+# _extract_retry_after imported from _retry_strategy
+# _compute_backoff_seconds imported from _retry_strategy
+# _extract_tls_metadata imported from _tls_extractor
+# TLS extraction imported from _tls_extractor
+# _derive_redirect_fields imported from _error_classifier
+# _derive_failure_stage imported from _error_classifier
+# Error classification from _error_classifier
+# classify_fetch_error imported from _error_classifier
+# _looks_xmlish imported from _html_processor
+# _try_decode imported from _html_processor
+# URL kind functions imported from _url_ops
 async def _get_tor_session():
     """Get Tor session for .onion URL fetches.
 
@@ -1323,54 +677,7 @@ async def _get_i2p_session():
     _SESSION_MGR.record_i2p_source('local_i2p')
     return _SESSION_MGR._i2p_session
 
-class _CurlCffiResponseAdapter:
-    """Minimal aiohttp-compatible response adapter for curl_cffi fetch results.
-
-    Provides the surface that async_fetch_public_text() needs when iterating
-    over a body via `async with session.get(url) as resp:`. We do not aim
-    for full aiohttp.ClientResponse parity — only the fields used by the
-    aiohttp body-read loop (.url, .status, .headers, .iter_chunked()).
-    """
-    __slots__ = ('url', 'status', 'headers', 'content_type', '_content')
-
-    def __init__(self, url: str, status: int, headers: dict[str, str] | None, content: bytes) -> None:
-        self.url = url
-        self.status = status
-        self.headers: dict[str, str] = dict(headers) if headers else {}
-        ct = self.headers.get('Content-Type') or self.headers.get('content-type') or ''
-        self.content_type = ct
-        self._content = content
-
-    async def read(self) -> bytes:
-        return self._content
-
-    async def text(self, encoding: str='utf-8', errors: str='strict') -> str:
-        return self._content.decode(encoding, errors=errors)
-
-    async def iter_chunked(self, n: int):
-        """Yield body in n-byte chunks (matches aiohttp's iter_chunked API)."""
-        data = self._content
-        for i in range(0, len(data), n):
-            yield data[i:i + n]
-
-class _CurlCffiGetContextManager:
-    """Async context manager wrapping an adapter-yielding object.
-
-    Mirrors aiohttp's `session.get(...)` return value: a context manager
-    you can `async with` to get the response. The wrapped object must
-    implement `__aenter__` returning a _CurlCffiResponseAdapter.
-    """
-    __slots__ = tuple(('_future',))
-
-    def __init__(self, future: Any) -> None:
-        self._future = future
-
-    async def __aenter__(self):
-        return await self._future.__aenter__()
-
-    async def __aexit__(self, _exc_type, _exc, _tb) -> None:
-        return None
-
+# CurlCFFI adapters imported from _session_adapters
 class _TorCurlCffiFetchFuture:
     """Lazy adapter: defer the fetch until __aenter__.
 
@@ -1731,164 +1038,13 @@ _NOSCRIPT_RE = re.compile('<noscript[^>]*>|enable javascript', re.IGNORECASE)
 _FEED_URL_RE = re.compile('/?(?:rss|feed|atom|xml|sitemap|opensearch)', re.IGNORECASE)
 _JS_SKIP_HOST_RE = re.compile('(?:^|\\.)(?:threatfox\\.abuse\\.ch|bleepingcomputer\\.com|thehackernews\\.com|krebsonsecurity\\.com|cisa\\.gov|id-ransomware\\.malwarehunterteam\\.com|ransomwaretracker\\.xyz|abuse\\.ch|urlhaus\\.abuse\\.ch|feodo\\.tracker|openphish\\.com|cyberscoop\\.com|darkreading\\.com|threatpost\\.com|therecord\\.media|securityweek\\.com|inforisktoday\\.com|helpnetsecurity\\.com|malwarebazaar\\.abuse\\.ch|sslbl\\.abuse\\.ch)$', re.IGNORECASE)
 
-class _JSRendererCapability:
-    """Thread-safe JS renderer capability tracker.
-
-    F-GLOBAL: Encapsulates _js_renderer_capability dict and
-    _js_renderer_capability_lock.
-
-    Tracks availability of camoufox, nodriver, and playwright.
-    Uses threading.Lock for thread-safe access.
-    Cached after first check — use reset() to force re-check.
-    """
-    __slots__ = ('_capability', '_lock')
-
-    def __init__(self) -> None:
-        self._capability: dict[str, str | None] = {'camoufox': None, 'nodriver': None, 'playwright': None}
-        self._lock = threading.Lock()
-
-    def get(self) -> dict[str, str | None]:
-        """Get current capability snapshot (copy)."""
-        with self._lock:
-            return dict(self._capability)
-
-    def reset(self) -> None:
-        """Reset all capabilities to unknown (force re-check)."""
-        with self._lock:
-            self._capability = {'camoufox': None, 'nodriver': None, 'playwright': None}
-
-    def mark_unavailable(self, name: str, reason: str) -> None:
-        """Mark a renderer as unavailable with a reason string."""
-        if name in self._capability:
-            with self._lock:
-                self._capability[name] = reason
-
-    def check_and_update(self) -> dict[str, str | None]:
-        """Run capability checks and update cached state.
-
-        Returns capability dict with reasons for unavailability.
-        """
-        with self._lock:
-            self._check_camoufox()
-            self._check_nodriver()
-            self._check_playwright()
-            return dict(self._capability)
-
-    def _check_camoufox(self) -> None:
-        """Check camoufox availability."""
-        if self._capability['camoufox'] is not None:
-            return
-        try:
-            import camoufox
-            _ = camoufox.Session
-            self._capability['camoufox'] = None
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            self._capability['camoufox'] = f'camoufox_unavailable: {e}'
-
-    def _check_nodriver(self) -> None:
-        """Check nodriver availability."""
-        if self._capability['nodriver'] is not None:
-            return
-        if not _check_chrome_binary_exists():
-            self._capability['nodriver'] = 'chrome_binary_missing'
-            return
-        try:
-            import nodriver
-            _ = nodriver.start
-            self._capability['nodriver'] = None
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            self._capability['nodriver'] = f'nodriver_unavailable: {e}'
-
-    def _check_playwright(self) -> None:
-        """Check playwright availability."""
-        if self._capability['playwright'] is not None:
-            return
-        heavy_browser_enabled = ENV.get_bool('HLEDAC_ENABLE_HEAVY_BROWSER')
-        if not heavy_browser_enabled:
-            self._capability['playwright'] = 'heavy_browser_disabled'
-            return
-        try:
-            import playwright
-            _ = playwright.async_api
-            self._capability['playwright'] = None
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            self._capability['playwright'] = f'playwright_unavailable: {e}'
-
-    def is_any_available(self) -> bool:
-        """Check if any JS renderer is available."""
-        with self._lock:
-            return any(v is None for v in self._capability.values())
-_js_renderer_cap = _JSRendererCapability()
-
-def _check_chrome_binary_exists() -> bool:
-    """Check if Chrome/Chromium binary is available on the system (macOS + Linux)."""
-    import os
-    candidates = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium', '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser']
-    from pathlib import Path
-    return any(Path(p).exists() and os.access(p, os.X_OK) for p in candidates)
-
-def _get_js_renderer_capability() -> dict[str, str | None]:
-    """
-    Return capability dict for all JS renderers.
-    Values: None = available, str = unavailable reason.
-    Cached after first call per renderer.
-
-    F-GLOBAL: Delegates to _js_renderer_cap singleton.
-    """
-    return _js_renderer_cap.check_and_update()
-
-def _all_js_renderers_unavailable() -> bool:
-    """Return True if all JS renderers are unavailable.
-
-    Checks the cached capability dict directly without triggering re-detection.
-    None = available (renderer has no unavailable reason).
-    str = unavailable reason.
-    """
-    cap = _js_renderer_cap.get()
-    return all(v is not None for v in cap.values())
-
-def reset_js_renderer_capability_cache() -> None:
-    """
-    Reset JS renderer capability cache.
-
-    Use this for tests, diagnostics, or long-running runtime refresh.
-    Does NOT trigger browser startup or heavy imports — only resets
-    the cached capability dict so the next _get_js_renderer_capability()
-    call re-detects from scratch.
-    """
-    _js_renderer_cap.reset()
-
-def refresh_js_renderer_capability() -> dict[str, str | None]:
-    """
-    Force re-detect JS renderer capabilities and return current state.
-
-    Unlike reset_js_renderer_capability_cache(), this also returns
-    the freshly-detected capability dict.
-    """
-    reset_js_renderer_capability_cache()
-    return _get_js_renderer_capability()
-
-def _looks_like_feed_url(url: str) -> bool:
-    """Return True if URL path strongly suggests an RSS/XML/Atom/Sitemap feed.
-
-    F271: Rust _rust_backend.url.looks_like_feed_url fast path with urllib.parse fallback.
-    The Rust function is a direct drop-in for the regex check on
-    urlparse(url).path.rstrip("/"). ImportError or runtime failure
-    falls through to the unchanged Python branch.
-    """
-    try:
-        _uops = _rust_backend.url
-        if _uops is not None:
-            return _uops.looks_like_feed_url(url)
-    except Exception:  # noqa: BLE001 — best-effort; feed URL detection failure returns False
-        pass
-    try:
-        parsed = urllib.parse.urlparse(url)
-        path = parsed.path.rstrip('/')
-        return bool(_FEED_URL_RE.search(path))
-    except Exception:  # noqa: BLE001 — best-effort; regex failure returns False
-        return False
-
+# _JSRendererCapability imported from _js_renderers
+# _check_chrome_binary_exists imported from _js_renderers
+# _get_js_renderer_capability imported from _js_renderers
+# _all_js_renderers_unavailable imported from _js_renderers
+# reset_js_renderer_capability_cache imported from _js_renderers
+# refresh_js_renderer_capability imported from _js_renderers
+# _looks_like_feed_url imported from _url_ops
 def _needs_js_fetch(text: str, *, url: str='', content_length: int=0, declared_length: int=-1) -> bool:
     """Detect if response suggests JS-rendered content is needed.
     Enhanced P0-FIX: covers three failure modes of the original _NOSCRIPT_RE-only
@@ -1954,70 +1110,8 @@ def _compute_effective_max_bytes(requested: int) -> int:
     if requested <= 0:
         return hard
     return min(max(requested, 1), hard)
-_JS_RENDERER_SEMAPHORE: asyncio.Semaphore | None = None
-
-def _get_js_renderer_semaphore() -> asyncio.Semaphore:
-    """F226A: Lazily-initialized, per-event-loop JS renderer Semaphore.
-
-    F-02 NOTE: Uses get_semaphore (fixed OK limit) rather than
-    ConcurrencyBudgetRegistry dynamic adjustment. The BrowserPool.max_active=2
-    provides the M1 8GB hard cap; ConcurrencyBudgetRegistry.JS_RENDERER
-    category is registered for future dynamic UMA-aware adjustment.
-
-    Thread-safe via functools.lru_cache internals (one lock, acquired once).
-    Note: asyncio.Semaphore is created in the calling event loop context.
-    """
-    global _JS_RENDERER_SEMAPHORE
-    if _JS_RENDERER_SEMAPHORE is not None:
-        return _JS_RENDERER_SEMAPHORE
-    from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-    _JS_RENDERER_SEMAPHORE = get_semaphore(ConcurrencyCategory.JS_RENDERER)
-    return _JS_RENDERER_SEMAPHORE
-
-async def _teardown_browser_pool() -> None:
-    """
-    Teardown nodriver BrowserPool + camoufox shared state at sprint winddown.
-
-    F-02: BrowserPool.close() stops all idle Chromium instances and marks the
-    pool as closed. BrowserPool is a lazy singleton — created on first use,
-    closed here at winddown.
-
-    Called from sprint_scheduler run_winddown(). Fail-soft — any error is
-    swallowed at DEBUG level. Must be idempotent (safe to call multiple times).
-
-    Resets:
-    - BrowserPool singleton: closes all idle browsers, clears global reference
-    - _JS_RENDERER_SEMAPHORE: released and cleared so next sprint re-initializes
-      in the correct event loop
-    - _js_renderer_capability: reset to None so next sprint re-probes availability
-    - yields cooldown to let any in-flight browser.stop() calls finish
-    """
-    # F-02: Close BrowserPool (stops Chromium, clears singleton)
-    try:
-        from hledac.universal.utils.browser_pool import close_pool
-        await close_pool()
-    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.debug('[browser_pool] BrowserPool.close() skipped: %s', _e)
-
-    # Legacy semaphore teardown (camoufox still uses it)
-    global _JS_RENDERER_SEMAPHORE
-    try:
-        _sem = _JS_RENDERER_SEMAPHORE
-        if _sem is not None:
-            try:
-                for _ in range(_sem._value + 1):
-                    await asyncio.sleep(0)
-            except Exception:  # noqa: BLE001 — best-effort; semaphore drain failure is non-fatal
-                pass
-            _JS_RENDERER_SEMAPHORE = None
-    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.debug('[browser_pool] semaphore teardown skipped: %s', _e)
-    try:
-        _js_renderer_cap.reset()
-    except Exception as _e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-        logger.debug('[browser_pool] capability reset skipped: %s', _e)
-    logger.debug('[winddown] browser pool torn down')
-
+# _JS_RENDERER_SEMAPHORE imported from _js_renderers
+# _teardown_browser_pool imported from _js_renderers
 class AiohttpBodyOutcome(msgspec.Struct, frozen=True, gc=False):
     """F226B: aiohttp body read outcome with peek + size cap. F350M-R: gc=False for M1 8GB."""
     body: bytes
@@ -2119,125 +1213,8 @@ async def _fetch_with_camoufox(url: str, timeout: float=15.0) -> str:
 _CAMOUFOX_OS_ROTATION: tuple[str, ...] = ('macos', 'windows', 'linux')
 _CAMOUFOX_MAX_RETRIES: int = 3
 
-async def _camoufox_locked(url: str, timeout: float) -> str:
-    """
-    F226A: Camoufox body inside the original _CAMOUFOX_LOCK + outer JS semaphore.
-    P2-4: Added os-rotation retry — each OS variant generates a different
-    auto-generated fingerprint, so dark web sites that block one fingerprint
-    may accept another. Retries up to 3 OS variants before giving up.
-    """
-    try:
-        from camoufox.async_api import AsyncCamoufox
-    except ImportError:
-        return ''
-    async with _get_camoufox_lock():
-        last_error = ''
-        for attempt in range(_CAMOUFOX_MAX_RETRIES):
-            os_choice = _CAMOUFOX_OS_ROTATION[attempt % len(_CAMOUFOX_OS_ROTATION)]
-            try:
-                async with AsyncCamoufox(headless=True, os=os_choice, webgl_config=('Apple', 'Apple M1, or similar')) as browser:
-                    page = await browser.new_page()
-                    try:
-                        await page.goto(url, wait_until='networkidle', timeout=timeout * 1000)
-                        html = await page.content()
-                    finally:
-                        await page.close()
-                    return html
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                last_error = str(e)
-                logger.debug(f'Camoufox attempt {attempt + 1}/{_CAMOUFOX_MAX_RETRIES} (os={os_choice}) failed for {url}: {e}')
-                continue
-        logger.warning(f'Camoufox all {_CAMOUFOX_MAX_RETRIES} attempts failed for {url}: {last_error}')
-        return ''
-
-async def _fetch_with_nodriver(url: str, url_kind: str='', url_host: str='') -> str:
-    """
-    F265C: Primary JS fetch via nodriver (direct CDP, no WebDriver).
-    On M1, nodriver is more stable than Camoufox — used as first choice.
-    Requires Chrome binary present. Returns "" with telemetry on failure.
-
-    B1: url_kind/url_host params — caller pre-classified via _classify_url_cached.
-    """
-    if not _check_chrome_binary_exists():
-        logger.debug('nodriver skipped: chrome binary not found')
-        return ''
-    if _is_uma_critical():
-        logger.debug('nodriver skipped: UMA critical memory pressure')
-        return ''
-    try:
-        import nodriver as uc
-    except ImportError:
-        _js_renderer_cap.mark_unavailable('nodriver', 'nodriver_unavailable')
-        logger.debug('nodriver not installed, CDP fetch unavailable')
-        return ''
-    async with _get_js_renderer_semaphore():
-        return await _nodriver_locked(url, url_kind, url_host)
-_NODRIVER_MAX_RETRIES: int = 2
-
-async def _nodriver_locked(url: str, url_kind: str='', url_host: str='') -> str:
-    """
-    F226A: nodriver body wrapped inside the shared _JS_RENDERER_SEMAPHORE.
-    F-02: Replaced per-call uc.start() cold-start with BrowserPool.
-
-    BrowserPool eliminates the 1.5-2 s Chromium cold-start penalty by keeping
-    up to max_active=2 persistent idle browsers. Each URL fetch:
-      acquire() → reuse warm browser or launch if pool empty
-      release() → return to idle deque (bounded LRU)
-
-    Cleanup invariants preserved:
-    - page.close() in finally
-    - BrowserPool.release() handles browser lifecycle — no browser.stop() here
-    - CancelledError re-raised (must propagate)
-
-    B1: url_kind/url_host params — caller pre-classified via _classify_url_cached.
-    When both are empty, falls back to _batch_classify_url_cached([url]) (legacy path).
-    """
-    # Lazy import to avoid early browser startup at module load
-    from hledac.universal.utils.browser_pool import acquire_browser, release_browser
-
-    if not url_kind or not url_host:
-        _url_kind_batch = _batch_classify_url_cached([url])
-        url_kind = _url_kind_batch[0][0] if _url_kind_batch else 'clearnet'
-    _is_onion = url_kind == 'onion'
-
-    # F-02: Pass tor_proxy so BrowserPool routes through the correct pool
-    _tor_proxy: str | None = TOR_SOCKS_PROXY if _is_onion else None
-
-    page = None
-    last_error = ''
-    for attempt in range(_NODRIVER_MAX_RETRIES):
-        browser = None
-        try:
-            browser = await acquire_browser(tor_proxy=_tor_proxy)
-            page = await browser.get(url)
-            try:
-                await asyncio.sleep(2)
-                html = await page.get_content()
-            finally:
-                if page is not None:
-                    try:
-                        await page.close()
-                    except Exception:  # noqa: BLE001 — best-effort; page close failure is non-fatal
-                        pass
-            return html
-        except asyncio.CancelledError:
-            # BrowserPool.release() is NOT called on cancellation — browser may be dead
-            # BrowserPool._browser_alive check on next acquire handles stale browsers
-            raise
-        except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-            last_error = str(e)
-            _ev0 = attempt + 1
-            logger.debug('nodriver attempt %d failed for %s: %s', _ev0, url, e)
-            await asyncio.sleep(0.2)
-        finally:
-            if browser is not None:
-                try:
-                    await release_browser(browser, tor_proxy=_tor_proxy)
-                except Exception:  # noqa: BLE001 — best-effort; release failure is non-fatal
-                    pass
-    logger.warning('nodriver all %s attempts failed for %s: %s', _NODRIVER_MAX_RETRIES, url, last_error)
-    return ''
-
+# _camoufox_locked imported from _js_renderers
+# _fetch_with_nodriver imported from _js_renderers
 async def _fetch_with_playwright(url: str, timeout: float=15.0) -> str:
     """
     F265C: Playwright fallback — last resort after nodriver fails.
@@ -2292,28 +1269,8 @@ async def _playwright_locked(url: str, timeout: float) -> str:
 # BLITZ-15: Dead-host tracking — hosts marked dead after exhausting retries
 # in blitz mode are excluded from further fetch attempts for the sprint duration.
 # Reset at sprint start via reset_blitz_dead_hosts().
-_blitz_dead_hosts: set[str] = set()
-_blitz_dead_hosts_lock: threading.Lock = threading.Lock()
 
-
-def mark_blitz_host_dead(host: str) -> None:
-    """BLITZ-15: Mark a host as dead for the sprint duration after retry exhaustion."""
-    with _blitz_dead_hosts_lock:
-        _blitz_dead_hosts.add(host)
-
-
-def is_blitz_host_dead(host: str) -> bool:
-    """BLITZ-15: Check if a host has been marked dead in blitz mode."""
-    with _blitz_dead_hosts_lock:
-        return host in _blitz_dead_hosts
-
-
-def reset_blitz_dead_hosts() -> None:
-    """BLITZ-15: Clear dead-host tracking (called at sprint start)."""
-    global _blitz_dead_hosts
-    with _blitz_dead_hosts_lock:
-        _blitz_dead_hosts.clear()
-
+# Blitz functions imported from _retry_strategy
 
 def _blitz_aware_stop(retry_state: _TenacityRetryCallState) -> bool:
     """Tenacity stop function: blitz-aware max attempts.
@@ -3187,72 +2144,8 @@ __all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
 
 
-def _sync_process_html(html: str, url: str='') -> tuple[str, list, dict]:
-    """Synchronous CPU-bound HTML parsing + pattern matching + metadata extraction.
-
-    Runs in CPU_EXECUTOR thread pool — never blocks the async event loop.
-    Fail-safe: malformed HTML returns empty text, never raises.
-
-    Returns:
-        Tuple of (markdown-stripped text, pattern match list, metadata dict).
-        metadata dict keys: ga_gtm_ids, og_tags, comments (from extract_html_metadata).
-    """
-    metadata = extract_html_metadata(html)
-    text = html_to_text_fast(html)
-    if not text:
-        import html as _html
-        text = strip_html_tags(_html.unescape(html))
-        text = collapse_whitespace(text).strip()
-    matches = match_text(text)
-    try:
-        raw_ranges = rust_html.extract_links_zero_copy(html, url)
-        for start, end in raw_ranges:
-            href_str = html[start:end]
-            resolved = urllib.parse.urljoin(url, href_str)
-            if resolved.startswith(('http://', 'https://')):
-                matches.append(PatternHit(pattern='rust_link', start=0, end=0, value=resolved, label=''))
-    except Exception:  # noqa: BLE001 — best-effort; rust_link extraction failure is non-fatal
-        pass
-    return (text, matches, metadata)
-
-def _batch_sync_extract_html_metadata(items: list[tuple[str, str]]) -> list[dict]:
-    """Batch extract metadata (emails, titles) via Rust rayon pool.
-
-    Args:
-        items: List of (html, url) tuples.
-
-    Returns:
-        List of dicts with 'emails' and 'title' keys, matching item order.
-        Returns empty list on any error (fail-safe).
-    """
-    if not items:
-        return []
-    rust_emails = cast(Any, _rust_backend).batch_extract_emails
-    rust_titles = cast(Any, _rust_backend).batch_extract_titles
-    if rust_emails is None and rust_titles is None:
-        return [{} for _ in items]
-    try:
-        htmls = [html for html, _ in items]
-        emails_results: list[list[str]] = [[] for _ in items]
-        titles_results: list[str | None] = [None for _ in items]
-        if rust_emails is not None:
-            try:
-                raw_emails = rust_emails(htmls)
-                if raw_emails and len(raw_emails) == len(items):
-                    emails_results = raw_emails
-            except Exception:  # noqa: BLE001 — best-effort; rust email extraction failure is non-fatal
-                pass
-        if rust_titles is not None:
-            try:
-                raw_titles = rust_titles(htmls)
-                if raw_titles and len(raw_titles) == len(items):
-                    titles_results = raw_titles
-            except Exception:  # noqa: BLE001 — best-effort; rust title extraction failure is non-fatal
-                pass
-        return [{'emails': e, 'title': t} for e, t in zip(emails_results, titles_results, strict=True)]
-    except Exception:  # noqa: BLE001 — best-effort; batch metadata extraction failure returns empty dicts
-        return [{} for _ in items]
-
+# _sync_process_html imported from _html_processor
+# _batch_sync_extract_html_metadata imported from _html_processor
 def _batch_sync_extract_links(items: list[tuple[str, str]]) -> list[list[str]]:
     """R3.2: Batch extract links via Rust rayon parallel batch_extract_links.
 
@@ -3423,14 +2316,7 @@ _DRAIN_REGISTRY = _drain_registry._registry  # collections.deque with maxlen
 _DRAIN_TOTAL_SCHEDULED = 0  # Deprecated; now encapsulated in _DrainRegistry
 _DRAIN_TOTAL_COMPLETED = 0  # Deprecated; now encapsulated in _DrainRegistry
 
-def _get_html_executor() -> concurrent.futures.ThreadPoolExecutor:
-    """Get or create bounded HTML processing executor.
-
-    Now uses the centralized domain_executors registry (P1-4).
-    """
-    from hledac.universal.utils.domain_executors import get_html_executor
-    return get_html_executor()
-
+# _get_html_executor imported from _html_processor
 def schedule_html_extraction(html: str, url: str='') -> asyncio.Future:
     """Submit HTML processing to CPU_EXECUTOR and register for drain.
 

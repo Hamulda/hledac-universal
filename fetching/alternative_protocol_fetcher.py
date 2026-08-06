@@ -2,6 +2,7 @@
 Alternative Protocol Fetcher — Unified access to beyond-indexed content.
 
 Orchestrates IPFS, Gopher, Gemini, I2P, ZeroNet, and Freenet/Hyphanet protocols
+
 for accessing content invisible to standard web crawlers.
 
 F230: Alternative Protocol Stack integration.
@@ -161,8 +162,13 @@ async def _fetch_from_ipfs(query: str, semaphore: asyncio.Semaphore) -> tuple[li
                     return CanonicalFinding(finding_id=f'ipfs-alt-{cid[:12]}-{int(time.time() * 1000)}', query=query, source_type=SourceType.IPFS_CONTENT, confidence=0.75, ts=time.time(), provenance=(f'ipfs://{cid}',), payload_text=decode_response_bytes(content)[:4096] if isinstance(content, bytes) else str(content)[:4096])
                 except Exception:
                     return None
-            results = await parallel([_fetch_one_cid(cid) for cid in cids[:10]], policy='log', concurrency=5, ctx='alt_protocol:ipfs_fetch')
-            findings = [r for r in results if r is not None]
+            # ISSUE-P8-004: Removed nested parallel() - semaphore handles concurrency at orchestrator level
+            # This eliminates mixed concurrency model (Semaphore + parallel()) for M1 8GB optimization
+            findings = []
+            for cid in cids[:10]:
+                finding = await _fetch_one_cid(cid)
+                if finding:
+                    findings.append(finding)
             return (findings, AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=len(findings), success=True, error=None))
         except TimeoutError:
             return ([], AltProtocolResult(source_type=SourceType.IPFS_CONTENT, findings_count=0, success=False, error='timeout'))

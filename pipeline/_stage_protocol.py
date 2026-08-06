@@ -3,6 +3,11 @@
 Role: Definuje Stage protokol a StageContext pro řetězec AsyncIterator[Item] s AIMD
 a bounded queues mezi fázemi.
 
+
+
+
+
+
 Architecture:
     DiscoveryStage → DedupStage → FetchStage → MatchStage → EnrichStage → StoreStage
     (každá fáze: AsyncIterator vstup → AsyncIterator výstup, AIMD controller, bounded queue)

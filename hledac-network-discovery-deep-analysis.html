@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hledac Network + Discovery Layers - Deep Architecture Analysis</title>
+<style>
+    :root {
+        --bg-primary: #0d1117;
+        --bg-secondary: #161b22;
+        --bg-tertiary: #21262d;
+        --text-primary: #e6edf3;
+        --text-secondary: #8b949e;
+        --text-muted: #6e7681;
+        --accent-blue: #58a6ff;
+        --accent-green: #3fb950;
+        --accent-yellow: #d29922;
+        --accent-red: #f85149;
+        --accent-purple: #a371f7;
+        --accent-orange: #db6d28;
+        --accent-cyan: #39c5cf;
+        --accent-pink: #db61a2;
+        --accent-teal: #2ea043;
+        --border-color: #30363d;
+        --code-bg: #0d1117;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background: var(--bg-primary); color: var(--text-primary); line-height: 1.6; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+    h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+    h1.network { color: var(--accent-cyan); }
+    h1.discovery { color: var(--accent-purple); }
+    h2 { font-size: 1.8rem; margin: 2rem 0 1rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; }
+    h3 { font-size: 1.3rem; margin: 1.5rem 0 0.75rem; color: var(--accent-yellow); }
+    h4 { font-size: 1.1rem; margin: 1rem 0 0.5rem; color: var(--accent-orange); }
+    .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+    .stat-card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.25rem; text-align: center; }
+    .stat-card .value { font-size: 2.5rem; font-weight: bold; }
+    .stat-card .label { font-size: 0.875rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat-card.cyan .value { color: var(--accent-cyan); }
+    .stat-card.purple .value { color: var(--accent-purple); }
+    .stat-card.green .value { color: var(--accent-green); }
+    .stat-card.orange .value { color: var(--accent-orange); }
+    .stat-card.red .value { color: var(--accent-red); }
+    .layer-section { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.5rem; margin: 1.5rem 0; }
+    .pattern-card { background: var(--bg-tertiary); border-left: 4px solid var(--accent-green); padding: 1rem; margin: 1rem 0; border-radius: 0 8px 8px 0; }
+    .pattern-card.excellent { border-left-color: var(--accent-blue); }
+    .pattern-card.bug { border-left-color: var(--accent-red); }
+    .pattern-card.warning { border-left-color: var(--accent-yellow); }
+    .pattern-card.security { border-left-color: var(--accent-red); }
+    .code-block { background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem; margin: 0.75rem 0; overflow-x: auto; font-family: 'SF Mono', Monaco, monospace; font-size: 0.85rem; white-space: pre; color: var(--accent-cyan); }
+    .tag { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 20px; font-size: 0.7rem; font-weight: 600; margin: 0.15rem; }
+    .tag-network { background: rgba(57, 197, 207, 0.2); color: var(--accent-cyan); }
+    .tag-discovery { background: rgba(163, 113, 247, 0.2); color: var(--accent-purple); }
+    .tag-ml { background: rgba(219, 97, 162, 0.2); color: var(--accent-pink); }
+    .tag-perf { background: rgba(63, 185, 80, 0.2); color: var(--accent-green); }
+    .tag-security { background: rgba(248, 81, 73, 0.2); color: var(--accent-red); }
+    .tag-ai { background: rgba(210, 153, 34, 0.2); color: var(--accent-yellow); }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+    th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border-color); }
+    th { background: var(--bg-tertiary); color: var(--text-secondary); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+    .quick-win { background: linear-gradient(135deg, rgba(248, 81, 73, 0.1), rgba(210, 153, 34, 0.1)); border: 1px solid var(--accent-yellow); border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .recommendation { background: rgba(63, 185, 80, 0.1); border-left: 4px solid var(--accent-green); padding: 1rem; margin: 1rem 0; border-radius: 0 8px 8px 0; }
+    .toc { background: var(--bg-tertiary); border-radius: 8px; padding: 1.5rem; margin: 1.5rem 0; }
+    .toc ul { list-style: none; }
+    .toc li { margin: 0.4rem 0; }
+    .toc a { color: var(--accent-blue); text-decoration: none; }
+    .badge { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
+    .badge-issue { background: var(--accent-red); color: #fff; }
+    .badge-fix { background: var(--accent-green); color: #000; }
+    .badge-migration { background: var(--accent-yellow); color: #000; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+    @media (max-width: 900px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+    .flow-diagram { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; padding: 1.5rem; margin: 1rem 0; text-align: center; font-family: monospace; }
+    .flow-diagram .box { display: inline-block; padding: 0.5rem 1rem; border-radius: 6px; margin: 0.25rem; font-weight: 600; }
+    .flow-diagram .box-dns { background: rgba(57, 197, 207, 0.2); border: 1px solid var(--accent-cyan); color: var(--accent-cyan); }
+    .flow-diagram .box-fp { background: rgba(163, 113, 247, 0.2); border: 1px solid var(--accent-purple); color: var(--accent-purple); }
+    .flow-diagram .box-bgp { background: rgba(210, 153, 34, 0.2); border: 1px solid var(--accent-yellow); color: var(--accent-yellow); }
+    .flow-diagram .arrow { color: var(--text-muted); font-size: 1.2rem; }
+    .architecture-box { background: var(--bg-tertiary); border-radius: 8px; padding: 1rem; margin: 0.5rem 0; }
+    .architecture-box h5 { color: var(--accent-blue); margin-bottom: 0.5rem; }
+    .metric { display: flex; justify-content: space-between; padding: 0.25rem 0; border-bottom: 1px dashed var(--border-color); }
+    .metric-label { color: var(--text-secondary); }
+    .metric-value { color: var(--accent-green); font-family: monospace; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1 class="network">🌐 Hledac Network Layer - Deep Architecture Analysis</h1>
+<h1 class="discovery">🔍 Hledac Discovery Layer - Deep Architecture Analysis</h1>
+<p style="color: var(--text-secondary); margin-bottom: 1.5rem;">
+    network/: 21 modules (3,723 LOC) · discovery/: 26 modules (9,000+ LOC)
+</p>
+
+<div class="summary-grid">
+    <div class="stat-card cyan">
+        <div class="value">21</div>
+        <div class="label">Network Modules</div>
+    </div>
+    <div class="stat-card purple">
+        <div class="value">26</div>
+        <div class="label">Discovery Modules</div>
+    </div>
+    <div class="stat-card green">
+        <div class="value">35+</div>
+        <div class="label">Architecture Patterns</div>
+    </div>
+    <div class="stat-card orange">
+        <div class="value">6</div>
+        <div class="label">GOD Files</div>
+    </div>
+    <div class="stat-card red">
+        <div class="value">3</div>
+        <div class="label">Bugs Found</div>
+    </div>
+</div>
+
+<nav class="toc">
+    <h3 style="color: var(--text-primary); margin-top: 0;">📑 Table of Contents</h3>
+    <div class="grid-2">
+        <div>
+            <h4 style="color: var(--accent-cyan);">🌐 Network Layer</h4>
+            <ul>
+                <li><a href="#network-structure">Structure & Duality</a></li>
+                <li><a href="#domain-bandit">Domain Concurrency Bandit</a></li>
+                <li><a href="#session-runtime">Session Runtime (F4XX)</a></li>
+                <li><a href="#native-extraction">Native Extraction (HEIST-08)</a></li>
+                <li><a href="#network-intel">NetworkIntel Adapter</a></li>
+                <li><a href="#network-quick-wins">Quick Wins</a></li>
+            </ul>
+        </div>
+        <div>
+            <h4 style="color: var(--accent-purple);">🔍 Discovery Layer</h4>
+            <ul>
+                <li><a href="#discovery-structure">Structure Overview</a></li>
+                <li><a href="#discovery-base">Base Patterns (RateLimiter)</a></li>
+                <li><a href="#source-registry">Source Registry (PEP 810)</a></li>
+                <li><a href="#cascade">Providerless Cascade (F206AM)</a></li>
+                <li><a href="#fusion-ranker">Fusion Ranker (RRF+MMR)</a></li>
+                <li><a href="#god-files">GOD Files Analysis</a></li>
+            </ul>
+        </div>
+    </div>
+</nav>
+
+<!-- ==================== NETWORK LAYER ==================== -->
+<section class="layer-section" id="network-structure">
+<h2 style="color: var(--accent-cyan);">🌐 Network Layer - Architecture Duality</h2>
+
+<div class="pattern-card warning">
+<h4>⚠️ F350M-R Phase 2: DUAL Role Architecture</h4>
+<p>The <code>network/</code> package serves DUAL role after migration:</p>
+<ul style="margin-left: 1.5rem; margin-top: 0.5rem; color: var(--text-secondary);">
+    <li><strong>INFRASTRUCTURE</strong> (canonical): session_runtime, ipfs_client, i2p_client, etc.</li>
+    <li><strong>OSINT RE-EXPORTS</strong> (lazy): passive_dns, passive_fingerprint → recon/</li>
+</ul>
+</div>
+
+<table>
+    <thead>
+        <tr><th>Module</th><th>LOC</th><th>Role</th><th>Key Pattern</th></tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><code>session_runtime.py</code></td>
+            <td>491</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>httpx, ContextVar, uvloop</td>
+        </tr>
+        <tr>
+            <td><code>native_extraction.py</code></td>
+            <td>506</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>Rust native_db bridge</td>
+        </tr>
+        <tr>
+            <td><code>domain_concurrency.py</code></td>
+            <td>216</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>Gradient Bandit</td>
+        </tr>
+        <tr>
+            <td><code>ipfs_client.py</code></td>
+            <td>791</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>IPFS gateway client</td>
+        </tr>
+        <tr>
+            <td><code>freenet_client.py</code></td>
+            <td>435</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>FProxy integration</td>
+        </tr>
+        <tr>
+            <td><code>zeronet_client.py</code></td>
+            <td>394</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>ZeroNet JSON API</td>
+        </tr>
+        <tr>
+            <td><code>ipv6_recon.py</code></td>
+            <td>338</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>RDAP/WHOIS</td>
+        </tr>
+        <tr>
+            <td><code>banner_grabber.py</code></td>
+            <td>395</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>TCP banner enumeration</td>
+        </tr>
+        <tr>
+            <td><code>network_intelligence.py</code></td>
+            <td>178</td>
+            <td><span class="tag tag-network">INFRA</span></td>
+            <td>Unified wrapper</td>
+        </tr>
+        <tr>
+            <td><code>passive_*.py</code></td>
+            <td>21-28</td>
+            <td><span class="tag tag-discovery">OSINT</span></td>
+            <td>recon/ re-exports</td>
+        </tr>
+    </tbody>
+</table>
+</section>
+
+<!-- DOMAIN CONCURRENCY BANDIT -->
+<section class="layer-section" id="domain-bandit">
+<h3>1️⃣ Domain Concurrency Bandit - Gradient Bandit Algorithm <span class="tag tag-perf">Sprint 8AC</span></h3>
+
+<div class="pattern-card excellent">
+<h4>Softmax Action Selection for Adaptive Per-Host Limits</h4>
+<p><strong>Location:</strong> <code class="file-link">network/domain_concurrency.py</code></p>
+
+<div class="architecture-box">
+<h5>🎰 Arm Definition - Fibonacci-like Concurrency Levels</h5>
+<pre class="code-block">ARM_VALUES: list[int] = [1, 2, 3, 5, 8]  # Conservative levels
+N_ARMS: int = 5
+
+# Gradient Bandit hyperparameters
+_ALPHA: float = 0.1           # Learning rate
+_ALPHA_REWARD: float = 0.9    # Exponential smoothing baseline</pre>
+</div>
+
+<div class="architecture-box">
+<h5>📊 Reward Function - Multi-Signal Scoring</h5>
+<pre class="code-block">def _compute_reward(latency_ms, status_code, got_captcha) -> float:
+    # Speed reward: linear decay 1.0 (0ms) → 0.0 (5000ms)
+    speed_reward = max(0.0, 1.0 - latency_ms / 5000.0)
+    
+    # Detection penalty
+    if status_code == 429:  penalty = 0.8   # Rate limit
+    elif status_code == 403: penalty = 0.6   # Forbidden
+    elif got_captcha:       penalty = 0.9   # CAPTCHA
+    else:                   penalty = 0.0
+    
+    return speed_reward * (1.0 - penalty)</pre>
+</div>
+
+<div class="flow-diagram">
+    <div class="box box-dns">select_arm()</div>
+    <span class="arrow">→</span>
+    <div class="box box-dns">Softmax Prob</div>
+    <span class="arrow">→</span>
+    <div class="box box-dns">Crypto RNG</div>
+    <span class="arrow">→</span>
+    <div class="box box-fp">record_outcome()</div>
+    <span class="arrow">→</span>
+    <div class="box box-bgp">Update Prefs</div>
+</div>
+
+<p style="color: var(--text-secondary); margin-top: 1rem;">
+    <strong>Benefit:</strong> Smooth, probabilistic exploration vs aggressive AIMD. Prevents thundering herd.
+</p>
+</div>
+</section>
+
+<!-- SESSION RUNTIME -->
+<section class="layer-section" id="session-runtime">
+<h3>2️⃣ Session Runtime - F4XX httpx Migration <span class="badge badge-migration">Migrated</span></h3>
+
+<div class="pattern-card excellent">
+<h4>ContextVar Isolation - Replaces 5 Module-Level Mutables</h4>
+<p><strong>Location:</strong> <code class="file-link">network/session_runtime.py</code></p>
+
+<div class="architecture-box">
+<h5>🔄 F4XX Authority Split</h5>
+<pre class="code-block">┌─────────────────────────────────────────────────────────────┐
+│  This module: PLAIN TCP async HTTP surface (httpx)           │
+│  NOT source-ingress owner → FetchCoordinator                 │
+│  NOT persisted sessions → SessionManager                     │
+│  NOT curl world → StealthCrawler/curl_cffi                  │
+└─────────────────────────────────────────────────────────────┘
+
+# PLAIN TCP consumers:
+#   - fetching/public_fetcher.py (passive text/HTML)
+#   - pipeline/live_feed_pipeline.py (article fallback)
+# 
+# SOCKS: httpx-socks via transport/session_pool.py
+# curl_cffi: separate JA3 fingerprint plane</pre>
+</div>
+
+<div class="architecture-box">
+<h5>⚡ F266-UV7: ContextVar State Pattern</h5>
+<pre class="code-block">class _SessionRuntimeState:
+    __slots__ = (
+        "_session_instance",    # httpx.AsyncClient | None
+        "_session_lock",        # asyncio.Lock (lazy)
+        "_session_closed",      # bool
+        "_last_error",          # str | None
+        "_bandits",             # dict per-session bandit state
+        "_bandit_overrides",    # dict
+    )
+
+# INVARIANTS:
+# [I1]  No top-level network side effect at import time
+# [I2]  async_get_httpx_session() is lazy (session on first await)
+# [I9]  asyncio.timeout() is standard (not wait_for)
+# [I10] httpx Limits: adaptive _SAFE_MAX_CONNECTIONS</pre>
+</div>
+
+<table>
+    <thead>
+        <tr><th>Constants</th><th>Connect</th><th>Read</th><th>Use Case</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>API_*</td><td>10s</td><td>20s</td><td>Fast API calls</td></tr>
+        <tr><td>HTML_*</td><td>15s</td><td>35s</td><td>HTML/fetch</td></tr>
+        <tr><td>CT_*</td><td>10s</td><td>15s</td><td>Cert transparency</td></tr>
+        <tr><td>TOR_*</td><td>45s</td><td>75s</td><td>Tor/low-priority</td></tr>
+    </tbody>
+</table>
+</div>
+</section>
+
+<!-- NATIVE EXTRACTION -->
+<section class="layer-section" id="native-extraction">
+<h3>3️⃣ Native Extraction - HEIST-08 Rust Bridge <span class="tag tag-security">Wire Protocol</span></h3>
+
+<div class="pattern-card excellent">
+<h4>Structured Data from Exposed Databases</h4>
+<p><strong>Location:</strong> <code class="file-link">network/native_extraction.py</code></p>
+
+<div class="flow-diagram">
+    <div class="box box-dns">extract_from_exposed(host, port, service)</div>
+    <span class="arrow">↓</span>
+    <div class="box box-dns">MongoDB/Redis → asyncio.to_thread()</div>
+    <span class="arrow">↓</span>
+    <div class="box box-fp">Rust native_db::{MongoDumper, RedisDumper}</div>
+    <span class="arrow">↓</span>
+    <div class="box box-bgp">Elasticsearch → httpx (pure Python)</div>
+</div>
+
+<pre class="code-block"># Feature Gate
+HLEDAC_ENABLE_NATIVE_EXTRACTION=1  # default: 0 (opt-in)
+
+# M1 8GB Safety
+• Rust: 50 MB max per extraction session
+• Python ES HTTP: 100 MB max response
+• asyncio.to_thread() for blocking Rust calls
+• Concurrency: max 5 parallel extractions
+
+# Fail-Safe Invariants
+• Never raises — returns NativeExtractionResult(success=False)
+• Rust ImportError → graceful degradation
+• asyncio.CancelledError re-raised for cancellation</pre>
+
+<table>
+    <thead>
+        <tr><th>Service</th><th>Port</th><th>Protocol</th><th>Implementation</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>MongoDB</td><td>27017</td><td>OP_MSG</td><td>Rust MongoDumper</td></tr>
+        <tr><td>Redis</td><td>6379</td><td>RESP2/RESP3</td><td>Rust RedisDumper</td></tr>
+        <tr><td>Elasticsearch</td><td>9200</td><td>HTTP REST</td><td>httpx (no Rust)</td></tr>
+    </tbody>
+</table>
+</div>
+</section>
+
+<!-- NETWORK INTEL ADAPTER -->
+<section class="layer-section" id="network-intel">
+<h3>4️⃣ NetworkIntel Adapter - Unified Wrapper <span class="tag tag-network">Passive Recon</span></h3>
+
+<div class="pattern-card excellent">
+<h4>Async Query with Circuit Breaker</h4>
+<p><strong>Location:</strong> <code class="file-link">network/network_intelligence.py</code></p>
+
+<pre class="code-block">class NetworkIntelAdapter:
+    __slots__ = ('_dns', '_fp', '_targets')
+
+    async def async_query(target: str) -> NetworkIntelResult:
+        # Wraps: PassiveDNSAdapter, PassiveFingerprintAdapter, monitor_bgp()
+        # asyncio.gather(..., return_exceptions=True) across sources
+        # Bounds: MAX_NETWORKINTEL_TARGETS=20, 30s timeout</pre>
+
+<div class="flow-diagram">
+    <div class="box box-dns">async_query("1.1.1.1")</div>
+    <span class="arrow">↓</span>
+    <div class="box box-dns">dns_task = _query_dns()</div>
+    <div class="box box-fp">fp_task = _query_fp()</div>
+    <div class="box box-bgp">bgp_task = _query_bgp()</div>
+    <span class="arrow">↓</span>
+    <div class="box box-dns">asyncio.gather(return_exceptions=True)</div>
+    <span class="arrow">↓</span>
+    <div class="box box-dns">NetworkIntelResult</div>
+</div>
+</div>
+</section>
+
+<!-- ==================== DISCOVERY LAYER ==================== -->
+<section class="layer-section" id="discovery-structure">
+<h2 style="color: var(--accent-purple);">🔍 Discovery Layer - 26 Modules</h2>
+
+<div class="module-tree">
+    <pre style="font-family: monospace; font-size: 0.85rem;">
+discovery/
+├── base.py (433 LOC)           ← SSOT BaseDiscoveryAdapter, RateLimiter
+├── source_registry.py (184)    ← PEP 810 lazy loading
+├── cascade.py (198)            ← Providerless discovery mesh
+├── fusion_ranker.py (460)      ← RRF + MMR + Diversity
+├── duckdb_fts_integration.py   ← Full-text search integration
+├── duckdb_fts_store.py (477)   ← DuckDB FTS store
+├── crtsh_adapter.py (735)      ← Certificate Transparency
+├── circl_pdns_adapter.py (391) ← Passive DNS
+├── dht_adapter.py (409)        ← DHT discovery
+├── academic/
+│   ├── core_adapter.py (237)
+│   ├── openalex_adapter.py (239)
+│   ├── arxiv_adapter.py (237)
+│   ├── s2orc_adapter.py (224)
+│   └── unpaywall_adapter.py (174)
+├── duckduckgo_adapter.py (1550) ← ⚠️ GOD FILE
+├── ti_feed_adapter.py (1511)   ← ⚠️ GOD FILE
+├── rss_atom_adapter.py (1269)  ← ⚠️ GOD FILE
+├── fediverse_adapter.py (354)
+├── tvnews_adapter.py (415)
+├── wayback_cdx_adapter.py (281)
+├── wayback_sitemap_adapter.py (266)
+├── matrix_adapter.py (211)
+├── gopher_crawler.py (210)
+├── provider_stats.py (266)
+├── deep_source_registry.py (359)
+├── ti_aspirational.py (239)
+├── discovery_planner.py (419)
+└── historical_frontier.py (188)</pre>
+</div>
+</section>
+
+<!-- BASE PATTERNS -->
+<section class="layer-section" id="discovery-base">
+<h3>5️⃣ Base Patterns - RateLimiter & DiscoveryResult <span class="tag tag-perf">ISSUE 24</span></h3>
+
+<div class="pattern-card excellent">
+<h4>Rust-Backed Token Bucket Rate Limiter</h4>
+<p><strong>Location:</strong> <code class="file-link">discovery/base.py</code></p>
+
+<pre class="code-block"># R6: Centralized Rust access
+from hledac.universal.core.rust_backend import rust
+
+_RustGeneralRateLimiter = getattr(
+    rust.rate_limit, 'RustGeneralRateLimiter', None
+) if rust.rate_limit else None
+
+class RateLimiter:
+    """ISSUE 24: Uses Rust try_acquire() via asyncio.to_thread()
+       ~10× faster than asyncio.Lock polling."""
+    
+    async def acquire(self) -> None:
+        if self._rust_limiter is not None:
+            # Rust path: non-blocking try_acquire in thread pool
+            while True:
+                acquired = await asyncio.to_thread(
+                    self._rust_limiter.try_acquire
+                )
+                if acquired:
+                    return
+                await asyncio.sleep(0.1)  # Cooperative sleep
+        
+        # Python fallback: asyncio.Lock + refill + sleep</pre>
+
+<div class="architecture-box">
+<h5>📊 DiscoveryResult - Canonical Output Type</h5>
+<pre class="code-block">class DiscoveryResult(msgspec.Struct, frozen=True):
+    query: str
+    url: str
+    title: str
+    snippet: str
+    source: str          # "duckduckgo", "crtsh"
+    source_type: str     # "search", "ct", "pdns", "archive"
+    rank: int = 0
+    retrieved_ts: float
+    score: float = 0.0   # [0.0, 1.0]
+    reason: str | None = None
+    metadata: dict[str, str] = msgspec.field(default_factory=dict)</pre>
+</div>
+</div>
+</section>
+
+<!-- SOURCE REGISTRY -->
+<section class="layer-section" id="source-registry">
+<h3>6️⃣ Source Registry - PEP 810 Lazy Loading <span class="tag tag-discovery">Sprint P1-12</span></h3>
+
+<div class="pattern-card excellent">
+<h4>Lazy Adapter Registration on First Access</h4>
+<p><strong>Location:</strong> <code class="file-link">discovery/source_registry.py</code></p>
+
+<pre class="code-block"># PEP 810: Register adapters on first access, NOT at import
+_LAZY_ADAPTERS: tuple[...] = (
+    ('circl_pdns',     ..., tier=1, lane='passive_dns'),
+    ('dht_discovery',  ..., tier=3, lane='experimental'),
+    ('ipfs_discovery', ..., tier=3, lane='experimental'),
+)
+
+def __getattr__(name: str) -> Any:
+    """PEP 810: lazily import submodules on demand."""
+    if name in _LAZY_SUBMODULES:
+        mod_path, attr_name = _LAZY_SUBMODULES[name]
+        mod = importlib.import_module(mod_path)
+        return getattr(mod, attr_name)
+    raise AttributeError(...)
+
+# PIVOT_TYPE_MAP: IOC type → pivot domain
+PIVOT_TYPE_MAP = {
+    'domain': 'domain', 'ip': 'domain', 'ipv4': 'domain',
+    'md5': 'graph', 'sha1': 'graph', 'sha256': 'graph',
+    'email': 'leak', 'url': 'archive', 'username': 'identity',
+}</pre>
+</div>
+</section>
+
+<!-- CASCADE -->
+<section class="layer-section" id="cascade">
+<h3>7️⃣ Providerless Cascade - F206AM Fusion Mode <span class="tag tag-ml">RRF+MMR</span></h3>
+
+<div class="pattern-card excellent">
+<h4>Concurrent Multi-Provider Discovery with Fusion</h4>
+<p><strong>Location:</strong> <code class="file-link">discovery/cascade.py</code></p>
+
+<div class="flow-diagram">
+    <div class="box box-dns">DDG Task</div>
+    <div class="box box-fp">HF Task</div>
+    <div class="box box-bgp">WB Task</div>
+    <span class="arrow">↓ concurrent</span>
+    <div class="box box-dns">parallel_ok()</div>
+    <span class="arrow">↓</span>
+    <div class="box box-dns">fusion_ranker.fuse_discovery_hits()</div>
+    <span class="arrow">↓</span>
+    <div class="box box-dns">RRF + MMR + Dedup</div>
+</div>
+
+<pre class="code-block"># D-9: Default changed from 0 to 1 — fusion parallel mode always-on
+HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=1  # default
+
+CASCADE_FUSION_MODE='fuse_always'  # default (was 'first_wins')
+
+# Fallback order (legacy sequential mode):
+# 1. DuckDuckGo (primary)
+# 2. Historical Frontier (DuckDB shadow_findings)
+# 3. Wayback CDX (Internet Archive)
+# 4. Wayback Sitemap
+
+# Timeouts:
+# - DDG: 20s
+# - Historical Frontier: 2s
+# - Wayback CDX: 5s
+# - DHT: 30s (last resort)</pre>
+
+<table>
+    <thead>
+        <tr><th>Provider</th><th>Timeout</th><th>Source Family</th></tr>
+    </thead>
+    <tbody>
+        <tr><td>DuckDuckGo</td><td>20s</td><td>search</td></tr>
+        <tr><td>Historical Frontier</td><td>2s</td><td>historical</td></tr>
+        <tr><td>Wayback CDX</td><td>5s</td><td>archive</td></tr>
+        <tr><td>DHT</td><td>30s</td><td>dht_discovery</td></tr>
+    </tbody>
+</table>
+</div>
+</section>
+
+<!-- FUSION RANKER -->
+<section class="layer-section" id="fusion-ranker">
+<h3>8️⃣ Fusion Ranker - RRF + MMR + Source-Family Diversity <span class="tag tag-ml">Sprint F206AP</span></h3>
+
+<div class="pattern-card excellent">
+<h4>Reciprocal Rank Fusion with Max Marginal Relevance</h4>
+<p><strong>Location:</strong> <code class="file-link">discovery/fusion_ranker.py</code></p>
+
+<pre class="code-block"># RRF (Reciprocal Rank Fusion)
+# score = Σ (1 / (k + rank_i)) where k=60 (default)
+# Combines multiple ranked lists into single fused ranking
+
+# MMR (Max Marginal Relevance)
+# Reduces redundancy while maintaining relevance
+# diversity = λ * MMR_score + (1-λ) * RRF_score
+
+# Diversity Caps:
+# - Max results per source family: 50%
+# - Prevents single source from dominating
+
+def fuse_discovery_hits(provider_results, max_results=10):
+    """Fuse hits from multiple providers via RRF+MMR."""</pre>
+</div>
+</section>
+
+<!-- GOD FILES -->
+<section class="layer-section" id="god-files">
+<h2 style="color: var(--accent-red);">⚠️ GOD Files Analysis</h2>
+
+<table>
+    <thead>
+        <tr><th>File</th><th>LOC</th><th>Priority</th><th>Split Recommendation</th></tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><code>duckduckgo_adapter.py</code></td>
+            <td>1,550</td>
+            <td><span class="badge badge-issue">HIGH</span></td>
+            <td>Extract: API client, parser, rate limiter, error handling</td>
+        </tr>
+        <tr>
+            <td><code>ti_feed_adapter.py</code></td>
+            <td>1,511</td>
+            <td><span class="badge badge-issue">HIGH</span></td>
+            <td>Extract: Feed parsing, normalization, deduplication</td>
+        </tr>
+        <tr>
+            <td><code>rss_atom_adapter.py</code></td>
+            <td>1,269</td>
+            <td><span class="badge badge-issue">HIGH</span></td>
+            <td>Extract: RSS/Atom parsing, feed discovery, caching</td>
+        </tr>
+        <tr>
+            <td><code>session_runtime.py</code></td>
+            <td>491</td>
+            <td><span class="badge badge-migration">MEDIUM</span></td>
+            <td>Already well-structured, consider extracting bandits</td>
+        </tr>
+        <tr>
+            <td><code>ipfs_client.py</code></td>
+            <td>791</td>
+            <td><span class="badge badge-migration">MEDIUM</span></td>
+            <td>Extract: API client, DHT, gateway handling</td>
+        </tr>
+        <tr>
+            <td><code>native_extraction.py</code></td>
+            <td>506</td>
+            <td><span class="badge badge-migration">MEDIUM</span></td>
+            <td>Extract per-database handlers</td>
+        </tr>
+    </tbody>
+</table>
+</section>
+
+<!-- QUICK WINS -->
+<section class="layer-section" id="network-quick-wins">
+<h2>🚀 Quick Wins & Potential Issues</h2>
+
+<div class="quick-win">
+<h4>⚠️ BUG #1: network/passive_fingerprint.py is Deprecated Re-export</h4>
+<p><strong>Location:</strong> <code class="file-link">network/passive_fingerprint.py</code></p>
+<p>This file just re-exports from <code>recon.passive_fingerprint</code>. It's a K2 (F350M-R) compatibility shim. Consider removing if all imports are updated.</p>
+</div>
+
+<div class="quick-win">
+<h4>⚠️ BUG #2: Native Extraction Feature Flag</h4>
+<p><strong>Location:</strong> <code class="file-link">network/native_extraction.py</code></p>
+<p><code>HLEDAC_ENABLE_NATIVE_EXTRACTION</code> defaults to 0 (disabled). Ensure this is intentional for production deployments.</p>
+</div>
+
+<div class="quick-win">
+<h4>⚠️ WARNING #1: DuckDB FTS Integration Complexity</h4>
+<p><strong>Location:</strong> <code class="file-link">discovery/duckdb_fts_integration.py</code></p>
+<p>DuckDB FTS is powerful but complex. Ensure proper schema migration handling.</p>
+</div>
+
+<div class="quick-win">
+<h4>💡 OPTIMIZATION #1: RateLimiter Rust Fallback</h4>
+<p><strong>Location:</strong> <code class="file-link">discovery/base.py</code></p>
+<p>Rust <code>try_acquire()</code> via <code>asyncio.to_thread()</code> is 10× faster. Verify Rust rate limiter is compiled in production builds.</p>
+</div>
+
+<div class="quick-win">
+<h4>💡 OPTIMIZATION #2: Cascade Fusion Mode Default</h4>
+<p><strong>Location:</strong> <code class="file-link">discovery/cascade.py</code></p>
+<p>D-9 changed default to <code>fuse_always</code>. This is good for recall but may increase latency. Monitor production metrics.</p>
+</div>
+
+<div class="quick-win">
+<h4>💡 OPTIMIZATION #3: Domain Bandit Emergency Override</h4>
+<p><strong>Location:</strong> <code class="file-link">network/domain_concurrency.py</code></p>
+<p><code>consecutive_429 > 2 → arm[0]</code> is good defensive behavior. Consider exposing this as a monitoring metric.</p>
+</div>
+</section>
+
+<!-- RECOMMENDATIONS -->
+<section class="layer-section">
+<h2>📋 Recommendations</h2>
+
+<div class="recommendation">
+<h4>🔴 Priority 1: Split GOD Files</h4>
+<p>Focus on the 3 largest adapters (duckduckgo, ti_feed, rss_atom). Extract common seams into base classes.</p>
+</div>
+
+<div class="recommendation">
+<h4>🟡 Priority 2: Verify Rust Rate Limiter</h4>
+<p>Ensure <code>RustGeneralRateLimiter</code> is compiled in production. The asyncio fallback works but is 10× slower.</p>
+</div>
+
+<div class="recommendation">
+<h4>🟡 Priority 3: Monitor Cascade Fusion</h4>
+<p>With <code>fuse_always</code> default, all 3 providers run concurrently. Monitor latency P95 and cost.</p>
+</div>
+
+<div class="recommendation">
+<h4>🟢 Priority 4: Clean Deprecated Shims</h4>
+<p>Remove <code>network/passive_fingerprint.py</code> re-export once all imports are updated to <code>recon.passive_fingerprint</code>.</p>
+</div>
+
+<h3>Architecture Strengths to Preserve</h3>
+<ul style="color: var(--text-secondary); margin-left: 1.5rem;">
+    <li><strong>Gradient Bandit</strong> — Smooth, probabilistic concurrency exploration</li>
+    <li><strong>ContextVar Sessions</strong> — F266-UV7 isolation, no module-level mutables</li>
+    <li><strong>Rust native_db Bridge</strong> — HEIST-08 wire protocol extraction</li>
+    <li><strong>NetworkIntel Adapter</strong> — Unified passive recon interface</li>
+    <li><strong>Rust Rate Limiter</strong> — ISSUE 24 lock-free atomic try_acquire()</li>
+    <li><strong>PEP 810 Lazy Loading</strong> — P1-12 zero-RAM until first access</li>
+    <li><strong>RRF+MMR Fusion</strong> — F206AP best recall with diversity</li>
+    <li><strong>Providerless Cascade</strong> — F206AM concurrent multi-source</li>
+    <li><strong>msgspec DTOs</strong> — frozen=True throughout</li>
+    <li><strong>Fail-Safe Throughout</strong> — Graceful degradation on errors</li>
+</ul>
+</section>
+
+<footer style="margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border-color); color: var(--text-muted); text-align: center;">
+    <p>Hledac Network + Discovery Layers Analysis · Generated 2026-08-06</p>
+    <p style="font-size: 0.875rem;">network/: 21 modules · discovery/: 26 modules · 3 GOD files · 2 bugs · 4 optimizations</p>
+</footer>
+</div>
+</body>
+</html>

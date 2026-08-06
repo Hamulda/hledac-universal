@@ -4,6 +4,7 @@ security/key_manager.py — Real key management via macOS Keychain + HKDF-SHA256
 M1 8GB RAM: Keychain lookup is ~1ms, HKDF-SHA256 derivation ~0.1ms.
 
 
+
 No secrets ever stored in LMDB or plaintext files.
 
 Real implementation:

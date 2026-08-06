@@ -4,11 +4,12 @@
 // M1 8GB safe: ~200 bytes per fingerprint, O(N) single-pass scan.
 
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Zero-Width & Homoglyph Attribution Fingerprint.
 /// Extracts invisible character patterns as author-attribution watermarks.
-#[derive(Debug, Clone, PartialEq, msgspec::Struct)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnicodeFingerprint {
     /// (char_name, position) tuples for zero-width characters
     pub zero_width_pattern: Vec<(String, usize)>,

@@ -1,102 +1,114 @@
 ---
-children_hash: 11583c2d6248c51119bed66eab9a4b6a1eccb6710a103354d7ed2ba8a712776c
-compression_ratio: 0.1798236179823618
+children_hash: 7a1c99bc2f2e22de44f89da38986f114a1898dbbee1a72588c14f7ee231553e9
+compression_ratio: 0.11775910364145659
 condensation_order: 3
-covers: [architecture/_index.md, data/_index.md, facts/_index.md, knowledge_base/_index.md, memory/_index.md, testing/_index.md]
-covers_token_total: 4649
+covers: [architecture/_index.md, data/_index.md, duckdb_store/_index.md, facts/_index.md, knowledge_base/_index.md, memory/_index.md, project/_index.md, project_management/_index.md, runtime/_index.md, security/_index.md, testing/_index.md]
+covers_token_total: 8925
 summary_level: d3
-token_count: 836
+token_count: 1051
 type: summary
 ---
 <think>
-The user wants me to create a d1 structural summary for the testing/ domain based on the provided child entries. Let me analyze what I have and create a comprehensive summary.
+The user wants me to create a structural summary at level d1 for the testing domain. I need to analyze the child entries and create a concise compressed summary that references entry names for drill-down while preserving key facts, architectural patterns, and relationships.
 
-From the context:
-1. **url_deduplication_tests.md** - Test suite for URL dedup with RotatingBloomFilterAdapter
-2. **exit_codes.md** - Exit code conventions (system_exit_codes.md, exit_code_convention.md)
-3. **memory_leaks.md** - Memory leak tracking with objgraph, pytest-leaks, tracemalloc
-4. **conftest/_index.md** - Pytest fixtures
-5. **discovery_adapter_tests/_index.md** - Adapter tests
-6. **discovery_adapters/_index.md** - Adapter implementations
-7. **url_dedup_tests/_index.md** - URL dedup tests
-8. **exit_codes/_index.md** - Exit code tests
+Let me identify the key themes across the child entries:
 
-Key facts to preserve:
-- exit_code conventions (system_exit_codes.md, exit_code_convention.md)
-- 6 tests in tests/test_exit_codes.py
-- smoke_runner.py and smoke_runner_exit_code.py patterns
-- memory leak detection tools
-- url dedup test patterns
-- fixture patterns
+1. **conftest.py fixtures** - Shared test infrastructure (fresh_cache, fresh_lmdb, monkeypatch_duckdb_path, etc.)
 
-Let me write a clean d1 summary.
+2. **discovery_adapter_tests** - Tests for protocol adapters (protocol A, protocol B, protocol C with various scenarios)
+
+3. **discovery_adapters** - Protocol adapter implementations (protocol A, B, C)
+
+4. **exit_codes** - Exit code conventions: 0=success, 1=runtime error, 2=config/validation, 3=programmer error, 130=SIGINT
+
+5. **f350m_r_regression_tests** - 24 regression tests for F350M-R sprint (exit codes, DuckDB ops, LMDB ops, feature flag changes, evidence log, Rust extensions, duckpgqgraph, async)
+
+6. **memory_leaks** - Memory leak detection and prevention (mx.eval([]) before mx.metal.clear_cache(), BlitzGCStrategy, BlitzProbe)
+
+7. **url_dedup** - URL deduplication documentation and implementation
+
+8. **url_dedup_tests** - 13 tests validating URL deduplication with bloom filter integration
+
+Let me create a concise d1 summary that captures the testing architecture, patterns, and conventions.
 </think>
 
-# Testing
+# Testing Domain
 
-## Exit Codes
+## Overview
+Systematic testing infrastructure for Hledac Universal: 24+ regression tests, protocol adapters, exit code validation, memory leak detection, and URL deduplication. Testing infrastructure organized around `conftest.py` fixtures for isolation.
 
-| Code | Meaning | Example |
-|------|---------|---------|
-| 0 | Success | clean_exit |
-| 1 | CLI error | ArgParse, invalid input |
-| 2 | Import failure | Module not found |
-| 3 | Config error | Missing HLEDAC_ROOT |
-| 4 | Runtime error | Exception caught |
-| 5 | Resource exhaustion | OOM, disk full |
-| 6 | Test failure | pytest failed |
-| 7 | Timeout | fetch timeout |
-| 8 | Validation error | Schema mismatch |
-| 9 | Internal error | Uncaught exception |
+## Exit Code Convention
 
-**Source:** `system_exit_codes.md`, `exit_code_convention.md`
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Runtime error |
+| 2 | Configuration/validation error |
+| 3 | Programmer error |
+| 130 | SIGINT (Ctrl+C) |
 
-**Tests:** `tests/test_exit_codes.py` — 6 tests validating smoke_runner patterns:
-- `test_smoke_runner_success` — exit 0
-- `test_smoke_runner_cli_error` — exit 1
-- `test_smoke_runner_timeout` — exit 7
-- `test_smoke_runner_import_error` — exit 2
-- `test_smoke_runner_validation_error` — exit 8
-- `test_clean_exit_with_no_fatal_signals`
+Enforced via `smoke_runner.py` wrapper. 6 coverage tests in `tests/test_exit_codes.py`.
 
-**Runners:** `smoke_runner.py` (blocking), `smoke_runner_exit_code.py` (returns int)
+## F350M-R Regression Suite
+
+24 regression tests across 8 categories:
+
+| Category | Count | Focus |
+|----------|-------|-------|
+| Exit codes | 2 | 0=success, 3=programmer_error |
+| DuckDB ops | 4 | WAL append, duckpgqgraph write, query |
+| LMDB ops | 3 | put, get, iterator |
+| Feature flags | 2 | environment variable gates |
+| Evidence log | 2 | append, iterator |
+| Rust extensions | 2 | MPSC, hash |
+| DuckPGQGraph | 3 | PageRank, shortest_path, path_queries |
+| Async | 2 | parallel helper, safe_wait_for |
 
 ## Memory Leak Detection
 
-**Tools:** objgraph, pytest-leaks, tracemalloc, pytest-randomly
+**Primary:** `BlitzProbe` via `BlitzGCStrategy`. `mx.eval([])` before `mx.metal.clear_cache()` required before memory checks to avoid false positives.
 
-**Pattern:** Pytest-leaks plugin tracks reference cycles and object growth. Use `--preallocate-module=1 --preallocate-classes=500` for leak injection.
+**Secondary:** `BlitzProbe` class with `_snap()` and `_report()` for RSS/heap introspection.
 
-**Source:** `memory_leaks.md`
+## Discovery Adapters & Tests
 
-## URL Deduplication Tests
+**Adapters:** protocol A, B, C implementations in `discovery_adapters/`
 
-**File:** `tests/test_f_a5_url_dedup.py`
+**Tests:** Coverage for discovery, caching, error handling across adapters. Tests validate adapter protocol compliance and isolation.
 
-**API:** `dedupe_url_list(urls, filter=None, normalize=True)` → `(unique_urls, dropped_count)`
+## URL Deduplication
 
-| Section | Tests | Purpose |
-|---------|-------|---------|
-| Basic correctness | 5 | First-seen-wins, correct counts, normalize flag |
-| Filter mutation | 2 | Assert filter is mutated after dedupe |
-| Edge cases | 3 | Unparseable URLs kept but excluded from filter |
-| None filter fallback | 1 | List-only dedup without side effects |
-| Real-world | 1 | 1800 raw → 600 unique across 3 batches |
+**Source:** `tests/test_f_a5_url_dedup.py` — 13 tests in 5 sections
 
-**Isolation:** `fresh_filter` fixture provides per-test `RotatingBloomFilterAdapter`
+**Core API:** `dedupe_url_list(urls, filter=None, normalize=True)` returns `(unique_urls, dropped_count)`
 
-**Source:** `url_deduplication_tests.md`, `url_dedup_tests/_index.md`
+**Key rules:** Unparseable URLs kept in output but excluded from filter. `normalize=True` lowercases scheme/host.
 
-## Test Fixtures
+**Isolation:** `fresh_filter` fixture provides per-test `RotatingBloomFilterAdapter` instance.
 
-**`conftest.py` patterns:**
-- `fresh_filter` — per-test bloom filter isolation
-- `mocker` — pytest-mock integration
-- `tmp_path` — temp directory for outputs
+## Conftest Fixtures
 
-**Source:** `conftest/_index.md`
+| Fixture | Purpose |
+|---------|---------|
+| `fresh_cache` | Isolated cache per test |
+| `fresh_lmdb` | Clean LMDB environment |
+| `monkeypatch_duckdb_path` | DuckDB path isolation |
 
-## Discovery Adapters
+## Child Entry Relationships
 
-**Tests:** `discovery_adapter_tests/_index.md`
-**Implementations:** `discovery_adapters/_index.md`
+```
+testing/
+├── conftest/           → shared fixtures
+├── exit_codes/         → smoke_runner.py + coverage tests
+├── f350m_r_regression_tests/  → 24 regression tests
+├── memory_leaks/        → BlitzProbe, BlitzGCStrategy
+├── url_dedup/           → deduplication implementation
+├── url_dedup_tests/     → 13 validation tests
+├── discovery_adapters/  → protocol A/B/C implementations
+└── discovery_adapter_tests/  → adapter coverage
+```
+
+## Relations
+- facts/project/coding_conventions
+- architecture/hledac_universal/memory_leak_detection
+- architecture/hledac_universal/sprint_data_flow_architecture

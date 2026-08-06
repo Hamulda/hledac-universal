@@ -2,6 +2,21 @@
 DeepHermes3Engine — LLM-based decision making with ChatML formatting.
 
 DeepHermes 3 3B 4bit with deep thinking support is the default primary reasoning model.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Supports ChatML formatting, AI-driven query analysis, and research synthesis.
 
 NOTE (Sprint 8VH): brain/inference_engine.py is functionally distinct:

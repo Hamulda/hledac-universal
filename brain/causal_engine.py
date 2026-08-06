@@ -2,6 +2,13 @@
 Causal engine — bounded stub for the Sprint F196B probe suite.
 
 Real implementation lives in legacy/causal_engine.py.  This stub is
+
+
+
+
+
+
+
 loaded by `tests/test_hypothesis_builder.py` and provides the public
 dataclasses + MAX_* constants that the export/ layer expects.
 

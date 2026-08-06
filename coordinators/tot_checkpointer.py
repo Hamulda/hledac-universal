@@ -2,6 +2,7 @@
 UNIFIED-005/007/008: Transactional ToT State Checkpointer — Multi-Layer Crash Resilience
 ==========================================================================================
 
+
 Four-layer durability architecture for Tree-of-Thoughts state on M1 8GB:
 
   L0 — LMDB incremental (hot path): sub-ms per-node writes during exploration.

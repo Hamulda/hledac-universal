@@ -3,6 +3,12 @@ discovery/academic/openalex_adapter.py — OpenAlex API Adapter
 
 Sprint F259: Academic Intelligence Layer — OpenAlex scholarly graph.
 
+
+
+
+
+
+
 Features:
 - Concept-based search: topic -> related works by concept hierarchy
 - Institution network: author/institution -> collaboration network
@@ -26,7 +32,7 @@ REQUEST_TIMEOUT_S = 5.0
 MAX_RESULTS = 20
 FIELD_CONCEPTS = {'cs': 'C164176025', 'ai': 'C39432361', 'ml': 'C185592260', 'security': 'C162324750', 'crypto': 'C2777199784'}
 
-class OpenAlexWork(msgspec.Struct):
+class OpenAlexWork(msgspec.Struct, gc=False):
     """OpenAlex academic work."""
     id: str
     title: str
@@ -41,7 +47,7 @@ class OpenAlexWork(msgspec.Struct):
     abstract: str
     publication_date: str | None
 
-class OpenAlexInstitution(msgspec.Struct, frozen=True):
+class OpenAlexInstitution(msgspec.Struct, frozen=True, gc=False):
     """OpenAlex institution."""
     id: str
     display_name: str
@@ -50,7 +56,7 @@ class OpenAlexInstitution(msgspec.Struct, frozen=True):
     homepage: str | None
     works_count: int
 
-class OpenAlexAuthor(msgspec.Struct, frozen=True):
+class OpenAlexAuthor(msgspec.Struct, frozen=True, gc=False):
     """OpenAlex author."""
     id: str
     display_name: str
@@ -58,7 +64,7 @@ class OpenAlexAuthor(msgspec.Struct, frozen=True):
     institutions: list[str]
     works_count: int
 
-class InstitutionNetwork(msgspec.Struct, frozen=True):
+class InstitutionNetwork(msgspec.Struct, frozen=True, gc=False):
     """Collaboration network for an institution."""
     institution: OpenAlexInstitution
     collaborators: list[tuple[OpenAlexInstitution, int]]

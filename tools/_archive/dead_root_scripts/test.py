@@ -2,6 +2,8 @@
 Unified Test Runner — tools/test.py
 ====================================
 Replaces 5 scattered entrypoints:
+
+
   ci_import_check.py, smoke_test.py, smoke_runner.py,
   run_baseline.py, run_comprehensive_tests.py
 
@@ -37,7 +39,7 @@ class TestResult(NamedTuple):
     passed: bool
     error: str = ''
 
-class BaselineResult(msgspec.Struct):
+class BaselineResult(msgspec.Struct, gc=False):
     profile: str
     commands: list[dict]
     passed: int

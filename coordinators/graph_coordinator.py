@@ -2,6 +2,8 @@
 GraphCoordinator - Delegates graph reasoning to coordinator
 ======================================================
 
+
+
 Implements the stable coordinator interface (start/step/shutdown) for:
 - GraphRAG multi-hop reasoning
 - Quantum pathfinder execution

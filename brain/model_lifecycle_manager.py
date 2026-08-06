@@ -2,6 +2,7 @@
 ModelLifecycleManager — Single source of truth pro model load/unload lifecycle
 ============================================================================
 
+
 A5-03: ModelManager God Object decomposition.
 
 Tento modul obsahuje POUZE lifecycle logiku:

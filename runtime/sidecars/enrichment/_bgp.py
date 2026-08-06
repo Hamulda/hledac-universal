@@ -2,6 +2,7 @@
 runtime/sidecars/enrichment/_bgp.py — F-ISSUE-005: BGPEnrichmentSidecarAdapter
 """
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+
 from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
 
 

@@ -2,6 +2,10 @@
 Unified FingerprintProfile → EvasionScript Pipeline
 ===================================================
 
+
+
+
+
 Resolves APEX-1005, APEX-1006, APEX-1007: JavaScriptEvasion and
 FingerprintRandomizer were parallel systems producing overlapping,
 inconsistent evasion scripts. This module unifies them into a single

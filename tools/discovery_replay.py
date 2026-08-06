@@ -2,6 +2,7 @@
 Discovery replay / cassette system for HTTP interaction recording.
 
 Sprint F239A: Provides VCR-style replay of discovery adapter HTTP calls.
+
 When replay_enabled is True, reads cached responses from disk instead of
 making live HTTP requests.
 

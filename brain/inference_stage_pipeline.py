@@ -2,6 +2,8 @@
 BoundedInferencePipeline — 3-stage async inference pipeline with backpressure.
 
 Issue #17: The Hermes engine has _prep_executor, _inference_executor, and
+
+
 _post_executor as separate thread pools, but they are called sequentially
 per request with no overlap.  While request N is in GPU inference (1–30 s),
 the CPU sits idle — the next prompt's prep could already be running.

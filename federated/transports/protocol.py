@@ -2,6 +2,7 @@
 F350M-FED-P: Node Transport Protocol — canonical seam for real P2P.
 
 Sprint: F350M-FED-P / P2P Transport Activation 2026-06-04
+
 Target: federated/transports/protocol.py
 
 PURPOSE

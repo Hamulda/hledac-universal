@@ -2,6 +2,7 @@
 runtime/sidecars/discovery/_i2p.py — F-ISSUE-005: I2PDiscoverySidecarAdapter
 """
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+
 from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
 
 

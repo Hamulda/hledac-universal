@@ -2,6 +2,7 @@
 
 Provides run_ct_pivot() for CT (Certificate Transparency) log discovery.
 Can be imported from anywhere in the runtime without creating circular
+
 dependencies.
 
 F350M-R: Extracted from sprint_entrypoint.py to break the reverse-import

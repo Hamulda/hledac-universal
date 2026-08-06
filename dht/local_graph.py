@@ -2,6 +2,7 @@
 Local DHT graph store — ISS UE-004: asyncio.to_thread elimination via Rust LMDB backend.
 
 Replace 10+ asyncio.to_thread() hops with single Rust→Python lmdb calls.
+
 BFS traversal: 5-10 Python hops → 1 Rust call.
 
 Rust backend: rust_extensions/src/lmdb_dht.rs

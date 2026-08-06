@@ -2,6 +2,7 @@
 import logging
 logger = logging.getLogger(__name__)
 
+
 class WaybackAdapter:
     """Wayback Machine CDX API adapter."""
     __slots__ = tuple(('_stealth',))

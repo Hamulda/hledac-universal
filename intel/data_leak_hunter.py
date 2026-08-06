@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.data_leak_hunter
-from recon.data_leak_hunter import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

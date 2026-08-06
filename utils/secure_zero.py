@@ -125,7 +125,7 @@ def secure_zero_typed(obj: Any) -> None:
 
     Example:
         @msgspec.define
-        class SecretKeys(msgspec.Struct):
+        class SecretKeys(msgspec.Struct, gc=False):
             public: bytes
             private: bytes
             nonce: bytes

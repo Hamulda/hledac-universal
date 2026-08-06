@@ -35,6 +35,7 @@
 //! `[DEOBFUSCATE]` prefix. Sampling 1:1000 via atomic counter to keep Prometheus noise low.
 //! Fields: `layers_stripped`, `encodings_detected`, `bytes_decoded`.
 
+use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -127,7 +128,7 @@ fn probe_entropy_regions(text: &str) -> Vec<CandidateRegion> {
         return Vec::new();
     }
 
-    let mut regions = Vec::new();
+    let mut regions: Vec<CandidateRegion> = Vec::new();
     let stride = 8usize;
 
     // We scan with stride, but expand each hit to cover the full high-entropy span.
@@ -209,6 +210,7 @@ const ENC_XOR1: &str = "xor1";
 
 /// Try to decode a candidate region with one encoding layer.
 /// Returns Some(DecodedCandidate) if decode succeeds and output is printable.
+#[allow(dead_code)]
 fn try_decode(encoded: &str, depth: u8) -> Option<DecodedCandidate> {
     // ── Base64 ──────────────────────────────────────────────────────────────
     if let Some(decoded) = try_base64(encoded) {
@@ -377,7 +379,7 @@ fn decode_base64_impl(s: &str, table: &[i8; 256]) -> Option<String> {
         3 => {
             chars.push(b'=');
         }
-        1 => return None; // Invalid base64
+        1 => return None, // Invalid base64
         _ => {}
     }
 
@@ -390,14 +392,11 @@ fn decode_base64_impl(s: &str, table: &[i8; 256]) -> Option<String> {
             break;
         }
 
-        let v0 = table.get(block[0] as usize)? as u32;
-        let v1 = table.get(block[1] as usize)? as u32;
-        let v2 = table.get(block[2] as usize)? as u32;
-        let v3 = table.get(block[3] as usize)? as u32;
-
-        if v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0 {
-            return None; // Invalid character or padding in wrong place
-        }
+        // u32 values are always >= 0, no need for redundant comparison
+        let v0 = *table.get(block[0] as usize)? as u32;
+        let v1 = *table.get(block[1] as usize)? as u32;
+        let v2 = *table.get(block[2] as usize)? as u32;
+        let v3 = *table.get(block[3] as usize)? as u32;
 
         let triple = (v0 << 18) | (v1 << 12) | (v2 << 6) | v3;
         result.push((triple >> 16) as u8);
@@ -446,7 +445,8 @@ const fn base64_decode_table() -> [i8; 256] {
     }
     table[b'+' as usize] = 62;
     table[b'/' as usize] = 63;
-    table</pre>
+    table
+}
 
 /// URL-safe base64 decode table (-_).
 const fn base64_url_decode_table() -> [i8; 256] {
@@ -475,7 +475,8 @@ const fn base64_url_decode_table() -> [i8; 256] {
     }
     table[b'-' as usize] = 62; // URL-safe: '-' instead of '+'
     table[b'_' as usize] = 63; // URL-safe: '_' instead of '/'
-    table</pre>
+    table
+}
 
 fn try_hex(s: &str) -> Option<String> {
     let s_clean = s.trim();
@@ -730,6 +731,7 @@ fn peel_region(region: &str, depth: u8, max_depth: u8) -> Option<DecodedCandidat
 
 /// Main deobfuscation logic: probe entropy regions and peel each one.
 /// Returns a Vec of all decoded candidates found (private, used by tests).
+#[allow(dead_code)]
 fn deobfuscate_impl(text: &str, max_depth: u8) -> Vec<String> {
     if text.is_empty() || max_depth == 0 {
         return Vec::new();
@@ -758,7 +760,7 @@ fn deobfuscate_impl(text: &str, max_depth: u8) -> Vec<String> {
 
 /// Result struct for telemetry + caller feedback.
 #[derive(Debug, Clone)]
-#[pyclass(module = "hledac_rust_extensions")]
+#[pyclass(module = "hledac_rust_extensions", from_py_object)]
 pub struct DeobfuscateResult {
     #[pyo3(get)]
     pub candidates: Vec<String>,

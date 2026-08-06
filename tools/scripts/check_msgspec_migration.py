@@ -3,6 +3,7 @@ scripts/check_msgspec_migration.py
 ===================================
 CI check: verify that canonical-path modules use msgspec.Struct, not @dataclass.
 
+
 Scope: only module-level classes in REQUIRED_FILES.
         Local function-scoped dataclasses are excluded (not public API).
 

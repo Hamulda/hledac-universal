@@ -3,6 +3,8 @@ core/lmdb_unified.py
 =====================
 Sprint S-01: Unified LMDB singleton — eliminates ~1 GB VM reservation from 7+ separate LMDB envs.
 
+
+
 Root cause: Each `lmdb.open(map_size=256MB)` reserves map_size bytes in virtual memory
 regardless of actual usage. With 7+ separate envs across the codebase, M1 8GB loses
 ~20% of its addressable VM to reserved (never-touch) mmap regions.

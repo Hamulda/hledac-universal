@@ -2,6 +2,7 @@
 CTLogClient — Certificate Transparency log pivot přes crt.sh JSON API.
 
 Sprint 8SC: CT log pivot pro doménový OSINT (SubjectAltNames, cert history).
+
 B3: Max 1 request per 5s rate limit, 24h cache.
 Sprint F264: Migrated orjson → msgspec facade (utils.msgspec_json).
 Cache file format (.json and .json.zst) is preserved for backward compat.

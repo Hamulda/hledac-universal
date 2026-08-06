@@ -3,6 +3,7 @@
 Deterministic string matching validator — verifies IOC/claim strings
 appear in the original evidence text. No ML, no LLM, no embeddings.
 
+
 Bounded:
 - max 64 claimed items
 - evidence capped at 200k chars
@@ -16,7 +17,7 @@ REASON_MISSING_ITEMS = 'missing_items'
 REASON_NO_CLAIMED_ITEMS = 'no_claimed_items'
 REASON_EMPTY_EVIDENCE = 'empty_evidence'
 
-class GroundingValidationResult(msgspec.Struct, frozen=True):
+class GroundingValidationResult(msgspec.Struct, frozen=True, gc=False):
     """Result of grounding validation.
 
     Attributes:

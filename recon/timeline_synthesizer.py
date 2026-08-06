@@ -2,6 +2,10 @@
 Timeline Synthesizer — Sprint F202E
 ===================================
 
+
+
+
+
 Canonical timeline builder that synthesizes temporal events from:
   - CT (Certificate Transparency) timestamps
   - Archive observations (Wayback, Archive.today)
@@ -26,7 +30,7 @@ logger = logging.getLogger(__name__)
 MAX_TIMELINE_EVENTS: int = 200
 MAX_EVENT_AGE_DAYS: int = 365 * 5
 
-class TimelineEvent(msgspec.Struct):
+class TimelineEvent(msgspec.Struct, gc=False):
     """
     A single timestamped event in the synthesized timeline.
 
@@ -52,7 +56,7 @@ class TimelineEvent(msgspec.Struct):
     def to_dict(self) -> dict[str, Any]:
         return {'ts': self.ts, 'event_type': self.event_type, 'source': self.source, 'description': self.description, 'entity_id': self.entity_id, 'confidence': self.confidence, 'evidence': self.evidence}
 
-class TimelineMetadata(msgspec.Struct):
+class TimelineMetadata(msgspec.Struct, gc=False):
     """
     Metadata about the synthesized timeline.
     """
@@ -62,7 +66,7 @@ class TimelineMetadata(msgspec.Struct):
     event_types: dict[str, int] = field(default_factory=dict)
     sources: dict[str, int] = field(default_factory=dict)
 
-class SynthesizedTimeline(msgspec.Struct, frozen=True):
+class SynthesizedTimeline(msgspec.Struct, frozen=True, gc=False):
     """
     Complete synthesized timeline with events and metadata.
     """

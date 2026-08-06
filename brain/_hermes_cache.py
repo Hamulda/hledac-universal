@@ -2,6 +2,7 @@
 brain/_hermes_cache.py — Sprint P0-04
 Thread-safe bounded LRU model cache for DeepHermes3Engine.
 
+
 Invarianty (M1 8GB):
   - Max 2 base modely (~2GB RAM každý) — _HERMES_MODEL_CACHE_MAX
   - Max 2 LoRA adaptéry — _LORA_CACHE_MAX

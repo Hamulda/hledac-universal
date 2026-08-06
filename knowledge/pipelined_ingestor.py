@@ -2,6 +2,7 @@
 knowledge/pipelined_ingestor.py
 Sprint F265B: Zero-Copy Parallel WAL + DuckDB Pipeline
 
+
 PipelinedIngestor — standalone orchestrátor paralelního WAL + DuckDB Arrow write.
 
 Architecture (SEQUENTIAL-2 Level 1 + Level 3):

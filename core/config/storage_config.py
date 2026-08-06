@@ -3,6 +3,7 @@ core/config/storage_config.py — StorageConfig: msgspec.Struct typed configurat
 
 ISSUE-033: SSD-aware paths + LIBC_PERF_OPT support.
 
+
 Design:
     - msgspec.Struct (frozen=True) — zero-copy decode, ~3× faster than dataclass
     - Defaults tuned for M1 8GB MacBook Air

@@ -2,6 +2,9 @@
 Rate limiters — SSOT token-bucket implementations.
 
 Provides async-safe TokenBucket with:
+
+
+
   - asyncio.Lock for thread-safe concurrent access
   - time.monotonic() for interval tracking
   - Gaussian jitter (±15 %)

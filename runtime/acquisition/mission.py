@@ -2,6 +2,7 @@
 runtime/acquisition/mission.py
 
 Nonfeed mission controller — coordinates lane family expectations.
+
 Extracted from acquisition_strategy.py (original L1138-1250 + L2738-3250).
 
 MODERNIZATION (Issue #18):

@@ -27,6 +27,13 @@ __all__ = [
     # R12: concurrency facade
     "ConcurrencyCategory",
     "get_semaphore",
+    # SWARM-010: feature flags
+    "FeatureFlags",
+    "FeatureFlag",
+    "FlagCategory",
+    "FlagInfo",
+    "FlagValidationError",
+    "validate_sprint_flags",
 ]
 
 # ── PEP 810 lazy imports — nothing imported at module load time ───────────────
@@ -43,10 +50,11 @@ _rb: object | None = None
 _main_cache: object | None = None
 _rlm_cache: dict[str, object] | None = None
 _concurrency_cache: dict[str, object] | None = None
+_ff_cache: dict[str, object] | None = None
 
 
 def __getattr__(name: str):
-    global _lock_cache, _embed_cache, _rgov_cache, _sysdet_cache, _uma_cache, _rb, _main_cache, _rlm_cache, _concurrency_cache
+    global _lock_cache, _embed_cache, _rgov_cache, _sysdet_cache, _uma_cache, _rb, _main_cache, _rlm_cache, _concurrency_cache, _ff_cache
 
     # ── rust_backend (already lazy, keep existing pattern) ───────────────────
     if name == "rust_backend":
@@ -181,5 +189,26 @@ def __getattr__(name: str):
                 "get_semaphore": get_semaphore,
             }
         return _concurrency_cache[name]  # type: ignore[return-value]
+
+    # ── SWARM-010: feature flags ───────────────────────────────────────────
+    if name in ("FeatureFlags", "FeatureFlag", "FlagCategory", "FlagInfo", "FlagValidationError", "validate_sprint_flags"):
+        if _ff_cache is None:
+            from hledac.universal.core.feature_flags import (
+                FeatureFlags,
+                FeatureFlag,
+                FlagCategory,
+                FlagInfo,
+                FlagValidationError,
+                validate_sprint_flags,
+            )
+            _ff_cache = {
+                "FeatureFlags": FeatureFlags,
+                "FeatureFlag": FeatureFlag,
+                "FlagCategory": FlagCategory,
+                "FlagInfo": FlagInfo,
+                "FlagValidationError": FlagValidationError,
+                "validate_sprint_flags": validate_sprint_flags,
+            }
+        return _ff_cache[name]  # type: ignore[return-value]
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

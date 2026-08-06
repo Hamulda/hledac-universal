@@ -2,6 +2,13 @@
 Hledac Agent Performance Optimizer
 
 Implements comprehensive performance optimization for the 45+ agent ecosystem
+
+
+
+
+
+
+
 with focus on 8GB memory constraint, async patterns, and load balancing.
 
 Key Features:

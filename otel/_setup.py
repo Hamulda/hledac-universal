@@ -2,6 +2,7 @@
 
 Always-on, fail-safe, bounded.
 
+
 Exporter selection (env HLEDAC_OTEL_EXPORTER):
   - "stdout" (default): JSON-Lines to sys.stdout or HLEDAC_OTEL_STDOUT_FILE
   - "otlp":  OTLP/HTTP to HLEDAC_OTEL_ENDPOINT (default http://localhost:4318)

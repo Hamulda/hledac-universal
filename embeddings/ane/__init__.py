@@ -2,6 +2,7 @@
 embeddings/ane/ — Unified ANE/MLX Embedder Factory (F330-MLX-DUP-007)
 
 Jediný vstupní bod pro embedding inference na M1:
+
 - CoreML ANE engine (preferovaný, pokud dostupný)
 - MLX/Metal fallback (ModernBERTEmbedder)
 - Sdílený UnifiedMemoryBudget(max=3.5GB) s LRU evict

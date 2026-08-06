@@ -2,6 +2,8 @@
 """
 Session Manager for public_fetcher.
 
+
+
 ISSUE-009: Replaces module-level singleton with factory pattern.
 
 Architecture:

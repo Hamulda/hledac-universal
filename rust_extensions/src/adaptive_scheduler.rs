@@ -39,8 +39,8 @@ use std::time::{Duration, Instant};
 const METAL_CACHE_TTL_MS: u64 = 100;
 
 // Thread-local cache entry: (last_instant, metal_level, limit_bytes).
-/// limit_bytes is cached alongside level so we skip the Python call
-/// when the cached entry is still valid.
+// limit_bytes is cached alongside level so we skip the Python call
+// when the cached entry is still valid.
 thread_local! {
     static METAL_CACHE: Cell<(Instant, u8, u64)> = Cell::new((Instant::now(), 1, 0));
 }
@@ -325,16 +325,7 @@ pub fn sync_metal_memory_pressure_py(py: Python<'_>) -> usize {
     mixed_threshold_via_metal(py)
 }
 
-/// Deprecated: memory_pressure and cpu_saturation arguments are ignored.
-///
-/// MLX-aware paths call `mixed_threshold()` directly; Python no longer needs to
-/// sync memory pressure state. Kept for backward compatibility only.
-#[allow(deprecated)]
-#[deprecated(since = "0.1.0", note = "Metal probing is now inline in mixed_threshold(); args are ignored")]
-#[pyfunction]
-pub fn sync_adaptive_state(_memory_pressure: u8, _cpu_saturation: u8) {
-    // No-op: Metal probing is inline in mixed_threshold() via thread-local cache.
-}
+// sync_adaptive_state removed: deprecated no-op, functionality is now inline in mixed_threshold()
 
 pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_adaptive_cpu_threads, m)?)?;
@@ -343,7 +334,7 @@ pub fn register_functions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_adaptive_mixed_threshold_via_metal, m)?)?;
     m.add_function(wrap_pyfunction!(get_metal_limit_bytes_py, m)?)?;
     m.add_function(wrap_pyfunction!(sync_metal_memory_pressure_py, m)?)?;
-    m.add_function(wrap_pyfunction!(sync_adaptive_state, m)?)?;
+    // sync_adaptive_state removed: deprecated no-op, not used from Python
     Ok(())
 }
 

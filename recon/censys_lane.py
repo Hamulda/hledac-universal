@@ -2,6 +2,7 @@
 Sprint F235: Censys Intelligence Lane
 
 External intelligence lane for Censys (certificate transparency, port scans).
+
 High-value unindexed data: Censys has comprehensive internet-wide scanning data
 that Google doesn't index — certificates, TLS banners, host attributes.
 

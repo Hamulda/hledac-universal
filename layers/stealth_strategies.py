@@ -2,6 +2,17 @@
 Stealth Strategies — Strategy Protocol + 5 Concrete Strategies
 
 Design:
+
+
+
+
+
+
+
+
+
+
+
 - Each strategy is a Protocol (PEP 544) + concrete implementation
 - Strategies are instantiated lazily inside StealthLayer.init_*()
 - Heavy deps (torch, transformers) stay inside strategy constructors (lazy)
@@ -56,7 +67,7 @@ class StealthStrategy(Protocol):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class UARotationConfig(msgspec.Struct):
+class UARotationConfig(msgspec.Struct, gc=False):
     rotate_on_each_request: bool = False
     min_rotation_interval: float = 300.0  # 5 minutes
     pool: tuple[str, ...] = field(
@@ -126,7 +137,7 @@ class UARotationStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class HeaderRandomizationConfig(msgspec.Struct):
+class HeaderRandomizationConfig(msgspec.Struct, gc=False):
     enabled: bool = True
     randomize_order: bool = True
     add_chaff_headers: bool = False
@@ -211,7 +222,7 @@ class HeaderRandomizationStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class CircuitManagementConfig(msgspec.Struct):
+class CircuitManagementConfig(msgspec.Struct, gc=False):
     enabled: bool = False
     tor_control_port: int = 9051
     tor_control_host: str = "127.0.0.1"
@@ -311,7 +322,7 @@ class CircuitManagementStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class FingerprintMuterConfig(msgspec.Struct):
+class FingerprintMuterConfig(msgspec.Struct, gc=False):
     enabled: bool = True
     mute_canvas: bool = True
     mute_webgl: bool = True
@@ -409,7 +420,7 @@ class FingerprintMuterStrategy:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-class CaptchaSolvingConfig(msgspec.Struct):
+class CaptchaSolvingConfig(msgspec.Struct, gc=False):
     """Configuration for CAPTCHA solving strategy.
 
     M1 8GB: Primary = third-party API (2captcha), Secondary = Vision/CoreML.

@@ -2,9 +2,14 @@
 NER Engine — Named Entity Recognition using GLiNER-X on CPU.
 
 Uses knowledgator/gliner-relex-large-v0.5 model for joint NER + RE extraction
+
+
+
+
 with lazy loading and explicit CPU-only mode.
 
 Alternative: utils/entity_extractor.py (regex-based, faster but less accurate)
+
 
 Usage:
     from hledac.universal.brain.ner_engine import NEREngine, get_ner_engine

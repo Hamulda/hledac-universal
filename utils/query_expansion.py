@@ -2,6 +2,14 @@
 Query Expansion - Intelligent Query Variations
 
 Generates context-aware search variations using:
+
+
+
+
+
+
+
+
 - Domain-specific synonyms
 - Acronym expansion
 - Pattern-based expansion
@@ -16,7 +24,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-class ExpansionConfig(msgspec.Struct):
+class ExpansionConfig(msgspec.Struct, gc=False):
     """Configuration for query expansion"""
     max_variations: int = 50
     synonym_depth: int = 2
@@ -233,7 +241,7 @@ class ExpansionStrategy(ABC):
         """Get strategy type identifier."""
         pass
 
-class QueryVariation(msgspec.Struct, frozen=True):
+class QueryVariation(msgspec.Struct, frozen=True, gc=False):
     """A single query variation with metadata."""
     query: str
     strategy: str

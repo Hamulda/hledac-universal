@@ -2,6 +2,7 @@
 
 Responsibilities:
 - Per-entry dedup by (label, pattern, value)
+
 - Run-level dedup by entry_url
 - Track duplicate hits
 

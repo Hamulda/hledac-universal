@@ -2,6 +2,7 @@
 Embedding Pipeline - Semantic Search Integration (P13)
 ====================================================
 
+
 P13: Embedding pipeline for semantic search with MMR and RRF fusion.
 
 ROLE: Primary embedder using MLXEmbeddingManager from core.mlx_embeddings.
@@ -13,6 +14,7 @@ Features:
 - Matryoshka Representation Learning (MRL) - 256d truncation
 - Memory guard: skip if RSS > 6.5 GB
 - Automatic memory release after batch processing
+- SWARM-002: Multilingual embedding (BGE-M3 for non-English)
 
 Data contracts:
 - generate_embeddings: list[str] → np.ndarray float32 shape (N, 256)
@@ -45,6 +47,22 @@ _ESTIMATED_EMBEDDING_MODEL_SIZE_GB = 0.5
 _DEFAULT_BATCH_SIZE = 16
 _ENV_BATCH_SIZE_VAR = 'HLEDAC_MLX_EMBED_BATCH'
 _ENV_ALLOW_LARGE_BATCH_VAR = 'HLEDAC_ALLOW_LARGE_MLX_BATCH'
+
+# SWARM-002: Multilingual embedding support
+_MULTILINGUAL_AVAILABLE = False
+try:
+    from hledac.universal.core.multilingual import (
+        detect_language,
+        get_lang_detector,
+        get_bge_m3_embedder,
+        LangDetector,
+        BGEM3Embedder,
+    )
+    _MULTILINGUAL_AVAILABLE = True
+except ImportError:
+    LangDetector = None
+    BGEM3Embedder = None
+    logger.debug('[EMBED] Multilingual modules not available (SWARM-002 disabled)')
 
 class EmbeddingRouter:
     """
@@ -223,6 +241,31 @@ class EmbeddingRouter:
             pass
         logger.info('[EMBED:ROUTER] All embedders unloaded')
 _embedding_router = None
+
+# SWARM-002: Singleton language detector
+_lang_detector_instance: LangDetector | None = None
+
+
+def _get_lang_detector() -> LangDetector | None:
+    """Get singleton language detector for SWARM-002."""
+    global _lang_detector_instance
+    if not _MULTILINGUAL_AVAILABLE:
+        return None
+    if _lang_detector_instance is None:
+        _lang_detector_instance = get_lang_detector(
+            use_fasttext=True,
+            use_langdetect=True,
+            confidence_threshold=0.7
+        )
+    return _lang_detector_instance
+
+
+def _get_multilingual_embedder() -> BGEM3Embedder | None:
+    """Get singleton BGE-M3 embedder for SWARM-002."""
+    if not _MULTILINGUAL_AVAILABLE:
+        return None
+    return get_bge_m3_embedder(mrl_target_dim=_EMBEDDING_DIM, lazy_load=True)
+
 
 def _get_embedder():
     """
@@ -431,9 +474,77 @@ def _release_embedder() -> None:
     except Exception as e:
         logger.debug(f'[EMBED] Failed to unload embedder: {e}')
 
+
+# SWARM-002: Multilingual embedding helper
+def _embed_multilingual_batch(texts: list[str], batch_size: int) -> np.ndarray:
+    """
+    Generate embeddings for multilingual texts via BGE-M3.
+
+    BGE-M3 provides cross-lingual semantic alignment for 100+ languages.
+    Embeddings are MRL-truncated to 256d for USEARCH compatibility.
+
+    Args:
+        texts: List of non-English text strings to embed.
+        batch_size: Batch size for processing.
+
+    Returns:
+        numpy ndarray dtype=float32, shape=(len(texts), 256).
+    """
+    if not _MULTILINGUAL_AVAILABLE:
+        logger.warning('[EMBED] Multilingual requested but not available')
+        return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+
+    try:
+        bge_embedder = _get_multilingual_embedder()
+        if bge_embedder is None:
+            return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+
+        # Load if not already loaded (sync load)
+        if not bge_embedder.is_loaded:
+            bge_embedder.load()
+
+        # Embed batch via BGE-M3 (1024d → MRL truncated to 256d)
+        # Note: MLX backend is async, run in executor to avoid blocking
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                # We're in async context, use run_in_executor
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        asyncio.run,
+                        bge_embedder.embed_batch(texts, truncate_to=_EMBEDDING_DIM)
+                    )
+                    embeddings = future.result(timeout=60.0)
+            else:
+                embeddings = asyncio.run(
+                    bge_embedder.embed_batch(texts, truncate_to=_EMBEDDING_DIM)
+                )
+        except RuntimeError:
+            # No running loop
+            embeddings = asyncio.run(
+                bge_embedder.embed_batch(texts, truncate_to=_EMBEDDING_DIM)
+            )
+
+        if embeddings.dtype != np.float32:
+            embeddings = embeddings.astype(np.float32)
+
+        logger.debug(f'[EMBED] Multilingual batch embedded {len(texts)} texts via BGE-M3')
+        return embeddings
+
+    except Exception as e:
+        logger.error(f'[EMBED] BGE-M3 batch embedding failed: {e}')
+        return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+
+
 def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_loaded: bool=False) -> np.ndarray:
     """
     Generate embeddings for a list of texts using ModernBERT via MLX.
+
+    SWARM-002: Language-aware routing:
+    - English texts → ModernBERT 256d
+    - Non-English texts → BGE-M3 256d (MRL truncated)
 
     Uses MRL (Matryoshka Representation Learning) to truncate embeddings
     to 256 dimensions for efficient storage and search.
@@ -466,6 +577,72 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
             return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
     except Exception:
         pass  # fail-open: governor unavailable → allow embeddings
+
+    # SWARM-002: Language-based splitting for multilingual routing
+    english_indices = []
+    multilingual_indices = []
+    english_texts = []
+    multilingual_texts = []
+
+    lang_detector = _get_lang_detector()
+    if lang_detector is not None and _MULTILINGUAL_AVAILABLE:
+        for i, text in enumerate(texts):
+            try:
+                lang_result = lang_detector.detect(text)
+                if lang_result.is_english:
+                    english_indices.append(i)
+                    english_texts.append(text)
+                else:
+                    multilingual_indices.append(i)
+                    multilingual_texts.append(text)
+            except Exception:
+                # Default to English on detection error
+                english_indices.append(i)
+                english_texts.append(text)
+    else:
+        # No multilingual support, all English
+        english_indices = list(range(len(texts)))
+        english_texts = texts
+
+    if multilingual_texts:
+        logger.debug(
+            f'[EMBED] Language split: {len(english_texts)} English, '
+            f'{len(multilingual_texts)} multilingual'
+        )
+
+    # Initialize result array
+    result = np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+
+    # Embed English texts via ModernBERT
+    if english_texts:
+        english_embeddings = _embed_english_batch(english_texts, batch_size, keep_loaded)
+        for i, emb_idx in enumerate(english_indices):
+            result[emb_idx] = english_embeddings[i]
+
+    # Embed multilingual texts via BGE-M3
+    if multilingual_texts:
+        multilingual_embeddings = _embed_multilingual_batch(multilingual_texts, batch_size)
+        for i, emb_idx in enumerate(multilingual_indices):
+            result[emb_idx] = multilingual_embeddings[i]
+
+    return result
+
+
+def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -> np.ndarray:
+    """
+    Embed English texts via ModernBERT (internal helper for generate_embeddings).
+
+    Args:
+        texts: List of English text strings to embed.
+        batch_size: Batch size for processing.
+        keep_loaded: If True, retain model in memory after batch.
+
+    Returns:
+        numpy ndarray dtype=float32, shape=(len(texts), 256).
+    """
+    if not texts:
+        return np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)
+
     original_to_unique: list[int] = []
     texts_to_embed: list[str] = texts
     dedup_happened = False
@@ -482,21 +659,31 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
             original_to_unique.append(seen[h])
         if len(unique_list) < len(texts):
             dedup_happened = True
-            original_to_unique = original_to_unique  # used in remap below
             dedup_ratio = (len(texts) - len(unique_list)) / len(texts)
             logger.debug('[EMBED:J] xxhash dedup: %d→%d texts (%.0f%% duplicates removed)', len(texts), len(unique_list), dedup_ratio * 100)
             texts_to_embed = unique_list
     except ImportError:
         logger.debug('[EMBED:J] xxhash not available — skipping dedup')
+
     if not _check_memory_guard():
-        logger.warning('[EMBED] Skipping embedding generation due to memory pressure')
-        return np.zeros((0, _EMBEDDING_DIM), dtype=np.float32)
+        logger.warning('[EMBED] Skipping English embedding generation due to memory pressure')
+        return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+
     embedder = _get_embedder()
     if embedder is None:
         logger.warning('[EMBED] No embedder available — returning zero array')
         return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
+
     try:
-        embeddings = embedder.encode_adaptive(texts_to_embed, initial_batch_size=batch_size, min_batch_size=4, max_batch_size=128, normalize=True, truncate_dim=_EMBEDDING_DIM, memory_pressure_provider=_uma_pressure_provider)
+        embeddings = embedder.encode_adaptive(
+            texts_to_embed,
+            initial_batch_size=batch_size,
+            min_batch_size=4,
+            max_batch_size=128,
+            normalize=True,
+            truncate_dim=_EMBEDDING_DIM,
+            memory_pressure_provider=_uma_pressure_provider
+        )
         try:
             _ps = psutil  # already imported at module level from core.psutil_shim
             backend_name = type(embedder).__name__.lower()
@@ -520,7 +707,8 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
         elif embeddings.shape[1] < _EMBEDDING_DIM:
             pad = np.zeros((embeddings.shape[0], _EMBEDDING_DIM - embeddings.shape[1]), dtype=np.float32)
             embeddings = np.hstack([embeddings, pad])
-        logger.debug(f'[EMBED] Generated embeddings shape: {embeddings.shape}')
+        logger.debug(f'[EMBED] Generated English embeddings shape: {embeddings.shape}')
+
         if dedup_happened:
             full_embeddings = np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
             for orig_idx, unique_idx in enumerate(original_to_unique):
@@ -528,7 +716,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
             embeddings = full_embeddings
         return embeddings
     except Exception as e:
-        logger.error(f'[EMBED] Batch embedding failed: {e}')
+        logger.error(f'[EMBED] English batch embedding failed: {e}')
         return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
     finally:
         if not keep_loaded:
@@ -537,6 +725,10 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
 def embed_query(text: str) -> np.ndarray:
     """
     Generate embedding for a single query (sync).
+
+    SWARM-002: Language-aware routing:
+    - English queries → ModernBERT 256d
+    - Non-English queries → BGE-M3 256d (MRL truncated)
 
     Uses search_query prefix for asymmetric retrieval.
 
@@ -550,6 +742,18 @@ def embed_query(text: str) -> np.ndarray:
     if not _check_memory_guard():
         logger.warning('[EMBED] Skipping query embedding due to memory pressure')
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+
+    # SWARM-002: Language detection for multilingual routing
+    lang_detector = _get_lang_detector()
+    if lang_detector is not None and _MULTILINGUAL_AVAILABLE:
+        try:
+            lang_result = lang_detector.detect(text)
+            if not lang_result.is_english:
+                return _embed_query_multilingual(text)
+        except Exception:
+            pass  # Fall through to English embed
+
+    # English path: ModernBERT
     embedder = _get_embedder()
     try:
         emb = embedder.embed_query(text, truncate_dim=_EMBEDDING_DIM)
@@ -566,9 +770,54 @@ def embed_query(text: str) -> np.ndarray:
         logger.error(f'[EMBED] Query embedding failed: {e}')
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
+
+def _embed_query_multilingual(text: str) -> np.ndarray:
+    """
+    Generate multilingual query embedding via BGE-M3 (internal helper).
+
+    Args:
+        text: Non-English query text to embed.
+
+    Returns:
+        numpy ndarray dtype=float32, shape=(256,).
+    """
+    if not _MULTILINGUAL_AVAILABLE:
+        logger.warning('[EMBED] Multilingual query but BGE-M3 not available')
+        return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+
+    try:
+        bge_embedder = _get_multilingual_embedder()
+        if bge_embedder is None:
+            return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+
+        if not bge_embedder.is_loaded:
+            bge_embedder.load()
+
+        emb = bge_embedder.embed(text, truncate_to=_EMBEDDING_DIM)
+        if emb.dtype != np.float32:
+            emb = emb.astype(np.float32)
+        if emb.ndim == 2:
+            emb = emb.squeeze(0)
+        if len(emb) > _EMBEDDING_DIM:
+            emb = emb[:_EMBEDDING_DIM]
+        elif len(emb) < _EMBEDDING_DIM:
+            emb = np.pad(emb, (0, _EMBEDDING_DIM - len(emb)))
+
+        logger.debug(f'[EMBED] Query embedded via BGE-M3: lang={detect_language(text).language if _MULTILINGUAL_AVAILABLE else "unknown"}')
+        return emb
+
+    except Exception as e:
+        logger.error(f'[EMBED] Multilingual query embedding failed: {e}')
+        return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+
+
 def embed_document(text: str) -> np.ndarray:
     """
     Generate embedding for a document (for indexing).
+
+    SWARM-002: Language-aware routing:
+    - English documents → ModernBERT 256d
+    - Non-English documents → BGE-M3 256d (MRL truncated)
 
     Uses search_document prefix for indexing.
 
@@ -580,6 +829,18 @@ def embed_document(text: str) -> np.ndarray:
     """
     if not _check_memory_guard():
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+
+    # SWARM-002: Language detection for multilingual routing
+    lang_detector = _get_lang_detector()
+    if lang_detector is not None and _MULTILINGUAL_AVAILABLE:
+        try:
+            lang_result = lang_detector.detect(text)
+            if not lang_result.is_english:
+                return _embed_document_multilingual(text)
+        except Exception:
+            pass  # Fall through to English embed
+
+    # English path: ModernBERT
     embedder = _get_embedder()
     try:
         emb = embedder.embed_document(text, truncate_dim=_EMBEDDING_DIM)
@@ -594,6 +855,46 @@ def embed_document(text: str) -> np.ndarray:
         return emb
     except Exception as e:
         logger.error(f'[EMBED] Document embedding failed: {e}')
+        return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+
+
+def _embed_document_multilingual(text: str) -> np.ndarray:
+    """
+    Generate multilingual document embedding via BGE-M3 (internal helper).
+
+    Args:
+        text: Non-English document text to embed.
+
+    Returns:
+        numpy ndarray dtype=float32, shape=(256,).
+    """
+    if not _MULTILINGUAL_AVAILABLE:
+        logger.warning('[EMBED] Multilingual document but BGE-M3 not available')
+        return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+
+    try:
+        bge_embedder = _get_multilingual_embedder()
+        if bge_embedder is None:
+            return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
+
+        if not bge_embedder.is_loaded:
+            bge_embedder.load()
+
+        emb = bge_embedder.embed(text, truncate_to=_EMBEDDING_DIM)
+        if emb.dtype != np.float32:
+            emb = emb.astype(np.float32)
+        if emb.ndim == 2:
+            emb = emb.squeeze(0)
+        if len(emb) > _EMBEDDING_DIM:
+            emb = emb[:_EMBEDDING_DIM]
+        elif len(emb) < _EMBEDDING_DIM:
+            emb = np.pad(emb, (0, _EMBEDDING_DIM - len(emb)))
+
+        logger.debug(f'[EMBED] Document embedded via BGE-M3')
+        return emb
+
+    except Exception as e:
+        logger.error(f'[EMBED] Multilingual document embedding failed: {e}')
         return np.zeros(_EMBEDDING_DIM, dtype=np.float32)
 
 async def generate_embeddings_async(texts: list[str], batch_size: int=_BATCH_SIZE, keep_loaded: bool=False) -> np.ndarray:

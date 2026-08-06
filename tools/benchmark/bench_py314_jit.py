@@ -2,6 +2,8 @@
 # F2: Run with PYTHONMALLOCSTATS=1 for allocator diagnostics on exit:
 #   PYTHONMALLOCSTATS=1 python3.14 -m hledac.universal.tools.bench_py314_jit
 """
+
+
 F214I-2 — Python 3.14 Experimental JIT Benchmark
 
 Compares default vs PYTHON_JIT=1 for Hledac import/boot smoke.

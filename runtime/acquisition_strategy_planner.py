@@ -2,6 +2,20 @@
 
 Dual-role: PLANNER (build_acquisition_plan, no I/O) + RUNNER
 (run_enabled_acquisition_lanes, has network I/O). See
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 :ref:`acquisition-strategy` for architecture overview, lane definitions,
 Planner/Runner section boundaries, and F350M-R cleanup notes.
 """

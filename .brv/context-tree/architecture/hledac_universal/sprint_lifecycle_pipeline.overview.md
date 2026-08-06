@@ -1,6 +1,7 @@
-- Sprint pipeline flows: CLI → run_sprint → SprintScheduler.run → 8 acquisition lanes → advisory runners → graph accumulation → DuckDB canonical write
-- 12 sprint lifecycle stages from NOT_SCHEDULED through ACCEPTED
-- Advisory Log LRU with max 16 unique keys, FIFO eviction, no promotion on hit; HIT=O(1) membership+counter increment, MISS=O(1) dict setitem+deque.append+popleft
-- SprintScheduler tier priority (High→Low): surface → structured_ti → deep → archive → other
-- Deprecated entry point: python -m hledac.universal replaced by runtime/sprint_entrypoint.py
-- Advisory dedup prevents duplicate processing across sprint execution
+- SprintLifecyclePipeline orchestrates 8 acquisition lanes with per-lane pre/post lifecycle hooks
+- Lifecycle states follow a 3-tier progression: pending → acquiring → acquired → releasing → released
+- Implements lifecycle-aware module loading where modules register hooks for state transitions
+- Blocks execution of next sprint until current sprint reaches released state
+- WAL (Write-Ahead Log) ensures durability; shadow store serves as scratch space
+- Bounded inference mechanism prevents runaway loops during acquisition
+- Key implementation files: runtime/sprint_scheduler.py, runtime/sprint_entrypoint.py, core/__main__.py

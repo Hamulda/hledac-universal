@@ -2,6 +2,9 @@
 WhoisService — Historical WHOIS/RDAP Intelligence
 
 Consolidated async WHOIS/RDAP client replacing three broken implementations:
+
+
+
   - network_reconnaissance.WHOISLookup  (raw socket, no RDAP, no history)
   - rir_correlator._whois_lookup_domain (blocking ipwhois via run_in_executor)
   - ipv6_recon WHOIS fallback            (IP-only, no domain RDAP)
@@ -67,7 +70,7 @@ RDAP_DOMAIN_BOOTSTRAP: list[str] = ['https://rdap.org/domain/', 'https://rdap.ve
 WHOIS_FALLBACK_SERVERS: dict[str, str] = {'com': 'whois.verisign-grs.com', 'net': 'whois.verisign-grs.com', 'org': 'whois.pir.org', 'io': 'whois.nic.io', 'co': 'whois.nic.co', 'info': 'whois.afilias.net', 'biz': 'whois.biz', 'us': 'whois.nic.us', 'uk': 'whois.nic.uk', 'de': 'whois.denic.de', 'fr': 'whois.nic.fr', 'eu': 'whois.eu', 'nl': 'whois.sidn.nl', 'ru': 'whois.tcinet.ru', 'jp': 'whois.jprs.jp', 'cn': 'whois.cnnic.cn'}
 HISTORICAL_APIS: dict[str, str] = {'whoisxmlapi': 'https://www.whoisxmlapi.com/WHOISAPI/V1/', 'whoiswhoisxml': 'https://www.whoiswhoisxmlapi.com/api/1.0/', 'domainiq': 'https://www.domainiq.com/api/', 'whoisology': 'https://whoisology.com/api/'}
 
-class WhoisResult(msgspec.Struct):
+class WhoisResult(msgspec.Struct, gc=False):
     """Structured WHOIS/RDAP result."""
     domain: str
     registrar: str | None = None

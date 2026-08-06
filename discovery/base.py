@@ -2,6 +2,10 @@
 discovery/base.py — SSOT BaseDiscoveryAdapter for discovery/ adapters.
 
 Provides:
+
+
+
+
 - DiscoveryResult: canonical output type
 - RateLimiter: token-bucket rate limiter
 - BaseDiscoveryMixin: shared infrastructure (rate limiting, retry, health_check)
@@ -31,7 +35,7 @@ logger = logging.getLogger(__name__)
 # DiscoveryResult — canonical output type
 # -----------------------------------------------------------------------
 
-class DiscoveryResult(msgspec.Struct, frozen=True):
+class DiscoveryResult(msgspec.Struct, frozen=True, gc=False):
     """
     Canonical output type for all discovery adapters.
 
@@ -180,12 +184,25 @@ class RateLimiter:
                 pass
         return self._python_tokens
 
+    @property
+    def is_rust_available(self) -> bool:
+        """Check if Rust rate limiter is available (for diagnostics/monitoring)."""
+        return self._rust_limiter is not None
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Return rate limiter metrics for monitoring (OPTIMIZATION #1)."""
+        return {
+            "is_rust": self.is_rust_available,
+            "available_tokens": self.available,
+            "python_fallback": not self.is_rust_available,
+        }
+
 
 # -----------------------------------------------------------------------
 # DiscoveryHit — shared DTO for batch-oriented adapters (SSOT, F350M-R)
 # -----------------------------------------------------------------------
 
-class DiscoveryHit(msgspec.Struct, frozen=True):
+class DiscoveryHit(msgspec.Struct, frozen=True, gc=False):
     """
     Single web discovery result for batch-oriented adapters.
 
@@ -213,7 +230,7 @@ class DiscoveryHit(msgspec.Struct, frozen=True):
     ct_common_name: str | None = None
 
 
-class DiscoveryBatchResult(msgspec.Struct, frozen=True):
+class DiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
     """
     Result surface for a single discovery call.
 

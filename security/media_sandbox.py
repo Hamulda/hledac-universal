@@ -2,6 +2,11 @@
 Media Sandbox - Tiered Process Isolation for Untrusted Binary Parsing
 =====================================================================
 
+
+
+
+
+
 ADVERSARY-001 fix: Isolates PyMuPDF, whisper.cpp, stegdetect, and other
 high-risk media decoders from the orchestrator process.
 

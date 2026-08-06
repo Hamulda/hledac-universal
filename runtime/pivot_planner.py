@@ -2,6 +2,9 @@
 Sprint F202G: Hypothesis-Driven Pivot Planner
 
 Bounded advisory layer that generates next pivots from accepted findings
+
+
+
 and envelope facets. Scheduler uses pivots as advisory ordering input,
 NOT as new sprint owner.
 

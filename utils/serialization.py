@@ -12,12 +12,16 @@ Use _safe_dataclass_to_dict() instead of asdict() when the dataclass has:
 Use safe_to_json() as a drop-in for json.dumps(asdict(obj), default=str).
 """
 
-
-
 import dataclasses
 import json
 from enum import Enum
 from pathlib import Path
+
+__all__ = [
+    "_make_serializable",
+    "_safe_dataclass_to_dict",
+    "safe_to_json",
+]
 
 
 def _make_serializable(obj, _seen: set[int] | None = None):

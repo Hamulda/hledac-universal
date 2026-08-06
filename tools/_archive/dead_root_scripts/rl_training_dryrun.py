@@ -2,6 +2,8 @@
 rl_training_dryrun.py — Controlled QMIX training simulation on M1 8GB.
 
 Loads production .sprint_policy_state.json (ZSTD-aware) into a temp copy,
+
+
 runs 70 synthetic sprints, triggers QMIX train_steps every 10 sprints, and
 prints a baseline convergence trace + health report. Production state is
 NEVER mutated.
@@ -35,7 +37,7 @@ PRODUCTION_STATE = PROJECT_ROOT / 'rl' / '.sprint_policy_state.json'
 DEFAULT_NUM_SPRINTS = 90
 DEFAULT_TRAIN_INTERVAL = 10
 
-class SyntheticResult(msgspec.Struct):
+class SyntheticResult(msgspec.Struct, gc=False):
     """Minimal SprintSchedulerResult surface used by _compute_reward() and
     StateExtractor. Fields are populated randomly; reward math stays realistic
     (clamped [-1, 5]) so policy_manager.update() exercises the real code path.
@@ -75,7 +77,7 @@ def _make_synthetic(rng: random.Random) -> SyntheticResult:
     runtime = rng.uniform(20.0, 60.0)
     return SyntheticResult(sprint_id='dryrun-synth', accepted_findings=accepted, produced_findings=accepted + rng.randint(0, 5), ingested_findings=accepted, runtime_seconds=runtime, new_iocs=new_iocs, cycles_completed=rng.randint(1, 4), aborted=False, source_quality_avg=round(rng.uniform(0.5, 0.95), 3), semantic_novelty=round(new_iocs / max(accepted, 1), 3), last_rl_action=rng.randint(0, 4))
 
-class TrainingSnapshot(msgspec.Struct, frozen=True):
+class TrainingSnapshot(msgspec.Struct, frozen=True, gc=False):
     sprint: int
     train_steps: int
     loss: float

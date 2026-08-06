@@ -2,6 +2,7 @@
 StealthBrowser — async browser for scraping JS-heavy or bot-protected sites.
 
 Interface expected by research_coordinator.py:
+
     browser = StealthBrowser()
     content = await browser.fetch(url, depth=depth)
 

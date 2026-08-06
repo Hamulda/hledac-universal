@@ -2,6 +2,7 @@
 Apple Foundation Models Probe - Sprint 7B
 ==========================================
 
+
 Fail-open probe pro Apple Foundation Models (AFM) na macOS.
 Slouží k detekci schopnosti zařízení před MLX inference.
 

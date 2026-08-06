@@ -1,3 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.stealth_crawler
-from recon.stealth_crawler import *
-from recon.stealth_crawler import __all__
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

@@ -2,6 +2,18 @@
 Memory Layer - M1 Memory Management and Context Swap
 =====================================================
 
+
+
+
+
+
+
+
+
+
+
+
+
 Manages memory for M1 8GB MacBook Air:
 - System state machine (HEALTHY → MEMORY_PRESSURE → ...)
 - Context swap between orchestrator states (unload/load models)
@@ -67,7 +79,7 @@ from hledac.universal.project_types import MemoryConfig, MemoryPressureError, Or
 from hledac.universal.utils.async_helpers import safe_create_task
 logger = logging.getLogger(__name__)
 
-class ThermalSnapshot(msgspec.Struct, frozen=True):
+class ThermalSnapshot(msgspec.Struct, frozen=True, gc=False):
     """Immutable snapshot of thermal reading with TTL tracking."""
     celsius: float | None
     sampled_at_monotonic: float
@@ -787,7 +799,7 @@ from dataclasses import dataclass, field
 import msgspec
 
 
-class RAMDiskConfig(msgspec.Struct, frozen=True, kw_only=True):
+class RAMDiskConfig(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """
     Configuration for RAM disk creation (ISSUE-033: migrated from @dataclass to msgspec.Struct).
 
@@ -807,7 +819,7 @@ class RAMDiskConfig(msgspec.Struct, frozen=True, kw_only=True):
     min_memory_mb: int = 1024
     max_memory_usage_percent: float = 0.3
 
-class SharedMemoryBlock(msgspec.Struct, frozen=True):
+class SharedMemoryBlock(msgspec.Struct, frozen=True, gc=False):
     """Metadata for a shared memory block."""
     block_id: str
     size: int
@@ -816,7 +828,7 @@ class SharedMemoryBlock(msgspec.Struct, frozen=True):
     data_type: str
     metadata: dict[str, Any]
 
-class ProcessMessage(msgspec.Struct, frozen=True):
+class ProcessMessage(msgspec.Struct, frozen=True, gc=False):
     """Inter-process communication message."""
     message_type: str
     block_id: str | None = None

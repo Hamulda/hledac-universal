@@ -3,6 +3,10 @@ discovery/academic/core_adapter.py — CORE.ac.uk Full Text Search Adapter
 
 Sprint F259: Academic Intelligence Layer — CORE.ac.uk open access aggregator.
 
+
+
+
+
 Features:
 - CORE aggregates 200M+ open access papers from 10,000+ repositories
 - API: https://api.core.ac.uk/v3/
@@ -30,7 +34,7 @@ def _get_api_key() -> str | None:
     """Get CORE API key from environment."""
     return os.environ.get('CORE_API_KEY') or os.environ.get('HLEDAC_CORE_API_KEY')
 
-class COREWork(msgspec.Struct):
+class COREWork(msgspec.Struct, gc=False):
     """CORE.ac.uk academic work."""
     id: int
     title: str
@@ -45,7 +49,7 @@ class COREWork(msgspec.Struct):
     topics: list[str]
     oai_ids: list[str]
 
-class COREPageResult(msgspec.Struct, frozen=True):
+class COREPageResult(msgspec.Struct, frozen=True, gc=False):
     """A page of text with highlight markers."""
     text: str
     score: float

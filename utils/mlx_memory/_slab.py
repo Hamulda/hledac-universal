@@ -2,6 +2,8 @@
 utils/mlx_memory/_slab.py — Metal Slab Pool (F330-MLX-DUP-007)
 
 Bounded slab allocator pro Metal buffery na M1 8GB.
+
+
 Používá velikostní třídy (powers of 2) pro minimalizaci fragmentace.
 
 Architecture:
@@ -31,7 +33,7 @@ _SLAB_CLASS_NAMES: tuple[str, ...] = ('64KB', '256KB', '1MB', '4MB', '16MB', '64
 _SLABS_PER_CLASS: int = 2
 _MAX_SLAB_TOTAL_BYTES: int = 512 * 1024 * 1024
 
-class _Slab(msgspec.Struct):
+class _Slab(msgspec.Struct, gc=False):
     """A single Metal buffer slab."""
     slab_id: str
     size_class: int

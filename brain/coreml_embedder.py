@@ -2,6 +2,8 @@
 Sprint F228B: CoreML/ANE embedding backend for Apple Neural Engine.
 
 Priority routing: CoreML microservice (py3.12 FastAPI :8765) → ONNXRuntime CPU fallback.
+
+
 Identical API to FastEmbed BAAI/bge-small-en-v1.5 caller.
 
 M1 8GB constraint: model cache ≤ 256MB, batch_size ≤ 32.

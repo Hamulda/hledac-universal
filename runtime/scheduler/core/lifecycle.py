@@ -2,6 +2,7 @@
 SprintLifecycleAdapter — Normalizes lifecycle API differences between runtime/ and utils/ versions.
 ================================================================================================
 
+
 Extracted from runtime/sprint_scheduler.py (Phase 1 of modular decomposition).
 Lines: 1071-1374 in original.
 

@@ -2,6 +2,9 @@
 SPRINT F206AG-v2: Qoder Repowiki Reality Matrix
 
 Scans the Qoder repowiki documentation and compares claims against
+
+
+
 actual repository wiring. Produces JSON reality matrix + Markdown report.
 
 HERMETIC: No MLX imports, no network calls, no live sprint execution,
@@ -62,7 +65,7 @@ HAS_SECRET_EXPORT_RISK = {'security/pq_export_encryption.py', 'security/pq_expor
 PRIVATE_HELPER_PATHS = {}
 PRODUCTION_CALL_PATHS = {'runtime/sprint_scheduler.py': {'core/__main__.py', 'core/__main__.py:run_sprint'}, 'runtime/sprint_lifecycle.py': {'core/__main__.py'}, 'runtime/sprint_lifecycle_runner.py': {'runtime/sprint_scheduler.py'}, 'runtime/sprint_advisory_runner.py': {'runtime/sprint_scheduler.py'}, 'runtime/sidecar_bus.py': {'runtime/sprint_scheduler.py'}, 'runtime/sidecar_dispatcher.py': {'runtime/sprint_scheduler.py'}, 'knowledge/duckdb_store.py': {'core/__main__.py'}, 'knowledge/semantic_store.py': {'core/__main__.py'}, 'export/sprint_exporter.py': {'core/__main__.py'}, 'transport/circuit_breaker.py': {'runtime/sprint_scheduler.py', 'coordinators/fetch_coordinator.py'}, 'transport/transport_resolver.py': {'pipeline/live_public_pipeline.py'}, 'transport/tor_transport.py': {'core/__main__.py'}}
 
-class ModuleReality(msgspec.Struct):
+class ModuleReality(msgspec.Struct, gc=False):
     path: str
     exists: bool
     verdict: str
@@ -71,7 +74,7 @@ class ModuleReality(msgspec.Struct):
     risks: list[str] = field(default_factory=list)
     recommended_action: str = ''
 
-class Overclaim(msgspec.Struct, frozen=True):
+class Overclaim(msgspec.Struct, frozen=True, gc=False):
     doc_path: str
     claim: str
     referenced_path: str
@@ -81,7 +84,7 @@ class Overclaim(msgspec.Struct, frozen=True):
     examples: list[str] = field(default_factory=list)
     group_key: str = ''
 
-class HighRiskGap(msgspec.Struct, frozen=True):
+class HighRiskGap(msgspec.Struct, frozen=True, gc=False):
     gap_type: str
     description: str
     affected_paths: list[str]

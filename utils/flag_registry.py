@@ -2,6 +2,7 @@
 F11 + Phase 2: Declarative FlagSpec registry.
 
 Single source of truth for HLEDAC_* feature flag metadata (group,
+
 implications, mutual-exclusion, daemon requirements, RAM budget).
 Backed by ``FLAG_REGISTRY`` dict that callers can query for
 documentation, validation (Phase 3) and discovery (Phase 4).
@@ -26,7 +27,7 @@ from typing import Literal
 FlagGroup = Literal['network', 'brain', 'storage', 'dark_surface', 'intelligence_apis', 'forensics', 'stealth', 'system']
 VALID_GROUPS: frozenset[str] = frozenset({'network', 'brain', 'storage', 'dark_surface', 'intelligence_apis', 'forensics', 'stealth', 'system'})
 
-class FlagSpec(msgspec.Struct, frozen=True):
+class FlagSpec(msgspec.Struct, frozen=True, gc=False):
     """Canonical specification of a single HLEDAC_* feature flag.
 
     Attributes:

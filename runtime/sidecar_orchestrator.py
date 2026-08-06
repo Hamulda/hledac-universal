@@ -3,6 +3,8 @@
 runtime/sidecar_orchestrator.py — F350M-R: Thin Facade Refactor
 ================================================================
 
+
+
 SidecarOrchestrator is a thin facade wiring three canonical layers:
 
 1. FindingSidecarBus  (sidecar_bus.py)  — accepted-finding sidecar registry/execution

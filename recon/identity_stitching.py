@@ -2,6 +2,13 @@
 Identity Stitching Engine
 =========================
 
+
+
+
+
+
+
+
 Advanced cross-platform identity linking and probabilistic identity matching system.
 
 Features:
@@ -260,7 +267,7 @@ except ImportError:
     RelationshipType = None
 logger = logging.getLogger(__name__)
 
-class UsernameEntry(msgspec.Struct):
+class UsernameEntry(msgspec.Struct, gc=False):
     """Represents a username on a specific platform."""
     platform: str
     username: str
@@ -369,7 +376,7 @@ class IdentityMatch:
         """Convert match to dictionary."""
         return {'profile_a': self.profile_a, 'profile_b': self.profile_b, 'match_score': self.match_score, 'match_signals': self.match_signals, 'confidence': self.confidence, 'evidence': self.evidence}
 
-class StitchedIdentity(msgspec.Struct, frozen=True):
+class StitchedIdentity(msgspec.Struct, frozen=True, gc=False):
     """
     Represents a stitched identity combining multiple profiles.
 

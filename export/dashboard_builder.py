@@ -3,6 +3,7 @@
 """
 Self-contained single-file HTML dashboard generator for sprint handoff.
 
+
 Produces a ~500KB-2MB HTML file containing:
   - DuckDB-WASM (~800 KB gzip CDN, loaded on-demand) for in-browser SQL
   - HTML5 Canvas force-directed graph viewer (no external deps)

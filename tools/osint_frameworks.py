@@ -2,6 +2,7 @@
 Wrapper pro externí OSINT nástroje (theHarvester, Sherlock, Maigret).
 Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 """
+
 import asyncio
 import contextlib
 import json

@@ -2,8 +2,14 @@
 """
 AccelBackend: lazy-resolving facade for the Rust acceleration layer.
 
+
+
+
+
+
 Architecture:
   core/rust_backend/
+
   ├── __init__.py    ← AccelBackend facade + get_accel() singleton
   ├── _prober.py     ← one-time Rust extension probe (cached, never re-probes)
   ├── bloom.py       ← BloomFilter, UrlSet
@@ -144,6 +150,8 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "tls",
     # ISSUE [ULTIMATE]-005: Unicode attribution fingerprint
     "unicode_fingerprint",
+    # SWARM-003: Link prediction (Adamic-Adar, Jaccard, Preferential Attachment)
+    "link_predictor",
     # misc is used for _TlsDomain backward-compat and html property routing
     "misc",
 )
@@ -196,6 +204,7 @@ if TYPE_CHECKING:
     from .feed_decision import FeedDecisionDomain, get_domain as _feed_decision_get_domain
     from .feed_pipeline import FeedPipelineDomain, get_domain as _feed_pipeline_get_domain
     from .swarm_dag import SwarmDAG, PythonFallbackSwarmDAG, get_domain as _swarm_dag_get_domain
+    from .link_predictor import _LinkPredictorDomain
 
 logger = logging.getLogger(__name__)
 
@@ -568,6 +577,18 @@ class AccelBackend:
     @property
     def html(self) -> Any:
         return self._get_domain("html", _get_submodule("html").get_html_domain)
+
+    # SWARM-003: Link prediction domain
+    @property
+    def link_predictor(self) -> Any:
+        """Link prediction domain (Adamic-Adar, Jaccard, Preferential Attachment).
+
+        Uses hledac_rust_extensions.link_predictor module for edge prediction.
+        Falls back to Python implementation if Rust is unavailable.
+        """
+        return _get_submodule("link_predictor").get_link_predictor_domain(
+            self._ensure_probe().ext
+        )
 
     # -------------------------------------------------------------------------
     # Internal
@@ -1036,13 +1057,17 @@ class RustBackend(_RustCompatShim):
     isinstance(rust, RustBackend) is True because rust is a RustBackend instance.
     """
 
+    # Inherit parent's __slots__ by not declaring any here.
+    # This is intentional — RustBackend is just a type alias for the singleton.
     __slots__ = ()
 
     def __new__(cls) -> "RustBackend":  # type: ignore[override]
         return _get_or_create_singleton()
 
     def __init__(self) -> None:
-        # Idempotent — singleton already initialized
+        # Idempotent — singleton already initialized.
+        # Note: _accel and _raw_accessor are set by _get_or_create_singleton()
+        # via direct attribute assignment, bypassing slots.
         pass
 
 
@@ -1050,8 +1075,9 @@ def _get_or_create_singleton() -> "RustBackend":
     global _rust_compat_instance
     if _rust_compat_instance is None:
         instance: RustBackend = object.__new__(RustBackend)  # type: ignore[arg-type]
-        object.__init__(instance)
+        # Initialize all slot attributes (RustBackend inherits __slots__ from _RustCompatShim)
         instance._accel = AccelBackend()  # type: ignore[attr-defined]
+        instance._raw_accessor = None  # type: ignore[attr-defined]
         _rust_compat_instance = instance
     assert _rust_compat_instance is not None
     return _rust_compat_instance

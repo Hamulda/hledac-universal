@@ -2,6 +2,8 @@
 Domain Protocol & Generic Delegation Framework (F285)
 
 Eliminates boilerplate duplication between _RustXxxDomain / _PythonXxxDomain pairs
+
+
 using a metaclass that generates delegation methods at class definition time.
 
 Performance (M1): Methods are generated ONCE at class definition (not per-call

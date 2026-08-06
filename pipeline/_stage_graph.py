@@ -3,6 +3,9 @@
 Python orchestrates stages; CPU stages use Rust pipeline_compose / rayon;
 GPU stages use MLX; IO stages use async DuckDB/LMDB.
 
+
+
+
 Pattern: Structure of Arrays (SoA) batches between stages, not AoS dict soup.
 Each stage receives a typed batch and returns a typed batch + telemetry.
 

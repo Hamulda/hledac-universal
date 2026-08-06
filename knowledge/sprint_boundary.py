@@ -2,6 +2,7 @@
 SprintBoundaryCoordinator — coordinates sprint-boundary state transitions.
 
 Handles the two concerns that must happen together when a sprint ends:
+
   1. Cache invalidation  (_DuckDBQueryCache.invalidate())
   2. Dedup store advance (DedupManager.advance_ioc_sprint → Rust MmapIocDedupStore.advance_sprint())
 

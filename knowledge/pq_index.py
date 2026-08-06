@@ -2,6 +2,7 @@
 Product Quantization (PQ) index pro kompresi embeddingů.
 Vrací similarity (1/(1+L2)) konzistentní s HNSW cosine similarity.
 
+
 ROLE: Compression/Acceleration Layer (NOT retrieval authority)
 ===========================================================
 - komprimuje embeddingy pomocí Product Quantization (12× úspora)

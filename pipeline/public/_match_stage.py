@@ -2,6 +2,7 @@
 
 Responsibilities:
 - Dispatch pattern matching to PatternMatcher (offloaded to thread pool)
+
 - Batch process multiple URLs concurrently
 - Track matched pattern counts and labels
 

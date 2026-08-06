@@ -2,6 +2,7 @@
 F214INT — InterpreterPoolExecutor Pure-Python POC Probe
 ========================================================
 
+
 Scans utils/, tools/, intelligence/ for pure-Python CPU-heavy candidates
 suitable for Python 3.14 InterpreterPoolExecutor POC.
 

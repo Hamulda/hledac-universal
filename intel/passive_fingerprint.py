@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: network.passive_fingerprint
-from network.passive_fingerprint import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

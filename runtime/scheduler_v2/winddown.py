@@ -2,6 +2,7 @@
 
 F350M-R / Issue #P2.
 
+
 Extracts winddown phase logic from runtime/sprint_scheduler.py:
     - _run_winddown (~1500 lines of teardown/export logic)
     - _run_export (4 renderers + CTI + hypothesis)
@@ -156,9 +157,9 @@ class WinddownOrchestrator:
         except Exception:
             pass
 
-        # Extract export results (set by _run_export_as_task via ctx._cycle)
-        _exp_result = getattr(ctx._cycle, '_export_result', None) or {}
-        export_paths = _exp_result.get('paths', [])
+        # Extract export results (set by _run_export_as_task via ctx.cycle)
+        # FIX: Changed from _export_result to export_result (public field)
+        _exp_result = getattr(ctx.cycle, 'export_result', None) or getattr(ctx.cycle, '_export_result', None) or {}
         export_errors = _parallel_errors + _exp_result.get('errors', [])
 
         # Phase 2: Serial barrier - synthesis must complete before hermes unload
@@ -182,7 +183,7 @@ class WinddownOrchestrator:
         # Final cleanup
         self._maybe_launch_enhanced_research(ctx)
         # Note: sidecar_tasks removed from _CycleState — lives on SprintSchedulerV2 only
-        # ctx._cycle fields are intentionally NOT cleared — sprint is terminating
+        # ctx.cycle.fields are intentionally NOT cleared — sprint is terminating
         _result.final_phase = ctx.runner.current_phase if ctx.runner else 'WINDDOWN'
 
         return WinddownPhaseResult(
@@ -195,11 +196,14 @@ class WinddownOrchestrator:
     async def _run_export_as_task(self, ctx: Any, lifecycle: Any, query: str) -> None:
         """Run export and store results in ctx._export_result for parallel retrieval.
 
-        This wraps _run_export for use in TaskGroup - stores results in ctx._cycle
+        This wraps _run_export for use in TaskGroup - stores results in ctx.cycle
         so the calling code can retrieve them after the TaskGroup completes.
         """
         _result = await self._run_export(ctx, lifecycle, query)
-        ctx._cycle._export_result = _result
+        # FIX: Use public field export_result ( CycleState has export_result field)
+        # For compatibility, also set _export_result for any code that still uses it
+        object.__setattr__(ctx.cycle, 'export_result', _result)
+        object.__setattr__(ctx.cycle, '_export_result', _result)  # backward compat
 
     async def _run_export(self, ctx: Any, lifecycle: Any, query: str) -> dict[str, Any]:
         """Run all exporters + CTI + hypothesis in parallel. Returns {paths, errors}."""
@@ -329,11 +333,11 @@ class WinddownOrchestrator:
 
     async def _await_synthesis(self, ctx: Any) -> bool:
         """Await synthesis task launched during windup entry."""
-        _synth_task = getattr(ctx._cycle, 'synth_windup_task', None)
+        _synth_task = getattr(ctx.cycle, 'synth_windup_task', None)
         if _synth_task is not None:
             try:
                 await _synth_task
-                ctx._cycle.synth_windup_task = None
+                ctx.cycle.synth_windup_task = None
                 return True
             except Exception:
                 return False
@@ -404,11 +408,11 @@ class WinddownOrchestrator:
         try:
             from hledac.universal.core.env_config import ENV
             if ENV.get_bool('HLEDAC_ENABLE_PRIVACY_LAYER'):
-                _privacy = getattr(ctx._cycle, 'privacy_layer', None)
+                _privacy = getattr(ctx.cycle, 'privacy_layer', None)
                 if not _privacy and hasattr(ctx, 'layer_manager'):
                     _privacy = getattr(ctx.layer_manager, 'privacy', None)
-                if _privacy and hasattr(ctx._cycle, 'privacy_context_id') and ctx._cycle.privacy_context_id:
-                    await _privacy.close_privacy_context(ctx._cycle.privacy_context_id)
+                if _privacy and hasattr(ctx.cycle, 'privacy_context_id') and ctx.cycle.privacy_context_id:
+                    await _privacy.close_privacy_context(ctx.cycle.privacy_context_id)
         except Exception:
             pass
 

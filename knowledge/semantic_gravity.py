@@ -2,6 +2,9 @@
 Semantic Gravity Field — [SILICON]-05
 ======================================
 Detects voids in the semantic embedding space of collected IOCs and suggests
+
+
+
 fetch targets to fill those gaps. Prevents the meta-reasoning coordinator
 from making blind decisions based solely on keyword matching.
 

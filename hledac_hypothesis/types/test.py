@@ -2,6 +2,9 @@
 Test types — hledac_hypothesis.types.test
 ==========================================
 
+
+
+
 Extracted from hledac_hypothesis._types (C4 Sprint Refactoring).
 """
 
@@ -26,7 +29,7 @@ class TestType(Enum):
     PREDICTION_TEST = "prediction_test"
 
 
-class TestResult(msgspec.Struct):
+class TestResult(msgspec.Struct, gc=False):
     """Result of executing a test against a hypothesis."""
     test_type: str
     result: str  # passed, failed, inconclusive
@@ -40,7 +43,7 @@ class TestResult(msgspec.Struct):
             self.timestamp = datetime.fromisoformat(self.timestamp)
 
 
-class TestDesign(msgspec.Struct):
+class TestDesign(msgspec.Struct, gc=False):
     """Design for testing a hypothesis."""
     test_type: str
     description: str
@@ -57,7 +60,7 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-class FalsificationResult(msgspec.Struct):
+class FalsificationResult(msgspec.Struct, gc=False):
     """Result of a falsification attempt."""
     falsified: bool
     confidence: float

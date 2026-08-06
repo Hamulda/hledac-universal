@@ -2,6 +2,8 @@
 FTP Explorer - strict FTP protocol adapter for bounded directory listing and text file fetching.
 
 This module provides safe FTP operations with:
+
+
 - Timeouts and concurrency limits
 - Bounded depth and entry counts
 - Allowed extension filtering
@@ -28,7 +30,7 @@ MAX_ENTRIES = 200
 MAX_BYTES = 256 * 1024
 ALLOWED_EXTENSIONS = {'.txt', '.csv', '.json', '.log', '.md', '.xml', '.yaml', '.yml'}
 
-class FTPListingItem(msgspec.Struct):
+class FTPListingItem(msgspec.Struct, gc=False):
     """Represents a single item in FTP directory listing."""
     path: str
     is_dir: bool

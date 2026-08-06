@@ -2,6 +2,7 @@
 Session Manager – ukládá cookies a credentials, automaticky je injectuje do fetch.
 Sprint 46: Access to Unreachable Data (Sessions + Paywall + OSINT + Darknet)
 Sprint 48: Async LMDB operations via executor, orjson serialization
+
 """
 import asyncio
 import concurrent.futures

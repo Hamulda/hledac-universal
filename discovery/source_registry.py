@@ -2,6 +2,7 @@
 Lightweight source registry for structured TI adapters.
 
 Provides a simple registry pattern for source adapters without
+
 introducing heavy plugin infrastructure.
 
 Sprint 8BN — Structured TI Ingest V1
@@ -16,7 +17,7 @@ import msgspec
 from typing import Any
 from hledac.universal.utils.cache import PyCacheDict
 
-class SourceEntry(msgspec.Struct):
+class SourceEntry(msgspec.Struct, gc=False):
     """F229: Named source with tier and acquisition lane."""
     adapter: Callable[..., Any] | None = None
     tier: int = 1

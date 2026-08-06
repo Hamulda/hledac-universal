@@ -2,6 +2,8 @@
 PrefetchCache – dočasné úložiště pro prefetched data s LRU, TTL a background writerem.
 """
 import asyncio
+
+
 import logging
 import time
 from pathlib import Path

@@ -2,6 +2,15 @@
 Passive Service Fingerprinting — F204G: Deterministic passive fingerprinting engine.
 
 Extracts service fingerprints from accepted findings without active port scanning.
+
+
+
+
+
+
+
+
+
 Consumes: HTTP headers, TLS/cert text, CT metadata, HTML hints from payload_text.
 
 Fingerprint sources:
@@ -53,7 +62,7 @@ MAX_FINGERPRINTS_PER_FINDING: int = 5
 MAX_PATTERN_BYTES: int = 4096
 FINGERPRINT_TIMEOUT_S: float = 10.0
 
-class ServiceFingerprint(msgspec.Struct, frozen=True):
+class ServiceFingerprint(msgspec.Struct, frozen=True, gc=False):
     """A single passive service fingerprint derived from finding data."""
     finding_id: str
     service_name: str
@@ -63,14 +72,14 @@ class ServiceFingerprint(msgspec.Struct, frozen=True):
     evidence_ids: tuple[str, ...]
     facets: dict[str, str]
 
-class FingerprintResult(msgspec.Struct, frozen=True):
+class FingerprintResult(msgspec.Struct, frozen=True, gc=False):
     """Outcome of a passive fingerprinting run."""
     fingerprints: tuple[ServiceFingerprint, ...]
     scanned_count: int
     skipped_count: int
     elapsed_ms: float
 
-class TechStack(msgspec.Struct, frozen=True):
+class TechStack(msgspec.Struct, frozen=True, gc=False):
     """R11: Tech stack signals extracted from HTTP headers, cookies, and HTML."""
     cloud_provider: str | None
     cdn_provider: str | None

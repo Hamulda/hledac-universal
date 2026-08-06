@@ -2,6 +2,7 @@
 Shadow Analytics Hook — CANONICAL FINDING → FACTS PIPELINE
 ==========================================================
 
+
 ROLE: Non-blocking pipeline stage that forwards finding metadata from the
 EvidenceLog (ledger) to DuckDBShadowStore (sprint facts).
 

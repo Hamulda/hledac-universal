@@ -2,6 +2,7 @@
 LightpandaManager — headless browser management for JS-heavy page rendering.
 
 Extracted from coordinators/fetch_coordinator.py (Sprint 45 refactor).
+
 Manages Lightpanda process lifecycle, CDP endpoint, and nodriver-based JS rendering.
 """
 import asyncio

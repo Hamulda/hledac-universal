@@ -3,6 +3,9 @@ GopherTransport — Gopher protocol support for historical content.
 
 Sprint OSINT-Collection: Gopher protocol support.
 
+
+
+
 Gopher is a read-only hierarchical document protocol from 1991.
 Hundreds of active servers still host historical content including:
 - University archives (UMich, MN Psyc)
@@ -50,7 +53,7 @@ GTYPE_TN3270 = 'T'
 GTYPE_GIF = 'g'
 GTYPE_IMAGE = 'I'
 
-class GopherResponse(msgspec.Struct):
+class GopherResponse(msgspec.Struct, gc=False):
     """Response from a Gopher request."""
     selector: str
     content: bytes
@@ -67,7 +70,7 @@ class GopherResponse(msgspec.Struct):
     def size(self) -> int:
         return len(self.content)
 
-class GopherItem(msgspec.Struct):
+class GopherItem(msgspec.Struct, gc=False):
     """Single item in a Gopher directory listing."""
     item_type: str
     display_string: str
@@ -84,7 +87,7 @@ class GopherItem(msgspec.Struct):
     def is_file(self) -> bool:
         return self.item_type == GTYPE_FILE
 
-class GopherFinding(msgspec.Struct):
+class GopherFinding(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for gopher findings.
 
     Represents parsed gopher content as a finding for OSINT.

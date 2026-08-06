@@ -2,20 +2,38 @@
 TransportResolver - Autonomous transport selection based on runtime context.
 
 Priorities: Nym > Tor > Direct > InMemory
+
+
+
 No config toggles - all decisions based on runtime signals.
 
-ROLE (F300P):
-  This file is a POLICY CANDIDATE, not current production transport authority.
-  - Production routing lives in FetchCoordinator._fetch_url() via get_transport_for_url()
-  - resolve_url() / is_tor_mandatory() are lightweight classification seams
-  - resolve() is DORMANT — per-request start() is not production lifecycle
+═══════════════════════════════════════════════════════════════════════════════════
+⚠️  AUTHORITY NOTE ⚠️
+═══════════════════════════════════════════════════════════════════════════════════
 
-NOT AUTHORITY FOR:
-  - Session lifecycle management (session_manager.py, session_runtime.py)
-  - Runtime fetch truth (FetchCoordinator._fetch_url())
-  - Tor session pool management
+  This file is a POLICY CANDIDATE, not current production transport authority.
+  
+  PRODUCTION AUTHORITY PATH:
+    FetchCoordinator._fetch_url() → get_transport_for_url() → RouteDecision
+  
+  SAFE TO USE (lightweight classification seams):
+    ✓ resolve_url()      — fast sync URL classification (<50μs)
+    ✓ is_tor_mandatory() — fast sync check (<10μs)
+    ✓ get_route_decision() — fail-closed routing decision
+  
+  DORMANT (⚠️ DO NOT USE IN PRODUCTION):
+    ✗ resolve()           — per-request start/stop is NOT production lifecycle
+    ✗ TransportResolver() — singleton lifecycle not wired into FetchCoordinator
+  
+  MIGRATION PRECONDITIONS (before wiring resolve() into production):
+    1. TorTransport/Tor session lifecycle managed by resolver (not per-request)
+    2. FetchCoordinator._get_tor_session() pool replaced by resolver-backed session
+    3. NymTransport persistent session established (currently start/stop per request)
+
+═══════════════════════════════════════════════════════════════════════════════════
 """
 import asyncio
+import warnings
 from hledac.universal.utils.async_helpers import safe_wait_for
 import logging
 from dataclasses import dataclass
@@ -59,8 +77,10 @@ def _probe_tcp_port(host: str, port: int, timeout: float = 2.0) -> bool:
     Duplication targets (Type-2 renamed):
       1. _check_tor_available()        — host=127.0.0.1, port=9050, timeout=0.5
       2. _check_tor_available_async()  — host=127.0.0.1, port=9050, timeout=0.5
-      3. is_i2p_available()            — host=127.0.0.1, port=7654, timeout=2.0
-      4. _is_i2p_available_uncached()  — host=127.0.0.1, port=7654, timeout=2.0
+      3. is_i2p_available()            — host=127.0.0.1, port=4444, timeout=2.0
+      4. _is_i2p_available_uncached()  — host=127.0.0.1, port=4444, timeout=2.0
+
+    NOTE: I2P ports - 4444=SOCKS, 7654=HTTP console, 7656=SAM v3, 8888=HTTP proxy.
 
     Invariants:
       [PROBE-I1] Fail-closed — returns False on any error (OSError, timeout)
@@ -142,7 +162,7 @@ class SourceTransportMap:
         """Return True if suffix MUST use Tor (e.g. .onion)."""
         return cls._map.get(suffix) is Transport.TOR
 
-class TransportContext(msgspec.Struct):
+class TransportContext(msgspec.Struct, gc=False):
     """Runtime context for transport selection."""
     requires_anonymity: bool = False
     risk_level: str = 'medium'
@@ -262,12 +282,15 @@ class TransportResolver:
         """
         Issue #37: Check if I2P router is running.
 
-        Probes the I2P SOCKS port (7654). This is a fast synchronous check
+        Probes the I2P SOCKS port (4444). This is a fast synchronous check
         (~2ms) used by get_route_decision() for fail-closed routing.
+
+        NOTE: 7654 is the I2P HTTP console, NOT the SOCKS proxy.
+        Correct I2P ports: 4444=SOCKS, 7656=SAM v3, 8888=HTTP proxy.
 
         Returns True if I2P SOCKS proxy is reachable, False otherwise.
         """
-        return _probe_tcp_port('127.0.0.1', 7654, timeout=2.0)
+        return _probe_tcp_port('127.0.0.1', 4444, timeout=2.0)
 
     def resolve_url(self, url: str) -> Transport:
         """
@@ -299,9 +322,17 @@ class TransportResolver:
 
         Priority: Nym > Tor > Direct > InMemory
 
-        AUTHORITY NOTE: DORMANT — not wired into FetchCoordinator.
-        See class-level migration precondition.
+        ⚠️ DEPRECATED: This method is DORMANT — not wired into FetchCoordinator.
+        See module-level AUTHORITY NOTE and migration preconditions.
+        
+        Current production path: FetchCoordinator._fetch_url() via get_transport_for_url().
         """
+        warnings.warn(
+            "TransportResolver.resolve() is DORMANT and not wired into production. "
+            "Use get_transport_for_url() + RouteDecision instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._check_transports()
         if context.requires_anonymity or context.risk_level == 'high':
             if self._nym_class:
@@ -388,15 +419,23 @@ _I2P_AVAILABLE_CACHE_TTL: float = 5.0
 _i2p_available_cache: tuple[bool, float] | None = None
 
 def _is_i2p_available_uncached() -> bool:
-    """Probe I2P SOCKS port 7654 — internal uncached check."""
-    return _probe_tcp_port('127.0.0.1', 7654, timeout=2.0)
+    """
+    Probe I2P SOCKS port 4444 — internal uncached check.
+
+    NOTE: 7654 is the I2P HTTP console, NOT the SOCKS proxy.
+    Correct I2P ports: 4444=SOCKS, 7656=SAM v3, 8888=HTTP proxy.
+    """
+    return _probe_tcp_port('127.0.0.1', 4444, timeout=2.0)
 
 def is_i2p_available() -> bool:
     """
-    Issue #37: Check if I2P router is running (SOCKS port 7654).
+    Issue #37: Check if I2P router is running (SOCKS port 4444).
 
     Uses a 5-second TTL cache to avoid hammering the port on repeated calls.
     Thread-safe via non-blocking socket check.
+
+    NOTE: 7654 is the I2P HTTP console, NOT the SOCKS proxy.
+    Correct I2P ports: 4444=SOCKS, 7656=SAM v3, 8888=HTTP proxy.
 
     Returns:
         True if I2P SOCKS proxy is reachable, False otherwise.
@@ -482,4 +521,3 @@ def set_i2p_transport_singleton(transport: Any) -> None:
 def get_i2p_transport_singleton() -> Any:
     """F250: Return registered I2PTransport singleton, or None."""
     return _I2P_TRANSPORT_SINGLETON
-Transport = Transport

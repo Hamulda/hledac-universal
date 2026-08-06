@@ -6,6 +6,7 @@ Probe F192E.1: Sprint Path E2E Benchmark
 Standalone benchmark probe for canonical sprint path.
 Measures first-finding latency, memory ceiling, branch mix, total findings.
 
+
 Usage:
     python benchmarks/benchmark_sprint_probe.py
     python benchmarks/benchmark_sprint_probe.py --duration 60 --cycles 10

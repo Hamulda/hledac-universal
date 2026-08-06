@@ -3,6 +3,7 @@
 Writes one JSON object per line to sys.stdout (or any TextIO). Greppable, jq-able.
 Format: subset of OTLP/JSON — https://opentelemetry.io/docs/specs/otlp/#json-protobuf-encoding
 
+
 Fail-safe: any error -> drop the bad span, continue; never raise to caller.
 """
 import msgspec.json as _json

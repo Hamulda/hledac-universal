@@ -2,7 +2,7 @@
 title: DuckDB Shadow Store Extended
 summary: 'DuckDB Shadow Store: 3-tier facts hierarchy, 3-tier IOC extraction with zero-copy Python path, two-tier L1/L2 query cache with LMDB persistence, UMA-aware runtime settings, Arrow ingest, ParquetHistoryReader for 100GB+ lazy reads'
 tags: []
-related: []
+related: [data/duckdb_store/duckdb_shadow_store_extended_architecture.md]
 keywords: []
 createdAt: '2026-07-11T19:02:58.783Z'
 updatedAt: '2026-07-11T19:02:58.783Z'

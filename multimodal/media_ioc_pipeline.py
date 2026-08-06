@@ -2,6 +2,8 @@
 [SILICON-07] Media IOC Pipeline — Canonical Media→IOC Orchestration
 ====================================================================
 
+
+
 Orchestrates the full media decode → transcription → IOC extraction pipeline.
 Bridges the gap between Apple Media Engine (SILICON-02) and the SIMD IOC scanner
 (HEIST-01), ensuring every transcribed audio/video second is scanned for IoCs.

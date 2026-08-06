@@ -2,6 +2,9 @@
 DomainRateLimiter — Async-safe token bucket per (scheme, host).
 
 Provides per-domain rate limiting as an alternative to global AIMD semaphore.
+
+
+
 Designed for aiohttp_socks-friendly operation with optional Tor/I2P lane awareness.
 
 Key design (cutting-edge, M1 8GB safe):

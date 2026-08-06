@@ -2,6 +2,7 @@
 GraphAttachmentStore — Sprint F222 extraction, updated F320
 ===========================================================
 
+
 ROLE: Owns graph injection slots and graph-read seams for DuckDBShadowStore.
 
 BOUNDARY:

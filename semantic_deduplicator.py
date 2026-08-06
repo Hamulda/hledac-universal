@@ -2,6 +2,8 @@
 Semantic Deduplicator — Embedding-Based Duplicate Detection (F195 Sprint)
 =======================================================================
 
+
+
 ROLE: Secondary dedup layer after URL/content fingerprint dedup.
 Uses vector embeddings to detect semantically similar findings that
 passed the primary (hash-based) dedup but are still near-duplicates.

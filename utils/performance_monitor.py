@@ -2,6 +2,12 @@
 PerformanceMonitor - Sledování výkonu z M1MasterOrchestrator
 
 Funkce:
+
+
+
+
+
+
 - Sledování rychlosti (tokens/sec, queries/sec)
 - Speedup tracking oproti baseline
 - Quality validation
@@ -16,7 +22,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-class PerformanceMetrics(msgspec.Struct):
+class PerformanceMetrics(msgspec.Struct, gc=False):
     """Metriky výkonu"""
     generation_count: int = 0
     total_tokens: int = 0
@@ -156,7 +162,7 @@ class MemoryPressure(Enum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class SystemMetrics(msgspec.Struct, frozen=True):
+class SystemMetrics(msgspec.Struct, frozen=True, gc=False):
     """Current system metrics."""
     cpu_percent: float
     memory_percent: float

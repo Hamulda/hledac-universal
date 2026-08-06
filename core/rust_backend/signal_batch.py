@@ -3,6 +3,7 @@
 Rust-backed signal batch processing — ARM NEON SIMD for M1,
 scalar fallback on other platforms.
 
+
 batch_compute_scores: Source quality scoring via F199A formula.
   Input: list of (fetched_count, accepted_count, novelty_flag)
   Output: list of float weights clamped [0.3, 2.5]

@@ -2,6 +2,7 @@
 Deep explainer – využívá mlx-graphs native explain nebo fallback GNNExplainer v MLX.
 """
 import logging
+
 _MLX_AVAILABLE = False
 try:
     import mlx.core as mx

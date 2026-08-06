@@ -173,7 +173,12 @@ dependencies = [
     # Speech → SFSpeechRecognizer on ANE (1h audio in ~3 min, zero GPU bandwidth).
     "pyobjc-framework-AVFoundation>=12.2; sys_platform == 'darwin'",
     "pyobjc-framework-Speech>=12.2; sys_platform == 'darwin'",
-    # Python 3.14: both 8.x and 9.x lack wheels; upper bound needed for ANE ops (macOS SDK 15+)
+    # Python 3.14: coremltools 8.x and 9.x lack PyPI wheels for Python 3.14.
+    # Workaround: Install from GitHub releases with pre-built M1 wheels:
+    #   pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools
+    # OR: pip install coremltools --no-deps && manually install deps from conda-forge.
+    # NOTE: coremltools 10.x+ may ship 3.14 wheels — check PyPI after 2026-Q4.
+    # Upper bound caps at 10.0 for ANE ops (macOS SDK 15+ compatibility).
     "coremltools>=8.0,<10.0",
     # ── Kryptografie ──────────────────────────────────────────────────────────
     "cryptography>=48.0.0",
@@ -191,7 +196,12 @@ dependencies = [
     "xxhash>=3.7.0,<4.0.0",
     "mmh3>=5.2.1",
     # ── Networking / OSINT ────────────────────────────────────────────────────
-    "dnspython>=2.4.0,<3.0.0",  # ISSUE-008: 2.7 EOL; 3.x is stable async-native (2026)
+    # ISSUE-008: dnspython 2.x EOL — migrate to 3.x for async-native API.
+    # dnspython 3.x breaks: dns.asyncresolver.resolve() → dns.resolver.resolve()
+    #                         dns.query.https() → dns.query.http()
+    # Migration guide: https://dnspython.readthedocs.io/en/latest/migration.html
+    # 2026-08: dnspython 3.x has stable async-native support (resolvers, zone transfers).
+    "dnspython>=2.7.0",
     "ipwhois>=1.3.0",
     "yara-python>=4.5.4",
     "stix2>=3.0.1",
@@ -345,23 +355,45 @@ whisper = [
     "whispercpp>=0.1.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 http3 = [
-    # Real QUIC lane for stealth/DA+ profiles (M1 8GB: ~50-80 MB resident).
+    # HTTP/3 (QUIC) lane for stealth/DA+ profiles.
     # INSTALL WITH: uv sync --extra http3  (NOT automatic — opt-in only)
-    # F320 hybrid strategy — auto-detection via get_quic_transport_adapter():
-    #   arm64 darwin + neqo available  → NeqoRustlsTransportAdapter (rustls,
-    #     immediate arena release, keeps M1 8GB UMA clean between requests)
-    #   otherwise                     → AioquicTransportAdapter (fallback)
-    # ARCHITECTURAL NOTE (M1 8GB): neqo + rustls has lower RAM footprint
-    # than aioquic + cryptography/BoringSSL because rustls uses M1-native
-    # ciphers and immediately releases memory arenas on session close.
-    # neqo is detected at RUNTIME via _probe_neqo() (arm64 darwin only),
-    # so the package is listed here for future expansion but is NOT
-    # currently on PyPI (TODO: add PyO3/ne-qp-rs wrapper when neqo ships
-    # a Python wheel; currently aioquic is the only available QUIC engine).
-    # "neqo>=0.1.0",  # ← UNCOMMENT WHEN neqo ships a PyPI wheel
-    # aioquic is the fallback when neqo is unavailable (x86_64, Linux, CI).
-    # M1 8GB RAM: aioquic is ~50-80 MB resident due to OpenSSL/BoringSSL
-    # and is therefore deprecated on M1 arm64 in favour of neqo.
+    #
+    # HTTP/3 STRATEGY (F320 hybrid — auto-detection at runtime):
+    #   Priority 1: NwQuicTransportAdapter — Apple Network.framework (macOS arm64)
+    #     ~80 KB per connection, hardware TLS, zero external deps
+    #   Priority 2: Quinn-Rs (GitHub) — Mozilla's Quinn with rustls
+    #     ~8 MB compile, lower RAM than aioquic, M1-native ciphers
+    #   Priority 3: neqo (GitHub/PyPI) — Mozilla's newer QUIC
+    #     ~10 MB compile, same benefits as Quinn-Rs
+    #   Priority 4: aioquic (PyPI) — fallback only, ~50-80 MB resident
+    #     Heavy due to cryptography/OpenSSL, use only if above unavailable
+    #
+    # HTTP3-ISSUE-001 ROOT CAUSE:
+    #   neqo is NOT on PyPI (https://github.com/mozilla/neqo/issues)
+    #   PyPI 'quinn' package is NOT Mozilla's Quinn — it's PySpark helpers!
+    #   Quinn-Rs available via GitHub: pip install quinn-rs@git+...
+    #
+    # ARCHITECTURAL NOTE (M1 8GB):
+    #   Rust QUIC + rustls has lower RAM footprint than aioquic + cryptography
+    #   because rustls uses M1-native ciphers and releases memory arenas
+    #   immediately on session close (keeps UMA clean between requests).
+    #
+    # M1 8GB bounds: ~50-80 MB resident for aioquic, <16 MB for Network.framework
+    #
+
+    # Quinn-Rs: Mozilla's Quinn via GitHub (preferred over aioquic on M1)
+    # Install from GitHub until Quinn-Rs ships on PyPI
+    # Note: Quinn-Rs package name is 'quinn-rs' on GitHub
+    # "quinn-rs @ git+https://github.com/djc/quinn.git@main#subdirectory=quinn-rs",
+
+    # neqo: Mozilla's newer QUIC implementation
+    # Note: NOT on PyPI as of 2026-08-06 (watch https://github.com/mozilla/neqo)
+    # When neqo ships on PyPI, uncomment below:
+    # "neqo>=0.1.0",
+
+    # aioquic: fallback only (heavy but works everywhere)
+    # M1 8GB: ~50-80 MB resident due to OpenSSL/BoringSSL
+    # Prefer NwQuicTransportAdapter (native) or Quinn-Rs (GitHub) when available
     "aioquic>=1.3.0",
     "cryptography>=48.0.0",  # BoringSSL-backed (Rust) — used by aioquic fallback
 ]
@@ -554,7 +586,6 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "deep_research/**" = ["BLE001"]
 "federated/transports/**" = ["BLE001"]
 "security/automation/**" = ["BLE001"]
-"tools/profile_f214_runtime_workloads.py" = ["BLE001"]
 "transport/http3_lane.py" = ["BLE001"]
 "tools/url_dedup.py" = ["BLE001"]
 "runtime/observability.py" = ["BLE001"]
@@ -563,30 +594,19 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "discovery/duckduckgo_adapter.py" = ["BLE001"]
 "core/embeddings/pool.py" = ["BLE001"]
 "brain/research_hypothesis_engine.py" = ["BLE001"]
-"tools/live_kpi_extraction_guard.py" = ["BLE001"]
 "security/vault_manager.py" = ["BLE001"]
-"runtime/tracing_setup.py" = ["BLE001"]
 "pipeline/public_discovery.py" = ["BLE001"]
 "knowledge/semantic_store.py" = ["BLE001"]
 "knowledge/lmdb_subdb.py" = ["BLE001"]
 "knowledge/lancedb_rag_engine.py" = ["BLE001"]
-"intelligence/temporal_archaeologist.py" = ["BLE001"]
-"intelligence/passive_fingerprint.py" = ["BLE001"]
 "federated/transports/peer_node.py" = ["BLE001"]
 "core/embeddings/manager.py" = ["BLE001"]
 "coordinators/monitoring_coordinator.py" = ["BLE001"]
 "utils/filtering.py" = ["BLE001"]
 "tools/lmdb_kv.py" = ["BLE001"]
-"scripts/compile_dspy_programs.py" = ["BLE001"]
-"runtime/instrumentation_setup.py" = ["BLE001"]
 "knowledge/quality_assessment.py" = ["BLE001"]
-"intelligence/web_intelligence.py" = ["BLE001"]
-"intelligence/wayback_diff_miner.py" = ["BLE001"]
-"intelligence/dark_web_intelligence.py" = ["BLE001"]
-"enhanced_research.py" = ["BLE001"]   # research orchestration (cold-path)
 "research/**" = ["BLE001"]           # research spike files
 "tura-install/**" = ["BLE001"]       # tura-install project (cold-path)
-"_test_imports.py" = ["BLE001"]       # test import helper at root level
 # ── Issue #9.1 additions (2026-07-24) ──────────────────────────────────────
 "benchmarks_shadow/**" = ["BLE001"]   # benchmark shadow dir (outside benchmarks/)
 "recon/**" = ["BLE001"]              # recon intelligence collectors (cold-path)
@@ -606,56 +626,15 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "runtime/enrichment_services.py" = ["BLE001"]
 "multimodal/evidence_triage.py" = ["BLE001"]
 "knowledge/ioc_dedup_adapter.py" = ["BLE001"]
-"knowledge/graph/backend_protocol.py" = ["BLE001"]
 "knowledge/dedup.py" = ["BLE001"]
-"intelligence/whois_service.py" = ["BLE001"]
-"intelligence/academic_discovery.py" = ["BLE001"]
 "infrastructure/plugin_manager.py" = ["BLE001"]
 "discovery/rss_atom_adapter.py" = ["BLE001"]
 "discovery/deep_source_registry.py" = ["BLE001"]
-"discovery/arpa_eth_arpa_adapter.py" = ["BLE001"]
-"utils/lmdb_presssure.py" = ["BLE001"]
-"transport/stealth_manager.py" = ["BLE001"]
 "transport/session_pool.py" = ["BLE001"]
-"transport/httpauth.py" = ["BLE001"]
-"transport/base_transport.py" = ["BLE001"]
-"transport/uds_transport.py" = ["BLE001"]
-"network/tor_transport.py" = ["BLE001"]
-"network/http3_client.py" = ["BLE001"]
 "network/session_runtime.py" = ["BLE001"]
-"network/connection_pool.py" = ["BLE001"]
-"network/adaptive_connector.py" = ["BLE001"]
-"intelligence/passive_dns.py" = ["BLE001"]
-"intelligence/origin_intelligence.py" = ["BLE001"]
-"intelligence/greynoise_client.py" = ["BLE001"]
-"intelligence/censys_client.py" = ["BLE001"]
-"intelligence/shodan_client.py" = ["BLE001"]
-"intelligence/host_intel.py" = ["BLE001"]
-"intel/tor_pseudonym_discovery.py" = ["BLE001"]
-"intel/rapid7_client.py" = ["BLE001"]
-"intel/bgp_metadata.py" = ["BLE001"]
-"intel/asn_intelligence.py" = ["BLE001"]
-"export/arrow_exporter.py" = ["BLE001"]
-"export/md_writer.py" = ["BLE001"]
-"export/json_writer.py" = ["BLE001"]
-"export/csv_writer.py" = ["BLE001"]
-"export/base_exporter.py" = ["BLE001"]
-"discovery/chaos_adapter.py" = ["BLE001"]
-"coordinators/telemetry_coordinator.py" = ["BLE001"]
-"coordinators/inference_coordinator.py" = ["BLE001"]
-"coordinators/evidence_coordinator.py" = ["BLE001"]
-"brain/embedder_router.py" = ["BLE001"]
 "brain/ane_embedder.py" = ["BLE001"]
 "brain/_hermes_cache.py" = ["BLE001"]
-"utils/metal_memory.py" = ["BLE001"]
 "utils/async_helpers.py" = ["BLE001"]
-"security/identity_anonymizer.py" = ["BLE001"]
-"graph/duckdb_graph.py" = ["BLE001"]
-"layers/security_policy.py" = ["BLE001"]
-"pipeline/synthesis_pipeline.py" = ["BLE001"]
-"pipeline/sprint_synthesis_pipeline.py" = ["BLE001"]
-"core/uma_budget.py" = ["BLE001"]
-"core/metal.py" = ["BLE001"]
 "prefetch/prefetch_oracle.py" = ["BLE001"]
 # ── P1-01: directory blanket ignores — cold-path submodules ─────────────────────
 # Blanket ignores for submodules without specific per-file entries:
@@ -678,11 +657,6 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "scripts/**" = ["BLE001"]
 "hledac/**" = ["BLE001"]
 "capabilities.py" = ["BLE001"]
-"captcha_solver*.py" = ["BLE001"]
-"deep_probe.py" = ["BLE001"]
-"_breaking_changes.py" = ["BLE001"]
-"_dep_upgrade_check.py" = ["BLE001"]
-"_fix_rename.py" = ["BLE001"]
 "compat/**" = ["BLE001"]
 "advanced_rag/**" = ["BLE001"]
 "archive/**" = ["BLE001"]
@@ -697,7 +671,6 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "infrastructure/**" = ["BLE001"]
 "rl/**" = ["BLE001"]
 # ── P1-01: remaining 37 files (all cold-path) ─────────────────────────────────
-"universal/__main__.py" = ["BLE001"]
 "execution/ghost_executor.py" = ["BLE001"]
 "fetching/_body_hash.py" = ["BLE001"]
 "fetching/_factories.py" = ["BLE001"]
@@ -730,10 +703,8 @@ ignore = ["E501", "F821", "B027"]  # BLE001: P1-01 audit in progress — see Iss
 "resource_allocator.py" = ["BLE001"]
 "semantic_deduplicator.py" = ["BLE001"]
 "stealth/stealth_manager.py" = ["BLE001"]
-"test_simple.py" = ["BLE001"]
 "tool_exec_log.py" = ["BLE001"]
 "tool_registry.py" = ["BLE001"]
-"tot_integration.py" = ["BLE001"]
 
 # ── Mypy ─────────────────────────────────────────────────────────────────────
 [tool.mypy]

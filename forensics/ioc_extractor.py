@@ -1,20 +1,42 @@
-"""IOC Extractor — delegates to knowledge.ioc_processor (F350M-R).
+"""
+IOC Extractor — delegates to knowledge.ioc_processor (F350M-R).
+=============================================================================
 
-This module is kept for backward compatibility (callers in forensics/ and runtime/).
-All IOC extraction now routes through knowledge.ioc_processor which uses
-AccelBackend (get_accel()) for proper lazy Rust probe.
+DEPRECATION NOTICE (F350M-R):
+    This module is DEPRECATED and kept ONLY for backward compatibility.
 
-F350M-R: Replaced broken `from core.rust_backend import rust` pattern
+    - Canonical path (hot path): Use knowledge/duckdb_store.py directly
+      which calls batch_ioc_extract_unified from hledac_rust_extensions.
+    - Canonical path (cold path): Import from knowledge.ioc_processor
+      which uses get_accel() for proper lazy Rust probe.
+
+    Migration (search+replace):
+        from hledac.universal.forensics.ioc_extractor import fast_ioc_extract
+        ↓ REPLACE WITH
+        from hledac.universal.knowledge.ioc_processor import fast_ioc_extract
+
+F350M-R ISSUE: Replaced broken `from core.rust_backend import rust` pattern
 (which failed because rust.ioc is a domain object, not a module)
 with the canonical get_accel() facade.
-
-Hot path (canonical write): knowledge/duckdb_store.py uses
-    batch_ioc_extract_unified directly from hledac_rust_extensions.
-    NOT routed through here — hot path bypasses Python entirely.
 """
+
+from __future__ import annotations
+
+import warnings
+
+# Emit deprecation warning on import — aligned with intel/__init__.py pattern
+warnings.warn(
+    "forensics.ioc_extractor is deprecated — "
+    "import from 'hledac.universal.knowledge.ioc_processor' instead. "
+    "Hot path (duckdb_store): batch_ioc_extract_unified from hledac_rust_extensions.",
+    DeprecationWarning,
+    stacklevel=1,
+)
 
 # Re-export everything from the unified facade for backward compatibility
 from hledac.universal.knowledge.ioc_processor import (  # noqa: F401,E402,F811
+    # Note: forensics/ is part of hledac.universal package, so hledac.universal.* imports work
+    # when the package is installed. This is the standard project import convention.
     fast_ioc_extract,
     url_normalize,
     batch_dedup_urls,

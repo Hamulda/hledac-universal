@@ -46,6 +46,8 @@
 //! drain their queue and exit naturally. New work goes to the new pool.
 
 use parking_lot::RwLock;
+use pyo3::prelude::*;
+use pyo3::wrap_pyfunction;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use std::sync::Arc;
@@ -70,14 +72,19 @@ static IO_POOL: RwLock<Option<Arc<ThreadPool>>> = RwLock::new(None);
 
 /// Build a CPU-bound ThreadPool with `num_threads` threads.
 /// Applies P-core QoS hints (macOS) and CPU affinity (Linux).
-fn build_cpu_pool(num_threads: usize) -> ThreadPool {
+///
+/// [SWARM]-009 FIX: Returns Result instead of panicking on OOM.
+/// On M1 8GB, thread allocation can fail if system memory is constrained.
+fn build_cpu_pool(num_threads: usize) -> Result<ThreadPool, String> {
     let n = num_threads.clamp(1, MAX_TOTAL_THREADS);
     ThreadPoolBuilder::new()
         .num_threads(n)
         .stack_size(4_194_304) // 4 MiB
         .thread_name(|i| format!("hledac-cpu-{}", i))
-        .spawn_handler(|t| {
-            thread::spawn(move || {
+        .spawn_handler(move |builder| {
+            // spawn_handler expects FnOnce(Box<dyn rayon::Builder>) -> Result<(), Error>
+            // We spawn our own thread with platform-specific setup, then call builder.run()
+            let _ = thread::spawn(move || {
                 #[cfg(target_os = "macos")]
                 {
                     unsafe {
@@ -86,23 +93,27 @@ fn build_cpu_pool(num_threads: usize) -> ThreadPool {
                 }
                 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
                 apply_affinity_hint(n);
-                t.run();
-                Ok(())
-            })
+                builder.run();
+            });
+            Ok(())
         })
         .build()
-        .expect("build_cpu_pool: ThreadPoolBuilder::build failed (OOM?)")
+        .map_err(|e| format!("build_cpu_pool: ThreadPoolBuilder::build failed: {}", e))
 }
 
 /// Build an I/O-bound ThreadPool with `num_threads` threads.
-fn build_io_pool(num_threads: usize) -> ThreadPool {
+///
+/// [SWARM]-009 FIX: Returns Result instead of panicking on OOM.
+/// On M1 8GB, thread allocation can fail if system memory is constrained.
+fn build_io_pool(num_threads: usize) -> Result<ThreadPool, String> {
     let n = num_threads.clamp(1, 4); // io_pool max 4 threads
     ThreadPoolBuilder::new()
         .num_threads(n)
         .stack_size(4_194_304) // 4 MiB
         .thread_name(|i| format!("hledac-io-{}", i))
-        .spawn_handler(|t| {
-            thread::spawn(move || {
+        .spawn_handler(move |builder| {
+            // spawn_handler expects FnOnce(Box<dyn rayon::Builder>) -> Result<(), Error>
+            let _ = thread::spawn(move || {
                 #[cfg(target_os = "macos")]
                 {
                     unsafe {
@@ -111,12 +122,12 @@ fn build_io_pool(num_threads: usize) -> ThreadPool {
                 }
                 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
                 apply_affinity_hint(n);
-                t.run();
-                Ok(())
-            })
+                builder.run();
+            });
+            Ok(())
         })
         .build()
-        .expect("build_io_pool: ThreadPoolBuilder::build failed (OOM?)")
+        .map_err(|e| format!("build_io_pool: ThreadPoolBuilder::build failed: {}", e))
 }
 
 /// Linux: Pin thread to first `cores` physical CPU cores.
@@ -144,7 +155,8 @@ fn apply_affinity_hint(_cores: usize) {}
 
 /// Resize the CPU-bound pool to `num_threads`.
 ///
-/// Panics if `num_threads` exceeds MAX_TOTAL_THREADS (8 on M1).
+/// [SWARM]-009 FIX: Graceful degradation on OOM.
+/// Logs error and keeps existing pool if new pool build fails.
 /// Existing dispatchers (from pool_run.rs) hold references to the old pool
 /// and drain their queues; new work goes to the new pool automatically
 /// because dispatchers re-read the pool from the RwLock on each iteration.
@@ -152,13 +164,22 @@ fn apply_affinity_hint(_cores: usize) {}
 /// Thread-safe: uses RwLock for concurrent readers (dispatchers) vs single writer.
 pub fn resize_cpu_pool(num_threads: usize) {
     let n = num_threads.clamp(1, MAX_TOTAL_THREADS);
-    let new_pool = Arc::new(build_cpu_pool(n));
-    let mut guard = CPU_POOL.write();
-    *guard = Some(new_pool);
+    match build_cpu_pool(n) {
+        Ok(pool) => {
+            let new_pool = Arc::new(pool);
+            let mut guard = CPU_POOL.write();
+            *guard = Some(new_pool);
+        }
+        Err(e) => {
+            eprintln!("elastic_pool: resize_cpu_pool failed ({}) — keeping existing pool", e);
+        }
+    }
 }
 
 /// Resize the I/O-bound pool to `num_threads`.
 ///
+/// [SWARM]-009 FIX: Graceful degradation on OOM.
+/// Logs error and keeps existing pool if new pool build fails.
 /// Panics if `num_threads` would push total threads above MAX_TOTAL_THREADS (8).
 /// Enforces: cpu_threads + io_threads <= 8.
 ///
@@ -175,9 +196,16 @@ pub fn resize_io_pool(num_threads: usize) {
     let max_io = MAX_TOTAL_THREADS.saturating_sub(cpu_count);
     let n = num_threads.clamp(1, max_io.max(1));
 
-    let new_pool = Arc::new(build_io_pool(n));
-    let mut guard = IO_POOL.write();
-    *guard = Some(new_pool);
+    match build_io_pool(n) {
+        Ok(pool) => {
+            let new_pool = Arc::new(pool);
+            let mut guard = IO_POOL.write();
+            *guard = Some(new_pool);
+        }
+        Err(e) => {
+            eprintln!("elastic_pool: resize_io_pool failed ({}) — keeping existing pool", e);
+        }
+    }
 }
 
 /// Get current CPU pool thread count, or 0 if not initialized.
@@ -216,6 +244,9 @@ pub fn init_default_pools() {
 
 /// Get the current CPU pool as Arc<ThreadPool>.
 /// Initializes with defaults (4 threads) if not yet set.
+///
+/// [SWARM]-009 FIX: Graceful degradation on OOM.
+/// Falls back to 1-thread pool if full build fails.
 pub fn get_cpu_pool() -> Arc<ThreadPool> {
     {
         let guard = CPU_POOL.read();
@@ -224,7 +255,13 @@ pub fn get_cpu_pool() -> Arc<ThreadPool> {
         }
     }
     // Slow path: pool not yet initialized. Build new pool under write lock.
-    let pool = Arc::new(build_cpu_pool(4));
+    let pool = match build_cpu_pool(4) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            eprintln!("elastic_pool: get_cpu_pool initial build failed ({}) — falling back to 1-thread", e);
+            Arc::new(build_cpu_pool(1).expect("fallback 1-thread pool should always succeed"))
+        }
+    };
     let mut guard = CPU_POOL.write();
     if let Some(ref existing) = *guard {
         // Another thread initialized first — use that pool instead.
@@ -236,6 +273,9 @@ pub fn get_cpu_pool() -> Arc<ThreadPool> {
 
 /// Get the current I/O pool as Arc<ThreadPool>.
 /// Initializes with defaults (2 threads) if not yet set.
+///
+/// [SWARM]-009 FIX: Graceful degradation on OOM.
+/// Falls back to 1-thread pool if full build fails.
 pub fn get_io_pool() -> Arc<ThreadPool> {
     {
         let guard = IO_POOL.read();
@@ -244,7 +284,13 @@ pub fn get_io_pool() -> Arc<ThreadPool> {
         }
     }
     // Slow path: pool not yet initialized. Build new pool under write lock.
-    let pool = Arc::new(build_io_pool(2));
+    let pool = match build_io_pool(2) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            eprintln!("elastic_pool: get_io_pool initial build failed ({}) — falling back to 1-thread", e);
+            Arc::new(build_io_pool(1).expect("fallback 1-thread pool should always succeed"))
+        }
+    };
     let mut guard = IO_POOL.write();
     if let Some(ref existing) = *guard {
         // Another thread initialized first — use that pool instead.

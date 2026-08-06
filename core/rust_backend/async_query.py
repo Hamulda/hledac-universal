@@ -2,6 +2,8 @@
 """
 Rust-backed DuckDB query functions — O(1) connection pool, race-free execution.
 
+
+
 rust_async_query: single query via to_thread
 rust_async_query_batch: parallel N queries via rayon (each worker opens
     its own :memory: connection — :memory: is thread-safe in DuckDB)

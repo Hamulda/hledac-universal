@@ -1,46 +1,100 @@
 ---
-children_hash: bebcf399d55f2659385266517909d4aad6e8917311e2bb108d6aab576eeb5354
-compression_ratio: 0.18036595991867557
+children_hash: c486b3d33187b250e982156199021d913fc6ea0e984f3d16f3e99477c85a1999
+compression_ratio: 0.24825898738942218
 condensation_order: 2
-covers: [context.md, core/_index.md, hledac_universal/_index.md, runtime/_index.md, transport_layers/_index.md]
-covers_token_total: 3443
+covers: [context.md, core/_index.md, hledac_universal/_index.md, ipc_mechanisms/_index.md, runtime/_index.md, transport_layers/_index.md]
+covers_token_total: 5313
 summary_level: d2
-token_count: 621
+token_count: 1319
 type: summary
 ---
-<think>
-The user wants me to create a concise structural summary at the domain level (d1) for transport_layers. I need to compress the child entries while preserving key facts, relationships, and patterns. Let me distill the essential information from these entries.
+<think>The user wants me to create a structural summary at level d2 from the provided knowledge entries. Let me analyze the content:
 
-Key topics to cover:
-1. HTTP/3 lane with dual strategy (curl_cffi + aioquic)
-2. M1_BOUNDS configuration constants
-3. Architecture decisions about dark web exclusion, CAPS integration, fail-fast policy
-4. Key files and their roles
-5. Reference entry names for drill-down
+1. **context.md** - Domain overview for architecture
+2. **core/_index.md** - Lock registry architecture (deadlock-free, 8-category enum, async lazy init)
+3. **hledac_universal/_index.md** - Comprehensive hledac_universal architecture (sprint pipeline, storage trinity, brain module, HTTP/transport, coordinators, sidecar system, critical invariants, performance, Rust extensions, deduplication, layer protocol, telemetry, CLI)
+4. **ipc_mechanisms/_index.md** - Zero-copy IPC architecture
+5. **runtime/_index.md** - Sprint lifecycle, tiers, canonical boundary, scheduler v2, resource governor, meaningful run detection, report serialization
+6. **transport_layers/_index.md** - HTTP/3 lane, Tor/I2P transports, CAPS integration
 
-I need to output ONLY the summary text, no code blocks or XML.
+This is the top-level domain "architecture" summary. I need to create a d2 structural overview that:
+- Preserves key facts, relationships, patterns
+- References child entry names for drill-down
+- Target ~20-30% compression
+- Output clean structured markdown
+- Do NOT wrap in code blocks or XML tags
+
+Let me create a comprehensive but condensed summary.
 </think>
 
-# transport_layers
 
-HTTP/3 lane implementation in `transport/http3_lane.py` with dual strategy for stealth and opportunistic modes. Canonical entry: `PublicFetcher.fetch()` delegates to `FetchCoordinator.coordinated_fetch()` which routes to HTTP/3 lane via CAPS-registered capability. curl_cffi_opportunistic is default; aioquic_stealth is fallback when neqo unavailable.
 
-## Dual Strategy
+# architecture
 
-**curl_cffi_opportunistic** (default, 0.7+): JA3 spoofing via curl_cffi. **aioquic_stealth** (fallback): Standard client hello when neqo not available. **neqo** (planned): Mozilla Rust QUIC engine for arm64 darwin, pending PyPI package. Dark web TLDs (.onion, .i2p, .b32.i2p) explicitly excluded from HTTP/3 attempts—H3 auto-skipped for Tor/I2P circuits per QUIC/UDP incompatibility.
+Cross-domain knowledge for the hledac Universal OSINT orchestrator—sprint-based acquisition, DuckDB canonical storage, dark web transports, and M1 8GB safety invariants.
 
-## Configuration (M1_BOUNDS)
+## Domain Overview
 
-LRU cache bounded at 512 entries with 24h TTL. Concurrency limited to 3. Timeout 8.0s, semaphore wait 2.0s. Memory guard triggers RSS block at 5.5 GiB. Max probe tasks capped at 16.
+**Scope**: HTTP/3 lane implementation, proxy routing, Alt-Svc caching, memory guards, zero-copy IPC, sprint lifecycle orchestration, transport layers. **Excludes**: high-level architecture (see hledac_universal), duckdb storage specifics.
 
-## Architecture Decisions
+**Ownership**: Hledac Universal Team
 
-CAPS system replaces availability checks—FetchCoordinator uses `CAPS.require(CURL_CFFI)` for gated capability. FAIL-FAST policy: no silent httpx fallback when curl_cffi unavailable, ensuring JA3 spoofing is always honored. LRU uses OrderedDict for O(1) eviction. Error propagation returns None rather than raising.
+## Key Architectural Decisions
 
-## Key Files
+| Decision | Location | Details |
+|----------|----------|---------|
+| Deadlock-free locking | `core/lock_registry_architecture.md` | 8-category ascending order (METRICS→CACHE→CONFIG→NETWORK→CURSOR→GRAPH→WAL→MPC) |
+| Sprint entry boundary | `runtime/f186a_canonical_sprint_truth.md` | `run_sprint()` sole canonical owner |
+| Canonical storage | `hledac_universal/duckdb_kuzu_dual_graph_architecture.md` | DuckDB canonical, LanceDB vectors, LMDB WAL |
+| Cold import reduction | `hledac_universal/lazy-loading-reduces-cold-import-by-98.md` | PEP 562 facade: 9.7s → 150ms |
+| M1 safety | `hledac_universal/10-critical-invariants-govern-system-stability.md` | 10 GHOST_INVARIANTS enforced via CI |
 
-`transport/http3_lane.py` implements lane. `fetching/public_fetcher.py` entry point. `fetching/curl_cffi_fetch.py` wraps curl_cffi with CAPS checks. `coordinators/fetch_coordinator.py` orchestrates with capability gating.
+## Core Architecture (hledac_universal)
 
-## Drill-Down
+**Sprint Pipeline** (12-stage): CLI → `run_sprint()` → `SprintScheduler.run()` → 8 acquisition lanes (surface/structured_ti/deep/archive/CT/WAYBACK/PASSIVE_DNS/PIVOT_EXECUTOR/DOH) → advisory runners → graph accumulation → DuckDB write.
 
-`http_3_lane_implementation.md` covers strategy details, Alt-Svc probing, memory guards. `http_3_configuration_constants.md` lists M1_BOUNDS values. `http_3_neqo_integration_plan.md` outlines neqo Rust integration. `issue_0_2_curl_cffi_caps_architecture_fix.md` documents CAPS migration.
+**Storage Trinity**: DuckDB (canonical, 600MB/4 threads), LMDB (WAL, entity hot-edges), LanceDB (ANN vectors, 256d text/1024d image).
+
+**Brain Module**: 12 lazy engines via `__getattr__` (Hermes3 L1, MLX dispatcher, DSPy, NER). BoundedInferencePipeline (ISSUE-17) with 3-stage queue <200KB.
+
+**HTTP/Transport**: curl_cffi + aioquic dual strategy, BLAKE3-64 body hashing (5GB/s), Tor/I2P darknet support.
+
+**5 Coordinators**: Fetch (AIMD, 25 window), Resource (BlitzGCStrategy), Memory (L1/L2 + FAISS/HNSW), Sidecar (17 adapters), Execution.
+
+**Sidecar System** (F205B): 17 adapters with env gates, 3-stage execution (light→correlation→derived), 5-branch parallel teardown (ISSUE-3: 30-90s → 5-15s).
+
+## Runtime Domain (runtime)
+
+**Sprint Tiers**: quick (60-179s), standard (180-299s), deep (300-599s), thorough (600s+). MIN_ACTIVE_WINDOW_S = 30s.
+
+**Scheduler V2**: `SprintSchedulerV2` production, v1 archived. PivotTask relocated to `runtime/pivot_types.py`.
+
+**Resource Governor**: `M1ResourceGovernor` with 5-tier UMA state, EMA adaptive concurrency (alpha=0.3), sidecar admission blocks.
+
+**Meaningful Run Detection**: Hardware-limited smoke / smoke / meaningful (pattern hits ≥15) / not meaningful.
+
+**Report Serialization**: orjson with OPT_INDENT_2, numpy auto-detect, `HLEDAC_REPORT_PRETTY_PRINT=1`.
+
+**Sprint Seed State**: Global `_current_sprint_seed_state` for deterministic cognitive replay.
+
+## Transport Layers
+
+**HTTP/3 Lane**: 3 strategies (curl_cffi_opportunistic → NeqoRustls → Aioquic). LRU 512 entries, 3 concurrent, 5.5GiB RSS block, 24h TTL.
+
+**Tor**: socks5h://127.0.0.1:9050, circuit rotation every 10 requests, 2.0x timeout, JARM C2 fingerprinting (Cobalt Strike/Metasploit/AsyncRAT/Havoc/Covenant).
+
+**I2P**: SAM v3 (7656, ~2MB RAM), SOCKS5H (4444), HTTP proxy (8888). Session ID: hledac-samv3-<uuid>.
+
+**CAPS Integration**: FetchCoordinator requires curl_cffi CAPS for JA3 spoofing—fail-fast on unavailable.
+
+## IPC Mechanisms
+
+Zero-copy architecture: SharedMemory (M1), Arrow IPC, DuckDB shared cache, msgspec serialization, LMDB WAL persistence, EventBus for sidecar communication.
+
+## Cross-Domain Contracts
+
+- `run_sprint()` owns sprint_delta reporting → `duckdb_store/context.md` for canonical write
+- 10 critical invariants span runtime + hledac_universal
+- Sidecar 17 adapters wired via `sidecar_bus_architecture.md` → `sidecar_protocol_registry.md`
+- Sprint flags (no_communication, no_stealth, no_ghost, no_coordination) control layer injection
+- Resource governor telemetry flows through acquisition_orchestrator_lifecycle.md

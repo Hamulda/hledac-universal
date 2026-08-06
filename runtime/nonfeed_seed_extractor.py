@@ -2,6 +2,8 @@
 Sprint F222D: NonfeedSeed Extractor — Feed → Pivot → Nonfeed Bridge
 =================================================================
 
+
+
 runtime/nonfeed_seed_extractor.py
 --------------------------------
 Deterministic IOC extraction from feed findings → bounded seeds for

@@ -2,6 +2,7 @@
 Metal GPU-Accelerated HNSW Construction — SILICON-02
 ====================================================
 
+
 ROLE: Offload HNSW index construction distance computations to M1 GPU via MLX.
 Does NOT replace USearch graph topology — only accelerates distance computations
 during index build via optimal insertion order and batch GPU offload.
@@ -80,7 +81,7 @@ METAL_HNSW_ENABLED: bool = (
 _usearch_imported: bool = False
 
 
-def _get_usearch_index_class() -> type:
+def _get_usearch_index_class() -> type[object]:
     """Lazy import usearch.index.Index. Cached after first call."""
     global _usearch_imported
     if not _usearch_imported:

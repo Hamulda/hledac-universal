@@ -2,6 +2,7 @@
 SprintGraphAccumulator — Graph IOC accumulation adapter.
 =======================================================
 
+
 Extracts the graph accumulation logic from SprintScheduler into a
 standalone, testable adapter.
 

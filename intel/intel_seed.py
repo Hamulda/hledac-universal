@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.intel_seed
-from recon.intel_seed import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

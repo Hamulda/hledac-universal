@@ -2,6 +2,9 @@
 knowledge/duckdb_audit_store.py — DuckDB-backed Audit Store
 =========================================================
 
+
+
+
 ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 
 Drop-in replacement for security/audit.py AuditLogger.

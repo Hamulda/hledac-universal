@@ -2,6 +2,7 @@
 Role-Based Pool Executor — DEPRECATED (R-18)
 ============================================
 
+
 .. deprecated::
     This module is deprecated as of R-18. Use the dedicated modules instead:
     - ``runtime.lmdb_pool`` for LMDB operations (``run_lmdb``)

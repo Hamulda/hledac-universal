@@ -2,6 +2,7 @@
 core/system_metrics.py — Unified system metrics with M1-optimized syscalls
 ==========================================================================
 
+
 Replaces raw psutil calls in hot paths with cached, zero-syscall alternatives.
 
 M1 8GB UMA invariants:

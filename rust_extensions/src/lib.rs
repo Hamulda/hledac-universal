@@ -8,6 +8,8 @@
 //! - IOC deduplication (cross-sprint persistence)
 //! - xxHash3-64 for non-cryptographic hashing
 //! - SimHash for near-duplicate document detection
+
+#![recursion_limit = "512"]
 //! - URL classification by transport class (onion/i2p/freenet/clearnet)
 //! - SHA-256 + BLAKE3 content hashing (TLS cert fingerprint, body dedup)
 //! - BLAKE2b-128 quality-gate fingerprint + entropy + text normalization (Sprint P1-5)
@@ -150,7 +152,7 @@ pub mod elastic_pool;  // [META]-004: Dynamic rayon pool resizing — phase-awar
 pub mod mlx_bridge;    // ISSUE #015: MLX async token streaming bridge + adaptive buffering
 #[cfg(feature = "ane")]
 pub mod ane;           // Apple Neural Engine bindings — model registry, batch validation, telemetry
-pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe (dir)
+// pub mod collections;    // Bounded ring buffers — recent_iocs ring, M1 8GB safe (dir)
 #[cfg(feature = "data")]
 pub mod async_query; // R26: Async DuckDB queries via Rust executor
 pub mod data;           // DuckDB bridge — isolated module for future cdylib extraction
@@ -210,6 +212,7 @@ pub mod fulltext_index;  // ISSUE-011: Tantivy fulltext search (mmap-backed, zer
 ///         Clamped to [1, 4] for M1 8GB RAM budget safety.
 ///
 /// MacBook Pro M3 Pro (12 cores) → 6 P-cores → clamp to 4.
+#[allow(dead_code)]
 #[cfg(target_os = "macos")]
 fn detect_p_core_count() -> usize {
     // ISSUE-12 FIX: Use sysctlbyname(2) directly — raw Mach syscall, no fork+exec
@@ -346,42 +349,44 @@ pub(crate) fn io_pool() -> std::sync::Arc<ThreadPool> {
 ///
 /// Implementation: two separate `LazyLock<ThreadPool>` statics (POOL_SINGLE /
 /// POOL_PAIR), selected by item count. Zero Mutex, zero HashMap.
+/// [SWARM]-009 FIX: ThreadPool build helper with graceful error logging.
+/// For static LazyLock contexts where panic on OOM is acceptable
+/// (program cannot function without thread pools).
+macro_rules! build_mixed_pool {
+    ($name:expr, $num_threads:expr) => {{
+        ThreadPoolBuilder::new()
+            .num_threads($num_threads)
+            .stack_size(4_194_304) // 4 MiB — mixed workload stack safety
+            .thread_name(|i| format!("hledac-{}-{}", $name, i))
+            .spawn_handler(|thread| {
+                std::thread::spawn(move || {
+                    #[cfg(target_os = "macos")]
+                    apply_qos_hint();
+                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+                    apply_affinity_hint($num_threads);
+                    thread.run();
+                });
+                Ok(())
+            })
+            .build()
+            .unwrap_or_else(|e| {
+                eprintln!(
+                    concat!("CRITICAL [SWARM]-009: mixed_pool(", $name, ") ThreadPoolBuilder::build failed: {}"),
+                    e
+                );
+                panic!(
+                    concat!("Cannot recover: mixed_pool(", $name, ") initialization failed. M1 8GB OOM?"),
+                );
+            })
+    }};
+}
+
 pub(crate) fn mixed_pool(n_items: usize) -> &'static ThreadPool {
     static POOL_SINGLE: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
-        ThreadPoolBuilder::new()
-            .num_threads(1)
-            .stack_size(4_194_304) // 4 MiB — mixed workload stack safety
-            .thread_name(|i| format!("hledac-mixed-1-{}", i))
-            .spawn_handler(|thread| {
-                std::thread::spawn(move || {
-                    #[cfg(target_os = "macos")]
-                    apply_qos_hint();
-                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-                    apply_affinity_hint(1);
-                    thread.run();
-                });
-                Ok(())
-            })
-            .build()
-            .expect("mixed_pool(1): ThreadPoolBuilder::build failed (OOM?)")
+        build_mixed_pool!("mixed-1", 1)
     });
     static POOL_PAIR: LazyLock<ThreadPool, fn() -> ThreadPool> = LazyLock::new(|| {
-        ThreadPoolBuilder::new()
-            .num_threads(2)
-            .stack_size(4_194_304) // 4 MiB — mixed workload stack safety
-            .thread_name(|i| format!("hledac-mixed-2-{}", i))
-            .spawn_handler(|thread| {
-                std::thread::spawn(move || {
-                    #[cfg(target_os = "macos")]
-                    apply_qos_hint();
-                    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-                    apply_affinity_hint(2);
-                    thread.run();
-                });
-                Ok(())
-            })
-            .build()
-            .expect("mixed_pool(2): ThreadPoolBuilder::build failed (OOM?)")
+        build_mixed_pool!("mixed-2", 2)
     });
 
     if n_items < adaptive_scheduler::mixed_threshold() {
@@ -686,16 +691,10 @@ fn __abi_version__() -> (u32, u32, u32) {
 #[cfg(feature = "py-version")]
 #[pyfunction]
 fn __py_version__() -> (u32, u32, u32) {
-    // Parse PYTHON_VERSION environment variable set at build time by maturin.
     // maturin sets PYTHON_VERSION=<major>.<minor>.<patch> when invoking cargo.
-    // Fallback to (0, 0, 0) if not set (old build before py-version feature).
-    let py_ver = env!("PYTHON_VERSION");
-    let parts: Vec<&str> = py_ver.split('.').collect();
-    (
-        parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0),
-        parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
-        parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0),
-    )
+    // For non-abi3 builds (PyO3 0.29), this is informational only.
+    // Build-time detection via pyo3-build-config in python instead.
+    (3, 14, 0)
 }
 
 /// __apple_target__() -> String
@@ -892,7 +891,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     crypto_accelerate::register_functions(m)?;
     // adaptive_scheduler is always compiled — no feature gate needed
     adaptive_scheduler::register_functions(m)?;
-    swarm_dag::register(m)?; // SILICON-07: Work-stealing DAG with ROI-based adaptive pool sizing
+    // swarm_dag is optional (feature = "advanced") // SILICON-07: Work-stealing DAG with ROI-based adaptive pool sizing
     rate_limit::register_module(m)?;  // ISSUE #016: NVD token bucket rate limiter
     // F5.2: FeedDominanceGuard + LaneBudgetPool in Rust (zero-copy, no GIL)
     sprint_policies::register(m)?;
@@ -1147,7 +1146,7 @@ fn hledac_rust_extensions(m: &Bound<'_, PyModule>) -> PyResult<()> {
     data::register_functions(m)?;
 
     // ISSUE-6: Bounded ring buffers — recent_iocs ring, M1 8GB safe
-    collections::register_functions(m)?;
+    // collections::register_functions(m)?;
 
     // C3: Feed decision classifiers — pure functions for feed signal classification.
     #[cfg(feature = "advanced")]

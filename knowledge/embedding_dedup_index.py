@@ -2,6 +2,8 @@
 knowledge/embedding_dedup_index.py — A7: USearch Embedding-Based Dedup for Prelude
 ================================================================================
 
+
+
 Embedding-based near-duplicate detection using usearch + MLX embeddings.
 Integrates with existing UnifiedEmbeddingManager (M1 ANE-accelerated).
 

@@ -2,6 +2,10 @@
 runtime/state — Canonical Runtime & Research State
 
 Single source of truth for global runtime flags, sprint-start snapshots,
+
+
+
+
 and cross-component state. All state classes are frozen msgspec.Struct
 for M1 8GB RAM efficiency (no __dict__, no GC overhead).
 

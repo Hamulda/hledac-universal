@@ -3,6 +3,7 @@
 Extracted from sprint_scheduler.py (33 449 LOC → modular package).
 F350M-R / Issue #P2.
 
+
 All changes are backward-compatible: the original class remains in
 runtime/sprint_scheduler.py and is re-imported / aliased there.
 This file is the canonical home for the type definitions.

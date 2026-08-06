@@ -2,6 +2,19 @@
 Parallel Execution Optimizer
 Advanced parallel execution optimization for Hledač automation systems
 """
+
+
+
+
+
+
+
+
+
+
+
+
+
 import asyncio
 import msgspec
 import inspect
@@ -44,7 +57,7 @@ class TaskType(Enum):
     NETWORK_INTENSIVE = 'network_intensive'
     MIXED = 'mixed'
 
-class TaskMetrics(msgspec.Struct):
+class TaskMetrics(msgspec.Struct, gc=False):
     """Task execution metrics"""
     task_id: str
     task_type: TaskType
@@ -57,7 +70,7 @@ class TaskMetrics(msgspec.Struct):
     worker_id: str | None = None
     parallel_group: str | None = None
 
-class WorkerMetrics(msgspec.Struct):
+class WorkerMetrics(msgspec.Struct, gc=False):
     """Worker performance metrics"""
     worker_id: str
     cpu_cores: int
@@ -68,7 +81,7 @@ class WorkerMetrics(msgspec.Struct):
     efficiency_score: float
     last_updated: datetime
 
-class ParallelGroup(msgspec.Struct):
+class ParallelGroup(msgspec.Struct, gc=False):
     """Parallel execution group"""
     group_id: str
     tasks: list[Any]
@@ -804,7 +817,7 @@ class OptimizationLevel(Enum):
     BALANCED = 'balanced'
     AGGRESSIVE = 'aggressive'
 
-class ResourceMetrics(msgspec.Struct):
+class ResourceMetrics(msgspec.Struct, gc=False):
     """Current resource utilization metrics."""
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
@@ -816,7 +829,7 @@ class ResourceMetrics(msgspec.Struct):
     network_bytes_recv: int = 0
     timestamp: float = field(default_factory=time.time)
 
-class ResourceLimits(msgspec.Struct):
+class ResourceLimits(msgspec.Struct, gc=False):
     """Resource utilization limits for M1 8GB systems."""
     max_cpu_percent: float = 80.0
     max_memory_percent: float = 85.0
@@ -1076,7 +1089,7 @@ async def main():
 if __name__ == '__main__':
     asyncio.run(main())
 
-class CacheEntry(msgspec.Struct):
+class CacheEntry(msgspec.Struct, gc=False):
     """Entry in predictive cache."""
     key: str
     value: Any

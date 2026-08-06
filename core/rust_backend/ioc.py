@@ -2,6 +2,7 @@
 
 Canonical module (F350M-R). Wraps Rust extension or pure Python regex for:
   - extract_iocs(text) → dict[str, list[str]]
+
   - extract_iocs_flat(text) → list[(ioc_type, value)]
   - extract_iocs_simd(text) → list[(ioc_type, value)]
   - batch_extract_iocs(texts) → list[dict[...]]

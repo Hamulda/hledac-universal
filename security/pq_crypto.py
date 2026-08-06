@@ -2,6 +2,10 @@
 Post-Quantum cryptography abstraction — ML-DSA-65 hybrid signature support.
 
 ML-DSA (Module-Lattice Digital Signature Algorithm) is for signatures.
+
+
+
+
 ML-KEM (Key Encapsulation Mechanism) is for encryption only — NOT used here.
 
 Architecture:
@@ -41,7 +45,7 @@ class PQSecurityLevel(Enum):
     """ML-DSA security levels (NIST FIPS 204)."""
     ML_DSA_65 = 65
 
-class PQStatus(msgspec.Struct):
+class PQStatus(msgspec.Struct, gc=False):
     """Current status of the post-quantum backend."""
     availability: PQAvailability = PQAvailability.DISABLED
     backend_name: str = 'null'
@@ -51,14 +55,14 @@ class PQStatus(msgspec.Struct):
     signed_batch_digest: str | None = None
     chunk_count: int = 0
 
-class PQSignature(msgspec.Struct, frozen=True):
+class PQSignature(msgspec.Struct, frozen=True, gc=False):
     """A single ML-DSA signature over a canonical batch digest."""
     algorithm: str
     signature: bytes
     backend_name: str
     security_level: int
 
-class HybridSignatureSet(msgspec.Struct, frozen=True):
+class HybridSignatureSet(msgspec.Struct, frozen=True, gc=False):
     """
     Hybrid signature set containing P-256 + optional ML-DSA.
 

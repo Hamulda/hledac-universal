@@ -2,6 +2,8 @@
 
 Stateful quality assessment engine for canonical finding ingestion.
 
+
+
 ARCHITECTURE:
     DuckDBQualityGate is COMPOSED into DuckDBCanonical.
     Manages QualityAssessmentState (counts, rejection ledger).

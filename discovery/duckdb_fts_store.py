@@ -2,6 +2,9 @@
 DuckDB FTS Store — Issue #11.
 Full-text index pro discovery/ dokument data.
 
+
+
+
 Pouziva rank_bm25 (pure Python, v deps) + DuckDB pro structured storage.
 M1 8GB safe. Zero-copy Arrow ingest.
 
@@ -40,7 +43,10 @@ BM25_K = 60
 _WAL_SUFFIX = '.wal'
 _WAL_MAX_SIZE_MB = 64
 
-class FTSDocument(msgspec.Struct):
+# Schema version for migration handling (ISSUE #11)
+_SCHEMA_VERSION = 1
+
+class FTSDocument(msgspec.Struct, gc=False):
     """Jeden dokument k indexaci."""
     doc_id: str
     title: str = ''
@@ -50,7 +56,7 @@ class FTSDocument(msgspec.Struct):
     fetched_at: float = field(default_factory=time.time)
     metadata_json: str = '{}'
 
-class FTSSearchResult(msgspec.Struct):
+class FTSSearchResult(msgspec.Struct, gc=False):
     """Jeden vysledek FTS dotazu."""
     doc_id: str
     title: str
@@ -129,11 +135,25 @@ class DuckDBFTSStore:
             logger.info('DuckDBFTSStore initialized: path=%s', self._db_path)
 
     def _ensure_schema(self) -> None:
-        """Vytvori DuckDB tabulku pro dokumenty."""
+        """Vytvori DuckDB tabulku pro dokumenty s version tracking."""
         assert self._conn is not None
         self._conn.execute("\n            CREATE TABLE IF NOT EXISTS doc_bm25 (\n                doc_id        TEXT PRIMARY KEY,\n                title         TEXT NOT NULL DEFAULT '',\n                body          TEXT NOT NULL DEFAULT '',\n                source        TEXT NOT NULL DEFAULT '',\n                url           TEXT,\n                fetched_at    DOUBLE NOT NULL DEFAULT 0.0,\n                metadata_json TEXT NOT NULL DEFAULT '{}'\n            );\n        ")
         self._conn.execute('\n            CREATE INDEX IF NOT EXISTS idx_doc_bm25_source ON doc_bm25(source);\n        ')
         self._conn.execute('\n            CREATE INDEX IF NOT EXISTS idx_doc_bm25_fetched ON doc_bm25(fetched_at DESC);\n        ')
+        # Schema version tracking for migrations
+        try:
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS _fts_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+            """)
+            self._conn.execute(
+                "INSERT OR IGNORE INTO _fts_meta (key, value) VALUES ('schema_version', ?)",
+                [str(_SCHEMA_VERSION)]
+            )
+        except Exception:
+            pass  # fail-soft
 
     def _wal_source_hash(self) -> str:
         """Stable hash for WAL file naming — derived from db_path."""

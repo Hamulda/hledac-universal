@@ -2,6 +2,7 @@
 Streaming graph visualization section writer.
 Yields Mermaid diagram chunks — bounded by MAX_NODES/MAX_EDGES, fail-soft.
 """
+
 import asyncio
 from collections.abc import AsyncGenerator
 __all__ = ['stream_graph_viz_section', 'GraphVizSection']

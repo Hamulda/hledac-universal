@@ -26,7 +26,7 @@ const MAX_RESPONSE_BODY: usize = 10 * 1024 * 1024;
 
 /// HTTP response returned to Python.
 #[derive(Debug, Clone)]
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct QuicResponse {
     #[pyo3(get)]
     pub status: u16,
@@ -67,13 +67,17 @@ static CONNECTION_SEM: tokio::sync::Semaphore = tokio::sync::Semaphore::const_ne
 static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
 
 /// Get or create the global tokio runtime.
+/// 
+/// NOTE: Uses `.expect()` because OnceLock doesn't support fallible init pre-1.66.
+/// If this fails, the QUIC module is unusable. Error indicates system-level issue
+/// (e.g., OOM, resource limits) that cannot be recovered from.
 fn get_runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .max_blocking_threads(2)  // M1 8GB: only 2 threads needed for QUIC I/O
             .build()
-            .expect("quic: failed to create tokio runtime")
+            .expect("quic: OOM or system limit exceeded during tokio runtime creation")
     })
 }
 

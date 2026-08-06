@@ -2,6 +2,10 @@
 Coordinator DTOs — Data Transfer Objects
 =======================================
 
+
+
+
+
 Extracted from base.py (F320-5) for better separation of concerns.
 These DTOs are used across multiple coordinators.
 

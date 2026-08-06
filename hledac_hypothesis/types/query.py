@@ -2,6 +2,8 @@
 Dark query types — hledac_hypothesis.types.query
 =================================================
 
+
+
 Extracted from hledac_hypothesis._types (C4 Sprint Refactoring).
 """
 
@@ -21,7 +23,7 @@ class DarkQueryType(Enum):
     I2P = "i2p"
 
 
-class DarkQuery(msgspec.Struct, frozen=True):
+class DarkQuery(msgspec.Struct, frozen=True, gc=False):
     """
     Query for exploring dark/unindexed surface.
 
@@ -35,7 +37,7 @@ class DarkQuery(msgspec.Struct, frozen=True):
     reasoning: str = ""  # Why this query was generated
 
 
-class _DarkQueryListResponse(msgspec.Struct):
+class _DarkQueryListResponse(msgspec.Struct, gc=False):
     """Response model for Hermes LLM dark query generation."""
     queries: list[dict[str, Any]] = msgspec.field(default_factory=list)
 

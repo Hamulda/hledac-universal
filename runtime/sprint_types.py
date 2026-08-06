@@ -2,6 +2,9 @@
 Sprint Types Module - Extracted from sprint_scheduler.py (Tier 3 Sprint 2)
 
 Auto-extracted standalone types, dataclasses, enums, and functions
+
+
+
 that do not depend on SprintScheduler instance state.
 
 MIGRATION STATUS:

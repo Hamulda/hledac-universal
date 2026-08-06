@@ -2,6 +2,7 @@
 F350M-FED-P: LaneDispatchTransport — real per-lane backend dispatch.
 
 Sprint: F350M-FED-P / P2P Transport Activation 2026-06-04
+
 Target: federated/transports/lane_dispatch.py
 
 PURPOSE

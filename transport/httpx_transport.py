@@ -2,6 +2,7 @@
 HTTPX Transport Routing — Transport Capability Layer 2026
 =======================================================
 
+
 Sprint F206AF: HTTPX/H2 Auto-Fallback to curl_cffi
 
 Provides:

@@ -3,6 +3,7 @@
 Scans benchmarks/live_sprint_measurement.py via AST to build a precise
 extraction map of all KPI-related functions WITHOUT importing the module.
 
+
 This is the prerequisite refactor map before any high-risk extraction of
 live_kpi derivation from the monolith (benchmarks/live_sprint_measurement.py).
 
@@ -18,7 +19,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 
-class FunctionSpec(msgspec.Struct):
+class FunctionSpec(msgspec.Struct, gc=False):
     """One KPI-related function."""
     name: str
     source_lines: tuple[int, int]

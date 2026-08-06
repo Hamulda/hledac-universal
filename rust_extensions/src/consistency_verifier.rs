@@ -67,7 +67,7 @@ use std::hash::BuildHasherDefault;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Use nohash hasher for faster HashMap operations on primitive keys
-type NoHashHasher = std::collections::hash_map::DefaultHashBuilder;
+type NoHashHasher = std::collections::hash_map::DefaultHasher;
 type FactMap = HashMap<(String, String), Vec<Fact>, BuildHasherDefault<NoHashHasher>>;
 
 // ---------------------------------------------------------------------------
@@ -438,6 +438,7 @@ fn looks_like_ip(value: &str) -> bool {
 }
 
 /// Check if a value looks like a SHA256 hash.
+#[allow(dead_code)]
 fn looks_like_sha256(value: &str) -> bool {
     let cleaned = value.trim();
     cleaned.len() == 64 && cleaned.chars().all(|c| c.is_ascii_hexdigit())
@@ -517,6 +518,7 @@ fn extract_domain_from_text(text: &str) -> Option<String> {
 }
 
 /// Normalize an IP address for comparison.
+#[allow(dead_code)]
 fn normalize_ip(ip: &str) -> String {
     ip.trim().to_lowercase()
 }
@@ -670,7 +672,7 @@ fn detect_group_contradictions(entity: &str, attribute: &str, facts: &[Fact]) ->
     }
 
     // Check for temporal inconsistencies within each value group
-    for (value, group_facts) in &value_groups {
+    for (_value, group_facts) in &value_groups {
         if group_facts.len() < 2 {
             continue;
         }
@@ -681,7 +683,7 @@ fn detect_group_contradictions(entity: &str, attribute: &str, facts: &[Fact]) ->
             source_times.entry(fact.source.clone()).or_default().push(fact);
         }
 
-        for (source, time_facts) in &source_times {
+        for (_source, time_facts) in &source_times {
             if time_facts.len() < 2 {
                 continue;
             }
@@ -834,7 +836,7 @@ fn apply_tri_source_voting(
 
     // Check for 1:1:1 split
     let mut value_counts: HashMap<String, usize> = HashMap::new();
-    for (source, vals) in &source_values {
+    for (_source, vals) in &source_values {
         if vals.len() == 1 {
             let v = vals.iter().next().unwrap();
             *value_counts.entry(v.clone()).or_insert(0) += 1;
@@ -989,7 +991,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
         let (disputed_finding, suspect, voting_contradictions) =
             apply_tri_source_voting(entity, attribute, group_facts);
 
-        if let Some(df) = disputed_finding {
+        if let Some(_df) = disputed_finding {
             // Mark all facts in this group as disputed
             for fact in group_facts {
                 let finding = findings.iter().find(|f| {
@@ -1115,6 +1117,9 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
     .max(0.0)
     .min(1.0);
 
+    // Count contradictions BEFORE moving into struct
+    let contradictions_found = contradictions.len();
+
     ConsistencyResult {
         clean,
         contradictory,
@@ -1124,7 +1129,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
         entity_scores,
         consistency_score,
         facts_processed: facts.len(),
-        contradictions_found: contradictions.len(),
+        contradictions_found,
     }
 }
 
@@ -1132,7 +1137,7 @@ pub fn check_batch_findings(findings: &[Finding]) -> ConsistencyResult {
 // PyO3 Bindings
 // ---------------------------------------------------------------------------
 
-static _VERIFIER_LOCK: RwLock<()> = RwLock::();
+static _VERIFIER_LOCK: RwLock<()> = RwLock::new(());
 
 #[pyfunction]
 #[pyo3(signature = (findings_json, max_findings = 500))]

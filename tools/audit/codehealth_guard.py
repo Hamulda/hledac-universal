@@ -2,6 +2,7 @@
 F229G: NEXT ACTION GUARD — owner-imported semantics for moved symbols.
 
 Checks:
+
 - function exists locally
 - OR symbol is imported from benchmarks.live_measurement_next_action (PASS_OWNER_IMPORTED)
 - explicit args <= 8, OR is compat wrapper (NextActionInput + rule-helper loop, <=110 lines)
@@ -36,7 +37,7 @@ class GuardVerdict(Enum):
     FAIL_SYNTAX_ERROR = 'CODEHEALTH_FAIL_SYNTAX_ERROR'
     FAIL_SYMBOL_MISSING = 'CODEHEALTH_FAIL_SYMBOL_MISSING'
 
-class GuardResult(msgspec.Struct):
+class GuardResult(msgspec.Struct, gc=False):
     verdict: GuardVerdict
     function_name: str
     explicit_args: int

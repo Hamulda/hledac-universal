@@ -2,6 +2,7 @@
 Extrækce stavu pro MARL agenty.
 Stav obsahuje globální informace (z grafu, scheduleru) a lokální informace z aktuálního běhu.
 
+
 Podporuje dva režimy:
   1. extract(result: SprintSchedulerResult) — RL F257: čte přímo z výsledků sprintu
   2. extract_from_dicts(thread_state, global_state) — původní rozhraní pro dict-based input

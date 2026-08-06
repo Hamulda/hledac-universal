@@ -3,6 +3,9 @@
 UNIFIED-007 + UNIFIED-008: Replaces per-sprint relearning of domain hostility
 with a cumulative, cross-sprint reputation store backed by DuckDB.
 
+
+
+
 Key features:
 - tarpit_score: cumulative 0.0→1.0 score from TarpitDetector across sprints
 - proxy_affinity: JSON arrays of successful/failed proxy strings per domain

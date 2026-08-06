@@ -2,6 +2,9 @@
 Quality Assessment — Sprint F216G refactor
 ==========================================
 
+
+
+
 ROLE: Quality gate delegate for DuckDBShadowStore.
 
 Handles quality decision logic (entropy, dedup, URL-first fingerprinting),

@@ -2,6 +2,7 @@
 PHYSICS-01: Micro-Burst Scheduler — Proactive Thermal Management for M1 SoC
 
 The M1 chip is passively cooled (fanless MacBook Air). Under sustained
+
 GPU+CPU load, the aluminum chassis cannot dissipate heat fast enough.
 After ~5 minutes of 100% load, the SoC throttles to ~60% performance.
 

@@ -2,6 +2,9 @@
 META-001: Cross-Sprint Pre-Fetch Gate
 =====================================
 
+
+
+
 Queries entity_observations DuckDB table AND SprintDeltaIndex to gate
 URL frontier selection BEFORE fetching. Prevents redundant fetches for entities
 already confirmed by multiple independent sources across sprints.

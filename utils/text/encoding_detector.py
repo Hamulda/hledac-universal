@@ -2,6 +2,10 @@
 
 Detects Base64, Base32, Base85, Hex encoding in text with statistical
 validation and nested encoding detection.
+
+
+
+
 """
 from __future__ import annotations
 import base64
@@ -20,7 +24,7 @@ URL_ENCODING_REGEX = '(?:%[0-9A-Fa-f]{2})+'
 MIN_ENTROPY = 2.5
 MAX_ENTROPY = 7.5
 
-class EncodingChain(msgspec.Struct):
+class EncodingChain(msgspec.Struct, gc=False):
     """Represents a chain of nested encodings.
 
     Attributes:
@@ -32,7 +36,7 @@ class EncodingChain(msgspec.Struct):
     final_content: str
     depth: int
 
-class EncodingFinding(msgspec.Struct):
+class EncodingFinding(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for detected encoding in text.
 
     Attributes:
@@ -56,7 +60,7 @@ class EncodingFinding(msgspec.Struct):
     entropy: float = 0.0
     nested_chain: EncodingChain | None = None
 
-class EncodingConfig(msgspec.Struct):
+class EncodingConfig(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for encoding detection configuration.
 
     Attributes:

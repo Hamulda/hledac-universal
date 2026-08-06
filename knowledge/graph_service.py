@@ -2,6 +2,7 @@
 Graph Service — Sprint Memory Layer Facade
 =========================================
 
+
 Cross-sprint entity memory backed by DuckPGQGraph (DuckDB).
 
 ROLE: Sprint memory / cross-sprint persistence layer.

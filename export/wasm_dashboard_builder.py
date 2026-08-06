@@ -2,6 +2,7 @@
 [META]-010: Interactive Canvas graph dashboard — no CDN, no WASM.
 
 Produces a self-contained HTML file with:
+
   - Force-directed layout via D3-force (bundled inline)
   - Canvas 2D rendering (no WebGL dependency)
   - Community-based node coloring

@@ -2,6 +2,7 @@
 
 Responsibilities:
 - Export findings as Markdown report
+
 - Export entity graph as HTML
 - Called at end of pipeline run (post-processing)
 

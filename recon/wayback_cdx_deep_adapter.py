@@ -3,6 +3,7 @@ Wayback CDX Deep Adapter — Sprint F234
 
 Wraps WaybackCDXDeepSearch for the advisory sidecar seam in sidecar_orchestrator.
 
+
 Role: advisory sidecar, NOT the main write path.
 Wayback CDX analysis is non-blocking and fail-soft — errors never crash the sprint.
 

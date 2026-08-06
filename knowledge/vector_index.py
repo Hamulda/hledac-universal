@@ -2,6 +2,8 @@
 VectorIndex — Unified Vector Storage Protocol (Issue F5)
 
 ROLE: Single canonical interface for ANN vector storage.
+
+
 Dispatches to SqliteVecIndex (primary, M1 8GB) or LanceDbIndex (>1M vectors).
 
 Dispatch: HLEDAC_VECTOR_BACKEND env var

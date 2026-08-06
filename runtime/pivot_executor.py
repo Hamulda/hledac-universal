@@ -2,6 +2,9 @@
 Sprint F204C: Autonomous Pivot Executor
 
 Bounded executor that runs top pivots from PivotPlanner, stores derived
+
+
+
 findings via canonical ingest, and writes HypothesisFeedback without
 sync event-loop hacks.
 

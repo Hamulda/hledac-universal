@@ -2,6 +2,10 @@
 ContentCleaner - HTML to Markdown/JSON Converter
 ================================================
 
+
+
+
+
 Memory-efficient HTML cleaning using ReaderLM-v2 via MLX-LM.
 Optimized for Apple Silicon (M1/M2/M3) with 8GB RAM.
 
@@ -53,7 +57,7 @@ class OutputFormat(Enum):
     JSON = 'json'
     TEXT = 'text'
 
-class CleaningResult(msgspec.Struct):
+class CleaningResult(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for HTML cleaning result."""
     success: bool
     content: str
@@ -521,7 +525,7 @@ def clean_search_result_url(url: str, source: str='auto') -> str | None:
         return extract_url_from_google_redirect(url)
 from dataclasses import dataclass
 
-class SearchResultItem(msgspec.Struct):
+class SearchResultItem(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for search result item."""
     title: str
     url: str

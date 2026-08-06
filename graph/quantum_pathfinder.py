@@ -2,6 +2,9 @@
 Quantum-Inspired Pathfinder Module
 ===================================
 
+
+
+
 GRAPH ANALYTICS PROVIDER / DONOR BACKEND (Sprint F700D)
 ========================================================
 DuckPGQGraph is the GraphAnalyticsProvider — the analytics/donor backend.
@@ -199,7 +202,7 @@ def _get_SCIPY_AVAILABLE():
         SCIPY_AVAILABLE = _is_scipy_available()
     return SCIPY_AVAILABLE
 
-class QuantumPathConfig(msgspec.Struct):
+class QuantumPathConfig(msgspec.Struct, gc=False):
     """Configuration for quantum-inspired pathfinding.
 
     Attributes:
@@ -1457,6 +1460,147 @@ class DuckPGQGraph:
         except Exception as e:
             logger.warning(f'[GRAPH] community_detection failed: {e}')
             return {}
+
+    def predict_edges(self, min_confidence: float = 0.3, max_candidates: int = 10000) -> list[dict]:
+        """
+        SWARM-003: Predict missing edges in the IOC graph.
+
+        Computes link prediction scores for non-connected node pairs with common neighbors:
+        - Adamic-Adar Index: Σ 1/log(degree(z)) for common neighbors z
+        - Preferential Attachment: degree(u) × degree(v)
+        - Jaccard Coefficient: |N(u) ∩ N(v)| / |N(u) ∪ N(v)|
+
+        Args:
+            min_confidence: Minimum confidence threshold (default: 0.3)
+            max_candidates: Maximum node pairs to consider (M1 8GB bound, default: 10000)
+
+        Returns:
+            List of dicts with predicted edges:
+            {src_id, dst_id, adamic_adar, jaccard, pref_attach, common_neighbors, confidence}
+        """
+        try:
+            # Try Rust implementation first
+            try:
+                from hledac.universal.core.rust_backend import rust as _rust
+                if _rust is not None and _rust.is_available and _rust.link_predictor is not None:
+                    result = _rust.link_predictor.predict_links(
+                        self.db_path,
+                        min_adamic_adar=0.01,
+                        min_jaccard=min_confidence,
+                        max_candidates=max_candidates,
+                    )
+                    if result and hasattr(result, 'edges'):
+                        edges = []
+                        for e in result.edges:
+                            edges.append({
+                                'src_id': e.src_id,
+                                'dst_id': e.dst_id,
+                                'adamic_adar': e.adamic_adar,
+                                'jaccard': e.jaccard,
+                                'pref_attach': e.preferential_attachment,
+                                'common_neighbors': e.common_neighbors,
+                                'method': e.method,
+                                'confidence': self._compute_confidence(e.adamic_adar, e.jaccard, e.preferential_attachment),
+                            })
+                        return edges
+            except ImportError:
+                pass
+
+            # Fallback: Python DuckDB implementation
+            return self._predict_edges_python(min_confidence, max_candidates)
+
+        except Exception as e:
+            logger.warning(f'[GRAPH] predict_edges failed: {e}')
+            return []
+
+    def _predict_edges_python(self, min_confidence: float, max_candidates: int) -> list[dict]:
+        """Python fallback for link prediction using DuckDB."""
+        import math
+        from collections import defaultdict
+
+        try:
+            # Build adjacency list
+            adjacency: dict[int, list[int]] = defaultdict(list)
+            degrees: dict[int, int] = defaultdict(int)
+
+            rows = self.con.execute("""
+                SELECT src_id, dst_id FROM ioc_edges WHERE rel_type = 'OBSERVED'
+            """).fetchall()
+
+            for src_id, dst_id in rows:
+                adjacency[src_id].append(dst_id)
+                adjacency[dst_id].append(src_id)
+                degrees[src_id] += 1
+                degrees[dst_id] += 1
+
+            # Deduplicate
+            for node in adjacency:
+                adjacency[node] = list(set(adjacency[node]))
+
+            # Find candidate pairs
+            candidates: dict[tuple[int, int], list[int]] = defaultdict(list)
+
+            for node, neighbors in adjacency.items():
+                for neighbor in neighbors:
+                    if neighbor not in adjacency:
+                        continue
+                    for second in adjacency[neighbor]:
+                        if second == node or second in neighbors:
+                            continue
+                        pair = (min(node, second), max(node, second))
+                        candidates[pair].append(neighbor)
+
+            # Limit and compute scores
+            edges = []
+            for (src, dst), common in list(candidates.items())[:max_candidates]:
+                if not common:
+                    continue
+
+                # Adamic-Adar
+                adamic_adar = 0.0
+                for cn in common:
+                    deg = degrees.get(cn, 0)
+                    if deg > 1:
+                        adamic_adar += 1.0 / math.log(deg)
+
+                # Jaccard
+                n_src = degrees.get(src, 0)
+                n_dst = degrees.get(dst, 0)
+                union = n_src + n_dst - len(common)
+                jaccard = len(common) / union if union > 0 else 0.0
+
+                # Preferential Attachment
+                pref_attach = n_src * n_dst
+
+                confidence = self._compute_confidence(adamic_adar, jaccard, float(pref_attach))
+
+                if confidence >= min_confidence:
+                    edges.append({
+                        'src_id': src,
+                        'dst_id': dst,
+                        'adamic_adar': adamic_adar,
+                        'jaccard': jaccard,
+                        'pref_attach': float(pref_attach),
+                        'common_neighbors': len(common),
+                        'method': 'adamic_adar' if adamic_adar > 0.3 else 'jaccard',
+                        'confidence': confidence,
+                    })
+
+            # Sort by confidence
+            edges.sort(key=lambda x: x['confidence'], reverse=True)
+            return edges
+
+        except Exception as e:
+            logger.warning(f'[GRAPH] _predict_edges_python failed: {e}')
+            return []
+
+    def _compute_confidence(self, adamic_adar: float, jaccard: float, pref_attach: float) -> float:
+        """Compute combined confidence score from link prediction metrics."""
+        # Weighted average of normalized scores
+        aa_conf = min(adamic_adar / 2.0, 1.0) * 0.5  # 50% weight
+        jaccard_conf = jaccard * 0.3  # 30% weight
+        pa_conf = min(pref_attach / 1000.0, 1.0) * 0.2  # 20% weight
+        return min(aa_conf + jaccard_conf + pa_conf, 1.0)
 
     def batch_centrality_all(self, top_k: int = 20) -> list[dict]:
         """

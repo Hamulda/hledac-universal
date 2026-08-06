@@ -2,6 +2,59 @@
 Universal Orchestrator Types - Consolidated Type Definitions
 =============================================================
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 All enums and dataclasses used across the universal orchestrator.
 Consolidated from:
 - orchestrator_v2.py (ResearchMode, OrchestratorState, ActionType, etc.)

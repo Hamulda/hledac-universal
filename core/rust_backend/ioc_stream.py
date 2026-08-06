@@ -2,6 +2,7 @@
 HEIST-01: Python seam for StreamingIocScanner — zero-copy mmap/bytes IOC sweep.
 
 Provides a convenience wrapper around the Rust `StreamingIocScanner` PyClass
+
 with Python 3.14+ best practices: type hints, async support via
 `asyncio.to_thread()`, and graceful fallback when the Rust extension
 is not available.

@@ -3,6 +3,10 @@ Discovery Planner — Budget-Aware Multi-Source Expansion.
 
 Sprint F206AQ: Budget-Aware Multi-Source Expansion
 
+
+
+
+
 Core idea:
   provider score = reliability_ewma * novelty_ewma / cost_ewma
 
@@ -68,14 +72,14 @@ def get_provider_state(name: str) -> ProviderCapabilityState:
         return ProviderCapabilityState.DISABLED
     return ProviderCapabilityState.PRODUCTION
 
-class ProviderPlan(msgspec.Struct):
+class ProviderPlan(msgspec.Struct, gc=False):
     """Plan for a single discovery call."""
     provider: str
     max_results: int
     timeout_s: float
     estimated_cost_ms: float
 
-class ProviderStatusDebug(msgspec.Struct, frozen=True):
+class ProviderStatusDebug(msgspec.Struct, frozen=True, gc=False):
     """Why a provider was selected or skipped."""
     provider: str
     state: ProviderCapabilityState
@@ -103,7 +107,7 @@ def serialize_provider_status_debug(debug_entries: list[ProviderStatusDebug] | l
             result.append({'provider': entry.get('provider', ''), 'state': state if state is not None else str(state), 'selected': entry.get('selected', False), 'reason': entry.get('reason', '')})
     return result
 
-class DiscoveryPlan(msgspec.Struct, frozen=True):
+class DiscoveryPlan(msgspec.Struct, frozen=True, gc=False):
     """Full plan for a sprint discovery pass."""
     plans: list[ProviderPlan]
     estimated_total_ms: float

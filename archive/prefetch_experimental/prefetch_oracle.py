@@ -2,6 +2,7 @@
 PrefetchOracle – rozhoduje, které URL se mají načítat na pozadí.
 
 PROMOTION GATE — EXPERIMENTAL / HEAVY / NOT PROMOTED
+
 =====================================================
 Používá dvoustupňový výběr:
 1. Stage A: ultralehké kandidáty (common neighbors, PQIndex, sketchy)

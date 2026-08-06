@@ -2,6 +2,9 @@
 META-007: Propositional Consistency Bridge
 ==========================================
 
+
+
+
 Bridges PropositionalConsistencyVerifier with EntropyFetchBridge for the
 "confident liar" detection feedback loop.
 

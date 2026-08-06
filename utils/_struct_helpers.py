@@ -22,7 +22,7 @@ Use a direct __setattr__ override on the class. Cost: ~0.05 µs per mutation.
         cycle_time_ema: float = 1.0
         ...
 
-    class _CycleState(msgspec.Struct, frozen=True):  # AFTER
+    class _CycleState(msgspec.Struct, frozen=True, gc=False):  # AFTER
         barrier_retry_count: int = 0
         stop_requested: bool = False
         cycle_time_ema: float = 1.0
@@ -42,7 +42,7 @@ Use field(default_factory=...) for mutable containers + __setattr__ for field re
         sidecar_tasks: set[Any] = field(default_factory=set)
         ...
 
-    class _RuntimeState(msgspec.Struct, frozen=True):  # AFTER
+    class _RuntimeState(msgspec.Struct, frozen=True, gc=False):  # AFTER
         bg_tasks: set = field(default_factory=set)
         duckdb_store: Any = None
         sidecar_tasks: set = field(default_factory=set)

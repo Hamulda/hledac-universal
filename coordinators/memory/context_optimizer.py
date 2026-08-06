@@ -2,6 +2,7 @@
 Context Optimization Manager
 ===========================
 
+
 Context optimization with three-tier storage (hot/warm/cold) and compression.
 
 Extracted from memory_coordinator.py (F320) — original line range: 989-1269
@@ -14,62 +15,25 @@ Features:
 
 Canonical import:
     from hledac.universal.coordinators.memory import ContextOptimizationManager
+
+Types (ContextPriority, ResearchPhase, ContextItem, CompressedContext)
+are defined in _core.py to avoid duplication. Import from there or via this module.
 """
 
 import logging
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import msgspec
-
+from hledac.universal.coordinators.memory._core import (
+    CompressedContext,
+    ContextItem,
+    ContextPriority,
+    ResearchPhase,
+)
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
 
 logger = logging.getLogger(__name__)
-
-
-class ContextPriority(Enum):
-    """Priority levels for context items."""
-    HIGH = 'high'
-    MEDIUM = 'medium'
-    LOW = 'low'
-
-
-class ResearchPhase(Enum):
-    """Research phases for context prioritization."""
-    DATA_COLLECTION = 'data_collection'
-    ANALYSIS = 'analysis'
-    SYNTHESIS = 'synthesis'
-    VALIDATION = 'validation'
-
-
-class ContextItem(msgspec.Struct, gc=False):
-    """Individual context item with metadata for three-tier storage."""
-    item_id: str
-    content: str
-    metadata: dict[str, Any]
-    tokens: int
-    priority: ContextPriority
-    access_count: int
-    last_accessed: float
-    embedding: Any | None = None
-    content_type: str = 'general'
-    confidence: float = 0.5
-
-
-class CompressedContext(msgspec.Struct, gc=False):
-    """Compressed context container."""
-    context_id: str
-    original_size: int
-    compressed_size: int
-    compression_ratio: float
-    critical_content: str
-    important_summary: str
-    abstract_summary: str
-    full_compressed: bytes
-    metadata: dict[str, Any]
-    timestamp: float
 
 
 class ContextOptimizationManager:

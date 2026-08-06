@@ -2,6 +2,10 @@
 recon/batch_document_processor.py — Batch PDF Processing Pipeline
 =================================================================
 
+
+
+
+
 ISSUE [UNINDEXED]-013: Batch PDF Processing for Large Document Dumps
 
 MOTIVATION:

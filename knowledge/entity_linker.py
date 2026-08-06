@@ -2,6 +2,10 @@
 EntityLinker - Wikidata-based Entity Linking and Disambiguation
 ===============================================================
 
+
+
+
+
 Lightweight entity linking system optimized for M1 MacBook Air (8GB RAM).
 Links extracted entities to Wikidata using SPARQL queries with context-aware
 disambiguation and caching.

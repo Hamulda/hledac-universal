@@ -2,6 +2,10 @@
 """
 [META]-002: Cross-Sprint Entity Delta Sync Engine + SprintDeltaIndex Compatibility.
 
+
+
+
+
 Architecture
 -------------
 Two-tier design (consistent with cross_sprint_gate.py [META-001]):

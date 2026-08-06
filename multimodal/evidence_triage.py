@@ -2,6 +2,8 @@
 Evidence Triage Coordinator — Sprint F202I.
 
 Extracts bounded triage facets from PDF/image artifacts discovered in sprint runs.
+
+
 Facets: title/author, EXIF/GPS, OCR snippets, file hashes, embedded URL/domain hits.
 
 No VLM by default. Model load/unload only via brain/model_lifecycle.py.
@@ -65,7 +67,7 @@ def _extract_urls_and_domains(text: str) -> tuple[list[str], list[str]]:
     domains = unique_domains[:MAX_URL_HITS]
     return (urls, domains)
 
-class TriageFacets(msgspec.Struct):
+class TriageFacets(msgspec.Struct, gc=False):
     """
     Bounded triage facets extracted from a document/image artifact.
 

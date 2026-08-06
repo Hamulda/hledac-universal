@@ -2,6 +2,7 @@
 LazyImport — Deferred module import with caching
 ===============================================
 
+
 Replaces 10× try/except ImportError patterns in duckdb_store.py with a
 single helper that resolves once and caches the result.
 

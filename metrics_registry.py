@@ -2,6 +2,8 @@
 MetricsRegistry - Prometheus-style lightweight metrics
 ===================================================
 
+
+
 Simple metrics collection without external dependencies.
 Tracks runtime metrics for debugging RAM constraints.
 
@@ -35,7 +37,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 METRIC_NAMES = frozenset(['orchestrator_rss_mb', 'orchestrator_frontier_size', 'orchestrator_evidence_ring_len', 'orchestrator_tool_exec_events', 'orchestrator_budget_remaining_tokens', 'orchestrator_budget_remaining_time', 'orchestrator_budget_remaining_api_calls', 'cache_http_size', 'cache_snapshot_size', 'cache_frontier_size', 'memory_open_fds', 'memory_rss_mb', 'memory_vms_mb', 'mlx_cache_hits', 'mlx_cache_misses', 'mlx_cache_size_bytes', 'mlx_active_memory_bytes', 'mlx_peak_memory_bytes', 'mlx_cache_fragmentation_ratio', 'mlx_kernel_compilation_time_ms', 'mlx_kernel_cache_hit_rate', 'model_load_duration_ms', 'model_unload_count', 'model_load_failures', 'action_latency_ms', 'thermal_throttle_events', 'thermal_recovery_events', 'memory_zone_normal_seconds', 'memory_zone_high_seconds', 'circuit_breaker_state_transitions', 'circuit_breaker_open_count', 'circuit_breaker_half_open_count', 'circuit_breaker_closed_count', 'circuit_breaker_recovery_success', 'circuit_breaker_open_duration_s', 'circuit_breaker_closed_duration_s', 'memory_zone_critical_seconds', 'dark_surface_pivots_attempted', 'dark_surface_pivots_successful', 'cover_traffic_fired', 'alert_warning_circuit_breaker_open_over_30s', 'memory_pressure_vs_finding_yield', 'windup_entry_count', 'sprint_budget_elapsed_ms', 'sprint_budget_remaining_ms', 'sprint_budget_phase', 'sprint_phase_duration_avg_ms', 'sprint_phase_duration_p50_ms', 'sprint_phase_duration_p95_ms', 'duckdb_ingest_latency_ms', 'duckdb_query_latency_ms', 'bounded_gather_tasks_gathered', 'bounded_gather_tasks_errors', 'bounded_gather_errors_suppressed', 'memory_layer_pressure_pct', 'fetch_coordinator_active', 'fetch_coordinator_blocked_domains', 'fetch_coordinator_circuit_open'])
 
-class MetricSnapshot(msgspec.Struct):
+class MetricSnapshot(msgspec.Struct, gc=False):
     """A single metric snapshot"""
     ts: datetime
     name: str

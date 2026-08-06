@@ -2,6 +2,8 @@
 brain/auto_re/catalog.py — Magic-byte format families and Hermes3 prompt builder
 ================================================================================
 
+
+
 Stage A: Magic-byte router maps first 16 bytes → format family (or "unknown").
 Stage B: Hermes3 prompt assembly with entropy histogram + ASCII printability.
 

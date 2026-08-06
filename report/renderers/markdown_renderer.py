@@ -2,6 +2,7 @@
 Jinja2 for Markdown replaces string-concatenation templates.
 Templates are loaded from report/templates/ directory.
 Supports streaming write for large reports.
+
 """
 from typing import TYPE_CHECKING, Any
 from pathlib import Path

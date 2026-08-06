@@ -2,6 +2,7 @@
 EvidenceSink Adapter — EvidenceLog implementuje EvidenceSink Protocol
 ===================================================================
 
+
 A5-02: Adapter který obalí EvidenceLog a implementuje EvidenceSink Protocol.
 
 Tento adapter žije v injection layer — spojuje Protocol s implementací.

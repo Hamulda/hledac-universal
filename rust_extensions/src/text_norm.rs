@@ -136,8 +136,8 @@ pub fn batch_nfc_normalize(texts: Vec<String>) -> Result<Vec<String>, PyErr> {
     }
     let n = texts.len();
     let out = Python::attach(|py| {
-        release_gil(py, || {
-            crate::mixed_pool(n).install(|| texts.par_iter().map(|s| s.nfc().collect()).collect())
+        release_gil(py, move || {
+            crate::mixed_pool(n).install(|| texts.iter().map(|x| x.clone()).collect::<Vec<_>>().par_iter().map(|s| s.nfc().collect()).collect())
         })
     });
     Ok(out)
@@ -179,9 +179,9 @@ pub fn batch_strip_diacritics(texts: Vec<String>) -> Result<Vec<String>, PyErr> 
     ];
     let n = texts.len();
     let out = Python::attach(|py| {
-        release_gil(py, || {
+        release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
-                texts.par_iter()
+                texts.iter().map(|x| x.clone()).collect::<Vec<_>>().par_iter()
                     .map(|s| {
                         s.nfd()
                             .filter(|c| !MARK_RANGES.iter().any(|(lo, hi)| c >= lo && c <= hi))
@@ -218,7 +218,7 @@ pub fn batch_nfc_normalize_fast(texts: Vec<String>) -> Result<Vec<String>, PyErr
 
     let n = texts.len();
     let out = Python::attach(|py| {
-        release_gil(py, || {
+        release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
                 texts
                     .into_par_iter()
@@ -272,7 +272,7 @@ pub fn batch_strip_diacritics_fast(texts: Vec<String>) -> Result<Vec<String>, Py
 
     let n = texts.len();
     let out = Python::attach(|py| {
-        release_gil(py, || {
+        release_gil(py, move || {
             crate::mixed_pool(n).install(|| {
                 texts
                     .into_par_iter()

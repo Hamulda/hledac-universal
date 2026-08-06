@@ -3,6 +3,8 @@ Regex cache with LRU for compiled patterns.
 Sprint 79a: Avoid recompiling regex patterns in hot paths.
 F4.2: Python regex centralized cache — replaces scattered re.compile() calls.
 
+
+
 Key optimizations:
 1. @cached_compile decorator — caches re.compile() at function level
 2. MultiPatternCache — O(n) multi-pattern matching (Aho-Corasick style)

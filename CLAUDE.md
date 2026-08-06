@@ -72,8 +72,107 @@ CLI / __main__.py
 
 ## FEATURE FLAGS (Kompletní seznam)
 
-**Pravidlo Q1:** Každý nový `HLEDAC_ENABLE_*` flag MUSÍ mít vyplněný sloupec `Profile`.
-Bez `profile` pole flag nebude přijat do CI — viz `tests/probe_q1_arch_rules/`.
+> **⚠️ ISSUE [SWARM]-010:** Feature flag sprawl — 70+ flags, žádná validace. 
+> **Kanonický zdroj:** `core/feature_flags.py` — jediná pravda pro všechny HLEDAC_ENABLE_* flags.
+> **Pravidlo Q1:** Každý nový `HLEDAC_ENABLE_*` flag MUSÍ být přidán do `FeatureFlag` enum v `core/feature_flags.py`.
+> Bez registrace v enumu nebude přijat do CI.
+
+### Kanonická architektura (ISSUE [SWARM]-010)
+
+```
+core/feature_flags.py          # Enum + validace + runtime check
+    ├── FeatureFlag enum      # Všechny známé flags
+    ├── FeatureFlags class    # Singleton s get(), validate(), list_all()
+    ├── DEPRECATED_FLAGS      # Deprecated aliases s warningy
+    └── validate_sprint_flags()  # CLI entry point
+
+utils/flag_registry.py         # Q1 compliance + FlagSpec registry
+    ├── FlagSpec              # Metadata (implies, conflicts, RAM)
+    ├── validate_flag_combo()   # Validace kombinací
+    └── register()            # Registrace nových flags
+
+runtime/sprint_entrypoint.py   # Validace na startu sprintu
+    └── run_pre_sprint_checks() → FeatureFlags.validate()
+```
+
+### Kategorie (FlagCategory enum)
+
+| Kategorie | Popis | Příklady |
+|-----------|-------|----------|
+| `NETWORK` | Transport, protokoly | TOR, I2P, HTTPX, curl_cffi |
+| `BRAIN` | LLM, ML inference | LLM, DSPy, Hermes3, GRAPH_RAG |
+| `STORAGE` | Persistence, indexy | DuckDB, LanceDB, Graph |
+| `DARK_SURFACE` | Dark web discovery | DARK_PIVOTS, DHT, IPFS |
+| `INTELLIGENCE_APIS` | Third-party API | Shodan, Censys, BGP |
+| `FORENSICS` | Analýza, forensics | Steganography, Auto-RE |
+| `STEALTH` | Anti-detection | Stealth layer, jitter |
+| `SYSTEM` | Runtime, debug | Benchmark, Offline, RL |
+
+### Implication rules (závislosti)
+
+| Flag | Implies |
+|------|---------|
+| `HLEDAC_ENABLE_DSPY` | `HLEDAC_ENABLE_LLM` |
+| `HLEDAC_ENABLE_HYPOTHESIS` | `HLEDAC_ENABLE_LLM` |
+| `HLEDAC_ENABLE_GRAPH_RAG` | `HLEDAC_ENABLE_LLM`, `HLEDAC_ENABLE_GRAPH_ANALYSIS` |
+| `HLEDAC_ENABLE_GRAPH_PATHS` | `HLEDAC_ENABLE_GRAPH_ANALYSIS` |
+| `HLEDAC_ENABLE_BGP_PDNS` | `HLEDAC_ENABLE_BGP` |
+| `HLEDAC_ENABLE_FEDERATED_HYBRID` | `HLEDAC_ENABLE_FEDERATED` |
+| `HLEDAC_ENABLE_DEEP_RESEARCH` | `HLEDAC_ENABLE_LLM` |
+| `HLEDAC_ENABLE_HERMES_SYNTHESIS` | `HLEDAC_ENABLE_LLM` |
+| `HLEDAC_LANCEDB_AUTO_TUNE` | `HLEDAC_LANCEDB_QUANTIZE` |
+
+### Conflict pairs (mutual exclusion)
+
+| Flag A | Flag B |
+|--------|--------|
+| `HLEDAC_ENABLE_CURL_CFFI` | `HLEDAC_ENABLE_HTTPX_H2` |
+| `HLEDAC_ENABLE_NODRIVER` | `HLEDAC_ENABLE_HEAVY_BROWSER` |
+| `HLEDAC_ENABLE_FEDERATED_HYBRID` | `HLEDAC_ENABLE_FEDERATED_P2P` |
+| `HLEDAC_ENABLE_SYNTHESIS` (deprecated) | `HLEDAC_ENABLE_HERMES_SYNTHESIS` |
+
+### Deprecated flags
+
+| Deprecated | Replacement | Reason |
+|------------|-------------|--------|
+| `HLEDAC_ENABLE_SYNTHESIS` | `HLEDAC_ENABLE_HERMES_SYNTHESIS` | More explicit naming |
+| `HLEDAC_HTTP3` | `HLEDAC_ENABLE_HTTPX_H3` | Consistent naming pattern |
+| `HLEDAC_DEEP_RESEARCH` | `HLEDAC_ENABLE_DEEP_RESEARCH` | Consistent naming pattern |
+| `HLEDAC_LANCEDB_AUTO_TUNE` | `HLEDAC_LANCEDB_AUTO_TUNE_ENABLED` | Boolean semantics |
+
+### Usage (core/feature_flags.py)
+
+```python
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
+
+# Check a flag
+if FeatureFlags.get(FeatureFlag.DSPY):
+    from hledac.universal.brain import dspy_optimizer
+
+# Validate at startup (exit 2 on errors)
+errors, warnings = FeatureFlags.validate()
+if errors:
+    sys.exit(2)
+
+# List all flags
+for info in FeatureFlags.list_all():
+    print(f"{info.name}: {info.value} (active={info.is_active})")
+
+# Get diagnostic output
+FeatureFlags.print_diagnostics()
+```
+
+### M1 8GB RAM budget
+
+| Threshold | Action |
+|-----------|--------|
+| > 5500 MB | WARNING logged |
+| > 7000 MB | FATAL — `sys.exit(2)` |
+
+---
+
+**Pravidlo Q1:** Každý nový `HLEDAC_ENABLE_*` flag MUSÍ být přidán do `FeatureFlag` enum v `core/feature_flags.py`.
+Bez registrace nebude přijat do CI — viz `tests/probe_q1_arch_rules/`.
 
 | Flag | Default | Profile | Popis |
 |------|---------|---------|-------|

@@ -2,6 +2,10 @@
 from __future__ import annotations
 Shadow msgspec twins for AdmissionResult and BacklogCandidate.
 
+
+
+
+
 SHADOW-ONLY PILOT (Sprint 8AQ) — NOT part of production boot path.
 This module is NEVER imported by autonomous_orchestrator.py or any live gate.
 
@@ -26,7 +30,7 @@ import msgspec
 # Shadow twins
 # ---------------------------------------------------------------------------
 
-class AdmissionResultShadow(msgspec.Struct, frozen=True):
+class AdmissionResultShadow(msgspec.Struct, frozen=True, gc=False):
     """
     Shadow of autonomous_orchestrator.AdmissionResult.
 
@@ -44,7 +48,7 @@ class AdmissionResultShadow(msgspec.Struct, frozen=True):
     reason: str
 
 
-class BacklogCandidateShadow(msgspec.Struct, frozen=True):
+class BacklogCandidateShadow(msgspec.Struct, frozen=True, gc=False):
     """
     Shadow of autonomous_orchestrator.BacklogCandidate.
 

@@ -2,6 +2,9 @@
 Core Compile and Import Readiness Gate — Sprint F212R-C
 
 Read-only compile/import smoke for core runtime surfaces.
+
+
+
 No MLX load. No network. No production edits.
 
 Usage:

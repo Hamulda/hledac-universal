@@ -2,6 +2,7 @@
 RAGOrchestrator — bounded dual-engine RAG (sqlite-vec + optional LanceDB).
 
 ROLE: Production RAG provider that wires advanced_rag → knowledge/lancedb_store.
+
 ================================================================================
 
 Architecture (Phase 7.3):

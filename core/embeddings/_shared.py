@@ -2,6 +2,7 @@
 Shared utilities for embeddings modules.
 
 Consolidates duplicate implementations detected by vibedrift:
+
 - _encode_sync() - MLX encoding with fallback
 - _get_rss_gb() - memory measurement
 - apply_task_prefix() - task prefixing for prompts

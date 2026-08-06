@@ -2,6 +2,9 @@
 runtime/telemetry.py — Minimal runtime telemetry seam
 ======================================================
 
+
+
+
 Role: SprintMetrics collector + fail-soft structured logging helper.
 Authority: session-scoped phase/module/elapsed_ms events.
 

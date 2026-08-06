@@ -2,6 +2,8 @@
 runtime/sidecar_dispatcher.py — F205F: Extracted Sidecar Dispatch Bookkeeping
 ============================================================================
 
+
+
 Refactored from sprint_scheduler.py F205C. Holds only dispatch bookkeeping:
 - SidecarBatch construction for the bus
 - Empty / None store guard

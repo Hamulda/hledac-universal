@@ -2,6 +2,10 @@
 MLX Unified Scheduler — koordinovaný MLX scheduler pro LLM + embeddings na M1.
 
 Problém (P1-03):
+
+
+
+
     Čtyři různé MLX-related moduly s částečně překrývající se funkcionalitou:
     - mlx_kv_cache_share.py — sdílení tokenizovaných prefixů (pre-tokenization cache)
     - mlx_batched_executor.py — batched executor přes BatchScheduler

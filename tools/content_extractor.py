@@ -2,6 +2,7 @@
 Content extractor module - import-safe with bounded extraction.
 Extracts main text from HTML and structured data from previews.
 """
+
 import logging
 import re
 from dataclasses import dataclass, field
@@ -130,7 +131,7 @@ def extract_structured_snippet(data: str, max_chars: int=20000) -> str:
         pass
     return data[:max_chars]
 
-class ExtractedContent(msgspec.Struct):
+class ExtractedContent(msgspec.Struct, gc=False):
     """Structured extracted content."""
     url: str
     title: str = ''

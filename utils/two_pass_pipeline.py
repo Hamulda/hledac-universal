@@ -2,6 +2,9 @@
 Two-Pass Pipeline — Issue 2.5
 
 Single asyncio.TaskGroup with a queue between producer (pass 1) and consumer (pass 2).
+
+
+
 Backpressure via asyncio.Queue(maxsize=512).
 
 Producer (Pass 1): async I/O — network fetches, disk reads
@@ -40,14 +43,14 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 logger = logging.getLogger(__name__)
 
-class TwoPassPipelineConfig(msgspec.Struct):
+class TwoPassPipelineConfig(msgspec.Struct, gc=False):
     """Configuration for a two-pass pipeline."""
     queue_size: int = 512
     label: str = 'two_pass'
     consumer_concurrency: int = 8
     timeout_s: float | None = None
 
-class PipelineStats(msgspec.Struct):
+class PipelineStats(msgspec.Struct, gc=False):
     """Runtime statistics for a two-pass pipeline."""
     produced: int = 0
     consumed: int = 0

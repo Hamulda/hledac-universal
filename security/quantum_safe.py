@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+
+
 import logging
 import secrets
 from dataclasses import dataclass
@@ -34,7 +36,7 @@ class SecurityLevel(Enum):
     HIGH = 'high'
     MAXIMUM = 'maximum'
 
-class EncryptedContainer(msgspec.Struct):
+class EncryptedContainer(msgspec.Struct, gc=False):
     """Šifrovaný kontejner"""
     ciphertext: bytes
     encapsulated_key: bytes

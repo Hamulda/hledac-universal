@@ -675,7 +675,7 @@ impl PyDistributedBloomFilter {
         }
         // R4-01: GIL released during bulk add — serial loop (filter.add is not Send+Sync)
         let filter = &mut self.filter;
-        crate::gil::release_gil(py, || {
+        crate::gil::release_gil(py, move || {
             items.iter().map(|s| filter.add(s.as_bytes())).collect()
         })
     }
@@ -693,7 +693,7 @@ impl PyDistributedBloomFilter {
         }
         let bytes_vec: Vec<&[u8]> = items.iter().map(|s| s.as_bytes()).collect();
         // R4-01: GIL released during rayon par_iter — filter.contains() is pure Rust
-        crate::gil::release_gil(py, || {
+        crate::gil::release_gil(py, move || {
             bytes_vec
                 .par_iter()
                 .map(|b| self.filter.contains(b))

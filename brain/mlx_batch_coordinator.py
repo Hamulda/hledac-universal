@@ -2,6 +2,9 @@
 brain/mlx_batch_coordinator.py — Sprint G2: MLX Batch Coordinator
 =========================================================
 
+
+
+
 Extracted from DeepHermes3Engine to reduce complexity (91 → smaller method groups).
 Manages the batch queue, worker, and batch processing pipeline.
 

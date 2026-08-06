@@ -2,6 +2,7 @@
 sqlite-vec helpers for RAG on M1 8GB.
 
 Design:
+
 - Zero-process: unlike LanceDB, sqlite-vec runs in-process via SQLite extension.
 - Shared db: uses sprint_{id}.db (same as DuckDB shadow store).
 - ANN via SQLite virtual table: CREATE VIRTUAL TABLE ... USING vec0().

@@ -37,7 +37,8 @@ from importlib import import_module
 _RECON_MAP: dict[str, str] = {
     # network/ primitives
     "bgp_monitor": "network.bgp_monitor",
-    "passive_fingerprint": "network.passive_fingerprint",
+    # F350M-R: Updated to canonical recon.passive_fingerprint (network/passive_fingerprint.py removed)
+    "passive_fingerprint": "recon.passive_fingerprint",
     "ct_log_scanner": "network.ct_log_scanner",
     "passive_dns": "recon.dns.passive_dns",
     "dns_tunnel_detector": "recon.dns.dns_tunnel_detector",
@@ -99,6 +100,10 @@ _RECON_MAP: dict[str, str] = {
     "lane": "recon.lane",
     "ct_lane": "recon.ct_lane",
     "bgp_lane": "recon.bgp_lane",
+    # F350M-R A5: Added missing redirects
+    "shodan_wrapper": "recon.shodan_wrapper",
+    "whois_service": "recon.whois_service",
+    "streaming_embedder": "recon.streaming_embedder",
 }
 
 

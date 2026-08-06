@@ -2,6 +2,7 @@
 intelligence/network_reconnaissance_lane.py — F320+: Network Reconnaissance Lane
 
 Thin subclass of BaseIntelligenceLane for DNS/WHOIS/SSL enumeration.
+
 Wraps DNSEnumerator + WHOISLookup + SSLAnalyzer from network_reconnaissance.py.
 
 LaneSpec:

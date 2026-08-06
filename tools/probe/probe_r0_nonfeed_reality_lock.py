@@ -3,6 +3,8 @@
 R0: Nonfeed Reality Lock Audit Probe
 ====================================
 
+
+
 Hermetický read-only audit, který validuje R0 invariants (Q1-Q9) z
 `tests/test_r0_nonfeed_reality_lock.py` a generuje deterministické
 artifacts:

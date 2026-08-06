@@ -2,6 +2,8 @@
 Live Multisource Validator — F208H + F208K + F209B + F210C
 
 Reads a live_sprint_measurement JSON artifact and emits PASS/FAIL verdict.
+
+
 Supports both internal sprint report JSON and benchmark live measurement JSON shapes.
 Does NOT execute sprints, network calls, or MLX loads.
 
@@ -47,13 +49,13 @@ for _member in Verdict:
     globals()[_member.name] = _member
 del _member
 
-class ValidationFailure(msgspec.Struct):
+class ValidationFailure(msgspec.Struct, gc=False):
     verdict: Verdict
     reason: str
     field_path: str | None = None
 VALIDATOR_SCHEMA_VERSION = 'f209b.validator.v1'
 
-class ValidationResult(msgspec.Struct, frozen=True):
+class ValidationResult(msgspec.Struct, frozen=True, gc=False):
     overall: Verdict
     failures: list[ValidationFailure] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)

@@ -2,6 +2,8 @@
 FetchCoordinatorFacade — Skinny Coordinator using Service Layer
 ============================================================
 
+
+
 Lightweight facade that delegates to isolated services.
 
 This is the REFACTORED FetchCoordinator — all heavy lifting is done

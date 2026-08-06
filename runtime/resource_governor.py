@@ -2,6 +2,15 @@
 runtime/resource_governor.py — M1ResourceGovernor advisory safety layer
 
 ROLE: Advisory safety layer for branch concurrency, model lease, and renderer lease.
+
+
+
+
+
+
+
+
+
 NOT a sprint owner. Reads from canonical sources:
 - brain/model_lifecycle.get_model_lifecycle_status() — model lease state
 - core/resource_governor.sample_uma_status() — UMA memory state

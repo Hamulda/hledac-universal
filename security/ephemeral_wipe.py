@@ -2,6 +2,7 @@
 security/ephemeral_wipe.py — EphemeralStateAnnihilator (ADVERSARY-005)
 
 Cryptographic memory annihilation wired into TEARDOWN phase.
+
 Destroys residual ephemeral state after sprint completion:
 
   (a) mlock'd key material (key_manager, KV cache)

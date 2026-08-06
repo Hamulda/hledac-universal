@@ -2,6 +2,11 @@
 
 Implements the EVIDENCE LEDGER boundary — records what happened during research
 but does NOT govern sprint truth or own facts. See :ref:`evidence-ledger` for
+
+
+
+
+
 architecture overview, 3-tier hierarchy, and ledger boundary rules.
 """
 from __future__ import annotations
@@ -12,6 +17,7 @@ import contextvars
 import gzip
 import hashlib
 import logging
+
 import os
 import secrets
 import threading
@@ -379,7 +385,7 @@ logger = _get_logger()
 
 # ISSUE [FINAL]-019-04: WARC Provenance Chain — structured provenance for court-admissible evidence
 # ISSUE [FINAL]-019-10: WarcWriteResult — msgspec.Struct with full write metadata + success field
-class WarcWriteResult(msgspec.Struct, frozen=True, kw_only=True):
+class WarcWriteResult(msgspec.Struct, frozen=True, kw_only=True, gc=False):
     """
     Court-admissible provenance record for a WARC write operation.
 

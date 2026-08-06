@@ -2,6 +2,10 @@
 Hledač Threat Intelligence Automation System
 Advanced security automation with threat intelligence and proactive defense
 """
+
+
+
+
 import asyncio
 import hashlib
 import ipaddress
@@ -19,7 +23,7 @@ from cachetools import LRUCache
 
 logger = logging.getLogger(__name__)
 
-class ThreatIntelligence(msgspec.Struct):
+class ThreatIntelligence(msgspec.Struct, gc=False):
     """Threat intelligence data"""
     threat_id: str
     threat_type: str
@@ -32,7 +36,7 @@ class ThreatIntelligence(msgspec.Struct):
     confidence: float
     tags: list[str]
 
-class SecurityAlert(msgspec.Struct, frozen=True):
+class SecurityAlert(msgspec.Struct, frozen=True, gc=False):
     """Security alert generated from threat intelligence"""
     alert_id: str
     threat_intelligence: ThreatIntelligence
@@ -42,7 +46,7 @@ class SecurityAlert(msgspec.Struct, frozen=True):
     timestamp: datetime
     status: str
 
-class DefenseAction(msgspec.Struct, frozen=True):
+class DefenseAction(msgspec.Struct, frozen=True, gc=False):
     """Automated defense action"""
     action_id: str
     action_type: str

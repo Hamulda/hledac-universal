@@ -6,6 +6,11 @@ Minimal DSPy integration — fail-soft, no mandatory dependencies.
 
 
 # Fail-soft: DSPy is an optional extra. If not installed, this module is a no-op stub.
+
+
+
+
+
 try:
     import dspy
 

@@ -2,6 +2,7 @@
 intelligence/ct_lane.py
 ======================
 
+
 Sprint F234: CT intelligence lane as async-native module.
 
 Data sources (zero API key):
@@ -36,7 +37,7 @@ except ImportError:
     MAX_BRIDGE_OUTPUT = 500
 _CT_RATE_LIMIT_S = 1.0
 
-class CTFinding(msgspec.Struct):
+class CTFinding(msgspec.Struct, gc=False):
     """Single Certificate Transparency log entry."""
     domain: str
     org_name: str | None

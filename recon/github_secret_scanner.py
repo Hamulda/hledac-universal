@@ -2,6 +2,7 @@
 GitHubSecretScanner — veřejný GitHub Code Search API pro potenciální secrets.
 
 P20: Bez GitHub tokenu — pouze public search (rate limit: 10 req/min).
+
 Hledá: AWS keys, Google API keys, Stripe keys, Slack tokens, private keys.
 
 Anti-patterns:
@@ -29,7 +30,7 @@ def _mask_secret(value: str) -> str:
     """Mask secrets via centralized DLP filter (SOVEREIGN-010)."""
     return _mask_secret_impl(value)
 
-class SecretFinding(msgspec.Struct):
+class SecretFinding(msgspec.Struct, gc=False):
     pattern: str
     file_path: str
     line: int

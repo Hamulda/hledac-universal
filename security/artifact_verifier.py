@@ -2,6 +2,9 @@
 Artifact Verifier — ADVERSARY-001-INTERNAL-007 Fix
 =================================================
 
+
+
+
 Verifies and installs pre-built forensic binary artifacts with SHA-256
 integrity checks, replacing the unsafe `git clone + make` bootstrap
 in DeepForensicsAnalyzer._ensure_stegdetect().

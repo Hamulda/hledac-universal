@@ -2,6 +2,9 @@
 Async Generators Pipeline Utilities — F275
 
 Modern streaming pipeline pro M1 8GB: constant memory místo list accumulation.
+
+
+
 """
 
 import asyncio
@@ -17,7 +20,7 @@ T = typing.TypeVar("T", default=object)
 R = typing.TypeVar("R", default=object)
 
 
-class BatchStats(msgspec.Struct, frozen=True):
+class BatchStats(msgspec.Struct, frozen=True, gc=False):
     """Statistics pro batch processing."""
 
     items_processed: int = 0

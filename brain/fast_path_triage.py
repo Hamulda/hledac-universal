@@ -2,6 +2,7 @@
 BLITZ-10: FastPathTriage — Two-tier document relevance pre-filter for Hermes-3B.
 
 Eliminates 70-90% of irrelevant noise before data reaches the 3B model,
+
 saving 5-55 minutes of wasted inference per sprint on M1 8GB.
 
 Architecture (M1 8GB UMA safe):

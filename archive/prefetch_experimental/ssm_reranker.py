@@ -6,6 +6,8 @@ Obsahuje fast path pro případ, že depthwise konvoluce je pomalá.
 """
 import logging
 import time
+
+
 try:
     import mlx.core as mx
     import mlx.nn as nn

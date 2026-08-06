@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.wayback_cdx_deep_adapter
-from recon.wayback_cdx_deep_adapter import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

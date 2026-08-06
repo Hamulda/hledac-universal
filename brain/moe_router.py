@@ -2,6 +2,9 @@
 🔧 HELPER - MoERouter (Mixture-of-Experts)
 ===========================================
 
+
+
+
 Toto je HELPER modul pro MoE routing.
 
 Používá se pouze jako pomocný nástroj pro deephermes3_engine.
@@ -17,13 +20,24 @@ Features:
 - Max 2 aktivní experti v paměti
 - Sekvenční zpracování
 - Agresivní cleanup
+- Memory-aware routing (Sprint 8TD)
+- SWARM-001: Micro-model routing s <100ms hot-swap
+- SWARM-002: Multilingual embedding routing (BGE-M3 for non-English)
+
+SWARM-001 Integration:
+    from hledac.universal.brain.moe_swarm_integration import MoERouterSwarmMixin
+
+SWARM-002 Integration:
+    Multilingual embedding support for cross-lingual threat intelligence.
+    Non-English queries are routed to BGE-M3 multilingual embedder.
 """
+import asyncio
 import gc
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import numpy as np
 from ..security.pii_gate import fallback_sanitize
 from ..core.embeddings.cache import EmbeddingCache
@@ -38,6 +52,35 @@ except ImportError:
     mlx_nn = None
 _torch_nn = None
 logger = logging.getLogger(__name__)
+
+# SWARM-001: Optional micro-model swarm integration
+try:
+    from .micro_model_swarm import (
+        MicroModelSwarmRouter,
+        create_swarm_router,
+        TaskType,
+        MICRO_MODELS,
+    )
+    SWARM_AVAILABLE = True
+except ImportError:
+    SWARM_AVAILABLE = False
+    MicroModelSwarmRouter = None
+    create_swarm_router = None
+    TaskType = None
+    MICRO_MODELS = {}
+    logger.warning("MicroModelSwarm not available (SWARM-001 disabled)")
+
+# SWARM-002: Optional multilingual embedding support
+_MULTILINGUAL_AVAILABLE = False
+try:
+    from hledac.universal.core.multilingual import (
+        detect_language,
+        get_lang_detector,
+        get_bge_m3_embedder,
+    )
+    _MULTILINGUAL_AVAILABLE = True
+except ImportError:
+    logger.debug("[MoE] Multilingual modules not available (SWARM-002 disabled)")
 
 class MoERouterConfig(msgspec.Struct, gc=False):
     """Konfigurace pro MoE Router"""
@@ -106,6 +149,7 @@ class MoERouter:
     - Sekvenční zpracování
     - Agresivní cleanup
     - Memory-aware routing (Sprint 8TD)
+    - SWARM-001: Micro-model routing s <100ms hot-swap
     """
     KNOWN_MODEL_SIZES: dict[str, float] = {'mlx-community/Hermes-3-Llama-3.1-8B-4bit': 5.2, 'mlx-community/Hermes-3-Llama-3.1-8B-8bit': 9.1, 'mlx-community/Phi-3.5-mini-instruct-4bit': 2.4, 'mlx-community/Mistral-7B-Instruct-v0.3-4bit': 4.8, 'mlx-community/gemma-2-2b-it-4bit': 1.8}
     __slots__ = tuple((
@@ -117,10 +161,12 @@ class MoERouter:
         '_prompt_cache_by_expert',
         '_router_mlp',
         '_sanitize_for_llm',
+        '_swarm_router',
+        '_swarm_enabled',
         'config',
     ))
 
-    def __init__(self, config: MoERouterConfig | None=None, sanitize_for_llm: Callable[[str], str] | None=None):
+    def __init__(self, config: MoERouterConfig | None=None, sanitize_for_llm: Callable[[str], str] | None=None, enable_swarm: bool = True):
         """
         Initialize MoERouter.
 
@@ -129,6 +175,7 @@ class MoERouter:
             sanitize_for_llm: Optional callback for LLM input sanitization.
                               If provided, used instead of fallback_sanitize.
                               Signature: Callable[[str], str]
+            enable_swarm: Enable SWARM-001 micro-model routing (default: True)
         """
         self.config = config or MoERouterConfig()
         self._sanitize_for_llm = sanitize_for_llm
@@ -142,6 +189,10 @@ class MoERouter:
         # free-list memmap. Replaces the old circular-round-robin memmap that
         # had no real eviction. Shares the cache across sessions (meta.json persist).
         self._embed_cache: EmbeddingCache | None = None
+        
+        # SWARM-001: Micro-model swarm router
+        self._swarm_enabled = enable_swarm and SWARM_AVAILABLE
+        self._swarm_router: MicroModelSwarmRouter | None = None
 
     async def initialize(self) -> None:
         """Inicializovat router MLP a embedding model"""
@@ -153,6 +204,9 @@ class MoERouter:
             self._router_mlp = RouterMLP(input_dim=768, num_experts=num_experts, hidden_dim=128)
             logger.info(f'✓ Router MLP initialized ({num_experts} experts)')
             await self._init_embedding_model()
+            # SWARM-001: Initialize micro-model swarm router
+            if self._swarm_enabled:
+                await self._init_swarm_router()
         except Exception as e:
             logger.error(f'Failed to initialize MoE router: {e}')
             raise
@@ -163,15 +217,129 @@ class MoERouter:
         self._embedding_model = None
         self._embedding_tokenizer = None
 
-    async def _load_expert(self, expert_name: str) -> bool:
+    # SWARM-001: Micro-model swarm methods
+    async def _init_swarm_router(self) -> None:
+        """
+        Initialize the MicroModelSwarmRouter for task-specialized routing.
+        
+        This enables:
+        - Content-based routing (regex patterns, <1ms)
+        - Micro-model pool with <100ms hot-swap
+        - UMA-resident micro-models with LRU eviction
+        """
+        if not self._swarm_enabled:
+            return
+        
+        try:
+            # Create swarm router with 3.2 GB budget for micro-models
+            # (M1 8GB: 2GB for DeepHermes-3B, 2.5GB for micro-models, 1.5GB reserve)
+            self._swarm_router = create_swarm_router(
+                memory_budget_mb=3200,
+                preload_models=True,
+            )
+            logger.info('[SWARM-001] MicroModelSwarmRouter initialized')
+            
+            # Preload priority models in background
+            import asyncio
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._swarm_router.preload_priority_models)
+            logger.info('[SWARM-001] Priority micro-models preloading...')
+            
+        except Exception as e:
+            logger.error(f'[SWARM-001] Failed to initialize swarm router: {e}')
+            self._swarm_enabled = False
+
+    async def _classify_for_swarm(self, text: str) -> tuple[str | None, TaskType]:
+        """
+        Classify text and route to appropriate micro-model.
+        
+        Uses regex-based content classification (<1ms latency).
+        Falls back to main model if no micro-model is suitable.
+        
+        Args:
+            text: Input text to classify
+            
+        Returns:
+            Tuple of (micro_model_id, task_type)
+        """
+        if not self._swarm_router or not self._swarm_enabled:
+            return (None, TaskType.GENERAL)
+        
+        try:
+            model_id, task_type = self._swarm_router.route(text)
+            # Ensure we always return a valid TaskType
+            if task_type is None:
+                task_type = TaskType.GENERAL
+            return (model_id, task_type)
+        except Exception as e:
+            logger.warning(f'[SWARM-001] Classification failed: {e}')
+            return (None, TaskType.GENERAL)
+
+    async def _load_micro_model(self, model_id: str) -> bool:
+        """
+        Load a micro-model via pointer swap (<100ms).
+        
+        Instead of full mlx_lm.load() (1-20s), we use pre-loaded
+        model pool and swap pointers.
+        
+        Args:
+            model_id: ID of micro-model (e.g., 'qwen_coder')
+            
+        Returns:
+            True if model loaded/available
+        """
+        if not self._swarm_router or not self._swarm_enabled:
+            return False
+        
+        try:
+            loaded = self._swarm_router._pool.get_model(model_id)
+            return loaded is not None
+        except Exception as e:
+            logger.warning(f'[SWARM-001] Failed to load micro-model {model_id}: {e}')
+            return False
+
+    def get_swarm_stats(self) -> dict[str, Any]:
+        """Get SWARM-001 statistics."""
+        if not self._swarm_router:
+            return {"enabled": False}
+        return self._swarm_router.get_stats()
+    
+    @property
+    def swarm_memory_pressure(self) -> float:
+        """Current micro-model pool memory pressure."""
+        if self._swarm_router:
+            return self._swarm_router.memory_pressure
+        return 0.0
+    
+    @property
+    def swarm_loaded_models(self) -> list[str]:
+        """List of currently loaded micro-models."""
+        if self._swarm_router:
+            return self._swarm_router.loaded_models
+        return []
+    
+    @property
+    def swarm_enabled(self) -> bool:
+        """Whether SWARM-001 micro-model routing is enabled."""
+        return self._swarm_enabled
+
+    async def _load_expert(
+        self,
+        expert_name: str,
+        query: str = "",
+    ) -> bool:
         """
         Lazy load experta přes mlx_lm.load() bez blokování event loopu.
 
         Issue M-04: mlx_lm.load() je synchroní blocking call (1-20s).
         Běží v MLXWorker thread, event loop zůstává volný pro jiné coroutines.
 
+        SWARM-001: If query is provided and SWARM is enabled, tries micro-model
+        routing first for task-specialized inference (<100ms hot-swap).
+
         Args:
             expert_name: Jméno experta k načtení
+            query: Optional query text for SWARM-001 micro-model routing
 
         Returns:
             True pokud se podařilo načíst
@@ -179,6 +347,44 @@ class MoERouter:
         if expert_name in self._experts:
             self._expert_usage[expert_name] = self._expert_usage.get(expert_name, 0) + 1
             return True
+        
+        # SWARM-001: Try micro-model routing for compatible tasks
+        if self._swarm_enabled and query:
+            micro_model_id, task_type = await self._classify_for_swarm(query)
+            if micro_model_id and task_type:
+                # Expert is compatible with micro-model task
+                expert_task_map = {
+                    'osint': 'CLASSIFICATION',
+                    'security': 'CODE',
+                    'temporal': 'SYNTHESIS',
+                    'graph': 'GENERAL',
+                    'synthesis': 'SYNTHESIS',
+                }
+                expected_task = expert_task_map.get(expert_name, '')
+                # Compare task types (both are TaskType enum)
+                from .micro_model_swarm import TaskType as SWTaskType
+                if expected_task == 'CLASSIFICATION' and task_type == SWTaskType.CLASSIFICATION:
+                    pass  # Match
+                elif expected_task == 'CODE' and task_type == SWTaskType.CODE:
+                    pass  # Match
+                elif expected_task == 'SYNTHESIS' and task_type in (SWTaskType.SYNTHESIS, SWTaskType.TRANSLATION):
+                    pass  # Match
+                elif expected_task == 'GENERAL':
+                    pass  # Always allow general fallback
+                else:
+                    # Task mismatch - don't use micro-model
+                    micro_model_id = None
+                
+                if micro_model_id:
+                    logger.info(f'[SWARM-001] Routing {expert_name} to micro-model: {micro_model_id}')
+                    if await self._load_micro_model(micro_model_id):
+                        # Store micro-model reference - use same key as full model
+                        # The _generate_with_expert will detect micro-model and use swarm router
+                        self._experts[expert_name] = (f"_swarm:{micro_model_id}", task_type)
+                        self._expert_usage[expert_name] = 1
+                        return True
+                    # Fall through to regular loading if micro-model load failed
+        
         if len(self._experts) >= self.config.max_active_experts:
             await self._evict_lru_expert()
         try:
@@ -266,10 +472,27 @@ class MoERouter:
         """
         Získat embedding dotazu pro router.
 
+        SWARM-002: Language-aware embedding routing:
+        - English queries → torch embed (768d)
+        - Non-English queries → BGE-M3 embed (MRL truncated to 768d)
+
         [META]-013: Now delegates to EmbeddingCache(dim=768) — two-layer LRU
         with free-list persistent memmap (cross-session). Uses torch-based
         encode when available, falls back to _fallback_embedding on failure.
         """
+        # SWARM-002: Language detection for multilingual routing
+        lang_result = None
+        if _MULTILINGUAL_AVAILABLE:
+            try:
+                lang_result = detect_language(query)
+            except Exception:
+                pass
+
+        # SWARM-002: Route to appropriate embedder based on language
+        if lang_result is not None and not lang_result.is_english:
+            return await self._get_multilingual_embedding(query)
+
+        # English path: torch embed (original behavior)
         # [META]-013: lazily create the facade wrapping EmbeddingCache(dim=768)
         if self._embed_cache is None:
             self._embed_cache = EmbeddingCache(dim=768)
@@ -281,6 +504,39 @@ class MoERouter:
             return result
         # Fallback: stateless hash embedding when nothing works
         return self._fallback_embedding(query)
+
+    async def _get_multilingual_embedding(self, query: str) -> np.ndarray:
+        """
+        SWARM-002: Get multilingual embedding via BGE-M3.
+
+        BGE-M3 provides cross-lingual semantic alignment for 100+ languages.
+        Embeddings are MRL-truncated to 768d for MoE router compatibility.
+
+        Args:
+            query: Non-English query text
+
+        Returns:
+            768-dim normalized float32 embedding
+        """
+        if not _MULTILINGUAL_AVAILABLE:
+            # Fallback to hash if multilingual not available
+            return self._fallback_embedding(query)
+
+        try:
+            bge_embedder = get_bge_m3_embedder(mrl_target_dim=768, lazy_load=True)
+
+            # Load model if not already loaded
+            if not bge_embedder.is_loaded:
+                bge_embedder.load()
+
+            # Get embedding (BGE-M3 1024d → MRL truncated to 768d)
+            # BGE-M3 embed is async, so we can await it directly
+            embedding = await bge_embedder.embed(query, truncate_to=768)
+            return embedding
+
+        except Exception as e:
+            logger.warning(f'[MoE] BGE-M3 embedding failed: {e}')
+            return self._fallback_embedding(query)
 
     def _fallback_embedding(self, query: str) -> np.ndarray:
         """
@@ -412,7 +668,8 @@ class MoERouter:
             for expert_name, score in selected_experts:
                 if expert_name == 'synthesis':
                     continue
-                loaded = await self._load_expert(expert_name)
+                # SWARM-001: Pass query for micro-model routing
+                loaded = await self._load_expert(expert_name, query=query)
                 if not loaded:
                     logger.warning(f'Failed to load expert: {expert_name}')
                     continue
@@ -436,6 +693,9 @@ class MoERouter:
         Issue M-04: mlx_lm.generate() je synchroní blocking call (1-60s).
         Běží v MLXWorker thread, event loop zůstává volný pro jiné coroutines.
 
+        SWARM-001: If expert has micro-model assigned (stored as "_swarm:model_id"),
+        uses the micro-model pool for generation instead.
+
         Args:
             expert_name: Jméno experta
             query: Vstupní dotaz
@@ -447,16 +707,37 @@ class MoERouter:
         """
         if expert_name not in self._experts:
             return f'Error: Expert {expert_name} not loaded'
+        
         try:
-            from mlx_lm import generate
-            from hledac.universal.core.mlx_inference_lock import run_in_mlx_worker
-
-            model, tokenizer = self._experts[expert_name]
+            model_or_ref, tokenizer_or_task = self._experts[expert_name]
             formatted_prompt = self._format_expert_prompt(expert_name, query, context, system_prompt)
             if self._sanitize_for_llm is not None:
                 formatted_prompt = self._sanitize_for_llm(formatted_prompt)[:MAX_LLM_PROMPT_CHARS]
             else:
                 formatted_prompt = fallback_sanitize(formatted_prompt, max_length=MAX_LLM_PROMPT_CHARS)[:MAX_LLM_PROMPT_CHARS]
+            
+            # SWARM-001: Check if this is a micro-model reference
+            if isinstance(model_or_ref, str) and model_or_ref.startswith('_swarm:'):
+                micro_model_id = model_or_ref.replace('_swarm:', '')
+                logger.info(f'[SWARM-001] Using micro-model: {micro_model_id}')
+                
+                if self._swarm_router:
+                    result = self._swarm_router._pool.generate(
+                        micro_model_id,
+                        formatted_prompt,
+                        max_tokens=self.config.max_tokens_per_expert,
+                        temp=self.config.temperature,
+                    )
+                    return result.strip()
+                else:
+                    logger.warning('[SWARM-001] Swarm router not available, falling back to main model')
+            
+            # Standard path: use loaded model
+            from mlx_lm import generate
+            from hledac.universal.core.mlx_inference_lock import run_in_mlx_worker
+
+            model, tokenizer = model_or_ref, tokenizer_or_task
+            
             # Issue M-04: run mlx_lm.generate() in worker thread — event loop stays FREE
             response = await run_in_mlx_worker(
                 generate,

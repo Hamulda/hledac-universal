@@ -2,6 +2,8 @@
 ToolExecLog - Tamper-evident tool execution logging
 ===================================================
 
+
+
 This module implements append-only logging for tool execution events.
 Unlike EvidenceLog (which stores research evidence), ToolExecLog tracks
 tool invocations with hashes for forensic audit.
@@ -58,7 +60,7 @@ def normalize_correlation(corr: dict[str, str | None] | None) -> dict[str, str |
         return None
     return {k: corr.get(k) for k in SHARED_CORRELATION_KEYS if k in corr}
 
-class ToolExecEvent(msgspec.Struct, frozen=True):
+class ToolExecEvent(msgspec.Struct, frozen=True, gc=False):
     """
     Tool execution event - bounded metadata only.
 

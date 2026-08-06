@@ -2,6 +2,8 @@
 utils/mlx_memory/_embedder.py — Metal Buffer Pre-allocator (F330-MLX-DUP-007)
 
 Pre-allocates persistent Metal buffers for embedding inference to eliminate
+
+
 per-batch allocation overhead. Expected: 20% faster embeddings on M1.
 
 Architecture (SILICON-04 upgrade):
@@ -47,7 +49,7 @@ def _get_shared_buf_cls():
         return None
 
 
-class _MetalBuffer(msgspec.Struct):
+class _MetalBuffer(msgspec.Struct, gc=False):
     """A single pre-allocated Metal buffer.
 
     SILICON-04: When _shared_buf is set, it backs a real MTLBuffer

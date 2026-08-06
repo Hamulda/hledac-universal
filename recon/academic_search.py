@@ -2,6 +2,18 @@
 Academic Search System - Multi-Source Query Expansion
 
 From MSQES: Multi-Source Query Expansion System
+
+
+
+
+
+
+
+
+
+
+
+
 Integrated into Universal Orchestrator for comprehensive academic research.
 
 Features:
@@ -69,7 +81,7 @@ class SourceConfig:
             env_key = f'{self.name.upper()}_API_KEY'
             self.api_key = __import__('os').getenv(env_key)
 
-class SearchResult(msgspec.Struct):
+class SearchResult(msgspec.Struct, gc=False):
     """A single search result."""
     title: str
     url: str
@@ -83,7 +95,7 @@ class SearchResult(msgspec.Struct):
     def to_dict(self) -> dict[str, Any]:
         return {'title': self.title, 'url': self.url, 'snippet': self.snippet, 'source': self.source, 'result_type': self.result_type.name, 'metadata': self.metadata, 'relevance_score': self.relevance_score, 'timestamp': self.timestamp.isoformat()}
 
-class SourceResult(msgspec.Struct, frozen=True):
+class SourceResult(msgspec.Struct, frozen=True, gc=False):
     """Results from a single source."""
     source_name: str
     results: list[SearchResult]
@@ -92,7 +104,7 @@ class SourceResult(msgspec.Struct, frozen=True):
     success: bool
     error_message: str | None = None
 
-class AcademicSearchResult(msgspec.Struct, frozen=True):
+class AcademicSearchResult(msgspec.Struct, frozen=True, gc=False):
     """Complete academic search result."""
     original_query: str
     all_results: list[SearchResult]
@@ -127,7 +139,7 @@ class QueryAnalysis:
         words = self.original_query.lower().split()
         return [w for w in words if w not in stop_words and len(w) > 2]
 
-class SourcePerformance(msgspec.Struct):
+class SourcePerformance(msgspec.Struct, gc=False):
     """Performance metrics for a source."""
     source_name: str
     total_requests: int = 0

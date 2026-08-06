@@ -2,6 +2,7 @@
 Static hydration extractor for SPA/JS-heavy pages.
 
 Reduces need for full JS rendering on M1 8GB by extracting pre-existing
+
 hydration data already present in the HTML source (Next.js, Nuxt, generic
 hydration, JSON-LD, and metadata).
 
@@ -61,7 +62,7 @@ _RE_SKIP_TAGS: re.Pattern = re.compile(
 # ---------------------------------------------------------------------------
 
 
-class HydrationExtractionResult(msgspec.Struct):
+class HydrationExtractionResult(msgspec.Struct, gc=False):
     """
     Result of static hydration extraction from HTML.
 

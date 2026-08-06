@@ -3,6 +3,8 @@
 Reads F231 artifact inventory, prelive gate, F231L cockpit, F231R, F231S
 outputs and produces one definitive operator answer.
 
+
+
 No live execution. No network. No MLX.
 
 Verdicts:

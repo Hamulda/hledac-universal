@@ -3,6 +3,12 @@ brain/dspy_programs.py
 ======================
 DSPy-style prompt optimization for hypothesis engine.
 
+
+
+
+
+
+
 Gate: HLEDAC_ENABLE_DSPY=1 (runtime inference-only, compiled programs)
 Compilation: scripts/dspy_compile.py (offline, never during sprint)
 

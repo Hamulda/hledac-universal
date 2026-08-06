@@ -3,6 +3,8 @@
 Extracted from runtime/sprint_scheduler.py (33 449 LOC → modular package).
 F350M-R / Issue #P2.
 
+
+
 Bounded LIFO registry replacing WeakValueDictionary + deque dual-eviction.
 M1 8GB: No GC overhead — objects released deterministically.
 """

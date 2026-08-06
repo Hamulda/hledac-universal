@@ -2,6 +2,7 @@
 VLMAnalyzer - Vision-Language Model interface.
 
 Provides vision-language model capabilities via mlx-vlm.
+
 On M1 8GB: no local VLM is configured by default.
 OCR-first pipeline is canonical; VLM is deferred to future small model benchmark.
 

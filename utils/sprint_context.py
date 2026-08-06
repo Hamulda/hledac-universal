@@ -2,6 +2,7 @@
 from __future__ import annotations
 Sprint Context — ContextVar-based sprint metadata for Hledac.
 
+
 Provides thread-safe, async-safe sprint context propagation using msgspec.Struct
 (frozen=True) for minimal overhead.
 
@@ -31,7 +32,7 @@ import msgspec
 # =============================================================================
 
 
-class SprintContext(msgspec.Struct, frozen=True):
+class SprintContext(msgspec.Struct, frozen=True, gc=False):
     """
     Sprint metadata container.
 

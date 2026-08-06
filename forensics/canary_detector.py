@@ -2,6 +2,8 @@
 Canary Token Detector
 =====================
 
+
+
 ISSUE-015: Detect canary tokens and tracking beacons embedded in documents.
 
 Canary tokens are tracking mechanisms used to identify document leaks. When a

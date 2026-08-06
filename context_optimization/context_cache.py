@@ -2,6 +2,10 @@
 Multi-level Context Cache with FastEmbed (ONNX)
 =========================================
 
+
+
+
+
 OPTIMIZED: PyTorch backend removed in favor of ONNX Runtime via FastEmbed
 
 This module provides memory-efficient multi-level caching using FastEmbed
@@ -197,7 +201,7 @@ class CacheLocation(Enum):
     L1_MEMORY = L1_MEMORY
     L2_DISK = L2_DISK
 
-class CacheEntry(msgspec.Struct):
+class CacheEntry(msgspec.Struct, gc=False):
     """Single cache entry."""
     cache_id: str
     content: Any
@@ -209,7 +213,7 @@ class CacheEntry(msgspec.Struct):
     cache_type: CacheType
     metadata: dict[str, Any]
 
-class CacheStats(msgspec.Struct):
+class CacheStats(msgspec.Struct, gc=False):
     """Cache performance statistics."""
     total_entries: int
     l1_entries: int

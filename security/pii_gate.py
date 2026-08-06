@@ -2,6 +2,9 @@
 SecurityGate - PII Detection and Sanitization
 =============================================
 Memory-efficient PII detection using regex patterns.
+
+
+
 Optimized for M1 8GB RAM - no large ML models.
 
 EARLY PRIVACY GATE AUTHORITY (this module):
@@ -43,7 +46,7 @@ class PIICategory(Enum):
     DRIVER_LICENSE = 'driver_license'
     ADDRESS = 'address'
 
-class PIIMatch(msgspec.Struct):
+class PIIMatch(msgspec.Struct, gc=False):
     """A single PII match found in text"""
     text: str
     category: PIICategory
@@ -52,7 +55,7 @@ class PIIMatch(msgspec.Struct):
     confidence: float
     method: str
 
-class SanitizationResult(msgspec.Struct):
+class SanitizationResult(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for sanitization operation result."""
     sanitized_text: str
     pii_found: list[PIIMatch]

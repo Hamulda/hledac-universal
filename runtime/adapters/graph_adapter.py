@@ -2,6 +2,9 @@
 runtime/adapters/graph_adapter.py — F270: DuckPGQ Graph Adapter v2
 ================================================================
 
+
+
+
 Adapter implementing GraphProtocol for DuckPGQGraph.
 Non-breaking: wraps existing graph service without changes.
 

@@ -2,6 +2,7 @@
 knowledge/duckdb_ct_cache_store.py — DuckDB-backed CT Log Cache
 =============================================================
 
+
 ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 
 Drop-in replacement for intel/ct_log_scanner.py CT cache.

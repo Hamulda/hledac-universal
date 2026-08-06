@@ -2,6 +2,10 @@
 BGP + Passive DNS Adapter — Sprint F214R
 ======================================
 
+
+
+
+
 Extends existing BGP infrastructure (bgp_lane.py) with:
   - RIPE Stat API: IP → ASN, prefix, holder, country, org
   - BGP.tools API: historical prefix announcements, sibling prefixes
@@ -59,7 +63,7 @@ def _is_private_ip(ip: str) -> bool:
     """Check if IP is RFC1918/loopback/private."""
     return bool(_PRIVATE_IP_RE.match(ip))
 
-class BGPFinding(msgspec.Struct):
+class BGPFinding(msgspec.Struct, gc=False):
     """BGP intelligence finding from RIPE/BGP.tools."""
     ip: str = ''
     asn: int = 0
@@ -82,7 +86,7 @@ class BGPFinding(msgspec.Struct):
         except Exception:
             return None
 
-class PDNSRecord(msgspec.Struct, frozen=True):
+class PDNSRecord(msgspec.Struct, frozen=True, gc=False):
     """Passive DNS record."""
     domain: str = ''
     record_type: str = ''

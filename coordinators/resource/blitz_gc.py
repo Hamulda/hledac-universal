@@ -2,6 +2,7 @@
 coordinators/resource/blitz_gc.py — BlitzGCStrategy (PHYSICS-06, PHYSICS-07)
 ============================================================================
 
+
 Eliminates involuntary GC stop-the-world pauses during active sprint phase.
 
 PHYSICS-06: Disable automatic GC during active sprint

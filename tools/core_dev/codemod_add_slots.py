@@ -2,6 +2,7 @@
 AST-based __slots__ codemod for Hledac Universal.
 
 Handles three categories:
+
   1. @dataclass → @dataclass(slots=True)  [764 classes — trivial]
   2. Plain class with annotated __init__ → add __slots__  [545 classes — medium]
   3. Skip: ABC base classes, Protocols, exception classes, classes with setattr

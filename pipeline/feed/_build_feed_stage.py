@@ -2,6 +2,7 @@
 
 Responsibilities:
 - Build CanonicalFinding objects from matched feed entries
+
 - Assign finding IDs, timestamps, confidences
 - Encode payloads as bytes for zero-copy storage
 

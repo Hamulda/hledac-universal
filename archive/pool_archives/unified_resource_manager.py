@@ -2,6 +2,8 @@
 Unified Resource Manager — ISSUE-010 Solution
 ============================================
 
+
+
 Centrální správce resource managementu který sjednocuje:
 1. ResourceAwareScheduler — task scheduling s resource awareness
 2. AIMD Controllers — enrichment, extraction, fetch feedback
@@ -80,7 +82,7 @@ _MAX_FETCH_WORKERS = 25
 _MEMORY_PRESSURE_SCALE_DOWN = 0.5  # Reduce workers by 50% on memory pressure
 
 
-class TaskRequest(msgspec.Struct):
+class TaskRequest(msgspec.Struct, gc=False):
     """Resource request for a task."""
     task_id: str
     task_name: str

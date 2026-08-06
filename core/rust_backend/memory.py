@@ -3,6 +3,7 @@
 Memory availability and total system memory queries.
 Used for M1 resource governance and memory pressure monitoring.
 
+
 A5-04 CONSOLIDATION (2026-07-30)
 =================================
 Tento modul obsahuje DOMAIN FACTORY pattern pro DuckDB bridge.

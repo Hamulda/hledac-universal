@@ -2,6 +2,9 @@
 from __future__ import annotations
 runtime/acquisition/lane_plan.py
 
+
+
+
 Acquisition lane plan structures — AcquisitionLanePlan, LaneSpec, LaneRule.
 Extracted from acquisition_strategy.py (original L823-1137).
 

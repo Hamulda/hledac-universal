@@ -2,6 +2,7 @@
 Coordinators Domain Catalog
 ===========================
 
+
 Provides structured access to coordinators via domain grouping.
 Lazy loading ensures only needed coordinators are imported.
 
@@ -59,7 +60,6 @@ _DOMAIN_MODULES: dict[str, dict[str, str]] = {
         'FetchCoordinator': '.fetch_coordinator',
         'GraphCoordinator': '.graph_coordinator',
         'ArchiveCoordinator': '.archive_coordinator',
-        # ClaimsCoordinator: ARCHIVED 2026-07-16 — no production wiring, missing ClaimClusterIndex/EvidencePacketStorage/_research_mgr dependencies
         'MultimodalCoordinator': '.multimodal_coordinator',
         'RenderCoordinator': '.render_coordinator',
         'AgentCoordinationEngine': '.agent_coordination_engine',
@@ -75,16 +75,18 @@ _DOMAIN_MODULES: dict[str, dict[str, str]] = {
         'get_gc_stats': '.resource.resource_coordinator',
     },
     # F320: Memory sub-package (extracted from memory_coordinator.py)
+    # Types are now centralized in _core.py (single source of truth)
     'memory': {
         'ContextOptimizationManager': '.memory.context_optimizer',
         'MultiLevelContextCache': '.memory.multi_level_cache',
-        'ContextPriority': '.memory.context_optimizer',
-        'ResearchPhase': '.memory.context_optimizer',
-        'ContextItem': '.memory.context_optimizer',
-        'CompressedContext': '.memory.context_optimizer',
-        'CacheType': '.memory.multi_level_cache',
-        'CacheLocation': '.memory.multi_level_cache',
-        'CacheEntry': '.memory.multi_level_cache',
+        # Types from _core.py
+        'ContextPriority': '.memory._core',
+        'ResearchPhase': '.memory._core',
+        'ContextItem': '.memory._core',
+        'CompressedContext': '.memory._core',
+        'CacheType': '.memory._core',
+        'CacheLocation': '.memory._core',
+        'CacheEntry': '.memory._core',
     },
 }
 _COORDINATOR_EXPORTS: dict[str, list[str]] = {

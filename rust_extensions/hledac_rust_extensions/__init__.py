@@ -3,6 +3,7 @@ hledac_rust_extensions — Rust extensions for Hledac OSINT platform.
 
 Runtime-loaded PyO3 cdylib. Supports three loading strategies in order of preference:
 
+
 1. Installed wheel  (standard, no path manipulation)
    → __file__ points into site-packages, .so loaded by Python's import machinery.
 2. Editable develop  (uv run maturin develop — in-place .so in rust_extensions/)

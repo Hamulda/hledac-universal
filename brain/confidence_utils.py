@@ -2,6 +2,7 @@
 Beta-Binomial confidence estimator for dynamic belief updating.
 
 Used in enrichment confidence policy — updates confidence after each new
+
 evidence piece using Bayesian inference.
 
 TEMPORAL DECAY & RETRACTION (APEX-1003):

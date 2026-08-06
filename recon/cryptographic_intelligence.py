@@ -2,6 +2,14 @@
 Cryptographic Intelligence Module
 =================================
 
+
+
+
+
+
+
+
+
 Advanced cryptographic analysis and cryptanalysis for OSINT research.
 Self-hosted on M1 8GB - no external APIs required.
 
@@ -139,7 +147,7 @@ class HashType(Enum):
     APACHE_MD5 = 'apache_md5'
     UNKNOWN = 'unknown'
 
-class CryptanalysisResult(msgspec.Struct):
+class CryptanalysisResult(msgspec.Struct, gc=False):
     """Result of cryptanalysis attempt."""
     success: bool
     plaintext: str | None
@@ -151,7 +159,7 @@ class CryptanalysisResult(msgspec.Struct):
     time_seconds: float
     alternative_solutions: list[dict[str, Any]] = field(default_factory=list)
 
-class HashAnalysis(msgspec.Struct, frozen=True):
+class HashAnalysis(msgspec.Struct, frozen=True, gc=False):
     """Analysis of a hash value."""
     hash_value: str
     possible_types: list[HashType]
@@ -162,7 +170,7 @@ class HashAnalysis(msgspec.Struct, frozen=True):
     salt: str | None = None
     estimated_complexity: str = 'unknown'
 
-class EncryptionDetection(msgspec.Struct, frozen=True):
+class EncryptionDetection(msgspec.Struct, frozen=True, gc=False):
     """Detection of encryption type from ciphertext."""
     is_encrypted: bool
     possible_ciphers: list[CipherType]
@@ -172,7 +180,7 @@ class EncryptionDetection(msgspec.Struct, frozen=True):
     language_detected: str | None
     block_size_hint: int | None = None
 
-class CertificateInfo(msgspec.Struct, frozen=True):
+class CertificateInfo(msgspec.Struct, frozen=True, gc=False):
     """Parsed certificate information."""
     subject: dict[str, str]
     issuer: dict[str, str]
@@ -191,7 +199,7 @@ class CertificateInfo(msgspec.Struct, frozen=True):
     is_ca: bool
     chain_valid: bool
 
-class KeyAnalysis(msgspec.Struct, frozen=True):
+class KeyAnalysis(msgspec.Struct, frozen=True, gc=False):
     """Analysis of cryptographic key."""
     key_type: str
     key_size: int
@@ -202,7 +210,7 @@ class KeyAnalysis(msgspec.Struct, frozen=True):
     recommended_action: str
 
 
-class SSHFPRecord(msgspec.Struct, frozen=True):
+class SSHFPRecord(msgspec.Struct, frozen=True, gc=False):
     """
     P8-007: SSHFP DNS record (RFC 4255) — SSH host key fingerprint.
 

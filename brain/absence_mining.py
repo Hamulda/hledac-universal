@@ -2,6 +2,10 @@
 Absence Mining Engine — [FINAL]-019-01
 ======================================
 
+
+
+
+
 Detects structural absences (negative evidence) in OSINT findings:
 
 1. **IOC Completeness Rules** — checks whether reported IOCs have expected

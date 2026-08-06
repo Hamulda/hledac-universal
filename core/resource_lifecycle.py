@@ -3,6 +3,8 @@ core/resource_lifecycle.py — Centralized Resource Lifecycle Manager
 
 R1 Solution: Single authority for all sprint resource creation and teardown.
 
+
+
 PROBLEMS SOLVED:
   1. No single authority knows when all executors, pools, sessions, and
      singletons are truly dead.

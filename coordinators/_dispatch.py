@@ -2,6 +2,7 @@
 Shared Request Dispatch — Coordinator Routing Pattern
 ===================================================
 
+
 Eliminates duplicate handle_request() implementations across coordinators.
 Every coordinator follows the same pattern:
 1. Track operation

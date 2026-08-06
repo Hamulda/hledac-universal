@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.wayback_diff_miner
-from recon.wayback_diff_miner import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

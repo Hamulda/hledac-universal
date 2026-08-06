@@ -1,1 +1,1 @@
-Sprint pipeline flows CLI → SprintScheduler → 8 acquisition lanes → advisory runners → graph → DuckDB, with 12 lifecycle stages from bootstrap to accept and LRU dedup advisory log (16 keys).
+The SprintLifecyclePipeline orchestrates 8 acquisition lanes through a 3-tier lifecycle (pending → acquiring → acquired → releasing → released), supporting per-lane pre/post hooks and lifecycle-aware module loading to control parallel sprint execution.

@@ -2,6 +2,8 @@
 Unified Memory Monitor - kombinované sledování systémové a GPU paměti.
 
 Sprint 81: Core Stability & Memory Safety
+
+
 - UnifiedMemorySnapshot - dataclass pro kombinovaný memory snapshot
 - UnifiedMemoryMonitor - třída pro sledování unified memory na M1
 """

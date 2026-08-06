@@ -2,6 +2,7 @@
 Hypothesis Engine — Adversarial Verifier (C4 Sprint Refactoring)
 ================================================================
 
+
 Extracted from :mod:`brain.hypothesis_engine_engine` to break the 5 373 LOC monolith
 into focused modules. This module hosts the :class:`AdversarialVerifier`
 (Devil's Advocate mode) — the falsification layer that actively seeks evidence

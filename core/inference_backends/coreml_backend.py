@@ -2,6 +2,7 @@
 core/inference_backends/coreml_backend.py — CoreML FastAPI Backend
 ================================================================
 CoreML FastAPI microservice via CoreMLClient.
+
 Endpoint: http://127.0.0.1:8765
 
 NOTE: This backend is NOT loaded by default. It is only instantiated

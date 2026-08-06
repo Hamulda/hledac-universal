@@ -1,9 +1,18 @@
 {
-  "curationsSinceDream": 0,
-  "lastDreamAt": "2026-08-03T11:57:26.893Z",
-  "lastDreamLogId": "drm-1785758191932",
+  "curationsSinceDream": 2,
+  "lastDreamAt": "2026-08-05T16:15:58.886Z",
+  "lastDreamLogId": "drm-1785945825311",
   "pendingMerges": [],
-  "staleSummaryPaths": [],
-  "totalDreams": 9,
+  "staleSummaryPaths": [
+    {
+      "enqueuedAt": 1785967432353,
+      "path": "architecture/hledac_universal/duckdb_memory_configuration.md"
+    },
+    {
+      "enqueuedAt": 1785968320044,
+      "path": "architecture/hledac_universal/f186a_canonical_sprint_truth.md"
+    }
+  ],
+  "totalDreams": 10,
   "version": 1
 }

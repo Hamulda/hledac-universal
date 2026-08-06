@@ -2,6 +2,13 @@
 SynthesisRunner — Sprint 8QC
 ============================
 Orchestrates MLX-based structured synthesis of OSINT findings into STIX-ready reports.
+
+
+
+
+
+
+
 Works in WINDUP phase only (or with explicit force_synthesis=True).
 
 OSINTReport schema (msgspec.Struct):
@@ -1686,7 +1693,30 @@ class SynthesisRunner:
 
             result_bytes = await asyncio.to_thread(_collapse_sync)
             if result_bytes:
-                return result_bytes.decode("utf-8", errors="replace")
+                collapsed = result_bytes.decode("utf-8", errors="replace")
+                
+                # [SWARM]-004: Apply entropy-guided word pruning to collapser output
+                # This is a fast Rust pre-pass (~5-10μs for 4000 chars) that:
+                # - Removes boilerplate words (TF-IDF: words in >=80% of groups)
+                # - Drops low-entropy tokens (Shannon entropy < 3.5 bits)
+                # - Preserves all IOCs (IPs, domains, hashes, CVEs, APT names)
+                # - Target: 30-50% token reduction, ~1.5x Hermes inference speedup
+                try:
+                    from hledac.universal.core.rust_backend import rust
+                    compressed = rust.raw.compress_prompt(collapsed)
+                    if compressed and len(compressed) < len(collapsed):
+                        original_len = len(collapsed)
+                        compressed_len = len(compressed)
+                        reduction = (1.0 - compressed_len / original_len) * 100
+                        logger.debug(
+                            f"[SYNTHESIS] [SWARM]-004: compress_prompt "
+                            f"{original_len} → {compressed_len} chars ({reduction:.1f}% reduction)"
+                        )
+                        return compressed
+                except Exception as compress_err:
+                    logger.debug(f"[SYNTHESIS] [SWARM]-004: compress_prompt failed: {compress_err}")
+                
+                return collapsed
             return ""
         except Exception as e:
             logger.debug("[SYNTHESIS] Collapser failed: %s — falling back to flat findings", e)

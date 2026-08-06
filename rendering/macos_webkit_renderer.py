@@ -2,6 +2,7 @@
 
 This module provides a lightweight JS renderer that uses the native macOS
 WebKit (WKWebView) instead of Chrome/Chromium/Playwright. It runs as an
+
 isolated subprocess per render — no persistent daemon, no browser pool.
 
 Platform constraints:
@@ -51,7 +52,7 @@ class MACOS_WEBKIT_REASONS:
     SUCCESS = 'macos_webkit_success'
     MAX_BYTES_EXCEEDED = 'macos_webkit_max_bytes_exceeded'
 
-class WebKitRenderResult(msgspec.Struct, frozen=True):
+class WebKitRenderResult(msgspec.Struct, frozen=True, gc=False):
     """Result of a WKWebView render attempt.
 
     Always returned (never raises) — callers check .ok before using .html.

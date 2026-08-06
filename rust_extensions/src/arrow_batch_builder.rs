@@ -546,13 +546,13 @@ pub fn build_record_batch_from_structs<'py>(
     // Single-pass iterátor: 1× Python iteration per list, ne 7× indexovaný get_item.
     // ISSUE-007 fix: starý kód volal get_item(i) 7× + str() 6× + to_string_lossy() 6× per row.
     // PyList::iter() vrací PyObject Ref'd iterator — každá item access je O(1) C access.
-    let mut ids_iter = ids.iter()?;
-    let mut queries_iter = queries.iter()?;
-    let mut source_types_iter = source_types.iter()?;
-    let mut confidences_iter = confidences.iter()?;
-    let mut timestamps_iter = timestamps.iter()?;
-    let mut provenance_jsons_iter = provenance_jsons.iter()?;
-    let mut payload_texts_iter = payload_texts.iter()?;
+    let mut ids_iter = ids.iter();
+    let mut queries_iter = queries.iter();
+    let mut source_types_iter = source_types.iter();
+    let mut confidences_iter = confidences.iter();
+    let mut timestamps_iter = timestamps.iter();
+    let mut provenance_jsons_iter = provenance_jsons.iter();
+    let mut payload_texts_iter = payload_texts.iter();
 
     loop {
         match (ids_iter.next(), queries_iter.next(), source_types_iter.next(),
@@ -693,9 +693,9 @@ pub fn build_record_batch_from_findings<'py>(
     // instead of N× get_item(i) index lookups. findings items need struct
     // field extraction (nested get_item), provenance_jsons + payload_texts
     // are simple strings via iter() + next().
-    let mut findings_iter = findings.iter()?;
-    let mut prov_iter = provenance_jsons.iter()?;
-    let mut payload_iter = payload_texts.iter()?;
+    let mut findings_iter = findings.iter();
+    let mut prov_iter = provenance_jsons.iter();
+    let mut payload_iter = payload_texts.iter();
 
     loop {
         let item = match findings_iter.next() {
@@ -903,6 +903,7 @@ pub fn build_findings_from_iocs<'py>(
     }
 
     let actual_n = ids.len();
+    let payload_texts: Vec<String> = vec!["".to_string(); actual_n];
     if actual_n == 0 {
         return Ok(Some(PyBytes::new(py, b"")));
     }
@@ -915,6 +916,7 @@ pub fn build_findings_from_iocs<'py>(
         confidences,
         timestamps,
         provenance_jsons,
+        payload_texts,
         actual_n,
     ) {
         Ok(bytes) => bytes,

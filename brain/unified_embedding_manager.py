@@ -2,6 +2,9 @@
 UnifiedEmbeddingManager — Single source for ALL embeddings.
 
 Replaces:
+
+
+
 - RAGEngine._fastembed_embedder (FastEmbed BAAI/bge-small-en-v1.5, 384d)
 - SemanticStore._model (FastEmbed TextEmbedding, 384d)
 - LanceDBIdentityStore._embedder (MLXEmbeddingManager, 256d MRL)

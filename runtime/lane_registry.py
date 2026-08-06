@@ -2,6 +2,8 @@
 runtime/lane_registry.py — F350M-R: A5 Feature-Flag Sprawl Fix
 ================================================================
 
+
+
 Single source of truth for lane enablement.
 Replaces scattered os.environ.get("HLEDAC_ENABLE_X") checks for lanes/sidecars.
 

@@ -3,6 +3,8 @@ if TYPE_CHECKING:
     pass
 __all__ = ['get_lsh_domain']
 
+
+
 class _PythonLshIndex:
     """Python fallback LSH index — pure-Python OrderedDict bucketing (slow path).
 

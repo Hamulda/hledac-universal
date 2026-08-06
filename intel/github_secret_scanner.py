@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.github_secret_scanner
-from recon.github_secret_scanner import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

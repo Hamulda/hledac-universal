@@ -2,6 +2,15 @@
 Universal Research Coordinator
 ==============================
 
+
+
+
+
+
+
+
+
+
 Integrated research coordination combining:
 - DeepSeek R1: Unified AI + Evidence Network + RAG orchestration
 - Hermes3: Simplified initialization patterns

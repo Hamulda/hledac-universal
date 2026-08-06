@@ -2,6 +2,7 @@
 TemporalSignalStore — SQLite WAL persistence for TemporalSignalLayer snapshots.
 
 Provides cross-run persistence for temporal signal state, enabling detection of
+
 dormant infrastructure wake-up and long-range temporal patterns.
 
 Design:

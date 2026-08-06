@@ -2,6 +2,9 @@
 Multimodal Enrichment Service
 ==============================
 
+
+
+
 Fail-soft enrichment for PDF/image findings via VisionEncoder and MambaFusion.
 Stores enrichment in LMDB keyed by finding_id (same pattern as forensics).
 
@@ -582,7 +585,7 @@ class MultimodalEnricher:
                 out[fid] = enrich_data
         return out
 
-class DocumentResult(msgspec.Struct):
+class DocumentResult(msgspec.Struct, gc=False):
     """
     Typed result from document extraction.
 

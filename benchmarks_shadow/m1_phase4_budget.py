@@ -2,7 +2,9 @@
 benchmarks/m1_phase4_budget.py — F204J: M1 Mission Budget Benchmark
 ====================================================================
 
+
 Hermetic benchmark that verifies peak RSS <= 5.5 GiB without model loaded.
+
 
 Measures:
 - Peak RSS during sidecar admission checks
@@ -43,7 +45,7 @@ def get_rss_gib() -> float:
     except Exception:
         return 0.0
 
-class BudgetBenchmarkResult(msgspec.Struct):
+class BudgetBenchmarkResult(msgspec.Struct, gc=False):
     """Result of the M1 mission budget benchmark."""
     status: str
     peak_rss_gib: float

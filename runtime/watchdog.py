@@ -2,6 +2,7 @@
 StuckTaskDetector — asyncio task wall-clock timeout watchdog.
 ============================================================
 
+
 Detects tasks that have been running longer than `timeout_s` without yielding.
 Designed to catch C-extension I/O hangs (DNS resolver, TLS handshake, curl_cffi)
 that appear healthy in system-wide CPU/memory metrics but are blocked in

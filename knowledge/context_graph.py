@@ -2,6 +2,7 @@
 ContextGraph - Lightweight In-Memory Context Tracker
 ====================================================
 
+
 DEPRECATED: This module is a simple in-memory context tracker.
 It is NOT a storage backend and does NOT persist data.
 Do NOT use as authoritative graph storage.

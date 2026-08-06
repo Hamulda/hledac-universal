@@ -1,12 +1,19 @@
-"""Bounded LRU ring buffer for spans/trace records.
+"""
+Bounded LRU ring buffer for spans/trace records.
 
 M1 8GB safe: O(1) put/get, FIFO eviction, pure Python (no GIL pressure spike),
+
 thread-safe via single re-entrant lock.
 
 Generic over key/value types. Used by RingBufferExporter for test inspection
 and by on-demand span snapshots (e.g. last 100 errors).
+
+This module provides the canonical FIFO ring buffer implementation.
+TelemetryRingBuffer (core/ffi_circuit_breaker.py) extends this with
+telemetry-specific filtering methods.
 """
 
+from __future__ import annotations
 
 import threading
 from collections import OrderedDict
@@ -17,7 +24,16 @@ V = TypeVar("V", default=object)
 
 
 class BoundedRing[K, V]:
-    """FIFO-evicting map. Thread-safe."""
+    """
+    FIFO-evicting map. Thread-safe.
+
+    Extends OrderedDict with bounded capacity and LRU-style eviction.
+    When capacity is reached, oldest entry is evicted (FIFO).
+
+    Supports generic key/value types and exposes hit/miss/eviction statistics.
+
+    TelemetryRingBuffer extends this with module-specific filtering.
+    """
 
     __slots__ = (
         "_capacity",
@@ -97,3 +113,25 @@ class BoundedRing[K, V]:
                 "misses": self._misses,
                 "evictions": self._evictions,
             }
+
+    # ── Telemetry extension methods ───────────────────────────────────────
+
+    def get_recent(self, n: int = 100) -> list[V]:
+        """
+        Get N most recent values (LIFO order).
+
+        Override in subclass for typed filtering (see TelemetryRingBuffer).
+        Default: returns last N values from the OrderedDict.
+        """
+        with self._lock:
+            if self._size == 0:
+                return []
+            count = min(n, self._size)
+            # OrderedDict is LRU-order: most recent at end
+            values = list(self._data.values())
+            return values[-count:]
+
+    @property
+    def _size(self) -> int:  # type: ignore[unused-ignore]
+        """Internal: current size (for subclasses)."""
+        return len(self._data)

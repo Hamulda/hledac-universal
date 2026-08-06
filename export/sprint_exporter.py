@@ -6,6 +6,9 @@
 Sprint 8VI §A: EXPORT fáze — export_sprint() + _generate_next_sprint_seeds()
 Sprint 8VJ §C: ExportHandoff | dict → typed handoff spotřeba
 Sprint 8VX §A: Finish-up — removal conditions tightened, comments aligned with reality
+
+
+
 Sprint F150I: product_value_summary — přenáší do exportu to, co runtime už ví:
   - accepted/stored reality z dedup status
   - reject breakdown (low-info / duplicate / fail-open)

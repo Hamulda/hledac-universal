@@ -2,6 +2,16 @@
 
 See :ref:`memory-coordinator` for class index, neuromorphic STDP layer details,
 context optimization moved imports, and memory pressure polling.
+
+
+
+
+
+
+
+
+
+
 """
 import asyncio
 import ctypes
@@ -48,7 +58,7 @@ if TYPE_CHECKING:
     from hledac.universal.knowledge.neuromorphic import NeuromorphicMemoryManager, NeuromorphicMemoryZone
 import contextlib
 
-from hledac.universal.core.uma_governor import PressureState
+from hledac.universal.core.resource_governor import PressureState
 
 
 def _serialize_to_json(data: Any) -> bytes:

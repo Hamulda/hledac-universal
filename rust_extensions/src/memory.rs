@@ -260,12 +260,9 @@ pub fn advise_free(ptr: usize, len: usize) -> bool {
 pub fn get_metal_active_memory_bytes(py: Python<'_>) -> u64 {
     // R4-12 FIX: use cached module handle instead of per-call py.import()
     // get_or_init stores Py<PyModule>, bind() re-borrows it as Bound<'py, PyModule>
-    let Ok(mlx) = MLX_CORE_MODULE
+    let mlx = MLX_CORE_MODULE
         .get_or_init(|| py.import("mlx.core").unwrap().unbind())
-        .bind(py)
-    else {
-        return 0;
-    };
+        .bind(py);
     // Try modern API first: mx.get_active_memory()
     let result = mlx.call_method0("get_active_memory");
     if let Ok(val) = result {

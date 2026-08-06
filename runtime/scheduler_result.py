@@ -3,6 +3,8 @@
 Extracted from sprint_scheduler.py (33 449 LOC → modular package).
 F350M-R / Issue #P2.
 
+
+
 ~380 fields — frozen dataclass with SoA int-counter layout.
 """
 from dataclasses import dataclass, field

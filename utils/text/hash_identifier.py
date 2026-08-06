@@ -2,6 +2,10 @@
 
 Identifies 300+ hash algorithms by length, charset, and pattern matching.
 Supports hashcat and John the Ripper integration.
+
+
+
+
 """
 from __future__ import annotations
 import logging
@@ -21,7 +25,7 @@ _COMPILED_PATTERN_HASHES: tuple[tuple[re.Pattern[str], str, str], ...] = tuple((
 _HEX_HASH_SCAN_RE = re.compile('\\b[0-9a-fA-F]{32,128}\\b')
 _COMPILED_SCAN_PATTERN_HASHES: tuple[tuple[re.Pattern[str], str], ...] = tuple(((re.compile(pattern + '\\S+'), pattern) for pattern in PATTERN_HASHES.keys()))
 
-class HashMatch(msgspec.Struct):
+class HashMatch(msgspec.Struct, gc=False):
     """Represents a hash algorithm match.
 
     Attributes:
@@ -41,7 +45,7 @@ class HashMatch(msgspec.Struct):
     hashcat_mode: int | None
     john_format: str | None
 
-class HashFinding(msgspec.Struct):
+class HashFinding(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for hash found in text.
 
     Attributes:
@@ -55,7 +59,7 @@ class HashFinding(msgspec.Struct):
     matches: list[HashMatch]
     context: str
 
-class HashConfig(msgspec.Struct):
+class HashConfig(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for hash identification configuration.
 
     Attributes:

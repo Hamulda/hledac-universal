@@ -2,6 +2,10 @@
 Web Intelligence Helper — OSINT scraping and analysis utilities.
 
 Provides a lightweight wrapper around Hledac's scraping and OSINT components
+
+
+
+
 with bounded queue management and graceful degradation when optional
 dependencies are unavailable.
 
@@ -65,7 +69,7 @@ class OperationStatus(Enum):
     FAILED = 'failed'
     CANCELLED = 'cancelled'
 
-class IntelligenceTarget(msgspec.Struct):
+class IntelligenceTarget(msgspec.Struct, gc=False):
     """Unified intelligence target configuration."""
     target_id: str
     name: str
@@ -78,14 +82,14 @@ class IntelligenceTarget(msgspec.Struct):
     compliance_level: str = 'strict'
     stealth_level: str = 'high'
 
-class TechIntelligence(msgspec.Struct, frozen=True):
+class TechIntelligence(msgspec.Struct, frozen=True, gc=False):
     """Tech stack intelligence inferred from job postings."""
     detected_technologies: dict[str, int]
     hiring_patterns: list[str]
     seniority_distribution: dict[str, int]
     inferred_pain_points: list[str]
 
-class IntelligenceResult(msgspec.Struct):
+class IntelligenceResult(msgspec.Struct, gc=False):
     """Comprehensive intelligence result."""
     operation_id: str
     target_id: str

@@ -3,6 +3,11 @@
 research_memory.py — Cross-Sprint Research Session Memory
 ====================================================
 
+
+
+
+
+
 Persistent cross-sprint knowledge of what we know, what we've tried,
 and what gaps remain after each sprint.
 

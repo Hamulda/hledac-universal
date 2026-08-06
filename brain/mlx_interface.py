@@ -2,6 +2,7 @@
 brain/mlx_interface.py — Sprint G2: Unified MLX Interface
 =====================================================
 
+
 Centralizes all MLX imports and metal memory probing in one place.
 Replaces scattered lazy mlx imports in DeepHermes3Engine and other brain components.
 

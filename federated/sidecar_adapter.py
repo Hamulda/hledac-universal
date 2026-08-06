@@ -2,6 +2,7 @@
 F350M-FED: Federated Sidecar Adapter — wires FederatedResearchCoordinator
 into the existing SidecarOrchestrator / SidecarRegistry pattern.
 
+
 Sprint: F350M-FED / Federated Activation 2026-06-04
 Target: federated/sidecar_adapter.py
 

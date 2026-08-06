@@ -11,10 +11,11 @@
 //!   MAX_BYTES = 50 * 1024 * 1024 (50 MB)
 //!   LOAD_FACTOR = 0.7 (HashMap rehash threshold)
 
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use pyo3::prelude::*;
 
@@ -22,9 +23,9 @@ use pyo3::prelude::*;
 #[derive(Clone, Debug)]
 struct CacheEntry<V> {
     value: V,
-    frequency: u32,       // Access frequency counter (Count-Min)
-    last_access: u64,     // Monotonic timestamp
-    size_bytes: usize,    // Estimated memory size
+    frequency: u32,    // Access frequency counter (Count-Min)
+    last_access: u64,  // Monotonic timestamp
+    size_bytes: usize, // Estimated memory size
 }
 
 impl<V: Clone> CacheEntry<V> {
@@ -73,7 +74,8 @@ impl TinyLFU {
 
     /// Estimate frequency of an item
     fn estimate(&self, item: &[u8]) -> u32 {
-        self.seeds.iter()
+        self.seeds
+            .iter()
             .enumerate()
             .map(|(i, &seed)| {
                 let mut hasher = ahash::AHasher::default();
@@ -96,7 +98,9 @@ impl TinyLFU {
             let h = hasher.finish();
             let bucket = (h as usize) % self.buckets;
             // Conservative update: only increment if this is the minimum
-            let min_val = self.sketch.iter()
+            let min_val = self
+                .sketch
+                .iter()
                 .enumerate()
                 .filter(|(j, _)| *j != i)
                 .map(|(_, row)| row[bucket])
@@ -143,9 +147,7 @@ pub struct GraphLRUCache<K: Clone + Hash + Eq, V: Clone> {
 impl<K: Clone + Hash + Eq + std::fmt::Display, V: Clone> GraphLRUCache<K, V> {
     pub fn new(max_entries: usize, max_bytes: usize) -> Self {
         Self {
-            entries: HashMap::with_capacity(
-                (max_entries as f64 * 1.2) as usize,
-            ),
+            entries: HashMap::with_capacity((max_entries as f64 * 1.2) as usize),
             lru_order: VecDeque::with_capacity(max_entries),
             admission: TinyLFU::new(),
             max_entries,
@@ -179,12 +181,17 @@ impl<K: Clone + Hash + Eq + std::fmt::Display, V: Clone> GraphLRUCache<K, V> {
         let size = Self::estimate_size(&value);
 
         // TinyLFU admission check
-        let current_min_freq = self.entries.values()
+        let current_min_freq = self
+            .entries
+            .values()
             .map(|e| e.frequency)
             .min()
             .unwrap_or(0);
 
-        if !self.admission.should_admit(key_bytes.as_bytes(), current_min_freq) {
+        if !self
+            .admission
+            .should_admit(key_bytes.as_bytes(), current_min_freq)
+        {
             // Reject: too infrequent
             return value;
         }
@@ -256,60 +263,106 @@ impl PyGraphLRUCache {
     #[new]
     fn new(max_entries: usize, max_bytes: usize) -> Self {
         Self {
-            cache: Arc::new(Mutex::new(
-                GraphLRUCache::new(max_entries, max_bytes)
-            )),
+            cache: Arc::new(Mutex::new(GraphLRUCache::new(max_entries, max_bytes))),
         }
     }
 
     fn get(&self, key: String) -> Option<Vec<u8>> {
-        self.cache.lock().unwrap()
-            .entries.get(&key)
-            .map(|e| e.value.clone())
+        let mut cache = self.cache.lock();
+        let key_bytes = key.clone();
+        // Extract counter value BEFORE the borrow to avoid conflicts
+        cache.counter += 1;
+        let counter_val = cache.counter;
+        
+        if let Some(entry) = cache.entries.get_mut(&key) {
+            entry.last_access = counter_val;
+            entry.frequency += 1;
+            let value = entry.value.clone();
+            drop(entry);
+            cache.admission.record(key_bytes.as_bytes());
+            return Some(value);
+        }
+        None
     }
 
     fn put(&self, key: String, value: Vec<u8>) -> bool {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock();
         let size = GraphLRUCache::<String, Vec<u8>>::estimate_size(&value);
         let key_bytes = key.clone();
 
         // TinyLFU admission check
-        let current_min = cache.entries.values()
+        let current_min = cache
+            .entries
+            .values()
             .map(|e| e.frequency)
             .min()
             .unwrap_or(0);
 
-        if !cache.admission.should_admit(key_bytes.as_bytes(), current_min) {
+        if !cache
+            .admission
+            .should_admit(key_bytes.as_bytes(), current_min)
+        {
             return false;
         }
 
-        // Evict if needed
+        // Check if key exists - update or insert
+        // NOTE: Extract counter BEFORE get_mut to avoid borrow conflict
+        let counter_val = cache.counter;
+        if let Some(existing) = cache.entries.get_mut(&key) {
+            // Update existing entry - extract values while we have the borrow
+            let old_size = existing.size_bytes;
+            let existing_value = std::mem::replace(&mut existing.value, value);
+            existing.frequency = 1;
+            existing.last_access = counter_val;
+            existing.size_bytes = size;
+            drop(existing);
+            
+            cache.current_bytes = cache.current_bytes.saturating_sub(old_size) + size;
+            cache.admission.record(key_bytes.as_bytes());
+            return true;
+        }
+
+        // Evict if needed for new entry
         cache.evict_until(size).ok();
 
         let entry = CacheEntry::new(value, size, &mut cache.counter);
         cache.current_bytes += size;
-        let key_for_lru = key.clone();
-        cache.entries.insert(key, entry);
-        cache.lru_order.push_back(key_for_lru);
+        cache.entries.insert(key.clone(), entry);
+        cache.lru_order.push_back(key);
         cache.admission.record(key_bytes.as_bytes());
 
         true
     }
 
     fn len(&self) -> usize {
-        self.cache.lock().unwrap().len()
+        self.cache.lock().len()
     }
 
     fn is_empty(&self) -> bool {
-        self.cache.lock().unwrap().is_empty()
+        self.cache.lock().is_empty()
     }
 
     fn clear(&self) {
-        self.cache.lock().unwrap().clear();
+        self.cache.lock().clear();
+    }
+
+    fn contains_key(&self, key: String) -> bool {
+        self.cache.lock().entries.contains_key(&key)
+    }
+
+    fn remove(&self, key: String) -> Option<Vec<u8>> {
+        let mut cache = self.cache.lock();
+        if let Some(entry) = cache.entries.remove(&key) {
+            // Remove from LRU order
+            cache.lru_order.retain(|k| k != &key);
+            cache.current_bytes = cache.current_bytes.saturating_sub(entry.size_bytes);
+            return Some(entry.value);
+        }
+        None
     }
 
     fn stats(&self) -> HashMap<String, usize> {
-        let cache = self.cache.lock().unwrap();
+        let cache = self.cache.lock();
         let mut stats = HashMap::new();
         stats.insert("entries".to_string(), cache.entries.len());
         stats.insert("bytes".to_string(), cache.current_bytes);
@@ -340,8 +393,7 @@ mod tests {
 
     #[test]
     fn test_lru_cache() {
-        let mut cache: GraphLRUCache<String, Vec<u8>> =
-            GraphLRUCache::new(3, 1024 * 1024);
+        let mut cache: GraphLRUCache<String, Vec<u8>> = GraphLRUCache::new(3, 1024 * 1024);
 
         cache.get_or_insert(&"k1".to_string(), || vec![1, 2, 3]);
         cache.get_or_insert(&"k2".to_string(), || vec![4, 5, 6]);

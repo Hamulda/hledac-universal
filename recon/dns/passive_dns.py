@@ -2,6 +2,12 @@
 Passive DNS — DoH (DNS-over-HTTPS) resolver with multi-source fallback.
 
 Sources:
+
+
+
+
+
+
   - Cloudflare (1.1.1.1, one.one.one.one)
   - Google (8.8.8.8, dns.google)
   - Quad9 (9.9.9.9, dns.quad9.net)
@@ -49,7 +55,7 @@ class RetryableError(Exception):
     """Signals a retriable error for retry_backoff_async."""
 
 
-class _ResolverHealth(msgspec.Struct):
+class _ResolverHealth(msgspec.Struct, gc=False):
     """Per-resolver health state for circuit breaker."""
     consecutive_failures: int = 0
     last_failure_ts: float = 0.0

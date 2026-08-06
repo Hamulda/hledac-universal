@@ -2,6 +2,7 @@
 Adapter: StealthSession → StealthEngine interface.
 Bridges security_coordinator.py to canonical StealthSession from stealth/stealth_session.py.
 Sprint F214Q — StealthEngine aliasing.
+
 """
 
 class StealthEngine:

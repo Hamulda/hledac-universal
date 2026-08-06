@@ -11,6 +11,10 @@ This is the canonical health endpoint consumed by:
   - Memory pressure alarms (critical → abort sprint)
 """
 
+# Feature flag: controls whether OpenTelemetry spans are emitted.
+# Set to False to disable telemetry even when instrumentation is configured.
+HEALTH_ENDPOINT_TELEMETRY_ENABLED: bool = True
+
 
 from typing import Any
 
@@ -83,22 +87,25 @@ async def collect_runtime_health() -> dict[str, Any]:
             result["uma_state"] = {}
 
     # ── OpenTelemetry span event ───────────────────────────────────────────
-    try:
-        from hledac.universal.runtime import get_logfire_logger
+    # HEALTH_ENDPOINT_TEMETRY_ENABLED flag controls whether telemetry is emitted.
+    # This allows disabling telemetry even when instrumentation is configured.
+    if HEALTH_ENDPOINT_TELEMETRY_ENABLED:
+        try:
+            from hledac.universal.runtime import get_logfire_logger
 
-        logger = get_logfire_logger("health")
-        # Emit key UMA metrics as structured log
-        if result["uma_state"]:
-            uma = result["uma_state"]
-            logger.info(
-                "runtime_health",
-                rss_gib=uma["rss_gib"],
-                pressure_level=uma["pressure_level"],
-                metal_gib=uma["metal_gib"],
-                dedup_bloom_pct=uma["dedup_bloom_pct"],
-            )
-    except Exception:
-        # Telemetry hook is best-effort — never fail the health endpoint
-        pass
+            logger = get_logfire_logger("health")
+            # Emit key UMA metrics as structured log
+            if result["uma_state"]:
+                uma = result["uma_state"]
+                logger.info(
+                    "runtime_health",
+                    rss_gib=uma["rss_gib"],
+                    pressure_level=uma["pressure_level"],
+                    metal_gib=uma["metal_gib"],
+                    dedup_bloom_pct=uma["dedup_bloom_pct"],
+                )
+        except Exception:
+            # Telemetry hook is best-effort — never fail the health endpoint
+            pass
 
     return result

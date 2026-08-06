@@ -2,6 +2,7 @@
 runtime/protocols/cleanup_protocol.py — F285: Async Resource Cleanup Protocol
 
 PEP 544 Protocol for async resource cleanup with:
+
 - AsyncCleanable: base Protocol with aclose(timeout_s=10.0)
 - manage_cleanup(): @asynccontextmanager for automatic LIFO cleanup
 

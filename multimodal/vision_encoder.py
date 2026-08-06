@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+
 from hledac.universal.utils.domain_executors import get_vision_executor
 from pathlib import Path
 import numpy as np

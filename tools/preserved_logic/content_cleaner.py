@@ -2,6 +2,7 @@
 ContentCleaner — HTML cleaning stub.
 
 Provides HTML to Markdown/JSON/text conversion.
+
 This is a fail-safe stub: raises ImportError on instantiation.
 """
 from __future__ import annotations

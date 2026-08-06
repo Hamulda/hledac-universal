@@ -2,6 +2,8 @@
 F203C: Kill Chain Tagger — MITRE ATT&CK Mapping for OSINT Findings
 
 Maps raw OSINT findings to MITRE ATT&CK tactics and techniques:
+
+
   - Reconnaissance (TA0043): T1590-T1598 — target reconnaissance
   - Resource Development (TA0042): T1583-T1588 — capability development
 
@@ -62,7 +64,7 @@ _add_pattern('Resource Development', 'T1588.003', 'Obtain Code Signing Certifica
 _add_pattern('Resource Development', 'T1588.004', 'Obtain Digital Certificates', 'resource_development', 0.6, 'ssl certificate purchase', 'buy certificate', 'domain validated cert', 'wildcard cert', 'letsencrypt.*automation', 'acme.*protocol', 'certificate authority', 'ca cert')
 _add_pattern('Resource Development', 'T1588.005', 'Obtain Exploits', 'resource_development', 0.5, 'exploitdb', 'metasploit module', 'cve-20\\d\\d', 'edb-id', 'exploit purchase', '0-day exploit', 'pentest-exploit', 'poc.*exploit', 'proof of concept.*exploit')
 
-class KillChainTag(msgspec.Struct, frozen=True):
+class KillChainTag(msgspec.Struct, frozen=True, gc=False):
     """
     MITRE ATT&CK kill chain tag attached to an OSINT finding.
 

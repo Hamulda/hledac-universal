@@ -2,6 +2,11 @@
 
 Python 3.14 built-in logging.QueueHandler je základ, ale pro M1 8GB je lepší
 vlastní implementace přes asyncio.Queue protože:
+
+
+
+
+
 1. logging.QueueHandler blokuje při plné frontě (PUTaty logger thread)
 2. Vlastní queue můžeme bounded — max 10_000 zpráv, pak drop oldest
 3. Background thread jen flushuje do stdout/stderr

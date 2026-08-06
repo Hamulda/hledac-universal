@@ -2,6 +2,7 @@
 Native Database Extraction — Wire-protocol data extraction from exposed databases.
 
 HEIST-08: Bridges the gap between open_storage_scanner (HTTP-only cloud-storage
+
 discovery) and raw database wire protocols. After positive detection of an open
 database port, this module performs structured data extraction:
 
@@ -24,8 +25,12 @@ ARCHITECTURE:
 
 FEATURE FLAG:
   HLEDAC_ENABLE_NATIVE_EXTRACTION=1  — enables native protocol extraction
-  (default: 0, opt-in; Rust native_db feature must be compiled for
-  MongoDB/Redis; Elasticsearch HTTP extraction always works when enabled)
+  (default: 0, opt-in SECURITY choice; Rust native_db feature must be compiled
+  for MongoDB/Redis extraction. This is DISABLED by default because:
+    1. Direct database connection to exposed services is a security-sensitive operation
+    2. Rust native_db must be compiled with --features native_db
+    3. Elasticsearch HTTP extraction works without Rust but is still gated
+  For internal/CI use: set HLEDAC_ENABLE_NATIVE_EXTRACTION=1
 
 M1 8GB SAFETY:
   • Rust: 50 MB max per extraction session (native_db.rs MAX_RESPONSE_BYTES)
@@ -488,10 +493,12 @@ async def extract_batch(
 def is_native_extraction_enabled() -> bool:
     """Check if native extraction is enabled via environment flag.
 
-    ``HLEDAC_ENABLE_NATIVE_EXTRACTION=1`` enables the extraction mode.
-    Default is OFF (0) — opt-in because Rust native_db must be compiled
-    for MongoDB/Redis extraction, and ES HTTP extraction adds network
-    connections to non-standard ports.
+    SECURITY: Default is OFF (0) — opt-in because:
+    - Direct database wire protocol access to exposed services is privileged
+    - Rust native_db must be compiled with --features native_db
+    - Elasticsearch HTTP extraction adds connections to non-standard ports
+
+    Set HLEDAC_ENABLE_NATIVE_EXTRACTION=1 for internal/CI deployments only.
     """
     return os.environ.get("HLEDAC_ENABLE_NATIVE_EXTRACTION", "0") == "1"
 

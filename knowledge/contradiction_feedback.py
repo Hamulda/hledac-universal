@@ -2,6 +2,10 @@
 META-007 + META-008: Contradiction Feedback Bridge + Auto-Retraction
 ====================================================================
 
+
+
+
+
 Closed-loop contradiction detection -> re-fetch gating + auto-retraction.
 Aggregates results from all 4+ contradiction detection engines and feeds
 them back into the sprint pipeline so contradictions trigger corrective action.

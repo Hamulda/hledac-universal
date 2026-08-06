@@ -2,6 +2,7 @@
 Safe serialization for isolated executor RPC (P1-04).
 
 Eliminates pickle.load/dump security risk (RCE via __reduce__) in
+
 interpreter-to-interpreter RPC by using msgspec.json + function name lookup.
 
 Why not pickle
@@ -46,7 +47,7 @@ import msgspec
 logger = logging.getLogger(__name__)
 
 # msgspec schema for safe function calls
-class FuncCall(msgspec.Struct):
+class FuncCall(msgspec.Struct, gc=False):
     """Safe function call payload — msgspec.Struct for zero-copy decode."""
     func: str  # "module.attr" format
     args: tuple[Any, ...] = ()

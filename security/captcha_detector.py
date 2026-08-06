@@ -2,12 +2,15 @@
 CAPTCHA detection pre-filter — phase 1 heuristic, no ML model required.
 Gated by HLEDAC_ENABLE_CAPTCHA_DETECTION=1.
 
+
 GHOST_INVARIANTS:
 - I10: Never block event loop — PIL.open() always via run_in_executor
 - Fail-soft: any exception → return False (never crash on CAPTCHA detection)
 - Phase 1: PIL-only heuristics (no VisionEncoder, no coremltools model)
 """
 import re
+from io import BytesIO
+
 from hledac.universal.utils.domain_executors import get_captcha_executor
 try:
     from PIL import Image

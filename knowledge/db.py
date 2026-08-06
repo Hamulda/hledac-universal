@@ -2,6 +2,9 @@
 knowledge/db.py — Unified Database Facade
 ========================================
 
+
+
+
 ISSUE-001: Databázová redundance a fragmentace
 
 KONSOLIDACE NA 2 BACKENDY:

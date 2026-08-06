@@ -2,6 +2,7 @@
 
 This module provides the orchestrated version of the RSS/Atom feed pipeline
 using the StageOrchestrator framework. It composes:
+
     fetch_feed → assemble → scan → dedup → build_feed
 
 Usage:

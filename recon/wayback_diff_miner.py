@@ -2,6 +2,9 @@
 WaybackDiffMiner — Sprint F206AX
 ================================
 
+
+
+
 Transport seam: injected fetch provider + canonical circuit breaker preflight.
 No network at import time. Fail-soft when breaker unavailable.
 
@@ -55,7 +58,7 @@ TIMEOUT_PER_REQUEST: float = 30.0
 WAYBACK_CDX_API: str = 'https://web.archive.org/cdx/search/cdx'
 WAYBACK_BASE_URL: str = 'https://web.archive.org'
 
-class CDXDiffEvent(msgspec.Struct, frozen=True):
+class CDXDiffEvent(msgspec.Struct, frozen=True, gc=False):
     """
     A single change event detected from Wayback CDX comparison.
 
@@ -74,7 +77,7 @@ class CDXDiffEvent(msgspec.Struct, frozen=True):
     change_type: str
     evidence_url: str
 
-class WaybackDiffResult(msgspec.Struct):
+class WaybackDiffResult(msgspec.Struct, gc=False):
     """Result of a WaybackDiffMiner.mine() call."""
     input_count: int
     change_events: list[CDXDiffEvent] = field(default_factory=list)

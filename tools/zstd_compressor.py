@@ -2,6 +2,7 @@
 ZstdCompressor — content-aware Zstd compression with passive dictionary learning.
 
 Extracted from coordinators/fetch_coordinator.py (Sprint 44 refactor).
+
 Provides compression with content-aware levels and passive dictionary building.
 
 HEIST-07: Dictionary-aware compression now backed by Rust `compress_page_dict()`

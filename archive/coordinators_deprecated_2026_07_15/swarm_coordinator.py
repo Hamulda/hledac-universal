@@ -2,6 +2,13 @@
 Universal Swarm Coordinator
 ===========================
 
+
+
+
+
+
+
+
 Integrated swarm intelligence from:
 - SwarmCoordinator: Swarm state management, adaptive strategies
 - SelfOrganizingCoordinator: Tree of agents, hourglass balancing
@@ -41,7 +48,7 @@ class SwarmState(Enum):
     DIVERSE = 'diverse'
     COORDINATED = 'coordinated'
 
-class SwarmMetrics(msgspec.Struct):
+class SwarmMetrics(msgspec.Struct, gc=False):
     """Metrics for swarm behavior analysis."""
     diversity: float = 0.0
     convergence: float = 0.0
@@ -52,7 +59,7 @@ class SwarmMetrics(msgspec.Struct):
     performance: float = 0.0
     fault_tolerance: float = 1.0
 
-class AdaptiveStrategy(msgspec.Struct, frozen=True):
+class AdaptiveStrategy(msgspec.Struct, frozen=True, gc=False):
     """Adaptive strategy configuration."""
     name: str
     description: str
@@ -62,7 +69,7 @@ class AdaptiveStrategy(msgspec.Struct, frozen=True):
     priority: int = 1
     cooldown: float = 10.0
 
-class SwarmAgent(msgspec.Struct, frozen=True):
+class SwarmAgent(msgspec.Struct, frozen=True, gc=False):
     """Individual swarm agent."""
     agent_id: str
     position: list[float] = field(default_factory=list)
@@ -74,7 +81,7 @@ class SwarmAgent(msgspec.Struct, frozen=True):
     findings: list[dict[str, Any]] = field(default_factory=list)
     current_task: str | None = None
 
-class SwarmNode(msgspec.Struct, frozen=True):
+class SwarmNode(msgspec.Struct, frozen=True, gc=False):
     """
     P2P Research Swarm Node.
 
@@ -114,7 +121,7 @@ class SwarmNode(msgspec.Struct, frozen=True):
         self.is_online = is_healthy
         return is_healthy
 
-class SwarmTask(msgspec.Struct, frozen=True):
+class SwarmTask(msgspec.Struct, frozen=True, gc=False):
     """
     P2P Swarm Task with priority and consensus tracking.
 
@@ -137,7 +144,7 @@ class SwarmTask(msgspec.Struct, frozen=True):
         """Enable priority queue comparison."""
         return self.priority < other.priority
 
-class ConsensusProposal(msgspec.Struct, frozen=True):
+class ConsensusProposal(msgspec.Struct, frozen=True, gc=False):
     """
     Consensus mechanism for swarm decisions.
 

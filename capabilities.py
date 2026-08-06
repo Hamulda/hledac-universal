@@ -2,6 +2,11 @@
 F650H: ModelLifecycleManager facade truth + no third model truth
 ================================================================
 
+
+
+
+
+
 Sprint: F650H / F600K / F130S
 Target: capabilities.py
 Goal: bounded de-ownership + facade truth hardening
@@ -114,7 +119,7 @@ class CapabilityTruthLayer(Enum):
     RUNTIME_LOADED = 'loaded'
     EFFECTIVE_FOR_TOOL_CONTRACT = 'effective'
 
-class CapabilityTruthStatus(msgspec.Struct):
+class CapabilityTruthStatus(msgspec.Struct, gc=False):
     """
     F6: Truthful capability status across all four layers.
 

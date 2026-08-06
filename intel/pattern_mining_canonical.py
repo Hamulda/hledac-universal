@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.pattern_mining_canonical
-from recon.pattern_mining_canonical import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

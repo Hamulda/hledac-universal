@@ -2,6 +2,25 @@
 runtime/sidecar_protocol_adapters.py — F350M-R: Protocol-Based Sidecar Adapters
 ==============================================================================
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Protocol-based plugin adapters for orphaned sidecar modules.
 Each adapter wraps an existing module and exposes SidecarAdapterProtocol.
 

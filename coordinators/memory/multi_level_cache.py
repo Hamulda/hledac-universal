@@ -2,6 +2,7 @@
 Multi-Level Context Cache
 =========================
 
+
 Multi-level context cache with semantic search using FAISS and USearch HNSW.
 
 Extracted from memory_coordinator.py (F320) — original line range: 1270-1684
@@ -17,6 +18,9 @@ Features:
 
 Canonical import:
     from hledac.universal.coordinators.memory import MultiLevelContextCache
+
+Types (CacheType, CacheLocation, CacheEntry) are defined in _core.py
+to avoid duplication. Import from there or via this module.
 """
 
 import asyncio
@@ -24,12 +28,14 @@ import hashlib
 import logging
 import sys
 import time
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import msgspec
-
+from hledac.universal.coordinators.memory._core import (
+    CacheEntry,
+    CacheLocation,
+    CacheType,
+)
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
@@ -51,32 +57,6 @@ try:
 except ImportError:
     usearch = None
     USEARCH_AVAILABLE = False
-
-
-class CacheType(Enum):
-    """Types of cache entries."""
-    SEMANTIC = 'semantic'
-    COMPUTATION = 'computation'
-    QUERY = 'query'
-
-
-class CacheLocation(Enum):
-    """Cache location levels."""
-    L1_MEMORY = 'l1_memory'
-    L2_DISK = 'l2_disk'
-
-
-class CacheEntry(msgspec.Struct, gc=False):
-    """Single cache entry with FAISS embedding support."""
-    cache_id: str
-    content: Any
-    embedding: Any | None
-    access_count: int
-    last_accessed: float
-    created_at: float
-    size_bytes: int
-    cache_type: CacheType
-    metadata: dict[str, Any]
 
 
 class MultiLevelContextCache:
@@ -172,6 +152,16 @@ class MultiLevelContextCache:
         if self._lock is None:
             self._lock = asyncio.Lock()
         return self._lock
+
+    # F320-Issue2: lazy lock for embedding cache — consistent pattern with _get_lock()
+    async def _get_embedding_lock(self) -> asyncio.Lock | None:
+        """Lazily create asyncio.Lock for embedding cache operations."""
+        if self._embedding_cache_lock is None:
+            try:
+                self._embedding_cache_lock = asyncio.Lock()
+            except Exception:
+                return None
+        return self._embedding_cache_lock
 
     def _init_hnsw(self) -> None:
         """Initialize usearch index for approximate nearest neighbor search (Sprint 26)."""
@@ -284,29 +274,34 @@ class MultiLevelContextCache:
         """
         import unicodedata
         normalized = unicodedata.normalize('NFC', text)
-        # ISSUE-2984: lazy lock initialization
-        if self._embedding_cache_lock is None:
-            try:
-                self._embedding_cache_lock = asyncio.Lock()
-            except Exception:
-                self._embedding_cache_lock = None
-        cached = self._embedding_cache.get(normalized)
-        if cached is not None:
-            return cached
+        
+        # Check cache (protected by lock)
+        async with await self._get_embedding_lock():
+            cached = self._embedding_cache.get(normalized)
+            if cached is not None:
+                return cached
+        
+        # Compute embedding (outside lock - expensive operation)
+        embedding = None
         if self.embedder:
             try:
                 if hasattr(self.embedder, 'encode_batch'):
                     # C7-FIX: Use asyncio.Runner() instead of new_event_loop/run_until_complete.
                     # Runner handles loop lifecycle automatically and is the modern Python 3.11+ pattern.
                     result = await self.embedder.encode_batch([text])
-                    return result[0] if result else None
-                embeddings = list(self.embedder.embed([text]))
-                if embeddings:
-                    return np.array(embeddings[0])
+                    embedding = result[0] if result else None
+                else:
+                    embeddings = list(self.embedder.embed([text]))
+                    if embeddings:
+                        embedding = np.array(embeddings[0])
             except Exception as e:
                 logger.debug(f'Embedding failed: {e}')
-        self._embedding_cache[normalized] = None
-        return None
+        
+        # Store result (protected by lock)
+        async with await self._get_embedding_lock():
+            self._embedding_cache[normalized] = embedding
+        
+        return embedding
 
     def _get_embedding(self, text: str) -> Any | None:
         """Get embedding for text using MLXEmbedder or FastEmbed (sync wrapper).

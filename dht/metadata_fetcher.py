@@ -2,6 +2,8 @@
 BEP-9: Extension protocol for fetching torrent metadata without downloading torrent file.
 
 Protocol: TCP connection to peer → handshake with extension protocol →
+
+
  request ut_metadata → receive metadata pieces → parse bencode info dict
 
 M1 constraint: Max 5 concurrent metadata fetches.

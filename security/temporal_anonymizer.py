@@ -3,6 +3,7 @@ TemporalAnonymizer — Stub implementation.
 
 Provides random delay for rate limiting in intelligence modules.
 
+
 Real implementation deferred — stub provides interface compatibility
 with callers expecting get_random_delay() method.
 """

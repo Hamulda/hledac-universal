@@ -3,6 +3,8 @@
 Extracted from live_public_pipeline.py.
 Contains only: struct definitions + thin orchestration stub.
 
+
+
 All heavy logic delegated to sibling modules:
 - public_discovery: URL generation + _DiscoveryEngine
 - public_patterns: pattern matching + quality scoring

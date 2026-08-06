@@ -2,6 +2,9 @@
 core/locks.py — Canonical Lock Registry pro Hledac Universal.
 
 ARCHITEKTURA:
+
+
+
     Všechny threading.Lock / threading.RLock v projektu MUSÍ být registrovány
     v LockCategory enumu pro prevenci deadlocku při cross-thread acquisition.
 

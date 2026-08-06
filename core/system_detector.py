@@ -2,6 +2,8 @@
 System Detector - Runtime hardware capability detection for M1 Adaptive Defaults
 ================================================================================
 
+
+
 Sprint: Issue 14 / F650M
 Target: Replace hardcoded M1 8GB limits with runtime detection
 

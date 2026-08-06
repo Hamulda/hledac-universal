@@ -2,6 +2,7 @@
 
 Role: Dedup stage přijímá URLy z DiscoveryStage, deduplikuje je přes RotatingBloomFilter,
 posílá unikátní URLy do FetchStage.
+
 """
 from __future__ import annotations
 

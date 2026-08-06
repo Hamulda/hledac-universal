@@ -2,6 +2,8 @@
 """
 Rust-backed Federated Q-Learning table with rayon parallel batch updates.
 
+
+
 Q(s,a) += alpha * (reward + gamma * max(Q(s',a')) - Q(s,a))
 
 Features:

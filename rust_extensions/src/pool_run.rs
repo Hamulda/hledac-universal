@@ -137,6 +137,10 @@ fn mixed_sender() -> &'static parking_lot::Mutex<Option<Sender<WorkItem>>> {
 }
 
 /// Spawn a dispatcher thread that runs pool.install() and consumes work from rx.
+///
+/// NOTE: Uses `.expect()` because dispatcher thread is essential for pool operation.
+/// If this fails, the entire thread pool becomes non-functional (work won't be
+/// dispatched). This indicates a system-level OOM/resource exhaustion issue.
 fn spawn_dispatcher(pool_name: &str, rx: Arc<Receiver<WorkItem>>) {
     let pool_name_owned = pool_name.to_string();
     thread::Builder::new()
@@ -159,7 +163,7 @@ fn spawn_dispatcher(pool_name: &str, rx: Arc<Receiver<WorkItem>>) {
                 _ => run_dispatcher_loop(get_cpu_pool(), rx),
             }
         })
-        .expect("spawn_dispatcher: thread::Builder failed (OOM?)");
+        .expect("pool_run: OOM or system thread limit exceeded — dispatcher thread spawn failed");
 }
 
 /// Dispatcher loop for fixed pools (cpu, io).
@@ -407,7 +411,7 @@ pub fn rayon_submit_channel_(
     //   - Worker upgrades Weak → valid Arc for duration of execute_work_item
     //   - When worker finishes: if Arc still alive (Python hasn't dropped), condvar fires
     //   - If Python never calls rayon_join: work_shared is leaked (acceptable for abort path)
-    let work_shared: Arc<SharedTask> = Arc::new_cyclic(|weak| SharedTask {
+    let work_shared: Arc<SharedTask> = Arc::new_cyclic(|_weak| SharedTask {
         result: parking_lot::Mutex::new(None),
         cancel_flag: AtomicBool::new(false),
         state: AtomicU8::new(STATE_PENDING),

@@ -2,6 +2,15 @@
 Advanced Image OSINT Module
 ===========================
 
+
+
+
+
+
+
+
+
+
 Comprehensive image intelligence gathering for OSINT research.
 Self-hosted on M1 8GB with MLX acceleration.
 
@@ -38,14 +47,14 @@ except ImportError:
     MLX_AVAILABLE = False
     logger.warning('MLX not available - using numpy fallback')
 
-class ImageHash(msgspec.Struct):
+class ImageHash(msgspec.Struct, gc=False):
     """Perceptual hash for image similarity."""
     ahash: str
     phash: str
     dhash: str
     whash: str
 
-class OCRResult(msgspec.Struct, frozen=True):
+class OCRResult(msgspec.Struct, frozen=True, gc=False):
     """OCR extraction result."""
     text: str
     confidence: float
@@ -53,7 +62,7 @@ class OCRResult(msgspec.Struct, frozen=True):
     regions: list[dict[str, Any]]
     processing_time_ms: float
 
-class SteganalysisResult(msgspec.Struct, frozen=True):
+class SteganalysisResult(msgspec.Struct, frozen=True, gc=False):
     """Steganography analysis result."""
     is_suspicious: bool
     lsb_entropy: float
@@ -63,7 +72,7 @@ class SteganalysisResult(msgspec.Struct, frozen=True):
     suspicious_patterns: list[str]
     visual_artifacts: np.ndarray | None = None
 
-class ImageAnalysis(msgspec.Struct, frozen=True):
+class ImageAnalysis(msgspec.Struct, frozen=True, gc=False):
     """Complete image analysis result."""
     file_hash: str
     image_hash: ImageHash

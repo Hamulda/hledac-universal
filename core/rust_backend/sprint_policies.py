@@ -2,6 +2,14 @@
 """
 Feed dominance guard and lane budget pool for sprint scheduling.
 Implements feed dominance detection and per-lane budget allocation.
+
+
+
+
+
+
+
+
 """
 
 from __future__ import annotations

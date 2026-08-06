@@ -2,6 +2,11 @@
 Layer Protocol + LayerStack — Inversion of Control for Cross-Cutting Concerns
 
 Design principles:
+
+
+
+
+
 - Each layer is a Protocol (PEP 544): mount(ctx), unmount(ctx), on_event(event)
 - LayerStack mounts layers in order, events propagate through in same order
 - No global state — LayerStack is injected where needed

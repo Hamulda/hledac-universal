@@ -2,6 +2,7 @@
 utils/mlx_memory/_tensor.py — SharedTensor Zero-Copy Wrapper (F330-MLX-DUP-007)
 
 Wrapper around mlx.core.array enabling reference passing semantics.
+
 Now with Metal buffer backing (SILICON-04) for true zero-copy on M1 UMA.
 
 Architecture:

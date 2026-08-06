@@ -31,6 +31,10 @@ def _is_providerless_enabled() -> bool:
     OSINT collectors (DDG + Historical + Wayback) run concurrently via TaskGroup
     with RRF+MMR fusion ranker. Sequential fallback preserved for explicit
     HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY=0.
+
+    OPTIMIZATION #2 NOTE: fuse_always improves recall but adds ~100-200ms latency
+    from parallel execution. For latency-critical use cases, set CASCADE_FUSION_MODE=fuse_on_empty.
+    Monitor production metrics: if p95 latency > 500ms, consider reducing to fuse_on_empty.
     """
     return os.environ.get('HLEDAC_ENABLE_PROVIDERLESS_DISCOVERY', '1').strip().lower() in ('1', 'true', 'yes', 'on')
 

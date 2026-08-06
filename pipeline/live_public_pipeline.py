@@ -2,6 +2,12 @@
 
 query -> discovery (8AC duckduckgo) -> fetch (8AD public_fetcher) ->
 lightweight HTML extraction -> PatternMatcher (8X) -> quality gate (8W) ->
+
+
+
+
+
+
 CanonicalFinding -> storage (8S/8R DuckDBShadowStore).
 
 No LLM calls. No AO. No new storage schema.

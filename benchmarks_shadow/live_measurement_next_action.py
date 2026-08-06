@@ -3,6 +3,7 @@ F229A: NEXT ACTION MODULE — pure extracted from live_sprint_measurement.py.
 
 Owns: NextActionInput, _derive_next_action, all _rule_* helpers, _was_family_attempted.
 
+
 Pure: no runtime/scheduler/core/network/MLX imports.
 Only imports MeasurementStatus from live_measurement_schema.
 """
@@ -20,7 +21,7 @@ def _was_family_attempted(runtime_truth: dict, family: str) -> bool:
     timed_out = runtime_truth.get(f'{family}_branch_timed_out', False)
     return timed_out
 
-class NextActionInput(msgspec.Struct, frozen=True):
+class NextActionInput(msgspec.Struct, frozen=True, gc=False):
     """All inputs needed by _derive_next_action rule helpers.
 
     Frozen dataclass ensures rule helpers are pure and cannot mutate inputs.

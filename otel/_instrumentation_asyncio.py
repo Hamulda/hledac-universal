@@ -3,6 +3,9 @@
 Wraps asyncio.Task to automatically propagate OTel trace context
 (trace_id, span_id) into task-local storage via contextvars.
 
+
+
+
 M1 8GB bounds:
   - task_context_cache: 512 entries (LRU via cachetools.LRUCache)
   - No background threads — zero extra RAM

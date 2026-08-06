@@ -2,6 +2,7 @@ import asyncio
 import pathlib as _pl
 import atexit
 import contextvars
+
 from dataclasses import dataclass
 import msgspec
 from typing import cast
@@ -528,7 +529,7 @@ try:
 except Exception:
     pass
 
-class _Paths(msgspec.Struct, frozen=True):
+class _Paths(msgspec.Struct, frozen=True, gc=False):
     """Immutable bundle of canonical runtime paths.
 
     `hledac_home` is the XDG-style user-data root (`~/.hledac`); the other

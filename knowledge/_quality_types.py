@@ -2,6 +2,7 @@
 _quality_types — Quality decision types shared across knowledge layer.
 
 NEEDED BY:
+
     - knowledge/duckdb_store.py  (defers quality assessment to this module)
     - knowledge/quality_assessment.py  (quality assessor interface)
     - knowledge/sprint_facts/canonical_finding.py  (re-exports for public API)

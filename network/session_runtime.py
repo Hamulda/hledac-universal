@@ -2,6 +2,7 @@
 Session Runtime — Shared Async HTTP Surface
 ============================================
 
+
 F4XX: aiohttp REMOVED — curl_cffi is primary, httpx is HTTP/2 transport.
 httpx-socks handles Tor/I2P SOCKS5 (connection_pool_manager.py, tor/i2p_transport).
 

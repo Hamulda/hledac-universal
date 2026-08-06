@@ -2,6 +2,10 @@
 Structured Data Extractor — W3C JSON-LD + microdata + RDFa for OSINT
 ====================================================================
 
+
+
+
+
 ROLE: Beyond-curl_cffi structured extraction from rendered HTML.
 ============================================================
 
@@ -74,7 +78,7 @@ MAX_PROPERTY_KEYS: int = 64
 _SCHEMA_TO_IOC_KIND: dict[str, str] = {'Person': 'identity', 'Organization': 'identity', 'LocalBusiness': 'identity', 'GovernmentOrganization': 'identity', 'NGO': 'identity', 'Corporation': 'identity', 'EducationalOrganization': 'identity', 'Article': 'document', 'NewsArticle': 'document', 'BlogPosting': 'document', 'ScholarlyArticle': 'document', 'Report': 'document', 'TechArticle': 'document', 'WebPage': 'document', 'Product': 'asset', 'Offer': 'asset', 'Vehicle': 'asset', 'CreativeWork': 'asset', 'Event': 'event', 'BusinessEvent': 'event', 'SocialEvent': 'event', 'Festival': 'event', 'Place': 'location', 'AdministrativeArea': 'location', 'Country': 'location', 'City': 'location', 'State': 'location', 'PostalAddress': 'location', 'WebSite': 'site', 'BreadcrumbList': 'site', 'ContactPoint': 'contact'}
 _DROPPED_PROPS: frozenset[str] = frozenset({'@context', 'potentialAction', 'subjectOf', 'mainEntityOfPage'})
 
-class ExtractedEntity(msgspec.Struct, frozen=True):
+class ExtractedEntity(msgspec.Struct, frozen=True, gc=False):
     """A single structured entity extracted from a page."""
     entity_id: str
     entity_type: str
@@ -85,14 +89,14 @@ class ExtractedEntity(msgspec.Struct, frozen=True):
     source_url: str
     extracted_at: str
 
-class ExtractedRelation(msgspec.Struct, frozen=True):
+class ExtractedRelation(msgspec.Struct, frozen=True, gc=False):
     """A typed relation between two entities on the same page."""
     src_id: str
     dst_id: str
     relation: str
     source_url: str
 
-class StructuredExtraction(msgspec.Struct, frozen=True):
+class StructuredExtraction(msgspec.Struct, frozen=True, gc=False):
     """Result of parsing one page's structured data."""
     entities: tuple[ExtractedEntity, ...]
     relations: tuple[ExtractedRelation, ...]

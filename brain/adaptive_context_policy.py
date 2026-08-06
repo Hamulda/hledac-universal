@@ -2,6 +2,8 @@
 Sprint F219A + F285: Adaptive Context Policy for DeepHermes on M1 8GB.
 
 Provides runtime preflight guardrails to estimate whether the prompt/context
+
+
 is safe for generation, and truncate/summarize evidence safely when memory
 pressure is elevated.
 

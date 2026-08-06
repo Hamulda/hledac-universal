@@ -2,6 +2,8 @@
 DuckDBWriteCoordinator — Extrahovaný hot-path pro batch ingest z DuckDBShadowStore.
 
 Třída odpovídá za kompletní ingest pipeline:
+
+
 - WAL-first pořadí (LMDB putmany)
 - DuckDB Arrow zero-copy insert
 - Graph ingest (podmíněně)

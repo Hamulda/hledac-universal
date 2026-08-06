@@ -2,6 +2,8 @@
 InferencePipeliner — Non-blocking async inference pipeline with prompt preprocessing overlap.
 
 Problem: await hermes.generate() returns str — caller waits for completion.
+
+
 Cannot overlap next prompt's preprocessing with current generation.
 
 Solution: InferencePipeliner.submit() returns asyncio.Future immediately.

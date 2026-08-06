@@ -2,6 +2,10 @@
 Causal reasoning types — hledac_hypothesis.types.causal
 =======================================================
 
+
+
+
+
 Extracted from hledac_hypothesis._types (C4 Sprint Refactoring).
 M1 8GB: CO_OCCURRENCE_FP16=True saves RAM on co-occurrence matrices.
 """
@@ -24,7 +28,7 @@ MAX_CO_OCCURRENCE_MATRIX_SIZE = 2000
 CO_OCCURRENCE_FP16 = True  # Use float16 for RAM savings
 
 
-class CausalEntity(msgspec.Struct, frozen=True):
+class CausalEntity(msgspec.Struct, frozen=True, gc=False):
     """An entity extracted from findings for causal reasoning."""
     entity_id: str
     entity_type: str  # ip, domain, person, org, email, url, etc.
@@ -34,7 +38,7 @@ class CausalEntity(msgspec.Struct, frozen=True):
     last_seen: float = 0.0
 
 
-class TemporalSequence(msgspec.Struct, frozen=True):
+class TemporalSequence(msgspec.Struct, frozen=True, gc=False):
     """An ordered sequence of events."""
     sequence_id: str
     entities: list[str]  # entity IDs in temporal order
@@ -43,7 +47,7 @@ class TemporalSequence(msgspec.Struct, frozen=True):
     confidence: float = 0.0
 
 
-class AnomalySignal(msgspec.Struct, frozen=True):
+class AnomalySignal(msgspec.Struct, frozen=True, gc=False):
     """An anomaly signal from unexpected source combinations."""
     anomaly_type: str  # cross_domain, temporal_gap, source_conflict, etc.
     entities: tuple[str, ...]
@@ -53,7 +57,7 @@ class AnomalySignal(msgspec.Struct, frozen=True):
     description: str = ""
 
 
-class CausalHypothesis(msgspec.Struct, frozen=True):
+class CausalHypothesis(msgspec.Struct, frozen=True, gc=False):
     """A causal hypothesis generated from entity co-occurrence and temporal sequences."""
     hypothesis_id: str
     source_entity: str

@@ -2,6 +2,8 @@
 Matrix Public Rooms Intelligence Adapter.
 
 Search Matrix public rooms for intelligence signals.
+
+
 Uses matrix.org homeserver for public room directory.
 
 M1 constraint: Max 50 messages per room, 10s timeout per request.
@@ -22,7 +24,7 @@ MAX_ROOMS_TO_SEARCH = 20
 MAX_GUEST_TOKEN_AGE = 3600
 MATRIX_RATE_LIMIT_DELAY = 2.0
 
-class MatrixRoom(msgspec.Struct):
+class MatrixRoom(msgspec.Struct, gc=False):
     """Represents a Matrix public room."""
     room_id: str
     name: str | None
@@ -32,7 +34,7 @@ class MatrixRoom(msgspec.Struct):
     world_readable: bool
     guest_can_join: bool
 
-class MatrixPublicAdapter(msgspec.Struct, frozen=True):
+class MatrixPublicAdapter(msgspec.Struct, frozen=True, gc=False):
     """Search Matrix public rooms for intelligence signals.
 
     Matrix.org has 80M+ users, many security/research communities.

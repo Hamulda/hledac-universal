@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.social_identity_miner
-from recon.social_identity_miner import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

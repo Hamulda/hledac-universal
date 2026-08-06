@@ -2,6 +2,7 @@
 ZeroAttributionEngine — functional implementation.
 
 Provides zero-attribution metadata stripping and header fingerprinting.
+
 Used by fetch_coordinator.py, stealth_layer.py, and intelligence modules.
 
 Real implementation provides:

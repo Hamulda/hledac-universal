@@ -2,6 +2,8 @@
 transport/transport_race.py — R9: Parallel Transport Racing
 
 Replaces the sequential transport fallback chain in public_fetcher.py with
+
+
 bounded parallel racing: for each URL, launch httpx, curl_cffi, and
 nw_connection (Apple Network.framework) concurrently, take the first
 success, and cancel the rest.
@@ -544,8 +546,8 @@ class TransportRaceManager:
                 # First transport fires immediately (idx=0); rest get delays.
                 if _RACE_STAGGER_MS > 0 and idx > 0:
                     await asyncio.sleep(abs(_rng.gauss(0.0, _RACE_STAGGER_MS / 3000.0)))
-                tasks[t_name] = asyncio.ensure_future(
-                    _run_transport(t_name)
+                tasks[t_name] = safe_create_task(
+                    _run_transport(t_name), name=f"transport_race:{t_name}"
                 )
 
             try:

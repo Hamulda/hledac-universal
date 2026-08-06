@@ -2,6 +2,18 @@
 Sprint F234S Serialization Safety Probe
 =======================================
 Verifies no live/benchmark/report path crashes on:
+
+
+
+
+
+
+
+
+
+
+
+
 - dataclass recursion / self-references
 - Enum values
 - pathlib.Path

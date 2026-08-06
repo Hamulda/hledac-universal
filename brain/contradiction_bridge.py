@@ -2,6 +2,9 @@
 [META]-011: ContradictionBridge — AdversarialVerifier → EntropyFetchBridge adapter
 =================================================================================
 
+
+
+
 ISSUE [META]-011: Contradiction → EntropyBridge feedback loop is completely missing.
 
 AdversarialVerifier.detect_contradictions() returns list[Contradiction] with

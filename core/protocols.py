@@ -2,6 +2,8 @@
 core/protocols.py — Protocol-based structural typing for Hledac Universal.
 
 Sprint F290: Replaces ~45 getattr()/hasattr() calls with explicit structural
+
+
 protocols. Any class implementing the required methods satisfies the Protocol
 — no inheritance required (duck typing with type-safety).
 

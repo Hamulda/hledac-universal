@@ -2,6 +2,7 @@
 UA Rotator — Single Source of Truth for User-Agent rotation.
 
 Design (Issue 10.2):
+
   - Canonical UA pool: diverse, modern browsers (Chrome 124-136, Firefox 133-136,
     Safari 17-18, Edge 124-136) across Windows/macOS/Linux/Android/iOS
   - JA3 consistency: get_ua_for_profile() returns UA matching curl_cffi impersonate target

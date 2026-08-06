@@ -2,6 +2,7 @@
 
 HEIST-08 (2026-07): Extended with native protocol extraction mode.
 After positive HTTP detection, also probes common database ports and,
+
 when HLEDAC_ENABLE_NATIVE_EXTRACTION=1, performs wire-protocol data
 extraction via Rust native_db or pure-Python ES HTTP.
 """

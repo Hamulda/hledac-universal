@@ -2,6 +2,8 @@
 RenderCoordinator - decision tree for getting rendered HTML.
 Sprint 67: Full Playwright WebKit implementation with timeout, routing, semaphore.
 """
+
+
 import asyncio
 import hashlib
 import logging
@@ -14,7 +16,7 @@ from hledac.universal.utils.capability_prober import get_prober
 logger = logging.getLogger(__name__)
 CAPTCHA_PATTERNS = ['captcha', 'recaptcha', 'hcaptcha', 'g-recaptcha', 'data-sitekey', 'turnstile', 'cloudflare', 'challenge', 'security check', 'verify you are human', 'i am not a robot', 'select all images', 'grid captcha']
 
-class RenderResult(msgspec.Struct):
+class RenderResult(msgspec.Struct, gc=False):
     html: str | None
     status: Literal['ok', 'no_backend', 'timeout', 'blocked', 'error']
     debug: dict

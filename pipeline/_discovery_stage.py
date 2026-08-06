@@ -2,6 +2,7 @@
 
 Role: Discovery stage produkuje URLy (str) do output queue pro DedupStage.
 Je to první stage — nemá input queue.
+
 """
 from __future__ import annotations
 

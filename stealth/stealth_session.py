@@ -2,6 +2,8 @@
 Canonical stealth session for public fetching.
 
 Sprint F195C — Stealth layer unification:
+
+
 - Request timing variance via jitter
 - Testable UA rotation
 - Clean session lifecycle
@@ -20,7 +22,7 @@ _STEALTH_UA_POOL: tuple[str, ...] = ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_
 _JITTER_MIN_S: float = 0.05
 _JITTER_MAX_S: float = 0.5
 
-class StealthResponse(msgspec.Struct):
+class StealthResponse(msgspec.Struct, gc=False):
     """Response from stealth HTTP request."""
     status: int
     final_url: str

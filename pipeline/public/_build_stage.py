@@ -2,6 +2,7 @@
 
 Responsibilities:
 - Build CanonicalFinding objects from matched pages
+
 - Assign finding IDs, timestamps, confidences
 - Encode payloads as bytes for zero-copy storage
 

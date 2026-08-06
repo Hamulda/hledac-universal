@@ -2,6 +2,7 @@
 """
 from __future__ import annotations
 Memory budget gate for M1 MacBook Air 8GB unified memory.
+
 Single target: darwin-arm64 (Apple Silicon). psutil is the sole RSS backend.
 """
 from __future__ import annotations
@@ -40,8 +41,8 @@ class BrowserDecision(msgspec.Struct, frozen=True, gc=False):
 
 
 # ISSUE-014 FIX: asyncio.Lock() removed — was unused, caused "no running event loop" on macOS import
-# ISSUE-018: RSS cache — 5s TTL to avoid psutil call on every request in hot path
-_RSS_CACHE_TTL_S: float = 5.0
+# ISSUE-018: RSS cache — 10s TTL for M1 battery optimization (updated from 5s)
+_RSS_CACHE_TTL_S: float = 10.0
 _RSS_CACHE: tuple[float, float] | None = None  # (timestamp, rss_gib)
 _RSS_CACHE_LOCK: threading.Lock = threading.Lock()
 

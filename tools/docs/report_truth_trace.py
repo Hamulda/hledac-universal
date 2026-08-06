@@ -3,6 +3,8 @@ report_truth_trace.py — F208 Truth Boundary Diagnostic
 
 Traces where F208 acquisition fields disappear across benchmark → internal report → validation boundaries.
 
+
+
 Verdicts:
   TRACE_PASS_ALL_PRESENT              — all fields present, terminality satisfied
   TRACE_TERMINALITY_UNSATISFIED      — acquisition_report exists in both, terminality.satisfied=false
@@ -22,14 +24,14 @@ F208_FIELDS = ['measurement_id', 'status', 'run_quality_verdict', 'report_json_p
 TERMINALITY_FIELDS = ['acquisition_terminality_checked', 'acquisition_terminality_satisfied', 'acquisition_terminality_missing_lanes', 'acquisition_terminality_report']
 SHAPE_GAP_FIELDS = ['return_guard', 'windup_guard_observation', 'source_family_outcomes']
 
-class BoundarySnapshot(msgspec.Struct):
+class BoundarySnapshot(msgspec.Struct, gc=False):
     """Field presence at one processing boundary."""
     source: str
     present: dict = field(default_factory=dict)
     missing: list = field(default_factory=list)
     nulls: list = field(default_factory=list)
 
-class TraceResult(msgspec.Struct, frozen=True):
+class TraceResult(msgspec.Struct, frozen=True, gc=False):
     verdict: str
     drop_boundary: str | None
     boundary_snapshots: dict

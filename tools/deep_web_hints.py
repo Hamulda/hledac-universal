@@ -2,6 +2,8 @@
 Deep Web Hints Extractor - analyzes HTML preview for forms, API candidates, and JS markers.
 NOT a crawler - only analyzes already-fetched preview HTML.
 
+
+
 This module extracts:
 - Form definitions (action, method, input fields)
 - API endpoint candidates (/api/, graphql, /v1/, etc.)
@@ -36,7 +38,7 @@ MAX_FIELDS_PER_FORM = 10
 MAX_API_CANDIDATES = 20
 MAX_HTML_PREVIEW_SIZE = 50 * 1024
 
-class DeepWebHints(msgspec.Struct):
+class DeepWebHints(msgspec.Struct, gc=False):
     """Structured hints extracted from HTML preview."""
     url: str
     forms: list[dict] = field(default_factory=list)

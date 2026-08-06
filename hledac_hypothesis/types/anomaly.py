@@ -2,6 +2,9 @@
 Anomaly and adversarial types — hledac_hypothesis.types.anomaly
 ==============================================================
 
+
+
+
 Extracted from hledac_hypothesis._types (C4 Sprint Refactoring).
 """
 
@@ -18,7 +21,7 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-class Contradiction(msgspec.Struct):
+class Contradiction(msgspec.Struct, gc=False):
     """
     Represents a contradiction between two claims or evidence items.
 
@@ -34,7 +37,7 @@ class Contradiction(msgspec.Struct):
     resolution_notes: str = ""
 
 
-class CrossReferenceResult(msgspec.Struct):
+class CrossReferenceResult(msgspec.Struct, gc=False):
     """Result of cross-referencing a claim across databases."""
     database_id: str
     claim_found: bool
@@ -44,7 +47,7 @@ class CrossReferenceResult(msgspec.Struct):
     metadata: dict[str, Any] = msgspec.field(default_factory=dict)
 
 
-class AdversarialReport(msgspec.Struct):
+class AdversarialReport(msgspec.Struct, gc=False):
     """
     Comprehensive adversarial verification report.
 

@@ -2,6 +2,8 @@
 GhostExecutor - Vykonávací engine pro UniversalResearchOrchestrator
 
 Implementuje 14+ akcí pro deep research:
+
+
 - SCAN, GOOGLE, DOWNLOAD, SEARCH, SMART_SEARCH
 - MEMORIZE, PROBE, TRACK
 - RESEARCH_PAPER, DEEP_RESEARCH, DEEP_READ
@@ -77,7 +79,7 @@ class ActionType(Enum):
     STEALTH_HARVEST = 'stealth_harvest'
     OSINT_DISCOVERY = 'osint_discovery'
 
-class ActionResult(msgspec.Struct):
+class ActionResult(msgspec.Struct, gc=False):
     """Výsledek akce"""
     success: bool
     action: str

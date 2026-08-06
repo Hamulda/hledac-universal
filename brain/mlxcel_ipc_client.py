@@ -2,6 +2,9 @@
 MlxcelIpcClient — Out-of-Process Inference via UNIX Domain Socket / Subprocess
 ==============================================================================
 
+
+
+
 Out-of-Process Architecture (F4XX):
 ------------------------------------
 Instead of importing mlx-lm directly in the Python process (which consumes

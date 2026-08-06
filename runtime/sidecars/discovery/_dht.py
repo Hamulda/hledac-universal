@@ -2,6 +2,7 @@
 runtime/sidecars/discovery/_dht.py — F-ISSUE-005: DHTDiscoverySidecarAdapter
 """
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+
 from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
 
 

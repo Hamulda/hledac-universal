@@ -3,6 +3,8 @@ brain/continuous_batch_engine.py — Continuous Batching pro MLX Inference
 
 POSITIVE-NEGATIVE ZLEPŠENÍ:
 
+
+
 Na rozdíl od navrženého ContinuousBatchScheduler (který vyžaduje mlx_lm.generate_batch()
 API, které neexistuje), tento modul využívá EXISTUJÍCÍ infrastrukturu:
 

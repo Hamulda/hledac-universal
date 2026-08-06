@@ -1,5 +1,12 @@
 """
-t-string utilities (PEP 750, Python 3.14+)
+t-string utilities (DEPRECATED - Python 3.14+ only)
+
+.. deprecated::
+    This module requires Python 3.14+ (PEP 750 t-strings) which is not
+    yet available. The project targets Python 3.11+.
+
+    For template strings, use standard string formatting (f-strings,
+    str.format(), or string.Template) instead.
 
 Provides helpers to render t-string Template objects to formatted strings.
 
@@ -44,13 +51,34 @@ Limitations:
 """
 
 
-from string.templatelib import Template, Interpolation
-from typing import TYPE_CHECKING, Any, Literal
+import warnings
+
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 __all__ = ["render", "t", "Template"]
+
+warnings.warn(
+    "tstring.py requires Python 3.14+ (PEP 750 t-strings). "
+    "This module is deprecated and non-functional on Python < 3.14. "
+    "Use f-strings or str.format() instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+
+def _require_template() -> None:
+    """Lazy import to defer import error until actual use."""
+    global Template, Interpolation
+    try:
+        from string.templatelib import Template, Interpolation  # type: ignore[import]
+    except ImportError:
+        raise ImportError(
+            "tstring.py requires Python 3.14+ (PEP 750 t-strings). "
+            "Use f-strings or str.format() instead."
+        )
 
 
 def convert(value: object, conversion: Literal["a", "r", "s"] | None) -> object:
@@ -64,7 +92,7 @@ def convert(value: object, conversion: Literal["a", "r", "s"] | None) -> object:
     return value
 
 
-def render(template: Template) -> str:
+def render(template) -> str:
     """
     Render a t-string Template to a formatted string.
 
@@ -83,6 +111,8 @@ def render(template: Template) -> str:
         template = t"Sprint {name} completed with {count} items"
         result = render(template)  # "Sprint Alice completed with 42 items"
     """
+    global Template, Interpolation
+    _require_template()
     parts: list[str] = []
     for i, s in enumerate(template.strings):
         parts.append(s)
@@ -94,7 +124,7 @@ def render(template: Template) -> str:
     return "".join(parts)
 
 
-def t(string: str, /) -> Template:
+def t(string: str, /):
     """
     Create a Template from a string literal.
 
@@ -115,4 +145,6 @@ def t(string: str, /) -> Template:
         field_name = "sprint_id"
         template = t(f"Sprint {{{field_name}}} started")  # escaped braces
     """
+    global Template
+    _require_template()
     return Template(string)

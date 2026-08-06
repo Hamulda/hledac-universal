@@ -2,6 +2,10 @@
 JTMS — Justification-based Truth Maintenance System.
 
 Provides belief revision with dependency tracking for multi-source evidence fusion.
+
+
+
+
 When a source is retracted, all facts derived from it are revised automatically.
 
 Architecture:

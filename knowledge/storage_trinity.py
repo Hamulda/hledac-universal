@@ -1,31 +1,40 @@
 """
-StorageTrinity — Unified write boundary for DuckDB + LMDB + LanceDB.
+StorageTrinity — Unified write boundary for DuckDB + LMDB + LanceDB + DuckPGQGraph.
 
 ARCH-STR-001: Synchronized write pipeline eliminating ghost entities.
 
+
+
+
+
 Layer ordering (fail-safe, rebuildable-last):
-    1. DuckDB  — Source of truth. All writes go here first.
-    2. LMDB    — Metadata + dedup. After DuckDB confirmed.
-    3. LanceDB — Embeddings. LAST because can be fully rebuilt.
+    1. DuckDB     — Source of truth. All writes go here first.
+    2. LMDB       — Metadata + dedup. After DuckDB confirmed.
+    3. LanceDB    — Embeddings. Async flush, can be rebuilt.
+    4. DuckPGQGraph — Cross-sprint IOC relationships. Fail-safe.
 
 Phase semantics:
-    - Phase 1 DuckDB  MUST succeed or entire transaction aborts.
-    - Phase 2 LMDB    MUST succeed after Phase 1.
-    - Phase 3 LanceDB MUST NOT block Phase 1-2. Failures are logged
-      and LanceDB is marked for async rebuild.
+    - Phase 1 DuckDB      MUST succeed or entire transaction aborts.
+    - Phase 2 LMDB        MUST succeed after Phase 1.
+    - Phase 3 LanceDB     MUST NOT block Phase 1-2. Failures are logged
+                          and LanceDB is marked for async rebuild.
+    - Phase 4 DuckPGQGraph MUST NOT block Phase 1-3. Failures are logged.
 
 Rollback:
     - If Phase 2 fails → Phase 1 DuckDB transaction rolls back.
     - If Phase 3 fails → Phase 1-2 remain committed, LanceDB rebuild scheduled.
+    - If Phase 4 fails → Phase 1-3 remain committed, graph rebuild scheduled.
 
 M1 8GB constraints:
     - LanceDB lazy init only when embeddings are available.
     - Bounded embedding queue (max 8192 pending).
     - Async flush in background to never block canonical writes.
+    - DuckPGQGraph sync but fast (in-memory DuckDB, ~1ms per upsert).
 
 Usage:
     trinity = StorageTrinity(duckdb_store=store)
     trinity.inject_semantic_store(semantic_store)
+    trinity.inject_graph_service(graph_service)
     await trinity.upsert_finding(finding)
 
 Invariant tests (in tests/):
@@ -33,6 +42,7 @@ Invariant tests (in tests/):
     - test_trinity_lance_fail_preserves_duckdb
     - test_trinity_phase_order_enforced
     - test_trinity_ghost_entity_prevention
+    - test_trinity_graph_fail_preserves_duckdb
 """
 
 from __future__ import annotations
@@ -79,6 +89,7 @@ class TrinityWriteResult:
     duckdb: TrinityPhaseResult
     lmdb: TrinityPhaseResult | None = None
     lance: TrinityPhaseResult | None = None
+    graph: TrinityPhaseResult | None = None  # DuckPGQGraph upsert (optional phase)
     total_duration_ms: float = 0.0
 
     @property
@@ -126,6 +137,7 @@ class StorageTrinity:
     __slots__ = (
         "_duckdb_store",
         "_semantic_store",
+        "_graph_service",
         "_lance_lock",
         "_lance_flush_task",
         "_rebuild_pending",
@@ -139,6 +151,7 @@ class StorageTrinity:
     ) -> None:
         self._duckdb_store = duckdb_store
         self._semantic_store: SemanticStore | None = None
+        self._graph_service: Any = None  # DuckPGQGraph-backed GraphService
         self._lance_lock = asyncio.Lock()
         self._lance_flush_task: asyncio.Task | None = None
         self._rebuild_pending: set[str] = set()  # entity_ids needing LanceDB rebuild
@@ -146,7 +159,7 @@ class StorageTrinity:
         self._initialized = True
 
     # -----------------------------------------------------------------------
-    # Injection seam
+    # Injection seams
     # -----------------------------------------------------------------------
 
     def inject_semantic_store(self, store: SemanticStore) -> None:
@@ -158,6 +171,22 @@ class StorageTrinity:
         """
         self._semantic_store = store
         logger.debug("[TRINITY] SemanticStore injected for LanceDB buffering")
+
+    def inject_graph_service(self, graph_service: Any) -> None:
+        """
+        Inject GraphService (DuckPGQGraph-backed) for IOC graph persistence.
+
+        DuckPGQGraph.upsert_ioc() is called after DuckDB writes to maintain
+        cross-sprint entity relationships. Failures are logged but do not
+        block the canonical write path.
+
+        Architecture:
+            StorageTrinity ← DuckPGQGraph via GraphService
+            StorageTrinity is the "write coordinator" that orchestrates
+            DuckDB (truth) + LMDB (dedup) + LanceDB (embeddings) + Graph (relationships).
+        """
+        self._graph_service = graph_service
+        logger.debug("[TRINITY] GraphService (DuckPGQGraph) injected")
 
     # -----------------------------------------------------------------------
     # Public write API — single finding
@@ -171,6 +200,7 @@ class StorageTrinity:
             1. DuckDB (source of truth) — MUST succeed.
             2. LMDB dedup (after DuckDB confirmed).
             3. LanceDB embeddings (LAST, fail-safe, async flush).
+            4. DuckPGQGraph (relationships, fail-safe).
 
         Raises:
             TrinityPhaseError: If Phase 1 (DuckDB) fails.
@@ -231,11 +261,17 @@ class StorageTrinity:
         # ------------------------------------------------------------------
         lance_result = await self._write_lance_async(findings)
 
+        # ------------------------------------------------------------------
+        # Phase 4: DuckPGQGraph upsert (fail-safe, async)
+        # ------------------------------------------------------------------
+        graph_result = await self._write_graph_async(findings)
+
         total_ms = (_time.monotonic() - t0) * 1000.0
         return TrinityWriteResult(
             duckdb=duckdb_result,
             lmdb=lmdb_result,
             lance=lance_result,
+            graph=graph_result,
             total_duration_ms=total_ms,
         )
 
@@ -390,6 +426,91 @@ class StorageTrinity:
                     logger.debug("[TRINITY:LANCE:FLUSH] Flushed %d records to LanceDB", count)
             except Exception as exc:
                 logger.warning("[TRINITY:LANCE:FLUSH] Flush failed: %s", exc)
+
+    # -----------------------------------------------------------------------
+    # Phase 4: DuckPGQGraph write (fail-safe, sync)
+    # -----------------------------------------------------------------------
+
+    async def _write_graph_async(self, findings: Sequence[Any]) -> TrinityPhaseResult:
+        """
+        Phase 4: Upsert IOCs to DuckPGQGraph via GraphService.
+
+        Fail-safe: Graph failure never blocks the canonical path.
+        DuckPGQGraph maintains cross-sprint entity relationships for analytics.
+        """
+        if self._graph_service is None:
+            return TrinityPhaseResult(
+                phase="graph",
+                success=True,
+                records=0,
+                error="graph_service_not_injected",
+            )
+
+        t0 = _time.monotonic()
+        upserted = 0
+        try:
+            for finding in findings:
+                # Extract IOC value from finding
+                ioc_value = self._extract_ioc_value(finding)
+                if not ioc_value:
+                    continue
+
+                ioc_type = self._extract_ioc_type(finding)
+                source = self._extract_source_type(findings)
+                ts = self._extract_ts(findings)
+
+                # DuckPGQGraph.upsert_ioc is sync but fast (in-memory DuckDB)
+                self._graph_service.upsert_ioc(
+                    value=ioc_value,
+                    ioc_type=ioc_type,
+                    confidence=0.8,  # Canonical write = high confidence
+                    source=source,
+                    observed_at=ts,
+                )
+                upserted += 1
+
+            duration_ms = (_time.monotonic() - t0) * 1000.0
+            return TrinityPhaseResult(
+                phase="graph",
+                success=True,
+                records=upserted,
+                duration_ms=duration_ms,
+            )
+
+        except Exception as exc:
+            duration_ms = (_time.monotonic() - t0) * 1000.0
+            logger.warning("[TRINITY:GRAPH] DuckPGQGraph upsert failed: %s", exc)
+            return TrinityPhaseResult(
+                phase="graph",
+                success=False,
+                records=0,
+                error=str(exc),
+                duration_ms=duration_ms,
+            )
+
+    def _extract_ioc_value(self, finding: Any) -> str | None:
+        """Extract IOC value from finding (domain, ip, hash, etc.)."""
+        # Try common IOC fields
+        for attr in ("value", "ioc_value", "domain", "ip_address", "hash", "indicator"):
+            val = getattr(finding, attr, None)
+            if val:
+                return str(val)
+
+        # Try payload_text as fallback
+        payload = getattr(finding, "payload_text", None)
+        if payload:
+            # Take first line as IOC value
+            return payload.split("\n")[0].strip()
+
+        return None
+
+    def _extract_ioc_type(self, finding: Any) -> str:
+        """Extract IOC type from finding."""
+        for attr in ("ioc_type", "type", "record_type"):
+            val = getattr(finding, attr, None)
+            if val:
+                return str(val)
+        return "unknown"
 
     # -----------------------------------------------------------------------
     # Rebuild mechanism

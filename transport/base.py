@@ -2,6 +2,9 @@
 Transport Layer — Canonical Protocol Definitions
 ================================================
 
+
+
+
 Sprint F214: Transport Protocol Separation
 
 PROBLEM:
@@ -57,7 +60,7 @@ if TYPE_CHECKING:
     from .transport_router import Lane, TransportDecision, route_transport
 
 
-class TransportConfig(msgspec.Struct, frozen=True):
+class TransportConfig(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable configuration for a fetch operation.
 
@@ -77,7 +80,7 @@ class TransportConfig(msgspec.Struct, frozen=True):
     suggested_concurrency: str = "medium"
 
 
-class TransportResult(msgspec.Struct, frozen=True):
+class TransportResult(msgspec.Struct, frozen=True, gc=False):
     """
     Immutable result from a transport fetch operation.
 

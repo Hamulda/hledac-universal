@@ -2,6 +2,7 @@
 DiagnosticsEngine — system diagnostics stub.
 
 Provides automated system health monitoring and issue detection.
+
 This is a fail-safe stub: all methods return safe empty results.
 """
 from __future__ import annotations

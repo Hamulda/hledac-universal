@@ -2,6 +2,18 @@
 config/settings.py — Centralized Settings for Hledac Universal
 
 Architecture (Issue #44):
+
+
+
+
+
+
+
+
+
+
+
+
     Single Settings class with msgspec.Struct + lazy ENV resolution.
     Bound settings imported once at startup.
 

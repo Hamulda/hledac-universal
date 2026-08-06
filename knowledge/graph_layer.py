@@ -2,6 +2,7 @@
 KnowledgeGraphLayer - COMPOSER/ORCHESTRATOR role
 ================================================
 
+
 DEPRECATED MODULE: This module orchestrates graph components but is NOT a truth store.
 
 For authoritative storage use:

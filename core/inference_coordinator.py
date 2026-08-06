@@ -2,6 +2,16 @@
 core/inference_coordinator.py — Unified Inference Coordinator + Model Pool
 =======================================================================
 
+
+
+
+
+
+
+
+
+
+
 Issue M-10: Triple inference path (in-process mlx-lm / out-of-process
 mlxcel / CoreML FastAPI) with 3 různé lifecycle, locky, cache vrstvy → drift.
 

@@ -2,6 +2,9 @@
 OpsEC Coordinator — F350M-R Architectural Split
 ===============================================
 
+
+
+
 OPSEC-only (Stealth/Privacy/VPN/Tor/PGP) operations extracted from
 UniversalSecurityCoordinator for LCOM reduction and domain isolation.
 

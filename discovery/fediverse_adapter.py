@@ -2,6 +2,9 @@
 Fediverse/Mastodon Intelligence Adapter.
 
 Search public Mastodon/Fediverse instances for OSINT signals.
+
+
+
 Uses multiple public instances to avoid rate limits.
 
 M1 constraint: Max 2 concurrent instances at once, 10s timeout per request.
@@ -23,7 +26,7 @@ RATE_LIMIT_DELAY = 5.0
 OSINT_INSTANCES = ['https://infosec.exchange', 'https://mastodon.social', 'https://scholar.social', 'https://fosstodon.org', 'https://hachyderm.io']
 DEFAULT_INSTANCES = OSINT_INSTANCES[:2]
 
-class FediversePost(msgspec.Struct):
+class FediversePost(msgspec.Struct, gc=False):
     """Single Mastodon/Fediverse status, normalised to OSINT-friendly fields.
 
     `to_dict()` reconstructs the legacy dict shape consumed by
@@ -53,7 +56,7 @@ class FediversePost(msgspec.Struct):
         author_handle = self.author or ''
         return {'url': self.url, 'id': post_id, 'content': self.content, 'created_at': self.created_at, 'account': {'username': author_handle, 'display_name': author_handle}}
 
-class FediverseResult(msgspec.Struct, frozen=True):
+class FediverseResult(msgspec.Struct, frozen=True, gc=False):
     """Result envelope for a single (instance, query) cell.
 
     `posts` is always a list (empty on error). `error` is `None` on
@@ -65,7 +68,7 @@ class FediverseResult(msgspec.Struct, frozen=True):
     posts: list[FediversePost] = field(default_factory=list)
     error: str | None = None
 
-class FediverseAdapter(msgspec.Struct, frozen=True):
+class FediverseAdapter(msgspec.Struct, frozen=True, gc=False):
     """Search public Mastodon/Fediverse for OSINT signals.
 
     Strategy: Use multiple public instances to avoid rate limits.

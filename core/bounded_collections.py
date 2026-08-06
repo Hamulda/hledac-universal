@@ -2,6 +2,7 @@
 Bounded Collections — Always-on, fail-safe, M1 8GB safe.
 
 collections.deque with explicit maxlen for unbounded-list prevention.
+
 Every list-typed field that grows without limit is a memory leak vector
 on M1 8GB UMA. This module provides zero-overhead wrappers that make
 the bounded semantics explicit in the type signature.

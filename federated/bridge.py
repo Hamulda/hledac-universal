@@ -2,6 +2,7 @@
 F350M-FED-P3: Federated Bridge — lazy Protocol facade for Q-table persistence
 =============================================================================
 
+
 Sprint: F350M-FED / Federated Activation 2026-06-04
 Target: federated/bridge.py
 

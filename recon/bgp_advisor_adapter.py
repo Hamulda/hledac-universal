@@ -3,6 +3,7 @@ BGP Advisor Adapter — Sprint F234
 
 Wraps BGPLane for the advisory sidecar seam in sidecar_orchestrator.
 
+
 Role: advisory sidecar, NOT the main write path.
 BGP analysis is non-blocking and fail-soft — errors never crash the sprint.
 

@@ -2,6 +2,7 @@
 Sprint F235: Shodan Intelligence Lane
 
 External intelligence lane for Shodan (device/IP fingerprints, banners, vulns).
+
 High-value unindexed data: Shodan captures service banners, port data, vulnerabilities,
 geolocation, and ASN context that Google/Censys don't surface.
 

@@ -2,6 +2,8 @@
 """
 Hot edge detection and compression for entity graph traversal.
 Implements bloom-filter-backed deduplication and LZ4 compression.
+
+
 """
 
 from __future__ import annotations

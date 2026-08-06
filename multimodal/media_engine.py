@@ -2,6 +2,10 @@
 [SILICON]-02: Apple Media Engine Integration — Audio/Video Decoding + Transcription
 ====================================================================================
 
+
+
+
+
 Zero-dependency (beyond PyObjC stdlib frameworks) integration with Apple's
 hardware-accelerated media pipeline on M1:
 
@@ -10,6 +14,7 @@ hardware-accelerated media pipeline on M1:
   Vision        → VNRecognizeTextRequest on ANE (OCR on video keyframes)
 
 Why NOT whisper.cpp / ffmpeg-next / whisper-rs:
+
   - whisper.cpp requires Cargo build + model download (39-74 MB extra)
   - ffmpeg-next adds Rust compile burden (~5 min cold build)
   - Apple frameworks are ALREADY on-disk, use ZERO extra RAM until called,

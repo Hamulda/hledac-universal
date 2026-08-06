@@ -2,6 +2,7 @@
 core/mlx_inference_lock.py — MLX inference lock + async-safe MLXWorker.
 
 Issue M-04 (MoE synchronně volá mlx_lm.load() a generate() uvnitř async funkcí):
+
     brain/moe_router.py _load_expert a _generate_with_expert volají
     synchroní mlx_lm.load() / mlx_lm.generate() přímo uvnitř async def.
     Event loop je frozen 1-60s — žádná jiná coroutine nemůže běžet.

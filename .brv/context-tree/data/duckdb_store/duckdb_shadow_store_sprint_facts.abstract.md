@@ -1,1 +1,1 @@
-DuckDB Shadow Store implements a 3-tier facts hierarchy (sprint facts, shadow findings, cross-sprint events) with 3 independent graph attachment slots for analytics, STIX synthesis, and buffered writes.
+DuckDBShadowStore provides SQL storage with 1GB memory default, 3-tier IOC extraction fallback (Python zero-copy → Rayon PyO3 → Pure Python), Arrow zero-copy ingest, RemoteParquetSource supporting 5 URI schemes (s3/https/az/gs/postgres), SEC-02 file permissions (0o600), S-07 async operations, and S1-06 bounded queue backpressure (size 16).

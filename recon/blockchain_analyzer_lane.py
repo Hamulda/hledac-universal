@@ -2,6 +2,7 @@
 intelligence/blockchain_analyzer_lane.py — F320+: Blockchain Analyzer Lane
 
 Thin subclass of BaseIntelligenceLane for blockchain forensics.
+
 Wraps BlockchainForensics from blockchain_analyzer.py.
 
 LaneSpec:

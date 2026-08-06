@@ -2,6 +2,18 @@
 InferenceEngine - Advanced Inference and Reasoning for OSINT
 ===========================================================
 
+
+
+
+
+
+
+
+
+
+
+
+
 M1 8GB Optimized inference engine providing:
 - Abductive reasoning (finding best explanations for observations)
 - InferenceEvidence chaining (connecting facts through inference chains)

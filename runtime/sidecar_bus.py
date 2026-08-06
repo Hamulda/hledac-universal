@@ -2,6 +2,9 @@
 runtime/sidecar_bus.py — F204A+F27: Canonical Accepted-Finding Sidecar Bus
 ==========================================================================
 
+
+
+
 Unified sidecar orchestrator for all accepted findings from feed/public/CT branches.
 Bounded batch processor: takes SidecarBatch, fans out to registered sidecar
 runners via staged asyncio.gather(return_exceptions=True), collects SidecarRunResult records.

@@ -2,6 +2,7 @@
 runtime/sidecars/discovery/_onion.py — F-ISSUE-005: OnionDiscoverySidecarAdapter
 """
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+
 from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
 
 

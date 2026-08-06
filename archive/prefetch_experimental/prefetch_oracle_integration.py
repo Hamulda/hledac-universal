@@ -3,6 +3,8 @@ PrefetchOracleIntegration – lightweight bounded oracle for scheduler advisory 
 
 F200A: Sprint F200A prefetch oracle integration.
 
+
+
 Role: ADVISORY ONLY — oracle SUGGESTS ordering; scheduler RETAINS authority.
 Oracle never blocks, never raises, never takes over scheduler decisions.
 
@@ -88,7 +90,7 @@ RECENCY_BONUS_PER_CYCLE = 0.05
 RECENCY_BONUS_MAX = 0.3
 NOVELTY_BONUS = 0.15
 
-class _SourceSignal(msgspec.Struct):
+class _SourceSignal(msgspec.Struct, gc=False):
     """Per-source signal tracking (bounded)."""
     feed_url: str
     fetched: int = 0

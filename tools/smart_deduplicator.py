@@ -2,6 +2,7 @@
 Smart Deduplicator - Near-duplicate detection with delta storage.
 
 Implements:
+
 - compute_near_dup_score: Jaccard-like similarity using superfeatures
 - maybe_store_delta: Decide whether to store delta or full text
 

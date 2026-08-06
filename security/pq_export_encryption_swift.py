@@ -2,6 +2,8 @@
 Swift-backed HPKE Export backend — calls the helper tool for HPKE X-Wing.
 
 This module provides the actual HPKE encryption via the secure-enclave-helper
+
+
 tool's HPKE commands when running on macOS 26+.
 
 Helper path discovery (priority order):
@@ -107,12 +109,12 @@ async def _run_helper_async(command: list[str], timeout: float=10.0) -> dict[str
     """
     return await asyncio.to_thread(_run_helper_sync, command, timeout)
 
-class _CachedStatus(msgspec.Struct):
+class _CachedStatus(msgspec.Struct, gc=False):
     """Bounded status cache entry with short TTL."""
     status: HPKEStatus
     until: float
 
-class HPKEExportBackend(msgspec.Struct):
+class HPKEExportBackend(msgspec.Struct, gc=False):
     """
     HPKE export backend using the Swift secure-enclave-helper.
 

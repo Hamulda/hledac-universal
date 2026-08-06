@@ -2,6 +2,7 @@
 Expected Information Gain (EIG) calculator for research prioritization.
 
 Used to decide which entities to enrich next — picks the action with
+
 highest expected information gain given current belief state.
 
 Usage:

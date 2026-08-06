@@ -2,6 +2,11 @@
 AssetExposureCorrelator — F202C: Correlates asset exposure signals into explainable findings.
 
 Signal sources consumed:
+
+
+
+
+
   - ct_log findings: cert→SAN mappings, issuers, timestamps
   - open_storage findings: exposed S3/Firebase/Elasticsearch/MongoDB buckets
   - jarm fingerprints: TLS fingerprint hashes (infrastructure clustering)
@@ -72,7 +77,7 @@ def reset_correlator_stats() -> None:
     _stats.clear()
     _stats.update({'assets_registered': 0, 'signals_extracted': 0, 'correlations_run': 0, 'findings_produced': 0, 'exposed_hosts_found': 0, 'open_buckets_found': 0, 'infra_clusters_found': 0, 'subdomain_takeovers_found': 0})
 
-class AssetSignal(msgspec.Struct):
+class AssetSignal(msgspec.Struct, gc=False):
     """A single signal associated with an asset."""
     signal_type: str
     asset_key: str
@@ -80,7 +85,7 @@ class AssetSignal(msgspec.Struct):
     metadata: dict
     finding_id: str
 
-class Asset(msgspec.Struct):
+class Asset(msgspec.Struct, gc=False):
     """An asset (host, domain, IP) with collected signals."""
     key: str
     signals: list[AssetSignal] = field(default_factory=list)
@@ -101,7 +106,7 @@ class Asset(msgspec.Struct):
     def has_dns(self) -> bool:
         return any((s.signal_type == SIGNAL_TYPE_PASSIVE_DNS for s in self.signals))
 
-class ExposureFinding(msgspec.Struct):
+class ExposureFinding(msgspec.Struct, gc=False):
     """A correlated exposure finding with evidence."""
     corr_type: str
     asset_key: str
@@ -342,7 +347,7 @@ def _classify_jarm_hosting(jarm_hash: str, http_status: int) -> str:
         return 'real_content'
     return 'unknown'
 
-class OpenStorageResult(msgspec.Struct):
+class OpenStorageResult(msgspec.Struct, gc=False):
     """Normalized DTO for open storage scan results."""
     url: str
     status: int

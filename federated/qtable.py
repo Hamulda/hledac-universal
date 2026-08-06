@@ -2,6 +2,8 @@
 F350M-FED: Lightweight in-memory FederatedQTable.
 
 Sprint: F350M-FED / Federated Activation 2026-06-04
+
+
 Target: federated/qtable.py
 
 PURPOSE

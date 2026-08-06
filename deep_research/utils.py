@@ -2,6 +2,8 @@
 Deep Research Utilities for Hledac Universal Platform
 Link rot detection, content extraction, and processing utilities
 """
+
+
 import asyncio
 import logging
 import re
@@ -11,7 +13,7 @@ from typing import Any
 from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 
-class LinkCheckResult(msgspec.Struct):
+class LinkCheckResult(msgspec.Struct, gc=False):
     """Result of link rot check"""
     url: str
     is_alive: bool

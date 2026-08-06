@@ -2,10 +2,15 @@
 ModelManager - Správa životního cyklu modelů na M1 8GB
 
 Zajišťuje:
+
+
+
 - Sekvenční načítání modelů (nikdy nejsou 2 velké modely současně v RAM)
 - Automatické uvolňování paměti (gc + MLX cache clear)
+
 - Jednotné rozhraní pro Hermes3, ModernBERT a GLiNER
 - Strict 1-model-at-a-time policy pro M1 8GB stabilitu
+
 - F4XX: Out-of-Process inference přes mlxcel UNIX socket / subprocess
   (mlxcel = externí Rust binárka, šetří ~300MB Python RSS)
 """

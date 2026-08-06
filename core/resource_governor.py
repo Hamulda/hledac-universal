@@ -3,6 +3,26 @@ ResourceGovernor 2.0 – centrální gatekeeper pro všechny výpočetně náro�
 
 ROLE: Canonical UMA POLICY / HYSTERESIS / RUNTIME GOVERNANCE (not a raw sampler).
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 This module provides:
 - State evaluation from system_used_gib (threshold driver)
 - Hysteresis-based I/O-only mode gate (prevents thrashing)

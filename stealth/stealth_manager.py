@@ -2,6 +2,12 @@
 StealthManager - Complete Stealth System for Universal
 
 Integrates all stealth components from stealth_toolkit:
+
+
+
+
+
+
 - RateLimiter: Token bucket with adaptive throttling
 - HeaderSpoofer: HTTP header rotation
 - FingerprintRandomizer: Browser fingerprint randomization
@@ -57,7 +63,7 @@ TCP_LIMIT = 20
 TCP_LIMIT_PER_HOST = 4
 TCP_KEEPALIVE_TIMEOUT = 30
 
-class StealthManagerConfig(msgspec.Struct):
+class StealthManagerConfig(msgspec.Struct, gc=False):
     """Configuration for complete stealth system"""
     enable_rate_limiter: bool = True
     enable_header_spoofer: bool = True
@@ -331,7 +337,7 @@ class SkipFetch(Exception):
     """
     pass
 
-class StealthResponse(msgspec.Struct, frozen=True):
+class StealthResponse(msgspec.Struct, frozen=True, gc=False):
     """Response from stealth HTTP request - M1 8GB optimized (no large bodies in RAM)."""
     status: int
     final_url: str

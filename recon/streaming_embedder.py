@@ -2,6 +2,8 @@
 Sprint F203I — Streaming Embedder for M1 8GB Memory Safety
 ISSUE #022: Pipeline parallelization — concurrent batch embedding.
 ISSUE #016: Replace raw asyncio.create_task + asyncio.wait with safe_create_task
+
+
             + asyncio.wait_for timeout for OTel trace propagation.
 
 ROLE: Chunked async embedding pipeline that yields batches incrementally,
@@ -140,7 +142,7 @@ def _try_rust_text_norm(texts: list[str]) -> list[str] | None:
 # ---------------------------------------------------------------------------
 
 
-class _BatchResult(msgspec.Struct):
+class _BatchResult(msgspec.Struct, gc=False):
     """Result of a single batch embed operation."""
     ids: list[str]
     embeddings: np.ndarray | None

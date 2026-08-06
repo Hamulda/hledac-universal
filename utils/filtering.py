@@ -2,6 +2,14 @@
 Filtering Utilities - URL Filtering and Frontier Management
 ===========================================================
 
+
+
+
+
+
+
+
+
 Combines:
 - FastFilter: Binary Fuse Filter for URL filtering (memory efficient)
 - EfficientFrontier: Quotient Filter for URL deduplication
@@ -40,7 +48,7 @@ except ImportError:
     ORJSON_AVAILABLE = False
 logger = logging.getLogger(__name__)
 
-class FilterStats(msgspec.Struct):
+class FilterStats(msgspec.Struct, gc=False):
     """Statistics for fast filter."""
     total_checked: int = 0
     blocked: int = 0
@@ -54,7 +62,7 @@ class FilterStats(msgspec.Struct):
             return 0.0
         return self.blocked / self.total_checked
 
-class FrontierStats(msgspec.Struct, frozen=True):
+class FrontierStats(msgspec.Struct, frozen=True, gc=False):
     """Statistics for frontier operations."""
     total_urls: int = 0
     checked_urls: int = 0

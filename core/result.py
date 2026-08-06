@@ -3,6 +3,9 @@ Result type — explicit error handling without silent exceptions.
 
 Pattern: Ok[T] | Err where Err carries the exception, never silently swallowed.
 
+
+
+
 Usage:
     from hledac.universal.core.result import try_op, Ok, Err, Result
 

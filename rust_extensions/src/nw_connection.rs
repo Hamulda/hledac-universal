@@ -25,6 +25,7 @@
 //! message pointing to ``maturin build --features nw_framework``.
 
 use pyo3::prelude::*;
+
 use std::os::raw::c_void;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -32,11 +33,17 @@ use std::time::{Duration, Instant};
 // ---------------------------------------------------------------------------
 // Objective-C / Network.framework type aliases (opaque C types)
 // ---------------------------------------------------------------------------
+#[allow(dead_code)]
 type NwConnectionT = *mut c_void;
+#[allow(dead_code)]
 type NwEndpointT = *mut c_void;
+#[allow(dead_code)]
 type NwParametersT = *mut c_void;
+#[allow(dead_code)]
 type DispatchQueueT = *mut c_void;
+#[allow(dead_code)]
 type DispatchDataT = *mut c_void;
+#[allow(dead_code)]
 type NwContentContextT = *mut c_void; // nw_content_context_t
 
 // nw_connection_state_t enum values
@@ -130,7 +137,7 @@ extern "C" {
 
 /// HTTP response returned to Python via PyO3.
 #[derive(Debug, Clone)]
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct NwResponse {
     #[pyo3(get)]
     pub status: u16,
@@ -271,7 +278,7 @@ impl ConnectionState {
 // ---------------------------------------------------------------------------
 
 /// Global semaphore capping concurrent connections at MAX_CONCURRENT_CONNECTIONS.
-static CONNECTION_SEM: std::sync::Semaphore = std::sync::Semaphore::const_new(MAX_CONCURRENT_CONNECTIONS);
+static CONNECTION_SEM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Pool stats for telemetry.
 static POOL_STATS: OnceLock<Mutex<PoolStats>> = OnceLock::new();
@@ -834,7 +841,7 @@ fn qpack_encode_header(name: &[u8], value: &[u8]) -> Vec<u8> {
 
     let mut out = Vec::with_capacity(32);
 
-    if let Some(idx) = static_idx {
+    if let Some(_idx) = static_idx {
         // Indexed Header Field (static table reference)
         // Prefix 0x80 (10xxxxxx) for static table, index 0-based in QPACK but varint encoded
         // Actually QPACK uses a different encoding than HPACK here.
@@ -962,7 +969,7 @@ fn parse_h3_response(data: &[u8]) -> H3Response {
                     if hpos >= frame_payload.len() {
                         break;
                     }
-                    let prefix = frame_payload[hpos];
+                    let _prefix = frame_payload[hpos];
                     hpos += 1;
 
                     // Parse name (varint length-prefixed)
@@ -1358,8 +1365,8 @@ pub fn fetch_quic(url: &str, timeout_ms: Option<u64>) -> NwResponse {
 /// Return pool statistics as a Python dict.
 #[cfg(feature = "nw_framework")]
 #[pyfunction]
-pub fn pool_stats() -> PyResult<PyObject> {
-    Python::with_gil(|py| {
+pub fn pool_stats() -> PyResult<Py<PyAny>> {
+    Python::attach(|py| {
         let stats = get_pool_stats().lock().unwrap();
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("total_fetches", stats.total_fetches)?;
@@ -1373,8 +1380,8 @@ pub fn pool_stats() -> PyResult<PyObject> {
 
 #[cfg(not(feature = "nw_framework"))]
 #[pyfunction]
-pub fn pool_stats() -> PyResult<PyObject> {
-    Python::with_gil(|py| {
+pub fn pool_stats() -> PyResult<Py<PyAny>> {
+    Python::attach(|py| {
         let dict = pyo3::types::PyDict::new(py);
         dict.set_item("error", "nw_framework feature not enabled")?;
         Ok(dict.into())

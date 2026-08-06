@@ -2,6 +2,7 @@
 runtime/acquisition/budget.py
 
 FeedDominanceBudget — canonical feed dominance budget policy.
+
 Extracted from acquisition_strategy.py (original L608-800).
 
 MODERNIZATION (Issue #18):

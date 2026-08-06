@@ -2,6 +2,9 @@
 Encryption utilities for Hledac Universal Platform
 AES-256-GCM encryption for secure data storage
 """
+
+
+
 import base64
 import logging
 import os
@@ -10,7 +13,7 @@ from dataclasses import dataclass
 import msgspec
 logger = logging.getLogger(__name__)
 
-class EncryptionResult(msgspec.Struct):
+class EncryptionResult(msgspec.Struct, gc=False):
     """Result of encryption operation"""
     ciphertext: str
     nonce: str
@@ -18,7 +21,7 @@ class EncryptionResult(msgspec.Struct):
     success: bool = True
     error: str | None = None
 
-class DecryptionResult(msgspec.Struct):
+class DecryptionResult(msgspec.Struct, gc=False):
     """Result of decryption operation"""
     plaintext: str
     success: bool = True

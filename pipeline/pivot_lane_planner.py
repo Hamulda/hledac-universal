@@ -3,6 +3,8 @@
 Determines which nonfeed lanes should run for each pivot seed type.
 Pure, no network — returns a plan only.
 
+
+
 Seed type → lane mapping:
   domain → DOH + CT + WAYBACK + PASSIVE_DNS
   url    → WAYBACK + PUBLIC

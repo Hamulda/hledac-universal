@@ -2,6 +2,7 @@
 benchmarks/m1_sustained_sprint.py — Hermetic M1 Sustained Sprint Benchmark
 =======================================================================
 
+
 Measures OSINT throughput and memory safety without network I/O.
 
 Usage:
@@ -71,7 +72,7 @@ def count_cves_in_text(text: str) -> int:
     import re
     return len(re.findall('CVE-\\d{4}-\\d{4,}', text))
 
-class BenchmarkResult(msgspec.Struct):
+class BenchmarkResult(msgspec.Struct, gc=False):
     """Hermetic benchmark result."""
     status: str
     duration_s: float

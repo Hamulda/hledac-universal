@@ -2,6 +2,7 @@
 PHYSICS-08: SprintExportBuffer — Continuous Background Serialization
 ===================================================================
 
+
 Maintains a running in-memory buffer that accumulates findings as they're
 accepted during the sprint. At TEARDOWN, the pre-serialized data eliminates
 the triple-serialization bottleneck in the export phase.

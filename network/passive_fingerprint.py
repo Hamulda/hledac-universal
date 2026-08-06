@@ -1,9 +1,27 @@
 """
-Re-export from recon.passive_fingerprint — canonical passive fingerprinting.
+⚠️ DEPRECATED: This file is a re-export shim for backward compatibility.
 
-K2 (F350M-R): network/ is infrastructure facade.
-Canonical passive fingerprinting is recon.passive_fingerprint.
+K2 (F350M-R): This file has been REMOVED. Please update your imports:
+
+OLD (deprecated):
+    from hledac.universal.network.passive_fingerprint import ...
+
+NEW (canonical):
+    from hledac.universal.recon.passive_fingerprint import ...
+
+This stub will be removed in a future release.
 """
+
+import warnings
+
+warnings.warn(
+    "network.passive_fingerprint is deprecated — "
+    "import from 'hledac.universal.recon.passive_fingerprint' instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+# Re-export from canonical location for backward compatibility
 from hledac.universal.recon.passive_fingerprint import (  # noqa: F401, E402
     PassiveFingerprintAdapter,
     PassiveTechStackAdapter,

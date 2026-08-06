@@ -2,6 +2,7 @@
 VectorStore - LanceDB-backed vector storage for semantic search.
 
 ROLE: Primary vector storage for embedding pipeline.
+
 Two separate indices: text (256d MRL) and image (1024d).
 
 Features:

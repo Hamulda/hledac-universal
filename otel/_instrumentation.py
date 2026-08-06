@@ -2,6 +2,7 @@
 
 Fail-safe wrappers around opentelemetry.trace. On any failure, the hot path
 gets a NoOp span and continues unchanged.
+
 """
 
 

@@ -2,6 +2,7 @@
 WakeFd asyncio integration — ISSUE-010
 =====================================
 
+
 Propojuje Rust WakeFd (pipe-based cross-thread notification)
 s Python asyncio event loop pres loop.add_reader().
 

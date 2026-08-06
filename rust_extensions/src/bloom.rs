@@ -853,7 +853,7 @@ impl MmapBloomFilter {
     ///   `true`  = item might be in the filter (may be false positive)
     ///   `false` = item is definitely NOT in the filter
     ///
-    /// CONC-SEQ-006 P1: Now uses rayon.par_iter() because MmapBloomFilter
+    /// CONC-SEQ-006 P1: Now uses rayon.iter().map(|x| x.clone()).collect::<Vec<_>>().par_iter() because MmapBloomFilter
     /// is now Sync via parking_lot::RwLock<NonNull<u64>>. Phase1: parallel
     /// xxHash3-64 hashing (SIMD on M1). Phase2: sequential bitmap probe.
     /// ISSUE-7 fix: check_indices() avoids per-item Vec<usize> allocation.

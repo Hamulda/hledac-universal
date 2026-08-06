@@ -2,6 +2,7 @@
 F350M-FED-P: InMemoryPeerNodeTransport — in-process peer bridge for tests.
 
 Sprint: F350M-FED-P / P2P Transport Activation 2026-06-04
+
 Target: federated/transports/inmemory_peer.py
 
 PURPOSE

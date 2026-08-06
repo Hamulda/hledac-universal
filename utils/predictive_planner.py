@@ -2,6 +2,10 @@
 PredictivePlanner - Prediktivní plánování z PredictiveOrchestrator
 
 Funkce:
+
+
+
+
 - Speculative execution (spekulativní vykonávání)
 - Prediction accuracy tracking
 - Rollback management
@@ -17,7 +21,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-class Prediction(msgspec.Struct):
+class Prediction(msgspec.Struct, gc=False):
     """Predikce kroku"""
     action: str
     params: dict[str, Any]
@@ -26,7 +30,7 @@ class Prediction(msgspec.Struct):
     executed: bool = False
     correct: bool | None = None
 
-class PredictionMetrics(msgspec.Struct, frozen=True):
+class PredictionMetrics(msgspec.Struct, frozen=True, gc=False):
     """Metriky predikcí"""
     total_predictions: int = 0
     correct_predictions: int = 0

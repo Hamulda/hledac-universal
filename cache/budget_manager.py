@@ -2,6 +2,12 @@
 Budget Manager - Resource Control for Autonomous Workflow
 =========================================================
 
+
+
+
+
+
+
 Manages resource budgets and stop conditions for autonomous research workflows.
 Prevents infinite loops and ensures controlled resource consumption.
 

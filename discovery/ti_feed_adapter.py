@@ -2,6 +2,8 @@
 Lightweight structured TI feed adapters for normalized threat-intel ingress.
 
 Provides a simple adapter seam for structured threat-intel sources (NVD, CISA KEV)
+
+
 that maps to the NormalizedEntry format compatible with the existing discovery
 architecture.
 
@@ -34,7 +36,7 @@ TIER_SURFACE = 'surface'
 TIER_STRUCTURED_TI = 'structured_ti'
 TIER_OVERLAY_READY = 'overlay_ready'
 
-class NormalizedEntry(msgspec.Struct, frozen=True):
+class NormalizedEntry(msgspec.Struct, frozen=True, gc=False):
     """
     Lightweight normalized entry from any structured TI source.
 

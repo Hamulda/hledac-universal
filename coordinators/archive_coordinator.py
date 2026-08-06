@@ -2,6 +2,8 @@
 ArchiveCoordinator - Delegates archive escalation to coordinator
 ===========================================================
 
+
+
 Implements the stable coordinator interface (start/step/shutdown) for:
 - Archive escalation triggers
 - Memento lookup and recovery

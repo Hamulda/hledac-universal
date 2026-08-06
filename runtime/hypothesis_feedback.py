@@ -2,6 +2,9 @@
 Sprint F203G: Hypothesis Feedback Loop & Dead-End Pruning
 
 Provides feedback on pivot outcomes so PivotPlanner can penalize
+
+
+
 low-yield pivot types and generate fewer dead-end branches.
 
 Bounds:

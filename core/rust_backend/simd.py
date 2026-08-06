@@ -2,6 +2,7 @@
 """
 SIMD-accelerated cosine similarity for vector comparison.
 Used for semantic similarity calculations in MLX inference pipeline.
+
 """
 
 from __future__ import annotations

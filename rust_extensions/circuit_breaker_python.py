@@ -2,6 +2,7 @@
 Rust-backed circuit breaker — ISSUE-41.
 
 Lock-free per-domain circuit breaker using AtomicU32 + DashMap in Rust.
+
 Python fallback when Rust extension is unavailable.
 
 Architecture:

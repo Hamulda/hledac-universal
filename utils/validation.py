@@ -2,6 +2,8 @@
 Data validation utilities for the Hledac AI Research Platform.
 
 This module provides robust data validation functions with comprehensive
+
+
 error handling, type safety, and performance optimization for M1 systems.
 """
 import json
@@ -24,7 +26,7 @@ class ValidationSeverity(Enum):
     ERROR = 'error'
     CRITICAL = 'critical'
 
-class ValidationError(msgspec.Struct):
+class ValidationError(msgspec.Struct, gc=False):
     """Structured validation error information."""
     field: str
     message: str

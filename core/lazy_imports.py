@@ -3,6 +3,7 @@
 Extends PEP 562 __getattr__ for module-level lazy imports.
 Reduces cold-start overhead for --help / diagnostics path.
 
+
 Usage:
     from hledac.universal.core.lazy_imports import lazy
 

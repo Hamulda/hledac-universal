@@ -2,6 +2,7 @@
 Graph Lock Manager — Singleton for DuckPGQGraph lock coordination.
 
 PROBLEM
+
 -------
 DuckPGQGraph._acquire_graph_lock() (Sprint F700D) had 4 bugs:
   1. No singleton — N instances all write same PID → race condition

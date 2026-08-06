@@ -3,6 +3,12 @@ from __future__ annotations
 runtime/sidecar_protocol.py — F350M-R: Protocol-Based Sidecar Registry
 ======================================================================
 
+
+
+
+
+
+
 Plugin registry for sidecar adapters with Protocol-based type checking.
 Replaces hardcoded DEFAULT_SIDECAR_RUNNERS list with dynamic discovery.
 

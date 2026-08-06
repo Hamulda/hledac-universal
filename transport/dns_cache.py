@@ -2,6 +2,7 @@
 transport/dns_cache.py
 
 LRU DNS cache for transport-layer prefetch.
+
 Extracted from unified_transport.py (F350M-R refactor).
 
 [PHYSICS]-03/04: Upgraded to 1024 entries (matching Rust LRU) with a direct

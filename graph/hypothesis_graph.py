@@ -2,6 +2,11 @@
 Hypothesis graph — bounded in-memory graph for Sprint F259.
 
 Supports two call conventions for ``HypothesisEdge``:
+
+
+
+
+
   * canonical: ``edge_id, source_id, target_id, weight, rationale, ...``
   * legacy / test-friendly: ``source, target, hypothesis_type, statement,
     confidence, supporting_sources, temporal_sequence``
@@ -16,7 +21,7 @@ from typing import Any
 MAX_NODES: int = 5000
 MAX_EDGES: int = 20000
 
-class HypothesisNode(msgspec.Struct):
+class HypothesisNode(msgspec.Struct, gc=False):
     """Single node in the hypothesis graph."""
     node_id: str
     label: str
@@ -57,14 +62,14 @@ class HypothesisEdge:
     def __repr__(self) -> str:
         return f'HypothesisEdge(edge_id={self.edge_id!r}, source_id={self.source_id!r}, target_id={self.target_id!r}, weight={self.weight}, type={self.hypothesis_type!r})'
 
-class HiddenBridge(msgspec.Struct, frozen=True):
+class HiddenBridge(msgspec.Struct, frozen=True, gc=False):
     """Latent edge discovered by the pathfinder."""
     bridge_id: str
     endpoint_a: str
     endpoint_b: str
     score: float = 0.0
 
-class AnomalousCluster(msgspec.Struct, frozen=True):
+class AnomalousCluster(msgspec.Struct, frozen=True, gc=False):
     """A cluster whose edge density or weight distribution is anomalous."""
     cluster_id: str
     node_ids: list[str] = field(default_factory=list)

@@ -2,6 +2,7 @@
 Inkrementální přidávání vektorů do USearch indexu s asyncio.Lock.
 Lock chrání add i query, aby se předešlo race condition.
 M1 8GB: usearch C++ HNSW s Metal SIMD — rychlejší než hnswlib.
+
 """
 import asyncio
 import logging

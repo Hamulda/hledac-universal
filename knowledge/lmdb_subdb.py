@@ -2,6 +2,7 @@
 knowledge/lmdb_subdb.py
 =======================
 Sprint F265X: Unified LMDB store with key-prefix isolation for M1 8GB RAM.
+
 F272: Expanded to consolidate WAL, dedup, conditional_cache into single mmap.
 
 Reduces mmap overhead by merging multiple LMDB environments into one with

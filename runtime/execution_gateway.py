@@ -2,6 +2,7 @@
 Execution Gateway — unified dispatch for CPU/IO-bound work (Issue 8+9).
 
 Single entry point for all off-loop execution, replacing scattered
+
 ``asyncio.to_thread()`` calls with a bounded, M1 8GB-safe dispatcher
 that auto-selects the best backend:
 

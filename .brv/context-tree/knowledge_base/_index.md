@@ -1,96 +1,88 @@
 ---
-children_hash: 63387f366e8038f0bf5b36bb37c9615af2f524323a4905044d656eec876c0dec
-compression_ratio: 0.7231807951987997
+children_hash: d33d4bd4f1613f1285d57e636091faae0d2dc2573ab722eead0a4f030cafaa25
+compression_ratio: 0.5304292120435619
 condensation_order: 2
 covers: [audit/_index.md, context.md]
-covers_token_total: 1333
+covers_token_total: 1561
 summary_level: d2
-token_count: 964
+token_count: 828
 type: summary
 ---
 <think>
-The user wants me to create a structural summary of the knowledge_base/audit domain based on the provided child entries. I need to consolidate the information into a cohesive overview that:
-1. Preserves key facts, architectural decisions, and relationships
-2. References entry names for drill-down
-3. Achieves ~20-30% compression
-4. Is clean structured markdown
+The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries. Let me analyze the child entries and create a condensed structural overview.
 
-Let me analyze the content provided:
+Looking at the child entries provided:
 
-1. **context.md** - Overview of the audit domain
-2. **documentation_coverage_assessment_2026_07_16.md** - 9 EXCELLENT areas, 3 GOOD, 6 WEAK/MISSING
-3. **documentation_coverage_assessment_2026_07_27.md** - Updated coverage showing docs/integrations/ and docs/conventions/ now created
-4. **kb_audit_2026_07_11.md** - Initial audit finding 4 gaps
-5. **kb_audit_gap_fix_2026_07_26.md** - Status update on 4 gaps
-6. **kb_audit_gap_status_2026_07_26.md** - Gap tracker status
-7. **knowledge_audit_2026_07_26.md** - Audit timestamp
-8. **phase_3_documentation_and_knowledge_gaps.md** - Phase 3 findings
+1. **context.md** - Domain overview, purpose, scope, ownership, usage
+2. **documentation_coverage_assessment_2026_07_16.md** - Assessment with EXCELLENT/GOOD/WEAK ratings
+3. **documentation_coverage_assessment_2026_07_27.md** - Updates after changes
+4. **duckpgqgraph-flagged-as-weak-despite-core-role.md** - Key finding
+5. **kb_audit_2026_07_11.md** - Initial audit with 4 gaps
+6. **kb_audit_gap_fix_2026_07_26.md** - Gap fix status
+7. **kb_audit_gap_status_2026_07_26.md** - Tracking 4 items
+8. **knowledge_audit_2026_07_26.md** - Timestamp entry
+9. **phase_3_documentation_and_knowledge_gaps.md** - Phase 3 findings
 
-Key patterns to extract:
-- Timeline progression
-- Gap areas: conventions, integrations, exit codes, probe_tests
-- Resolution status for each
-- Documentation state
-- Excellence vs weak areas
-- Key conventions from CLAUDE.md
+I need to create a domain-level summary that:
+- Consolidates the key patterns
+- Preserves entity names, metrics, findings
+- Discards verbose details
+- References child entries for drill-down
+- Targets ~20-30% compression
 
-Let me create a concise structural summary that achieves ~20-30% compression while preserving the essential information.
+Key things to preserve:
+- Audit dates and findings
+- Coverage ratings (EXCELLENT/GOOD/WEAK)
+- Gap remediation status
+- DuckPGQGraph as critical gap
+- Resolved vs open items
+- Missing documentation (ADR, API ref, contribution guide)
+- Naming conventions in CLAUDE.md
+- Exit codes in test_exit_codes.py
+
+Let me write a condensed structural summary:
 </think>
 
-# knowledge_base/audit — Structural Summary
+# knowledge_base/audit
 
 ## Overview
+Meta-domain tracking knowledge base health: documentation coverage assessment, gap identification, and remediation tracking. Audits conducted 2026-07-11, 2026-07-16, 2026-07-26, 2026-07-27.
 
-Domain tracking KB health: audits, gap analysis, coverage assessments, stale content, and documentation maintenance for hledac_universal.
+## Coverage Summary
 
-## Audit Timeline
+| Rating | Count | Examples |
+|--------|-------|----------|
+| EXCELLENT | 9 | Critical invariants, 50+ feature flags, M1 8GB limits, 5-layer storage, 8-lane sprint, HTTP/3 dual-stack, DuckDB 600MB/4threads, kv_cache k=4/8192 |
+| GOOD | 3 | Testing patterns, Rust extensions, Brain module |
+| WEAK | 6 | Sidecar protocol, **DuckPGQGraph**, Evidence log MPSC, Pre-flight guards, Layer protocol, WAL/IPC validation |
 
-- **2026-07-11**: Initial KB audit (kb_audit_2026_07_11) — identified 4 gaps
-- **2026-07-16**: Coverage assessment (documentation_coverage_assessment_2026_07_16) — 9 EXCELLENT, 3 GOOD, 6 WEAK/MISSING
-- **2026-07-26**: Gap fix status (kb_audit_gap_fix_2026_07_26, kb_audit_gap_status_2026_07_26)
-- **2026-07-27**: Phase 3 audit (phase_3_documentation_and_knowledge_gaps) + updated coverage (documentation_coverage_assessment_2026_07_27)
+## Critical Gap: DuckPGQGraph
+Core analytics donor for IOC graph, STIX graph, truth_write_graph. Methods: path_queries, PageRank, shortest_path. Flagged WEAK despite central role (see duckpgqgraph-flagged-as-weak-despite-core-role.md).
 
-## Gap Resolution Status
+## Gap Remediation
 
-| Area | Status | Evidence |
-|------|--------|----------|
-| Conventions | ✅ RESOLVED | CLAUDE.md with snake_case, no bare except, asyncio.gather patterns |
-| Exit codes | ✅ RESOLVED | tests/test_exit_codes.py (6 tests) + smoke_runner.py; "100 tests" claim was stale |
-| Integrations | ✅ RESOLVED | docs/integrations/ created with Tor/I2P/Nym, DuckDB/LanceDB, Rust extensions |
-| probe_tests | ⚠️ STALE | Old probe_p12/p14 dirs removed; gap cleared |
+### Resolved (2026-07-26)
+- **Naming conventions**: CLAUDE.md (snake_case, no bare except, asyncio.gather return_exceptions=True)
+- **Exit codes**: tests/test_exit_codes.py + smoke_runner.py
+- **Stale probe_tests**: probe_p12/, probe_p14/ removed
 
-## Current Documentation State (2026-07-27)
+### Open
+- **Integrations**: docs/integrations/ created with tor-i2p-transport.md, duckdb-lancedb.md, rust-extensions.md
+- **probe_tests**: .brv/context-tree/testing/probe_tests/ remains empty
 
-**docs/ contains 5 files:**
-- docs/integrations/tor-i2p-transport.md (7.9KB)
-- docs/integrations/duckdb-lancedb.md (11.2KB)  
-- docs/integrations/rust-extensions.md (12KB)
-- docs/conventions/python-conventions.md (8.9KB)
-- docs/ioc_types.md, docs/ISSUE-038-LAYERS-REORGANIZATION.md
+## Missing Documentation
+- docs/adr/ (no ADRs)
+- docs/api/ (no API reference)
+- Contribution guide
 
-**Still Missing:** docs/adr/ (no ADRs), API reference, contribution guide
-
-## Excellence Areas (9 areas rated EXCELLENT)
-
-Critical invariants, 50+ feature flags, hardware constraints (M1 8GB), storage trinity, sprint pipeline (8 lanes), HTTP/3 dual strategy (curl_cffi + aioquic), DuckDB config (600MB/4 threads), KV cache (kv_bits=4, max_kv_size=8192)
-
-## Weak/Missing Areas (6 areas needing attention)
-
-Sidecar protocol, DuckPGQGraph, Evidence log MPSC, Pre-flight guards, Layer protocol, WAL/IPC validation
-
-## Key Conventions (from CLAUDE.md)
-
-- snake_case naming
-- No bare except clauses
-- asyncio.gather with return_exceptions=True
-- mx.eval before clear_cache
-- No time.sleep in async contexts
-- No asyncio.run in ThreadPoolExecutor
-- DuckDB via async_ingest_findings_batch; LMDB via cursor.putmulti
-- RotatingBloomFilter for URL dedup; Sidecars return [] on errors
-
-## Related Entries
-
-- facts/project/technology_stack.md
+## Key Files
 - kb_audit_2026_07_11.md (initial audit)
-- documentation_coverage_assessment_2026_07_27.md (current coverage)
+- kb_audit_gap_fix_2026_07_26.md, kb_audit_gap_status_2026_07_26.md (remediation)
+- documentation_coverage_assessment_2026_07_27.md (latest assessment)
+- phase_3_documentation_and_knowledge_gaps.md (Phase 3 findings)
+
+## Relations
+- facts/project/technology_stack
+- testing/exit_codes
+- knowledge_base/maintenance
+- architecture/hledac_universal/context.md

@@ -2,6 +2,11 @@
 Privacy Enhanced Research - Secure Research Wrapper
 
 Wraps research operations with privacy protections:
+
+
+
+
+
 - Request anonymization
 - Result sanitization
 - Audit logging

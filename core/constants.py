@@ -3,6 +3,13 @@ core/constants.py — Canonical Source of Truth for Magic Numbers
 
 Sprint F270: Centralized timeout and bound constants.
 
+
+
+
+
+
+
+
 Tento modul je JEDINÝ zdroj pravdy pro všechny hardcoded integer/float
 literals s sémantickým významem (časové limity, memory bounds, rate limity,
 cache velikosti, protocol constants). Cokoliv jinde v kódu používá

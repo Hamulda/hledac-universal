@@ -2,6 +2,7 @@
 runtime/sidecars/forensics/_steganography.py — F-ISSUE-005: SteganographySidecarAdapter
 """
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+
 from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
 
 

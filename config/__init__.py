@@ -2,6 +2,11 @@
 hledac.universal.config — canonical config namespace for universal package
 ========================================================================
 
+
+
+
+
+
 All content migrated from hledac/universal/config.py (single-file).
 """
 from .settings import settings, Settings, FetchSettings, MLXSettings, DuckDBSettings, DedupSettings, TransportSettings, MemorySettings, SprintSettings, GraphSettings, SynthesisSettings, CooldownSettings, FeatureGates
@@ -40,7 +45,7 @@ class ResearchPresets:
     def get_preset(cls, mode: ResearchMode) -> dict[str, Any]:
         return {ResearchMode.QUICK: cls.QUICK, ResearchMode.STANDARD: cls.STANDARD, ResearchMode.DEEP: cls.DEEP, ResearchMode.EXTREME: cls.EXTREME, ResearchMode.AUTONOMOUS: cls.AUTONOMOUS}.get(mode, cls.STANDARD)
 
-class SecurityConfig(msgspec.Struct):
+class SecurityConfig(msgspec.Struct, gc=False):
     obfuscation_level: str = 'medium'
     generate_decoys: bool = True
     decoy_count: int = 20
@@ -56,7 +61,7 @@ class SecurityConfig(msgspec.Struct):
     enable_audit_logging: bool = True
     anonymize_pii: bool = True
 
-class StealthConfig(msgspec.Struct, frozen=True):
+class StealthConfig(msgspec.Struct, frozen=True, gc=False):
     browser_type: str = 'chromium'
     headless: bool = True
     pool_size: int = 2
@@ -75,7 +80,7 @@ class StealthConfig(msgspec.Struct, frozen=True):
     enable_proxy_rotation: bool = False
     proxy_list: list[str] = field(default_factory=list)
 
-class PrivacyConfig(msgspec.Struct, frozen=True):
+class PrivacyConfig(msgspec.Struct, frozen=True, gc=False):
     enable_vpn: bool = False
     vpn_config_path: str | None = None
     enable_tor: bool = False
@@ -87,7 +92,7 @@ class PrivacyConfig(msgspec.Struct, frozen=True):
     enable_encryption: bool = True
     encryption_algorithm: str = 'fernet'
 
-class UniversalConfig(msgspec.Struct, frozen=True):
+class UniversalConfig(msgspec.Struct, frozen=True, gc=False):
     mode: ResearchMode = ResearchMode.STANDARD
     research: ResearchConfig = field(default_factory=ResearchConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)

@@ -2,6 +2,9 @@
 runtime/lane_policy.py — Unified Lane Policy Abstractions
 ==========================================================
 
+
+
+
 Problem: lane_quality assessment, policy evaluation, a budget calculation
 jsou rozptýleny napříč několika moduly bez shared protokolu.
 

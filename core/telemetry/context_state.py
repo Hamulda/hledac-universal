@@ -2,6 +2,7 @@
 Context state via ContextVar — TaskGroup child task visibility.
 
 Issue 8.4: Sprint phase and stealth state must be visible to all
+
 TaskGroup child tasks without passing explicit parameters.
 
 Issue #046: Extended with:

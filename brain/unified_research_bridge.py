@@ -2,6 +2,7 @@
 Canonical bridge: UnifiedAIOrchestrator → UnifiedResearchEngine.
 Moved from compat/core_unified_ai_orchestrator.py (F350M-R A-01).
 
+
 Provides real implementation by bridging to enhanced_research.py.
 """
 from __future__ import annotations

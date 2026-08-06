@@ -2,6 +2,7 @@
 """
 JSON serialization/deserialization with compact and pretty formats.
 Provides zero-copy bytes output for high-performance JSON handling.
+
 """
 
 from __future__ import annotations

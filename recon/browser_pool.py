@@ -2,6 +2,9 @@
 intelligence/browser_pool.py — ISSUE #15: Per-host Browser Pool
 
 Cutting-edge browser pool with per-host concurrency control:
+
+
+
 - M1 8GB: max 3 Chromium instances (15 MB each ≈ 45 MB total)
 - Per-host semaphore via BoundedPerHostGate (512 hosts, 4 concurrent per host)
 - Zero-copy page capture via Playwright's native buffer API
@@ -34,7 +37,7 @@ DEFAULT_PER_HOST_LIMIT = 4
 DEFAULT_MAX_HOSTS = 512
 
 
-class BrowserPage(msgspec.Struct):
+class BrowserPage(msgspec.Struct, gc=False):
     """Wrapper around a Playwright page with automatic cleanup tracking."""
     page: Any  # playwright.async_api.Page
     browser_instance: Any  # weakref to parent browser

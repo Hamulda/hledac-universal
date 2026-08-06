@@ -2,6 +2,9 @@
 Connected Coordination System - Hive Mind Integration Layer
 ===========================================================
 
+
+
+
 DEPRECATED: This module is now integrated into coordination_layer.py
 Use CoordinationLayer.enable_hive_mode() for new code.
 
@@ -48,7 +51,7 @@ class TopologyType(Enum):
     HYBRID = 'hybrid'
     ADAPTIVE = 'adaptive'
 
-class CoordinationNode(msgspec.Struct):
+class CoordinationNode(msgspec.Struct, gc=False):
     """Represents a node in the coordination network"""
     node_id: str
     layer: CoordinationLayer
@@ -58,7 +61,7 @@ class CoordinationNode(msgspec.Struct):
     connected_nodes: list[str]
     performance_metrics: dict[str, float]
 
-class CoordinationTask(msgspec.Struct):
+class CoordinationTask(msgspec.Struct, gc=False):
     """Represents a task flowing through the coordination system"""
     task_id: str
     description: str

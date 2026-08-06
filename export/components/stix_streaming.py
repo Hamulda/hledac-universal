@@ -3,6 +3,7 @@
 """
 Streaming STIX bundle write — bounded memory for large sprint sets.
 
+
 When len(ioc_nodes) > 500, uses batched in-memory processing with
 explicit memory management and size tracking.
 

@@ -3,6 +3,10 @@ brain/_mlx_dispatcher.py
 =======================
 ISSUE #31: Central MLX + ANE routing layer (F350M-R extension).
 
+
+
+
+
 Přepíná celý brain/ subsystém na MLX unified memory při HLEDAC_MLX=1.
 Fallback hierarchie (vždy fail-safe, vrací prázdné výsledky při chybě):
 

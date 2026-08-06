@@ -2,6 +2,7 @@
 core.memory_cycle — per-cycle GC maintenance + macOS pressure relief (F266-U2/U3)
 ==================================================================================
 
+
 Two bounded, fail-safe background hygiene primitives for long-running
 sprint loops on M1 8GB UMA:
 

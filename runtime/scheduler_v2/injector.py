@@ -61,7 +61,7 @@ class Injector:
                 config=SprintSchedulerConfig(sprint_duration_s=60.0, cycle_sleep_s=10.0),
                 query="test",
                 result=SprintSchedulerResult(),
-                duckdb_store=InitResult.success(store, 0.0),
+                duckdb_store_result=InitResult.success(store, 0.0),
             )
             object.__setattr__(scheduler, "_ctx", minimal_ctx)
 
@@ -187,16 +187,37 @@ class Injector:
 
         After calling this, the scheduler has all inject_* methods available
         as bound methods for v1 API compatibility.
+
+        Each inject method is a staticmethod that takes (scheduler, value) as arguments.
+        We create a closure that binds the scheduler for convenience.
+
+        NOTE: Simpler pattern than functools.partial - directly store the method
+        with scheduler bound via closure. This is clearer and has minimal overhead.
         """
-        _methods = {
-            name: getattr(cls, name)
-            for name in dir(cls)
-            if name.startswith("inject_") and callable(getattr(cls, name))
-        }
-        for name, method in _methods.items():
+        for name in dir(cls):
+            if not name.startswith("inject_"):
+                continue
             if name in ("inject_evidence_log", "inject_cancel_event"):
                 continue  # keep these in the scheduler
-            # Default-arg capture in lambda prevents late-binding bugs.
-            # This is intentional and correct: the captured `method` is the staticmethod's
-            # underlying function and `scheduler` is the target instance.
-            setattr(scheduler, name, lambda m=method, s=scheduler: lambda val: m(s, val))
+            method = getattr(cls, name)
+            if not callable(method):
+                continue
+
+            # Create a bound method that passes scheduler as first argument
+            # This is cleaner than functools.partial for static methods
+            #
+            # CLOSURE CAPTURE PATTERN (SC-06):
+            # The closure captures (name, method, scheduler) at DEFINITION time
+            # (when make_bound is called), not at call time.
+            # This is intentional — each loop iteration creates a new
+            # make_bound frame with its own captured values, avoiding the
+            # classic "lambda in loop" late-binding bug where all closures
+            # would share the same (final) loop variable values.
+            def make_bound(name: str, method: Any) -> Any:
+                def bound(*args: Any, **kwargs: Any) -> Any:
+                    return method(scheduler, *args, **kwargs)
+                bound.__name__ = name
+                bound.__doc__ = getattr(method, '__doc__', None)
+                return bound
+
+            setattr(scheduler, name, make_bound(name, method))

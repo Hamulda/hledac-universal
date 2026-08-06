@@ -2,6 +2,9 @@
 ConsistencyVerifier — META-008 auto-retraction hook for systematic dissenters.
 
 Runs AFTER ContradictionFeedbackBridge.run_contradiction_audit() to identify
+
+
+
 sources that are systematic dissenters and trigger automatic JTMS retraction.
 
 ARCHITECTURE:

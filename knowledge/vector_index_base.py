@@ -2,6 +2,8 @@
 Vector Index Abstraction Layer — Pattern #12 Fix
 ================================================
 
+
+
 ROLE: Shared base abstraction for ANN index implementations.
 
 ARCHITECTURE (M1 8GB, Python 3.14+):

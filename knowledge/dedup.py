@@ -2,9 +2,12 @@
 Dedup Manager — Sprint F216G refactor
 =====================================
 
+
+
 ROLE: Owns persistent dedup LMDB, hot cache, and semantic dedup cache.
 
 Separated from DuckDBShadowStore so dedup logic is testable without touching DuckDB.
+
 
 BOUNDARY:
     DuckDBShadowStore.async_ingest_findings_batch() delegates quality decisions

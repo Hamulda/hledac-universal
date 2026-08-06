@@ -2,6 +2,15 @@
 F186A CANONICAL SPRINT TRUTH CLOSURE — CLI Entry Point: python -m hledac.universal.runtime.sprint_entrypoint
 
 Pre-sprint checks, UMA wiring, sprint_delta reporting.
+
+
+
+
+
+
+
+
+
 Wires UMAAlarmDispatcher → SprintScheduler wind-down callbacks.
 
 ================================================================
@@ -1660,6 +1669,29 @@ def run_pre_sprint_checks() -> bool:
             f"[BOOT] SWAP {s.swap_used_gib:.1f}GB > {CLEAN_SWAP_MAX_GIB:.1f}GB (diagnostic tier) — "
             f"doporučuji restart před long run"
         )
+
+    # SWARM-010: Feature flag validation — single source of truth.
+    # Validates: deprecated flags, implications, conflicts, RAM budget.
+    # Runs at startup to catch configuration errors before sprint begins.
+    try:
+        from hledac.universal.core.feature_flags import FeatureFlags
+
+        flag_errors, flag_warnings = FeatureFlags.validate()
+        for err in flag_errors:
+            logger.error("[SWARM-010] %s: %s", err.flag, err.message)
+        for warn in flag_warnings:
+            logger.warning("[SWARM-010] %s: %s", warn.flag, warn.message)
+        if flag_errors:
+            logger.error(
+                "[SWARM-010] Flag validation failed (%d error(s)). "
+                "Fix flags above or set --force to bypass.",
+                len(flag_errors),
+            )
+            sys.exit(2)  # exit(2) = config/validation error
+    except ImportError:
+        logger.debug("[SWARM-010] FeatureFlags not available (skipping validation)")
+    except Exception as _exc:
+        logger.warning("[SWARM-010] Flag validation skipped due to error: %s", _exc)
 
     logger.info(f"[BOOT] Pre-sprint checks OK | UMA: {s.system_used_gib:.2f}GiB used | swap: {s.swap_used_gib:.2f}GiB")
     return checks_passed

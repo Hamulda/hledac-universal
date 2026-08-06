@@ -2,6 +2,7 @@
 Dedicated LMDB operation pool — extracted from role_based_pools.py.
 
 LMDB is single-writer but supports concurrent readers. This pool provides:
+
 - ThreadPoolExecutor with 2 workers (1 writer + 1 reader)
 - asyncio.Semaphore(2) for bounded concurrency
 - NO asyncio.Lock — removed in S1-14 fix: LMDB readers are lock-free

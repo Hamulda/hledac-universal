@@ -2,6 +2,7 @@
 Runtime Authority Probe — Sprint F2130
 
 Reads a live_sprint_measurement benchmark JSON and verifies the runtime
+
 authority contract: which execution path was used to run the sprint,
 whether it is canonical, and whether the report artifacts confirm a
 real product sprint vs. a noncanonical benchmark-only construction.

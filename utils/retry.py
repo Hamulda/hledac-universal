@@ -3,6 +3,7 @@ Centralizovaný retry helpers -- konzistentní retry politika pro celý projekt.
 
 Retry strategy: exponential backoff + decorrelated jitter + telemetrie.
 
+
 Usage:
     # Simple async retry
     result = await retry_async(lambda: fetch(url))

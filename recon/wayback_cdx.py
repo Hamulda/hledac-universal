@@ -2,6 +2,9 @@
 wayback_cdx — Sprint F234: CDX deep search extension
 =====================================================
 
+
+
+
 Extends the existing Wayback lane with CDX fulltext discovery.
 Finds archived URLs that no longer exist on live web (deleted content,
 old endpoints, historical paths).
@@ -45,7 +48,7 @@ TIMEOUT_PER_REQUEST: float = 60.0
 CDX_API = 'https://web.archive.org/cdx/search/cdx'
 WAYBACK_BASE_URL = 'https://web.archive.org'
 
-class CDXSearchResult(msgspec.Struct):
+class CDXSearchResult(msgspec.Struct, gc=False):
     """
     Single row from CDX deep search.
 
@@ -96,7 +99,7 @@ class CDXSearchResult(msgspec.Struct):
         parts = [f'[CDX Deep Search] {self.original}', f'Archived: {self.timestamp}', f'Type: {self.mimetype}', f'Status: {self.status_code}', f'Size: {self.length} bytes', f'Replay: {self.replay_url}']
         return '\n'.join(parts)
 
-class CDXDeepSearchResult(msgspec.Struct, frozen=True):
+class CDXDeepSearchResult(msgspec.Struct, frozen=True, gc=False):
     """Result of a cdx_deep_search() call."""
     query: str
     match_type: str

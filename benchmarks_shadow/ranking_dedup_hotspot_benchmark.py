@@ -2,6 +2,7 @@
 Ranking & Deduplication Hotspot Benchmark
 
 Measures O(n²) complexity hotspots in ranking duplicate removal and dedup similarity loops.
+
 Synthetic data: ranked results with duplicate clusters by URL/title/text.
 """
 import argparse
@@ -13,7 +14,7 @@ import msgspec
 sys.path.insert(0, '/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 from hledac.universal.utils.ranking import RankedResult, ReciprocalRankFusion, RRFConfig
 
-class BenchmarkResult(msgspec.Struct):
+class BenchmarkResult(msgspec.Struct, gc=False):
     size: int
     time_seconds: float
     dedup_count: int

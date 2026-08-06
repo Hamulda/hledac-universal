@@ -2,6 +2,8 @@
 Unified Lazy Import Resolver — P0-01
 
 Centralizuje try/except ImportError pattern napříč všemi moduly.
+
+
 Používá importlib.import_module() (PEP 451 C-optimalizovaná cesta v Python 3.14+)
 místo try/except ImportError, což eliminuje:
 - 4 import resolution kroky při cold startu

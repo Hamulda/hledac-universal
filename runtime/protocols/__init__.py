@@ -55,6 +55,9 @@ from .score_protocol import ScoreProtocol
 from .analytics_protocol import AnalyticsProtocol
 from .stix_protocol import StixProtocol
 
+# Scheduler v2 protocols (F350M-R)
+from runtime.scheduler_v2.protocol import AcquisitionOrchestratorProtocol, SchedulerProtocol
+
 # Re-export all protocols for convenience
 from .storage_protocol import StorageProtocol
 from .transport_protocol import TransportProtocol
@@ -93,4 +96,7 @@ __all__ = [
     "MetricsProtocol",
     # Lifecycle
     "LifecycleProtocol",
+    # Scheduler v2 (F350M-R)
+    "AcquisitionOrchestratorProtocol",
+    "SchedulerProtocol",
 ]

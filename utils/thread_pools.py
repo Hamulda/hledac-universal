@@ -2,6 +2,7 @@
 Worker pooly s GCD QoS a detekcí jader pro Apple Silicon M1.
 
 Sprint 7A additions:
+
   - PersistentActorExecutor: bridge worker-thread → event-loop
   - ANE_EXECUTOR, DB_EXECUTOR, CPU_EXECUTOR named pools
 """

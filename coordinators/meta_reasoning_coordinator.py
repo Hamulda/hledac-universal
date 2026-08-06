@@ -2,6 +2,14 @@
 Universal Meta-Reasoning Coordinator
 ====================================
 
+
+
+
+
+
+
+
+
 Integrated meta-reasoning from:
 - MetaReasoningCoordinator: Chain of Thought, Tree of Thoughts, Graph reasoning
 - Advanced reasoning strategies with automatic selection

@@ -2,6 +2,7 @@
 
 Role: Match stage přijímá PageResult z FetchStage, provádí pattern matching,
 posílá matches do EnrichStage.
+
 """
 from __future__ import annotations
 

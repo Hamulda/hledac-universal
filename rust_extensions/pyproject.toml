@@ -19,7 +19,7 @@ requires-python = ">=3.14"
 # NOTE: features here REPLACE Cargo.toml default features, not add to them.
 # Must include all project features (core, data, bloom, graph, advanced) otherwise
 # #[cfg(feature)] gated modules are compiled out but still referenced by other code.
-features = ["pyo3/extension-module", "core", "data", "bloom", "graph", "advanced", "dns"]
+features = ["pyo3/extension-module", "core", "data", "bloom", "graph", "advanced"]
 # Module name matching the PyO3 #[pymodule] in lib.rs
 module-name = "hledac_rust_extensions"
 # Python package source (./hledac_rust_extensions/ subdirectory)
@@ -44,4 +44,4 @@ target-dir = "target/maturin"
 # VŠECHNY buildy přes maturin (develop i build) nyní dostanou +neon,+crypto.
 # Redundantní s [profile.release.build-override] v Cargo.toml jako záloha.
 [tool.maturin.env]
-RUSTFLAGS = "-C target-feature=+neon,+crypto"
+RUSTFLAGS = "-C target-feature=+neon,+crypto -L /opt/homebrew/opt/duckdb/lib"

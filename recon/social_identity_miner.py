@@ -2,6 +2,9 @@
 intelligence/social_identity_miner.py — F204I: Social Identity Surface Miner
 ============================================================================
 
+
+
+
 Deterministic social identity facet miner. Extracts usernames, display names,
 profile URLs, bio links, PGP/email hints from accepted findings without
 invasive scraping.
@@ -84,7 +87,7 @@ def _get_bloom_filter() -> Any:
             _BLOOM = BloomFilter(capacity=_SOCIAL_BLOOM_CAPACITY, fp_rate=0.01)
     return _BLOOM
 
-class SocialIdentityFacet(msgspec.Struct, frozen=True):
+class SocialIdentityFacet(msgspec.Struct, frozen=True, gc=False):
     """A single social identity profile extracted from findings."""
     finding_id: str
     platform: str
@@ -96,7 +99,7 @@ class SocialIdentityFacet(msgspec.Struct, frozen=True):
     confidence: float
     evidence_kind: str = 'url_in_payload'
 
-class SocialIdentityResult(msgspec.Struct, frozen=True):
+class SocialIdentityResult(msgspec.Struct, frozen=True, gc=False):
     """Outcome of a social identity mining scan."""
     facets: tuple[SocialIdentityFacet, ...]
     scanned_count: int

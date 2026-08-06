@@ -3,6 +3,8 @@ I2P Transport - Anonymous overlay network transport via I2P SAM v3 / SOCKS.
 
 P10: I2P transport implementation using I2P SAM v3 protocol or SOCKS proxy.
 
+
+
 TRANSPORT MODES (priority order):
   - SAM v3 mode: Native SAM v3 protocol (TCP port 7656) — direct stream
     connections to .b32.i2p destinations. Supports NAMING LOOKUP, STREAM
@@ -38,11 +40,22 @@ from .base import Transport, TransportConfig, TransportResult
 if TYPE_CHECKING:
     import httpx
 logger = logging.getLogger(__name__)
+# I2P Port Reference (CRITICAL — common confusion point):
+# ╔═══════════════════════════════════════════════════════════════════════════════╗
+# ║  Port   │ Protocol  │ Purpose                        │ Used By              ║
+# ╠═══════════════════════════════════════════════════════════════════════════════╣
+# ║  4444   │ SOCKS5    │ I2P SOCKS proxy (standard)     │ transport/i2p_*.py   ║
+# ║  7656   │ TCP       │ SAM v3 bridge protocol          │ I2PSAMv3Client       ║
+# ║  7654   │ HTTP      │ I2P HTTP console (NOT SOCKS!)  │ browser only         ║
+# ║  8888   │ HTTP      │ I2P HTTP proxy (Freenet FProxy)│ HTTP mode only       ║
+# ╚═══════════════════════════════════════════════════════════════════════════════╝
 # OPSEC-001: I2P SOCKS proxy port is 4444 (standard), NOT 7654 (I2P console).
 # Port 7654 is the I2P HTTP console, not the SOCKS proxy.
 I2P_SOCKS_PORT = 4444
 I2P_SAM_PORT = 7656
 I2P_HTTP_PORT = 8888
+# Module-level imports for performance (avoid repeated imports in hot paths)
+import uuid
 SAM_MIN_VERSION = '3.0'
 SAM_MAX_VERSION = '3.2'
 SAM_OK = 'OK'
@@ -176,7 +189,6 @@ class I2PSAMv3Client:
 
         async with self._lock:
             if session_name is None:
-                import uuid
                 session_name = f'hledac-{uuid.uuid4().hex[:8]}'
             self._session_name = session_name
 
@@ -624,7 +636,6 @@ class I2PTransport(Transport):
                 return False
 
             # Create persistent streaming session
-            import uuid
             session_id = f'hledac-samv3-{uuid.uuid4().hex[:8]}'
             dest = await self._sam_v3_client.create_session(
                 session_name=session_id,
@@ -903,7 +914,6 @@ class I2PTransport(Transport):
             if self.transport_mode == 'sam' and self._sam_v3_client:
                 # Destroy old session and create fresh one
                 await self._sam_v3_client.destroy_session()
-                import uuid
                 session_id = f'hledac-samv3-{uuid.uuid4().hex[:8]}'
                 dest = await self._sam_v3_client.create_session(
                     session_name=session_id,

@@ -2,6 +2,7 @@
 Dependency profile smoke checks for uv.
 
 Verifies that dependency profiles in pyproject.toml are actually installable
+
 and don't lose core imports. No network, no browser launch, no MLX model load.
 
 Usage:
@@ -36,7 +37,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 _VENV_PYTHON = _PROJECT_ROOT / '.venv/bin/python'
 
-class ProfileCheck(msgspec.Struct):
+class ProfileCheck(msgspec.Struct, gc=False):
     name: str
     uv_sync_args: list[str] = field(default_factory=list)
     import_smoke: list[str] = field(default_factory=list)

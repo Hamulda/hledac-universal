@@ -2,6 +2,8 @@
 Entity Signal Extractor — Sprint F202B
 ======================================
 
+
+
 Deterministic entity extraction from accepted CanonicalFinding objects.
 No ML models — pure regex/string heuristics.
 
@@ -50,7 +52,7 @@ _DOMAIN_HANDLE_RE = re.compile('\\b([a-zA-Z0-9][a-zA-Z0-9_.-]{2,20})@([a-zA-Z0-9
 _HANDLE_RE = re.compile('@([a-zA-Z0-9][a-zA-Z0-9_.-]{1,30})')
 _URL_HOST_RE = re.compile('https?://([a-zA-Z0-9][a-zA-Z0-9-]*\\.[a-zA-Z]{2,})')
 
-class ExtractedEntity(msgspec.Struct):
+class ExtractedEntity(msgspec.Struct, gc=False):
     """A single extracted entity from a finding."""
     entity_type: str
     value: str
@@ -59,7 +61,7 @@ class ExtractedEntity(msgspec.Struct):
     finding_id: str
     confidence: float
 
-class EntitySignalProfile(msgspec.Struct, frozen=True):
+class EntitySignalProfile(msgspec.Struct, frozen=True, gc=False):
     """
     Simplified identity profile for entity signal extraction.
 

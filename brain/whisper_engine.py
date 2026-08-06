@@ -2,6 +2,9 @@
 brain/whisper_engine.py — Whisper.cpp CoreML/ANE Speech-to-Text Engine
 ======================================================================
 
+
+
+
 SILICON-02b: whisper.cpp transcription accelerated by CoreML/Apple Neural Engine.
 Complements the existing SFSpeechRecognizer (SILICON-02) with:
   - 99-language support (vs 60+ for SFSpeechRecognizer)

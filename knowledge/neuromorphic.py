@@ -2,6 +2,9 @@
 Neuromorphic Memory Module — STDP-based episodic memory with zone transitions.
 
 Extracted from coordinators/memory_coordinator.py (F320 refactor).
+
+
+
 Neuromorphic subsystem is gated behind ``HLEDAC_ENABLE_NEURO=1`` (default OFF).
 Always-on, bounded, fail-safe — if scipy/numpy unavailable, falls back gracefully.
 

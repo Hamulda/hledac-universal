@@ -3,6 +3,8 @@ intelligence/doh_lane.py
 =======================
 DNS-over-HTTPS intelligence lane — passive DNS recon bez externích API klíčů.
 
+
+
 Dual-provider: Cloudflare 1.1.1.1 + Google 8.8.8.8 pro cross-validation.
 Rate limit: Cloudflare DOH 1000 req/10s per IP — řídíme pomocí Semaphore.
 
@@ -37,7 +39,7 @@ from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 _DOH_SEMAPHORE = get_semaphore(ConcurrencyCategory.DNS_BRUTE)
 COMMON_SUBDOMAINS: list[str] = ['www', 'mail', 'ftp', 'vpn', 'api', 'admin', 'dev', 'staging', 'beta', 'internal', 'corp', 'git', 'jira', 'confluence', 'jenkins', 'gitlab']
 
-class DOHFinding(msgspec.Struct):
+class DOHFinding(msgspec.Struct, gc=False):
     domain: str
     record_type: str
     value: str

@@ -2,6 +2,9 @@
 BGPLane — Sprint F234 (BGP/ASN IP-to-Org Attribution)
 ======================================================
 
+
+
+
 Free, no API key required. Sources:
   - bgpview.io API (primary): /ip/{ip}, /asn/{asn}, /search?query_term={org}
   - Hurricane Electric BGP Toolkit: https://bgp.he.net/ (scraping fallback)
@@ -46,7 +49,7 @@ TIMEOUT_PER_REQUEST: float = 15.0
 MAX_PREFIXES_PER_ASN: int = 200
 BGPVIEW_API = 'https://api.bgpview.io'
 
-class BGPFinding(msgspec.Struct):
+class BGPFinding(msgspec.Struct, gc=False):
     """
     BGP intelligence finding.
 
@@ -93,7 +96,7 @@ class BGPFinding(msgspec.Struct):
             parts.append(f'Queried IP: {self.query_ip}')
         return '\n'.join(parts)
 
-class BGPResult(msgspec.Struct, frozen=True):
+class BGPResult(msgspec.Struct, frozen=True, gc=False):
     """Result of a BGP lane operation."""
     ip: str
     asn: int | None = None

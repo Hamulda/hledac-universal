@@ -2,6 +2,7 @@
 MLX Embedding Manager — Canonical Implementation
 ================================================
 
+
 Single source of truth for MLXEmbeddingManager.
 
 This module was moved from core/mlx_embeddings.py (F350M-R A-07 refactor).

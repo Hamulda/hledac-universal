@@ -2,6 +2,8 @@
 Hypothesis Engine — Pack DTOs (C4 Tier-4)
 ==========================================
 
+
+
 Sprint F262OBS-Tier4: Pure-DTO classes extracted from
 :mod:`brain.hypothesis_engine_engine` — the 714 LOC pack definitions
 that carry the "what next?" advice for the sprint scheduler.
@@ -46,13 +48,13 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-class SourceHint(msgspec.Struct):
+class SourceHint(msgspec.Struct, gc=False):
     """Source recommendation with quality score."""
     source: str
     quality: float
     hint_type: str = 'general'
 
-class HypothesisPack(msgspec.Struct, frozen=True):
+class HypothesisPack(msgspec.Struct, frozen=True, gc=False):
     """
     Bounded hypothesis/query pack from findings.
 

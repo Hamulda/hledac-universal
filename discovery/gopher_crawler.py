@@ -2,6 +2,9 @@
 GopherCrawler — recursive Gopher directory crawler + text extractor
 ==================================================================
 
+
+
+
 Crawls known Gopher archives, extracts text from type-0 (file) items,
 and emits structured findings for DuckDB ingestion.
 
@@ -31,7 +34,7 @@ CRAWL_TIMEOUT_S: float = 30.0
 MAX_CONCURRENT: int = 4
 SEED_SERVERS: list[tuple[str, int]] = [('gopher.floodgap.com', 70), ('gopher.quux.org', 70)]
 
-class GopherCrawlResult(msgspec.Struct):
+class GopherCrawlResult(msgspec.Struct, gc=False):
     """Result from a single gopher crawl operation."""
     host: str
     port: int
@@ -39,7 +42,7 @@ class GopherCrawlResult(msgspec.Struct):
     errors: list[str] = field(default_factory=list)
     crawled_at: float = field(default_factory=time.time)
 
-class GopherCrawlItem(msgspec.Struct, frozen=True):
+class GopherCrawlItem(msgspec.Struct, frozen=True, gc=False):
     """Structured item extracted from Gopher crawl."""
     host: str
     port: int

@@ -2,6 +2,8 @@
 from __future__ import annotations
 Common Crawl adapter — thin archival URL discovery seam.
 
+
+
 AUTHORITY: This adapter is a discovery-shaped seam ONLY.
 It does NOT fetch page content — only discovers archived URLs via CDX API.
 Real content fetching goes through the existing public_fetcher path.
@@ -23,7 +25,7 @@ SOURCE_NAME: str = 'commoncrawl'
 CDX_COLLINFO_URL = 'https://index.commoncrawl.org/collinfo.json'
 _CDN_NOISE_PATTERNS = ('cdn.jsdelivr.net', 'unpkg.com', 'cdnjs.cloudflare.com', 'raw.githubusercontent.com', 'github.com/-raw/', 'storage.googleapis.com', 'assets.wire.com')
 
-class RawFinding(msgspec.Struct):
+class RawFinding(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for OSINT findings.
 
     Nalezený výsledek z OSINT zdroje.

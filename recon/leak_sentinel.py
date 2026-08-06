@@ -2,6 +2,9 @@
 LeakSecretSentinel — F202D: Bounded leak and secret sentinel optional branch.
 
 Optional sidecar that converts paste/GitHub/breach signals into redacted
+
+
+
 CanonicalFinding objects with evidence pointers. Runs after CT findings are
 accepted — does NOT block finding acceptance.
 
@@ -122,14 +125,14 @@ def _redact_text(text: str) -> str:
         pass
     return result
 
-class LeakSourceResult(msgspec.Struct):
+class LeakSourceResult(msgspec.Struct, gc=False):
     """Result from one leak source."""
     source: str
     findings: list[dict]
     errors: list[str]
     elapsed_s: float = 0.0
 
-class LeakSentinelStats(msgspec.Struct):
+class LeakSentinelStats(msgspec.Struct, gc=False):
     """Statistics from a leak sentinel run."""
     sources_run: int = 0
     sources_succeeded: int = 0

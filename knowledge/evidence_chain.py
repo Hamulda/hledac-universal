@@ -2,6 +2,9 @@
 Sprint F203D: Evidence Chain Tracker
 
 Tracks reasoning path from raw finding through entity extraction, attribution,
+
+
+
 kill-chain tagging, to pivot suggestion. Analytik must explain "proč tomu věříme".
 
 Chain is derived at sprint teardown from in-memory sidecar results and finding

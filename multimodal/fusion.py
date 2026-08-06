@@ -2,6 +2,9 @@
 Multimodal Fusion Module
 ========================
 
+
+
+
 MambaFusion + MobileCLIPFusion — multimodalní fusion enginy.
 
 Issue #32 fixy:

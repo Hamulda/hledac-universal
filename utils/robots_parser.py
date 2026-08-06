@@ -2,6 +2,9 @@
 Robots.txt Parser - Web Crawling Rules
 ======================================
 
+
+
+
 Integrated from hledac/utils/network/robots.py
 
 Robots.txt parser with caching and validation.
@@ -25,13 +28,13 @@ _MAX_CACHE_SIZE = 128
 _MAX_SITEMAP_SIZE = 2 * 1024 * 1024
 _MAX_SITEMAP_URLS = 200
 
-class Rule(msgspec.Struct):
+class Rule(msgspec.Struct, gc=False):
     """Single robots.txt rule."""
     path: str
     allow: bool
     line_no: int
 
-class RobotsDocument(msgspec.Struct, frozen=True):
+class RobotsDocument(msgspec.Struct, frozen=True, gc=False):
     """Parsed robots.txt document."""
     fetched_at: float
     ttl: float

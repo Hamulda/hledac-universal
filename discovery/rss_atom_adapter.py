@@ -2,6 +2,13 @@
 RSS 2.0 and Atom 1.0 passive feed adapter.
 
 Public-passive only: uses async_fetch_public_text() from 8AD as sole network input.
+
+
+
+
+
+
+
 No storage writes. No LLM calls.
 
 Parsing strategy:
@@ -51,7 +58,7 @@ if TYPE_CHECKING:
     from hledac.universal.fetching.public_fetcher import FetchResult
 logger = logging.getLogger(__name__)
 
-class FeedEntryHit(msgspec.Struct, frozen=True):
+class FeedEntryHit(msgspec.Struct, frozen=True, gc=False):
     """Single parsed feed entry."""
     feed_url: str
     entry_url: str
@@ -74,7 +81,7 @@ class FeedEntryHit(msgspec.Struct, frozen=True):
     source_priority_bias: float = 0.0
     time_signal_reason: str = ''
 
-class FeedBatchResult(msgspec.Struct, frozen=True):
+class FeedBatchResult(msgspec.Struct, frozen=True, gc=False):
     """Result of fetching and parsing one feed."""
     feed_url: str
     entries: tuple[FeedEntryHit, ...]
@@ -82,7 +89,7 @@ class FeedBatchResult(msgspec.Struct, frozen=True):
     source_accessibility_error: str | None = None
     raw_xml: str | None = None
 
-class FeedDiscoveryHit(msgspec.Struct, frozen=True):
+class FeedDiscoveryHit(msgspec.Struct, frozen=True, gc=False):
     """Single feed URL discovered from an HTML page."""
     page_url: str
     feed_url: str
@@ -92,13 +99,13 @@ class FeedDiscoveryHit(msgspec.Struct, frozen=True):
     source: str
     discovered_ts: float
 
-class FeedDiscoveryBatchResult(msgspec.Struct, frozen=True):
+class FeedDiscoveryBatchResult(msgspec.Struct, frozen=True, gc=False):
     """Result of discovering feed URLs from an HTML page."""
     page_url: str
     hits: tuple[FeedDiscoveryHit, ...]
     error: str | None = None
 
-class FeedSeed(msgspec.Struct, frozen=True):
+class FeedSeed(msgspec.Struct, frozen=True, gc=False):
     """
     Single curated OSINT-relevant RSS/Atom feed seed.
 
@@ -114,7 +121,7 @@ class FeedSeed(msgspec.Struct, frozen=True):
     source: str
     priority: int = 0
 
-class MergedFeedSource(msgspec.Struct, frozen=True):
+class MergedFeedSource(msgspec.Struct, frozen=True, gc=False):
     """A feed source after merging discovered and seeded sources."""
     feed_url: str
     label: str

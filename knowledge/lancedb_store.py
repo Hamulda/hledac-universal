@@ -2,6 +2,10 @@
 LanceDB Identity Store - Hybrid vector + FTS search for entity resolution.
 
 .. deprecated:: F350M-R
+
+
+
+
     LanceDB-backed stores are DEPRECATED in favour of DuckDB-backed stores:
     - ``DuckDBEntityStore`` in ``knowledge.duckdb_rag_store``
     - ``DuckDBRAGStore`` in ``knowledge.duckdb_rag_store``

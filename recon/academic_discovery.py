@@ -2,6 +2,7 @@
 Academic Discovery — Convenience Functions for Academic Search
 ===============================================================
 
+
 Migrated from: intelligence/ (parent/donor)
 Canonical path: hledac.universal.recon.academic_discovery
 
@@ -59,7 +60,7 @@ MAX_HOPS = 2
 # RESULT DATA CLASSES
 # =============================================================================
 
-class AcademicPaper(msgspec.Struct):
+class AcademicPaper(msgspec.Struct, gc=False):
     """Structured academic paper result."""
     title: str
     authors: list[str]

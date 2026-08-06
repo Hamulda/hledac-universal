@@ -2,6 +2,7 @@
 Sprint F350M: EnrichmentServices Extraction
 ==========================================
 
+
 Owns forensics and multimodal enricher lifecycle extracted from SprintScheduler.
 
 Lifecycle: init() → enrich_ct_findings() / enrich_findings_multimodal() → flush() → close()

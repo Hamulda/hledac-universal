@@ -2,6 +2,7 @@
 META-007: Finding Collapser with Consistency Gate
 =================================================
 
+
 Combines PropositionalConsistencyVerifier with FindingCollapser for
 the "confident liar" detection feedback loop.
 
@@ -131,6 +132,27 @@ class FindingCollapserWithConsistency:
                     max_sources_per_group,
                 )
                 markdown = result.decode("utf-8") if isinstance(result, bytes) else result
+                
+                # [SWARM]-004: Apply entropy-guided word pruning BEFORE returning
+                # This is a fast Rust pre-pass (~5-10μs for 4000 chars) that:
+                # - Removes boilerplate words (TF-IDF: words in >=80% of groups)
+                # - Drops low-entropy tokens (Shannon entropy < 3.5 bits)
+                # - Preserves all IOCs (IPs, domains, hashes, CVEs, APT names)
+                # - Target: 30-50% token reduction, ~1.5x Hermes inference speedup
+                try:
+                    compressed = rust.raw.compress_prompt(markdown)
+                    if compressed and len(compressed) < len(markdown):
+                        original_len = len(markdown)
+                        compressed_len = len(compressed)
+                        reduction = (1.0 - compressed_len / original_len) * 100
+                        logger.debug(
+                            f"[COLLAPSER] [SWARM]-004: compress_prompt "
+                            f"{original_len} → {compressed_len} chars ({reduction:.1f}% reduction)"
+                        )
+                        markdown = compressed
+                except Exception as compress_err:
+                    logger.debug(f"[COLLAPSER] [SWARM]-004: compress_prompt failed: {compress_err}")
+                    
             except Exception as e:
                 logger.debug(f"[COLLAPSER] collapse_findings failed: {e}")
                 markdown = self._fallback_collapse(clean_for_collapse, max_groups, max_chars_per_group)

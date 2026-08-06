@@ -2,6 +2,9 @@
 
 F350M-R / Issue #16 / R8
 
+
+
+
 Architecture:
 - Single registry for all named caches in the system
 - Provides clear_all() on sprint winddown / shutdown

@@ -2,6 +2,9 @@
 Core type definitions for the sprint scheduler.
 
 Extracted from runtime/sprint_scheduler.py (Phase 1 of modular decomposition).
+
+
+
 All types here are independent — no circular deps with sprint_scheduler.py.
 
 Canonical source for these types remains sprint_scheduler.py until fully migrated.

@@ -2,6 +2,9 @@
 Security Layer - Cryptography, Obfuscation, and Secure Destruction
 ====================================================================
 
+
+
+
 Integrates:
 - StringObfuscator: Multi-stage encoding (XOR, Base64, Zlib)
 - ResearchObfuscator: Query masking, chaff traffic, cover stories
@@ -596,7 +599,7 @@ class SecurityLayer:
 import time
 from dataclasses import dataclass, field
 
-class AuditEntry(msgspec.Struct):
+class AuditEntry(msgspec.Struct, gc=False):
     """
     Immutable audit entry with SHA-256 hashing.
 

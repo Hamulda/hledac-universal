@@ -2,6 +2,7 @@
 
 Extracted from live_public_pipeline.py.
 Handles: IOC extraction (rust backend), pattern context, quality scoring,
+
          page usability computation, and HTML→text conversion.
 
 Pure functions, no I/O, no async. Heavy I/O (rust backend) is fail-safe.

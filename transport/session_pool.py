@@ -3,6 +3,7 @@ transport/session_pool.py
 
 ISSUE-007 / ISSUE-010: Canonical session pool — unified HTTP session entry point.
 
+
 F4.3 / F350M-R: Canonical session pool — singleton per kind.
 F4XX / ISSUE-013: Adaptive connection limits based on UMA memory pressure.
 
@@ -421,6 +422,40 @@ def get_http2_status() -> bool | None:
     Returns None if not yet probed, True if confirmed HTTP/2, False if fallback.
     """
     return _http2_negotiated
+
+
+async def probe_http2_at_startup() -> bool:
+    """
+    OPTIMIZATION #1: Pre-probe HTTP/2 negotiation at startup.
+
+    Creates a temporary httpx client, probes HTTP/2 negotiation, then closes.
+    This avoids the first-request penalty during actual fetches.
+
+    Returns:
+        True if HTTP/2 confirmed, False if fallback, None if probe failed.
+
+    Usage:
+        # Call early at app startup (before any real fetches)
+        h2_supported = await probe_http2_at_startup()
+    """
+    import httpx
+
+    client: httpx.AsyncClient | None = None
+    try:
+        client = httpx.AsyncClient(
+            http2=True,
+            timeout=httpx.Timeout(connect=3.0, read=3.0),
+            limits=httpx.Limits(max_connections=2, max_keepalive_connections=1),
+            trust_env=False,
+        )
+        result = await _probe_http2_negotiation(client)
+        return result if _http2_negotiated is not None else None
+    except Exception as e:
+        logger.debug(f"[SessionPool] Startup HTTP/2 probe failed: {e}")
+        return None
+    finally:
+        if client is not None:
+            await client.aclose()
 
 
 async def close_httpx() -> None:

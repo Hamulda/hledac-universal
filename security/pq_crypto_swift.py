@@ -2,6 +2,8 @@
 Swift-backed Post-Quantum backend — calls the helper tool for ML-DSA-65.
 
 This module provides the actual ML-DSA signing via the secure-enclave-helper
+
+
 tool's PQ commands when running on macOS 26+.
 
 Helper path discovery (priority order):
@@ -104,12 +106,12 @@ async def _run_helper_async(command: list[str], timeout: float=10.0) -> dict[str
     """
     return await asyncio.to_thread(_run_helper_sync, command, timeout)
 
-class _CachedStatus(msgspec.Struct):
+class _CachedStatus(msgspec.Struct, gc=False):
     """Bounded status cache entry with short TTL."""
     status: PQStatus
     until: float
 
-class SwiftPostQuantumBackend(msgspec.Struct):
+class SwiftPostQuantumBackend(msgspec.Struct, gc=False):
     """
     Post-quantum backend using the Swift secure-enclave-helper.
 

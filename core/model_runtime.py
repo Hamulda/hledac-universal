@@ -2,6 +2,7 @@
 core/model_runtime.py — Windup-Local Structured-Generation Sidecar
 ==============================================================
 
+
 F6.5: Structured-generation sidecar for sprint windup phase.
 
 Migrated from brain/model_lifecycle.py (F350M-R W6 refactor).

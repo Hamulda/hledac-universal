@@ -2,6 +2,11 @@
 
 Detects and analyzes input types for the universal processing pipeline.
 Supports file type detection via magic bytes, content analysis, pattern
+
+
+
+
+
 matching, and complexity estimation.
 
 Features:
@@ -38,7 +43,7 @@ UUID_PATTERN = '\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
 CREDIT_CARD_PATTERN = '\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b'
 PHONE_PATTERN = '\\b(?:\\+?\\d{1,3}[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b'
 
-class Pattern(msgspec.Struct):
+class Pattern(msgspec.Struct, gc=False):
     """Represents a detected pattern in input data.
 
     Attributes:
@@ -52,7 +57,7 @@ class Pattern(msgspec.Struct):
     confidence: float
     preview: str
 
-class ComplexityScore(msgspec.Struct, frozen=True):
+class ComplexityScore(msgspec.Struct, frozen=True, gc=False):
     """Complexity analysis for input data.
 
     Attributes:
@@ -68,7 +73,7 @@ class ComplexityScore(msgspec.Struct, frozen=True):
         """Convert to dictionary."""
         return {'level': self.level, 'factors': self.factors, 'estimated_analysis_time': self.estimated_analysis_time}
 
-class InputAnalysis(msgspec.Struct, frozen=True):
+class InputAnalysis(msgspec.Struct, frozen=True, gc=False):
     """Complete input analysis result.
 
     Attributes:
@@ -96,7 +101,7 @@ class InputAnalysis(msgspec.Struct, frozen=True):
         """Convert to dictionary."""
         return {'input_type': self.input_type, 'file_type': self.file_type, 'content_type': self.content_type, 'patterns': [{'pattern_type': p.pattern_type, 'location': p.location, 'confidence': p.confidence, 'preview': p.preview} for p in self.patterns], 'complexity': self.complexity.to_dict() if self.complexity else None, 'recommendations': self.recommendations, 'encoding': self.encoding, 'size_bytes': self.size_bytes, 'entropy': self.entropy}
 
-class IntelligenceConfig(msgspec.Struct, frozen=True):
+class IntelligenceConfig(msgspec.Struct, frozen=True, gc=False):
     """Configuration for intelligent input detection.
 
     Attributes:

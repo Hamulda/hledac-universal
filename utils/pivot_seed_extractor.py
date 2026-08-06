@@ -2,6 +2,8 @@
 Feed-to-Pivot Seed Extractor — Sprint F220A.
 
 Lightweight pure-stdlib extractor for bounded pivot seed extraction from
+
+
 feed finding payloads. Bounded: max 1000 texts, 20k chars/text, 256 seeds.
 No network, no ML, no heavy imports.
 """
@@ -29,7 +31,7 @@ MAX_SEEDS: Final[int] = 256
 # ----------------------------------------------------------------------
 # Dataclasses
 # ----------------------------------------------------------------------
-class PivotSeed(msgspec.Struct, frozen=True):
+class PivotSeed(msgspec.Struct, frozen=True, gc=False):
     """A single pivot seed extracted from feed payload text."""
 
     value: str
@@ -39,7 +41,7 @@ class PivotSeed(msgspec.Struct, frozen=True):
     reason: str
 
 
-class PivotSeedExtractionResult(msgspec.Struct, frozen=True):
+class PivotSeedExtractionResult(msgspec.Struct, frozen=True, gc=False):
     """Result of a pivot seed extraction run."""
 
     seeds: tuple[PivotSeed, ...]

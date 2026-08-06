@@ -2,6 +2,7 @@
 runtime/sidecars/_base.py — F-ISSUE-005: Shared Base for Scheduler-Backed Sidecars
 =================================================================================
 
+
 SchedulerBackedSidecarAdapter and bind_scheduler() are shared by all
 discovery / enrichment / forensics adapter categories.
 

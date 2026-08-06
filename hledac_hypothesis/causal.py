@@ -2,6 +2,7 @@
 Hypothesis Engine — Causal Reasoning (C4 Tier-5 Extraction)
 ============================================================
 
+
 Extracted from :mod:`brain.hypothesis_engine_engine` to break the remaining 3 126 LOC
 orchestrator into focused modules. This module hosts :class:`CausalReasoner`
 — the self-contained causal inference component responsible for entity

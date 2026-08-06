@@ -2,6 +2,8 @@
 Arti Transport — In-process Tor via Arti (Rust Tor implementation).
 
 HEIST-06: Arti integration closes the architectural gap between I2P SAM v3
+
+
 (native in-process) and Tor (external daemon + SOCKS5). Arti is the modern
 Rust reimplementation of Tor that can run as a lightweight subprocess or
 (eventually) embedded in-process via PyO3 bindings.

@@ -2,6 +2,7 @@
 F227A LIVE MEASUREMENT SCHEMA
 
 Schema-only extractions from benchmarks/live_sprint_measurement.py:
+
   - RunMode (enum)
   - MeasurementStatus (enum)
   - RunQualityVerdict (enum)
@@ -41,7 +42,7 @@ class RunQualityVerdict(Enum):
     FAIL_SCHEDULER_EXIT_MISSING = 'FAIL_SCHEDULER_EXIT_MISSING'
     FAIL_WALLCLOCK_BUDGET_EXCEEDED = 'FAIL_WALLCLOCK_BUDGET_EXCEEDED'
 
-class LiveMeasurementResult(msgspec.Struct):
+class LiveMeasurementResult(msgspec.Struct, gc=False):
     measurement_id: str
     sprint_id: str | None
     mode: RunMode

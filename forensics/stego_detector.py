@@ -2,6 +2,12 @@
 Statistical Steganography Detector
 ===================================
 
+
+
+
+
+
+
 Implements statistical methods for detecting steganography in images:
 - Chi-square test for LSB (Least Significant Bit) detection
 - RS (Regular-Singular) analysis with message length estimation
@@ -50,7 +56,7 @@ def _check_mps_available():
     return False
 MAX_IMAGE_SIZE = 2048
 
-class StegoConfig(msgspec.Struct):
+class StegoConfig(msgspec.Struct, gc=False):
     """Configuration for statistical steganography detector.
 
     Attributes:
@@ -84,7 +90,7 @@ class ChiSquareResult:
     embedded_bytes_estimate: int = 0
     is_significant: bool = False
 
-class RSResult(msgspec.Struct):
+class RSResult(msgspec.Struct, gc=False):
     """Result of RS (Regular-Singular) analysis.
 
     Attributes:
@@ -102,7 +108,7 @@ class RSResult(msgspec.Struct):
     message_length: int = 0
     confidence: float = 0.0
 
-class DCTResult(msgspec.Struct):
+class DCTResult(msgspec.Struct, gc=False):
     """Result of DCT coefficient analysis for JPEG.
 
     Attributes:
@@ -116,7 +122,7 @@ class DCTResult(msgspec.Struct):
     histogram_deviation: float = 0.0
     block_anomalies: list[float] = field(default_factory=list)
 
-class StegoResult(msgspec.Struct):
+class StegoResult(msgspec.Struct, gc=False):
     """Complete steganography analysis result.
 
     Attributes:

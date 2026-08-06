@@ -2,6 +2,21 @@
 Tool Executor — Async Execution Patterns.
 
 This module contains the CANONICAL execution logic for tools.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Extracted from tool_registry.py to enable isolated testing of async patterns.
 
 Execution flow:
@@ -519,13 +534,13 @@ async def _python_execute_handler(
     }
 
 
-class WebSearchArgs(msgspec.Struct, kw_only=True):
+class WebSearchArgs(msgspec.Struct, kw_only=True, gc=False):
     query: str
     max_results: int = 10
     recency_days: int | None = None
 
 
-class WebSearchResult(msgspec.Struct, kw_only=True):
+class WebSearchResult(msgspec.Struct, kw_only=True, gc=False):
     staged: bool = False
     backend_ready: bool = False
     query_ready: bool = True
@@ -537,17 +552,17 @@ class WebSearchResult(msgspec.Struct, kw_only=True):
     query: str = ""
 
 
-class EntityExtractionArgs(msgspec.Struct, kw_only=True):
+class EntityExtractionArgs(msgspec.Struct, kw_only=True, gc=False):
     text: str
     entity_types: list[str] = msgspec.field(default_factory=lambda: ["person", "organization", "location"])
 
 
-class EntityExtractionResult(msgspec.Struct, kw_only=True):
+class EntityExtractionResult(msgspec.Struct, kw_only=True, gc=False):
     entities: list[dict[str, Any]]
     entity_count: int
 
 
-class AcademicSearchArgs(msgspec.Struct, kw_only=True):
+class AcademicSearchArgs(msgspec.Struct, kw_only=True, gc=False):
     query: str
     sources: list[str] = msgspec.field(default_factory=lambda: ["arxiv", "semantic_scholar"])
     year_from: int | None = None
@@ -555,45 +570,45 @@ class AcademicSearchArgs(msgspec.Struct, kw_only=True):
     max_results: int = 10
 
 
-class AcademicSearchResult(msgspec.Struct, kw_only=True):
+class AcademicSearchResult(msgspec.Struct, kw_only=True, gc=False):
     papers: list[dict[str, Any]]
     total_found: int
     sources_searched: list[str]
 
 
-class FileReadArgs(msgspec.Struct, kw_only=True):
+class FileReadArgs(msgspec.Struct, kw_only=True, gc=False):
     path: str
     encoding: str = "utf-8"
     max_bytes: int | None = None
 
 
-class FileReadResult(msgspec.Struct, kw_only=True):
+class FileReadResult(msgspec.Struct, kw_only=True, gc=False):
     content: str
     path: str
     size_bytes: int
     encoding: str
 
 
-class FileWriteArgs(msgspec.Struct, kw_only=True):
+class FileWriteArgs(msgspec.Struct, kw_only=True, gc=False):
     path: str
     content: str
     encoding: str = "utf-8"
     append: bool = False
 
 
-class FileWriteResult(msgspec.Struct, kw_only=True):
+class FileWriteResult(msgspec.Struct, kw_only=True, gc=False):
     path: str
     bytes_written: int
     success: bool
 
 
-class PythonExecuteArgs(msgspec.Struct, kw_only=True):
+class PythonExecuteArgs(msgspec.Struct, kw_only=True, gc=False):
     code: str
     timeout_seconds: int = 30
     allowed_modules: list[str] = msgspec.field(default_factory=list)
 
 
-class PythonExecuteResult(msgspec.Struct, kw_only=True):
+class PythonExecuteResult(msgspec.Struct, kw_only=True, gc=False):
     stdout: str
     stderr: str
     result: Any
@@ -601,12 +616,12 @@ class PythonExecuteResult(msgspec.Struct, kw_only=True):
     success: bool
 
 
-class DNSTunnelCheckArgs(msgspec.Struct, kw_only=True):
+class DNSTunnelCheckArgs(msgspec.Struct, kw_only=True, gc=False):
     mode: str = "analyze_queries"
     queries: list[str] = msgspec.field(default_factory=list)
 
 
-class DNSTunnelCheckResult(msgspec.Struct, kw_only=True):
+class DNSTunnelCheckResult(msgspec.Struct, kw_only=True, gc=False):
     findings: list[dict[str, Any]] = msgspec.field(default_factory=list)
     stats: dict[str, Any] = msgspec.field(default_factory=dict)
     error: str | None = None

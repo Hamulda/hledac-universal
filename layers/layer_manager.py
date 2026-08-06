@@ -2,6 +2,10 @@
 Layer Manager - Centralized Layer Orchestration
 ===============================================
 
+
+
+
+
 Provides unified initialization, coordination and lifecycle management
 for all universal orchestrator layers.
 
@@ -120,7 +124,7 @@ class LayerStatus(Enum):
     ERROR = 'error'
     SHUTDOWN = 'shutdown'
 
-class LayerHealth(msgspec.Struct):
+class LayerHealth(msgspec.Struct, gc=False):
     """Layer health status"""
     name: str
     status: LayerStatus

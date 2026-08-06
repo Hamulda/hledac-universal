@@ -2,6 +2,7 @@
 Uses graphviz `dot` command-line tool for SVG generation.
 Subprocess invocation: dot -Tsvg -o output.svg
 M1 8GB: graphviz is a system binary, not Python bindings — minimal RAM.
+
 Fails gracefully if graphviz is not installed.
 """
 import shutil

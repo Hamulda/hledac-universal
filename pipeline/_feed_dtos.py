@@ -2,6 +2,11 @@
 
 Split from live_feed_pipeline.py (3 208 LOC).
 - FeedQualityMetrics: kvalita + adapter bands
+
+
+
+
+
 - FeedFallbackMetrics: fallback_useful, fallback_waste, decision
 - FeedEconomicsVerdict: rich_ratio, squandered_high_usefulness
 - FeedTelemetry: signal_stage, sample_texts, zero_signal_reason

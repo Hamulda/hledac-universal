@@ -2,6 +2,11 @@
 Analyst read-side facade for local questions over findings, graph, and vectors.
 
 ARCHITECTURE ROLE
+
+
+
+
+
 =================
 AnalystWorkbench is a read-side SEAM that aggregates:
   - DuckDBShadowStore findings (DuckDB, Tier 2)

@@ -3,6 +3,7 @@
 Rust-backed pipeline operators (MAP/FILTER/FOLD/COUNT) for high-throughput
 sidecar event processing.
 
+
 Replaces Python async Queue + dict overhead in sidecar_bus.py with
 zero-copy rayon parallelism.
 

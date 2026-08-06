@@ -2,6 +2,16 @@
 Insight Generation Engine
 ==========================
 
+
+
+
+
+
+
+
+
+
+
 From deep_research/insight_generator.py comments:
 - Pattern recognition insights
 - Anomaly detection insights

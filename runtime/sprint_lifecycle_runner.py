@@ -2,6 +2,7 @@
 SprintLifecycleRunner — mechanical lifecycle boundary extracted from SprintScheduler.
 
 This runner is a PURE MECHANICAL SEAM. It does NOT own policy. It does NOT make
+
 decisions. It translates lifecycle state into phase transitions and tick/sleep calls.
 
 What this runner OWNS (mechanical only):

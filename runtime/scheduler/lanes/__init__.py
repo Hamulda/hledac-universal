@@ -2,6 +2,18 @@
 
 Model-free planner/admission layer deciding which acquisition lanes are
 allowed per sprint/cycle under M1 constraints. AcquisitionStrategy does NOT
+
+
+
+
+
+
+
+
+
+
+
+
 fetch network — it only emits a bounded plan dict per lane. See
 :ref:`acquisition-strategy` for lane definitions, strategy rules, and invariants.
 """

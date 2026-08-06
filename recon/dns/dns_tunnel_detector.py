@@ -2,6 +2,11 @@
 Cascade DNS Tunneling Detector
 
 A high-performance DNS tunneling detection system with 94% detection rate
+
+
+
+
+
 and <1% false positives. Uses a cascaded approach with multiple detection layers.
 
 Architecture:
@@ -77,7 +82,7 @@ class Verdict(Enum):
     MALICIOUS = 'malicious'
     AMBIGUOUS = 'ambiguous'
 
-class DNSTunnelConfig(msgspec.Struct):
+class DNSTunnelConfig(msgspec.Struct, gc=False):
     """Configuration for DNS tunneling detector.
 
     Attributes:
@@ -99,7 +104,7 @@ class DNSTunnelConfig(msgspec.Struct):
     wavelet_levels: int = 4
     majority_vote_threshold: int = 2
 
-class NGramScore(msgspec.Struct, frozen=True):
+class NGramScore(msgspec.Struct, frozen=True, gc=False):
     """N-gram analysis score.
 
     Attributes:
@@ -113,7 +118,7 @@ class NGramScore(msgspec.Struct, frozen=True):
     char_distribution: float = 0.0
     anomaly_score: float = 0.0
 
-class TunnelingFinding(msgspec.Struct):
+class TunnelingFinding(msgspec.Struct, gc=False):
     """DNS tunneling detection finding.
 
     Attributes:

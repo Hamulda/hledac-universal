@@ -2,6 +2,7 @@
 runtime/adapters/fetch_adapter.py — F270: Fetch Coordinator Adapter
 ===================================================================
 
+
 Adapter implementing FetchProtocol for FetchCoordinator.
 Non-breaking: wraps existing FetchCoordinator without changes.
 

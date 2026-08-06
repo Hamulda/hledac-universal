@@ -2,6 +2,7 @@
 BudgetTracker – sleduje spotřebu network, CPU, storage (jednoduchý klouzavý okna).
 """
 import time
+
 from collections import deque
 
 class BudgetTracker:

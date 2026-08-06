@@ -2,6 +2,8 @@
 ConcurrencyBudget Registry — Centralizovaný správce semaforů pro M1 8GB.
 
 ÚČEL:
+
+
 - Single source of truth pro všechny asyncio.Semaphore hodnoty
 - Konzistence napříč moduly (194 různých hodnot → jednotná kategorizace)
 - Dynamická adjustace podle UMA stavu (OK/WARN/CRITICAL/EMERGENCY)

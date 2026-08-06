@@ -2,6 +2,9 @@
 knowledge/semantic_deduplicator.py — A6: Near-Duplicate Detection via SimHash + MinHash
 ========================================================================================
 
+
+
+
 Provides two strategies for near-duplicate finding detection:
 1. SimHash — fast Hamming-distance based, ideal for near-exact duplicates
 2. MinHash + LSH — Jaccard similarity for longer content

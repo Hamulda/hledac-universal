@@ -2,6 +2,9 @@
 RingMMap IPC — zero-copy msgspec.msgpack přes POSIX shared memory.
 
 Univerzální memory-mapped IPC vrstva pro M1 8GB (Darwin arm64).
+
+
+
 Lze použít pro jakýkoliv msgspec.Struct typ — žádný JSON, žádný pipe.
 
 ARCHITECTURA:

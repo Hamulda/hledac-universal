@@ -2,6 +2,7 @@
 Freenet / Hyphanet Client — Decentralized censorship-resistant content mining.
 
 Freenet (now Hyphanet) is a peer-to-peer platform for censorship-resistant
+
 communication and publishing. Content is accessed via:
   - FProxy HTTP gateway at http://127.0.0.1:8888/
   - URI schemes: freenet:USK@..., freenet:CHK@..., freenet:SSK@...

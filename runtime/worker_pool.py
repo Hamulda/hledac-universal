@@ -3,6 +3,8 @@
 Replaces bare `asyncio.to_thread()` calls throughout the codebase with a
 single, bounded, instrumentation-friendly executor.
 
+
+
 Thread budget on M1 8GB:
   - Rayon cpu_pool:    4 threads (Rust MLX inference)
   - Rayon io_pool:     2 threads (Rust async I/O)

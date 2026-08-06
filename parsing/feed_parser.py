@@ -3,6 +3,8 @@
 Replaces feedparser (7-15 ms/fed sync overhead) with selectolax MyHTML (~3-5 ms/fed).
 Fully async-native: no sync blocking in the pipeline.
 
+
+
 M1 8GB advantage:
   • ~12 MB RSS stack elimination (feedparser + sgmllib deps removed)
   • Zero sync blocker in async pipeline
@@ -43,7 +45,7 @@ import xxhash
 # DTO — msgspec.Struct for zero-allocation downstream consumption
 # ---------------------------------------------------------------------------
 
-class FeedEntry(msgspec.Struct, frozen=True):
+class FeedEntry(msgspec.Struct, frozen=True, gc=False):
     """Single parsed feed entry — msgspec.Struct for direct FeedPipelineEntryResult use."""
 
     feed_url: str

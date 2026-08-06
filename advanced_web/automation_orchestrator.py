@@ -2,6 +2,7 @@
 AutomationOrchestrator — minimal implementation for web_intelligence.py compatibility.
 
 Interface expected by web_intelligence.py:
+
     - __init__(config: dict = None)
     - cleanup() -> None (async)
 

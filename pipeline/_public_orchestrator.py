@@ -2,6 +2,7 @@
 
 This module provides the orchestrated version of the public OSINT pipeline
 using the StageOrchestrator framework. It composes:
+
     discovery → fetch → extract → match → build → export
 
 Usage:

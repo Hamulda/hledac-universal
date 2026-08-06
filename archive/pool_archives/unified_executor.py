@@ -2,6 +2,8 @@
 Unified Executor — ISSUE-010 Solution
 =====================================
 
+
+
 Centralizovaný pool executor který sjednocuje:
 1. Rust rayon pool (cpu_pool, io_pool, mixed_pool) — work-stealing scheduler
 2. AIMD feedback control — automatická adaptace velikosti poolů
@@ -67,7 +69,7 @@ _MAX_CPU_POOL_THREADS = 4  # P-cores for SIMD
 _MAX_IO_POOL_THREADS = 2  # I/O-bound
 
 
-class PoolStats(msgspec.Struct):
+class PoolStats(msgspec.Struct, gc=False):
     """Statistiky pro jeden pool."""
     active_workers: int = 0
     queued_tasks: int = 0

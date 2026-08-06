@@ -2,6 +2,10 @@
 
 UNIFIED-009: Replaces flat proxy-affinity lists with a weighted adjacency-list
 route graph persisted in DuckDB. Enables intelligent proxy+transport selection
+
+
+
+
 based on historical latency, success rate, and recency — eliminating the wasteful
 "race all transports" approach for domains with known-good routes.
 

@@ -2,6 +2,8 @@
 brain/model_state.py — Sprint G2: Model State Observer
 ====================================================
 
+
+
 Protocol + dataclass for exposing DeepHermes3Engine internal state
 to ModelManager for informed unload decisions.
 

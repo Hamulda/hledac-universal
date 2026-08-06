@@ -2,6 +2,10 @@
 IPv6 Reconnaissance — RDAP, WHOIS, DoH AAAA, BGP peer lookups.
 
 Primary methods:
+
+
+
+
   1. RDAP (arin/ripe/apnic) — primary for IP/ASN metadata
   2. WHOIS fallback — if RDAP returns no data
   3. DoH AAAA query — get IPv6 addresses for domains via DoH
@@ -70,7 +74,7 @@ _rdap_cache = _RDAPCache()
 RDAP_BOOTSTRAP: dict[str, str] = {'arin': 'https://rdap.arin.net/registry/ip', 'ripe': 'https://rdap.ripe.net/rdap/ip', 'apnic': 'https://rdap.apnic.net/ip', 'lacnic': 'https://rdap.lacnic.net/rdap/ip', 'afrinic': 'https://rdap.afrinic.net/rdap/ip'}
 WHOIS_SERVERS: dict[str, str] = {'arin': 'whois.arin.net', 'ripe': 'whois.ripe.net', 'apnic': 'whois.apnic.net'}
 
-class IPv6Result(msgspec.Struct):
+class IPv6Result(msgspec.Struct, gc=False):
     target: str
     rdap: dict[str, Any]
     whois: dict[str, Any]

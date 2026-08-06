@@ -2,6 +2,12 @@
 API Documentation Generator for Hledac v5.2 Elite Platform
 
 This tool automatically generates comprehensive API documentation by parsing the Python codebase,
+
+
+
+
+
+
 extracting classes, methods, functions, docstrings, and type hints.
 """
 import ast
@@ -12,7 +18,7 @@ import msgspec
 from pathlib import Path
 from typing import Any
 
-class APIClass(msgspec.Struct):
+class APIClass(msgspec.Struct, gc=False):
     """Represents a Python class with its documentation."""
     name: str
     module: str
@@ -24,7 +30,7 @@ class APIClass(msgspec.Struct):
     file_path: str
     line_number: int
 
-class APIMethod(msgspec.Struct, frozen=True):
+class APIMethod(msgspec.Struct, frozen=True, gc=False):
     """Represents a Python method or function."""
     name: str
     signature: str
@@ -38,7 +44,7 @@ class APIMethod(msgspec.Struct, frozen=True):
     is_property: bool
     line_number: int
 
-class APIParameter(msgspec.Struct, frozen=True):
+class APIParameter(msgspec.Struct, frozen=True, gc=False):
     """Represents a function parameter."""
     name: str
     type_hint: str
@@ -46,7 +52,7 @@ class APIParameter(msgspec.Struct, frozen=True):
     is_optional: bool
     description: str
 
-class APIProperty(msgspec.Struct, frozen=True):
+class APIProperty(msgspec.Struct, frozen=True, gc=False):
     """Represents a class property."""
     name: str
     type_hint: str
@@ -54,7 +60,7 @@ class APIProperty(msgspec.Struct, frozen=True):
     is_readonly: bool
     line_number: int
 
-class APIModule(msgspec.Struct, frozen=True):
+class APIModule(msgspec.Struct, frozen=True, gc=False):
     """Represents a Python module."""
     name: str
     file_path: str

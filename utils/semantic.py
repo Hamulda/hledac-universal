@@ -2,6 +2,12 @@
 SemanticFilter - The Filter
 ============================
 
+
+
+
+
+
+
 Memory-efficient semantic filtering using ModernBERT (MLX).
 
 Features:
@@ -32,7 +38,7 @@ from typing import Any
 import numpy as np
 logger = logging.getLogger(__name__)
 
-class FilterResult(msgspec.Struct):
+class FilterResult(msgspec.Struct, gc=False):
     """Result of semantic filtering."""
     passed: bool
     similarity: float

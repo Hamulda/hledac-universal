@@ -3,6 +3,9 @@ discovery/academic/unpaywall_adapter.py — Unpaywall / OA Button PDF Resolver
 
 Sprint F259: Academic Intelligence Layer — DOI → free PDF resolution.
 
+
+
+
 Features:
 - Given a DOI, find the free legal full-text version
 - API: https://api.unpaywall.org/v2/{doi}?email=
@@ -31,7 +34,7 @@ def _get_email() -> str:
     """Get email for polite pool."""
     return os.environ.get('HLEDAC_CONTACT_EMAIL', 'research@hledac.ai')
 
-class OAPaper(msgspec.Struct):
+class OAPaper(msgspec.Struct, gc=False):
     """Open Access paper info from Unpaywall."""
     doi: str
     title: str

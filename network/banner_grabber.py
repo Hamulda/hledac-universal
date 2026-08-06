@@ -3,6 +3,9 @@ Banner Grabber — Async TCP banner grabbing via asyncio.open_connection().
 
 Migrated to ConcurrencyBudgetRegistry (F268).
 
+
+
+
 Ports scanned:
 
   [21, 22, 25, 80, 443, 587, 8080, 8443, 993, 3389, 5432, 6379]
@@ -53,7 +56,7 @@ PORT_TIMEOUTS: dict[int, float] = {21: 5.0, 22: 8.0, 25: 8.0, 80: 5.0, 443: 5.0,
 TOR_PORTS: frozenset[int] = frozenset({22, 25, 3389})
 CURL_PORTS: frozenset[int] = frozenset({80, 443, 8080, 8443, 993})
 
-class BannerResult(msgspec.Struct):
+class BannerResult(msgspec.Struct, gc=False):
     ip: str
     port: int
     banner: str

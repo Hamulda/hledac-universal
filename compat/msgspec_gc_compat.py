@@ -42,7 +42,7 @@ def struct(
     kw_only: bool = False,
     unsafe_hash: bool = False,
     order: bool = False,
-) -> type:
+) -> type[object]:
     """
     msgspec.Struct factory with gc=False → weakref=False translation.
 
@@ -98,7 +98,7 @@ def struct(
 
 
 # Alias for direct subclassing pattern
-class Struct(msgspec.Struct):
+class Struct(msgspec.Struct, gc=False):
     """
     Drop-in msgspec.Struct subclass for Python 3.14 compatibility.
 

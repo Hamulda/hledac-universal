@@ -2,6 +2,7 @@
 hledac_hypothesis/dempster_shafer.py — Minimal Dempster-Shafer belief mass calculator.
 
 Cutting-edge: pure-Python (no numpy), M1-8GB-safe, fail-soft.
+
 API surface matches test_sprint60.TestHypothesis:
     DempsterShafer(frame)   → init with hypothesis frame
     .add_evidence(h, m)     → assign mass m to single hypothesis

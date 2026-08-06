@@ -2,6 +2,8 @@
 Research Obfuscation - Maskování výzkumných aktivit
 
 Pro ultra-deep research v tajných databázích:
+
+
 - Query masking (transformace citlivých termínů)
 - Chaff traffic generation (falešné dotazy)
 - Timing obfuscation
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Crypto-safe jitter — F350M-R
 _JITTER_RNG = secrets.SystemRandom()
 
-class ObfuscationConfig(msgspec.Struct):
+class ObfuscationConfig(msgspec.Struct, gc=False):
     """Konfigurace obfuskace"""
     mask_queries: bool = True
     generate_chaff: bool = True

@@ -2,8 +2,16 @@
 intelligence/lane.py — F320+: Base Intelligence Lane Architecture
 
 Abstract base class + LaneSpec for the 20+ intelligence lane submodules.
+
+
+
+
+
+
+
 Eliminates duplicated scaffolding: TransportManager, dedup, rate limiting,
 circuit breakers, canonical finding emission.
+
 
 Cutting-edge solution:
 - abc.ABC with typing.Protocol shapes for runtime + structural typing
@@ -46,7 +54,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class LaneSpec(msgspec.Struct, frozen=True):
+class LaneSpec(msgspec.Struct, frozen=True, gc=False):
     """
     Budget contract for a lane.
 
@@ -66,7 +74,7 @@ class LaneSpec(msgspec.Struct, frozen=True):
 # ---------------------------------------------------------------------------
 
 
-class LaneContext(msgspec.Struct):
+class LaneContext(msgspec.Struct, gc=False):
     """
     Runtime context for lane execution.
 
@@ -84,7 +92,7 @@ class LaneContext(msgspec.Struct):
 # ---------------------------------------------------------------------------
 
 
-class ResolveResult(msgspec.Struct):
+class ResolveResult(msgspec.Struct, gc=False):
     """
     Structured result from the resolve phase.
 
@@ -103,7 +111,7 @@ class ResolveResult(msgspec.Struct):
 # ---------------------------------------------------------------------------
 
 
-class FetchResult(msgspec.Struct):
+class FetchResult(msgspec.Struct, gc=False):
     """
     Structured result from the fetch phase.
 
@@ -128,7 +136,7 @@ class FetchResult(msgspec.Struct):
 # ---------------------------------------------------------------------------
 
 
-class ParsedResult(msgspec.Struct):
+class ParsedResult(msgspec.Struct, gc=False):
     """
     Structured result from the parse phase.
 
@@ -151,7 +159,7 @@ class ParsedResult(msgspec.Struct):
 # ---------------------------------------------------------------------------
 
 
-class DedupResult(msgspec.Struct):
+class DedupResult(msgspec.Struct, gc=False):
     """
     Result of the dedup phase.
 

@@ -2,6 +2,8 @@
 transport/conditional_cache.py — diskcache-backed ETag/Last-Modified cache for curl_cffi.
 
 Sprint Phase 8 (2026-07-03). Replaced LMDB with diskcache (sqlite3 backend)
+
+
 for ≥10× throughput on M1 SSD. diskcache uses SQLite under the hood with
 optimized settings for sequential read/write workloads (HTTP conditional cache).
 

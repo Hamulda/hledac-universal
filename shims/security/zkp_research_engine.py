@@ -2,6 +2,7 @@
 Zero-Knowledge Proof Research Engine — STUB.
 
 ZKP requires complex cryptographic primitives that cannot be trivially implemented:
+
 - Groth16 or PLONK proof systems (requires libsnark or circom WASM binding)
 - R1CS constraint generation for domain-specific relations
 - Trusted setup ceremonies or transparent setup alternatives (e.g., Marlin)

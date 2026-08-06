@@ -2,6 +2,7 @@
 
 Responsibilities:
 - Fetch RSS/Atom feed via httpx
+
 - Parse feed entries (title, URL, summary, published date)
 - Handle fetch errors gracefully
 

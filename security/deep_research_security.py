@@ -2,6 +2,9 @@
 DeepResearchSecurity - Komplexní bezpečnostní vrstva pro Ultra Deep Research
 
 Integruje všechny bezpečnostní komponenty pro výzkum v tajných archivech:
+
+
+
 - Quantum-safe crypto (ML-KEM, ML-DSA)
 - Steganography (DCT, LSB, Neural)
 - Obfuscation (masking, chaff)
@@ -29,7 +32,7 @@ from .quantum_safe import EncryptedContainer, QuantumSafeVault, SecurityLevel
 from .stealth_communicator import StealthCommunicator
 logger = logging.getLogger(__name__)
 
-class DeepSecurityConfig(msgspec.Struct):
+class DeepSecurityConfig(msgspec.Struct, gc=False):
     """Konfigurace pro deep research security"""
     security_level: SecurityLevel = SecurityLevel.HIGH
     privacy_level: str = 'maximum'

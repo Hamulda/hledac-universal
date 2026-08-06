@@ -2,6 +2,8 @@
 Local CAPTCHA Solver — Heavy OCR Models (OFF BY DEFAULT on M1 8GB)
 
 M1 8GB: This module is OFF BY DEFAULT.
+
+
 It requires: transformers + torch + pytesseract (heavy RAM, ~1-2 GB).
 
 To enable: HLEDAC_ENABLE_CAPTCHA_LOCAL=1
@@ -48,7 +50,7 @@ def _check_enabled() -> bool:
 # Local OCR Config
 # ─────────────────────────────────────────────────────────────────────────────
 
-class LocalOcrConfig(msgspec.Struct):
+class LocalOcrConfig(msgspec.Struct, gc=False):
     """Configuration for local OCR CAPTCHA solving."""
     model_name: str = "microsoft/trocr-small-printed"
     use_mlx: bool = True  # Use MLX acceleration if available

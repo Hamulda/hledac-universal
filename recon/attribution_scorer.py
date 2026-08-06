@@ -2,6 +2,9 @@
 F203B: Attribution Confidence Scorer
 
 Provides explainable confidence scores for identity stitching candidates.
+
+
+
 No model load, no network, pure Python with Levenshtein fallback.
 """
 import re
@@ -16,7 +19,7 @@ DEFAULT_FACTOR_WEIGHTS = {'email_domain_match': 0.25, 'username_pattern_similari
 SOCIAL_FACTOR_MIN_OVERLAP: int = 1
 SOCIAL_FACTOR_MAX_FACTOR_SCORE: float = 0.8
 
-class AttributionFactor(msgspec.Struct, frozen=True):
+class AttributionFactor(msgspec.Struct, frozen=True, gc=False):
     """A single factor contributing to attribution confidence."""
     factor_id: str
     factor_type: str
@@ -25,7 +28,7 @@ class AttributionFactor(msgspec.Struct, frozen=True):
     evidence: tuple[str, ...] = field(default_factory=tuple)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class AttributionScore(msgspec.Struct, frozen=True):
+class AttributionScore(msgspec.Struct, frozen=True, gc=False):
     """
     Explainable confidence score for an identity pair.
 

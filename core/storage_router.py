@@ -3,6 +3,8 @@
 5-Layer Storage Stack with single decision tree, tiered invalidation,
 and M1 8GB memory budget enforcement via ResourceGovernor.
 
+
+
 LAYERS (hot → cold):
   HOT      — SqliteVecStore (M1-native, sqlite-vec, ~5MB) for embeddings.float16
   WARM     — LanceDB (opt-in via HLEDAC_VECTORS=lancedb, IVF-PQ quantized)

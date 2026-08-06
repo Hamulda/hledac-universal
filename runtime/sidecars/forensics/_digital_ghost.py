@@ -2,6 +2,7 @@
 runtime/sidecars/forensics/_digital_ghost.py — F-ISSUE-005: DigitalGhostSidecarAdapter
 """
 from hledac.universal.runtime.sidecar_protocol import SidecarRegistry
+
 from hledac.universal.runtime.sidecars._base import SchedulerBackedSidecarAdapter
 
 

@@ -2,6 +2,8 @@
 Vision/VLM Routing Benchmark — F216B
 
 Hermetic benchmark for Vision/VLM routing policy.
+
+
 Does NOT load real VLMs or CoreML models.
 
 Routes:
@@ -34,7 +36,7 @@ class Route(Enum):
     SKIP_DUE_TO_MEMORY = 'skip_due_to_memory'
     UNSUPPORTED = 'unsupported'
 
-class RoutingCase(msgspec.Struct):
+class RoutingCase(msgspec.Struct, gc=False):
     name: str
     image_bytes: bytes
     ocr_sufficient: bool
@@ -49,7 +51,7 @@ class RoutingCase(msgspec.Struct):
     def to_dict(self) -> dict:
         return {'name': self.name, 'ocr_sufficient': self.ocr_sufficient, 'needs_visual_reasoning': self.needs_visual_reasoning, 'is_complex_scene': self.is_complex_scene, 'memory_pressure': self.memory_pressure, 'oversized': self.oversized, 'ocr_failed': self.ocr_failed, 'vlm_manually_requested': self.vlm_manually_requested, 'expected_route': self.expected_route.value}
 
-class BenchmarkResult(msgspec.Struct):
+class BenchmarkResult(msgspec.Struct, gc=False):
     benchmark: str = 'vision_vlm_routing_benchmark'
     mode: str = 'hermetic'
     total_cases: int = 0

@@ -2,6 +2,9 @@
 brain/_prompts.py — Shared Prompt Abstractions (PEP 3149 + Python 3.14)
 ============================================================================
 Extracts prompt formatting and template logic from DeepHermes3Engine and
+
+
+
 Hermes3DSPyLM to eliminate self-cloning.
 
 Python 3.14 features used:

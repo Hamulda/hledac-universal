@@ -2,6 +2,7 @@
 ZeroNet Client — Decentralized P2P website mining via ZeroNet JSON API.
 
 ZeroNet is a decentralized web platform using Bitcoin cryptography and
+
 BitTorrent network. Sites have Bitcoin-style addresses (e.g., 1ZeroMe...,
 1Talk..., 1Search...) and are accessed via local proxy at 127.0.0.1:43110.
 

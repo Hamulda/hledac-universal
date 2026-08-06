@@ -2,6 +2,9 @@
 F213D — Research Quality Score
 
 Reads a benchmark JSON (hermetic or live) and scores research depth.
+
+
+
 Rewards multisource evidence (CT, public, passive) and penalizes
 feed-only dominance, wall-clock failures, and memory taint.
 
@@ -62,7 +65,7 @@ class QualityGate(StrEnum):
     QUALITY_FAIL_NONFEED_ZERO = 'QUALITY_FAIL_NONFEED_ZERO'
     QUALITY_WARN_MULTISOURCE_SHALLOW = 'QUALITY_WARN_MULTISOURCE_SHALLOW'
 
-class EvidenceDepth(msgspec.Struct):
+class EvidenceDepth(msgspec.Struct, gc=False):
     """F231M: Production evidence depth diagnostics from KPI field aliases."""
     claims_depth: float = 0.0
     public_candidate_depth: float = 0.0
@@ -74,7 +77,7 @@ class EvidenceDepth(msgspec.Struct):
     advisory_clues_present: bool = False
     nonfeed_clues_without_acceptance: bool = False
 
-class ScoreComponents(msgspec.Struct, frozen=True):
+class ScoreComponents(msgspec.Struct, frozen=True, gc=False):
     findings_volume_score: float
     source_diversity_score: float
     nonfeed_evidence_score: float
@@ -138,7 +141,7 @@ def _compute_evidence_depth(norm: dict, nonfeed: int) -> EvidenceDepth:
     nonfeed_clues_without_acceptance = (public_candidates_seen or ct_clues_present or advisory_clues_present) and nonfeed == 0
     return EvidenceDepth(claims_depth=round(claims_depth, 4), public_candidate_depth=round(public_candidate_depth, 4), ct_clue_depth=round(ct_clue_depth, 4), advisory_clue_depth=round(advisory_clue_depth, 4), claims_extracted=claims_extracted, public_candidates_seen=public_candidates_seen, ct_clues_present=ct_clues_present, advisory_clues_present=advisory_clues_present, nonfeed_clues_without_acceptance=nonfeed_clues_without_acceptance)
 
-class ResearchQualityScore(msgspec.Struct, frozen=True):
+class ResearchQualityScore(msgspec.Struct, frozen=True, gc=False):
     total_quality_score: float
     grade: Grade
     components: ScoreComponents

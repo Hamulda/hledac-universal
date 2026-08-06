@@ -2,6 +2,7 @@
 """
 Metal GPU detection and batch keyword/IOC scanning.
 Pure Python fallback for environments without Metal GPU.
+
 """
 
 from __future__ import annotations

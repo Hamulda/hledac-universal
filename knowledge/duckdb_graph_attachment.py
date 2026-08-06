@@ -2,6 +2,7 @@
 
 Owns graph attachment lifecycle for DuckDBShadowStore.
 
+
 ARCHITECTURE:
     DuckDBGraphAttachment wraps GraphAttachmentStore (knowledge/graph_attachment.py).
     Provides 3 attachment slots:

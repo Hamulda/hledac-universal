@@ -2,6 +2,7 @@
 """
 ActionResult — unified result from any research action.
 
+
 Migrated from dataclass to msgspec.Struct for:
 - ~2-3× faster instantiation on hot path
 - Zero-copy encoding via msgspec
@@ -13,12 +14,12 @@ from __future__ import annotations
 import msgspec
 
 
-class ActionResult(msgspec.Struct):
+class ActionResult(msgspec.Struct, gc=False):
     """Unified result from any research action.
 
     Msgspec.Struct benefits:
     - ~2-3× faster instantiation vs dataclass
-    - Zero-GC overhead with 
+    - Zero-GC overhead with gc=False (no tracing for cycle detection)
     - Python 3.14 ready
     """
     success: bool = False

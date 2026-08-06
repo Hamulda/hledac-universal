@@ -2,6 +2,7 @@
 brain._lazy — LazyModel with TTL Eviction for M1 8GB Unified Memory
 ====================================================================
 
+
 Provides:
 - LazyModel[T]: Generic lazy model loader with TTL eviction and memory guard
 - _get_registry() / get() / unload_all() / stats(): Public API

@@ -2,6 +2,11 @@
 CommonCrawl CDX Index adapter + WARC content replay.
 
 Fetches archived URLs from CommonCrawl index for domain discovery (CDX).
+
+
+
+
+
 Optionally replays actual WARC content from CommonCrawl S3 bucket.
 
 Pattern: mirrors intelligence/wayback_cdx.py (Sprint F234).
@@ -44,7 +49,7 @@ _SOURCE_TYPE = 'commoncrawl_cdx'
 _SOURCE_TYPE_CONTENT = 'commoncrawl_warc'
 _WAYBACK_BASE_URL = 'https://web.archive.org'
 
-class CCSearchResult(msgspec.Struct):
+class CCSearchResult(msgspec.Struct, gc=False):
     """
     Single row from CommonCrawl CDX.
 
@@ -93,7 +98,7 @@ class CCSearchResult(msgspec.Struct):
             logger.debug(f'[commoncrawl] to_canonical_finding failed: {e}')
             return None
 
-class CommonCrawlResult(msgspec.Struct, frozen=True):
+class CommonCrawlResult(msgspec.Struct, frozen=True, gc=False):
     """Result of a CommonCrawl fetch (mirrors CDXDeepSearchResult)."""
     query: str
     match_type: str = 'domain'

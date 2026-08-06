@@ -2,6 +2,13 @@
 Sprint 8VK: Shadow Scheduler Inputs Scaffold
 ============================================
 
+
+
+
+
+
+
+
 **VERDICT: ACTIVE (diagnostic only)** — 2026-04-27, F206B
 
 Tento modul je ACTIVE diagnostic —纯粹的shadow inputs pro čtení faktů.

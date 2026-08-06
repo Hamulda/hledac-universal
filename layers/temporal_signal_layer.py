@@ -2,6 +2,11 @@
 Temporal Signal Layer — OSINT temporal intelligence without neuromorphic crypto.
 
 Bounded event-driven layer for:
+
+
+
+
+
 - burst detection
 - periodicity / check-in scoring
 - change-point detection (Page-Hinkley + BOCPD-lite)

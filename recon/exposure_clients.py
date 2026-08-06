@@ -3,6 +3,13 @@ Sprint F300E: Mixed Exposure Intelligence Clients
 
 Dva transport modely v jednom souboru — toto je záměrný mixed model:
 
+
+
+
+
+
+
+
 OWN-SESSION (LMDB cache):
   - ShodanClient: vlastní aiohttp session, LMDB ExposureCache, 7 dní TTL
   - CensysClient: vlastní aiohttp session, LMDB ExposureCache, 7 dní TTL

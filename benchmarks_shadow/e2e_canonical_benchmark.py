@@ -2,6 +2,8 @@
 Sprint F205E: Hermetic E2E Canonical Benchmark
 =============================================
 
+
+
 Benchmarks the canonical F204/F205 pipeline metrics:
 - findings/minute (throughput)
 - dedup_ratio (store acceptance rate)

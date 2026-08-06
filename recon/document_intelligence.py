@@ -2,6 +2,23 @@
 Document Intelligence Engine
 ============================
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ADVERSARY-001 fix: All untrusted binary parsing is sandboxed via
 security/media_sandbox.py MediaSandboxCoordinator (Tier-A Seatbelt,
 Tier-B subprocess isolation, Tier-C Wasmtime). PyMuPDF, whisper.cpp,
@@ -717,7 +734,7 @@ class MetadataCategory(Enum):
     DEVICE = 'device'
     CUSTOM = 'custom'
 
-class GeoLocation(msgspec.Struct):
+class GeoLocation(msgspec.Struct, gc=False):
     """GPS coordinates extracted from EXIF."""
     latitude: float
     longitude: float
@@ -743,7 +760,7 @@ class GeoLocation(msgspec.Struct):
         """Generate Google Maps URL."""
         return f'https://www.google.com/maps?q={self.latitude},{self.longitude}'
 
-class EXIFData(msgspec.Struct, frozen=True):
+class EXIFData(msgspec.Struct, frozen=True, gc=False):
     """Comprehensive EXIF data from images."""
     camera_make: str | None = None
     camera_model: str | None = None
@@ -761,7 +778,7 @@ class EXIFData(msgspec.Struct, frozen=True):
     shutter_speed: str | None = None
     raw_exif: dict[str, Any] = field(default_factory=dict)
 
-class DocumentMetadata(msgspec.Struct, frozen=True):
+class DocumentMetadata(msgspec.Struct, frozen=True, gc=False):
     """Comprehensive document metadata."""
     file_hash_md5: str
     file_hash_sha1: str
@@ -792,7 +809,7 @@ class DocumentMetadata(msgspec.Struct, frozen=True):
     hyperlinks_base: str | None = None
     raw_metadata: dict[str, Any] = field(default_factory=dict)
 
-class EmbeddedObject(msgspec.Struct, frozen=True):
+class EmbeddedObject(msgspec.Struct, frozen=True, gc=False):
     """Represents an embedded object in a document."""
     object_type: str
     object_name: str
@@ -801,7 +818,7 @@ class EmbeddedObject(msgspec.Struct, frozen=True):
     extracted_content: bytes | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class DocumentAnalysis(msgspec.Struct, frozen=True):
+class DocumentAnalysis(msgspec.Struct, frozen=True, gc=False):
     """Complete document analysis result."""
     metadata: DocumentMetadata
     embedded_objects: list[EmbeddedObject] = field(default_factory=list)
@@ -2497,7 +2514,7 @@ class DocumentIntelligenceEngine:
         keywords.update(tech_terms[:10])
         return list(keywords)[:20]
 
-class EntityMention(msgspec.Struct, frozen=True):
+class EntityMention(msgspec.Struct, frozen=True, gc=False):
     """Mention of an entity in text."""
     text: str
     entity_type: str
@@ -2506,7 +2523,7 @@ class EntityMention(msgspec.Struct, frozen=True):
     confidence: float
     context: str
 
-class CrossDocumentLink(msgspec.Struct, frozen=True):
+class CrossDocumentLink(msgspec.Struct, frozen=True, gc=False):
     """Link between entities across documents."""
     entity_type: str
     value: str
@@ -2515,7 +2532,7 @@ class CrossDocumentLink(msgspec.Struct, frozen=True):
     first_seen: str
     last_seen: str
 
-class TimelineEvent(msgspec.Struct):
+class TimelineEvent(msgspec.Struct, gc=False):
     """Event extracted from document with temporal information."""
     date: datetime | None
     description: str
@@ -2523,7 +2540,7 @@ class TimelineEvent(msgspec.Struct):
     entities_involved: list[str]
     confidence: float
 
-class LongContextAnalysis(msgspec.Struct, frozen=True):
+class LongContextAnalysis(msgspec.Struct, frozen=True, gc=False):
     """Results from MLX long-context analysis."""
     total_chunks: int
     total_tokens: int

@@ -3,6 +3,8 @@ discovery/circl_pdns_adapter.py — CIRCL Passive DNS Discovery Adapter
 
 Sprint F229: CIRCL PDNS adapter aligned with discovery/source_registry tier-1.
 
+
+
 Mirrors crtsh_adapter.py pattern:
   - async_get_httpx_session() from network.session_runtime
   - checked_aiohttp_get() from transport.circuit_breaker
@@ -42,7 +44,7 @@ class PDNSProviderStatus(Enum):
     COOLDOWN_ACTIVE = 'cooldown_active'
     PROVIDER_FAILURE = 'provider_failure'
 
-class PDNSOutcome(msgspec.Struct, frozen=True):
+class PDNSOutcome(msgspec.Struct, frozen=True, gc=False):
     """
     Normalized CIRCL PDNS adapter outcome — F229.
 

@@ -17,10 +17,11 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
+use parking_lot::Mutex;
 use pyo3::prelude::*;
 
 // ============== Atomic Counter ==============
@@ -278,18 +279,18 @@ impl TelemetryAggregator {
             while let Ok(event) = rx.recv() {
                 match event {
                     TelemetryEvent::Counter { name, count, bytes } => {
-                        let mut c = counters_clone.lock().unwrap();
+                        let mut c = counters_clone.lock();
                         let counter = c.entry(name).or_insert_with(AtomicCounter::new);
                         counter.add(count);
                         if bytes > 0 { counter.add_bytes(bytes); }
                     }
                     TelemetryEvent::Histogram { name, duration_ns } => {
-                        let mut h = histograms_clone.lock().unwrap();
+                        let mut h = histograms_clone.lock();
                         let hist = h.entry(name).or_insert_with(Histogram::new);
                         hist.record_ns(duration_ns);
                     }
                     TelemetryEvent::Gauge { name, value } => {
-                        let mut g = gauges_clone.lock().unwrap();
+                        let mut g = gauges_clone.lock();
                         let gauge = g.entry(name).or_insert_with(|| Gauge::new(0.0));
                         gauge.set(value);
                     }
@@ -326,13 +327,13 @@ impl TelemetryAggregator {
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
-        let counters = self.counters.lock().unwrap();
+        let counters = self.counters.lock();
         let counter_snap: HashMap<String, (u64, u64)> = counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
-        let histograms = self.histograms.lock().unwrap();
+        let histograms = self.histograms.lock();
         let histogram_snap: HashMap<String, HistogramStats> = histograms.iter().map(|(k, v)| (k.clone(), v.stats())).collect();
 
-        let gauges = self.gauges.lock().unwrap();
+        let gauges = self.gauges.lock();
         let gauge_snap: HashMap<String, f64> = gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
         TelemetrySnapshot { counters: counter_snap, histograms: histogram_snap, gauges: gauge_snap }
@@ -341,14 +342,14 @@ impl TelemetryAggregator {
     /// Export with extended histogram stats for OTel metrics bridge.
     /// Returns TelemetryExport with p50-p99.9 percentiles.
     pub fn export(&self) -> TelemetryExport {
-        let counters = self.counters.lock().unwrap();
+        let counters = self.counters.lock();
         let counter_snap: HashMap<String, (u64, u64)> = counters.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
-        let histograms = self.histograms.lock().unwrap();
+        let histograms = self.histograms.lock();
         let histogram_snap: HashMap<String, ExtendedHistogramStats> =
             histograms.iter().map(|(k, v)| (k.clone(), v.extended_stats())).collect();
 
-        let gauges = self.gauges.lock().unwrap();
+        let gauges = self.gauges.lock();
         let gauge_snap: HashMap<String, f64> = gauges.iter().map(|(k, v)| (k.clone(), v.get())).collect();
 
         TelemetryExport {

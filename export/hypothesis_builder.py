@@ -2,6 +2,8 @@
 HypothesisBuilder — Hypothesis Generation and Causal Reasoning Export
 ======================================================================
 
+
+
 Hledac Universal OSINT platform - Causal hypothesis reasoning export layer.
 
 Sprint F259: Uses brain/research_hypothesis_engine.py (canonical) for:
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
 RAM_THRESHOLD = 0.7
 
-class HypothesisResult(msgspec.Struct):
+class HypothesisResult(msgspec.Struct, gc=False):
     """Result of hypothesis generation run."""
     enabled: bool
     hypotheses_generated: int

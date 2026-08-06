@@ -2,6 +2,7 @@
 Power assertion module — prevents macOS sleep during sprint execution.
 
 APEX-1001: MacBook Air M1 with closed lid enters sleep after ~30s (default pmset).
+
 This kills active sprints, losing all in-progress work with no evidence artifacts.
 
 This module provides:

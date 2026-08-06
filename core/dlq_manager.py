@@ -3,6 +3,8 @@ Dead-Letter Queue Manager — DLQ-02
 ==================================
 Izolované ukládání koruptních/nevalidních payloadů pro pozdější inspekci.
 
+
+
 Architektura:
 - SQLite backend (WAL mode, bounded)
 - Payloady indexovány podle: sprint_id, source, error_type, timestamp

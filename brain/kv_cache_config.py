@@ -2,6 +2,9 @@
 brain/kv_cache_config.py — Sprint G2: KV Cache Single Source of Truth
 ========================================================================
 
+
+
+
 Extracted from:
 - DeepHermes3Engine._get_kv_cache_kwargs() + _get_adaptive_kv_bits()
 - SynthesisRunner._probe_metal_memory() + _get_adaptive_kv_bits() + _get_kv_cache_kwargs()

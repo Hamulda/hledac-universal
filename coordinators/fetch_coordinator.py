@@ -2,6 +2,10 @@
 FetchCoordinator - Delegates fetch/crawl pipeline to coordinator
 ================================================================
 
+
+
+
+
 Implements the stable coordinator interface (start/step/shutdown) for:
 - URL frontier selection
 - Network fetch with security checks

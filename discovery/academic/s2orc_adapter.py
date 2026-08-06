@@ -3,6 +3,10 @@ discovery/academic/s2orc_adapter.py — Semantic Scholar S2ORC Full Text Adapter
 
 Sprint F259: Academic Intelligence Layer — Semantic Scholar Academic Graph API.
 
+
+
+
+
 Features:
 - S2AG API: https://api.semanticscholar.org/graph/v1
 - TLDR generation via /paper/{id}/tldr endpoint (free, 100rps)
@@ -27,7 +31,7 @@ S2AG_AUTHOR_FIELDS = 'authorId,name,hIndex,paperCount,citationCount'
 RATE_LIMIT = 10
 REQUEST_TIMEOUT_S = 25.0
 
-class S2Paper(msgspec.Struct):
+class S2Paper(msgspec.Struct, gc=False):
     """Semantic Scholar paper."""
     paper_id: str
     title: str
@@ -42,7 +46,7 @@ class S2Paper(msgspec.Struct):
     doi: str | None
     tldr: str | None
 
-class CitationEdge(msgspec.Struct, frozen=True):
+class CitationEdge(msgspec.Struct, frozen=True, gc=False):
     """Citation edge between papers."""
     source_id: str
     target_id: str

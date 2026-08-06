@@ -2,6 +2,10 @@
 prelive_artifact_pack.py — Deterministic artifact pack validator/regenerator for pre-live gate inputs.
 
 No live network. No model load. No dependency install.
+
+
+
+
 Checks expected report artifacts and reports missing/stale ones.
 
 Usage:
@@ -32,14 +36,14 @@ def _canonical_base(sprint_id: str) -> tuple[str, str]:
     suffix = sprint_id[len(f'F{digits}'):]
     return (f'F{digits}', suffix if suffix else '')
 
-class SprintIdCollision(msgspec.Struct):
+class SprintIdCollision(msgspec.Struct, gc=False):
     sprint_id: str
     aliases: list[str] = field(default_factory=list)
     probe_dirs: list[str] = field(default_factory=list)
     report_paths: list[str] = field(default_factory=list)
     json_paths: list[str] = field(default_factory=list)
 
-class SprintCollisionReport(msgspec.Struct, frozen=True):
+class SprintCollisionReport(msgspec.Struct, frozen=True, gc=False):
     has_collisions: bool = False
     collisions: list[SprintIdCollision] = field(default_factory=list)
     total_probes_scanned: int = 0
@@ -109,7 +113,7 @@ def render_collision_warning(report: SprintCollisionReport) -> list[str]:
         lines.append('')
     return lines
 
-class ArtifactPackResult(msgspec.Struct, frozen=True):
+class ArtifactPackResult(msgspec.Struct, frozen=True, gc=False):
     required: list
     optional: list
     commands: list
@@ -122,7 +126,7 @@ class ArtifactStatus(StrEnum):
     STALE_OR_CORRUPT = 'STALE_OR_CORRUPT'
     OPTIONAL_MISSING = 'OPTIONAL_MISSING'
 
-class ProbeArtifact(msgspec.Struct, frozen=True):
+class ProbeArtifact(msgspec.Struct, frozen=True, gc=False):
     probe_dir: str
     filename: str
     full_path: str

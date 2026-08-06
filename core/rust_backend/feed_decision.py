@@ -2,6 +2,7 @@
 """
 Rust-backed feed signal classification — pure functions, no I/O.
 
+
 feed_decision_classify: classify fallback decision outcome (should_fetch, wasted, helpful).
 feed_stage_diagnose: diagnose which pipeline stage lost the signal.
 feed_branch_hint: sprint hint about feed branch quality.

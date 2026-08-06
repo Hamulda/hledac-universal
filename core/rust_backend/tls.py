@@ -2,6 +2,7 @@
 """
 TLS 1.3 fingerprinting via Rust rustls (JA4 algorithm).
 Tier 1: Rust tls13 module (rustls-based, <1ms per fingerprint)
+
 Tier 2: Python ssl analysis (fallback, less accurate)
 
 JA4 = Salesforce TLS fingerprint: 13-char string derived from

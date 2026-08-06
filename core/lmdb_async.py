@@ -3,6 +3,7 @@ core/lmdb_async.py — Async LMDB wrapper via Rust backend + asyncio.to_thread f
 
 P4-3: Asynchronní LMDB přes lmdb 2.x + posix-ipc
 
+
 Strategie
 ────────
 LMDB Python (lmdb>=2.2.0) je synchronní knihovna. Neexistuje žádné

@@ -3,6 +3,8 @@ Sprint F207R-C: Windup Entry Point Authority Audit
 ===================================================
 Scoped to: hledac/universal (READ-ONLY scan, NO production edits)
 
+
+
 PURPOSE:
 Identify all windup/teardown transition sites and classify their authority.
 

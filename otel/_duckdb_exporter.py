@@ -2,6 +2,9 @@
 DuckDB Span Exporter — Issue #23.
 ==================================
 
+
+
+
 OTLPSpanExporter → lokální DuckDB analytical store (otel_spans table).
 
 Span schema:

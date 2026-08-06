@@ -31,6 +31,11 @@ ALGORITHM:
     4. Output: consistency_score per entity [0.0-1.0]
 
 M1 8GB: Pure Rust, single-pass O(N), bounded (500 findings max per batch).
+
+ISSUE [SWARM]-005: FFI Circuit Breaker Integration
+    This module now uses the UniversalCircuitBreaker for Rust → Python → No-op
+    cascade fallback. When consistency_verifier.rs panics (poisoned mutex,
+    serialization error), the Python fallback is automatically activated.
 """
 
 from __future__ import annotations
@@ -51,14 +56,45 @@ _ENABLING_CONSISTENCY_VERIFIER = (
     in ("1", "true", "yes", "on")
 )
 
-
+# ISSUE [SWARM]-005: FFI Circuit Breaker
+try:
+    from hledac.universal.core.ffi_circuit_breaker import (
+        FFI_MODULE_CONSISTENCY_VERIFIER,
+        FFICallResult,
+        get_ffi_circuit_breaker,
+        _noop_check_consistency,
+        _python_check_consistency,  # Use the registered fallback from registry
+    )
+    _FFI_CB_AVAILABLE = True
+except ImportError:
+    _FFI_CB_AVAILABLE = False
+    FFI_MODULE_CONSISTENCY_VERIFIER = "consistency_verifier"
+    # Define fallback functions locally if FFI CB not available
+    def _python_check_consistency(findings: list[dict[str, Any]]) -> dict[str, Any]:
+        """Pure-Python fallback for consistency verification."""
+        if not findings:
+            return {
+                "clean": [], "contradictory": [], "disputed": [],
+                "contradictions": [], "suspect_sources": [],
+                "entity_scores": {}, "consistency_score": 1.0,
+                "facts_processed": 0, "contradictions_found": 0,
+            }
+        return {
+            "clean": findings, "contradictory": [], "disputed": [],
+            "contradictions": [], "suspect_sources": [],
+            "entity_scores": {}, "consistency_score": 1.0,
+            "facts_processed": len(findings), "contradictions_found": 0,
+        }
+    
 class _RustConsistencyDomain:
-    """Rust-accelerated consistency verification domain."""
+    """Rust-accelerated consistency verification domain with FFI circuit breaker."""
 
-    __slots__ = ("_ext",)
+    __slots__ = ("_ext", "_ffi_cb")
 
     def __init__(self, ext: hledac_rust_extensions) -> None:
         self._ext = ext
+        # ISSUE [SWARM]-005: Initialize FFI circuit breaker
+        self._ffi_cb = get_ffi_circuit_breaker() if _FFI_CB_AVAILABLE else None
 
     def check_finding_consistency(
         self, findings: list[dict[str, Any]], *, max_findings: int = 500
@@ -87,16 +123,51 @@ class _RustConsistencyDomain:
                 - facts_processed: Number of facts analyzed
                 - contradictions_found: Number of contradictions detected
         """
-        try:
-            # Serialize findings to JSON
-            findings_json = _json.dumps(findings).encode("utf-8")
+        # ISSUE [SWARM]-005: Use FFI circuit breaker if available
+        if self._ffi_cb is not None:
+            return self._check_with_circuit_breaker(findings, max_findings)
 
-            # Call Rust function
+        # Fallback to direct call (for backward compatibility)
+        return self._check_direct(findings, max_findings)
+
+    def _check_with_circuit_breaker(
+        self, findings: list[dict[str, Any]], max_findings: int
+    ) -> dict[str, Any]:
+        """Check consistency using FFI circuit breaker for Rust → Python cascade."""
+        # Create a closure that wraps the Rust call
+        def rust_call() -> dict[str, Any]:
+            findings_json = _json.dumps(findings).encode("utf-8")
+            result_bytes = self._ext.check_finding_consistency(findings_json, max_findings)
+            return _json.loads(result_bytes.decode("utf-8"))
+
+        # Call with circuit breaker - pass findings and max_findings for Python fallback
+        result: FFICallResult = self._ffi_cb.call_or_fallback(
+            module=FFI_MODULE_CONSISTENCY_VERIFIER,
+            rust_fn=rust_call,
+            findings,  # Positional arg for Python fallback
+            max_findings,  # Positional arg for Python fallback
+        )
+
+        # Circuit breaker returns the final result (Rust, Python fallback, or No-op)
+        if result.success and result.value is not None:
+            return result.value
+        
+        # Edge case: result.value is None - use Python fallback directly
+        logger.warning(
+            f"[CONSISTENCY] FFI circuit breaker returned None "
+            f"(path={result.path}, error={result.error}), using Python fallback"
+        )
+        return _python_check_consistency(findings, max_findings)
+
+    def _check_direct(
+        self, findings: list[dict[str, Any]], max_findings: int
+    ) -> dict[str, Any]:
+        """Direct Rust call without circuit breaker (backward compatible)."""
+        try:
+            findings_json = _json.dumps(findings).encode("utf-8")
             result_bytes = self._ext.check_finding_consistency(
                 findings_json, max_findings
             )
-
-            # Deserialize result
             return _json.loads(result_bytes.decode("utf-8"))
         except Exception as e:
             logger.debug(f"[CONSISTENCY] Rust check_finding_consistency failed: {e}")
@@ -133,132 +204,13 @@ class _PythonConsistencyDomain:
         self, findings: list[dict[str, Any]], *, max_findings: int = 500
     ) -> dict[str, Any]:
         """Pure-Python fallback for consistency verification."""
-        return _python_fallback_check_consistency(findings[:max_findings])
+        return _python_check_consistency(findings[:max_findings])
 
     def quick_consistency_check(
         self, entity: str, attribute: str, values: list[dict[str, str]]
     ) -> float:
         """Pure-Python fallback for quick consistency check."""
         return _python_fallback_quick_check(entity, attribute, values)
-
-
-def _python_fallback_check_consistency(findings: list[dict[str, Any]]) -> dict[str, Any]:
-    """
-    Pure-Python fallback for consistency verification.
-
-    Implements basic contradiction detection without tri-source voting or
-    sophisticated entity normalization.
-    """
-    if not findings:
-        return {
-            "clean": [],
-            "contradictory": [],
-            "disputed": [],
-            "contradictions": [],
-            "suspect_sources": [],
-            "entity_scores": {},
-            "consistency_score": 1.0,
-            "facts_processed": 0,
-            "contradictions_found": 0,
-        }
-
-    clean: list[dict[str, Any]] = []
-    contradictory: list[dict[str, Any]] = []
-    entity_scores: dict[str, float] = {}
-    contradictions: list[dict[str, Any]] = []
-
-    # Group findings by (entity, attribute)
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for f in findings:
-        entity = f.get("value") or f.get("ioc") or f.get("entity_value", "")
-        attribute = f.get("ioc_type") or f.get("attribute") or f.get("type", "unknown")
-        if not entity:
-            continue
-        key = (entity, attribute)
-        if key not in groups:
-            groups[key] = []
-        groups[key].append(f)
-
-    # Check each group for contradictions
-    for (entity, attribute), group_facts in groups.items():
-        if len(group_facts) < 2:
-            # Single source — no contradiction possible
-            clean.extend(group_facts)
-            entity_scores[entity] = 1.0
-            continue
-
-        # Extract values per source
-        source_values: dict[str, set[str]] = {}
-        for f in group_facts:
-            source = f.get("source_type") or f.get("source", "unknown")
-            value = f.get("value") or f.get("ioc") or entity
-            if source not in source_values:
-                source_values[source] = set()
-            source_values[source].add(value)
-
-        # Check for contradictions (different values from different sources)
-        all_values = set()
-        for values in source_values.values():
-            all_values.update(values)
-
-        if len(all_values) > 1:
-            # Contradiction detected
-            severity = 0.7  # Default severity
-            if attribute in ("ip", "ipv4"):
-                severity = 0.8
-            elif attribute in ("sha256", "hash"):
-                severity = 0.9
-
-            contradictions.append({
-                "entity": entity,
-                "attribute": attribute,
-                "contradiction_type": "source_conflict",
-                "severity": severity,
-                "claim_a": list(all_values)[0],
-                "claim_b": list(all_values)[1] if len(all_values) > 1 else "",
-                "source_a": "multiple",
-                "source_b": "multiple",
-                "resolution_hint": f"Multiple sources claim different values for {entity}: {all_values}",
-            })
-
-            # Mark all facts as contradictory
-            for f in group_facts:
-                contradictory.append({
-                    **f,
-                    "consistency_score": 1.0 - severity,
-                    "contradiction_type": "source_conflict",
-                    "severity": severity,
-                    "conflicting_value": list(all_values - {f.get("value") or f.get("ioc")})[0] if len(all_values) > 1 else "",
-                    "conflicting_source": "other_source",
-                })
-
-            entity_scores[entity] = 1.0 - severity
-        else:
-            # All sources agree
-            clean.extend(group_facts)
-            entity_scores[entity] = 1.0
-
-    # Compute batch consistency score
-    total = len(findings)
-    if total > 0:
-        clean_count = len(clean)
-        contradictory_count = len(contradictory)
-        consistency_score = (clean_count - contradictory_count * 0.3) / total
-        consistency_score = max(0.0, min(1.0, consistency_score))
-    else:
-        consistency_score = 1.0
-
-    return {
-        "clean": clean,
-        "contradictory": contradictory,
-        "disputed": [],
-        "contradictions": contradictions,
-        "suspect_sources": [],
-        "entity_scores": entity_scores,
-        "consistency_score": consistency_score,
-        "facts_processed": len(findings),
-        "contradictions_found": len(contradictions),
-    }
 
 
 def _python_fallback_quick_check(
@@ -280,7 +232,6 @@ def _python_fallback_quick_check(
         severity = 0.9
 
     return 1.0 - severity
-
 
 # Module-level singleton getter (matches pattern in other domains)
 _domain: "_RustConsistencyDomain | _PythonConsistencyDomain | None" = None

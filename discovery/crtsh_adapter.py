@@ -3,6 +3,9 @@ discovery/crtsh_adapter.py — CT/crt.sh Providerless Pivot Adapter
 
 Sprint F206AV: transport alignment with canonical session_runtime + circuit_breaker.
 
+
+
+
 Replaces local httpx.AsyncClient + local checked_aiohttp_get with:
 - async_get_httpx_session() from network.session_runtime
 - checked_aiohttp_get() from transport.circuit_breaker
@@ -39,7 +42,7 @@ class CTProviderStatus(Enum):
     COOLDOWN_ACTIVE = 'cooldown_active'
     PROVIDER_FAILURE = 'provider_failure'
 
-class CTProviderStatusReport(msgspec.Struct, frozen=True):
+class CTProviderStatusReport(msgspec.Struct, frozen=True, gc=False):
     """
     F217D: Explicit CT provider status report with bounded error sampling.
     F219E adds cooldown fields.
@@ -76,7 +79,7 @@ class CTProviderStatusReport(msgspec.Struct, frozen=True):
     stale_cache_preferred: bool = False
     provider_attempt_suppressed: bool = False
 
-class CTOutcome(msgspec.Struct, frozen=True):
+class CTOutcome(msgspec.Struct, frozen=True, gc=False):
     """
     Normalized CT adapter outcome — F207F, extended F217D with cache fields.
 

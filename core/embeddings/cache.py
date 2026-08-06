@@ -2,6 +2,9 @@
 Embedding Cache — np.memmap int8/float16 two-layer LRU for M1 8GB UMA.
 
 Architecture:
+
+
+
 - Layer 1: LRU in-memory dict (fastest)
 - Layer 2: np.memmap file for persistence (int8 + scale or float16)
 - Fallback: MLXEmbeddingManager.encode()

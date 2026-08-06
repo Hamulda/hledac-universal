@@ -6,8 +6,12 @@ Lazy-loads compiled programs from ~/.hledac/dspy_cache.json on first call.
 Fails soft: returns None/empty on any error.
 
 3 integration points (sprint phases):
+
   A) query_expansion  — before duckduckgo_adapter._build_query_variants
   B) finding_relevance — after raw findings arrive, filter score < 4
+
+
+
   C) pivot_suggestion  — in hypothesis_engine._model_assisted_query_suggestion
 """
 import asyncio

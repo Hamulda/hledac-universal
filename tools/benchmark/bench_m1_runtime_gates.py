@@ -7,6 +7,7 @@ F226 — Python 3.14 / M1 Benchmark Gates
 ROLE: Measure-only instrument for Python 3.14 + M1 safe experiments.
 NO runtime changes. NO production code paths modified.
 
+
 Benchmarks:
   1. body_limiter throughput         (transport/body_limiter.py)
   2. selectolax vs bs4 characterization (utils/html_text_fast.py)
@@ -382,7 +383,7 @@ def bench_msgspec_dto_serialization() -> dict[str, Any]:
         return {"name": "msgspec_dto_serialization", "status": "skip", "error": "msgspec not available"}
 
     # Struct mirroring CanonicalFinding fields (lightweight)
-    class FindingStruct(msgspec.Struct):
+    class FindingStruct(msgspec.Struct, gc=False):
         finding_id: str
         source_type: str
         query: str

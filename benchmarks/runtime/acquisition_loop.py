@@ -2,6 +2,11 @@
 
 Compares sequential (v1-style) vs parallel (TaskGroup) branch execution.
 
+
+
+
+
+
 Target: >= 1.5× speedup from parallel branches on M1 8GB.
 
 Run:

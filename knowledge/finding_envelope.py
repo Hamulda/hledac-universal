@@ -2,6 +2,7 @@
 Sprint F202A: Evidence Envelope and Signal Schema
 
 Bounded audit layer for CanonicalFinding — each finding can carry:
+
   - audit_reason:     why this finding was accepted
   - evidence_pointers: URLs, file refs, raw inputs that informed the finding
   - signal_facets:     categorized quality signals (entropy, novelty, completeness)

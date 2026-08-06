@@ -2,6 +2,8 @@
 CanonicalFinding — Sprint Facts DTO Layer
 =========================================
 
+
+
 Canonical internal finding DTO for the sprint facts store.
 Uses msgspec.Struct (frozen=True) for zero-copy serialization.
 

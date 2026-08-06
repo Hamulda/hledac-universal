@@ -2,6 +2,9 @@
 Evidence types — hledac_hypothesis.types.evidence
 =================================================
 
+
+
+
 Extracted from hledac_hypothesis._types (C4 Sprint Refactoring).
 M1 8GB: msgspec.Struct zero-copy, ~0 KB overhead.
 """
@@ -19,7 +22,7 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-class Evidence(msgspec.Struct):
+class Evidence(msgspec.Struct, gc=False):
     """Evidence item supporting or conflicting with a hypothesis."""
     evidence_id: str
     source: str
@@ -34,7 +37,7 @@ class Evidence(msgspec.Struct):
 from dataclasses import dataclass, field
 
 
-class SourceCredibility(msgspec.Struct):
+class SourceCredibility(msgspec.Struct, gc=False):
     """
     Credibility assessment for an evidence source.
 
@@ -64,7 +67,7 @@ class SourceCredibility(msgspec.Struct):
         self.last_updated = datetime.now(UTC)  # noqa: DTZ005
 
 
-class Event(msgspec.Struct):
+class Event(msgspec.Struct, gc=False):
     """Temporal event for consistency checking."""
     event_id: str
     description: str

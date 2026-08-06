@@ -2,6 +2,9 @@
 LanceDB-Backed RAG Engine — Sprint P2-3
 =======================================
 
+
+
+
 .. deprecated:: F350M-R
     LanceDB-backed RAG is DEPRECATED in favour of ``DuckDBRAGStore``
     in ``knowledge.duckdb_rag_store``. DuckDB FTS5 + HNSW provides

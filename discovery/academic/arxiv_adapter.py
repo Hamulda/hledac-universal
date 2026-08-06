@@ -3,6 +3,9 @@ discovery/academic/arxiv_adapter.py — arXiv Bulk Access via OAI-PMH
 
 Sprint F259: Academic Intelligence Layer — arXiv OAI-PMH bulk harvesting.
 
+
+
+
 Features:
 - OAI-PMH endpoint for incremental/delta harvesting (not just search API)
 - from date param for incremental updates only

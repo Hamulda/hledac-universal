@@ -2,6 +2,7 @@
 """
 Rust-backed unified RSS/Atom parse + scan + dedup pipeline.
 
+
 feed_entry_pipeline: parse XML, Aho-Corasick scan, dedup in one rayon-parallel pass.
 feed_batch_pipeline: batch process multiple feeds in parallel.
 

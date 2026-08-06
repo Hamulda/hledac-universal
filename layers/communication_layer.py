@@ -2,6 +2,14 @@
 Communication Layer - Universal Orchestrator Integration
 
 Unified communication system integrating:
+
+
+
+
+
+
+
+
 - Agent Messaging (pub/sub channels)
 - Agent Model Bridge (LLM routing)
 - Emergent Communication (semantic routing, vocabulary)
@@ -25,7 +33,7 @@ import itertools
 from hledac.universal.utils.async_helpers import parallel_ok
 _counter = itertools.count()
 
-class _Subscriber(msgspec.Struct):
+class _Subscriber(msgspec.Struct, gc=False):
     """Single subscriber entry with bounded inbox queue."""
     agent_id: str
     queue: asyncio.Queue[dict[str, Any]]
@@ -221,7 +229,7 @@ class _InMemoryMessaging:
         """Unregister agent."""
         safe_create_task(self._broker.unsubscribe(agent_id), name='comm_layer:unregister_agent')
 
-class _BatchItem(msgspec.Struct):
+class _BatchItem(msgspec.Struct, gc=False):
     """Batch item with priority for queue ordering."""
     priority: float = field(default=0.0)
     counter: int = field(default=0, compare=True)
@@ -236,7 +244,7 @@ class _BatchItem(msgspec.Struct):
             return NotImplemented
         return (self.priority, self.counter) < (other.priority, other.counter)
 
-class ModelQuery(msgspec.Struct):
+class ModelQuery(msgspec.Struct, gc=False):
     """Model query with metadata."""
     query_id: str
     prompt: str
@@ -245,7 +253,7 @@ class ModelQuery(msgspec.Struct):
     use_cache: bool
     timestamp: float
 
-class CacheEntry(msgspec.Struct, frozen=True):
+class CacheEntry(msgspec.Struct, frozen=True, gc=False):
     """Cache entry for model responses."""
     key: str
     response: str
@@ -270,7 +278,7 @@ try:
 except ImportError:
     HAS_EMERGENT = False
 
-class MessageContext(msgspec.Struct, frozen=True):
+class MessageContext(msgspec.Struct, frozen=True, gc=False):
     """Message context for routing."""
     sender_id: str
     priority: MessagePriority

@@ -2,6 +2,8 @@
 Plugin registry for capability adapters.
 
 Provides CapabilityPluginRegistry — a lightweight registration layer for
+
+
 capability plugins that validates module presence via importlib.util.find_spec()
 without triggering any network I/O or full module imports.
 """

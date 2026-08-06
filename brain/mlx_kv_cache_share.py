@@ -2,6 +2,9 @@
 P4-3: Tokenized Prompt Cache — Pre-tokenized prefix reuse
 =========================================================
 
+
+
+
 Problem: Every mlx_lm.generate() call re-tokenizes identical system_msg prefix.
 Solution: Pre-tokenize and cache token arrays for fixed prompt templates.
 

@@ -2,6 +2,7 @@
 embeddings/ane/_encoder.py — CoreML ANE Encoder (F330-MLX-DUP-007)
 
 CoreML-accelerated ModernBERT encoder pro Apple Neural Engine.
+
 Pre-converted .mlpackage model → ANE → embeddings.
 
 Tento modul obsahuje low-level CoreML encoder.
@@ -39,22 +40,47 @@ def _check_coreml_engine_available() -> bool:
     1. coremltools >= 6.0 installed
     2. .mlpackage exists at _ANE_MODEL_PATH
     3. Apple Silicon (darwin arm64)
+    4. Python version compatible (no PyPI wheels for 3.14 yet)
     """
     import platform
+    import sys
     if platform.system() != 'Darwin' or platform.machine() != 'arm64':
         logger.debug('[CoreML-ANE] Not Apple Silicon — ANE unavailable')
         return False
+
+    # Python 3.14: coremltools lacks PyPI wheels — detect and guide user
+    if sys.version_info >= (3, 14):
+        try:
+            import coremltools as ct
+        except ImportError:
+            logger.debug(
+                '[CoreML-ANE] Python 3.14 detected — coremltools PyPI wheels unavailable. '
+                'Install from GitHub: pip install --extra-index-url https://pypi.anaconda.org/apple/repo/simple coremltools'
+            )
+            return False
+        # If we get here, coremltools is somehow installed (maybe from conda)
+        version_tuple = _parse_coreml_version()
+        if version_tuple is not None and version_tuple < (6, 0):
+            logger.debug(f'[CoreML-ANE] coremltools {".".join(map(str, version_tuple))} < 6.0 — upgrade recommended')
+        return _ANNOT_MODEL_PATH.exists()
+
     try:
         import coremltools as ct
         version_tuple = _parse_coreml_version()
         if version_tuple is None:
-            logger.debug('[CoreML-ANE] coremltools not installed')
+            logger.debug(
+                '[CoreML-ANE] coremltools not installed. '
+                'Install: pip install coremltools'
+            )
             return False
         if version_tuple < (6, 0):
             logger.debug(f'[CoreML-ANE] coremltools {".".join(map(str, version_tuple))} < 6.0')
             return False
     except ImportError:
-        logger.debug('[CoreML-ANE] coremltools not installed')
+        logger.debug(
+            '[CoreML-ANE] coremltools not installed. '
+            'Install: pip install coremltools'
+        )
         return False
     if not _ANNOT_MODEL_PATH.exists():
         logger.debug(f'[CoreML-ANE] Model not found at {_ANNOT_MODEL_PATH}')

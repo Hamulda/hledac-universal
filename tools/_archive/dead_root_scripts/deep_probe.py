@@ -2,6 +2,11 @@
 Deep Probe Scanner - Advanced Deep Crawling & Hidden Content Discovery
 =======================================================================
 
+
+
+
+
+
 Integrated from launch_shadow_walker.py - Shadow Walker Algorithm for deep research
 and hidden endpoint discovery.
 
@@ -29,7 +34,7 @@ MAX_IPFS_RESULTS: int = 20
 IPFS_TIMEOUT_S: float = 10.0
 SCAN_TIMEOUT_S: float = 30.0
 
-class DiscoveredEndpoint(msgspec.Struct):
+class DiscoveredEndpoint(msgspec.Struct, gc=False):
     """Represents a discovered endpoint with metadata."""
     url: str
     title: str | None = None

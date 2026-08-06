@@ -2,6 +2,7 @@
 
 Role: Store stage přijímá CanonicalFinding z EnrichStage,
 odesílá je do DuckDB přes store.submit_findings() s bounded queue.
+
 """
 from __future__ import annotations
 

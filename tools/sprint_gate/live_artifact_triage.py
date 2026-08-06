@@ -2,6 +2,7 @@
 Sprint F219G — Live Artifact Triage Router
 
 Reads a live sprint measurement JSON and outputs a deterministic root-cause
+
 classification with one next-best-action.
 
 Safety: no live network, no MLX, no live execution, no dependency install.
@@ -48,7 +49,7 @@ class SprintFamily(StrEnum):
     F219 = 'F219'
     NONE = 'NONE'
 
-class TriageResult(msgspec.Struct):
+class TriageResult(msgspec.Struct, gc=False):
     root_cause_class: RootCause
     confidence: float
     reasons: list[str]

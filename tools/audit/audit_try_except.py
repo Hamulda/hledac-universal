@@ -3,6 +3,7 @@
 Audit script for try/except patterns.
 Flags overly broad try/except: bare except, except Exception: pass
 
+
 Acceptable:
   - except SpecificException: (e.g., except (OSError, ValueError):)
   - except SpecificException as e: with logging

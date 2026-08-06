@@ -2,8 +2,10 @@
 Lehká grafová neuronová síť (GraphSAGE) implementovaná v MLX.
 Trénink na pozadí, inference volitelná podle velikosti grafu.
 """
+
 from itertools import combinations
 import array
+
 import concurrent.futures
 import heapq
 import logging

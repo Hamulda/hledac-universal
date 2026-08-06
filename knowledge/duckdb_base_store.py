@@ -2,6 +2,7 @@
 
 ARCHITECTURE:
     Provides common base class for all DuckDB store implementations:
+
       - DuckDBCTCacheStore     (knowledge/duckdb_ct_cache_store.py)
       - DuckDBForensicsStore   (knowledge/duckdb_forensics_store.py)
       - DuckDBShadowStore      (knowledge/duckdb_store.py) — migration path

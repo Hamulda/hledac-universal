@@ -2,6 +2,7 @@
 """
 DuckDB query execution with connection pooling.
 Provides parallel and single query execution with pooled connections.
+
 """
 
 from __future__ import annotations

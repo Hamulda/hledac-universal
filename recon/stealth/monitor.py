@@ -3,6 +3,7 @@ StreamingMonitor — Continuous monitoring system for web sources.
 
 Rozděleno z původního stealth_crawler.py (ISSUE-028).
 
+
 Features:
 - RSS feed monitoring with selectolax (async-native)
 - API polling (Twitter/X, Reddit, custom APIs)

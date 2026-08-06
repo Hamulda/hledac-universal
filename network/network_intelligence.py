@@ -2,6 +2,10 @@
 NetworkIntelAdapter — Unified network intelligence wrapper.
 
 Wraps:
+
+
+
+
   - PassiveDNSResolver / PassiveDNSAdapter  (passive_dns.py)
   - PassiveFingerprint / FingerprintAdapter (passive_fingerprint.py)
   - monitor_bgp()  (bgp_monitor.py)
@@ -30,7 +34,7 @@ MAX_NETWORKINTEL_TARGETS: int = 20
 NETWORKINTEL_TIMEOUT_S: float = 30.0
 MAX_FINDINGS_PER_TARGET: int = 100
 
-class NetworkIntelResult(msgspec.Struct):
+class NetworkIntelResult(msgspec.Struct, gc=False):
     target: str
     passive_dns: list[dict]
     passive_fingerprint: list[dict]
@@ -159,7 +163,8 @@ class _PassiveFingerprintAdapter:
     __slots__ = tuple(('_inner',))
 
     def __init__(self):
-        from hledac.universal.network.passive_fingerprint import PassiveFingerprintAdapter as _cls
+        # F350M-R: Direct import from canonical recon.passive_fingerprint
+        from hledac.universal.recon.passive_fingerprint import PassiveFingerprintAdapter as _cls
         self._inner = _cls()
 
     async def query(self, target: str) -> list[dict]:

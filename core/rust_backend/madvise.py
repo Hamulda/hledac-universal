@@ -2,6 +2,7 @@
 """
 macOS memory advice operations via madvise(2).
 Used for hinting to the kernel about memory access patterns.
+
 """
 
 from __future__ import annotations

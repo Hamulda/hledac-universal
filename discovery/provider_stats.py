@@ -3,6 +3,8 @@ Provider Stats — EWMA-tracked discovery provider statistics.
 
 Sprint F206AQ: Budget-Aware Multi-Source Expansion
 
+
+
 Tracks per-provider:
   - success / fail / timeout counts
   - avg latency, hits, unique hosts
@@ -25,7 +27,7 @@ _EWMA_ALPHA = 0.3
 _MAX_ERRORS_STORED = 50
 _MIN_RELIABILITY = 0.01
 
-class ProviderStats(msgspec.Struct):
+class ProviderStats(msgspec.Struct, gc=False):
     """
     Per-provider EWMA statistics.
 

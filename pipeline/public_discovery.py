@@ -2,6 +2,10 @@
 
 Extracted from live_public_pipeline.py.
 Handles: rescue URLs, bootstrap, keyword search, CT/CC/Onion injection,
+
+
+
+
          _DiscoveryEngine (discovery loop, academic search, TOT).
 
 DI seam: set `_async_discovery_search_var`, `_ct_scanner_var`,

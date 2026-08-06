@@ -2,6 +2,10 @@
 
 Sprint F202H — Advisory policy layer for transport posture.
 
+
+
+
+
 Single read-side policy engine that:
 - Prevents M1 model+renderer conflicts (model context active → JS render blocked)
 - Provides concurrency/timeout hints to callers

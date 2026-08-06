@@ -2,6 +2,8 @@
 PastebinMonitor — scrape neindexované paste sites pro leak OSINT.
 ==============================================================
 
+
+
 Migrated from: intelligence/ (parent/donor)
 Canonical path: hledac.universal.recon.pastebin_monitor
 
@@ -41,7 +43,7 @@ def _mask_secret(value: str) -> str:
     """Mask secrets via centralized DLP filter (SOVEREIGN-010)."""
     return _mask_secret_impl(value)
 
-class PasteFinding(msgspec.Struct):
+class PasteFinding(msgspec.Struct, gc=False):
     """Structured paste finding result."""
     uri: str
     source: str
@@ -101,7 +103,7 @@ def _get_zstd_compress():
         return zstd.compress
     return None
 
-class _CircuitState(msgspec.Struct, frozen=True):
+class _CircuitState(msgspec.Struct, frozen=True, gc=False):
     failures: int = 0
     opened_at: float = 0.0
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)

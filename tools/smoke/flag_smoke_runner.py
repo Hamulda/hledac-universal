@@ -2,6 +2,7 @@
 Per-flag smoke test runner (F4.3).
 
 For each `HLEDAC_ENABLE_*` environment flag, this script:
+
 1. Imports the orchestrator entry point with the flag set
 2. Verifies the flag is *visible* (i.e. something in the orchestrator actually
    consults `os.environ["HLEDAC_ENABLE_X"]` or the equivalent in code)
@@ -80,7 +81,7 @@ _SKIP_PATH_FRAGMENTS = (
 )
 
 
-class FlagReport(msgspec.Struct):
+class FlagReport(msgspec.Struct, gc=False):
     """Per-flag result.
 
     ``slots=True`` keeps the report footprint bounded — each instance

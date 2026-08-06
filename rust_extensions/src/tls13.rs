@@ -752,32 +752,17 @@ pub fn connect_and_ja4(
     let result =
         connect_and_fingerprint_internal(host, port, sni, alpn, timeout).map_err(|e| e.to_py_err())?;
 
-    Ok({
-        // We need Python dict — return via PyResult<Py<PyDict>>
-        // This will be constructed in the calling code
-        // For now return empty and construct in Python
-        // Actually we need to construct it here
-        Python::attach(|py| {
-            let dict = pyo3::types::PyDict::new(py);
-            dict.set_item("ja4", result.ja4).unwrap();
-            dict.set_item("ech_detected", result.ech_detected).unwrap();
-            dict.set_item("tls_version", result.tls_version).unwrap();
-            dict.set_item(
-                "server_ciphers",
-                result.server_ciphers.join(","),
-            )
-            .unwrap();
-            dict.set_item(
-                "server_extensions",
-                result.server_extensions.join(","),
-            )
-            .unwrap();
-            dict.set_item("alpn", result.alpn.unwrap_or_default())
-                .unwrap();
-            dict.set_item("cert_verified", result.cert_verified)
-                .unwrap();
-            dict.into()
-        })
+    Python::with_gil(|py| {
+        let dict = pyo3::types::PyDict::new(py);
+        // SAFE: set_item only fails on full dict (impossible here) or non-hashable key (never with strings)
+        let _ = dict.set_item("ja4", result.ja4);
+        let _ = dict.set_item("ech_detected", result.ech_detected);
+        let _ = dict.set_item("tls_version", result.tls_version);
+        let _ = dict.set_item("server_ciphers", result.server_ciphers.join(","));
+        let _ = dict.set_item("server_extensions", result.server_extensions.join(","));
+        let _ = dict.set_item("alpn", result.alpn.unwrap_or_default());
+        let _ = dict.set_item("cert_verified", result.cert_verified);
+        Ok(dict.into())
     })
 }
 
@@ -820,43 +805,33 @@ pub fn batch_ja4(
             let result = connect_and_fingerprint_internal(host, *port, sni, alpn.clone(), timeout);
 
             match result {
-                Ok(r) => Python::attach(|py| {
+                Ok(r) => Python::with_gil(|py| {
                     let dict = pyo3::types::PyDict::new(py);
-                    dict.set_item("host", host).unwrap();
-                    dict.set_item("port", port).unwrap();
-                    dict.set_item("ja4", r.ja4).unwrap();
-                    dict.set_item("ech_detected", r.ech_detected).unwrap();
-                    dict.set_item("tls_version", r.tls_version).unwrap();
-                    dict.set_item(
-                        "server_ciphers",
-                        r.server_ciphers.join(","),
-                    )
-                    .unwrap();
-                    dict.set_item(
-                        "server_extensions",
-                        r.server_extensions.join(","),
-                    )
-                    .unwrap();
-                    dict.set_item("alpn", r.alpn.unwrap_or_default())
-                        .unwrap();
-                    dict.set_item("cert_verified", r.cert_verified)
-                        .unwrap();
-                    dict.set_item("error", "").unwrap();
+                    // SAFE: set_item only fails on full dict (impossible here) or non-hashable key (never with strings)
+                    let _ = dict.set_item("host", host);
+                    let _ = dict.set_item("port", port);
+                    let _ = dict.set_item("ja4", r.ja4);
+                    let _ = dict.set_item("ech_detected", r.ech_detected);
+                    let _ = dict.set_item("tls_version", r.tls_version);
+                    let _ = dict.set_item("server_ciphers", r.server_ciphers.join(","));
+                    let _ = dict.set_item("server_extensions", r.server_extensions.join(","));
+                    let _ = dict.set_item("alpn", r.alpn.unwrap_or_default());
+                    let _ = dict.set_item("cert_verified", r.cert_verified);
+                    let _ = dict.set_item("error", "");
                     dict.into()
                 }),
-                Err(e) => Python::attach(|py| {
+                Err(e) => Python::with_gil(|py| {
                     let dict = pyo3::types::PyDict::new(py);
-                    dict.set_item("host", host).unwrap();
-                    dict.set_item("port", port).unwrap();
-                    dict.set_item("ja4", "").unwrap();
-                    dict.set_item("ech_detected", false).unwrap();
-                    dict.set_item("tls_version", "").unwrap();
-                    dict.set_item("server_ciphers", "").unwrap();
-                    dict.set_item("server_extensions", "").unwrap();
-                    dict.set_item("alpn", "").unwrap();
-                    dict.set_item("cert_verified", false).unwrap();
-                    dict.set_item("error", format!("{:?}", e))
-                        .unwrap();
+                    let _ = dict.set_item("host", host);
+                    let _ = dict.set_item("port", port);
+                    let _ = dict.set_item("ja4", "");
+                    let _ = dict.set_item("ech_detected", false);
+                    let _ = dict.set_item("tls_version", "");
+                    let _ = dict.set_item("server_ciphers", "");
+                    let _ = dict.set_item("server_extensions", "");
+                    let _ = dict.set_item("alpn", "");
+                    let _ = dict.set_item("cert_verified", false);
+                    let _ = dict.set_item("error", format!("{:?}", e));
                     dict.into()
                 }),
             }

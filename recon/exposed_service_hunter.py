@@ -2,6 +2,21 @@
 Exposed Service Hunter
 ======================
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Discovers exposed services and misconfigurations for security research.
 Self-hosted on M1 8GB - no external APIs required.
 
@@ -67,7 +82,7 @@ class RiskLevel(Enum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class ExposedService(msgspec.Struct):
+class ExposedService(msgspec.Struct, gc=False):
     """Represents a discovered exposed service."""
     service_type: str
     host: str
@@ -81,7 +96,7 @@ class ExposedService(msgspec.Struct):
         """Convert to dictionary."""
         return {'service_type': self.service_type, 'host': self.host, 'port': self.port, 'exposure_type': self.exposure_type, 'metadata': self.metadata, 'risk_level': self.risk_level, 'discovered_at': self.discovered_at.isoformat()}
 
-class S3Bucket(msgspec.Struct, frozen=True):
+class S3Bucket(msgspec.Struct, frozen=True, gc=False):
     """S3 bucket information."""
     bucket_name: str
     region: str | None
@@ -91,7 +106,7 @@ class S3Bucket(msgspec.Struct, frozen=True):
     total_size: int | None
     permissions: list[str]
 
-class CertificateInfo(msgspec.Struct, frozen=True):
+class CertificateInfo(msgspec.Struct, frozen=True, gc=False):
     """Certificate transparency information."""
     domain: str
     issuer: str

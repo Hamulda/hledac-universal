@@ -2,6 +2,13 @@
 
 ROLE: Canonical store for sprint-level facts and derived analytics.
 
+
+
+
+
+
+
+
 See :ref:`duckdb-store-internals` for architecture overview, F360 extracted
 components, and the 3-tier facts hierarchy (Sprint Facts / Shadow Findings /
 Cross-Sprint). The 15 deprecated graph methods are now delegated to
@@ -1623,7 +1630,9 @@ def _resolve_duckdb_runtime_settings(uma_state: str | None = None, swap_detected
                         enable_fsst_vectors (bool),
                         temp_file_encryption (bool).
     """
-    base_mem = ENV.get_str("GHOST_DUCKDB_MEMORY", default="4GB")
+    # M1 8GB SAFETY: 4GB would exceed safe memory budget (OS~2.5GB + Python~1GB + MLX~4.5GB).
+    # Unified with _DUCKDB_MEMORY_LIMIT (line 1554) which defaults to 1GB.
+    base_mem = ENV.get_str("GHOST_DUCKDB_MEMORY", default="1GB")
     base_threads = ENV.get_int("HLEDAC_DUCKDB_THREADS", default=4)
     settings: dict[str, str | int | bool] = {
         "memory_limit": base_mem,

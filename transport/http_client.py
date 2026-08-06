@@ -2,6 +2,12 @@
 transport/http_client.py — Unified HTTP Transport (R4)
 ======================================================
 
+
+
+
+
+
+
 Single entry point for ALL HTTP fetching. Replaces the fragmented landscape of:
   - Direct httpx usage in ~40+ recon/ modules
   - curl_cffi in stealth/transport modules

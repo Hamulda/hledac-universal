@@ -2,6 +2,8 @@
 Autonomous Analyzer for Hledac Universal Orchestrator
 ======================================================
 
+
+
 Intelligent query analysis system that automatically determines optimal research
 configuration based on query content. Analyzes queries to select appropriate tools,
 sources, privacy levels, and reasoning modes without manual configuration.
@@ -29,7 +31,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-class AutoResearchProfile(msgspec.Struct):
+class AutoResearchProfile(msgspec.Struct, gc=False):
     """
     Autonomous research configuration profile.
 

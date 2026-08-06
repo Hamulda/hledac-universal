@@ -2,6 +2,9 @@
 intelligence/rir_correlator.py — Sprint F204H: RIR/ASN/WHOIS Bulk Correlator
 =============================================================================
 
+
+
+
 Bounded RIR/ASN/WHOIS correlation for IP/domain findings.
 Extracts IP addresses from findings, resolves ASN/org/netblock/country via
 ip-api.com (free HTTP API) and ipwhois for domain WHOIS.
@@ -45,7 +48,7 @@ RIR_CONCURRENCY: int = 3
 MAX_RIR_CACHE_ENTRIES: int = 1000
 _RIR_API_URL = 'http://ip-api.com/batch'
 
-class RIRCorrelation(msgspec.Struct, frozen=True):
+class RIRCorrelation(msgspec.Struct, frozen=True, gc=False):
     """Single RIR/ASN/WHOIS correlation result for one IOC."""
     ioc_value: str
     ioc_type: str
@@ -56,7 +59,7 @@ class RIRCorrelation(msgspec.Struct, frozen=True):
     confidence: float
     evidence_ids: tuple[str, ...]
 
-class RIRCorrelationResult(msgspec.Struct, frozen=True):
+class RIRCorrelationResult(msgspec.Struct, frozen=True, gc=False):
     """Outcome of a full RIR correlation run."""
     correlations: tuple[RIRCorrelation, ...]
     queried_count: int

@@ -2,6 +2,10 @@
 Lightweight Reranking Engine using FlashRank
 =========================================
 
+
+
+
+
 Memory-efficient reranking solution using FlashRank
 with TinyBERT-L-2 model (~4MB), optimized for M1 MacBook Air (8GB RAM).
 
@@ -24,7 +28,7 @@ except ImportError:
     FLASHRANK_AVAILABLE = False
     logger.warning('FlashRank not installed. Install with: pip install flashrank')
 
-class RerankResult(msgspec.Struct):
+class RerankResult(msgspec.Struct, gc=False):
     """Result from reranking operation."""
     document_id: str
     content: str
@@ -33,7 +37,7 @@ class RerankResult(msgspec.Struct):
     score_delta: float
     rank: int
 
-class RerankRequest(msgspec.Struct, frozen=True):
+class RerankRequest(msgspec.Struct, frozen=True, gc=False):
     """Request for reranking."""
     query: str
     documents: list[dict[str, Any]]

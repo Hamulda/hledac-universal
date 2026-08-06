@@ -46,7 +46,11 @@ async def is_i2p_available(proxy_type: str='http') -> bool:
     Check if I2P proxy is running and accessible.
 
     Args:
-        proxy_type: "http" (port 4444) or "socks5" (port 7654)
+        proxy_type: "http" (port 4444) or "socks5" (port 4444)
+
+    NOTE: Port 7654 is the I2P HTTP console, NOT the SOCKS proxy.
+    Correct I2P ports: 4444=SOCKS (both http and socks5 params use this),
+    7656=SAM v3, 8888=HTTP proxy.
 
     Uses cached result with 60-second TTL to avoid excessive probes.
 
@@ -144,8 +148,10 @@ async def fetch_eepsite_socks5(url: str, timeout: int=I2P_TIMEOUT, max_size: int
     """
     Fetch content from an I2P eepsite via SOCKS5 proxy.
 
-    This uses the lower-level SOCKS5 protocol (port 7654) for better anonymity.
+    This uses the SOCKS5 protocol (port 4444) for better anonymity.
     Falls back to HTTP proxy if httpx-socks is not available.
+
+    NOTE: Port 7654 is the I2P HTTP console, NOT the SOCKS proxy.
 
     Args:
         url: Eepsite URL (e.g., "http://i2pwiki.i2p/")

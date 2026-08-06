@@ -2,6 +2,9 @@
 brain/auto_re/parser_forge.py — Hermes3 Auto-RE Engine (ADVERSARY-004)
 =====================================================================
 
+
+
+
 Five-stage pipeline:
 
   Stage A — Magic-byte router

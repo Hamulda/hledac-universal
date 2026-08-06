@@ -3,6 +3,8 @@ discovery/deep_source_registry.py — Curated, self-updating registry of beyond-
 
 Sprint F270: DeepSourceRegistry.
 
+
+
 GOAL:
     Provide a curated catalog of OSINT-relevant sources BEYOND the indexed web
     — dark web (.onion / .i2p), archives, paste sites, academic mirrors,
@@ -54,7 +56,7 @@ SourceTier = Literal['surface', 'dark', 'archive', 'p2p', 'academic']
 TransportRequired = Literal['direct', 'tor', 'i2p', 'none']
 DataType = Literal['ct_logs', 'passive_dns', 'leak_db', 'academic', 'forum', 'paste', 'repo']
 
-class DeepSource(msgspec.Struct, frozen=True):
+class DeepSource(msgspec.Struct, frozen=True, gc=False):
     """Immutable description of a single beyond-surface OSINT source.
 
     source_id is a BLAKE2b 8-byte digest of base_url (16 hex chars) — stable

@@ -2,6 +2,7 @@
 Knowledge komponenty pro UniversalResearchOrchestrator.
 
 Obsahuje:
+
 - KnowledgeGraphLayer: KuzuDB-based persistent knowledge graph (KuzuDB)
 - AtomicJSONKnowledgeGraph: RAM-efficient JSON storage (bez DB závislostí)
 - ContextGraph: Simple in-memory context graph
@@ -43,10 +44,7 @@ _LAZY_EXPORT_MAP: dict[str, str] = {
     "from_timestamp_ns": "knowledge.time_series_splicer",
     # graph_attachment — lightweight (no heavy deps)
     "GraphAttachmentStore": "knowledge.graph_attachment",
-    # context_graph — lightweight (no heavy deps), kept eager
-    "ContextGraph": "knowledge.context_graph",
-    # graph_layer — heavy: kuzu, duckdb
-    "KnowledgeGraphLayer": "knowledge.graph_layer",
+
     # rag_engine — heavy: numpy (3x), hledac.universal.core.mlx_embeddings, duckdb
     "RAGEngine": "knowledge.rag_engine",
     "RAGConfig": "knowledge.rag_engine",

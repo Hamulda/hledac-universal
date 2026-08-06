@@ -2,6 +2,7 @@
 
 Responsibilities:
 - Fetch URL content via curl_cffi / httpx
+
 - Handle quality gates (pre-fetch skip, memory pressure)
 - Manage concurrency (bounded semaphore)
 - Track fetch errors and failure stages

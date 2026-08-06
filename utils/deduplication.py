@@ -2,6 +2,21 @@
 Advanced Deduplication System - From MSQES
 
 Multi-strategy deduplication combining:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 - Semantic deduplication (vector embeddings)
 - Content deduplication (MinHash + hashing)
 - Metadata deduplication (field comparison)
@@ -64,7 +79,7 @@ class DeduplicationStrategy(Enum):
     METADATA = 'metadata'
     HYBRID = 'hybrid'
 
-class DeduplicationConfig(msgspec.Struct):
+class DeduplicationConfig(msgspec.Struct, gc=False):
     """Configuration for deduplication engine."""
     semantic_threshold: float = 0.85
     content_threshold: float = 0.9
@@ -85,7 +100,7 @@ class DeduplicationConfig(msgspec.Struct):
     enable_monitoring: bool = True
     log_level: str = 'INFO'
 
-class QueryItem(msgspec.Struct):
+class QueryItem(msgspec.Struct, gc=False):
     """Item for deduplication processing."""
     id: str
     title: str
@@ -101,14 +116,14 @@ class QueryItem(msgspec.Struct):
         combined = f'{self.title}{self.content}'
         return xxh3_64_hex(combined)[:12]
 
-class SimilarityScore(msgspec.Struct):
+class SimilarityScore(msgspec.Struct, gc=False):
     """Similarity score with details."""
     score: float
     strategy: DeduplicationStrategy
     confidence: float
     details: dict[str, Any] = field(default_factory=dict)
 
-class DeduplicationStats(msgspec.Struct):
+class DeduplicationStats(msgspec.Struct, gc=False):
     """Statistics for deduplication."""
     total_items_processed: int = 0
     items_kept: int = 0
@@ -122,7 +137,7 @@ class DeduplicationStats(msgspec.Struct):
     cache_misses: int = 0
 
 
-class DeduplicationMatch(msgspec.Struct):
+class DeduplicationMatch(msgspec.Struct, gc=False):
     """Match between two items."""
     original_item: QueryItem
     matched_item: QueryItem
@@ -131,7 +146,7 @@ class DeduplicationMatch(msgspec.Struct):
     decision: str = 'pending'
 
 
-class DeduplicationResult(msgspec.Struct):
+class DeduplicationResult(msgspec.Struct, gc=False):
     """Result of deduplication process."""
     original_items: list[QueryItem]
     unique_items: list[QueryItem]
@@ -860,7 +875,7 @@ class DeduplicationEngine:
         self.metadata_dedup.executor.shutdown(wait=False)
         self.logger.info('DeduplicationEngine thread pools closed (non-blocking)')
 
-class DomainStats(msgspec.Struct):
+class DomainStats(msgspec.Struct, gc=False):
     """Per-domain statistiky pro yield tracking a domain diversity - M1 8GB."""
     domain: str
     requests: int = 0

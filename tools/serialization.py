@@ -1,19 +1,25 @@
 """
 Serialization utilities for LMDB storage and data exchange.
-Sprint 45: High-performance binary serialization.
-Sprint 79a: orjson storage serialization with hash-chain compatibility.
-MOD-14: Replaced msgpack with orjson (zero-copy, native numpy support).
+
+Historical context (for audit trail):
+  - Sprint 45: High-performance binary serialization (original msgpack era)
+  - Sprint 79a: orjson storage serialization with hash-chain compatibility
+  - MOD-14: Replaced msgpack with orjson (zero-copy, native numpy support)
+
+Current feature tracking:
+  - F-SERIAL-01: Canonical JSON serialization (hash-chain determinism)
+  - F-SERIAL-02: orjson optimized storage (numpy native, .jsonl format)
+  - F-SERIAL-03: Binary pack/unpack for inter-process communication
 """
 
 
+from __future__ import annotations
+
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 import numpy as np
-
-# orjson is always available - it's a core dependency
-ORJSON_AVAILABLE = True
 
 
 # ============================================================================
@@ -105,10 +111,9 @@ def unpack(data: bytes) -> Any:
     return orjson.loads(data)
 
 
-# Sprint 45: Test helper functions
+# F-SERIAL-03: Benchmark helper for binary serialization efficiency
 def estimate_size_reduction(data: dict) -> float:
     """Estimate size reduction compared to JSON."""
-    import json
     json_size = len(json.dumps(data, default=str).encode())
     packed_size = len(pack(data))
     return packed_size / json_size if json_size > 0 else 1.0

@@ -2,6 +2,10 @@
 Distillation Engine - MLX-based Reasoning Chain Quality Scoring
 
 Tento modul implementuje distillation engine pro hodnocení kvality
+
+
+
+
 reasoning chainů pomocí MLX MLP critic network. Optimalizováno pro
 M1 MacBook Air 8GB s SQLite storage.
 

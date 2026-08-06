@@ -225,10 +225,10 @@ pub fn buffer_entropy(input: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<f64>
     // This handles numpy arrays, bytearray, memoryview, and other buffer protocol objects
     // WITHOUT creating an intermediate Python bytes object.
     // PyBuffer::as_bytes() returns &[u8] directly from the object's memory.
-    if let Ok(buffer) = input.extract::<PyBuffer<u8>>() {
-        // unsafe: buffer guarantees lifetime validity for the GIL-held scope
-        let bytes = unsafe { buffer.as_bytes() };
-        return Ok(compute_entropy_zc(bytes));
+    if let Ok(_buffer) = input.extract::<PyBuffer<u8>>() {
+        // Copy buffer contents to Vec<u8>
+        let bytes: Vec<u8> = input.call_method0("bytes").unwrap().extract().unwrap();
+        return Ok(compute_entropy_zc(&bytes));
     }
 
     // Fallback: PyBytes — direct access to underlying buffer (zero-copy view)
@@ -286,12 +286,12 @@ pub fn buffer_entropy_batched<'py>(
     let _n = validate_batch(&buffers, py)?;
 
     // Collect buffer byte slices — zero-copy from each buffer-backed object
-    let mut buffer_views: Vec<&[u8]> = Vec::with_capacity(buffers.len());
+    let mut buffer_views: Vec<Vec<u8>> = Vec::with_capacity(buffers.len());
 
     for item in buffers.iter() {
         // ISSUE-005 / ISSUE-005-FIX2: Extract PyBuffer for true zero-copy access.
         // This avoids the PyBytes intermediate copy for numpy arrays/bytearray.
-        let buffer: PyBuffer<u8> = match item.extract() {
+        let _buffer: PyBuffer<u8> = match item.extract() {
             Ok(b) => b,
             Err(_) => {
                 // Item doesn't support buffer protocol — try bytes as fallback.
@@ -301,17 +301,12 @@ pub fn buffer_entropy_batched<'py>(
                 let Ok(bytes) = item.cast::<PyBytes>() else {
                     continue; // non-buffer, non-bytes item — skip silently
                 };
-                buffer_views.push(bytes.as_bytes());
+                buffer_views.push(bytes.as_bytes().to_vec());
                 continue;
             }
         };
-        // unsafe: PyBuffer<u8> lifetime is valid for the entire GIL-held
-        // buffer_entropy_batched scope. The extracted buffer borrows from `item`,
-        // which borrows from `buffers` (Bound<'py, PyList>) whose lifetime
-        // is 'py = the GIL scope of Python<'py>. buffer_views holds &-[u8] slices
-        // that remain valid as long as the GIL scope is active (pool.install
-        // runs inside Python::attach which holds the GIL throughout).
-        let bytes = unsafe { buffer.as_bytes() };
+        // Copy buffer contents to Vec<u8>
+        let bytes: Vec<u8> = item.call_method0("bytes").unwrap().extract().unwrap();
         buffer_views.push(bytes);
     }
 

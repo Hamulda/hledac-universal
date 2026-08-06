@@ -7,6 +7,8 @@ perfectly grammatical English, low typo density, uniform sentence length
 (high burstiness deviation toward flat LLM signatures), and high Shannon
 entropy per byte (LLMs default to ~4.5 bits/byte in English vs. human ~4.1).
 
+
+
 This module provides three orthogonal sub-scores that detect LLM-generated
 content WITHOUT requiring a model inference pass (except SmolLM path):
 

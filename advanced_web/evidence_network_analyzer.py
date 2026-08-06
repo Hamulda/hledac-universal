@@ -2,6 +2,10 @@
 EvidenceNetworkAnalyzer — network-based evidence analysis
 ==========================================================
 
+
+
+
+
 Provides bounded network analysis for entity relationships, contradictions,
 and centrality over OSINT evidence assembled during a sprint.
 
@@ -749,7 +753,7 @@ class EvidenceNetworkAnalyzer:
         return {'entities': [], 'edges': [], 'clusters': [], 'centrality': {}, 'contradictions': [], 'confidence': 0.0, 'analysis_type': 'evidence_network', 'not_implemented': False, 'todo_ref': self._TODO_REF, 'call_count': self._call_count}
 __all__ = ['EvidenceNetworkAnalyzer', 'EvidenceGraphNode', 'EvidenceGraphEdge', 'EvidenceGraph']
 
-class EvidenceGraphNode(msgspec.Struct, frozen=True):
+class EvidenceGraphNode(msgspec.Struct, frozen=True, gc=False):
     """Single entity node in the evidence network.
 
     node_id convention: f"{ioc_type}:{value}" (lowercased, deduped).
@@ -761,7 +765,7 @@ class EvidenceGraphNode(msgspec.Struct, frozen=True):
     confidence: float
     sources: tuple[str, ...] = ()
 
-class EvidenceGraphEdge(msgspec.Struct, frozen=True):
+class EvidenceGraphEdge(msgspec.Struct, frozen=True, gc=False):
     """Directed relationship between two EvidenceGraphNodes.
 
     weight is bounded [0.0, 1.0]; evidence_count records how many findings
@@ -773,7 +777,7 @@ class EvidenceGraphEdge(msgspec.Struct, frozen=True):
     weight: float
     evidence_count: int = 1
 
-class EvidenceGraph(msgspec.Struct, frozen=True):
+class EvidenceGraph(msgspec.Struct, frozen=True, gc=False):
     """Read-only evidence network assembled from a batch of findings.
 
     Invariants:

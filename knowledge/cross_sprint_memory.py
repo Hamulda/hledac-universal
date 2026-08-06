@@ -2,6 +2,7 @@
 Sprint F280: Cross-Sprint DuckPGQ Memory
 ========================================
 
+
 Cross-sprint entity memory via DuckPGQGraph.find_connected().
 
 ROLE: Inject DuckPGQ graph traversal into lane planning so that entities

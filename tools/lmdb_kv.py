@@ -2,6 +2,8 @@
 LMDB Zero-Copy KV Store
 ========================
 
+
+
 Zero-copy key-value storage using LMDB with msgspec (orjson fallback).
 Optimized for M1 MacBook with 8GB RAM constraints.
 

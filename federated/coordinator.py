@@ -2,6 +2,10 @@
 F350M-FED: Federated Research Coordinator (virtual-node model).
 
 Sprint: F350M-FED / Federated Activation 2026-06-04
+
+
+
+
 Target: federated/coordinator.py
 
 PURPOSE
@@ -122,7 +126,7 @@ class NodeLane:
     ALL: tuple[str, ...] = (SURFACE, DARK, ARCHIVE)
     'The default 3-lane partitioning (matches MAX_VIRTUAL_NODES).'
 
-class NodeResult(msgspec.Struct):
+class NodeResult(msgspec.Struct, gc=False):
     """Result of a single virtual node's research cycle."""
     lane: str
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -133,7 +137,7 @@ class NodeResult(msgspec.Struct):
     def is_ok(self) -> bool:
         return self.error is None
 
-class FederatedResult(msgspec.Struct, frozen=True):
+class FederatedResult(msgspec.Struct, frozen=True, gc=False):
     """
     Aggregated output of distribute_research().
 

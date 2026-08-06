@@ -2,6 +2,9 @@
 CoreMLModernBERTEmbedder — ANE-accelerated ModernBERT encoder for embeddings.
 
 Provides:
+
+
+
 - Batch text embedding via CoreML on Apple Neural Engine (ANE)
 - Pre-converted .mlpackage models (coremltools, py3.12 compatible)
 - Fallback: ModernBERTEmbedder (MLX/Metal) if ANE unavailable
@@ -62,7 +65,7 @@ def _check_coreml_engine_available() -> bool:
     logger.info(f'[CoreML-ANE] Engine available — model: {_ANE_MODEL_PATH}')
     return True
 
-class CoreMLModernBERTConfig(msgspec.Struct):
+class CoreMLModernBERTConfig(msgspec.Struct, gc=False):
     """Configuration for CoreML ANE ModernBERT embedder."""
     model_path: Path = field(default_factory=lambda: _ANE_MODEL_PATH)
     max_seq_len: int = 512

@@ -2,6 +2,14 @@
 Dark Web Intelligence Module
 ==============================
 
+
+
+
+
+
+
+
+
 Tor/I2P crawling and hidden service analysis for deep OSINT research.
 Self-hosted on M1 8GB with stealth capabilities.
 
@@ -135,7 +143,7 @@ class DarkWebContent(msgspec.Struct, frozen=True, gc=False):
     magnet_links: list[str] = field(default_factory=list)
     raw_html: str = ''
 
-class PGPKeyInfo(msgspec.Struct, frozen=True):
+class PGPKeyInfo(msgspec.Struct, frozen=True, gc=False):
     """Extracted PGP key information."""
     key_id: str
     fingerprint: str
@@ -839,7 +847,7 @@ def darkweb_content_to_canonical(content: DarkWebContent, query: str) -> Canonic
     finding_id = f'dw_{hashlib.md5(content.url.encode()).hexdigest()[:16]}'
     return CanonicalFinding(finding_id=finding_id, query=query, source_type='onion_discovery', confidence=confidence, ts=content.extracted_at, provenance=(content.url,), payload_text=payload)
 
-class DHTFinding(msgspec.Struct, frozen=True):
+class DHTFinding(msgspec.Struct, frozen=True, gc=False):
     """Structured output from DHT crawl operations."""
     info_hash: str
     name: str = ''

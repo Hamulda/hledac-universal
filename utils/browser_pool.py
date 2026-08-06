@@ -2,6 +2,7 @@
 BrowserPool — F-02 CRITICAL: persistent nodriver browser pool.
 
 Replaces per-call uc.start() cold-start penalty (~1.5-2 s / browser) with
+
 a bounded pool of pre-warmed idle browsers.
 
 Architecture

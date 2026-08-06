@@ -3,6 +3,7 @@ transport/policy.py — Tiered Transport Policy Engine
 
 Sprint F265C: Unified transport policy with explicit tier bounds.
 
+
 ARCHITECTURE:
   T0 (curl_cffi_stealth)  — always-on, JA3 impersonation, 1 concurrent slot
   T1 (httpx_h2)            — opt-in HLEDAC_ENABLE_HTTPX_H2, API-like URLs only
@@ -53,7 +54,7 @@ Tier = Literal['T0_curl_cffi', 'T1_httpx_h2', 'T2_httpx_h3', 'T3_js_renderer']
 _SOFT_GIB: float = 4.5
 _HARD_GIB: float = 6.0
 
-class TransportPolicyDecision(msgspec.Struct, frozen=True):
+class TransportPolicyDecision(msgspec.Struct, frozen=True, gc=False):
     """
     Output of get_transport_policy().
 

@@ -3,6 +3,9 @@ from __future__ import annotations
 Source Attribution — Sprint Facts Tiers 1 & 3
 =============================================
 
+
+
+
 Sprint scorecard and source hit log for sprint-level analytics.
 
 MIGRATION NOTE (Issue #2):

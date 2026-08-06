@@ -2,6 +2,8 @@
 Temporal Archaeologist Adapter — Sprint F202E
 =============================================
 
+
+
 Canonical adapter wrapping TemporalArchaeologist for the sprint pipeline.
 
 Responsibilities:
@@ -47,7 +49,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-class TimelineFindingResult(msgspec.Struct):
+class TimelineFindingResult(msgspec.Struct, gc=False):
     """
     Result of timeline synthesis containing events and derived findings.
     """

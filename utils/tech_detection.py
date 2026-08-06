@@ -2,6 +2,9 @@
 Technology Stack Detection - Framework & CMS Identification
 ===========================================================
 
+
+
+
 Integrated from hledac/scanners/deep_probe.py
 
 Detects technology stacks from URLs and content signatures.
@@ -10,12 +13,19 @@ Useful for understanding the underlying technology of discovered endpoints.
 M1-Optimized: Minimal dependencies, fast signature matching
 """
 import logging
-from dataclasses import dataclass
+import re
 import msgspec
-from typing import Any
+from typing import TypedDict, Any
+
 logger = logging.getLogger(__name__)
 
-class TechStackResult(msgspec.Struct):
+
+class FrameworkSignature(TypedDict):
+    """Type-safe signature for framework detection."""
+    indicators: list[str]
+    weight: float
+
+class TechStackResult(msgspec.Struct, gc=False):
     """Result of technology stack detection."""
     framework: str | None
     confidence: float
@@ -50,9 +60,29 @@ class TechStackSignature:
     """
     __slots__ = tuple(('signatures', 'version_patterns'))
 
-    def __init__(self):
-        self.signatures = {'wordpress': {'indicators': ['wp-content', 'wp-admin', 'wp-json', 'wp-includes'], 'weight': 1.0}, 'drupal': {'indicators': ['node/', 'drupal.js', 'sites/default', 'modules/'], 'weight': 1.0}, 'joomla': {'indicators': ['administrator/', 'components/', 'modules/', 'templates/'], 'weight': 1.0}, 'django': {'indicators': ['admin/', 'static/admin', 'django', '__debug__/'], 'weight': 1.0}, 'flask': {'indicators': ['static/', 'api/', 'swagger', 'flask'], 'weight': 0.9}, 'express': {'indicators': ['api/', 'swagger', 'node_modules', 'express'], 'weight': 0.9}, 'rails': {'indicators': ['assets/', 'rails', 'application.js', 'ruby'], 'weight': 0.9}, 'laravel': {'indicators': ['vendor/', 'artisan', 'storage/', 'laravel'], 'weight': 0.9}, 'spring': {'indicators': ['actuator/', 'swagger-ui', 'WEB-INF', 'spring'], 'weight': 0.9}, 'aspnet': {'indicators': ['WebResource.axd', 'ScriptResource.axd', 'App_Data', 'asp.net'], 'weight': 0.9}, 'nextjs': {'indicators': ['_next/', '__next', 'next.js', 'next/'], 'weight': 0.9}, 'react': {'indicators': ['react', 'reactjs', 'jsx', 'create-react-app'], 'weight': 0.8}, 'vue': {'indicators': ['vue', 'vuejs', 'vuetify', 'vue-router'], 'weight': 0.8}, 'angular': {'indicators': ['angular', 'ng-', '@angular'], 'weight': 0.8}}
-        self.version_patterns = {'wordpress': ['wp-includes/js/wp-emoji-release\\.min\\.js\\?ver=([0-9.]+)', 'wp-content/themes/[^/]+/style\\.css\\?ver=([0-9.]+)'], 'drupal': ['Drupal ([0-9.]+)', 'core/misc/drupal\\.js\\?v=([0-9.]+)'], 'django': ['Django/([0-9.]+)'], 'rails': ['Rails/([0-9.]+)', 'rails-([0-9.]+)']}
+    def __init__(self) -> None:
+        self.signatures: dict[str, FrameworkSignature] = {
+            'wordpress': {'indicators': ['wp-content', 'wp-admin', 'wp-json', 'wp-includes'], 'weight': 1.0},
+            'drupal': {'indicators': ['node/', 'drupal.js', 'sites/default', 'modules/'], 'weight': 1.0},
+            'joomla': {'indicators': ['administrator/', 'components/', 'modules/', 'templates/'], 'weight': 1.0},
+            'django': {'indicators': ['admin/', 'static/admin', 'django', '__debug__/'], 'weight': 1.0},
+            'flask': {'indicators': ['static/', 'api/', 'swagger', 'flask'], 'weight': 0.9},
+            'express': {'indicators': ['api/', 'swagger', 'node_modules', 'express'], 'weight': 0.9},
+            'rails': {'indicators': ['assets/', 'rails', 'application.js', 'ruby'], 'weight': 0.9},
+            'laravel': {'indicators': ['vendor/', 'artisan', 'storage/', 'laravel'], 'weight': 0.9},
+            'spring': {'indicators': ['actuator/', 'swagger-ui', 'WEB-INF', 'spring'], 'weight': 0.9},
+            'aspnet': {'indicators': ['WebResource.axd', 'ScriptResource.axd', 'App_Data', 'asp.net'], 'weight': 0.9},
+            'nextjs': {'indicators': ['_next/', '__next', 'next.js', 'next/'], 'weight': 0.9},
+            'react': {'indicators': ['react', 'reactjs', 'jsx', 'create-react-app'], 'weight': 0.8},
+            'vue': {'indicators': ['vue', 'vuejs', 'vuetify', 'vue-router'], 'weight': 0.8},
+            'angular': {'indicators': ['angular', 'ng-', '@angular'], 'weight': 0.8},
+        }
+        self.version_patterns: dict[str, list[str]] = {
+            'wordpress': [r'wp-includes/js/wp-emoji-release\.min\.js\?ver=([0-9.]+)', r'wp-content/themes/[^/]+/style\.css\?ver=([0-9.]+)'],
+            'drupal': [r'Drupal ([0-9.]+)', r'core/misc/drupal\.js\?v=([0-9.]+)'],
+            'django': [r'Django/([0-9.]+)'],
+            'rails': [r'Rails/([0-9.]+)', r'rails-([0-9.]+)'],
+        }
 
     def detect_stack(self, url: str, content: str | None=None, headers: dict[str, str] | None=None) -> TechStackResult:
         """
@@ -74,11 +104,9 @@ class TechStackSignature:
         additional_tech = []
         for framework, config in self.signatures.items():
             matches = 0
-            found_indicators = []
-            config_typed: Any = config
-            raw_indicators = config_typed.get('indicators', [])
-            indicators: list[str] = list(raw_indicators) if isinstance(raw_indicators, list) else []
-            weight: float = float(config_typed.get('weight', 1.0)) if not isinstance(config_typed.get('weight', 1.0), list) else 1.0
+            found_indicators: list[str] = []
+            indicators = config['indicators']
+            weight = config['weight']
             for indicator in indicators:
                 if indicator.lower() in url_lower:
                     matches += 1
@@ -106,11 +134,16 @@ class TechStackSignature:
         if detected_framework and content:
             version = self._detect_version(detected_framework, content)
         additional_tech = self._detect_additional_tech(url_lower, content)
-        return TechStackResult(framework=detected_framework, confidence=max_confidence, indicators=all_indicators, version=version, additional_tech=additional_tech)
+        return TechStackResult(
+            framework=detected_framework,
+            confidence=max_confidence,
+            indicators=all_indicators,
+            version=version,
+            additional_tech=additional_tech,
+        )
 
     def _detect_version(self, framework: str, content: str) -> str | None:
         """Detect framework version from content."""
-        import re
         if framework not in self.version_patterns:
             return None
         for pattern in self.version_patterns[framework]:
@@ -171,4 +204,4 @@ def detect_tech_stack(url: str, content: str | None=None, headers: dict[str, str
     """
     detector = TechStackSignature()
     return detector.detect_stack(url, content, headers)
-__all__ = ['TechStackResult', 'TechStackSignature', 'detect_tech_stack']
+__all__ = ['TechStackResult', 'TechStackSignature', 'detect_tech_stack', 'FrameworkSignature']

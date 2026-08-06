@@ -2,6 +2,8 @@
 Smart-Spawned Coordination Integration
 ======================================
 
+
+
 DEPRECATED: This module is now integrated into coordination_layer.py
 Use CoordinationLayer.enable_smart_mode() for new code.
 
@@ -42,7 +44,7 @@ class SmartSpawnedRole(Enum):
     CODER = 'coder'
     TESTER = 'tester'
 
-class SmartSpawnedAgent(msgspec.Struct):
+class SmartSpawnedAgent(msgspec.Struct, gc=False):
     """Represents a smart-spawned agent"""
     agent_id: str
     name: str

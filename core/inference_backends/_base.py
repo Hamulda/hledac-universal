@@ -3,6 +3,7 @@ core/inference_backends/_base.py — Base class for all inference backends
 ========================================================================
 Shared infrastructure for Backend-agnostic inference API.
 
+
 Pattern #17 fix: Extract common patterns from:
   - MLXInProcBackend (inference_coordinator.py)
   - MlxcelBackend (mlxcel_backend.py)

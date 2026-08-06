@@ -3,6 +3,7 @@
 Probes hledac_rust_extensions exactly once, returns a frozen result.
 Never raises — all exceptions caught and surfaced as availability=False.
 
+
 ISSUE-040: ABI version checking (semver-like tuple)
     - Rust extension exports __abi_version__ as (major, minor, patch) tuple via lib.rs
     - Python checks at import time: if ABI major version mismatches, fail-fast with clear error

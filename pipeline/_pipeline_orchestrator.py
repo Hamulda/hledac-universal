@@ -3,6 +3,7 @@
 Role: Orchestruje všechny stages v AsyncIterator[Stage] řetězci s TaskGroup
 na stage boundaries a bounded queues mezi nimi.
 
+
 Architecture:
     DiscoveryStage → DedupStage → FetchStage → MatchStage → EnrichStage → StoreStage
 

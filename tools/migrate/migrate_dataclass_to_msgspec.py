@@ -2,6 +2,9 @@
 tools/migrate_dataclass_to_msgspec.py — AST codemod: @dataclass → msgspec.Struct
 ===============================================================================
 
+
+
+
 Usage:
     # Dry-run (analyze, show diffs):
     python -m tools.migrate_dataclass_to_msgspec --dry-run

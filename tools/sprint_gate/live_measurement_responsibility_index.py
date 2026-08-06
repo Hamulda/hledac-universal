@@ -3,6 +3,8 @@
 Responsibility map for benchmarks/live_sprint_measurement.py.
 Read-only AST analysis — no imports, no runtime execution.
 
+
+
 ABSOLUTE REPO ROOT: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
 WORKDIR RULE: Work only inside repo root.
 NO-GIT RULE: Do not run git commands.
@@ -12,7 +14,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
-class SectionIndex(msgspec.Struct):
+class SectionIndex(msgspec.Struct, gc=False):
     name: str
     line_count_estimate: int
     line_range: str
@@ -21,7 +23,7 @@ class SectionIndex(msgspec.Struct):
     extraction_risk: str
     notes: list[str] = field(default_factory=list)
 
-class ResponsibilityIndex(msgspec.Struct, frozen=True):
+class ResponsibilityIndex(msgspec.Struct, frozen=True, gc=False):
     source_file: str = 'benchmarks/live_sprint_measurement.py'
     total_lines: int = 3757
     sections: list[SectionIndex] = field(default_factory=list)

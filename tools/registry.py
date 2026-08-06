@@ -2,6 +2,13 @@
 from __future__ import annotations
 Tool Registry — Pure Registration & Discovery.
 
+
+
+
+
+
+
+
 This module is the CANONICAL registration authority for tools.
 All tool registration MUST go through this surface.
 
@@ -37,7 +44,7 @@ class RiskLevel(StrEnum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class CostModel(msgspec.Struct, kw_only=True):
+class CostModel(msgspec.Struct, kw_only=True, gc=False):
     """Cost model for tool execution planning and resource management."""
     ram_mb_est: int = 100
     time_ms_est: int = 1000
@@ -49,7 +56,7 @@ class CostModel(msgspec.Struct, kw_only=True):
         """Convert to compact hint for Hermes LLM."""
         return {'ram_mb': self.ram_mb_est, 'time_ms': self.time_ms_est, 'network': self.network, 'network_cost': self.network_cost, 'risk': self.risk_level.value}
 
-class CostSummary(msgspec.Struct):
+class CostSummary(msgspec.Struct, gc=False):
     """Summary of estimated costs for a plan."""
     total_ram_mb: int = 0
     total_time_ms: int = 0
@@ -67,14 +74,14 @@ class CostSummary(msgspec.Struct):
             return False
         return True
 
-class BudgetLimits(msgspec.Struct):
+class BudgetLimits(msgspec.Struct, gc=False):
     """Budget limits for execution."""
     max_ram_mb: int = 2048
     max_time_ms: int = 300000
     max_network_calls: int = 50
     max_snapshot_writes: int = 20
 
-class SourceReputation(msgspec.Struct):
+class SourceReputation(msgspec.Struct, gc=False):
     """Source reliability scoring from own data."""
     domain: str
     path_prefix: str | None = None
@@ -114,7 +121,7 @@ class SourceReputation(msgspec.Struct):
         """Return dict for serialization."""
         return {'domain': self.domain, 'path_prefix': self.path_prefix, 'corroboration_rate': round(self.corroboration_rate, 3), 'contested_rate': round(self.contested_rate, 3), 'drift_rate': round(self.drift_rate, 3), 'blocked_rate': round(self.blocked_rate, 3), 'overall_score': round(self.overall_score, 3), 'total_claims': self.total_claims, 'last_updated': self.last_updated}
 
-class RateLimits(msgspec.Struct, kw_only=True):
+class RateLimits(msgspec.Struct, kw_only=True, gc=False):
     """Rate limiting configuration for tools."""
     max_calls_per_run: int = 100
     max_parallel: int = 1
@@ -123,7 +130,7 @@ class RateLimits(msgspec.Struct, kw_only=True):
         """Convert to compact hint for Hermes LLM."""
         return {'max_calls': self.max_calls_per_run, 'parallel': self.max_parallel}
 
-class Tool(msgspec.Struct, kw_only=True):
+class Tool(msgspec.Struct, kw_only=True, gc=False):
     """
     Tool definition with schemas, cost model, and handler.
 

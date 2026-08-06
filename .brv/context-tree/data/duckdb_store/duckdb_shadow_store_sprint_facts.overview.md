@@ -1,6 +1,7 @@
-- DuckDB Shadow Store implements a 3-tier facts hierarchy: (1) Sprint facts (sprint_delta, sprint_scorecard, source_hit_log), (2) Shadow findings (canonical_findings, shadow_runs), (3) Cross-sprint events (temporal_events, append-only)
-- Three independent graph attachment slots exist: _ioc_graph for analytics, _stix_graph for STIX synthesis, and _truth_write_graph for ACTIVE-phase buffered writes
-- F272 removed the DuckDB ioc_graph table; IOC storage now routes through DuckPGQGraph instead
-- Data flow: async_ingest_findings_batch -> graph attachments -> DuckPGQGraph or IOCGraph
-- Key dependencies: DuckPGQGraph for analytics queries, IOCGraph for truth, LanceDB for entity storage
-- ShadowStore project tag references both facts_tiers and graph_slots patterns
+- DuckDB memory default is 1GB (GHOST_DUCKDB_MEMORY), corrected from previous 600MB documentation; pragmas set threads=2, memory_limit='2GB', hard_memory_limit='1GB'
+- IOC extraction uses 3-tier fallback strategy: Python zero-copy → Rayon PyO3 (Rust) → Pure Python, ensuring graceful degradation
+- Arrow zero-copy ingest enabled by default (HLEDAC_ARROW_INGEST=ON) for efficient data transfer during ingestion
+- RemoteParquetSource supports 5 URI schemes (s3, https, az, gs, postgres) via DuckDB 1.5+ native PARQUET ATTACH pattern
+- Security hardening (SEC-02) enforces 0o600 file permissions on all DuckDB files; URI whitelist (E-33) prevents SQL injection via untrusted schemes
+- Async DuckDB operations (S-07) via asyncio.to_thread prevent event loop blocking; bounded queue (S1-06) provides backpressure with size=16, timeout=5.0s
+- DuckPGQGraph replaces deprecated IOC ioc_graph table (F272); insert config uses chunk=500, concurrency=2

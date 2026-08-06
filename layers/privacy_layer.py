@@ -2,6 +2,8 @@
 Privacy Layer - Universal Orchestrator Integration
 
 Integrates all privacy protection modules:
+
+
 - PersonalPrivacyManager (VPN/Tor/DNS/fingerprinting)
 - AnonymousCommunication (PGP/secure email/channels)
 - PrivacyAuditLog (PII anonymization/GDPR compliance)
@@ -89,7 +91,7 @@ except ImportError:
     ProtocolSpec = None
     HAS_PCG = False
 
-class PrivacyContext(msgspec.Struct):
+class PrivacyContext(msgspec.Struct, gc=False):
     """Privacy context for operations."""
     level: PrivacyLevel
     identity_id: str | None = None

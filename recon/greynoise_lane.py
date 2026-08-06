@@ -2,6 +2,7 @@
 Sprint F235: GreyNoise Intelligence Lane
 
 External intelligence lane for GreyNoise (internet noise, mass scanners).
+
 High-value unindexed data: GreyNoise identifies mass scanners, bots, and internet noise
 that other sources don't classify — critical for distinguishing real threats from noise.
 

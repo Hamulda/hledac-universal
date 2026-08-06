@@ -2,6 +2,11 @@
 F350M-FED-P: PeerNodeTransport — real cross-host P2P (UDP + Noise XX + mDNS).
 
 Sprint: F350M-FED-P / P2P Transport Activation 2026-06-04
+
+
+
+
+
 Target: federated/transports/peer_node.py
 
 PURPOSE

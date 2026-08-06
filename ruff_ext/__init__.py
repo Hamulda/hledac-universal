@@ -2,6 +2,7 @@
 ruff_ext — RUFF022: Banned Import Paths
 
 Custom lint rule for banning dual-namespace / bare-package imports.
+
 Rule ID: RUFF022 (banned-imports)
 
 Banned patterns:
@@ -83,6 +84,8 @@ ALLOWED_ROOTS: frozenset[str] = frozenset({
     "textwrap", "tokenize", "tracemalloc", "uuid", "zipfile",
     # Test
     "pytest", "unittest", "coverage", "hypothesis",
+    # DNS resolution library (external, not part of project)
+    "dns",
     # Internal aliases (explicit internal intent via underscore prefix)
     "_asyncio", "_threading", "_io", "_collections",
 })

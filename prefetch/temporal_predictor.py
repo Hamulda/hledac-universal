@@ -2,6 +2,9 @@
 TemporalIOCPredictor — P3-2: Speculative prefetch based on temporal patterns.
 
 Analyzes time-of-day / day-of-week patterns for IOC sources and pre-fetches
+
+
+
 during predicted peak activity windows.
 
 Architecture:
@@ -32,7 +35,7 @@ CONFIDENCE_BOOST_BURST = 2.0
 MIN_EVENTS_FOR_PATTERN = 5
 PEAK_HOUR_TOLERANCE = 2
 
-class IOCPrediction(msgspec.Struct, frozen=True):
+class IOCPrediction(msgspec.Struct, frozen=True, gc=False):
     """Single IOC prediction from temporal analysis."""
     ioc_value: str
     ioc_type: str
@@ -42,7 +45,7 @@ class IOCPrediction(msgspec.Struct, frozen=True):
     predicted_at: float
     expires_at: float
 
-class _PatternStats(msgspec.Struct):
+class _PatternStats(msgspec.Struct, gc=False):
     """Per-(ioc_type, source) rolling pattern statistics."""
     hour_counts: list[int] = field(default_factory=lambda: [0] * 24)
     dow_counts: list[int] = field(default_factory=lambda: [0] * 7)

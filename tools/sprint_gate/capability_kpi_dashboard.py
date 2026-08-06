@@ -2,6 +2,8 @@
 Capability KPI Dashboard — Sprint F206BL
 
 Model-free readiness dashboard that reads existing artifacts and emits:
+
+
 - capability_score (overall 0-100)
 - readiness_by_domain
 - blockers
@@ -31,7 +33,7 @@ class DomainStatus(StrEnum):
     RED = 'red'
     UNKNOWN = 'unknown'
 
-class DomainResult(msgspec.Struct):
+class DomainResult(msgspec.Struct, gc=False):
     status: DomainStatus
     score: int
     evidence_artifacts: list[str]
@@ -39,7 +41,7 @@ class DomainResult(msgspec.Struct):
     recommended_action: str
     raw: dict[str, Any] = field(default_factory=dict)
 
-class DashboardOutput(msgspec.Struct, frozen=True):
+class DashboardOutput(msgspec.Struct, frozen=True, gc=False):
     sprint: str
     date: str
     capability_score: int

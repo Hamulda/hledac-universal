@@ -33,7 +33,7 @@
 use pyo3::prelude::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use parking_lot::Mutex;  // parking_lot: no PoisonError, no unwrap needed
 use std::time::Duration;
 
 use arti_client::{TorClient, TorClientConfig};
@@ -147,11 +147,11 @@ impl ArtiNode {
     /// First run: 1-10s (downloads consensus).
     /// Subsequent: ~1s (cached consensus).
     fn start(&self) -> PyResult<bool> {
-        *self.bootstrap_status.lock().unwrap() = "bootstrapping...".to_string();
+        *self.bootstrap_status.lock() = "bootstrapping...".to_string();
 
         // Verify runtime alive
         {
-            let guard = self.runtime.lock().unwrap();
+            let guard = self.runtime.lock();
             if guard.is_none() {
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(
                     "Runtime destroyed (close() was called?)",
@@ -174,13 +174,13 @@ impl ArtiNode {
 
         match result {
             Ok(tc) => {
-                *self.client.lock().unwrap() = Some(tc);
-                *self.bootstrap_status.lock().unwrap() = "bootstrapped".to_string();
-                *self.bootstrapped.lock().unwrap() = true;
+                *self.client.lock() = Some(tc);
+                *self.bootstrap_status.lock() = "bootstrapped".to_string();
+                *self.bootstrapped.lock() = true;
                 Ok(true)
             }
             Err(e) => {
-                *self.bootstrap_status.lock().unwrap() = format!("failed: {}", e);
+                *self.bootstrap_status.lock() = format!("failed: {}", e);
                 Err(pyo3::exceptions::PyRuntimeError::new_err(e))
             }
         }
@@ -198,7 +198,7 @@ impl ArtiNode {
         })?;
 
         let tc = {
-            let guard = self.client.lock().unwrap();
+            let guard = self.client.lock();
             guard
                 .as_ref()
                 .ok_or_else(|| {
@@ -211,7 +211,7 @@ impl ArtiNode {
 
         // Verify runtime alive
         {
-            let guard = self.runtime.lock().unwrap();
+            let guard = self.runtime.lock();
             if guard.is_none() {
                 return Err(pyo3::exceptions::PyRuntimeError::new_err("Runtime destroyed"));
             }
@@ -226,28 +226,24 @@ impl ArtiNode {
 
     /// Check if Tor is bootstrapped and ready.
     fn is_bootstrapped(&self) -> bool {
-        *self.bootstrapped.lock().unwrap()
+        *self.bootstrapped.lock()
     }
 
     /// Get current bootstrap status string.
     fn bootstrap_status_str(&self) -> String {
-        self.bootstrap_status.lock().unwrap().clone()
+        self.bootstrap_status.lock().clone()
     }
 
     /// Close the Tor client and free resources. Idempotent.
     fn close(&mut self) {
         // Drop TorClient first
-        if let Ok(mut c) = self.client.lock() {
-            *c = None;
-        }
+        *self.client.lock() = None;
         // Drop runtime last
-        if let Ok(mut rt) = self.runtime.lock() {
-            if let Some(r) = rt.take() {
-                r.shutdown_background();
-            }
+        if let Some(r) = self.runtime.lock().take() {
+            r.shutdown_background();
         }
-        *self.bootstrap_status.lock().unwrap() = "closed".to_string();
-        *self.bootstrapped.lock().unwrap() = false;
+        *self.bootstrap_status.lock() = "closed".to_string();
+        *self.bootstrapped.lock() = false;
     }
 
     fn __del__(&mut self) {

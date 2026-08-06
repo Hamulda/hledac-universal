@@ -6,6 +6,7 @@ CLI wrapper that replays the research loop offline using report fixtures
 or built-in hermetic fixtures, producing a JSON artifact and Markdown summary.
 
 Usage:
+
     uv run python tools/replay_research_loop.py --input reports/some_sprint.json ...
     uv run python tools/replay_research_loop.py --fixture feed_only --query "LockBit ransomware" ...
 

@@ -2,6 +2,9 @@
 Dynamic Context Manager with MLX Embeddings (M1-primary)
 =============================================
 
+
+
+
 MLXEmbeddingManager is primary for M1. FastEmbed removed P0-1.
 
 This module provides memory-efficient context management using MLX embeddings
@@ -64,7 +67,7 @@ def _deserialize_cnew(data: bytes) -> dict[str, ContextItem]:
         result[k] = _deserialize_context_item(v)
     return result
 
-class ContextItem(msgspec.Struct):
+class ContextItem(msgspec.Struct, gc=False):
     """Individual context item with metadata."""
     item_id: str
     content: str
@@ -78,7 +81,7 @@ class ContextItem(msgspec.Struct):
     confidence: float = 0.5
     phase_relevance: dict[str, float] = None
 
-class ContextStats(msgspec.Struct):
+class ContextStats(msgspec.Struct, gc=False):
     """Context management statistics."""
     hot_items: int
     warm_items: int

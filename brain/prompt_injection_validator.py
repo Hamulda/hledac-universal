@@ -2,6 +2,9 @@
 P1G-A + ISSUE-8.2: Prompt Injection Validator v2
 =================================================
 
+
+
+
 Lightweight deterministic heuristic sanitizer for scraped content before
 it reaches the Hermes prompt. 3-layer defense against injection bypass.
 

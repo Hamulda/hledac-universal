@@ -3,31 +3,31 @@
     {
       "order": 3,
       "path": "_index.md",
-      "tokens": 836,
+      "tokens": 1051,
       "type": "summary"
     },
     {
       "order": 2,
-      "path": "architecture/_index.md",
-      "tokens": 621,
+      "path": "data/_index.md",
+      "tokens": 352,
       "type": "summary"
     },
     {
       "order": 2,
-      "path": "facts/_index.md",
-      "tokens": 78,
+      "path": "duckdb_store/_index.md",
+      "tokens": 257,
+      "type": "summary"
+    },
+    {
+      "order": 2,
+      "path": "project_management/_index.md",
+      "tokens": 76,
       "type": "summary"
     },
     {
       "order": 1,
       "path": "architecture/core/_index.md",
       "tokens": 187,
-      "type": "summary"
-    },
-    {
-      "order": 1,
-      "path": "testing/discovery_adapter_tests/_index.md",
-      "tokens": 266,
       "type": "summary"
     },
     {
@@ -65,9 +65,49 @@
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/cache_fragmentation_utils_4_overlapping_implementations.abstract.md",
+      "abstractTokens": 90,
+      "importance": 50,
+      "path": "architecture/hledac_universal/cache_fragmentation_utils_4_overlapping_implementations.md",
+      "tokens": 90,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/circuit_breaker_implementation_issue_41.abstract.md",
+      "abstractTokens": 40,
+      "importance": 50,
+      "path": "architecture/hledac_universal/circuit_breaker_implementation_issue_41.md",
+      "tokens": 40,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/cli_entry_point.abstract.md",
+      "abstractTokens": 56,
+      "importance": 50,
+      "path": "architecture/hledac_universal/cli_entry_point.md",
+      "tokens": 56,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/code_structure_overview.abstract.md",
+      "abstractTokens": 80,
+      "importance": 50,
+      "path": "architecture/hledac_universal/code_structure_overview.md",
+      "tokens": 80,
+      "type": "context"
+    },
+    {
       "importance": 50,
       "path": "architecture/hledac_universal/context.md",
       "tokens": 117,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/coordinators_architecture.abstract.md",
+      "abstractTokens": 78,
+      "importance": 50,
+      "path": "architecture/hledac_universal/coordinators_architecture.md",
+      "tokens": 78,
       "type": "context"
     },
     {
@@ -85,11 +125,51 @@
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/deduplication_module_architecture.abstract.md",
+      "abstractTokens": 72,
+      "importance": 50,
+      "path": "architecture/hledac_universal/deduplication_module_architecture.md",
+      "tokens": 72,
+      "type": "context"
+    },
+    {
       "abstractPath": "architecture/hledac_universal/duckdb_kuzu_dual_graph_architecture.abstract.md",
       "abstractTokens": 49,
       "importance": 50,
       "path": "architecture/hledac_universal/duckdb_kuzu_dual_graph_architecture.md",
       "tokens": 49,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/duckdb_memory_configuration.abstract.md",
+      "abstractTokens": 49,
+      "importance": 50,
+      "path": "architecture/hledac_universal/duckdb_memory_configuration.md",
+      "tokens": 49,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/embedding_pipeline_architecture.abstract.md",
+      "abstractTokens": 48,
+      "importance": 50,
+      "path": "architecture/hledac_universal/embedding_pipeline_architecture.md",
+      "tokens": 48,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/f186a_canonical_sprint_truth.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "architecture/hledac_universal/f186a_canonical_sprint_truth.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/f205b_sidecar_bus_3_stage_execution.abstract.md",
+      "abstractTokens": 41,
+      "importance": 50,
+      "path": "architecture/hledac_universal/f205b_sidecar_bus_3_stage_execution.md",
+      "tokens": 41,
       "type": "context"
     },
     {
@@ -125,6 +205,14 @@
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/issue_3_parallel_teardown.abstract.md",
+      "abstractTokens": 41,
+      "importance": 50,
+      "path": "architecture/hledac_universal/issue_3_parallel_teardown.md",
+      "tokens": 41,
+      "type": "context"
+    },
+    {
       "abstractPath": "architecture/hledac_universal/layer_protocol_and_layerstack.abstract.md",
       "abstractTokens": 45,
       "importance": 50,
@@ -139,6 +227,22 @@
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/migrate_universal_to_hledac_core.abstract.md",
+      "abstractTokens": 31,
+      "importance": 50,
+      "path": "architecture/hledac_universal/migrate_universal_to_hledac_core.md",
+      "tokens": 31,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/performance_configuration.abstract.md",
+      "abstractTokens": 62,
+      "importance": 50,
+      "path": "architecture/hledac_universal/performance_configuration.md",
+      "tokens": 62,
+      "type": "context"
+    },
+    {
       "abstractPath": "architecture/hledac_universal/project_documentation.abstract.md",
       "abstractTokens": 53,
       "importance": 50,
@@ -147,11 +251,83 @@
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/project_knowledge.abstract.md",
+      "abstractTokens": 27,
+      "importance": 50,
+      "path": "architecture/hledac_universal/project_knowledge.md",
+      "tokens": 27,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/publicfetcher_module.abstract.md",
+      "abstractTokens": 78,
+      "importance": 50,
+      "path": "architecture/hledac_universal/publicfetcher_module.md",
+      "tokens": 78,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/resilience_patterns.abstract.md",
+      "abstractTokens": 74,
+      "importance": 50,
+      "path": "architecture/hledac_universal/resilience_patterns.md",
+      "tokens": 74,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/rust_extensions_architecture.abstract.md",
+      "abstractTokens": 39,
+      "importance": 50,
+      "path": "architecture/hledac_universal/rust_extensions_architecture.md",
+      "tokens": 39,
+      "type": "context"
+    },
+    {
       "abstractPath": "architecture/hledac_universal/rust_extensions_code_review.abstract.md",
       "abstractTokens": 49,
       "importance": 50,
       "path": "architecture/hledac_universal/rust_extensions_code_review.md",
       "tokens": 49,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/semantic_dedup_architecture.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "architecture/hledac_universal/semantic_dedup_architecture.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/semantic_deduplicator.abstract.md",
+      "abstractTokens": 45,
+      "importance": 50,
+      "path": "architecture/hledac_universal/semantic_deduplicator.md",
+      "tokens": 45,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/sidecar_bus_architecture.abstract.md",
+      "abstractTokens": 64,
+      "importance": 50,
+      "path": "architecture/hledac_universal/sidecar_bus_architecture.md",
+      "tokens": 64,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/sidecar_orchestrator_architecture.abstract.md",
+      "abstractTokens": 50,
+      "importance": 50,
+      "path": "architecture/hledac_universal/sidecar_orchestrator_architecture.md",
+      "tokens": 50,
+      "type": "context"
+    },
+    {
+      "abstractPath": "architecture/hledac_universal/sidecar_protocol_adapters.abstract.md",
+      "abstractTokens": 74,
+      "importance": 50,
+      "path": "architecture/hledac_universal/sidecar_protocol_adapters.md",
+      "tokens": 74,
       "type": "context"
     },
     {
@@ -175,47 +351,27 @@
       "type": "context"
     },
     {
-      "abstractPath": "architecture/hledac_universal/sprint_lifecycle_pipeline.abstract.md",
-      "abstractTokens": 48,
-      "importance": 50,
-      "path": "architecture/hledac_universal/sprint_lifecycle_pipeline.md",
-      "tokens": 48,
-      "type": "context"
-    },
-    {
-      "abstractPath": "architecture/runtime/acquisition_cycleresult_structure.abstract.md",
-      "abstractTokens": 41,
-      "importance": 50,
-      "path": "architecture/runtime/acquisition_cycleresult_structure.md",
-      "tokens": 41,
-      "type": "context"
-    },
-    {
-      "abstractPath": "architecture/runtime/acquisition_exit_paths.abstract.md",
-      "abstractTokens": 41,
-      "importance": 50,
-      "path": "architecture/runtime/acquisition_exit_paths.md",
-      "tokens": 41,
-      "type": "context"
-    },
-    {
-      "abstractPath": "architecture/runtime/acquisition_orchestrator_lifecycle.abstract.md",
+      "abstractPath": "architecture/hledac_universal/sprint_17_rust_extensions_bug_fixes.abstract.md",
       "abstractTokens": 46,
       "importance": 50,
-      "path": "architecture/runtime/acquisition_orchestrator_lifecycle.md",
+      "path": "architecture/hledac_universal/sprint_17_rust_extensions_bug_fixes.md",
       "tokens": 46,
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/sprint_data_flow_architecture.abstract.md",
+      "abstractTokens": 62,
       "importance": 50,
-      "path": "architecture/runtime/context.md",
-      "tokens": 60,
+      "path": "architecture/hledac_universal/sprint_data_flow_architecture.md",
+      "tokens": 62,
       "type": "context"
     },
     {
+      "abstractPath": "architecture/hledac_universal/sprint_lifecycle_pipeline.abstract.md",
+      "abstractTokens": 63,
       "importance": 50,
-      "path": "architecture/transport_layers/context.md",
-      "tokens": 93,
+      "path": "architecture/hledac_universal/sprint_lifecycle_pipeline.md",
+      "tokens": 63,
       "type": "context"
     },
     {
@@ -227,61 +383,11 @@
       "type": "context"
     },
     {
-      "abstractPath": "architecture/transport_layers/http_3_lane_implementation.abstract.md",
-      "abstractTokens": 47,
-      "importance": 50,
-      "path": "architecture/transport_layers/http_3_lane_implementation.md",
-      "tokens": 47,
-      "type": "context"
-    },
-    {
       "abstractPath": "architecture/transport_layers/http_3_neqo_integration_plan.abstract.md",
       "abstractTokens": 0,
       "importance": 50,
       "path": "architecture/transport_layers/http_3_neqo_integration_plan.md",
       "tokens": 0,
-      "type": "context"
-    },
-    {
-      "abstractPath": "architecture/transport_layers/issue_0_2_curl_cffi_caps_architecture_fix.abstract.md",
-      "abstractTokens": 45,
-      "importance": 50,
-      "path": "architecture/transport_layers/issue_0_2_curl_cffi_caps_architecture_fix.md",
-      "tokens": 45,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "data/duckdb_store/context.md",
-      "tokens": 97,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "data/duckdb_store/duckdb-as-canonical-storage-with-tiered-memory-budget.md",
-      "tokens": 342,
-      "type": "context"
-    },
-    {
-      "importance": 50,
-      "path": "data/duckdb_store/duckdb-dual-role-sql-store-graph-analytics-donor.md",
-      "tokens": 322,
-      "type": "context"
-    },
-    {
-      "abstractPath": "data/duckdb_store/duckdb_remote_parquet_support.abstract.md",
-      "abstractTokens": 42,
-      "importance": 50,
-      "path": "data/duckdb_store/duckdb_remote_parquet_support.md",
-      "tokens": 42,
-      "type": "context"
-    },
-    {
-      "abstractPath": "data/duckdb_store/duckdb_shadow_store.abstract.md",
-      "abstractTokens": 61,
-      "importance": 50,
-      "path": "data/duckdb_store/duckdb_shadow_store.md",
-      "tokens": 61,
       "type": "context"
     },
     {
@@ -293,11 +399,27 @@
       "type": "context"
     },
     {
-      "abstractPath": "knowledge_base/audit/knowledge_audit_2026_07_26.abstract.md",
-      "abstractTokens": 31,
+      "abstractPath": "facts/conventions/conftest_py_lazy_loading_architecture.abstract.md",
+      "abstractTokens": 0,
       "importance": 50,
-      "path": "knowledge_base/audit/knowledge_audit_2026_07_26.md",
-      "tokens": 31,
+      "path": "facts/conventions/conftest_py_lazy_loading_architecture.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
+      "abstractPath": "runtime/acquisition/acquisition_strategy_planner.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "runtime/acquisition/acquisition_strategy_planner.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
+      "abstractPath": "runtime/acquisition/hermes_pivot_contract.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "runtime/acquisition/hermes_pivot_contract.md",
+      "tokens": 0,
       "type": "context"
     },
     {
@@ -317,6 +439,14 @@
       "type": "context"
     },
     {
+      "abstractPath": "testing/f350m_r_regression_tests/f350m_r_exit_code_regression_session_scoped_infrastructure.abstract.md",
+      "abstractTokens": 0,
+      "importance": 50,
+      "path": "testing/f350m_r_regression_tests/f350m_r_exit_code_regression_session_scoped_infrastructure.md",
+      "tokens": 0,
+      "type": "context"
+    },
+    {
       "abstractPath": "testing/url_dedup/url_deduplication_tests.abstract.md",
       "abstractTokens": 0,
       "importance": 50,
@@ -325,13 +455,13 @@
       "type": "context"
     }
   ],
-  "generated_at": "2026-08-03T11:57:26.891Z",
+  "generated_at": "2026-08-05T22:18:42.530Z",
   "lane_tokens": {
-    "contexts": 3999,
+    "contexts": 3993,
     "stubs": 0,
-    "summaries": 1988
+    "summaries": 1923
   },
-  "source_fingerprint": "70f0e91ad0fc166bd162430588d45ebd953d09b4ad5cbc7d548253b827a3187a",
-  "total_tokens": 5987,
+  "source_fingerprint": "9767645e5d51385f7d007a1a9fc662b7a1f7ca9c4da1e0706bf731bb0afc20bd",
+  "total_tokens": 5916,
   "version": 1
 }

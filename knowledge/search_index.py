@@ -2,6 +2,11 @@
 
 ISSUE-011: TantivyFulltextIndex replaces Python BM25Index for fulltext search.
 When the Rust fulltext module (hledac_rust_extensions.fulltext) is available,
+
+
+
+
+
 LocalSearchSeam delegates to mmap-backed Tantivy. Otherwise falls back to the
 pure-Python BM25Index transparently."""
 import logging

@@ -3,6 +3,7 @@
 ISSUE 6.1 — Masová migrace safe_gather_ok → parallel_ok (F-10)
 =============================================================
 
+
 Codemod: safe_gather_ok(*coros, label=X) → parallel_ok(*coros, label=X)
          safe_gather_ok(*tasks) → parallel_ok(*tasks)
 Dead branch removal: isinstance(r, Exception): continue

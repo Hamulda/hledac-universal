@@ -2,6 +2,9 @@
 
 UNIFIED-010: Replaces per-sprint anti-bot detection with a cumulative,
 cross-sprint fingerprint database backed by DuckDB. Eliminates wasteful
+
+
+
 re-detection of the same WAF/CDN protections every sprint.
 
 Key features:

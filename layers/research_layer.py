@@ -2,6 +2,7 @@
 Research Layer - GhostDirector and Deep Research Integration
 ============================================================
 
+
 Integrates:
 - GhostDirector: 18+ actions, OODA loop, autonomous investigation
 - ResearchDepthMaximizer: 10-level deep research, citation following

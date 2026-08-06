@@ -2,6 +2,7 @@
 from __future__ import annotations
 Pure async helper for reading chunk streams with a hard byte cap.
 
+
 No transport layer coupling. No router involvement. No network I/O.
 Used by both curl_cffi and httpx transport lanes.
 
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 CHUNKS_BUDGET: int = 8192
 
 
-class BodyReadResult(msgspec.Struct, frozen=True):
+class BodyReadResult(msgspec.Struct, frozen=True, gc=False):
     """
     Bounded body-read outcome with enough context for FetchResult construction.
 

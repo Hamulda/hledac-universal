@@ -2,6 +2,7 @@
 SprintDashboard — rich terminal dashboard for live sprint monitoring.
 
 Usage:
+
     dashboard = SprintDashboard(sprint_id, query, duration_s)
     dashboard.start()
     # after each cycle:

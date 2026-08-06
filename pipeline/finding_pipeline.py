@@ -2,6 +2,8 @@
 
 Problem: _store_worker_main sequentially awaits _flush_store_batch — waits for
 one flush to complete before starting the next. With 2 workers and chunk_size=1024,
+
+
 a large batch stalls the pipeline: 2048 findings → 2 sequential flushes of 1024.
 
 Solution: Drain queue into N chunks concurrently, flush all chunks in parallel

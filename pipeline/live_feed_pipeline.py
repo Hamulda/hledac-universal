@@ -2,6 +2,13 @@
 
 feed_url -> 8AF fetch+parse -> entry normalization
     -> HTML->text (word-boundary safe, entity-safe)
+
+
+
+
+
+
+
     -> pattern scan via PatternMatcher (offloaded, bounded concurrency)
     -> CanonicalFinding per PatternHit
     -> storage
@@ -12,6 +19,7 @@ Public API:
 
 Invariants:
 - Public/passive-only, no AO, no LLM
+
 - store=None is valid no-op
 - PatternMatcher is SSOT — no regex fallback
 - Empty matcher registry = valid zero-findings state

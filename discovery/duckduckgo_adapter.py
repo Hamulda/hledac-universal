@@ -3,6 +3,7 @@ DuckDuckGo public web discovery adapter.
 
 Backend: ddgs v9+ (sync-only; async via asyncio.to_thread compatibility fallback)
 
+
 INVARIANTS (Sprint 8AC):
 - Public/passive-only; no auth, no cookies, no credentials
 - No AO imports; no storage writes; no pattern matcher calls

@@ -3,6 +3,11 @@
 Meta-checker that compares benchmark JSON + validation JSON + trace JSON
 and reports disagreements between the three surfaces.
 
+
+
+
+
+
 Strict mode: stale trace verdicts and wallclock budget overruns are always reported.
 
 ABSOLUTE REPO ROOT: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
@@ -25,7 +30,7 @@ class SanityVerdict(Enum):
     SANITY_FAIL_BENCHMARK_SHAPE_GAP = 'SANITY_FAIL_BENCHMARK_SHAPE_GAP'
     SANITY_FAIL_RESEARCH_QUALITY = 'SANITY_FAIL_RESEARCH_QUALITY'
 
-class BenchmarkSurface(msgspec.Struct):
+class BenchmarkSurface(msgspec.Struct, gc=False):
     """Parsed benchmark surface."""
     run_quality_verdict: str | None = None
     live_kpi: dict[str, Any] | None = None
@@ -41,7 +46,7 @@ class BenchmarkSurface(msgspec.Struct):
     research_quality: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-class ValidatorSurface(msgspec.Struct, frozen=True):
+class ValidatorSurface(msgspec.Struct, frozen=True, gc=False):
     """Parsed validator surface."""
     live_kpi: dict[str, Any] | None = None
     acquisition_report: dict[str, Any] | None = None
@@ -50,7 +55,7 @@ class ValidatorSurface(msgspec.Struct, frozen=True):
     source_family_outcomes: list[dict[str, Any]] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-class TraceSurface(msgspec.Struct, frozen=True):
+class TraceSurface(msgspec.Struct, frozen=True, gc=False):
     """Parsed trace surface."""
     verdict: str | None = None
     stage: str | None = None
@@ -61,7 +66,7 @@ class TraceSurface(msgspec.Struct, frozen=True):
     raw_internal: dict[str, Any] | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-class QualitySurface(msgspec.Struct, frozen=True):
+class QualitySurface(msgspec.Struct, frozen=True, gc=False):
     """Parsed research quality surface."""
     quality_gate: str | None = None
     grade: str | None = None
@@ -78,7 +83,7 @@ class QualitySurface(msgspec.Struct, frozen=True):
     nonfeed_clues_without_acceptance: bool | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-class SanityResult(msgspec.Struct, frozen=True):
+class SanityResult(msgspec.Struct, frozen=True, gc=False):
     verdict: SanityVerdict = SanityVerdict.SANITY_PASS
     checks: dict[str, bool] = field(default_factory=dict)
     disagreements: list[str] = field(default_factory=list)

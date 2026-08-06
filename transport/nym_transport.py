@@ -1,3 +1,34 @@
+"""
+NymTransport — Nym Network mixnet transport via WebSocket JSON API.
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+COMPLEXITY NOTE (WARNING #2)
+═══════════════════════════════════════════════════════════════════════════════════
+
+This transport uses a custom JSON protocol over WebSocket, which is MORE COMPLEX
+than Tor/I2P SOCKS5 implementations. The complexity is justified by:
+
+  1. MIXNET ANONYMITY: Nym provides stronger anonymity than Tor via mixnet design
+  2. TRAFFIC ANALYSIS RESISTANCE: Cover traffic, continuous padding, etc.
+  3. MODERN ARCHITECTURE: WebSocket is well-supported, async-native
+
+If you don't need Nym-level anonymity, prefer:
+  - TorTransport (SOCKS5, simpler)
+  - I2PTransport (SOCKS5 or SAM v3, simpler)
+
+═══════════════════════════════════════════════════════════════════════════════════
+
+Nym Protocol Flow:
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │ 1. nym-client process spawns (local SOCKS5 → WebSocket bridge)              │
+  │ 2. WebSocket connects to ws://127.0.0.1:{websocket_port}                     │
+  │ 3. JSON messages: {"type": "send", "recipient": "...", "data": {...}}       │
+  │ 4. Responses: {"type": "received", "message": {...}}                         │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+JSON Serialization: orjson (2-3× faster) > msgspec fallback > stdlib json
+"""
 import asyncio
 import logging
 from hledac.universal.utils.async_helpers import safe_create_task
@@ -18,8 +49,13 @@ from hledac.universal.utils.uuid7 import new_runtime_id
 from .base import Transport
 logger = logging.getLogger(__name__)
 
+
 def _nym_json_dumps(obj: Any) -> str:
-    """Serialize to JSON string. orjson is 2-3× faster."""
+    """Serialize to JSON string.
+    
+    Priority: orjson (2-3× faster) > msgspec.encode > stdlib json.
+    Falls back gracefully if orjson not installed.
+    """
     if _ORJSON_AVAILABLE:
         return orjson.dumps(obj).decode('utf-8')
     return _msgspec_encode(obj).decode()
@@ -308,3 +344,38 @@ class NymTransport(Transport):
                     self.circuit_breaker_open = False
                     self.circuit_breaker_failures = 0
                     logger.info('Circuit breaker reset for Nym')
+
+    async def _nym_send_and_wait_reply(self, message: dict, timeout: float = 30.0) -> dict | None:
+        """
+        Send a message via Nym websocket and wait for reply.
+
+        This is a simpler alternative to send_message() for request/response patterns.
+        Returns the reply message dict or None on timeout/error.
+        """
+        reply_event = asyncio.Event()
+        reply_data: dict | None = None
+        msg_id = message.get('data', {}).get('msg_id', new_runtime_id())
+
+        async def reply_handler(msg: dict):
+            nonlocal reply_data
+            if msg.get('msg_id') == msg_id:
+                reply_data = msg
+                reply_event.set()
+
+        self.register_handler(f'_reply_{msg_id}', reply_handler)
+        try:
+            await self.send_message(
+                target=message.get('recipient', ''),
+                msg_type=message.get('data', {}).get('type', ''),
+                payload=message.get('data', {}).get('payload', {}),
+                signature=message.get('data', {}).get('signature', ''),
+                msg_id=msg_id,
+            )
+            try:
+                async with asyncio.timeout(timeout):
+                    await reply_event.wait()
+            except TimeoutError:
+                logger.warning(f'Nym reply timeout for msg_id={msg_id}')
+            return reply_data
+        finally:
+            self.handlers.pop(f'_reply_{msg_id}', None)

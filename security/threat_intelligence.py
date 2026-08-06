@@ -2,6 +2,7 @@
 ThreatIntelligence — IOC lookup and threat analysis for OSINT findings.
 
 Provides:
+
 - IOC (Indicator of Compromise) lookup against local threat feeds
 - Threat level assessment for analyzed entities
 - Graceful degradation: returns empty results if no feeds available

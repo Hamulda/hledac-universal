@@ -2,6 +2,9 @@
 Malá spiking neuronová síť (LIF) implementovaná v MLX pro impulzivní změny priorit.
 
 ISSUE-037 решения:
+
+
+
 1. Benchmark threshold 100ms → CPU fallback pokud MLX inference > 100ms
 2. Pre-compiled .mlpackage ANE model support (CoreML)
 3. Proper mx.eval() + mx.metal.clear_cache() pro M1 Metal cache management

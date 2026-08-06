@@ -2,6 +2,13 @@
 Unicode Attack Surface Analyzer
 
 High-speed Unicode attack analyzer detecting:
+
+
+
+
+
+
+
 - Zero-width characters (invisible text attacks)
 - Homoglyph substitution (confusable character attacks)
 - Bidirectional text attacks (RLO/LRO/PDF spoofing)
@@ -22,7 +29,7 @@ from typing import Any
 import msgspec
 logger = logging.getLogger(__name__)
 
-class UnicodeConfig(msgspec.Struct):
+class UnicodeConfig(msgspec.Struct, gc=False):
     """Configuration for Unicode attack analysis."""
     detect_zero_width: bool = True
     detect_homoglyphs: bool = True
@@ -33,14 +40,14 @@ class UnicodeConfig(msgspec.Struct):
     include_context: bool = True
     context_window: int = 20
 
-class ZeroWidthFinding(msgspec.Struct):
+class ZeroWidthFinding(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for zero-width character detection."""
     position: int
     char_code: str
     char_name: str
     context: str | None = None
 
-class HomoglyphFinding(msgspec.Struct):
+class HomoglyphFinding(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for homoglyph/confusable character detection."""
     position: int
     char: str
@@ -48,7 +55,7 @@ class HomoglyphFinding(msgspec.Struct):
     confusable_with: list[str]
     char_code: str = ''
 
-class BidiFinding(msgspec.Struct):
+class BidiFinding(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for bidirectional text attack detection."""
     position: int
     char_code: str
@@ -56,7 +63,7 @@ class BidiFinding(msgspec.Struct):
     description: str
     context: str | None = None
 
-class NormalizationFinding(msgspec.Struct):
+class NormalizationFinding(msgspec.Struct, gc=False):
     """Sprint F300: msgspec.Struct for Unicode normalization anomaly detection."""
     position: int
     original: str
@@ -64,7 +71,7 @@ class NormalizationFinding(msgspec.Struct):
     anomaly_type: str
     char_code: str = ''
 
-class UnicodeAnalysisResult(msgspec.Struct):
+class UnicodeAnalysisResult(msgspec.Struct, gc=False):
     """Complete result of Unicode attack analysis."""
     zero_width_findings: list[ZeroWidthFinding] = field(default_factory=list)
     homoglyph_findings: list[HomoglyphFinding] = field(default_factory=list)

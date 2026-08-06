@@ -2,6 +2,7 @@
 BranchManager – rozhodování o odbočkách s ANE a spiking prioritou.
 Rozhoduje o vytvoření nových větví (úloh) na základě nálezů.
 
+
 ISSUE-037 opravy:
 1. _boost_related_tasks/_boost_queue REMOVED — heappop na asyncio.PriorityQueue
    je CRITICAL bug (PriorityQueue nemá heap protocol). Nahrrazeno přímým

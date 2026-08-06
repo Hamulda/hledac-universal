@@ -2,6 +2,7 @@
 LightpandaPool — pool of Lightpanda instances for concurrent JS rendering.
 
 Extracted from coordinators/fetch_coordinator.py (Sprint 45 refactor).
+
 Provides a bounded pool of LightpandaManager instances.
 """
 import asyncio

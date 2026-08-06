@@ -2,17 +2,21 @@
 IOC Graph — Kuzu-backed entity graph for OSINT IOC tracking.
 
 GRAPH TRUTH STORE (Sprint 8F7)
+
 ===============================
 IOCGraph is the GraphTruthStore — the authoritative backend for IOC entity truth.
 It owns: buffer_ioc(), flush_buffers(), upsert_ioc_batch(), export_stix_bundle(), pivot().
 It is NOT the analytics backend — DuckPGQGraph serves that role.
 
-[META]-006 Schema:
+[META]-006 + [SWARM]-003 Schema:
   IOC(id STRING PK, ioc_type STRING, value STRING,
       first_seen DOUBLE, last_seen DOUBLE, confidence DOUBLE,
       earliest_observed DOUBLE, latest_observed DOUBLE, observation_count INTEGER)
   OBSERVED(finding_id STRING, source_type STRING,
            first_seen DOUBLE, last_seen DOUBLE)
+  PREDICTED(confidence DOUBLE, adamic_adar DOUBLE, jaccard DOUBLE,
+            pref_attach DOUBLE, common_neighbors INTEGER, method STRING,
+            created_at DOUBLE, verified BOOLEAN)
 
 PIVOT:  MATCH (n:IOC)-[r*1..2]-(m:IOC) WHERE n.value=$v AND n.ioc_type=$t RETURN m, r
 """
@@ -497,6 +501,43 @@ class IOCGraph:
         except Exception:
             pass
 
+        # SWARM-003: PREDICTED edge type for link prediction results
+        try:
+            self._conn.execute(
+                'CREATE REL TABLE PREDICTED('
+                'FROM IOC TO IOC, '
+                'confidence DOUBLE, '
+                'adamic_adar DOUBLE, '
+                'jaccard DOUBLE, '
+                'pref_attach DOUBLE, '
+                'common_neighbors INTEGER, '
+                'method STRING, '
+                'created_at DOUBLE, '
+                'verified BOOLEAN DEFAULT false'
+                ')'
+            )
+        except Exception:
+            pass
+
+        # SWARM-003: PREDICTED edge type for link prediction results
+        # Properties: confidence, adamic_adar, jaccard, pref_attach, common_neighbors, method
+        try:
+            self._conn.execute(
+                'CREATE REL TABLE PREDICTED('
+                'FROM IOC TO IOC, '
+                'confidence DOUBLE, '
+                'adamic_adar DOUBLE, '
+                'jaccard DOUBLE, '
+                'pref_attach DOUBLE, '
+                'common_neighbors INTEGER, '
+                'method STRING, '
+                'created_at DOUBLE, '
+                'verified BOOLEAN DEFAULT false'
+                ')'
+            )
+        except Exception:
+            pass
+
         # [META]-006: Probe whether existing DB has temporal fields
         if not self._schema_has_temporal:
             try:
@@ -621,6 +662,24 @@ class IOCGraph:
         except Exception:
             pass
 
+        # SWARM-003: Create PREDICTED edge table
+        try:
+            target_conn.execute(
+                'CREATE REL TABLE PREDICTED('
+                'FROM IOC TO IOC, '
+                'confidence DOUBLE, '
+                'adamic_adar DOUBLE, '
+                'jaccard DOUBLE, '
+                'pref_attach DOUBLE, '
+                'common_neighbors INTEGER, '
+                'method STRING, '
+                'created_at DOUBLE, '
+                'verified BOOLEAN DEFAULT false'
+                ')'
+            )
+        except Exception:
+            pass
+
         try:
             # Copy IOC nodes — MATCH all, CREATE in target
             # [META]-006: include earliest_observed, latest_observed, observation_count
@@ -693,6 +752,36 @@ class IOCGraph:
                 obs_count += 1
             total_copied += obs_count
             logger.info('[IOCGraph] persist_to_disk: %d OBSERVED edges copied', obs_count)
+
+            # SWARM-003: Copy PREDICTED edges
+            try:
+                pred_res = self._conn.execute(
+                    'MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) '
+                    'RETURN a.id, b.id, r.confidence, r.adamic_adar, r.jaccard, '
+                    'r.pref_attach, r.common_neighbors, r.method, r.created_at, r.verified'
+                )
+                pred_count = 0
+                while pred_res.has_next():
+                    row = pred_res.get_next()
+                    target_conn.execute(
+                        'MATCH (a:IOC {id: $aid}), (b:IOC {id: $bid}) '
+                        'CREATE (a)-[:PREDICTED {'
+                        'confidence: $conf, adamic_adar: $aa, jaccard: $jac, '
+                        'pref_attach: $pa, common_neighbors: $cn, '
+                        'method: $method, created_at: $ts, verified: $ver'
+                        '}]->(b)',
+                        {
+                            'aid': row[0], 'bid': row[1],
+                            'conf': row[2], 'aa': row[3], 'jac': row[4],
+                            'pa': row[5], 'cn': row[6], 'method': row[7],
+                            'ts': row[8], 'ver': row[9],
+                        },
+                    )
+                    pred_count += 1
+                total_copied += pred_count
+                logger.info('[IOCGraph] persist_to_disk: %d PREDICTED edges copied', pred_count)
+            except Exception:
+                pass
 
         except Exception as exc:
             logger.error('[IOCGraph] persist_to_disk failed: %s', exc)
@@ -811,6 +900,228 @@ class IOCGraph:
             conn.execute('MATCH (a:IOC), (b:IOC) WHERE a.id = $ida AND b.id = $idb CREATE (a)-[r:OBSERVED {finding_id: $fid, source_type: $st, first_seen: $ts, last_seen: $ts}]->(b)', {'ida': ioc_id_a, 'idb': ioc_id_b, 'fid': finding_id, 'st': source_type, 'ts': ts})
         else:
             conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb SET r.last_seen = $ts', {'ida': ioc_id_a, 'idb': ioc_id_b, 'ts': ts})
+
+    # SWARM-003: Link Prediction Methods
+    async def add_predicted_edge(
+        self,
+        src_id: str,
+        dst_id: str,
+        confidence: float,
+        method: str,
+        adamic_adar: float = 0.0,
+        jaccard: float = 0.0,
+        pref_attach: float = 0.0,
+        common_neighbors: int = 0,
+    ) -> bool:
+        """
+        Add a PREDICTED edge between two IOC nodes.
+
+        SWARM-003: Stores link prediction results in Kuzu for later verification.
+        Predicted edges can be promoted to OBSERVED edges once verified.
+
+        Args:
+            src_id: Source IOC node ID
+            dst_id: Destination IOC node ID
+            confidence: Combined confidence score (0-1)
+            method: Prediction method used (adamic_adar, jaccard, pref_attach)
+            adamic_adar: Adamic-Adar index score
+            jaccard: Jaccard coefficient
+            pref_attach: Preferential attachment score
+            common_neighbors: Number of common neighbors
+
+        Returns:
+            True if edge was added, False otherwise
+        """
+        if self._closed or self._conn is None:
+            return False
+
+        try:
+            await asyncio.to_thread(
+                self._add_predicted_edge_sync,
+                src_id, dst_id, confidence, method,
+                adamic_adar, jaccard, pref_attach, common_neighbors
+            )
+            return True
+        except Exception as e:
+            import logging
+            logging.warning(f'[IOCGraph] add_predicted_edge failed: {e}')
+            return False
+
+    def _add_predicted_edge_sync(
+        self,
+        src_id: str,
+        dst_id: str,
+        confidence: float,
+        method: str,
+        adamic_adar: float,
+        jaccard: float,
+        pref_attach: float,
+        common_neighbors: int,
+    ) -> None:
+        """Synchronous predicted edge addition — runs on _executor thread."""
+        conn = self._conn
+        assert conn is not None
+
+        # Check if PREDICTED edge already exists
+        res = conn.execute(
+            'MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb RETURN r.confidence',
+            {'ida': src_id, 'idb': dst_id}
+        )
+
+        ts = time.time()
+
+        if not res.has_next():
+            # Create new PREDICTED edge
+            conn.execute(
+                'MATCH (a:IOC), (b:IOC) WHERE a.id = $ida AND b.id = $idb '
+                'CREATE (a)-[r:PREDICTED {'
+                'confidence: $conf, '
+                'adamic_adar: $aa, '
+                'jaccard: $jac, '
+                'pref_attach: $pa, '
+                'common_neighbors: $cn, '
+                'method: $method, '
+                'created_at: $ts, '
+                'verified: false'
+                '}]->(b)',
+                {
+                    'ida': src_id,
+                    'idb': dst_id,
+                    'conf': confidence,
+                    'aa': adamic_adar,
+                    'jac': jaccard,
+                    'pa': pref_attach,
+                    'cn': common_neighbors,
+                    'method': method,
+                    'ts': ts,
+                }
+            )
+        else:
+            # Update existing PREDICTED edge if new one has higher confidence
+            existing_conf = res.get_next()[0]
+            if confidence > existing_conf:
+                conn.execute(
+                    'MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb '
+                    'SET r.confidence = $conf, r.adamic_adar = $aa, r.jaccard = $jac, '
+                    'r.pref_attach = $pa, r.common_neighbors = $cn, r.method = $method',
+                    {
+                        'ida': src_id,
+                        'idb': dst_id,
+                        'conf': confidence,
+                        'aa': adamic_adar,
+                        'jac': jaccard,
+                        'pa': pref_attach,
+                        'cn': common_neighbors,
+                        'method': method,
+                    }
+                )
+
+    async def verify_predicted_edge(self, src_id: str, dst_id: str) -> bool:
+        """
+        Mark a PREDICTED edge as verified.
+
+        SWARM-003: Called by EntropyFetchBridge micro-sprint when a predicted
+        edge is confirmed. Upgrades PREDICTED → OBSERVED relationship.
+
+        Args:
+            src_id: Source IOC node ID
+            dst_id: Destination IOC node ID
+
+        Returns:
+            True if edge was verified, False otherwise
+        """
+        if self._closed or self._conn is None:
+            return False
+
+        try:
+            conn = self._conn
+            assert conn is not None
+
+            # Mark as verified
+            conn.execute(
+                'MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb SET r.verified = true',
+                {'ida': src_id, 'idb': dst_id}
+            )
+
+            # Create OBSERVED edge if it doesn't exist
+            res = conn.execute(
+                'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb RETURN r',
+                {'ida': src_id, 'idb': dst_id}
+            )
+            if not res.has_next():
+                conn.execute(
+                    'MATCH (a:IOC), (b:IOC) WHERE a.id = $ida AND b.id = $idb '
+                    'CREATE (a)-[o:OBSERVED {finding_id: $fid, source_type: $st, first_seen: $ts, last_seen: $ts}]->(b)',
+                    {
+                        'ida': src_id,
+                        'idb': dst_id,
+                        'fid': 'link_prediction_verified',
+                        'st': 'swarm_003',
+                        'ts': time.time(),
+                    }
+                )
+
+            return True
+        except Exception as e:
+            import logging
+            logging.warning(f'[IOCGraph] verify_predicted_edge failed: {e}')
+            return False
+
+    async def get_predicted_edges(
+        self,
+        min_confidence: float = 0.3,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """
+        Get PREDICTED edges above confidence threshold.
+
+        SWARM-003: Returns edges ready for EntropyFetchBridge verification.
+
+        Args:
+            min_confidence: Minimum confidence threshold (default: 0.3)
+            limit: Maximum number of edges to return (default: 100)
+
+        Returns:
+            List of predicted edge dicts with all properties
+        """
+        if self._closed or self._conn is None:
+            return []
+
+        try:
+            conn = self._conn
+            assert conn is not None
+
+            result = conn.execute(
+                'MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) '
+                'WHERE r.confidence >= $min_conf AND r.verified = false '
+                'RETURN a.id, a.value, a.ioc_type, b.id, b.value, b.ioc_type, '
+                'r.confidence, r.adamic_adar, r.jaccard, r.method, r.common_neighbors '
+                'ORDER BY r.confidence DESC LIMIT $lim',
+                {'min_conf': min_confidence, 'lim': limit}
+            )
+
+            edges = []
+            while result.has_next():
+                row = result.get_next()
+                edges.append({
+                    'src_id': row[0],
+                    'src_value': row[1],
+                    'src_type': row[2],
+                    'dst_id': row[3],
+                    'dst_value': row[4],
+                    'dst_type': row[5],
+                    'confidence': row[6],
+                    'adamic_adar': row[7],
+                    'jaccard': row[8],
+                    'method': row[9],
+                    'common_neighbors': row[10],
+                })
+
+            return edges
+        except Exception as e:
+            import logging
+            logging.warning(f'[IOCGraph] get_predicted_edges failed: {e}')
+            return []
 
     async def upsert_ioc_batch(
         self,

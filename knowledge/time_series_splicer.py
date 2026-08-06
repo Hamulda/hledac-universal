@@ -2,6 +2,8 @@
 [META]-005: TimeSeriesSplicer — Unified millisecond-aligned timeline across protocols.
 
 Canonical timestamp format: (entity_value, ioc_type, protocol, timestamp_ns: int64,
+
+
                              event_type, source_evidence_url).
 Stored in DuckDB time_series_spliced table with
 PRIMARY KEY(entity_value, ioc_type, protocol, timestamp_ns).

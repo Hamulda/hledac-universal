@@ -2,6 +2,7 @@
 QuantumResistantCrypto — Post-Quantum Cryptography wrapper.
 
 Provides unified interface to PQ crypto operations:
+
 - ML-DSA-65 signing via Swift helper (macOS 26+)
 - Fallback to NullPostQuantumBackend if unavailable
 

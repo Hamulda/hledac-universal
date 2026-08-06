@@ -2,6 +2,9 @@
 TaskPrioritizer – MLP pro predikci gain + duration s perzistencí.
 Implementováno v MLX s online učením a ukládáním parametrů.
 
+
+
+
 ISSUE-037 решения:
 1. A/B testing wrapper TaskPrioritizationRouter pro porovnání MLX vs CPU heuristic
 2. Proper mx.eval() před mx.metal.clear_cache() pro M1 Metal cache management

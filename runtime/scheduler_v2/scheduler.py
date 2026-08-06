@@ -2,12 +2,14 @@
 
 F350M-R / Issue SC-06.
 
+
 SC-06 refactor: scheduler.py slimmed to ~320 LOC.
 Bootstrap  → runtime/scheduler_v2/_v2_init.py (V2Init.run() called in sprint_entrypoint.py)
 Inject shims → runtime/scheduler_v2/injector.py (Injector.apply() called at end of run())
 Synthesis    → runtime/scheduler_v2/acquisition.py (AcquisitionOrchestrator._run_synthesis_sidecar())
 
 Wiring:
+
     run()
       ├─ V2Init.run()             → service init (sprint_entrypoint.py)
       ├─ _run_prelude_and_first_cycle()

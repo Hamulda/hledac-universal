@@ -2,6 +2,7 @@
 WAL Manager — Sprint F216G refactor
 F272: Optional UnifiedLMDBStore support for reduced mmap overhead.
 
+
 ROLE: Owns LMDB for pending sync markers, deadletters, and WAL replay.
 
 Separated from DuckDBShadowStore so WAL bugs are isolatable by testing

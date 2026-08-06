@@ -2,6 +2,7 @@
 DuckDB Query Executor — Extracted SQL construction and execution engine.
 
 F360M-R: Extracted from DuckDBShadowStore._DuckDBQueryExecutor to reduce
+
 LCOM from 18 (38 methods in one class) to focused executor with single
 responsibility: SQL template management and transaction framing.
 

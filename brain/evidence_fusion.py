@@ -2,6 +2,7 @@
 Dempster-Shafer evidence fusion for multi-source contradiction detection.
 
 Used in brain/research_hypothesis_engine.py to merge findings from multiple sources
+
 and detect contradictions when combined belief < 0.3.
 
 SHAFER-2 REVISION (APEX-1004):

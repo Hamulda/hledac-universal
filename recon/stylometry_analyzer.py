@@ -2,6 +2,8 @@
 Stylometry Analyzer — Multi-Dimensional Writing Style Fingerprinting
 ====================================================================
 
+
+
 ISSUE [UNINDEXED]-007: Replaces the single cosine-similarity-on-char-distribution
 approach in ``brain/inference_engine.py:398-405`` and ``recon/identity_stitching.py:645-675``
 with a proper multi-dimensional stylometry engine.

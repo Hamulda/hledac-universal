@@ -2,6 +2,9 @@
 Adaptive Cache — Memory-Aware LRU/TinyLFU Cache for M1 8GB UMA
 ================================================================
 
+
+
+
 Adaptive cache with dynamic sizing based on available RAM.
 Uses existing Rust infrastructure (PyGraphLRUCache + get_memory_snapshot).
 

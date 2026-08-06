@@ -2,6 +2,17 @@
 Network Reconnaissance Module
 =============================
 
+
+
+
+
+
+
+
+
+
+
+
 Passive network intelligence gathering for OSINT research.
 Self-hosted on M1 8GB - no external scanning tools required.
 
@@ -34,8 +45,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
-import httpx
 import dns.asyncresolver
+import httpx
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import parallel_ok, parallel
 from hledac.universal.core.concurrency_registry import ConcurrencyCategory, ConcurrencyBudgetRegistry
@@ -54,7 +65,7 @@ class RecordType(Enum):
     SRV = 'SRV'
     CAA = 'CAA'
 
-class DNSRecord(msgspec.Struct):
+class DNSRecord(msgspec.Struct, gc=False):
     """DNS record information."""
     record_type: RecordType
     name: str
@@ -62,7 +73,7 @@ class DNSRecord(msgspec.Struct):
     ttl: int
     priority: int | None = None
 
-class WHOISData(msgspec.Struct, frozen=True):
+class WHOISData(msgspec.Struct, frozen=True, gc=False):
     """WHOIS lookup results."""
     domain: str
     registrar: str | None
@@ -81,7 +92,7 @@ class WHOISData(msgspec.Struct, frozen=True):
     tech_email: str | None
     raw_whois: str
 
-class SSLCertificate(msgspec.Struct, frozen=True):
+class SSLCertificate(msgspec.Struct, frozen=True, gc=False):
     """SSL/TLS certificate information."""
     subject: dict[str, str]
     issuer: dict[str, str]
@@ -95,7 +106,7 @@ class SSLCertificate(msgspec.Struct, frozen=True):
     is_valid: bool
     days_until_expiry: int
 
-class ServiceBanner(msgspec.Struct, frozen=True):
+class ServiceBanner(msgspec.Struct, frozen=True, gc=False):
     """Service banner information."""
     port: int
     protocol: str
@@ -104,7 +115,7 @@ class ServiceBanner(msgspec.Struct, frozen=True):
     version: str | None
     timestamp: float
 
-class HostInfo(msgspec.Struct, frozen=True):
+class HostInfo(msgspec.Struct, frozen=True, gc=False):
     """Complete host information."""
     hostname: str
     ip_addresses: list[str]
@@ -952,7 +963,7 @@ class DHTProbe:
                 results.append((h, f'found_at:{nodes[0]}'))
         return results
 
-class CNAMERecord(msgspec.Struct, frozen=True):
+class CNAMERecord(msgspec.Struct, frozen=True, gc=False):
     """CNAME chain record."""
     source: str
     target: str
@@ -993,7 +1004,7 @@ async def resolve_cname_chain(domain: str, max_depth: int=10) -> list[CNAMERecor
         logger.debug(f'resolve_cname_chain({domain}): {e}')
     return chain
 
-class ASNInfo(msgspec.Struct, frozen=True):
+class ASNInfo(msgspec.Struct, frozen=True, gc=False):
     """Autonomous System Number information."""
     asn: int
     prefix: str
@@ -1030,7 +1041,7 @@ async def lookup_asn(ip_or_prefix: str) -> list[ASNInfo]:
         logger.debug(f'lookup_asn({ip_or_prefix}): {e}')
     return results
 
-class CTRawCertificate(msgspec.Struct, frozen=True):
+class CTRawCertificate(msgspec.Struct, frozen=True, gc=False):
     """Certificate Transparency log entry."""
     common_name: str
     name_value: str

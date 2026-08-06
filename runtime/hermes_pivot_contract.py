@@ -2,6 +2,7 @@
 F256: HermesInferenceOutput contract — cross-sprint data transfer object.
 
 Canonical home for Hermes3Engine inference results used by:
+
 - pivot_planner.py    (score_with_hermes_output, _pivot_from_hermes_output)
 - sprint_advisory_runner.py (from_dict loading from DuckDB)
 - live_public_pipeline.py  (construction + to_dict persistence)

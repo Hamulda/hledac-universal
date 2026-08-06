@@ -2,6 +2,7 @@
 """
 Codemod: bare → canonical imports (ISSUE 1.2) — SAFE line-based version
 
+
 Replaces bare sibling-package imports using LINE-BASED string replacement:
     from hledac.universal.runtime.foo import bar  →  from hledac.universal.runtime.foo import bar
     import hledac.universal.runtime.foo           →  import hledac.universal.runtime.foo

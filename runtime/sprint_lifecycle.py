@@ -3,6 +3,7 @@ SprintLifecycleManager — canonical sprint state machine.
 
 Phases: BOOT → WARMUP → ACTIVE → DEGRADED → WINDUP → EXPORT → TEARDOWN
 
+
 Hard invariant: T-3min wind-down.
 All timing uses time.monotonic().
 No async. No threads. No I/O.

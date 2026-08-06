@@ -2,6 +2,9 @@
 HTN plánovač – hierarchický rozklad úkolů s cost modelem a budget‑aware prohledáváním.
 """
 from __future__ import annotations
+
+
+
 import functools
 import hashlib
 import logging
@@ -19,7 +22,7 @@ from hledac.universal.planning.search import anytime_beam_search
 from hledac.universal.planning.slm_decomposer import SLMDecomposer
 logger = logging.getLogger(__name__)
 
-class PlannerRuntimeRequest(msgspec.Struct, frozen=True):
+class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):
     """Typed request from planner to Hermes runtime. Replaces raw task dicts."""
     task_id: str
     task_type: str
@@ -29,7 +32,7 @@ class PlannerRuntimeRequest(msgspec.Struct, frozen=True):
     remaining_time_s: float | None
     is_panic_deprioritized: bool
 
-class PlannerRuntimeResult(msgspec.Struct, frozen=True):
+class PlannerRuntimeResult(msgspec.Struct, frozen=True, gc=False):
     """Typed result from Hermes runtime back to caller."""
     task_id: str
     executed: bool

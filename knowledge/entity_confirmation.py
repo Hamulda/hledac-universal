@@ -2,6 +2,9 @@
 [META]-014: Entity Confirmation Service
 ========================================
 
+
+
+
 Replicates the RouteGraphService.is_known_good() pattern for IOC entities.
 An entity becomes "confirmed" after ≥3 distinct source types report it
 with MAX(confidence) > 0.7.

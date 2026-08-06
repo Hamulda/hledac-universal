@@ -3,6 +3,7 @@
 Role: Enrich stage přijímá (PageResult, hits) z MatchStage, provádí text
 enrichment a construction CanonicalFinding, posílá je do StoreStage.
 
+
 MatchStage už provedla pattern matching a předává hits → EnrichStage NEVOLÁ
 match_text() znovu (duplikace opravena).
 

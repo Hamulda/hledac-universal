@@ -2,6 +2,7 @@
 CognitiveSaturationDetector — Sprint-level entity discovery rate monitor.
 
 Detects cognitive saturation by tracking unique entity discoveries over a sliding
+
 window. When d(unique_IOC)/dt → 0 for persistence_s seconds (after minimum
 active time), triggers automatic WINDUP transition.
 

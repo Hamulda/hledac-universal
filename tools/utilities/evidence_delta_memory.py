@@ -2,6 +2,8 @@
 Evidence Delta Memory — cross-sprint evidence comparison tool.
 
 Reads two benchmark/report JSON files and computes what changed between them:
+
+
 - source family additions/removals
 - branch accepted counts
 - feed vs nonfeed evidence delta
@@ -27,7 +29,7 @@ class Verdict(StrEnum):
     DELTA_NEW_NONFEED_EVIDENCE = 'DELTA_NEW_NONFEED_EVIDENCE'
     DELTA_MEANINGFUL_RESEARCH_PROGRESS = 'DELTA_MEANINGFUL_RESEARCH_PROGRESS'
 
-class EvidenceDelta(msgspec.Struct):
+class EvidenceDelta(msgspec.Struct, gc=False):
     new_source_families: list[str] = field(default_factory=list)
     disappeared_source_families: list[str] = field(default_factory=list)
     continued_source_families: list[str] = field(default_factory=list)
@@ -64,7 +66,7 @@ class CapabilityDeltaVerdict(StrEnum):
     NOT_COMPARABLE_HARDWARE_TAINTED = 'NOT_COMPARABLE_HARDWARE_TAINTED'
     NO_PRIOR = 'NO_PRIOR'
 
-class CapabilityDelta(msgspec.Struct, frozen=True):
+class CapabilityDelta(msgspec.Struct, frozen=True, gc=False):
     capability_delta_verdict: CapabilityDeltaVerdict
     improved_dimensions: list[str] = field(default_factory=list)
     regressed_dimensions: list[str] = field(default_factory=list)

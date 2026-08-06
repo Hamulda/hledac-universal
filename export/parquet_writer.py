@@ -3,6 +3,7 @@
 """
 Parquet zero-copy export pro Hledac Universal OSINT orchestrátor.
 
+
 Podporuje 3 export path (M1 8GB safe, fail-safe):
 
 1. DUCKDB_COPY (preferovaná): DuckDB `COPY ... TO 'x.parquet'`

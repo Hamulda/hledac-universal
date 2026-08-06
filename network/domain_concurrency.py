@@ -2,6 +2,7 @@
 Domain Concurrency Bandit — Gradient Bandit for Per-Domain Adaptive Concurrency
 =============================================================================
 
+
 Sprint 8AC: Gradient Bandit algorithm for adaptive per-host connection limits.
 Uses softmax action selection over Fibonacci-like arm values [1, 2, 3, 5, 8].
 
@@ -13,8 +14,11 @@ Authoritative arms: network/domain_concurrency.py
 
 
 
+from __future__ import annotations
+
 import math
 import secrets
+from typing import Any
 
 # Crypto-safe RNG — F350M-R
 _RNG = secrets.SystemRandom()
@@ -214,3 +218,40 @@ class DomainConcurrencyBandit:
     def consecutive_429(self) -> int:
         """Return consecutive 429 count for monitoring."""
         return self._consecutive_429
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Return bandit metrics for monitoring (OPTIMIZATION #3).
+
+        Exposes consecutive_429 as a monitoring metric for alerting.
+        When consecutive_429 > 2, arm[0] (min concurrency=1) is enforced.
+        """
+        probs = self._softmax_probs()
+        return {
+            "selected_arm": self._selected_arm,
+            "current_limit": ARM_VALUES[self._selected_arm],
+            "consecutive_429": self._consecutive_429,
+            "is_emergency_mode": self._consecutive_429 > 2,
+            "arm_probabilities": {
+                f"arm_{ARM_VALUES[i]}": round(p, 4) for i, p in enumerate(probs)
+            },
+            "preferences": [round(p, 4) for p in self._preferences],
+        }
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Return bandit metrics for monitoring (OPTIMIZATION #3).
+
+        Exposes consecutive_429 as a monitoring metric for alerting.
+        When consecutive_429 > 2, arm[0] (min concurrency=1) is enforced.
+        """
+        import math
+        probs = self._softmax_probs()
+        return {
+            "selected_arm": self._selected_arm,
+            "current_limit": ARM_VALUES[self._selected_arm],
+            "consecutive_429": self._consecutive_429,
+            "is_emergency_mode": self._consecutive_429 > 2,
+            "arm_probabilities": {
+                f"arm_{ARM_VALUES[i]}": round(p, 4) for i, p in enumerate(probs)
+            },
+            "preferences": [round(p, 4) for p in self._preferences],
+        }

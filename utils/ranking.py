@@ -2,6 +2,9 @@
 Ranking Utilities - Result Fusion and Ranking Algorithms
 
 Provides:
+
+
+
 - Reciprocal Rank Fusion (RRF) for multi-source results
 - Weighted score aggregation
 - Result deduplication
@@ -21,7 +24,7 @@ import msgspec
 from typing import Any
 logger = logging.getLogger(__name__)
 
-class RRFConfig(msgspec.Struct):
+class RRFConfig(msgspec.Struct, gc=False):
     """Configuration for Reciprocal Rank Fusion"""
     k: int = 60
     max_results: int = 100
@@ -29,7 +32,7 @@ class RRFConfig(msgspec.Struct):
     deduplication: bool = True
     dedup_threshold: float = 0.7
 
-class RankedResult(msgspec.Struct, frozen=True):
+class RankedResult(msgspec.Struct, frozen=True, gc=False):
     """Individual ranked result"""
     id: str
     title: str

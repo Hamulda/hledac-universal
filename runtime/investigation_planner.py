@@ -2,6 +2,7 @@
 Sprint F223E: Investigation Loop Planner
 
 Deterministic advisory layer that decides next OSINT action based on
+
 evidence gaps. Bounded — never unbounded research, never model calls.
 
 Inputs:

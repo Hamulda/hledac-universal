@@ -2,6 +2,9 @@
 Pattern Mining Canonical Adapter — Sprint F250
 ==============================================
 
+
+
+
 Canonical adapter wrapping PatternMiningEngine for the sprint pipeline.
 
 Responsibilities:
@@ -54,7 +57,7 @@ try:
 except ImportError:
     CanonicalFinding = None
 
-class PatternCandidate(msgspec.Struct):
+class PatternCandidate(msgspec.Struct, gc=False):
     """A derived pattern candidate produced by the pattern mining engine."""
     pattern_id: str
     pattern_type: str
@@ -68,7 +71,7 @@ class PatternCandidate(msgspec.Struct):
     def to_dict(self) -> dict[str, Any]:
         return {'pattern_id': self.pattern_id, 'pattern_type': self.pattern_type, 'pattern_data': self.pattern_data, 'confidence': self.confidence, 'severity': self.severity, 'description': self.description, 'source_findings': self.source_findings, 'metadata': self.metadata}
 
-class PatternMiningResult(msgspec.Struct, frozen=True):
+class PatternMiningResult(msgspec.Struct, frozen=True, gc=False):
     """Aggregated result of pattern mining on sprint findings."""
     temporal_patterns: list[PatternCandidate] = field(default_factory=list)
     behavioral_patterns: list[PatternCandidate] = field(default_factory=list)

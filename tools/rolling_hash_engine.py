@@ -2,6 +2,8 @@
 Rolling Hash Engine for URL deduplication.
 
 Rabin-Karp rolling hash for fast sliding-window computation on URL strings.
+
+
 Provides O(1) hash roll when sliding window advances — critical for URL dedup.
 
 Sprint F214Q: Rust extension candidate — Python fallback for M1 environments

@@ -2,6 +2,9 @@
 Canonical JSON codec — jediné rozhraní pro (de)serializaci v Hledac Universal.
 
 Sjednocuje `json_codec.py` + `msgspec_json.py` do jednoho modulu s jasnou
+
+
+
 strategií podle typu dat:
 
   ┌─────────────────────┬──────────────────┬──────────────────────────────┐
@@ -59,7 +62,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-class SearchResult(msgspec.Struct, frozen=True):
+class SearchResult(msgspec.Struct, frozen=True, gc=False):
     """Typed result for ANN / hybrid search hot paths."""
 
     id: str
@@ -68,7 +71,7 @@ class SearchResult(msgspec.Struct, frozen=True):
     metadata: dict[str, str] = msgspec.field(default_factory=dict)
 
 
-class SprintSeed(msgspec.Struct, frozen=True):
+class SprintSeed(msgspec.Struct, frozen=True, gc=False):
     """Typed seed for knowledge/sprint_seeds_store.py hot path."""
 
     url: str
@@ -77,7 +80,7 @@ class SprintSeed(msgspec.Struct, frozen=True):
     score: float = 0.0
 
 
-class CacheEntry(msgspec.Struct, frozen=True):
+class CacheEntry(msgspec.Struct, frozen=True, gc=False):
     """Typed entry for context_optimization/context_cache.py."""
 
     key: str

@@ -2,6 +2,19 @@
 Stealth Layer - Stealth Browsing, Detection Evasion, CAPTCHA Solving
 ====================================================================
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 Integrates:
 - StealthBrowser: Playwright wrapper with anti-detection
 - DetectionEvader: 10+ evasion scripts, behavior simulation
@@ -45,7 +58,7 @@ def _gauss(mu: float, sigma: float) -> float:
     z0 = math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2)
     return mu + sigma * z0
 
-class CaptchaSolverConfig(msgspec.Struct):
+class CaptchaSolverConfig(msgspec.Struct, gc=False):
     """Configuration for self-hosted CAPTCHA solving"""
     ocr_model: str = 'microsoft/trocr-small-printed'
     use_mlx: bool = True
@@ -56,7 +69,7 @@ class CaptchaSolverConfig(msgspec.Struct):
     timeout_seconds: float = 30.0
     confidence_threshold: float = 0.6
 
-class CaptchaResult(msgspec.Struct):
+class CaptchaResult(msgspec.Struct, gc=False):
     """Result of CAPTCHA solving attempt"""
     success: bool
     solution: str | None
@@ -331,7 +344,7 @@ from .evasion_pipeline import (  # noqa: E402
 BrowserProfile = FingerprintProfile
 
 
-class JavaScriptEvasionConfig(msgspec.Struct):
+class JavaScriptEvasionConfig(msgspec.Struct, gc=False):
     """Configuration for JavaScript evasion (backward-compat — APEX-1005/1006).
 
     Since the unified pipeline (evasion_pipeline.py), this config exists
@@ -536,7 +549,7 @@ class JavaScriptEvasion:
 # FingerprintRandomizer — backward-compat wrapper
 # ═══════════════════════════════════════════════════════════════════════════
 
-class FingerprintConfig(msgspec.Struct):
+class FingerprintConfig(msgspec.Struct, gc=False):
     """Configuration for fingerprint randomization (backward-compat)."""
     randomize_canvas: bool = True
     randomize_webgl: bool = True
@@ -676,7 +689,7 @@ class BehaviorPattern(Enum):
     QUICK = 'quick'
     CAREFUL = 'careful'
 
-class SimulationConfig(msgspec.Struct):
+class SimulationConfig(msgspec.Struct, gc=False):
     """Configuration for behavior simulation"""
     pattern: BehaviorPattern = BehaviorPattern.RESEARCHER
     min_delay: float = 0.5
@@ -688,13 +701,13 @@ class SimulationConfig(msgspec.Struct):
     randomness: float = 0.3
     viewport_variation: bool = True
 
-class MouseMovement(msgspec.Struct):
+class MouseMovement(msgspec.Struct, gc=False):
     """Mouse movement point"""
     x: float
     y: float
     timestamp: float
 
-class ScrollAction(msgspec.Struct):
+class ScrollAction(msgspec.Struct, gc=False):
     """Scroll action"""
     delta_y: int
     duration: float

@@ -2,6 +2,7 @@
 audit_reality_index.py — F225D: Audit Report Reality Index
 
 Read-only tool that classifies claims in AUDIT_REPORT.md as:
+
   FIXED               — claim was valid but is now resolved
   INTENTIONAL_ABSTRACT — abstract base / deliberate placeholder
   LEGACY_DEPRECATED   — module/file marked deprecated, zero callers
@@ -30,7 +31,7 @@ class ClaimStatus(Enum):
     FALSE_POSITIVE = 'FALSE_POSITIVE'
     UNKNOWN = 'UNKNOWN'
 
-class ClaimResult(msgspec.Struct, frozen=True):
+class ClaimResult(msgspec.Struct, frozen=True, gc=False):
     claim_id: str
     original_text: str
     status: ClaimStatus

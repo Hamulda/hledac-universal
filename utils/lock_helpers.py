@@ -2,6 +2,7 @@
 lock_helpers — Shared async-lock helpers for M1 8GB UMA.
 
 Provides:
+
     make_async_lock_dclp(): Double-checked locking pattern for asyncio.Lock.
 
 Protocol:

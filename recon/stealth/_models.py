@@ -2,6 +2,18 @@
 Dataclass/Enum modely pro stealth crawler a monitor.
 
 Rozděleno z původního stealth_crawler.py (ISSUE-028).
+
+
+
+
+
+
+
+
+
+
+
+
 """
 from __future__ import annotations
 
@@ -185,7 +197,7 @@ class SourceType(Enum):
     URL = "url"
 
 
-class MonitoredSource(msgspec.Struct):
+class MonitoredSource(msgspec.Struct, gc=False):
     """
     Configuration for a monitored source.
 
@@ -211,7 +223,7 @@ class MonitoredSource(msgspec.Struct):
             raise ValueError(f"Invalid source_type: {self.source_type}")
 
 
-class Change(msgspec.Struct):
+class Change(msgspec.Struct, gc=False):
     """Represents a single detected change"""
 
     change_type: ChangeType
@@ -220,7 +232,7 @@ class Change(msgspec.Struct):
     new_text: str | None
 
 
-class StreamEvent(msgspec.Struct):
+class StreamEvent(msgspec.Struct, gc=False):
     """Represents a change detection event from the monitoring stream."""
 
     event_id: str
@@ -234,7 +246,7 @@ class StreamEvent(msgspec.Struct):
     changes: list[Change]
 
 
-class Alert(msgspec.Struct):
+class Alert(msgspec.Struct, gc=False):
     """Represents an alert generated from monitoring."""
 
     alert_id: str
@@ -245,7 +257,7 @@ class Alert(msgspec.Struct):
     event: StreamEvent | None = None
 
 
-class AlertRule(msgspec.Struct):
+class AlertRule(msgspec.Struct, gc=False):
     """
     Rule for generating alerts based on monitoring events.
 
@@ -284,7 +296,7 @@ class BypassMethod(Enum):
     Manual = "manual"
 
 
-class ScrapingResult(msgspec.Struct):
+class ScrapingResult(msgspec.Struct, gc=False):
     """Result of a scraping operation."""
 
     url: str
@@ -297,7 +309,7 @@ class ScrapingResult(msgspec.Struct):
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
-class ProxyConfig(msgspec.Struct):
+class ProxyConfig(msgspec.Struct, gc=False):
     """Configuration for proxy rotation."""
 
     proxy_url: str
@@ -308,7 +320,7 @@ class ProxyConfig(msgspec.Struct):
     last_used: datetime | None = None
 
 
-class FingerprintProfile(msgspec.Struct):
+class FingerprintProfile(msgspec.Struct, gc=False):
     """
     TLS/HTTP fingerprint profile for stealth scraping.
 
@@ -324,7 +336,7 @@ class FingerprintProfile(msgspec.Struct):
     tls_version: str
 
 
-class HeaderConfig(msgspec.Struct):
+class HeaderConfig(msgspec.Struct, gc=False):
     """Configuration for HTTP header spoofing."""
 
     header_name: str
@@ -401,7 +413,7 @@ class HeaderSpoofer:
         return {"profile": self.default_profile, "header_count": len(self.headers)}
 
 
-class SearchResult(msgspec.Struct):
+class SearchResult(msgspec.Struct, gc=False):
     """Represents a single search result from stealth search."""
 
     url: str

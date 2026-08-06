@@ -50,6 +50,7 @@
 
 use pyo3::prelude::*;
 
+
 // ============================================================================
 // Safari WebKit HTTP/2 SETTINGS Constants
 // ============================================================================
@@ -120,7 +121,7 @@ pub const SAFARI_17_NO_PRIORITY: bool = true;
 
 /// H2Settings tuple for Python consumption.
 #[derive(Debug, Clone)]
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct H2Settings {
     #[pyo3(get)]
     pub settings: Vec<(u16, u32)>,
@@ -214,8 +215,8 @@ pub fn get_curl_default_initial_window_size() -> u32 {
 /// Validate that Safari SETTINGS would pass p0f3 fingerprinting.
 /// Returns a dict with validation results for each setting.
 #[pyfunction]
-pub fn validate_safari_fingerprint(profile: &str) -> PyResult<PyObject> {
-    Python::with_gil(|py| {
+pub fn validate_safari_fingerprint(profile: &str) -> PyResult<Py<pyo3::types::PyDict>> {
+    Python::attach(|py| {
         let preset = get_preset_for_profile(profile);
         let dict = pyo3::types::PyDict::new(py);
 

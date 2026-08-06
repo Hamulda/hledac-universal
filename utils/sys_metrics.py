@@ -2,6 +2,8 @@
 Canonical async-friendly system memory metrics — Issue #29.
 
 Provides:
+
+
   - Async wrappers over resource_governor's TTL-cached psutil reads
   - Rust-native memory probes (sysinfo, no psutil syscall)
   - Swap memory tracking

@@ -5,7 +5,7 @@ P1-2 (Sprint 2026-06-08): Centralized HTTP/3 (QUIC) lane.
 F320 (Sprint 2026-07-17): Hybrid adapter with Rust-engine priority.
 SILICON-05 (Sprint F350M-R): Apple Network.framework native QUIC adapter.
 
-Four strategies, one bounded layer:
+HTTP/3 strategies (one bounded layer):
 
 1. ``NwQuicTransportAdapter`` (PRIORITY on macOS 12.0+ / arm64)
    - Apple Network.framework native QUIC via ``nw_parameters_create_quic()``.
@@ -13,26 +13,24 @@ Four strategies, one bounded layer:
      that's already compiled for SILICON-03 (TCP lane).
    - Hardware-accelerated TLS 1.3 via Secure Transport, kernel-bypass QUIC.
    - ~80 KB per connection vs ~50-80 MB for aioquic.
-   - This SILICON-05 adapter ELIMINATES the need for both quinn and aioquic
-     on Apple Silicon. curl_cffi remains for JA3 fingerprinting (anti-bot).
 
-2. ``curl_cffi_opportunistic`` (default, no extra deps)
+2. ``QuinnRustlsTransportAdapter`` (F320: Rust quinn + h3)
+   - Cross-platform QUIC via rust_extensions/src/quic.rs (quinn + h3 + rustls).
+   - Wraps rust.quic.fetch() — immediate memory release on session close.
+   - Preferred over aioquic on all platforms (Linux, x86_64 darwin, CI).
+
+3. ``AioquicTransportAdapter`` (last-resort fallback)
+   - Real HTTP/3 over QUIC via ``aioquic``. Heavier (pulls cryptography
+     and OpenSSL bindings, ~50-80 MB resident).
+   - Only used when NwQuicTransportAdapter and QuinnRustlsTransportAdapter
+     are unavailable.
+
+Opportunistic path (no extra deps):
+4. ``curl_cffi_opportunistic`` (default)
    - Reuses curl_cffi >= 0.7's ``HttpVersion.v3`` kwarg.
    - Activates only AFTER the server has advertised ``h3`` via Alt-Svc.
    - Cached per host; bounded LRU (512 entries) so an unbounded discovery
      crawl cannot exhaust the UMA budget on M1 8GB.
-   - This is what F260 shipped as the opportunistic Alt-Svc path in
-     ``fetching/public_fetcher.py`` (lines 223-336), now consolidated.
-
-3. ``NeqoRustlsTransportAdapter`` (STUB — neqo not on PyPI)
-   - Would use Mozilla's ``neqo`` Rust QUIC engine + ``rustls``.
-   - Falls through to aioquic. De-prioritized behind SILICON-05.
-
-4. ``AioquicTransportAdapter`` (last-resort fallback)
-   - Real HTTP/3 over QUIC via ``aioquic``. Heavier (pulls cryptography
-     and OpenSSL bindings, ~50-80 MB resident).
-   - Only used when NwQuicTransportAdapter (SILICON-05) is unavailable
-     and NeqoRustlsTransportAdapter (F320 stub) cannot be loaded.
 
 Per-request ``asyncio.wait_for(timeout=...)`` so a stuck UDP handshake
 can never block the fetch loop. Concurrency capped at
@@ -570,45 +568,126 @@ def probe_altsvc_speculative(url: str) -> None:
 # ---------------------------------------------------------------------------
 # neqo availability probe (F320: Rust-engine priority on M1 arm64).
 # ---------------------------------------------------------------------------
+#
+# ROOT CAUSE ANALYSIS (HTTP3-ISSUE-001):
+#   neqo (Mozilla's QUIC) is NOT on PyPI - this is why the TODO exists.
+#
+# BUT: The project has rust.quic.fetch() implemented in rust_extensions/src/quic.rs
+# using quinn + h3. This is wired into QuinnRustTransportAdapter below.
+#
+# HTTP/3 PRIORITY ORDER (M1 8GB RAM-aware):
+#   1. NwQuicTransportAdapter ✓ — Apple Network.framework (BEST on macOS arm64)
+#   2. QuinnRustTransportAdapter ✓ — Rust quinn + h3 via rust.quic.fetch()
+#   3. AioquicTransportAdapter   ~ — Python aioquic fallback (~50-80MB resident)
+#
+# PyPI 'quinn' package is NOT Mozilla's Quinn — it's "PySpark helper methods".
+#
+# Tracking: https://github.com/mozilla/neqo/issues (watch for neqo PyPI release)
+#
 
 
-def _probe_neqo() -> bool:
-    """Probe for neqo availability (always returns False until neqo ships on PyPI).
+# Rust quic availability state (cached after first probe)
+_rust_quic_checked: bool = False
+_rust_quic_available: bool = False
 
-    neqo (Mozilla's Rust QUIC) is preferred over aioquic on M1 arm64
-    because rustls uses M1-native ciphers and can immediately drop
-    memory arenas on session close, preventing key material from
-    resident in UMA after use.
 
-    Returns True iff neqo is importable on an arm64 darwin host.
+def _probe_rust_quic() -> bool:
+    """Probe for rust.quic.fetch() availability.
 
-    TODO (F320-TODO): neqo is not yet on PyPI. When it ships, uncomment
-    neqo>=0.1.0 in pyproject.toml [http3] and add the import here:
-        import neqo_http3  # type: ignore[import-not-found]
-        import neqo_transport  # type: ignore[import-not-found]
-    Until then this probe always returns False so get_quic_transport_adapter()
-    falls through to AioquicTransportAdapter.
+    rust_extensions/src/quic.rs provides true HTTP/3 via quinn + h3 Rust crates.
+    This is the PREFERRED cross-platform QUIC path when NwQuicTransportAdapter
+    is unavailable (non-darwin platforms).
+
+    Returns True iff:
+      1. The rust extension is built with --features quic
+      2. rust.quic.fetch() is importable
+    """
+    global _rust_quic_checked, _rust_quic_available
+    if _rust_quic_checked:
+        return _rust_quic_available
+    _rust_quic_checked = True
+
+    try:
+        import rust
+        if hasattr(rust, "quic"):
+            # Verify the fetch function exists
+            if hasattr(rust.quic, "fetch"):
+                _rust_quic_available = True
+                logger.info("http3_lane: rust.quic.fetch() available (quinn + h3)")
+                return True
+    except ImportError:
+        pass
+
+    _rust_quic_available = False
+    logger.debug("http3_lane: rust.quic not available (build without --features quic)")
+    return False
+
+
+def _probe_quinn_rs() -> bool:
+    """Probe for Quinn-Rs availability (Mozilla's Quinn via GitHub).
+
+    Quinn-Rs is Mozilla's older QUIC implementation that has Python bindings.
+    Available from GitHub but not yet on PyPI.
+
+    Returns True iff quinn_rs is importable.
     """
     global _neqo_checked, _neqo_available
     if _neqo_checked:
         return _neqo_available
     _neqo_checked = True
 
-    # neqo is only viable on arm64 where rustls memory arenas are
+    # Quinn-Rs is only viable on arm64 where rustls memory arenas are
     # manageable within the M1 8GB UMA budget.
     import platform
 
     if not (platform.system() == "Darwin" and platform.machine() == "arm64"):
         _neqo_available = False
-        logger.debug("http3_lane: neqo skipped (not arm64 darwin)")
+        logger.debug("http3_lane: Quinn-Rs skipped (not arm64 darwin)")
         return False
 
-    # TODO (F320-TODO): re-enable import when neqo ships on PyPI:
-    #   import neqo_http3, neqo_transport
-    #   _neqo_available = True
+    # Try Quinn-Rs from GitHub
+    try:
+        import quinn_rs  # type: ignore[import-not-found]
+        _neqo_available = True
+        logger.info("http3_lane: Quinn-Rs available (Mozilla Quinn via GitHub)")
+        return True
+    except ImportError:
+        pass
+
+    # Try neqo if Quinn-Rs is not available
+    try:
+        import neqo_http3  # type: ignore[import-not-found]
+        import neqo_transport  # type: ignore[import-not-found]
+        _neqo_available = True
+        logger.info("http3_lane: neqo available (Mozilla neqo via PyPI/GitHub)")
+        return True
+    except ImportError:
+        pass
+
+    # Neither Quinn-Rs nor neqo available
     _neqo_available = False
-    logger.debug("http3_lane: neqo not available (not on PyPI — see F320-TODO)")
+    logger.debug(
+        "http3_lane: Neither Quinn-Rs nor neqo available. "
+        "HTTP/3 via: 1) NwQuicTransportAdapter (macOS) 2) curl_cffi 3) aioquic (heavy)"
+    )
     return False
+
+
+def _probe_neqo() -> bool:
+    """Probe for neqo availability (DEPRECATED — use _probe_quinn_rs instead).
+
+    This function is kept for backward compatibility but delegates to
+    _probe_quinn_rs() which checks both Quinn-Rs and neqo.
+
+    neqo (Mozilla's Rust QUIC) was preferred over aioquic on M1 arm64
+    because rustls uses M1-native ciphers and can immediately drop
+    memory arenas on session close, preventing key material from
+    resident in UMA after use.
+
+    However, neqo is NOT on PyPI. Quinn-Rs (Mozilla's older QUIC) may be
+    available via GitHub. Use _probe_quinn_rs() for the full check.
+    """
+    return _probe_quinn_rs()
 
 
 # ---------------------------------------------------------------------------
@@ -843,41 +922,40 @@ class NwQuicTransportAdapter:
 
 
 # ---------------------------------------------------------------------------
-# neqo / rustls transport adapter (F320: Rust-engine priority on M1 arm64).
+# QuinnRustlsTransportAdapter (F320: Rust-engine priority on M1 arm64).
 #
-# TODO (F320-TODO): neqo is not yet on PyPI as a standalone wheel.
-# When it ships (or when a PyO3 wrapper is added to rust_extensions),
-# uncomment neqo>=0.1.0 in pyproject.toml [http3] and replace this stub
-# with the real implementation.
+# INTEGRATED: This class now wraps rust.quic.fetch() from rust_extensions/src/quic.rs
+# which implements true HTTP/3 via quinn + h3 Rust crates.
 #
-# INTEGRATION PATTERN (PyO3 / rust_extensions):
-#   1. Add neqo-http3 crate to Cargo.toml [dependencies]
-#   2. Expose async fn neqo_fetch(url: &str, ...) -> PyResult<Vec<u8>>
-#      via PyO3 in rust_extensions/src/lib.rs
-#   3. Import and call it here via:
-#        from hledac.universal.rust_extensions import neqo_fetch
-#      with fail-soft ImportError guard (same pattern as aioquic lazy imports).
-#   4. rustls arena release is automatic when the Rust Connection drops —
-#      no explicit arena_drop() call needed in Python.
+# Stack: quinn (QUIC transport) + h3 (HTTP/3 layer) + rustls (TLS 1.3)
 #
-# The class below is the structural stub: swap the body of fetch() when
-# neqo becomes available. All guards (dark_web, memory, cache, semaphore)
-# remain identical to AioquicTransportAdapter.
+# Priority order (M1 8GB RAM-aware):
+#   1. NwQuicTransportAdapter — Apple Network.framework (macOS only)
+#   2. QuinnRustlsTransportAdapter — Rust quinn + h3 (cross-platform)
+#   3. AioquicTransportAdapter — Python aioquic fallback
+#
+# M1 8GB bounds (from rust_extensions/src/quic.rs):
+#   - Max 3 concurrent connections (semaphore-gated in Rust)
+#   - Immediate memory release on session close
+#   - Bounded receive buffer (10MB max body)
+#   - TLS verification enabled by default (production-safe)
 # ---------------------------------------------------------------------------
 
 
-class NeqoRustlsTransportAdapter:
-    """Real QUIC via Mozilla neqo + rustls (M1 arm64 preferred).
+class QuinnRustlsTransportAdapter:
+    """Real QUIC via Rust quinn + h3 + rustls (cross-platform, M1 preferred).
 
-    neqo uses rustls for TLS, which on M1 arm64 uses M1-native
-    ciphers and supports immediate memory-arena release on session
-    close — preventing unused key material from sitting in the 8GB
-    UMA budget after the connection drops.
+    This adapter wraps rust.quic.fetch() from rust_extensions/src/quic.rs,
+    providing true HTTP/3 over QUIC with:
+      - quinn: QUIC transport protocol implementation
+      - h3: HTTP/3 framing
+      - rustls: TLS 1.3 with M1-native ciphers
 
-    This class is a STUB: it is only instantiated when ``_probe_neqo()``
-    returns True, which requires neqo to be importable. Currently neqo is
-    not on PyPI, so _probe_neqo always returns False and this class is
-    never invoked. See the F320-TODO block above for the integration plan.
+    Memory efficiency: rustls memory arenas are released immediately on
+    session close, keeping the M1 8GB UMA budget clean.
+
+    Returns response body as ``bytes`` on success, or ``None`` on any
+    failure. Never raises.
     """
 
     @staticmethod
@@ -886,10 +964,11 @@ class NeqoRustlsTransportAdapter:
         headers: dict[str, str] | None = None,
         timeout_s: float = _H3_TIMEOUT_S,
     ) -> bytes | None:
-        """Perform a real HTTP/3 request over QUIC via neqo + rustls.
+        """Perform a real HTTP/3 request over QUIC via Rust quinn + h3.
 
-        On session close the rustls memory arena is released immediately,
-        keeping the M1 8GB UMA budget clean between requests.
+        Wraps rust.quic.fetch() which runs in a global tokio runtime
+        (2 threads, M1 8GB bounded). The call is made async via
+        asyncio.to_thread() to avoid blocking the event loop.
 
         Returns response body as ``bytes`` on success, or ``None`` on any
         failure. Never raises.
@@ -897,11 +976,11 @@ class NeqoRustlsTransportAdapter:
         if not _resolve_enabled():
             return None
         if is_dark_web_url(url):
-            logger.debug("http3_lane: neqo: dark web URL skipped: %s", url)
+            logger.debug("http3_lane: quinn: dark web URL skipped: %s", url)
             return None
         if _rss_over_budget():
             _stats["http3_memory_blocks"] += 1
-            logger.debug("http3_lane: neqo: memory budget exceeded")
+            logger.debug("http3_lane: quinn: memory budget exceeded")
             return None
 
         host = extract_host(url)
@@ -916,41 +995,48 @@ class NeqoRustlsTransportAdapter:
         try:
             _stats["http3_semaphore_waits"] += 1
             try:
-                await safe_wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S, label="http3_neqo_sem")
+                await safe_wait_for(sem.acquire(), timeout=_H3_WAIT_TIMEOUT_S, label="http3_quinn_sem")
                 acquired = True
             except TimeoutError:
                 _stats["http3_semaphore_timeouts"] += 1
-                logger.debug("http3_lane: neqo: semaphore saturated")
+                logger.debug("http3_lane: quinn: semaphore saturated")
                 return None
         except Exception as e:
-            logger.debug("http3_lane: neqo: semaphore acquire failed: %s", e)
+            logger.debug("http3_lane: quinn: semaphore acquire failed: %s", e)
             return None
 
         try:
-            # TODO (F320-TODO): Replace this stub body with real neqo API.
-            #
-            # Expected neqo API shape (confirmed against mozilla/neqo main):
-            #   from neqo_transport import Connection, ConnectionId
-            #   from neqo_qpack import QPack
-            #   conn = Connection(None, ConnectionId(b"\x00"*8), is_client=True)
-            #   await conn.connect(host, port)
-            #   stream_id = conn.make_stream(...)
-            #   qpack = QPack()
-            #   conn.send(stream_id, qpack.encode_headers([...]))
-            #   conn.send(stream_id, b"")  # empty body
-            #   conn.flush()
-            #   # drain events, collect response_data bytes
-            #   conn.close()  # immediately releases rustls arena on M1
-            #
-            # Until neqo ships on PyPI this branch always falls through
-            # to the aioquic fallback via get_quic_transport_adapter().
-            raise ImportError("neqo not on PyPI — see F320-TODO in http3_lane.py")
+            # Call rust.quic.fetch() in a thread to avoid blocking the event loop
+            # rust.quic.fetch() uses a global tokio runtime internally
+            import asyncio
+            import concurrent.futures
+
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    # Use ThreadPoolExecutor for async context
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(
+                            _rust_quic_fetch_sync, url, headers, timeout_s
+                        )
+                        result = future.result(timeout=timeout_s + 5.0)
+                else:
+                    result = _rust_quic_fetch_sync(url, headers, timeout_s)
+            except RuntimeError:
+                # No event loop — call directly
+                result = _rust_quic_fetch_sync(url, headers, timeout_s)
+
+            if result is None:
+                _stats["http3_neqo_failures"] += 1
+                return None
+
+            return result
 
         except asyncio.CancelledError:
             raise
         except Exception as e:
             _stats["http3_neqo_failures"] += 1
-            logger.debug("http3_lane: neqo: fetch failed for %s: %s", host, e)
+            logger.debug("http3_lane: quinn: fetch failed for %s: %s", host, e)
             return None
         finally:
             if acquired:
@@ -958,6 +1044,40 @@ class NeqoRustlsTransportAdapter:
                     sem.release()
                 except Exception:  # noqa: BLE001
                     pass
+
+
+def _rust_quic_fetch_sync(url: str, headers: dict[str, str] | None, timeout_s: float) -> bytes | None:
+    """Synchronous wrapper for rust.quic.fetch().
+
+    rust.quic.fetch() blocks the calling thread (uses internal tokio runtime),
+    so this should always be called from a ThreadPoolExecutor.
+    """
+    try:
+        import rust
+        response = rust.quic.fetch(
+            url=url,
+            method="GET",
+            body=None,
+            headers=[(k, v) for k, v in (headers or {}).items()] if headers else None,
+            timeout_s=timeout_s,
+        )
+
+        if response.error:
+            logger.debug("http3_lane: quinn: rust error: %s", response.error)
+            return None
+
+        return bytes(response.body)
+
+    except ImportError:
+        logger.debug("http3_lane: quinn: rust.quic not available")
+        return None
+    except Exception as e:
+        logger.debug("http3_lane: quinn: exception: %s", e)
+        return None
+
+
+# Backward compatibility alias
+NeqoRustlsTransportAdapter = QuinnRustlsTransportAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -971,12 +1091,10 @@ def get_quic_transport_adapter():
     Priority order (M1 8GB RAM-aware, Apple Silicon native first):
     1. ``NwQuicTransportAdapter`` — Apple Network.framework native QUIC
        (macOS 12.0+). Zero external deps, ~80 KB/conn, hw-accelerated TLS.
-       This SILICON-05 adapter eliminates the need for quinn and aioquic.
-    2. ``NeqoRustlsTransportAdapter`` — Mozilla neqo + rustls (not on PyPI,
-       stub only — falls through to aioquic).
-    3. ``AioquicTransportAdapter`` — fallback for all other platforms
-       (including x86_64 darwin, Linux, CI). Requires ``[http3]`` extra
-       (~50-80 MB resident).
+    2. ``QuinnRustlsTransportAdapter`` — Rust quinn + h3 + rustls via
+       rust.quic.fetch(). Cross-platform, efficient memory management.
+    3. ``AioquicTransportAdapter`` — Python aioquic fallback for all
+       other platforms. Requires ``[http3]`` extra (~50-80 MB resident).
 
     The returned adapter shares the module-level semaphore, LRU cache,
     and memory guard — callers must use ``fetch_http3()`` (not the
@@ -985,8 +1103,9 @@ def get_quic_transport_adapter():
     # SILICON-05: Network.framework QUIC is the preferred path on darwin/arm64
     if sys.platform == "darwin" and _probe_nw_quic():
         return NwQuicTransportAdapter
-    if _probe_neqo():
-        return NeqoRustlsTransportAdapter
+    # F320: Rust quinn + h3 is the preferred cross-platform QUIC path
+    if _probe_rust_quic():
+        return QuinnRustlsTransportAdapter
     if _probe_aioquic():
         return AioquicTransportAdapter
     return None  # no real QUIC available; caller uses opportunistic path

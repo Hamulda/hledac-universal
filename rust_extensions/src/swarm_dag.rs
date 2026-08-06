@@ -52,6 +52,7 @@
 use crossbeam_channel::{bounded, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -356,7 +357,7 @@ struct WorkerContext {
     task_types: Vec<TaskType>,
     channels: Arc<Vec<TaskChannel>>,
     running: Arc<AtomicBool>,
-    result_callback: Py<PyAny>,
+    result_callback: Arc<Py<PyAny>>,
     /// Steal cursor — which task type to try first next iteration.
     steal_cursor: AtomicUsize,
 }
@@ -370,7 +371,7 @@ impl WorkerContext {
 
         // Try local receive first
         for tt in &self.task_types {
-            let ch = &self.channels[tt as usize];
+            let ch = &self.channels[*tt as usize];
             if let Some(task) = ch.try_recv() {
                 self.process_task(task);
                 return;
@@ -396,7 +397,7 @@ impl WorkerContext {
 
         // Block on first task type for a short period
         for tt in &self.task_types {
-            let ch = &self.channels[tt as usize];
+            let ch = &self.channels[*tt as usize];
             if let Some(task) = ch.recv_deadline(deadline) {
                 self.process_task(task);
                 return;
@@ -408,8 +409,10 @@ impl WorkerContext {
     }
 
     fn process_task(&self, task: TaskPayload) {
-        Python::with_gil(|py| {
-            // Call Python callback: callback(task_id, task_type, payload_bytes)
+        // PyO3 0.29: Python::attach acquires GIL for the closure.
+        // This is safe for background threads - the GIL is acquired only during
+        // the callback execution.
+        let _ = Python::attach(|py| {
             let _ = self.result_callback.call1(
                 py,
                 (task.task_id, task.task_type as u8, &task.payload_bytes),
@@ -439,7 +442,7 @@ pub struct WorkStealingDAG {
     /// Worker thread handles — joined on stop().
     workers: Mutex<Vec<thread::JoinHandle<()>>>,
     /// Python callback for task results.
-    result_callback: Py<PyAny>,
+    result_callback: Arc<Py<PyAny>>,
     /// Stats: total submitted.
     submitted_count: AtomicU64,
     /// Stats: total completed.
@@ -454,6 +457,7 @@ impl WorkStealingDAG {
             TaskChannel::new(TaskType::Analyze),
             TaskChannel::new(TaskType::GraphInsert),
         ]);
+        let result_callback = Arc::new(result_callback);
 
         let roi_signals = vec![
             EmaRoiSignal::new(),
@@ -645,8 +649,8 @@ impl WorkStealingDAG {
     ///     Dict with submitted, completed, pending per type.
     fn get_stats(&self) -> Vec<(&'static str, usize)> {
         vec![
-            ("submitted", self.submitted_count.load(Ordering::Acquire)),
-            ("completed", self.completed_count.load(Ordering::Acquire)),
+            ("submitted", self.submitted_count.load(Ordering::Acquire) as usize),
+            ("completed", self.completed_count.load(Ordering::Acquire) as usize),
         ]
     }
 

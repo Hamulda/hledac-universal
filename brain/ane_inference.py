@@ -2,6 +2,9 @@
 brain/ane_inference.py — Apple Neural Engine Inference Engine
 ============================================================
 
+
+
+
 SILICON-06: Dedicated ANE (Apple Neural Engine) inference for small-batch
 embedding workloads. The M1's 16-core Neural Engine (11 TOPS int8) was
 completely idle during embedding batches — all inference ran on GPU via

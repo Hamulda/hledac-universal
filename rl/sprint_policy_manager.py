@@ -3,6 +3,8 @@ SprintPolicyManager — opt-in RL sprint policy layer.
 Plugged into SprintScheduler.run() as a policy advisor.
 Does NOT own lifecycle or exec — only provides action hints.
 
+
+
 Design:
 - Disabled by default — zero effect on sprint behavior when not enabled
 - Every 5th sprint is exploration (ACTION_DEEP_DIVE), rest are exploitation
@@ -49,7 +51,7 @@ _QMIX_FIELD = 'qmix_weights'
 # Non-security RNG — exploration epsilon-greedy sampling (30× faster than secrets)
 _RANDOM = secrets.SystemRandom()
 
-class SprintPolicyState(msgspec.Struct):
+class SprintPolicyState(msgspec.Struct, gc=False):
     """Serialized policy state persisted to disk."""
     sprint_sequence_number: int = 0
     epsilon: float = _DEFAULT_EPSILON

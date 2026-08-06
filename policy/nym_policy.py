@@ -2,6 +2,8 @@ import logging
 import numpy as np
 from hledac.universal.core.resource_governor import ResourceGovernor
 from hledac.universal.project_types import RiskLevel
+
+
 from hledac.universal.transport.transport_resolver import Transport
 logger = logging.getLogger(__name__)
 _TorTransport = None

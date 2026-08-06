@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.entity_signal_extractor
-from recon.entity_signal_extractor import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

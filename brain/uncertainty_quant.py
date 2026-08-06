@@ -2,6 +2,10 @@
 Entropy-to-Fetch Feedback Bridge — UNIFIED-003
 ================================================
 
+
+
+
+
 Closes the feedback loop between uncertainty quantification and data acquisition.
 
 Architecture:

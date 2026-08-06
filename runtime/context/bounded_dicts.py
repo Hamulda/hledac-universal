@@ -3,6 +3,7 @@
 Provides memory-bounded alternatives to unbounded Python dicts that can
 grow without limit during long sprint runs (18h+).
 
+
 Design principles:
   - Fixed capacity: never grows beyond maxsize (no OOM)
   - LRU-style eviction: least-recently-used entry evicted on overflow
@@ -132,6 +133,18 @@ class BoundedLRUDict:
         return data[key]
 
     def __contains__(self, key: str) -> bool:
+        """Check if key exists in the dict.
+
+        Note: Does NOT promote key to MRU position.
+        For LRU promotion, use ``get()`` instead::
+
+            if key in d:           # Does NOT promote
+                ...
+
+            value = d.get(key)     # Promotes to MRU
+            if value is not None:  # Key exists AND was promoted
+                ...
+        """
         return key in self._data
 
     def __len__(self) -> int:
@@ -144,8 +157,11 @@ class BoundedLRUDict:
         return bool(self._data)
 
     def get(self, key: str, default: bool | None = None) -> bool | None:
-        """Get value by key. Returns default if absent. Does NOT promote to MRU."""
-        return self._data.get(key, default)
+        """Get value by key. Returns default if absent. Promotes key to MRU position."""
+        if key in self._data:
+            self._data.move_to_end(key)
+            return self._data[key]
+        return default
 
     def promote(self, key: str) -> bool:
         """Promote key to most-recently-used position. Returns True if key exists."""

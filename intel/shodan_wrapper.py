@@ -1,2 +1,1 @@
-# DEPRECATED (F350M-R A4) — canonical: recon.shodan_wrapper
-from recon.shodan_wrapper import *
+# DEPRECATED - F350M-R A5 - stub removed, use intel/__init__.py redirect

@@ -2,6 +2,8 @@
 model_loader.py — Metal Model Loader
 ==================================
 
+
+
 PEP 698: Extracted from DeepHermes3Engine model lifecycle methods.
 Handles model loading, caching via hermes_cache, and memory-aware unloading.
 

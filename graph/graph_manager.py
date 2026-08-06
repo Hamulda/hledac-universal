@@ -2,6 +2,7 @@
 GraphManager — rustworkx + pyvis visualization layer.
 
 P2-5d: Migrated from igraph to rustworkx (2026-07-17).
+
 rustworkx is a Rust-based graph library (3-10x faster than igraph, M1-optimized).
 python-igraph removed from dependencies; rustworkx was already present.
 

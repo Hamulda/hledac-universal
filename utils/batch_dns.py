@@ -2,6 +2,9 @@
 Batch DNS Resolver — bounded LRU + negative cache + aiodns optional backend
 ============================================================================
 
+
+
+
 Sprint F-A4: Eliminates per-fetch DNS lookup cost in the discovery/fetch
 pipeline. 50 URLs with unique hostnames used to cost 50 sequential DNS
 round-trips (~5–10 s) because each ``FetchCoordinator._validate_fetch_target``

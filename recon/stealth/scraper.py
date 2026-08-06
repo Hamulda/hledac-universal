@@ -3,6 +3,8 @@ StealthCrawler a StealthWebScraper — web scraping s TLS fingerprinting.
 
 Rozděleno z původního stealth_crawler.py (ISSUE-028).
 
+
+
 From deep_research/distributed_dark_web_crawler.py:
 - curl_cffi for TLS fingerprinting (impersonate="chrome136")
 - DuckDuckGo HTML scraping (no CAPTCHA)

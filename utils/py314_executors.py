@@ -2,6 +2,10 @@
 py314_executors — DEPRECATED (2026-07-12)
 ============================================
 
+
+
+
+
 This module is DEPRECATED. All functionality has been consolidated into:
 
   runtime/worker_pool.py — SharedWorkerPool singleton (M1 8GB-safe)
@@ -55,7 +59,7 @@ _MAX_PROCESS_WORKERS = 4
 _MAX_INTERPRETER_WORKERS = 2
 _MIN_CHUNKSIZE = 100
 
-class ExecutorConfig(msgspec.Struct, frozen=True):
+class ExecutorConfig(msgspec.Struct, frozen=True, gc=False):
     """Immutable executor configuration."""
     executor_type: str
     max_workers: int
@@ -196,7 +200,7 @@ class ChunkedExecutor:
         chunk_size = chunksize if chunksize is not None else self._get_chunksize(len(items))
         yield from self._executor.map(fn, items, chunksize=chunk_size)
 
-class WorkloadProfile(msgspec.Struct, frozen=True):
+class WorkloadProfile(msgspec.Struct, frozen=True, gc=False):
     """Describes a workload's characteristics for executor selection."""
     name: str
     estimated_cpu_ms_per_item: float
@@ -302,7 +306,7 @@ def interpreter_pool_available() -> bool:
     except ImportError:
         return False
 
-class BenchmarkResult(msgspec.Struct):
+class BenchmarkResult(msgspec.Struct, gc=False):
     """Result of a parallel execution benchmark."""
     name: str
     serial_ms: float

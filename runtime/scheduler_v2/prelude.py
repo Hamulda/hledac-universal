@@ -2,6 +2,7 @@
 
 F350M-R / Issue #P2.
 
+
 Extracts prelude phase logic from runtime/sprint_scheduler.py:
     - _run_mandatory_acquisition_prelude (~1380 lines)
     - Individual lane functions: CT, WAYBACK, PDNS, DOH
@@ -12,7 +13,7 @@ All `self._result.X = Y` mutations become `ctx.result.X = Y`.
 Design:
     - Lanes are standalone async functions (no self._xxx references)
     - PreludeOrchestrator.run() orchestrates the gather of all lanes
-    - Lazy imports avoid M1 Metal init at import time
+    - Module-level lazy import cache avoids import overhead on every call
 
 ISSUE P2 FIX: All fire-and-forget ingest tasks are now tracked via
 TaskRegistry (safe_create_task_tracked). This guarantees:
@@ -27,6 +28,26 @@ import msgspec
 from typing import Any
 
 from hledac.universal.utils.async_helpers import first_completed  # ISSUE-15
+
+# ─── Module-level lazy import cache ───────────────────────────────────────────
+# Pattern: import at first use, cache in module globals for subsequent calls.
+# This avoids the overhead of importing on EVERY function call while still
+# keeping imports out of module __init__ (which would trigger M1 Metal init).
+#
+# Usage: call _lazy_import(name) to get the cached module/class.
+_LAZY_IMPORT_CACHE: dict[str, Any] = {}
+
+
+def _lazy_import(name: str) -> Any:
+    """Lazily import and cache a module/class.
+
+    Uses a module-level cache to avoid import overhead on repeated calls.
+    The first call triggers the import; subsequent calls use the cache.
+    """
+    if name not in _LAZY_IMPORT_CACHE:
+        from importlib import import_module
+        _LAZY_IMPORT_CACHE[name] = import_module(name)
+    return _LAZY_IMPORT_CACHE[name]
 
 class LaneResult(msgspec.Struct, gc=False):
     lane: str
@@ -51,6 +72,7 @@ async def run_public_prelude_lane(query: str) -> LaneResult:
     (celkem max 20 concurrent HTTP, M1 8GB RAM safe).
     Fail-fast: pokud pipeline vrátí ≥80% max_results (≥3), lane končí early.
     """
+    # Lazy imports with module-level cache
     from hledac.universal.pipeline.live_public_pipeline import async_run_live_public_pipeline
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane, build_lane_query
     try:

@@ -2,6 +2,9 @@
 ModernBERTEmbedder — MLX-accelerated ModernBERT encoder for embeddings, dedup, routing.
 
 Provides:
+
+
+
 - Batch text embedding via mlx-embeddings (ModernBERT-base, 768d)
 - Symmetric/asymmetric embedding support (search_query vs search_document prefixes)
 - M1 Metal cache cleanup on unload
@@ -75,7 +78,7 @@ except ImportError:
     MLX_EMBEDDINGS_AVAILABLE = False
     _ModernBERTMLXLoader = None
 
-class ModernBERTConfig(msgspec.Struct):
+class ModernBERTConfig(msgspec.Struct, gc=False):
     """Configuration for ModernBERT embedder."""
     model_path: str = 'nomic-ai/modernbert-embed-base'
     max_seq_len: int = 512

@@ -2,6 +2,7 @@
 runtime/sidecars/forensics/_auto_re.py — AutoRE Sidecar Adapter
 ============================================================
 
+
 ADVERSARY-004: Hermes3 Auto-RE Flow
 
 Sidecar lane running concurrently with IPFS / BGP / TI-Feed sidecars

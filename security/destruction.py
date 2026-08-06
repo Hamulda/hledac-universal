@@ -2,6 +2,8 @@
 Secure Destruction - Cryptographic Data Destruction
 
 Implementuje standardy:
+
+
 - DoD 5220.22-M (3-pass)
 - NIST 800-88 (1-pass random)
 - Gutmann (35-pass, overkill)
@@ -21,7 +23,7 @@ from hledac.universal.utils.secure_zero import secure_zero as _secure_zero
 
 logger = logging.getLogger(__name__)
 
-class DestructionConfig(msgspec.Struct):
+class DestructionConfig(msgspec.Struct, gc=False):
     """Konfigurace bezpečného mazání"""
     passes: int = 3
     pass_patterns: list[bytes] | None = None

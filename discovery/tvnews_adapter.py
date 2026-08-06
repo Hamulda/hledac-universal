@@ -3,6 +3,7 @@ Internet Archive TV News Adapter.
 
 Sprint P2-1: Internet Archive TV News crawler pro OSINT orchestrátor.
 
+
 API:
 - Archive.org Advanced Search API pro TV News collection
 - Endpoint: https://archive.org/advancedsearch.php

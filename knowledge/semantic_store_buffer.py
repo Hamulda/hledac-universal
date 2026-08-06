@@ -2,6 +2,7 @@
 SemanticStoreBuffer — extracted semantic buffering seam from DuckDBShadowStore.
 
 Sprint F222: Isolates semantic buffering logic so DuckDBShadowStore no longer
+
 contains the buffering implementation directly. The buffer delegates to an
 injected SemanticStore instance (or silently no-ops when no store is present).
 

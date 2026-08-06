@@ -2,6 +2,7 @@
 Memory Manager with LMDB Persistence
 ====================================
 
+
 Dual-layer architecture for session-bound ephemeral storage:
 
 LAYER 1 — Direct Module API (here in memory_manager.py):

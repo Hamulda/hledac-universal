@@ -2,6 +2,7 @@
 brain/brain_coordinator.py — Brain Composition Layer
 =================================================
 
+
 ARCH-SRP-001: Clean SRP separation for brain module.
 
 Composition layer that orchestrates:

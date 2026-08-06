@@ -2,6 +2,7 @@
 runtime/cli_session.py — Shared httpx.AsyncClient for CLI/probe scripts
 ========================================================================
 
+
 Reusable async context manager for one-shot CLI tools and probe scripts.
 Wraps lazy session creation + idempotent close via the session_runtime
 infrastructure, exposing a clean async-context-manager API.

@@ -2,8 +2,11 @@
 ParallelResearchScheduler – spravuje frontu úloh s prioritami.
 Používá asyncio pro I/O úlohy a ThreadPoolExecutor pro CPU-bound úlohy.
 
+
 PEP 654 redesign: asyncio.PriorityQueue + TaskGroup místo asyncio.Lock + heapq.
 - PriorityQueue je thread-safe (deque-based), žádné manuální locky pro frontu operace
+
+
 - asyncio.run_coroutine_threadsafe() místo call_soon_threadsafe+create_task (atomické v Py 3.10+)
 - msgspec.Struct(frozen=True) pro ~40% menší alokace PrioritizedTask
 - Bounded counter místo Event pro wait_all (eliminuje lost-wakeup race)
@@ -40,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 if _MSGSpec:
 
-    class PrioritizedTask(msgspec.Struct, frozen=True):
+    class PrioritizedTask(msgspec.Struct, frozen=True, gc=False):
         """Immutable prioritized task. msgspec offset access ~10× faster than dataclass.
 
         priority: higher = sooner (inverted for min-heap internally).
@@ -63,7 +66,7 @@ if _MSGSpec:
 else:
     from dataclasses import dataclass, field
 
-    class PrioritizedTask(msgspec.Struct):
+    class PrioritizedTask(msgspec.Struct, gc=False):
         priority: float
         task_id: str
         coro_or_fn: Any
@@ -414,8 +417,12 @@ class ParallelResearchScheduler:
                 self._all_done.set()
 
     async def steal_work(self, _worker_type: str) -> None:
-        """Work stealing — experimental placeholder."""
-        raise NotImplementedError("steal_work is not yet implemented")
+        """Work stealing — experimental placeholder.
+
+        TODO-314: Implement work stealing for better CPU utilization.
+        Current placeholder prevents production usage of work-stealing schedulers.
+        """
+        raise NotImplementedError("steal_work: TODO-314 - implement work stealing for CPU utilization")
 
     @property
     def io_queue(self) -> list:

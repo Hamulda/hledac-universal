@@ -2,6 +2,7 @@
 SOVEREIGN-009: Ed25519 Cryptographic Report Signing.
 
 Provides deterministic, always-on Ed25519 signing for forensic reports.
+
 Every exported forensic report is signed at export time, producing a
 base64-encoded Ed25519 signature that can be independently verified.
 

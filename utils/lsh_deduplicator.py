@@ -2,6 +2,8 @@
 LSH-backed Near-Duplicate Detection
 
 Multi-table LSH (Locality-Sensitive Hashing) pro O(1) near-duplicate
+
+
 detekci na scale. Kombinuje Rust SimHash s Rust LSH indexem.
 
 50× rychlejší než původní Python simhash_ext pro batch operace.
@@ -30,7 +32,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_NUM_TABLES = 16
 DEFAULT_NUM_ROWS = 4
 
-class LSHStats(msgspec.Struct):
+class LSHStats(msgspec.Struct, gc=False):
     """Statistics for LSH near-duplicate detection."""
     num_documents: int = 0
     num_tables: int = DEFAULT_NUM_TABLES

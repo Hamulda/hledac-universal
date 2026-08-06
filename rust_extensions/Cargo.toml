@@ -51,6 +51,7 @@ unicode-normalization = "0.1"
 lz4_flex = "0.10"
 libc = "0.2"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 # R4 FIX (B-10): Remove bundled — Rust links against the shared DuckDB library
 # provided by the Python duckdb wheel (single authority). This eliminates the
@@ -83,8 +84,8 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 # Enables: rust.tls.ja4_from_client_hello(), connect_and_ja4(), batch_ja4()
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"], optional = true }
 hex = "0.4"
-# ISSUE [ULTIMATE]-005: msgspec for zero-copy struct serialization
-msgspec = "0.13"
+# ISSUE [ULTIMATE]-005: msgspec removed — not available on crates.io
+# Using serde::Serialize derive instead
 
 # STIX 2.1 bundle encoding (for stix feature)
 # Feature-gated: ~2MB additional compile, M1 8GB safe
@@ -99,12 +100,15 @@ msgspec = "0.13"
 # ISSUE-011: Replaces Python in-memory BM25Index with mmap-backed Tantivy index
 tantivy = { version = "0.22", optional = true }
 
-# DNS resolution — DoH/DoT/DoQ via hickory-dns
+# DNS resolution — DoH/DoT/DoQ via hickory-resolver
 # Feature-gated: ~5MB additional compile, M1 8GB safe
 # Enables: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
-# P1-UPGRADE: hickory - simplified feature set for DoH/DoT
-# dns-over-https-rustls provides both DoH and DoT via rustls
-hickory = { package = "hickory-dns", version = "0.24", optional = true, features = ["resolver", "rustls"] }
+#
+# IMPORTANT: Using hickory-resolver directly (not hickory-dns meta-crate).
+# hickory-resolver does NOT depend on SQLite — only hickory-server has optional sqlite.
+# This avoids any conflict with arti-client's rusqlite dependency.
+# Rustls is used for TLS (rustls-platform-verifier on macOS).
+hickory-resolver = { version = "0.26", optional = true, features = ["tokio", "rustls-platform-verifier"] }
 # P1-UPGRADE: tokio 1.x → 1.40+ (2026-07-27)
 # Backward compatible for standard runtime builder APIs in dns.rs and quic.rs.
 # io-util added for HEIST-02 Arti bridge (AsyncReadExt/AsyncWriteExt).
@@ -138,7 +142,7 @@ tor-rtcompat = { version = "0.22", optional = true }
 # callbacks required by Network.framework's async C API.
 # M1 8GB: ~3 MB compile, zero runtime overhead beyond framework linking.
 # Platform: aarch64-apple-darwin ONLY (compiled conditionally via nw_framework feature).
-objc2 = { version = "0.6", optional = true, features = ["apple"] }
+objc2 = { version = "0.6", optional = true, features = ["unstable-apple-new"] }
 block2 = { version = "0.6", optional = true }
 
 # objc2-foundation: Safe Rust wrappers for Foundation types (NSString, NSArray,
@@ -212,6 +216,7 @@ data = [
     "dep:duckdb",
     "arrow_batch_builder",
     "graph_traverse",
+    "link_predictor",
 ]
 
 
@@ -258,7 +263,7 @@ advanced = [
 #   HLEDAC_ENABLE_MACH_REMAP=1 AND file_size >= 100MB.
 mach = []
 
-full = ["core", "data", "graph", "advanced", "dns", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper", "mach"]
+full = ["core", "data", "graph", "advanced", "tls13", "pdf", "office", "quic", "ane", "coreml_ane", "stix", "metal", "metal_shared", "otel", "fulltext", "native_db", "simdjson", "nw_framework", "whisper"]
 
 # simdjson: Zero-alloc JSON Pointer extraction via simd-json (ARM NEON native)
 # Adds: simdjson_extract.json_pointer_extract() — 2-4x faster than serde_json on M1
@@ -275,12 +280,16 @@ simdjson = [
 # Python fallback: exposed_service_hunter.py logs auth status only.
 native_db = []
 
-# dns: DoH/DoT/DoQ DNS resolution via hickory-dns
+# dns: DoH/DoT/DoQ DNS resolution via hickory-resolver
 # Adds: rust.dns.resolve_async(), resolve_happy_eyeballs(), prefetch()
 # M1 8GB: bounded cache (1024 hosts) + 50 concurrent queries
 # Feature-gated to avoid ~5MB compile overhead when not needed
+#
+# FIX [SWARM]-009: Using hickory-resolver instead of hickory-dns.
+# hickory-resolver does NOT depend on SQLite — only hickory-server has optional sqlite.
+# This avoids conflict with arti-client's rusqlite dependency.
 dns = [
-    "dep:hickory",
+    "dep:hickory-resolver",
     "dep:tokio",
 ]
 
@@ -290,13 +299,14 @@ dns = [
 bloom = []           # Referenced by core; #[cfg(feature = "bloom")] in lib.rs
 regex_lz4 = []        # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 content_hasher = []   # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
-adaptive_scheduler = []  // Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
-swarm_dag = []          // SILICON-07: Work-stealing task DAG; #[cfg(feature = "advanced")]
+adaptive_scheduler = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
+swarm_dag = []          # SILICON-07: Work-stealing task DAG; #[cfg(feature = "advanced")]
 simd_similarity = []  # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 feed_decision = []    # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 pipeline_compose = [] # Referenced by advanced; #[cfg(feature = "advanced")] in lib.rs
 graph_traverse = []   # Referenced by data
 arrow_batch_builder = []  # Referenced by data
+link_predictor = []   # SWARM-003: Link prediction (Adamic-Adar, Jaccard, Preferential Attachment)
 lsh_index = []        # Referenced by graph
 hot_edges = []         # Deprecated: module is hot_edges_rs, guarded by graph feature
 # NOTE: hot_edges_rs is the actual module name, hot_edges feature is legacy alias
@@ -463,6 +473,12 @@ unused = "warn"
 dead_code = "warn"
 unused_imports = "warn"
 unexpected_cfgs = "allow"
+
+# [SWARM]-009 FIX: Clippy lint for unwrap/expect usage in non-test code.
+# Run: cargo clippy -- -D clippy::unwrap_used
+# Tests (#[cfg(test)]) are exempted via #[allow(clippy::unwrap_used)] in test modules.
+[lints.clippy]
+unwrap_used = "warn"
 
 # ---------------------------------------------------------------------------
 # Target-specific flags

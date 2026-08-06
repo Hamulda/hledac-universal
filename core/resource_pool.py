@@ -2,6 +2,15 @@
 core/resource_pool.py — Centralized Resource Pool for Hledac Universal
 
 R-1 Solution: Unified resource pool addressing:
+
+
+
+
+
+
+
+
+
 - 8 DuckDB instances without coordination
 - 110+ run_in_executor submissions
 - ANE/MLX/CoreML resources without coordination

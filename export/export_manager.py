@@ -2,6 +2,7 @@
 ExportManager for Obsidian-compatible Markdown and interactive HTML graph export.
 
 Features:
+
 - export_markdown(): Obsidian-compatible Markdown with YAML front matter
 - export_graph_html(): Interactive HTML graph via pyvis
 

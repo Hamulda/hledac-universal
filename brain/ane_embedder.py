@@ -2,6 +2,9 @@
 ANE-akcelerovaný embedder pro ModernBERT a FlashRank.
 Offline konverze z MLX do CoreML, fallback na MLX.
 
+
+
+
 Reranker: rerank_findings_crossencoder() používá flashrank CrossEncoder.
 LanceDBIdentityStore má vlastní _get_flashrank_ranker() pro search path.
 Tyto dvě instance jsou záměrně oddělené — ANE brain pipeline vs. vector store search.
@@ -799,7 +802,7 @@ async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -
     Hash fallback: url+title hash (zero RAM, always works).
     """
     try:
-        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+        from hledac.universal.core.embeddings.legacy import get_embedding_manager
         mgr = get_embedding_manager()
     except Exception:
         mgr = None
@@ -845,7 +848,7 @@ def rerank_findings_cosine(findings: list[dict], query: str, top_k: int=20) -> l
     Fallback: embeddings.reranker batch_rerank_topk() → Rust SIMD → top-k extraction.
     """
     try:
-        from hledac.universal.core.mlx_embeddings import get_embedding_manager
+        from hledac.universal.core.embeddings.legacy import get_embedding_manager
         mgr = get_embedding_manager()
         if mgr is None or not mgr.is_loaded:
             raise RuntimeError('MLXEmbeddingManager unavailable')

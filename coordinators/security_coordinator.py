@@ -2,6 +2,8 @@
 Security Coordinator — F350M-R Architectural Split
 ===================================================
 
+
+
 Threat intelligence + Quantum Crypto + ZKP operations.
 OpsEC (stealth/privacy/VPN) extracted to OpsECCoordinator.
 

@@ -3,11 +3,13 @@ MLXWorkerThread — Dedicated thread with persistent event loop for MLX inferenc
 
 Pattern: thread-per-loop, single Metal context, single MLX model state.
 
+
 Why this exists (Sprint P0-3):
     The current code uses `loop.run_in_executor(self._inference_executor, sync_fn)`
     to offload blocking mlx_lm.generate() calls to a ThreadPoolExecutor.
     While the executor is non-blocking from the thread pool's perspective, the
     main asyncio loop is parked in `async with asyncio.timeout(delay): await future`
+
     for the entire inference duration (~1-30s for 50-200 tokens). During that
     window the main loop cannot service other coroutines (HTTP fetch, DB
     ingest, scheduled sidecars).

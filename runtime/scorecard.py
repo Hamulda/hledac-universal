@@ -2,6 +2,9 @@
 Sprint P2-01: ScorecardBuilder — refaktorovaný _print_scorecard_report.
 runtime/scorecard.py
 
+
+
+
 11-fázová špageta z __main__.py::_print_scorecard_report přesunuta do
 čisté třídy ScorecardBuilder s:
 - 2 fáze místo 11 (collect → persist)

@@ -2,6 +2,7 @@
 runtime/stix_exporter.py — STIX 2.1 bundle export.
 
 F350M-R: Native Rust STIX encoding + jsonschema validation.
+
 Provides stix.encode(), stix.decode(), stix.validate() backed by
 rust_extensions.stix_2_1 (serde_json + jsonschema, 2-4× faster than Python json.dumps).
 

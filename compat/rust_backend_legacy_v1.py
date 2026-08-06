@@ -2,6 +2,7 @@
 """
 Compatibilní vrstva pro staré callery, které vyžadují ABI version 1.0.
 
+
 Pozadí:
     Některé external callery (např. staré verze integrací, third-party nástroje)
     mohou mít hardcoded očekávání, že hledac_rust_extensions.__abi_version__()

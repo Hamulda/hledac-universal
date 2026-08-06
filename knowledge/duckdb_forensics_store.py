@@ -2,6 +2,7 @@
 knowledge/duckdb_forensics_store.py — DuckDB-backed Forensics Metadata Store
 =========================================================================
 
+
 ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 
 Drop-in replacement for forensics/metadata_extractor.py SQLite3 cache.

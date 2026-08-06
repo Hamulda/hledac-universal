@@ -3,6 +3,10 @@ F214G: Python 3.14.4 vs 3.14.5+ GC Reality Benchmark
 ======================================================
 Measures GC behavior impact on Hledac runtime for MacBook Air M1 8GB.
 
+
+
+
+
 Python 3.14.4: incremental GC (the "broken" version per CPython release notes)
 Python 3.14.5+: reverted to generational GC from 3.13 (per CPython changelog)
 
@@ -46,14 +50,14 @@ try:
 except ImportError:
     psutil = None
 
-class GCSnapshot(msgspec.Struct):
+class GCSnapshot(msgspec.Struct, gc=False):
     """Point-in-time GC state."""
     threshold: tuple[int, int, int]
     count: tuple[int, int, int]
     stats: list[dict]
     collections_total: int = 0
 
-class MemorySnapshot(msgspec.Struct, frozen=True):
+class MemorySnapshot(msgspec.Struct, frozen=True, gc=False):
     """Point-in-time memory state."""
     rss_mb: float
     swap_mb: float
@@ -61,7 +65,7 @@ class MemorySnapshot(msgspec.Struct, frozen=True):
     vm_available_gb: float
     timestamp: float = field(default_factory=time.monotonic)
 
-class PhaseResult(msgspec.Struct, frozen=True):
+class PhaseResult(msgspec.Struct, frozen=True, gc=False):
     """Result of a benchmark phase."""
     name: str
     wall_clock_s: float
@@ -73,7 +77,7 @@ class PhaseResult(msgspec.Struct, frozen=True):
     mem_peak_mb: float
     errors: list[str] = field(default_factory=list)
 
-class BenchmarkReport(msgspec.Struct, frozen=True):
+class BenchmarkReport(msgspec.Struct, frozen=True, gc=False):
     """Full benchmark report."""
     python_version: str
     python_version_info: tuple[int, int, int, str, int]

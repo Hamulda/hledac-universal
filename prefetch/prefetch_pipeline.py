@@ -2,6 +2,8 @@
 Continuous Prefetch Pipeline – P3-3
 
 Producer → Queue → Executor pattern for speculative IOC prefetching:
+
+
 1. Producer: IOC Graph traversal via asyncio.to_thread (non-blocking, async-native)
 2. Queue: asyncio.PriorityQueue with bounded depth (no ThreadPoolExecutor)
 3. Executor: Fetch with pre-warmed curl_cffi connections
@@ -45,7 +47,7 @@ IDLE_PREFETCH_INTERVAL_S = 5.0
 IDLE_PREFETCH_THRESHOLD = 3
 PREFETCH_PREWARMED_HOSTS_MAX = 50
 
-class PrefetchItem(msgspec.Struct):
+class PrefetchItem(msgspec.Struct, gc=False):
     """
     Single IOC prefetch item with priority queue ordering.
 

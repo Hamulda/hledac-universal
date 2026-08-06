@@ -2,6 +2,8 @@
 PEP 654 ExceptionGroup-based error handling + Rust-style Result monad.
 
 Issue 9 — Cancelltion/error handling restructure
+
+
 Modern Python 3.11+ async error patterns for Hledac Universal.
 
 Design principles:

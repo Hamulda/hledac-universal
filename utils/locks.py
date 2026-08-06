@@ -2,6 +2,7 @@
 locks — Lazy asyncio.Lock registry for M1 8GB UMA.
 
 Centralizes all module-level asyncio.Lock() creation to prevent the
+
 ISSUE-014 crash on macOS: asyncio.Lock() captures the running event loop
 at creation time. If called at module import (no loop yet), subsequent
 async uses fail with "no running event loop".

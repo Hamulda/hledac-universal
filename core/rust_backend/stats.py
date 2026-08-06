@@ -2,6 +2,7 @@
 """
 StatCollector — explicit stat registry for Rust extension telemetry.
 
+
 Replaces the hasattr/try-except pattern in sprint_entrypoint._get_rust_stats()
 with a single registry + contextlib.suppress() pass.
 

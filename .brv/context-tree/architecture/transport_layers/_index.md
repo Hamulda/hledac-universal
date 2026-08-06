@@ -1,83 +1,75 @@
 ---
-children_hash: 0a169501548cadd7c6d34f39c4cfab923d0e51a5f0dd8e555c0f3dd65d659005
-compression_ratio: 0.47812692544670365
+children_hash: cd71750b4770351cc5189d1a68474144726617349cd02a387238df0ec0ac1bd0
+compression_ratio: 0.28692579505300353
 condensation_order: 1
-covers: [context.md, http_3_configuration_constants.md, http_3_lane_implementation.md, http_3_neqo_integration_plan.md, issue_0_2_curl_cffi_caps_architecture_fix.md]
-covers_token_total: 1623
+covers: [context.md, http_3_bounded_resources.md, http_3_configuration_constants.md, http_3_lane_implementation.md, http_3_neqo_integration_plan.md, i2p_transport.md, issue_0_2_curl_cffi_caps_architecture_fix.md, tor_transport.md]
+covers_token_total: 2830
 summary_level: d1
-token_count: 776
+token_count: 812
 type: summary
 ---
 <think>
-The user wants me to create a structural summary at level d1 (domain level) from the provided knowledge entries about transport_layers. I need to:
-
-1. Condense the child entries into a structured overview
-2. Preserve key facts, relationships, and patterns
-3. Reference entry names for drill-down
-4. Target ~20-30% compression
-5. Output clean markdown without code blocks or XML tags
+The user wants me to create a structural summary at level d1 (domain level) from the provided child entries about transport_layers. I need to condense this information while preserving key facts, architectural decisions, and relationships.
 
 Let me analyze the entries:
 
-1. **context.md** - Overview of HTTP/3 lane with curl_cffi_opportunistic and aioquic_stealth strategies
-2. **http_3_configuration_constants.md** - M1_BOUNDS constants for HTTP/3 (cache, concurrency, timeouts, memory)
-3. **http_3_lane_implementation.md** - Three strategies, LRU caching, memory guards, Alt-Svc probing
-4. **http_3_neqo_integration_plan.md** - Future neqo integration plan
-5. **issue_0_2_curl_cffi_caps_architecture_fix.md** - Bug fix for curl_cffi CAPS integration
+1. **context.md** - Overview of HTTP/3 lane implementation with two strategies
+2. **http_3_bounded_resources.md** - H3 LRU cache 512 entries, concurrency cap 3, RSS memory block 5.5 GiB, cache TTL 24h
+3. **http_3_configuration_constants.md** - M1_BOUNDS constants for HTTP/3
+4. **http_3_lane_implementation.md** - Three HTTP/3 strategies, dark web rules
+5. **http_3_neqo_integration_plan.md** - neqo integration plan
+6. **i2p_transport.md** - I2P SAM v3 protocol, three transport modes
+7. **issue_0_2_curl_cffi_caps_architecture_fix.md** - CAPS architecture fix
+8. **tor_transport.md** - Tor socks5h proxy, circuit rotation, JARM fingerprinting
 
-Key patterns and relationships:
-- HTTP/3 has multiple strategies (curl_cffi_opportunistic default, aioquic_stealth fallback, neqo planned)
-- Configuration bounded by M1_BOUNDS constants
-- Dark web TLDs (.onion, .i2p, .b32.i2p) excluded from HTTP/3
-- LRU caching with 512 entry max
-- Memory guard at 5.5 GiB RSS
-- Concurrency limited to 3
-- CAPS system manages capability registration
+Key themes:
+- HTTP/3 lane with multiple strategies (curl_cffi_opportunistic, neqo, aioquic)
+- Bounded resources (LRU 512, concurrency 3, memory 5.5GiB)
+- Dark web bypass (Tor, I2P transports)
+- Alt-Svc probing
+- JARM fingerprinting for C2 detection
+- CAPS architecture for capability management
 
-Let me create a concise structural summary.
+I need to create a concise structural summary that references the entry names for drill-down.
 </think>
 
 # transport_layers
 
-HTTP/3 lane implementation supporting multiple strategies with LRU caching, memory guards, and speculative Alt-Svc probing.
+## Overview
+HTTP/3 lane implementation with layered transport strategies for anonymity networks. Two-tier architecture: HTTP/3 with bounded resources for clearnet, separate Tor/I2P transports for dark web.
 
-## Strategies
+## Architecture
 
-- **curl_cffi_opportunistic** (default) — JA3 spoofing via curl_cffi >= 0.7
-- **neqo** (planned) — Mozilla Rust QUIC engine, arm64 darwin priority, pending PyPI
-- **aioquic_stealth** (fallback) — Standard fallback when neqo unavailable
+### HTTP/3 Lane (http_3_lane_implementation.md, http_3_bounded_resources.md, http_3_configuration_constants.md)
+Three strategies in priority order: curl_cffi_opportunistic (default) → NeqoRustlsTransportAdapter (M1 arm64 darwin) → AioquicTransportAdapter (fallback). **neqo integration plan** in http_3_neqo_integration_plan.md.
 
-## Configuration (M1_BOUNDS)
+**Bounded Resources (M1_BOUNDS):**
+- LRU cache: 512 entries max, 24h TTL
+- Concurrency: 3 concurrent requests
+- Memory guard: RSS block at 5.5 GiB
+- Timeouts: 8.0s request, 2.0s semaphore wait, 4.0s probe
+- Max probe tasks: 16
 
-| Constant | Value |
-|----------|-------|
-| LRU cache max | 512 entries |
-| Concurrency max | 3 |
-| Timeout | 8.0s |
-| Semaphore wait | 2.0s |
-| Cache TTL | 86400s (24h) |
-| RSS memory block | 5.5 GiB |
-| Max probe tasks | 16 |
+**Flow:** request → LRU cache check → memory guard → Alt-Svc detection → speculative probe → execute H3
 
-## Architecture Decisions
+**Dark Web Rule:** .onion, .i2p, .b32.i2p TLDs bypass HTTP/3 entirely.
 
-- **Dark web exclusion**: HTTP/3 never attempted for `.onion`, `.i2p`, `.b32.i2p` TLDs
-- **CAPS integration**: FetchCoordinator uses `CAPS.require(CURL_CFFI)` instead of availability check
-- **FAIL-FAST policy**: No silent httpx fallback when curl_cffi unavailable — JA3 spoofing guaranteed
-- **Fallback chain**: neqo unavailable → aioquic → curl_cffi_opportunistic
-- **LRU eviction**: O(1) via OrderedDict, bounded by `http3_lru_max`
-- **Error handling**: Any error returns `None`, never propagates
+### CAPS Integration (issue_0_2_curl_cffi_caps_architecture_fix.md)
+FetchCoordinator uses CAPS.require(CURL_CFFI) for guaranteed JA3 spoofing. FAIL-FAST when curl_cffi unavailable—no silent httpx fallback.
 
-## Key Files
+## Anonymity Transports
 
-- `transport/http3_lane.py` — HTTP/3 lane implementation
-- `fetching/public_fetcher.py` — Public fetcher entry point
-- `fetching/curl_cffi_fetch.py` — CAPS-aware curl_cffi wrapper
-- `coordinators/fetch_coordinator.py` — Fetch orchestration with CAPS checks
+### Tor Transport (tor_transport.md)
+- Proxy: socks5h://127.0.0.1:9050
+- Circuit rotation: every 10 requests
+- Timeout multiplier: 2.0x
+- Max concurrent: 3 per domain
+- **JARM fingerprinting** for C2 detection (Cobalt Strike, Metasploit, AsyncRAT, Havoc, Covenant signatures documented)
 
-## Drill-Down
+### I2P Transport (i2p_transport.md)
+Three modes: SAM v3 (port 7656, ~2MB RAM), SOCKS5H (port 4444), HTTP proxy (port 8888). Session ID format: hledac-samv3-<uuid>. NAMING LOOKUP resolves .i2p destinations.
 
-- `http_3_lane_implementation.md` — Full strategy details, patterns, rules
-- `http_3_configuration_constants.md` — Complete M1_BOUNDS constants
-- `http_3_neqo_integration_plan.md` — neqo Rust integration roadmap
-- `issue_0_2_curl_cffi_caps_architecture_fix.md` — CAPS integration fix details
+## Key Relationships
+- HTTP/3 never attempts dark web TLDs → delegates to Tor/I2P transports
+- curl_cffi CAPS registration at capabilities.py:190
+- neqo pending PyPI availability (rustls arena release on arm64+darwin)

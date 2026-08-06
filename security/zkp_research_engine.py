@@ -2,6 +2,7 @@
 ZKPResearchEngine — Zero-Knowledge Proof research engine (simulation mode).
 
 PRODUCTION BLOCKED: No Python 3.14+ ZK proof library works on M1 ARM.
+
 Libraries considered: py-ecc, circom, snarkjs — none M1-compatible yet.
 
 CURRENT MODE: Simulated ZKP — logs proofs but does not compute real ZK proofs.

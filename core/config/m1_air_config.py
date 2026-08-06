@@ -2,6 +2,7 @@
 core/config/m1_air_config.py — M1AirConfig: Frozen typed configuration for MacBook Air M1 8GB.
 
 Sprint F290: Centralized hardware-specific limits as immutable config.
+
 All values are hardware-validated for M1 8GB UMA budget.
 
 Invariant table (test name → validated property):

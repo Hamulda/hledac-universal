@@ -2,6 +2,7 @@
 Prewarm Daemon — one-time MLX model preload at application startup.
 
 Běží v dedikovaném threadu (ne v main thread), aby neblokoval event loop.
+
 Modely se cachují do _HERMES_MODEL_CACHE atd., takže per-sprint init
 je ~0ms místo ~60-90s.
 

@@ -2,6 +2,10 @@
 Token-level uncertainty extraction from MLX inference via logits_processors.
 
 ISSUE APEX-1008: DeepHermes3Engine uses mlx_lm.generate() but doesn't extract
+
+
+
+
 logprobs. This module captures logits during generation and computes per-token
 entropy for downstream entity-level uncertainty aggregation.
 

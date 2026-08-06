@@ -2,6 +2,7 @@
 core/inference_backends/mlxcel_backend.py — Out-of-process mlxcel Backend
 ======================================================================
 Out-of-process mlxcel via MlxcelIpcClient.
+
 JSON-RPC 2.0 over UNIX Domain Socket (/tmp/hledac_mlxcel.sock)
 or subprocess pipes fallback.
 

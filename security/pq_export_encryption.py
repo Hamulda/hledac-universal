@@ -2,6 +2,10 @@
 Post-Quantum HPKE Export Encryption — X-Wing ML-KEM-768 X25519.
 
 HPKE (Hybrid Public Key Encryption) provides post-quantum encryption for
+
+
+
+
 exported evidence bundles using CryptoKit's X-Wing scheme on macOS 26+.
 
 Architecture:
@@ -49,7 +53,7 @@ class Decryptability(Enum):
     EPHEMERAL_TEST_ONLY = 'ephemeral_test_only'
     UNSUPPORTED = 'unsupported'
 
-class ExportEncryptionEnvelope(msgspec.Struct):
+class ExportEncryptionEnvelope(msgspec.Struct, gc=False):
     """
     Encrypted export bundle envelope — PRODUCTION safe, no private key material.
 
@@ -104,7 +108,7 @@ class ExportEncryptionEnvelope(msgspec.Struct):
         """Safe repr — no private key material."""
         return f'ExportEncryptionEnvelope(mode={self.mode!r}, pq={self.pq}, decryptability={self.decryptability.value}, recipient_key_id={self.recipient_key_id!r}, backend={self.backend!r})'
 
-class TestOnlyHPKERoundtripMaterial(msgspec.Struct, frozen=True):
+class TestOnlyHPKERoundtripMaterial(msgspec.Struct, frozen=True, gc=False):
     """
     Test-only HPKE roundtrip material — NEVER used in production.
 
@@ -117,7 +121,7 @@ class TestOnlyHPKERoundtripMaterial(msgspec.Struct, frozen=True):
     public_key_b64: str
     private_key_b64: str
 
-class HPKEStatus(msgspec.Struct, frozen=True):
+class HPKEStatus(msgspec.Struct, frozen=True, gc=False):
     """Current status of the HPKE export backend."""
     availability: HPKEAvailability = HPKEAvailability.DISABLED
     backend_name: str = 'null'

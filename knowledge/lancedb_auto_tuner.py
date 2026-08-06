@@ -2,6 +2,9 @@
 
 ROLE
 ----
+
+
+
 Adaptive ``num_partitions`` adjustment for IVF-PQ indices. Single source of
 truth shared between ``LanceDBIdentityStore`` (entities table, async) and
 ``_ANNIndex`` (semantic_dedup_v1, sync). Measures recall@K against a brute-force

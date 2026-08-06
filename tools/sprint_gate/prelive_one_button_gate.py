@@ -2,6 +2,10 @@
 Prelive One-Button Decision Gate — Sprint F221H
 
 Single command gives one verdict on whether a live sprint is worth running.
+
+
+
+
 Combines:
   - Artifact readiness (F221A-G + cross-sprint required probes)
   - Memory/swap state (UMA sample)
@@ -106,7 +110,7 @@ def _sample_uma() -> dict:
     except Exception as exc:
         return {'system_used_gib': 0.0, 'swap_used_gib': 0.0, 'swap_detected': False, 'uma_state': 'unknown', 'io_only': False, 'error': str(exc)}
 
-class F221ArtifactResult(msgspec.Struct):
+class F221ArtifactResult(msgspec.Struct, gc=False):
     probe_dir: str
     filename: str
     found: bool
@@ -141,7 +145,7 @@ def _check_all_f221_artifacts(repo_root: Path) -> tuple[list[F221ArtifactResult]
             missing.append(result)
     return (results, missing)
 
-class F223ArtifactResult(msgspec.Struct, frozen=True):
+class F223ArtifactResult(msgspec.Struct, frozen=True, gc=False):
     logical_name: str = ''
     probe_dir: str = ''
     filename: str = ''
@@ -283,7 +287,7 @@ def _has_fallback_schema(decision_data: dict | None) -> bool:
         return False
     return bool(decision_data.get('fallback_schema_blocked', False))
 
-class OneButtonResult(msgspec.Struct, frozen=True):
+class OneButtonResult(msgspec.Struct, frozen=True, gc=False):
     verdict: OneButtonVerdict
     live_allowed: bool
     reasons: list[str] = field(default_factory=list)
@@ -640,7 +644,7 @@ def _render_markdown(result: OneButtonResult, profile: str, query: str) -> str:
     lines.extend(['', '---', '', '## How to Run This Gate', '', '```bash', 'python tools/prelive_one_button_gate.py \\', '  --repo-root . \\', '  --profile nonfeed_diagnostic180 \\', '  --query "mozilla.org certificate transparency subdomains april 2026" \\', '  --output-json probe_f221h_one_button_prelive_gate/one_button_prelive_gate.json \\', '  --output-md probe_f221h_one_button_prelive_gate/REPORT_ONE_BUTTON_PRELIVE_GATE.md', '```', '', 'With optional last-live triage:', '```bash', 'python tools/prelive_one_button_gate.py \\', '  --repo-root . --profile nonfeed_diagnostic180 \\', '  --query "..." \\', '  --last-live-triage probe_f219g_live_artifact_triage/triage.json \\', '  --decision-gate-json probe_f219f_prelive_decision_gate/prelive_decision.json \\', '  --output-json ... --output-md ...', '```'])
     return '\n'.join(lines)
 
-class SelfTestResult(msgspec.Struct, frozen=True):
+class SelfTestResult(msgspec.Struct, frozen=True, gc=False):
     """Machine-checkable self-test output (Sprint F224H)."""
     self_test_passed: bool
     artifact_matrix: list[dict]

@@ -3,6 +3,7 @@ security/clearance_cookie_jar.py
 
 Cloudflare / DataDome clearance cookie persistence layer.
 
+
 Stores cf_clearance and datadome cookies in LMDB with bounded TTL.
 On subsequent requests, cookies are injected into the curl_cffi session
 so protected endpoints are bypassed without solving the challenge again.

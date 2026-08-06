@@ -2,6 +2,12 @@
 
 Problem: Python O(n²) fallback in _rust_cooccurrence_worker silently triggered
 when Rust engine unavailable. With 50 IOC/finding × 10_000 findings =
+
+
+
+
+
+
 12M pairs worst-case — sprint bottleneck.
 
 Solution: Python fallback ELIMINATED. Rust engine is a hard requirement.

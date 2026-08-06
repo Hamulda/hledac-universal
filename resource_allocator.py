@@ -2,6 +2,9 @@
 Resource Allocator with Predictive Modeling
 ==========================================
 
+
+
+
 ROLE: Canonical REQUEST-LEVEL BUDGETING / CONCURRENCY PRIMITIVE (not a sampler or governor).
 
 This module provides:
@@ -52,7 +55,7 @@ def _get_mx() -> Any | None:
     return _MLX_CORE if _MLX_CORE is not False else None
 
 
-class ResourceBudget(msgspec.Struct):
+class ResourceBudget(msgspec.Struct, gc=False):
     """Resource budget for a request."""
     ram_mb: int
     time_sec: float

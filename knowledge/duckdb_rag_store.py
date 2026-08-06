@@ -2,6 +2,10 @@
 knowledge/duckdb_rag_store.py — Unified DuckDB-Backed RAG & Identity Store
 ========================================================================
 
+
+
+
+
 F350M-R: Phase 2 Knowledge consolidation — LanceDB → DuckDB migration.
 
 ROLE: Single unified DuckDB-backed store replacing:

@@ -2,6 +2,7 @@
 
 Manages WAL + LMDB-backed storage within DuckDBShadowStore:
   - WAL truth records (finding:{id})
+
   - Pending-sync recovery markers
   - Deadletter markers
 

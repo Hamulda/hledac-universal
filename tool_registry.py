@@ -2,6 +2,7 @@
 Tool Registry — Thin Facade.
 
 This module now delegates to tools/registry.py (pure registration) and
+
 tools/executor.py (async execution patterns).
 
 Kept for backward compatibility — existing imports continue to work.
@@ -62,7 +63,7 @@ def get_task_tool_preview_mapping() -> dict[str, str]:
 from dataclasses import dataclass
 import msgspec
 
-class DeepResearchProviderMirror(msgspec.Struct, frozen=True):
+class DeepResearchProviderMirror(msgspec.Struct, frozen=True, gc=False):
     """Triad-side read-only mirror for DeepResearch provider admission metadata."""
     mirror_module: str = 'tool_registry'
     owning_module: str = 'enhanced_research'

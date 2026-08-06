@@ -2,6 +2,7 @@
 
 Owns all DuckDB HNSW vector operations:
   - rag_embeddings table (cross-sprint RAG document chunks)
+
   - entity_embeddings table (entity identity vectors)
   - DuckDB array_cosine_distance with HNSW index
 

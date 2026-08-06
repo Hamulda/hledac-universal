@@ -2,6 +2,7 @@
 """
 Evidence chain hashing for content deduplication.
 Implements content_hash + prev_chain -> new_chain for evidence linking.
+
 """
 
 from __future__ import annotations

@@ -131,7 +131,7 @@ fn compute_scores_neon(
     {
         // SAFETY: NEON intrinsics require aligned memory and valid SIMD state.
         // All our slices are created from Vec<f32> which have 4-byte alignment,
-        and we use core::arch::aarch64 operations which are sound on aarch64.
+        // and we use core::arch::aarch64 operations which are sound on aarch64.
         unsafe { compute_scores_neon_inner(fetched, accepted, current_weights, novelty) }
     }
     #[cfg(not(neon_available))]
@@ -531,7 +531,7 @@ pub fn batch_compute_scores(
     let mut novelty = Vec::<bool>::with_capacity(n);
 
     for item in stats.iter() {
-        let dict = item.downcast::<pyo3::types::PyDict>()?;
+        let dict = item.cast::<pyo3::types::PyDict>()?;
 
         // PyO3 0.28: get_item returns Result<Option<Bound>, PyErr>
         let f = match dict.get_item("fetched") {
@@ -612,7 +612,7 @@ pub fn batch_aggregate_signals(
 
     for i in 0..n_sources {
         let item = signals.get_item(i)?;
-        let py_list = item.downcast::<PyList>()?;
+        let py_list = item.cast::<PyList>()?;
 
         let mut fv: Vec<f32> = Vec::with_capacity(py_list.len());
         for elem in py_list.iter() {
@@ -741,8 +741,8 @@ pub fn batch_quality_score(
                 .map(|i| {
                     let text_len = *lens.get(i).unwrap_or(&0);
                     let text = texts_str.get(i).map(|s| s.as_str()).unwrap_or("");
-                    let fetch_error = errors.get(i).and_then(|e| e.as_ref());
-                    let failure_stage = failures.get(i).and_then(|f| f.as_ref());
+                    let fetch_error = errors.get(i).and_then(|e| e.as_ref()).map(|s| s.as_str());
+                    let failure_stage = failures.get(i).and_then(|f| f.as_ref()).map(|s| s.as_str());
 
                     _score_page_quality(text, text_len, fetch_error, failure_stage)
                 })

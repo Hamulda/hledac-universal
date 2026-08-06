@@ -2,6 +2,8 @@
 brain/lora_manager.py — Sprint G2: LoRA Manager
 =========================================
 
+
+
 Extracted from DeepHermes3Engine to reduce complexity.
 Manages LoRA adapter lifecycle, caching, and application.
 

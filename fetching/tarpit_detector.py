@@ -2,6 +2,10 @@
 Tarpit & Honeypot Detector for Fetch Pipeline
 ==============================================
 
+
+
+
+
 ISSUE [UNINDEXED]-014: Detect tarpits, link labyrinths, and honeypots in HTTP responses
 before HTML processing. Protects the fetch pipeline from wasting bandwidth and CPU on
 crawler-trapping pages.

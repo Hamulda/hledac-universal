@@ -2,6 +2,8 @@
 """
 Gemini Protocol Transport — modern privacy-focused alternative internet.
 
+
+
 Gemini is a TLS-only protocol (port 1965) with simple text format.
 Has ~2000 active capsules with technical/scientific/niche content.
 

@@ -2,6 +2,11 @@
 core.capability_cost — Per-capability memory cost registry for QoS triage.
 
 [FINAL]-019-07: Replaces hardcoded HEAVY_SIDECAR_COST_MB with a decorator-based
+
+
+
+
+
 registration system that each capability module uses to declare its memory profile.
 
 Usage in a capability module:
@@ -302,7 +307,7 @@ def capability_cost(
         tier: "critical" | "heavy" | "medium" | "light"
         tags: Optional tags for filtering
     """
-    def decorator(cls: type) -> type:
+    def decorator(cls: type[object]) -> type[object]:
         name = cls.__name__.lower()
         register_capability_cost(name=name, rss_mb=rss_mb, peak_mb=peak_mb, tier=tier, tags=tags)
         return cls
