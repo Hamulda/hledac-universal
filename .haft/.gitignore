@@ -1,5 +1,6 @@
 spec-migration-v2/
 .aider-desk/
 .kilo/
+.venv-test/
 project-typeenv-genesis-review.json
 .project-typeenv-genesis-review-*
