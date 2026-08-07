@@ -1674,7 +1674,7 @@ def run_pre_sprint_checks() -> bool:
     # Validates: deprecated flags, implications, conflicts, RAM budget.
     # Runs at startup to catch configuration errors before sprint begins.
     try:
-        from hledac.universal.core.feature_flags import FeatureFlags
+        from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 
         flag_errors, flag_warnings = FeatureFlags.validate()
         for err in flag_errors:
@@ -2617,7 +2617,7 @@ async def run_sprint(
 
     # F214Q: Remote debug OPSEC guard — strict exit if HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1
     # and PYTHON_DISABLE_REMOTE_DEBUG is not set. Python 3.14 activates safe-external-debugger by default.
-    if os.environ.get("HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED") == "1":
+    if FeatureFlags.get(FeatureFlag.REMOTE_DEBUG_DISABLE):
         if os.environ.get("PYTHON_DISABLE_REMOTE_DEBUG") != "1":
             sys.exit(
                 "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED=1 but PYTHON_DISABLE_REMOTE_DEBUG not set — "

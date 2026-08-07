@@ -375,11 +375,9 @@ def _load_smollm() -> tuple[object, object] | tuple[None, None]:
             return _smollm_model, _smollm_tokenizer
 
         try:
-            import os
+            from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 
-            _blitz_triage = (
-                os.environ.get("HLEDAC_ENABLE_BLITZ_TRIAGE", "0") == "1"
-            )
+            _blitz_triage = FeatureFlags.get(FeatureFlag.BLITZ_TRIAGE)
             if not _blitz_triage:
                 # SmolLM only loaded if BLITZ_TRIAGE is enabled
                 return None, None

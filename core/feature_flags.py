@@ -332,6 +332,9 @@ class FeatureFlag(Enum):
 
     MLX = "HLEDAC_MLX"
     MLX_PREWARM = "HLEDAC_MLX_PREWARM"
+    ANE_INFERENCE = "HLEDAC_ENABLE_ANE_INFERENCE"
+    DISABLE_ANE = "HLEDAC_DISABLE_ANE"
+    KV_CACHE = "HLEDAC_ENABLE_KV_CACHE"
 
     # ─── Brain / Processing Flags ────────────────────────────────────────
 
@@ -384,6 +387,7 @@ class FeatureFlag(Enum):
 
     ARROW_EVIDENCE = "HLEDAC_ARROW_EVIDENCE"
     EVIDENCE_DUCKDB = "HLEDAC_EVIDENCE_DUCKDB"
+    CLAIMS_EXTRACTION = "HLEDAC_ENABLE_CLAIMS_EXTRACTION"
 
     # ─── DuckDB / Storage Config Flags ──────────────────────────────────
 
@@ -422,6 +426,7 @@ class FeatureFlag(Enum):
     DOC_SANDBOX = "HLEDAC_ENABLE_DOC_SANDBOX"
     EPHEMERAL_WIPE = "HLEDAC_ENABLE_EPHEMERAL_WIPE"
     NATIVE_EXTRACTION = "HLEDAC_ENABLE_NATIVE_EXTRACTION"
+    REMOTE_DEBUG_DISABLE = "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED"
 
     # ─── Cognitive / Runtime Flags ─────────────────────────────────────────
 
@@ -601,6 +606,7 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_ENABLE_CAPTCHA_DETECTION": FlagCategory.FORENSICS,
         "HLEDAC_ENABLE_CAPTCHA_LOCAL": FlagCategory.FORENSICS,
         "HLEDAC_ENABLE_NATIVE_EXTRACTION": FlagCategory.FORENSICS,
+        "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED": FlagCategory.SECURITY,
         # Stealth
         "HLEDAC_ENABLE_STEALTH_LAYER": FlagCategory.STEALTH,
         "HLEDAC_ENABLE_PRIVACY_LAYER": FlagCategory.STEALTH,
@@ -707,6 +713,7 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         # Evidence / Logging
         "HLEDAC_ARROW_EVIDENCE": FlagCategory.STORAGE,
         "HLEDAC_EVIDENCE_DUCKDB": FlagCategory.STORAGE,
+        "HLEDAC_ENABLE_CLAIMS_EXTRACTION": FlagCategory.STORAGE,
         # Browser / Stealth
         "HLEDAC_BROWSER_MEM_THRESHOLD_GIB": FlagCategory.STEALTH,
         # Deobfuscation / Pipeline
@@ -758,6 +765,7 @@ def _build_metadata() -> dict[FeatureFlag, dict]:
         "HLEDAC_ENABLE_DOC_SANDBOX": FlagCategory.SECURITY,
         "HLEDAC_ENABLE_EPHEMERAL_WIPE": FlagCategory.SECURITY,
         "HLEDAC_ENABLE_NATIVE_EXTRACTION": FlagCategory.FORENSICS,
+        "HLEDAC_REQUIRE_REMOTE_DEBUG_DISABLED": FlagCategory.SECURITY,
         # Cognitive / Runtime
         "HLEDAC_ENABLE_COGNITIVE_SATURATION": FlagCategory.BRAIN,
         "HLEDAC_ENABLE_AUTO_RE": FlagCategory.BRAIN,

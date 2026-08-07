@@ -142,8 +142,8 @@ class _RustConsistencyDomain:
         result: FFICallResult = self._ffi_cb.call_or_fallback(
             module=FFI_MODULE_CONSISTENCY_VERIFIER,
             rust_fn=rust_call,
-            findings,  # Positional arg for Python fallback
-            max_findings,  # Positional arg for Python fallback
+            findings=findings,
+            max_findings=max_findings,
         )
 
         # Circuit breaker returns the final result (Rust, Python fallback, or No-op)

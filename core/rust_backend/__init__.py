@@ -148,6 +148,8 @@ _SUBMODULE_NAMES: tuple[str, ...] = (
     "int_counter", "simd", "sprint_policies", "html", "metal",
     # TLS 1.3 JA4 fingerprinting (rustls-based)
     "tls",
+    # HEIST-02: In-process Tor via Arti (embedded_tor feature)
+    "arti",
     # ISSUE [ULTIMATE]-005: Unicode attribution fingerprint
     "unicode_fingerprint",
     # SWARM-003: Link prediction (Adamic-Adar, Jaccard, Preferential Attachment)

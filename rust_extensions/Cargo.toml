@@ -125,7 +125,8 @@ hickory-resolver = { version = "0.26", optional = true, features = ["tokio", "ru
 # Features: tokio runtime, native TLS, onion proxy for .onion access.
 # rusqlite dep is used for persistent state cache - no conflict with other deps.
 arti-client = { version = "0.11", optional = true, default-features = false, features = ["tokio", "native-tls"] }
-tor-rtcompat = { version = "0.9", optional = true, default-features = false, features = ["runtime-tokio-native-tls"] }
+# tor-rtcompat 0.9: Runtime compatibility for Arti — tokio + native TLS.
+tor-rtcompat = { version = "0.9", optional = true, default-features = false, features = ["tokio", "native-tls"] }
 # P1-UPGRADE: tokio 1.x → 1.40+ (2026-07-27)
 # Backward compatible for standard runtime builder APIs in dns.rs and quic.rs.
 # io-util added for HEIST-02 Arti bridge (AsyncReadExt/AsyncWriteExt).

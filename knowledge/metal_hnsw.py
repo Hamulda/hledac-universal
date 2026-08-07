@@ -71,9 +71,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Feature gate — canonical constant, importable by integration points
 # ---------------------------------------------------------------------------
-METAL_HNSW_ENABLED: bool = (
-    os.environ.get("HLEDAC_ENABLE_METAL_HNSW", "0") == "1"
-)
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
+METAL_HNSW_ENABLED: bool = FeatureFlags.get(FeatureFlag.METAL_HNSW)
 
 # ---------------------------------------------------------------------------
 # Lazy imports (no module-level MLX cost — ISSUE #3 compliant)

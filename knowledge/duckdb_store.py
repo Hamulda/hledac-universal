@@ -1883,6 +1883,9 @@ def shutdown_all_duckdb_stores() -> None:
     _duckdb_store_registry.release_all()
 
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
+
 class DuckDBShadowStore:
     # F350M-R-A1: Lightweight registry — avoids gc.get_objects() at CRITICAL/EMERGENCY
     _instances: set["DuckDBShadowStore"] = set()
@@ -2051,7 +2054,7 @@ class DuckDBShadowStore:
         _flush_cfg = os.getenv("HLEDAC_DUCKDB_MIN_FLUSH", "50")
         self._min_flush: int = max(1, int(_flush_cfg))
         # F350M-R: Claims extraction wiring — Rust batch_extract_claims_python
-        self._claims_enabled: bool = os.getenv("HLEDAC_ENABLE_CLAIMS_EXTRACTION", "0") == "1"
+        self._claims_enabled: bool = FeatureFlags.get(FeatureFlag.CLAIMS_EXTRACTION)
         _max_cfg = os.getenv("HLEDAC_DUCKDB_MAX_FLUSH_INTERVAL", "1.0")
         self._max_flush_interval: float = max(0.1, float(_max_cfg))
         self.DEAD_LETTER_PREFIX: str = "deadletter_ingest:"
@@ -8457,7 +8460,7 @@ class DuckDBShadowStore:
             chunk_accepted_indices: list[int] = []
 
             # F350M-R: hoist ZERO_ATTRIBUTION check outside the per-finding loop
-            _do_zero_attribution = os.getenv("HLEDAC_ENABLE_ZERO_ATTRIBUTION") == "1"
+            _do_zero_attribution = FeatureFlags.get(FeatureFlag.ZERO_ATTRIBUTION)
             _temporal_anonymizer: Any = None
             if _do_zero_attribution and not hasattr(self, "_temporal_anonymizer"):
                 try:

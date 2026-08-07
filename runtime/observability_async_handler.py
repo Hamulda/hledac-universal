@@ -34,6 +34,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 
 _structlog: Any | None = None
 
@@ -192,7 +193,7 @@ class StdQueueAdapter:
 # === Configuration constants ===
 
 MAX_QUEUE_SIZE = 10_000
-_ASYNC_LOG_ENABLED = os.environ.get("HLEDAC_ASYNC_LOG", "0").strip() == "1"
+_ASYNC_LOG_ENABLED = FeatureFlags.get(FeatureFlag.ASYNC_LOG, default=False)
 
 
 # === AsyncLogHandler with Dependency Injection ===
@@ -239,11 +240,8 @@ class AsyncLogHandler:
             cls._lock = AsyncioLockAdapter()
         async with cls._lock:
             if cls._instance is None:
-                drop_oldest_env = (
-                    os.environ.get("HLEDAC_ASYNC_LOG_DROP_OLDEST", "1").strip()
-                    != "0"
-                )
-                cls._instance = cls(drop_oldest=drop_oldest_env)
+                drop_oldest = FeatureFlags.get(FeatureFlag.ASYNC_LOG_DROP_OLDEST, default=True)
+                cls._instance = cls(drop_oldest=drop_oldest)
         return cls._instance
 
     async def start(self) -> None:

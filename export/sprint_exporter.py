@@ -588,7 +588,7 @@ class JSONFormatter:
 
         # [META]-009: Build standalone investigator dashboard (opt-in)
         dashboard_html_path: str | None = None
-        if os.environ.get("HLEDAC_ENABLE_DASHBOARD", "1") == "1":
+        if FeatureFlags.get(FeatureFlag.DASHBOARD):
             try:
                 from hledac.universal.export.dashboard_builder import WASMDashboardBuilder
 
@@ -656,7 +656,7 @@ class JSONFormatter:
 
                 # Get timeline data from TimeSeriesSplicer (opt-in)
                 timeline_data: list[dict[str, Any]] = []
-                if os.environ.get("HLEDAC_ENABLE_TIMELINE_SPLICER", "0") == "1":
+                if FeatureFlags.get(FeatureFlag.TIMELINE_SPLICER):
                     try:
                         from hledac.universal.knowledge.time_series_splicer import get_time_series_splicer
                         splicer = get_time_series_splicer()

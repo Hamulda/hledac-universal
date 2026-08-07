@@ -52,6 +52,8 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+
 if TYPE_CHECKING:
     pass
 
@@ -61,8 +63,8 @@ logger = logging.getLogger(__name__)
 # HLEDAC_FORCE_PYTHON=1 → always use Python fallback (testing, debugging)
 # HLEDAC_FORCE_RUST=1   → always use Rust path (validate Rust in CI)
 # Default: auto-detect based on import success (legacy behavior)
-_FORCE_PYTHON = os.environ.get("HLEDAC_FORCE_PYTHON", "0") == "1"
-_FORCE_RUST = os.environ.get("HLEDAC_FORCE_RUST", "0") == "1"
+_FORCE_PYTHON = FeatureFlags.get(FeatureFlag.FORCE_PYTHON, default=False)
+_FORCE_RUST = FeatureFlags.get(FeatureFlag.FORCE_RUST, default=False)
 
 
 # ─── Rust backend probe (Sprint P1-5) ──────────────────────────────────

@@ -107,7 +107,8 @@ class JSRendererCapability:
         """Check playwright availability (must hold lock)."""
         if self._capability["playwright"] is not None:
             return
-        heavy_browser_enabled = os.environ.get("HLEDAC_ENABLE_HEAVY_BROWSER", "0") == "1"
+        from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+        heavy_browser_enabled = FeatureFlags.get(FeatureFlag.HEAVY_BROWSER)
         if not heavy_browser_enabled:
             self._capability["playwright"] = "heavy_browser_disabled"
             return

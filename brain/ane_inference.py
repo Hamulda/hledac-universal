@@ -81,10 +81,11 @@ _MODEL_CONFIGS: dict[str, dict[str, Any]] = {
 }
 
 # ─── Lazy capability detection ───────────────────────────────────────────────
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
 
 _coremltools_available: bool | None = None
 _coremltools: Any = None
-_ANE_DISABLED_BY_ENV = os.environ.get("HLEDAC_DISABLE_ANE", "").strip() == "1"
+_ANE_DISABLED_BY_ENV = FeatureFlags.get(FeatureFlag.DISABLE_ANE)
 
 
 def _check_coremltools() -> bool:

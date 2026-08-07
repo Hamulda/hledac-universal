@@ -38,7 +38,8 @@ def is_temporal_store_enabled() -> bool:
     """Return True when HLEDAC_ENABLE_TEMPORAL_STORE=1 is set."""
     global _store_enabled
     if _store_enabled is None:
-        _store_enabled = os.environ.get("HLEDAC_ENABLE_TEMPORAL_STORE", "0") == "1"
+        from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+        _store_enabled = FeatureFlags.get(FeatureFlag.TEMPORAL_STORE)
     return _store_enabled
 
 

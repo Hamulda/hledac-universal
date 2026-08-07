@@ -491,7 +491,7 @@ async def extract_batch(
 # ── Feature Gate Helpers ────────────────────────────────────────────────────
 
 def is_native_extraction_enabled() -> bool:
-    """Check if native extraction is enabled via environment flag.
+    """Check if native extraction is enabled via FeatureFlag registry.
 
     SECURITY: Default is OFF (0) — opt-in because:
     - Direct database wire protocol access to exposed services is privileged
@@ -500,7 +500,8 @@ def is_native_extraction_enabled() -> bool:
 
     Set HLEDAC_ENABLE_NATIVE_EXTRACTION=1 for internal/CI deployments only.
     """
-    return os.environ.get("HLEDAC_ENABLE_NATIVE_EXTRACTION", "0") == "1"
+    from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+    return FeatureFlags.get(FeatureFlag.NATIVE_EXTRACTION)
 
 
 def is_rust_native_db_available() -> bool:

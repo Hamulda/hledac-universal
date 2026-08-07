@@ -1271,7 +1271,7 @@ class RAGEngine:
 
         # ── SILICON-02: Try GPU-accelerated vector insertion ──────
         _gpu_inserted = False
-        if os.environ.get("HLEDAC_ENABLE_METAL_HNSW", "0") == "1":
+        if FeatureFlags.get(FeatureFlag.METAL_HNSW):
             try:
                 from hledac.universal.knowledge.metal_hnsw import MetalHNSWBuilder
                 gpu_builder = MetalHNSWBuilder(

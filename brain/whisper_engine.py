@@ -106,8 +106,9 @@ _TRANSCRIBE_TIMEOUT_S = 600.0    # 10 min max per transcription
 _MODEL_DOWNLOAD_TIMEOUT_S = 300.0  # 5 min max for model download
 
 # Runtime feature flags
-_WHISPER_ENABLED_BY_ENV = os.environ.get("HLEDAC_ENABLE_WHISPER", "1").strip() != "0"
-_WHISPER_DISABLED_BY_ENV = os.environ.get("HLEDAC_DISABLE_WHISPER", "").strip() == "1"
+from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+_WHISPER_ENABLED_BY_ENV = FeatureFlags.get(FeatureFlag.WHISPER)
+_WHISPER_DISABLED_BY_ENV = FeatureFlags.get(FeatureFlag.DISABLE_WHISPER)
 
 # CoreML model download URLs (pre-converted whisper.cpp encoder models)
 _COREML_MODEL_URLS: dict[str, str] = {

@@ -39,7 +39,8 @@ class ZKPResearchEngine:
     name: str = "zkp_stub"
 
     def __init__(self) -> None:
-        if os.environ.get("HLEDAC_ENABLE_ZKP") == "1":
+        from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
+        if FeatureFlags.get(FeatureFlag.ZKP):
             logger.warning(
                 "ZKP not implemented — HLEDAC_ENABLE_ZKP=1 is set but "
                 "ZKPResearchEngine is a stub. Real ZKP requires libsnark or "

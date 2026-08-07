@@ -821,7 +821,7 @@ async def async_search_public_web(
     # ---- Sprint F213B: query variant expansion for domain-like queries ----
     # Phase A: async DSPy expansion (no asyncio.run nesting — runs in caller's event loop)
     dspy_expanded: list = []
-    if os.getenv("HLEDAC_ENABLE_DSPY", "0") == "1":
+    if FeatureFlags.get(FeatureFlag.DSPY):
         try:
             from hledac.universal.brain.dspy_service import expand_query
             dspy_expanded = await expand_query(trimmed) or []
