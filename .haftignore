@@ -4,6 +4,8 @@
 .kilo/
 
 # Editor/IDE
+.aider-desk/
+.kilo/
 .claude/
 .vscode/
 .idea/
