@@ -197,7 +197,7 @@ class DeepProbeScanner:
                         raw_results.append({'bucket': bucket_name, 'url': url, 'status': 200})
                         fid = hashlib.sha256(bucket_name.encode()).hexdigest()[:16]
                         findings.append(CanonicalFinding(finding_id=fid, query=domain, source_type='deep_probe', confidence=0.5, ts=time.time(), provenance=('deep_probe', 's3', bucket_name), payload_text=f'Open S3 bucket: {bucket_name}'))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if len(checked) >= max_buckets:
                 break
@@ -261,7 +261,7 @@ async def scan_ipfs(query: str, store: Any=None, max_results: int=MAX_IPFS_RESUL
                     fid = hashlib.sha256(cid.encode()).hexdigest()[:16]
                     findings.append(CanonicalFinding(finding_id=fid, query=query, source_type='deep_probe', confidence=0.7, ts=time.time(), provenance=('deep_probe', 'ipfs', cid), payload_text=f'IPFS content: {url}'))
                     break
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if len(findings) >= max_results:
             break

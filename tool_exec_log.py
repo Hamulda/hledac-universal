@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 import orjson
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 BOUNDED_ERROR_CLASSES = frozenset(['TimeoutError', 'ConnectionError', 'HTTPError', 'ValueError', 'TypeError', 'AttributeError', 'KeyError', 'IOError', 'RuntimeError', 'CancelledError', 'AuthenticationError', 'PermissionError', 'NotFoundError', 'ValidationError', 'RateLimitError', 'CircuitBreakerError', 'Unknown'])
 BOUNDED_STATUSES = frozenset(['success', 'error', 'cancelled'])
@@ -256,7 +257,7 @@ class ToolExecLog:
                     async with asyncio.timeout(1.0):
                         item = await self._write_queue.get()
                     batch.append(item)
-                except TimeoutError:
+                except TimeoutError:  # noqa: BLE001
                     pass
                 if self._write_shutdown.is_set():
                     while True:
@@ -339,7 +340,7 @@ class ToolExecLog:
                         f'[ToolExecLog] Write queue overflow ({self._WRITE_QUEUE_MAXSIZE} full), '
                         f'counting overflow events (last seq={event.seq_no})'
                     )
-            except RuntimeError:
+            except RuntimeError:  # noqa: BLE001
                 pass
         self._log.append(event)
         return event
@@ -378,7 +379,7 @@ class ToolExecLog:
         for event in self._log:
             if event.seq_no not in ram_seqs:
                 events.append(event)
-        events.sort(key=lambda e: e.seq_no)
+        events.sort(key=attrgetter("seq_no"))
         errors = []
         expected_head = 'genesis'
         for event in events:
@@ -412,12 +413,12 @@ class ToolExecLog:
                 self._write_task.cancel()
                 try:
                     await self._write_task
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # noqa: BLE001
                     pass
         if self._db:
             try:
                 await self._db.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._db = None
 
@@ -433,7 +434,7 @@ class ToolExecLog:
             try:
                 if loop:
                     loop.run_until_complete(self.aclose())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._closed = True
 

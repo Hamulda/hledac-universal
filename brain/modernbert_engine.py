@@ -145,7 +145,7 @@ class ModernBertEngine:
                     mx.clear_cache()
                 elif hasattr(mx.metal, 'clear_cache'):
                     mx.metal.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         logger.info('[ModernBertEngine] Unloaded')
 

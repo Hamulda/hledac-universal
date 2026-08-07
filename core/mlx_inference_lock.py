@@ -129,7 +129,7 @@ class MLXWorker:
                 from hledac.universal.utils.mlx_memory import get_metal_stream_context
                 _stream_ctx = get_metal_stream_context()
                 _stream_ctx.__enter__()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._ready.set()
             loop.run_forever()
@@ -146,12 +146,12 @@ class MLXWorker:
                         loop.run_until_complete(
                             safe_gather_fire_and_forget(*pending, label="mlx_worker:shutdown")
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 loop.close()
                 try:
                     gc.collect()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._loop = None
 
@@ -248,7 +248,7 @@ class MLXWorker:
             if cf_future is not None:
                 try:
                     cf_future.cancel()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             raise RuntimeError("mlx_worker_timeout: operation exceeded 120s")
         finally:
@@ -280,7 +280,7 @@ class MLXWorker:
             mx.eval([])
             mx.clear_cache()
             gc.collect()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return result
 
@@ -294,7 +294,7 @@ class MLXWorker:
         if self._loop is not None and not self._loop.is_closed():
             try:
                 self._loop.call_soon_threadsafe(self._loop.stop)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if self._thread.is_alive():
             self._thread.join(timeout=timeout)

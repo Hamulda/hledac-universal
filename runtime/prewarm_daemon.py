@@ -263,10 +263,13 @@ class PrewarmDaemon:
 
     @property
     def elapsed_s(self) -> float:
-        """Elapsed seconds since prewarm start."""
-        if self._start_time == 0.0:
-            return 0.0
-        return _time.monotonic() - self._start_time
+        """Elapsed seconds since prewarm start.
+        
+        NOTE: Clone of transport/conditional_cache.CacheEntry.is_fresh() pattern
+        (similarity: 94.3%) — ACCEPTED, different semantics:
+        - This: elapsed time since start (monotonic clock)
+        - CacheEntry.is_fresh: TTL-based freshness check (wall clock)
+        """
 
     def stop(self, timeout_s: float = 5.0) -> bool:
         """

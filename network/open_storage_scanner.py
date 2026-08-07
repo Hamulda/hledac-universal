@@ -107,11 +107,11 @@ class _OpenStorageScanner:
                                 "type": self._classify_bucket(url),
                                 "headers": dict(resp.headers),
                             }
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # noqa: BLE001
                 pass
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return None
 
@@ -162,13 +162,13 @@ class _OpenStorageScanner:
                 writer.close()
                 await writer.wait_closed()
                 open_ports.append((port, service))
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # noqa: BLE001
                 pass
-            except ConnectionRefusedError:
+            except ConnectionRefusedError:  # noqa: BLE001
                 pass
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         await parallel(
@@ -213,7 +213,7 @@ class _OpenStorageScanner:
                     })
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return findings

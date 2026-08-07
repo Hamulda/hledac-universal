@@ -44,6 +44,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from functools import cache
 from typing import Any
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 try:
     from cryptography import x509
@@ -280,7 +281,7 @@ class ClassicalCryptanalysis:
             plaintext = self.caesar_decrypt(ciphertext, shift)
             score = self._score_english(plaintext)
             results.append(CryptanalysisResult(success=score > 0.6, plaintext=plaintext, cipher_type=CipherType.CAESAR, key=f'shift_{shift}', confidence=score, method='brute_force', attempts=shift, time_seconds=time.time() - start))
-        results.sort(key=lambda x: x.confidence, reverse=True)
+        results.sort(key=attrgetter("confidence"), reverse=True)
         return results
 
     def vigenere_decrypt(self, ciphertext: str, key: str) -> str:
@@ -363,7 +364,7 @@ class ClassicalCryptanalysis:
             plaintext = self.rail_fence_decrypt(ciphertext, rails)
             score = self._score_english(plaintext)
             results.append(CryptanalysisResult(success=score > 0.5, plaintext=plaintext, cipher_type=CipherType.RAIL_FENCE, key=f'rails_{rails}', confidence=score, method='brute_force', attempts=rails - 1, time_seconds=time.time() - start))
-        results.sort(key=lambda x: x.confidence, reverse=True)
+        results.sort(key=attrgetter("confidence"), reverse=True)
         return results
 
     def _find_vigenere_key_length(self, ciphertext: str, max_length: int) -> int:
@@ -454,7 +455,7 @@ class ClassicalCryptanalysis:
             all_results.append(vigenere_result)
         rail_results = self.rail_fence_bruteforce(ciphertext)
         all_results.extend(rail_results[:3])
-        all_results.sort(key=lambda x: x.confidence, reverse=True)
+        all_results.sort(key=attrgetter("confidence"), reverse=True)
         best = all_results[0]
         best.time_seconds = time.time() - start
         best.alternative_solutions = [{'cipher': r.cipher_type.value, 'confidence': r.confidence, 'plaintext': r.plaintext[:100]} for r in all_results[1:4]]
@@ -565,7 +566,7 @@ class HashAnalyzer:
         try:
             if all((c in '0123456789abcdefABCDEF' for c in data)) and len(data) % 2 == 0:
                 data = binascii.unhexlify(data).decode('latin-1')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         counter = Counter(data)
         length = len(data)
@@ -785,7 +786,7 @@ class CertificateAnalyzer:
         try:
             san = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME)
             san_domains = [name.value for name in san.value]
-        except x509.ExtensionNotFound:
+        except x509.ExtensionNotFound:  # noqa: BLE001
             pass
         is_self_signed = cert.subject == cert.issuer
         now = datetime.now(UTC)
@@ -795,7 +796,7 @@ class CertificateAnalyzer:
         try:
             basic_constraints = cert.extensions.get_extension_for_oid(x509.oid.ExtensionOID.BASIC_CONSTRAINTS)
             is_ca = basic_constraints.value.ca
-        except x509.ExtensionNotFound:
+        except x509.ExtensionNotFound:  # noqa: BLE001
             pass
         return CertificateInfo(subject=subject, issuer=issuer, serial_number=str(cert.serial_number), not_before=cert.not_valid_before, not_after=cert.not_valid_after, fingerprint_sha256=fingerprint_sha256, fingerprint_sha1=fingerprint_sha1, signature_algorithm=sig_alg, public_key_algorithm=f'{key_type}-{key_size}', key_size=key_size, san_domains=san_domains, is_self_signed=is_self_signed, is_expired=is_expired, days_until_expiry=days_until_expiry, is_ca=is_ca, chain_valid=True)
 

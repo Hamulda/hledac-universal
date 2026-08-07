@@ -675,7 +675,7 @@ class DuckDBQueryExecutor:
             if parquet_path is not None:
                 try:
                     _os.unlink(str(parquet_path))
-                except OSError:
+                except OSError:  # noqa: BLE001
                     pass
 
     # ── Run & Profile Operations ─────────────────────────────────────────────────

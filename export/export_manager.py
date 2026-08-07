@@ -14,6 +14,7 @@ import os
 import json as _stdlib_json
 import time
 from datetime import UTC
+from operator import attrgetter, itemgetter
 try:
     import orjson as _orjson
     _HAS_ORJSON = True
@@ -632,7 +633,7 @@ def render_d3_timeline_html(events: list[dict[str, Any]] | None=None, findings: 
                 ts = f.get('found_at') or f.get('timestamp') or f.get('created_at')
                 if ts:
                     all_events.append({'timestamp': _iso_ts(ts), 'title': f.get('ioc_value', 'Finding'), 'description': f"Type: {f.get('ioc_type', 'unknown')} | Source: {f.get('source_type', 'unknown')}", 'source_type': _safe_str(f.get('source_type', 'osint')), 'confidence': float(f.get('confidence', 0.5)), 'event_type': 'finding'})
-    all_events.sort(key=lambda x: x.get('timestamp', ''))
+    all_events.sort(key=attrgetter("get")('timestamp', ''))
     # Issue 10 fix: use canonical codec via encode_str
     from hledac.universal.utils.codec import encode_str as _encode_str_d3
     events_json = _encode_str_d3(all_events)

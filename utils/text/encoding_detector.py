@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 import msgspec
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 BASE64_REGEX = '[A-Za-z0-9+/]{20,}={0,2}'
 BASE32_REGEX = '[A-Z2-7]{20,}={0,6}'
@@ -164,7 +165,7 @@ class BaseEncodingDetector:
         findings.extend(self._detect_base85(text))
         findings.extend(self._detect_hex(text))
         findings.extend(self._detect_url_encoding(text))
-        findings.sort(key=lambda x: x.position)
+        findings.sort(key=attrgetter("position"))
         if self.config.detect_nested:
             for finding in findings:
                 nested = await self._analyze_nested(finding)
@@ -401,11 +402,11 @@ class BaseEncodingDetector:
                             chain.final_content = base64.b64decode(nf.original).decode('utf-8', errors='ignore')
                         elif nf.encoding_type == 'hex':
                             chain.final_content = bytes.fromhex(nf.original).decode('utf-8', errors='ignore')
-                    except (UnicodeDecodeError, ValueError):
+                    except (UnicodeDecodeError, ValueError):  # noqa: BLE001
                         pass
                 chain.depth = len(chain.encodings)
                 return chain
-        except (UnicodeDecodeError, ValueError, LookupError, OSError):
+        except (UnicodeDecodeError, ValueError, LookupError, OSError):  # noqa: BLE001
             pass
         return None
 

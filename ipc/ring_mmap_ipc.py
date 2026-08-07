@@ -280,7 +280,7 @@ class RingMMap:
         if self._shm is not None:
             try:
                 self._shm.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._shm = None
 
@@ -292,7 +292,7 @@ class RingMMap:
             try:
                 shm = posix_ipc.SharedMemory(name=self._name)
                 shm.close_unlink()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 
@@ -428,13 +428,13 @@ class RingMMapIPC:
                 try:
                     ring_shm.close()
                     ring_shm.unlink()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if result_shm is not None:
                 try:
                     result_shm.close()
                     result_shm.unlink()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             raise
 
@@ -542,7 +542,7 @@ class RingMMapIPC:
             )
             sem.release()
             sem.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def call(self, msg: T, timeout: float = 30.0) -> R | None:
@@ -595,7 +595,7 @@ class RingMMapIPC:
                 future = self._pending.pop(seq)
                 if not future.done():
                     future.set_result(result)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def close(self) -> None:
@@ -608,7 +608,7 @@ class RingMMapIPC:
             try:
                 self._ring.close()
                 self._ring.unlink()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._ring = None
 
@@ -618,7 +618,7 @@ class RingMMapIPC:
                 self._proc.join(timeout=5.0)
                 if self._proc.is_alive():
                     self._proc.kill()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._proc = None
 
@@ -631,7 +631,7 @@ class RingMMapIPC:
                     try:
                         shm = posix_ipc.SharedMemory(name=name)
                         shm.close_unlink()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
         self._started = False
@@ -675,13 +675,13 @@ def run_worker(
     # Clear stale count
     try:
         data_sem.acquire(0)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Signal ready
     try:
         ready_sem.release()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     try:
@@ -731,7 +731,7 @@ def run_worker(
                 struct.pack_into("<I", result_buf, 0, len(result_bytes))
                 result_buf[:len(result_bytes)] = result_bytes
                 result_sem.release()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     finally:

@@ -551,7 +551,7 @@ class InferenceCoordinator:
             if hasattr(rust_extensions, "batch_xxh3_64_bytes"):
                 h = rust_extensions.batch_xxh3_64_bytes(sig.encode())
                 return f"xxh3:{h:016x}"
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         import hashlib
 
@@ -814,7 +814,7 @@ class ModelPool:
             from hledac.universal.utils.mlx_cache import mlx_cleanup_sync
 
             mlx_cleanup_sync()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         logger.debug(f"[ModelPool] MLX cache cleared ({reason})")
 
@@ -839,9 +839,9 @@ class ModelPool:
                 try:
                     from hledac.universal.utils.mlx_cache import mlx_cleanup_sync
                     mlx_cleanup_sync()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Never raise from __del__ — interpreter shutdown is unpredictable
             pass
 

@@ -92,6 +92,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from operator import attrgetter, itemgetter
 import orjson
 
 if TYPE_CHECKING:
@@ -282,7 +283,7 @@ class TransactionalToTCheckpointer:
             # SEC-02: harden directory permissions
             try:
                 os.chmod(self._fs_dir, 0o700)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
         if self._lmdb_enabled:
@@ -318,7 +319,7 @@ class TransactionalToTCheckpointer:
             self._task.cancel()
             try:
                 await self._task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
             except Exception:  # noqa: BLE001
                 pass
@@ -627,7 +628,7 @@ class TransactionalToTCheckpointer:
             self._lmdb_path.mkdir(parents=True, exist_ok=True)
             try:
                 os.chmod(self._lmdb_path, 0o700)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
             self._lmdb_env = lmdb.open(
@@ -1003,7 +1004,7 @@ class TransactionalToTCheckpointer:
                 # Non-timeout: _wake_event was set externally (signal handler).
                 # Clear it so the next iteration sleeps for the full interval.
                 self._wake_event.clear()
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # noqa: BLE001
                 pass  # Normal: interval elapsed, time to checkpoint
             except asyncio.CancelledError:
                 break
@@ -1066,7 +1067,7 @@ class TransactionalToTCheckpointer:
             prefix = f"{self._sprint_id}_step"
             candidates = sorted(
                 [p for p in self._fs_dir.iterdir() if p.name.startswith(prefix)],
-                key=lambda p: p.stat().st_mtime,
+                key=attrgetter("stat")().st_mtime,
                 reverse=True,
             )
             if not candidates:

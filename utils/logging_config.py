@@ -65,7 +65,7 @@ def _get_trace_context() -> dict[str, Any]:
             out["trace_id"] = tid
         if sid and sid != "0" * 16:
             out["span_id"] = sid
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return out
 
@@ -93,9 +93,9 @@ def _get_task_context() -> dict[str, Any]:
             task_name = task.get_name()
             if task_name and task_name != "Task-1":
                 out["task_name"] = task_name
-    except RuntimeError:
+    except RuntimeError:  # noqa: BLE001
         pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return out
 
@@ -217,7 +217,7 @@ def configure_logging() -> None:
     if sl is None:
         try:
             _configure_stdlib_logging()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return
 
@@ -264,7 +264,7 @@ def get_logger(name: str) -> Any:
     if sl is not None:
         try:
             return sl.get_logger(name)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return logging.getLogger(name)
 
@@ -288,7 +288,7 @@ def bind_sprint_context(**kwargs: Any) -> None:
     if sl is not None:
         try:
             sl.contextvars.bind_contextvars(**clean_kwargs)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -301,7 +301,7 @@ def unbind_sprint_context(*keys: str) -> None:
                 sl.contextvars.unbind_contextvars(*keys)
             else:
                 sl.contextvars.unbind_contextvars("sprint_id", "lane", "mode", "query", "duration")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     if keys:

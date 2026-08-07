@@ -36,6 +36,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from hledac.universal.utils._patterns import elapsed_ms  # F320: DRY elapsed_ms helper
 _OTEL_AVAILABLE: bool | None = None
 TELEMETRY_EVENT_FIELDS = frozenset(['session_id', 'phase', 'component', 'event', 'elapsed_ms'])
 
@@ -126,7 +127,7 @@ class TelemetryLogger:
             h.setFormatter(JsonFormatter())
             self._logger.addHandler(h)
             self._logger.setLevel(logging.INFO)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def log_phase_transition(self, from_phase: str, to_phase: str, component: str | None=None, elapsed_ms: float=0.0) -> None:
@@ -137,7 +138,7 @@ class TelemetryLogger:
             self._events.append(evt)
             self._emit_log_record(evt)
             self._emit_otel_event(evt)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def log_event(self, phase: str, component: str, event: str, elapsed_ms: float=0.0) -> None:
@@ -147,7 +148,7 @@ class TelemetryLogger:
             self._events.append(evt)
             self._emit_log_record(evt)
             self._emit_otel_event(evt)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def log_sprint_finalize(self, final_phase: str, component: str | None=None, total_elapsed_ms: float=0.0) -> None:
@@ -158,7 +159,7 @@ class TelemetryLogger:
             self._events.append(evt)
             self._emit_log_record(evt)
             self._emit_otel_event(evt)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def get_events(self) -> list[dict]:
@@ -178,7 +179,7 @@ class TelemetryLogger:
             record.event = evt.event
             record.elapsed_ms = evt.elapsed_ms
             self._logger.handle(record)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _emit_otel_event(self, evt: SprintEvent) -> None:
@@ -192,7 +193,7 @@ class TelemetryLogger:
             if span is None or not hasattr(span, 'add_event'):
                 return
             span.add_event(evt.event, attributes={'session_id': evt.session_id, 'phase': evt.phase, 'component': evt.component, 'elapsed_ms': evt.elapsed_ms})
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 class SprintMetrics:
@@ -222,7 +223,7 @@ class SprintMetrics:
             elapsed = self._elapsed_ms()
             comp = component or self._component
             self._telemetry.log_event(phase=phase, component=comp, event='phase_entered', elapsed_ms=elapsed)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_transition(self, from_phase: str, to_phase: str, component: str | None=None) -> None:
@@ -231,7 +232,7 @@ class SprintMetrics:
             elapsed = self._elapsed_ms()
             comp = component or self._component
             self._telemetry.log_phase_transition(from_phase=from_phase, to_phase=to_phase, component=comp, elapsed_ms=elapsed)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_event(self, phase: str, component: str, event: str) -> None:
@@ -239,7 +240,7 @@ class SprintMetrics:
         try:
             elapsed = self._elapsed_ms()
             self._telemetry.log_event(phase=phase, component=component, event=event, elapsed_ms=elapsed)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def start(self) -> None:
@@ -247,7 +248,7 @@ class SprintMetrics:
         try:
             self._started_at = time.monotonic()
             self._telemetry.log_event(phase='BOOT', component=self._component, event='sprint_started', elapsed_ms=0.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def finalize(self, final_phase: str='TEARDOWN') -> None:
@@ -255,7 +256,7 @@ class SprintMetrics:
         try:
             elapsed = self._elapsed_ms()
             self._telemetry.log_sprint_finalize(final_phase=final_phase, component=self._component, total_elapsed_ms=elapsed)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def get_telemetry_events(self) -> list[dict]:
@@ -266,10 +267,5 @@ class SprintMetrics:
             return []
 
     def _elapsed_ms(self) -> float:
-        """Compute elapsed ms since sprint start."""
-        if self._started_at is None:
-            return 0.0
-        try:
-            return (time.monotonic() - self._started_at) * 1000.0
-        except Exception:
-            return 0.0
+        """Compute elapsed ms since sprint start. F320: Uses DRY helper."""
+        return elapsed_ms(self._started_at)

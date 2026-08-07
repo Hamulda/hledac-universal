@@ -218,6 +218,6 @@ def get_tls_domain(ext: object | None) -> _RustTlsDomain | _PythonTlsDomain:
     if ext is not None and _TLS13_RUST_AVAILABLE:
         try:
             return _RustTlsDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonTlsDomain()

@@ -80,6 +80,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
 
+from operator import attrgetter, itemgetter
 from otel._buffer import BoundedRing
 
 if TYPE_CHECKING:
@@ -285,7 +286,7 @@ def _metrics_increment(metric: str) -> None:
     try:
         from metrics_registry import get_metrics_registry
         get_metrics_registry().inc(metric)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -830,7 +831,7 @@ def _python_collapse_findings(
             # Sort by confidence
             sorted_group = sorted(
                 group,
-                key=lambda f: f.get("confidence", f.get("score", 0.0)),
+                key=attrgetter("get")("confidence", f.get("score", 0.0)),
                 reverse=True
             )
             

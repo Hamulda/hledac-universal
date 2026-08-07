@@ -60,6 +60,7 @@ import time
 from collections import defaultdict
 from typing import Any
 from ._types import CO_OCCURRENCE_FP16, MAX_CAUSAL_ENTITIES, MAX_CAUSAL_FINDINGS, MAX_CAUSAL_HYPOTHESES, MAX_CO_OCCURRENCE_MATRIX_SIZE, AnomalySignal, CausalEntity, CausalHypothesis, TemporalSequence
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 class CausalReasoner:
@@ -357,7 +358,7 @@ class CausalReasoner:
             confidence = self._calculate_confidence(source_count=source_count, source_diversity=source_diversity, co_occurrence_score=co_score, temporal_consistent=temporal_consistent)
             statement = self._generate_statement(entity1, entity2, confidence)
             hypotheses.append(CausalHypothesis(hypothesis_id=f'hyp_{len(hypotheses)}', source_entity=e1, target_entity=e2, hypothesis_type='causal' if temporal_consistent else 'correlative', statement=statement, confidence=confidence, source_count=source_count, source_diversity=source_diversity, temporal_consistent=temporal_consistent, supporting_findings=entity1.source_findings + entity2.source_findings))
-        hypotheses.sort(key=lambda h: h.confidence, reverse=True)
+        hypotheses.sort(key=attrgetter("confidence"), reverse=True)
         logger.info(f'CausalReasoner: generated {len(hypotheses)} causal hypotheses')
         return hypotheses[:max_hypotheses]
 

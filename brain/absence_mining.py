@@ -469,7 +469,7 @@ class AbsenceMiningEngine:
                 context = await self._query_hash_context(hash_val)
                 if context:
                     return (None, 0.0)  # Has context, no absence
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # High severity — hash with no context is suspicious
@@ -497,7 +497,7 @@ class AbsenceMiningEngine:
                 )
                 if results and len(results) > 0:
                     return (None, 0.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return AbsenceFinding(
@@ -524,7 +524,7 @@ class AbsenceMiningEngine:
                 )
                 if results and len(results) >= 2:
                     return (None, 0.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return AbsenceFinding(
@@ -601,7 +601,7 @@ class AbsenceMiningEngine:
             if resp.status_code == 200:
                 data = resp.json()
                 return isinstance(data, list) and len(data) > 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return False
 

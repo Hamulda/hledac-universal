@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import re
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import Any
 
+from operator import attrgetter, itemgetter
 # --------------------------------------------------------------------------- #
 # Datatypes
 # --------------------------------------------------------------------------- #
 
-class CorroborationScore(msgspec.Struct, frozen=True, gc=False):
+class CorroborationScore(Struct, frozen=True):
     """Sprint F300 migration: @dataclass(frozen=True) → msgspec.Struct.
 
     One corroboration assessment for an indicator value.
@@ -121,7 +123,7 @@ def score_indicators_by_corroboration(findings: list[dict]) -> list[Corroboratio
         sc = _score_group(value, kind, group)
         scores.append(sc)
 
-    scores.sort(key=lambda s: s.score, reverse=True)
+    scores.sort(key=attrgetter("score"), reverse=True)
     return scores
 
 

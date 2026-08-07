@@ -34,7 +34,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable
-import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class DispatchContext(msgspec.Struct, frozen=True, gc=False):
+class DispatchContext(Struct, frozen=True):
     """Immutable context passed to all dispatch operations. M1 8GB: msgspec.Struct for fast init."""
     coordinator_name: str
     operation_ref: str

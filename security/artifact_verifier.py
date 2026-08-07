@@ -284,7 +284,7 @@ class ArtifactVerifier:
             )
             try:
                 binary_path.unlink()
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
             return None
 
@@ -517,7 +517,7 @@ class ArtifactVerifier:
             # Always clean up temp build directory
             try:
                 shutil.rmtree(tmp_root, ignore_errors=True)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # ─── Private: Fallback (DISABLED in signed mode) ────────────────────────────
@@ -610,7 +610,7 @@ class ArtifactVerifier:
                     import stat
                     if item.stat().st_mode & stat.S_IXUSR:
                         return item
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 

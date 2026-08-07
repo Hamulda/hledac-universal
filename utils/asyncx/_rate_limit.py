@@ -112,7 +112,7 @@ class BoundedPerHostGate:
         """
         try:
             sem.release()
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass  # already released
 
     # ------------------------------------------------------------------

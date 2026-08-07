@@ -613,7 +613,7 @@ class StorageTrinity:
             self._lance_flush_task.cancel()
             try:
                 await self._lance_flush_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
 
         # Final flush

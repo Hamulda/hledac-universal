@@ -41,11 +41,13 @@ import re
 import time
 import urllib.parse
 from asyncio import CancelledError
-from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Any
 import msgspec
 import xxhash
+
+# Use canonical timestamp parser from feed_parser (eliminates duplicate _parse_timestamp logic)
+from hledac.universal.parsing.feed_parser import _parse_timestamp as _parse_published_ts
 
 def _entry_hash(title: str, published_raw: str) -> str:
     """Compute deterministic xxhash of title|published_raw for entry identity."""
@@ -186,25 +188,6 @@ def _text_of(element) -> str:
         return ''
     return text.strip()
 
-def _parse_published_ts(raw: str | None) -> float | None:
-    """Parse date from RSS or Atom formats. Returns None on failure."""
-    if not raw:
-        return None
-    raw = raw.strip()
-    if not raw:
-        return None
-    try:
-        normalized = _ISO_Z_RE.sub('+00:00', raw)
-        dt = datetime.datetime.fromisoformat(normalized)
-        return dt.timestamp()
-    except Exception as e:
-        logger.debug(f"[RSS/Atom] ISO timestamp parse failed for '{raw}': {e}")
-    try:
-        dt = parsedate_to_datetime(raw)
-        return dt.timestamp()
-    except Exception as e:
-        logger.debug(f"[RSS/Atom] RSS pubDate parse failed for '{raw}': {e}")
-    return None
 _TIER_RECENT_MAX: float = 3 * 86400
 _TIER_FRESH_MAX: float = 14 * 86400
 _TIER_AGED_MAX: float = 60 * 86400

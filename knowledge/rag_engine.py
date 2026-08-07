@@ -31,11 +31,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 import os
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
 from hledac.universal.utils.async_helpers import parallel
 from hledac.universal.core.lazy_imports import lazy
+from operator import attrgetter, itemgetter
 # SWARM-010: Feature flag imports for registry compliance
 from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag
 if TYPE_CHECKING:
@@ -54,7 +56,7 @@ except ImportError:
 import numpy as np
 logger = logging.getLogger(__name__)
 
-class RAGConfig(msgspec.Struct, gc=False):
+class RAGConfig(Struct):
     """Konfigurace pro RAG — Sprint F330: env var defaults consistent with knowledge/ pattern.
     
     SWARM-010: All flags now use FeatureFlags for registry compliance.
@@ -81,7 +83,7 @@ class RAGConfig(msgspec.Struct, gc=False):
     hnsw_index_path: str | None = FeatureFlags.get_str(FeatureFlag.RAG_HNSW_INDEX_PATH, None)
     hnsw_space: str = FeatureFlags.get_str(FeatureFlag.RAG_HNSW_SPACE, 'cosine')
 
-class Document(msgspec.Struct, gc=False):
+class Document(Struct):
     """Document for retrieval"""
     id: str
     content: str
@@ -91,7 +93,7 @@ class Document(msgspec.Struct, gc=False):
     def __hash__(self):
         return hash(self.id)
 
-class RetrievedChunk(msgspec.Struct, frozen=True, gc=False):
+class RetrievedChunk(Struct, frozen=True):
     """Retrieved document chunk with scores"""
     document: Document
     chunk_text: str
@@ -501,7 +503,7 @@ class TantivyFulltextIndex:
             try:
                 rust_mod = self._get_rust_module()
                 rust_mod.fulltext_delete_index(self._index_path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if not self._rust_available and self._bm25_fallback is not None:
@@ -866,7 +868,7 @@ class HNSWVectorIndex:
         self.max_elements = new_max_elements
         logger.debug(f'USearch index resize requested to {new_max_elements} (not directly supported)')
 
-class RaptorNode(msgspec.Struct, frozen=True, gc=False):
+class RaptorNode(Struct, frozen=True):
     """Single node in RAPTOR summarization tree."""
     node_id: str
     level: int
@@ -1178,7 +1180,7 @@ class RAGEngine:
             final_score = self.config.dense_weight * scores['dense'] + self.config.sparse_weight * scores['sparse']
             chunk = RetrievedChunk(document=doc, chunk_text=doc.content[:self.config.chunk_size], dense_score=scores['dense'], sparse_score=scores['sparse'], final_score=final_score)
             results.append(chunk)
-        results.sort(key=lambda x: x.final_score, reverse=True)
+        results.sort(key=attrgetter("final_score"), reverse=True)
         return results[:top_k]
 
     async def _generate_embeddings(self, texts: list[str]) -> list[list[float]]:
@@ -1476,7 +1478,7 @@ class RAGEngine:
             final_score = self.config.dense_weight * scores['dense'] + self.config.sparse_weight * scores['sparse']
             chunk = RetrievedChunk(document=doc, chunk_text=doc.content[:self.config.chunk_size], dense_score=scores['dense'], sparse_score=scores['sparse'], final_score=final_score)
             results.append(chunk)
-        results.sort(key=lambda x: x.final_score, reverse=True)
+        results.sort(key=attrgetter("final_score"), reverse=True)
         return results[:top_k]
 
     def save_hnsw_index(self, path: str | None=None) -> None:

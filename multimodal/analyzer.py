@@ -260,7 +260,7 @@ class MultimodalEnricher:
             if self._fusion_model is not None:
                 try:
                     await self._fusion_model.release()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._fusion_model = None
             self._vision_encoder = None
@@ -377,7 +377,7 @@ class MultimodalEnricher:
             usage = governor.get_current_usage()
             if isinstance(usage, dict) and usage.get('ram_mb', 0) > governor.high_water * 0.85:
                 return False
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, TypeError, ValueError):  # noqa: BLE001
             pass
         return True
 
@@ -807,7 +807,7 @@ class DocumentExtractor:
                         text = page.extract_text()
                         if text:
                             texts.append(text)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return ('\n'.join(texts), page_count)
             return await asyncio.to_thread(_read_pdf)

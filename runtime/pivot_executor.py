@@ -151,7 +151,7 @@ class AutonomousPivotExecutor:
                 from hledac.universal.core.telemetry.context_state import is_blitz_mode
                 if not is_blitz_mode():
                     await asyncio.sleep(abs(_rng.gauss(0.0, _pivot_jitter_s)))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-soft: jitter is best-effort
 
         async with semaphore:

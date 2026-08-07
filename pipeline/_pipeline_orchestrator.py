@@ -294,18 +294,18 @@ class PipelineOrchestrator:
             if not task.done():
                 try:
                     await task
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # noqa: BLE001
                     pass
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         # P1-8: cancel adapter task
         if self._adapter_task is not None and not self._adapter_task.done():
             self._adapter_task.cancel()
             try:
                 await self._adapter_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 

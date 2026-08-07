@@ -66,13 +66,14 @@ from urllib.parse import urlparse
 import httpx
 from hledac.universal.utils.async_helpers import parallel
 
+from operator import attrgetter, itemgetter
 # --- Lazy UTXO graph import (ISSUE-009) ---
 _UTXO_GRAPH_AVAILABLE = False
 _UTXOGraph: Any = None
 try:
     from hledac.universal.recon.bitcoin_utxo_analyzer import UTXOGraph as _UTXOGraph
     _UTXO_GRAPH_AVAILABLE = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 logger = logging.getLogger(__name__)
 MAX_CACHE_SIZE = 1000
@@ -566,7 +567,7 @@ class BlockchainForensics:
         patterns: list[TransactionPattern] = []
         if not transactions:
             return patterns
-        sorted_txs = sorted(transactions, key=lambda x: x.timestamp)
+        sorted_txs = sorted(transactions, key=attrgetter("timestamp"))
         peel_chain = self._detect_peel_chain(sorted_txs)
         if peel_chain:
             patterns.append(peel_chain)

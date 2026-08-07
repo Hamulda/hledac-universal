@@ -95,7 +95,7 @@ def _batcher_at_exit_shutdown(instance: MLXBatchedExecutor) -> None:
         instance._scheduler = None
         if instance._init_event is not None:
             instance._init_event.clear()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 class MLXBatchedExecutor:
@@ -348,7 +348,7 @@ class MLXBatchedExecutor:
         try:
             self._scheduler.set_max_size(effective_size)
             logger.debug('[MLXBatch] batch tier %s: %d→%d (mem_ema=%.1f%%)', tier, old_size, effective_size, self._memory_ema)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def execute(self, prompt: str, temperature: float | None=None, max_tokens: int | None=None, system_msg: str | None=None, priority: float=1.0) -> str:
@@ -389,7 +389,7 @@ class MLXBatchedExecutor:
                 # Stale or cancelled — fall through to submit a fresh one.
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Unexpected error — fall through to direct path.
                 pass
 
@@ -442,7 +442,7 @@ class MLXBatchedExecutor:
             # C3-08 FIX: also clean up LRU order tracking.
             try:
                 self._single_flight_order.remove(prompt_hash)
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass  # not in list — entry was LRU-evicted before submission
 
     async def _execute_callback(self, payload: dict[str, Any]) -> str:
@@ -521,7 +521,7 @@ class MLXBatchedExecutor:
             _mx_infer.eval([])
             if hasattr(_mx_infer, 'clear_cache'):
                 _mx_infer.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         elapsed_ms = (time.monotonic() - t0) * 1000.0
         self._stats['baseline_ema_ms'] = self._ema_alpha * elapsed_ms + (1 - self._ema_alpha) * float(self._stats['baseline_ema_ms'])

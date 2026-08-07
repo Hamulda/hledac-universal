@@ -94,7 +94,7 @@ def _simhash_single_sync(text: str) -> int:
         from hledac.universal.core.rust_backend import rust
         compute_simhash = rust.raw.compute_simhash  # type: ignore[assignment]
         return compute_simhash(text)
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     # Pure Python fallback
     try:
@@ -146,7 +146,7 @@ def _simhash_batch_sync(texts: list[str]) -> list[int]:
         from hledac.universal.core.rust_backend import rust
         batch_compute_simhash = rust.raw.batch_compute_simhash  # type: ignore[assignment]
         return batch_compute_simhash(texts)
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     try:
         from hledac.universal.core.rust_backend.simhash import _python_compute_simhash

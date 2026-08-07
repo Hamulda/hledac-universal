@@ -114,7 +114,7 @@ def _load_metadata_extractor() -> None:
             create_metadata_extractor,
         )
         METADATA_EXTRACTOR_AVAILABLE = True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
 
@@ -149,7 +149,7 @@ def _load_steganography_detector() -> None:
             quick_stego_check,
         )
         STEGANOGRAPHY_AVAILABLE = True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
 
@@ -178,7 +178,7 @@ def _load_digital_ghost_detector() -> None:
             detect_digital_ghosts,
         )
         DIGITAL_GHOST_AVAILABLE = True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
 

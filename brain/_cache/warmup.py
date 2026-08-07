@@ -307,7 +307,7 @@ class WarmupManager:
             import mlx.core as mx
             mx.eval([])
             mx.metal.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _estimate_prefill_tokens(self) -> int:

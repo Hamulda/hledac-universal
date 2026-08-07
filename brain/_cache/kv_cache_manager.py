@@ -397,7 +397,7 @@ class KVCacheManager:
             from hledac.universal.core.memory_pressure import MemoryPressureBroadcaster
             broadcaster = MemoryPressureBroadcaster.get_instance()
             broadcaster.register(self)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Non-fatal — broadcaster may not be initialized yet
 
 

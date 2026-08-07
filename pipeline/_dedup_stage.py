@@ -114,7 +114,7 @@ class DedupStage:
                     dedup_count += 1
                     metrics.record_dropped()
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
         except Exception:
             metrics.record_error()
@@ -138,7 +138,7 @@ class DedupStage:
             deduper = self._get_deduper()
             if deduper is not None:
                 return deduper.is_new(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback: bounded LRU dict (evict oldest when over capacity)

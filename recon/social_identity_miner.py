@@ -43,7 +43,7 @@ def _get_ac_matcher() -> Any:
                 _AC_MATCHER = _rust_backend.aho.AhoCorasickMatcher(patterns, labels=[])
             else:
                 _AC_MATCHER = None
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _AC_MATCHER
 
@@ -154,7 +154,7 @@ class SocialIdentityMiner:
             snap = get_uma_snapshot()
             if snap.get('high_water') and snap.get('rss_mb', 0) > snap['high_water'] * 0.85:
                 return SocialIdentityResult(facets=(), scanned_count=0, skipped_count=len(findings), elapsed_ms=_time.monotonic() * 1000 - start_ms)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         all_urls: list[tuple[str, str, str, str]] = []
         for finding in findings:
@@ -185,7 +185,7 @@ class SocialIdentityMiner:
             for t in tasks:
                 try:
                     t.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             gathered = []
         for result in gathered:
@@ -288,7 +288,7 @@ class SocialIdentityMiner:
                 urls.extend(self._scan_text_for_urls(payload))
             finding_str = str(finding)
             urls.extend(self._scan_text_for_urls(finding_str))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return urls[:MAX_LINKS_PER_PROFILE]
 
@@ -360,7 +360,7 @@ class SocialIdentityMiner:
             try:
                 if len(bloom) >= _SOCIAL_BLOOM_CAPACITY * 0.9:
                     bloom.rotate()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         unique: list[SocialIdentityFacet] = []
         for facet in facets:
@@ -387,7 +387,7 @@ class SocialIdentityMiner:
                 await store.async_ingest_findings_batch(findings)
             elif hasattr(store, 'ingest_findings'):
                 await store.ingest_findings(findings)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _build_profile_url(self, platform: str, username: str, platform_host: str='') -> str:

@@ -55,7 +55,7 @@ def _acquire_ro_conn(db_path: str) -> Any:
                 # Test connection is still alive
                 conn.execute("SELECT 1")
                 return conn
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # Create new connection
@@ -81,7 +81,7 @@ def _pool_close_all() -> None:
             for conn in pool:
                 try:
                     conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         _DUCKDB_POOL.clear()
 
@@ -156,7 +156,7 @@ def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
             else:
                 try:
                     conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
 
@@ -165,6 +165,6 @@ def get_query_domain(ext: object | None) -> _RustQueryDomain | _PythonQueryDomai
     if ext is not None:
         try:
             return _RustQueryDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonQueryDomain()

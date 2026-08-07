@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 
+from operator import attrgetter, itemgetter
 class SourceHint(msgspec.Struct, gc=False):
     """Source recommendation with quality score."""
     source: str
@@ -157,7 +158,7 @@ class HypothesisPack(msgspec.Struct, frozen=True, gc=False):
 
     def top_queries(self, n: int=3) -> list[dict[str, Any]]:
         """Get top N queries by priority for scheduler."""
-        return sorted(self.suggested_queries, key=lambda x: x.get('priority', 0.5), reverse=True)[:n]
+        return sorted(self.suggested_queries, key=attrgetter("get")('priority', 0.5), reverse=True)[:n]
 
     def pivot_trail(self, ioc: str) -> list[dict[str, Any]]:
         """Get all pivots starting from a specific IOC."""
@@ -182,12 +183,12 @@ class HypothesisPack(msgspec.Struct, frozen=True, gc=False):
             q_str = q.get('query', '')
             if q_str:
                 seen_queries.add(q_str)
-        for pivot in sorted(self.ioc_follow_ups, key=lambda x: x.get('priority', 0.5), reverse=True)[:2]:
+        for pivot in sorted(self.ioc_follow_ups, key=attrgetter("get")('priority', 0.5), reverse=True)[:2]:
             q = pivot.get('query', '')
             if q and q not in seen_queries:
                 actions.append({'action_type': 'ioc_pivot', 'query': q, 'from_ioc': pivot.get('from', ''), 'to_field': pivot.get('to', ''), 'rationale': pivot.get('rationale', ''), 'priority': pivot.get('priority', 0.8), 'pivot_type': 'ioc'})
                 seen_queries.add(q)
-        for q in sorted(self.suggested_queries, key=lambda x: x.get('priority', 0.5), reverse=True):
+        for q in sorted(self.suggested_queries, key=attrgetter("get")('priority', 0.5), reverse=True):
             if q['query'] not in seen_queries and len(actions) < max_actions:
                 actions.append({'action_type': 'query', 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5), 'pivot_type': q.get('pivot_type', 'general')})
                 seen_queries.add(q['query'])
@@ -389,7 +390,7 @@ class HypothesisPack(msgspec.Struct, frozen=True, gc=False):
         if self.is_empty():
             return None
         if self.ioc_follow_ups:
-            best_ioc = max(self.ioc_follow_ups, key=lambda x: x.get('priority', 0.5))
+            best_ioc = max(self.ioc_follow_ups, key=attrgetter("get")('priority', 0.5))
             return {'action_type': 'ioc_pivot', 'query': best_ioc.get('query', ''), 'from_ioc': best_ioc.get('from', ''), 'to_field': best_ioc.get('to', ''), 'rationale': best_ioc.get('rationale', 'IOC pivot'), 'priority': best_ioc.get('priority', 0.9), 'pivot_type': 'ioc'}
         if self.suggested_queries:
             sorted_qs = sorted(self.suggested_queries, key=lambda x: (x.get('priority', 0.5), x.get('pivot_type', '') == 'entity_expansion'), reverse=True)
@@ -407,14 +408,14 @@ class HypothesisPack(msgspec.Struct, frozen=True, gc=False):
         """
         shortlist: list[dict[str, Any]] = []
         seen_queries: set[str] = set()
-        for pivot in sorted(self.ioc_follow_ups, key=lambda x: x.get('priority', 0.5), reverse=True):
+        for pivot in sorted(self.ioc_follow_ups, key=attrgetter("get")('priority', 0.5), reverse=True):
             q = pivot.get('query', '')
             if q and q not in seen_queries:
                 shortlist.append({'action_type': 'ioc_pivot', 'query': q, 'from_ioc': pivot.get('from', ''), 'to_field': pivot.get('to', ''), 'rationale': pivot.get('rationale', ''), 'priority': pivot.get('priority', 0.5), 'pivot_type': 'ioc'})
                 seen_queries.add(q)
                 if len(shortlist) >= max_items:
                     return shortlist
-        for q in sorted(self.suggested_queries, key=lambda x: x.get('priority', 0.5), reverse=True):
+        for q in sorted(self.suggested_queries, key=attrgetter("get")('priority', 0.5), reverse=True):
             if q['query'] in seen_queries:
                 continue
             shortlist.append({'action_type': 'query', 'query': q.get('query', ''), 'rationale': q.get('rationale', ''), 'priority': q.get('priority', 0.5), 'pivot_type': q.get('pivot_type', 'general')})

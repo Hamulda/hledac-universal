@@ -135,7 +135,7 @@ class DarknetConnector:
             if client is not None and not client.is_closed:
                 try:
                     await client.aclose()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         setattr(self, '_tor_client', None)
         setattr(self, '_i2p_client', None)

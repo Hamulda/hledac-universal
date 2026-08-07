@@ -75,7 +75,7 @@ def package_import_context():
         if added:
             try:
                 sys.path.remove(project_root)
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass
 
 def _section(title: str) -> None:
@@ -132,7 +132,7 @@ def time_many(fn: Callable[[], Any], *, runs: int=7, warmups: int=1) -> dict[str
     for _ in range(warmups):
         try:
             _invoke()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     for _ in range(runs):
         try:
@@ -348,7 +348,7 @@ async def _run_hash_identifier_file(*, runs: int=3, warmups: int=1, quick: bool=
     finally:
         try:
             os.unlink(tmp_path)
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
 def _zstd_benchmark(*, runs: int=3, warmups: int=1, quick: bool=False) -> dict[str, Any]:

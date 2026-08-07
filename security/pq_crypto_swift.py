@@ -53,7 +53,7 @@ def _detect_repo_root() -> Path | None:
         if (repo_root / 'tools' / 'secure_enclave_helper').exists():
             _REPO_ROOT = repo_root
             return _REPO_ROOT
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 

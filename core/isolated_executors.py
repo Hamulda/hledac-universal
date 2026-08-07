@@ -751,7 +751,7 @@ def get_duckdb_executor() -> IsolatedDuckDBExecutor:
         inst = container.try_get("executor.duckdb")
         if inst is not None:
             return inst
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     with _pools_lock:
@@ -779,7 +779,7 @@ def get_mlx_executor() -> IsolatedMLXExecutor:
         inst = container.try_get("executor.mlx")
         if inst is not None:
             return inst
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     with _pools_lock:
@@ -807,7 +807,7 @@ def get_evidence_batch_writer() -> IsolatedEvidenceBatchWriter:
         inst = container.try_get("executor.evidence")
         if inst is not None:
             return inst
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     with _pools_lock:
@@ -1242,7 +1242,7 @@ class RayonPoolManager:
                     "io_threads": rust["get_io_threads"](),
                     "total_threads": rust["get_total_threads"](),
                 }
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return {
             "available": self._initialized,

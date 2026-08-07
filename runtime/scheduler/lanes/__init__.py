@@ -1307,14 +1307,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                             # A5-07: shield critical DuckDB write from cancellation
                             ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
                         _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
                         if _accepted:
                             graph_accumulator.accumulate_findings(_accepted, sprint_id=f'ct-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 if ct_outcome.error:
                     ct_error = ct_outcome.error
@@ -1362,14 +1362,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                             # A5-07: shield critical DuckDB write from cancellation
                             ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
                         _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
                         if _accepted:
                             graph_accumulator.accumulate_findings(_accepted, sprint_id=f'wayback-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(result.change_events), duration_s=time.monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str)
         except TimeoutError:
@@ -1413,14 +1413,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                             # A5-07: shield critical DuckDB write from cancellation
                             ingest_results = await asyncio.shield(store.async_ingest_findings_batch(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
                         _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
                         if _accepted:
                             graph_accumulator.accumulate_findings(_accepted, sprint_id=f'pdns-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=produced, duration_s=time.monotonic() - start, source_family='passive_dns', error=pdns_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query)
         except TimeoutError:
@@ -1454,14 +1454,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                         try:
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
                         _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
                         if _accepted:
                             graph_accumulator.accumulate_findings(_accepted, sprint_id=f'academic-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.ACADEMIC, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(search_results), duration_s=time.monotonic() - start, source_family='academic', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
         except asyncio.CancelledError:
@@ -1525,14 +1525,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                         try:
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
                         _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
                         if _accepted:
                             graph_accumulator.accumulate_findings(_accepted, sprint_id=f'ipfs-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.IPFS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=produced, duration_s=time.monotonic() - start, source_family='ipfs', candidate_findings=candidate_findings, ipfs_cid_count=ipfs_cid_count, ipfs_terminal_state=terminal_state)
         except asyncio.CancelledError:
@@ -1559,14 +1559,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                         try:
                             ingest_results = await store.async_ingest_findings_batch(all_findings)
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
                         _accepted = [f for f, r in zip(all_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else all_findings
                         if _accepted:
                             graph_accumulator.accumulate_findings(_accepted, sprint_id=f'open_source-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.OPEN_SOURCE, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(all_findings), duration_s=time.monotonic() - start, source_family='public')
         except TimeoutError:
@@ -1606,14 +1606,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                         try:
                             ingest_results = await store.async_ingest_findings_batch(list(candidate_findings))
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
                         _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else list(candidate_findings)
                         if _accepted:
                             graph_accumulator.accumulate_findings(_accepted, sprint_id=f'doh-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.DOH, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=doh_raw_count, duration_s=time.monotonic() - start, source_family='doh', doh_query=domain)
         except TimeoutError:
@@ -1644,14 +1644,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                                     ingest_results = await store.async_ingest_findings_batch(findings)
                                     accepted += sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
                                     total_tx += getattr(result, 'transaction_count', 0) or 0
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass
                     except Exception:
                         continue
                 if all_blockchain_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(all_blockchain_findings, sprint_id=f'blockchain-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.BLOCKCHAIN, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=total_tx, duration_s=time.monotonic() - start, source_family='blockchain')
         except TimeoutError:
@@ -1675,14 +1675,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if ingest_results is not None and graph_accumulator is not None:
                     try:
                         _accepted = [f for f, r in zip(findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if isinstance(ingest_results, list) else findings
                         if _accepted:
                             graph_accumulator.accumulate_findings(_accepted, sprint_id=f'shodan-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.SHODAN, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='shodan_intel')
         except TimeoutError:
@@ -1704,12 +1704,12 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f'censys-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.CENSYS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='censys_intel')
         except TimeoutError:
@@ -1731,12 +1731,12 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                         try:
                             ingest_results = await store.async_ingest_findings_batch(findings)
                             accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f'greynoise-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.GREYNOISE, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='greynoise_intel')
         except TimeoutError:
@@ -1805,14 +1805,14 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                                 accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
                             if _accepted:
                                 graph_accumulator.accumulate_findings(_accepted, sprint_id=f"ct-{int(__import__('time').time())}")
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     ct_error = ct_outcome.error if ct_outcome.error else None
                     return AcquisitionLaneOutcome(lane=AcquisitionLane.CT, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=ct_results_raw, duration_s=__import__('time').monotonic() - start, source_family='ct', ct_query=shaped_query, ct_results_raw=ct_results_raw, error=ct_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
@@ -1845,14 +1845,14 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                                 accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
                             if _accepted:
                                 graph_accumulator.accumulate_findings(_accepted, sprint_id=f"wayback-{int(__import__('time').time())}")
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=len(result.change_events), duration_s=__import__('time').monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str)
             except TimeoutError:
@@ -1882,14 +1882,14 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
                             try:
                                 ingest_results = await store.async_ingest_findings_batch(candidate_findings)
                                 accepted = sum((1 for r in ingest_results if isinstance(r, dict) and r.get('accepted')))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     if candidate_findings and graph_accumulator is not None:
                         try:
                             _accepted = [f for f, r in zip(candidate_findings, ingest_results) if isinstance(r, dict) and r.get('accepted')] if ingest_results is not None and isinstance(ingest_results, list) else list(candidate_findings)
                             if _accepted:
                                 graph_accumulator.accumulate_findings(_accepted, sprint_id=f"pdns-{int(__import__('time').time())}")
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, accepted_findings=accepted, produced_items=produced, duration_s=__import__('time').monotonic() - start, source_family='passive_dns', error=pdns_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query)
             except TimeoutError:
@@ -1941,7 +1941,7 @@ async def run_enabled_acquisition_lanes_streaming(snapshot, query: str, store, u
         if on_lane_complete is not None:
             try:
                 on_lane_complete(outcomes[-1])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         yield tuple(outcomes)
     if pending:
@@ -1998,7 +1998,7 @@ def _wallet_to_findings(wallet_analysis, query: str) -> list:
         risk = getattr(wallet_analysis, 'risk_score', None)
         finding = CanonicalFinding(finding_id=f'bc-{address[:16]}', source_type=SourceType.BLOCKCHAIN_FORENSICS, confidence=0.75, query=query[:128], ts=0.0, payload_text=f'address:{address} chain:{chain} balance:{balance} risk_score:{risk}', provenance=('source:blockchain', f'address:{address}'))
         findings.append(finding)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return findings
 
@@ -2081,7 +2081,7 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
             variants = expand_osint_query(base_query, max_variants=1)
             if variants:
                 return variants[0][:200]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         trimmed = base_query[:200] if len(base_query) > 200 else base_query
         return trimmed

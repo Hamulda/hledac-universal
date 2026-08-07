@@ -48,6 +48,7 @@ from hledac.universal.utils.msgspec_json import decode, encode
 from hledac.universal.utils.query_expansion import DomainSpecificExpansionStrategy, ExpansionStrategy, MultiStrategyExpander, QueryVariation, SemanticExpansionStrategy, SyntacticExpansionStrategy
 from hledac.universal.utils.async_helpers import parallel_ok
 from hledac.universal.utils.two_pass_pipeline import TwoPassPipeline, TwoPassPipelineConfig, consumer_fn_to_thread
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 class ResultType(Enum):
@@ -756,7 +757,7 @@ class AcademicSearchEngine:
         for result, score in scored:
             result.relevance_score = score
         scored_results = [r for r, _ in scored]
-        return sorted(scored_results, key=lambda r: r.relevance_score, reverse=True)
+        return sorted(scored_results, key=attrgetter("relevance_score"), reverse=True)
 
     async def _deduplicate_and_rank(self, results: list[SearchResult], query: str) -> list[SearchResult]:
         """
@@ -835,7 +836,7 @@ class AcademicSearchEngine:
         unique_items = [it for it in items if it.url in unique_urls]
         scored = await consumer_fn_to_thread(score_and_maybe_keep, unique_items, batch_size=64)
         scored_with_scores = [r for r in scored if r is not None]
-        return sorted(scored_with_scores, key=lambda r: r.relevance_score, reverse=True)
+        return sorted(scored_with_scores, key=attrgetter("relevance_score"), reverse=True)
 
     def _normalize_url(self, url: str) -> str:
         """Normalize URL for deduplication."""
@@ -911,7 +912,7 @@ class SemanticScholarClient:
             try:
                 import compression.zstd as _zstd
                 return decode(_zstd.decompress(zst_path.read_bytes()))
-            except (ImportError, Exception):
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             return decode(json_path.read_bytes())
@@ -945,7 +946,7 @@ class SemanticScholarClient:
             try:
                 import compression.zstd as _zstd
                 return decode(_zstd.decompress(zst_path.read_bytes()))
-            except (ImportError, Exception):
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             return decode(json_path.read_bytes())

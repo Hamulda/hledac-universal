@@ -410,7 +410,7 @@ def _scan_aho_corasick(text: str) -> tuple[bool, list[str], bool]:
                 patterns = [hit.pattern for hit in hits]
                 return True, patterns, True
             return False, [], True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Fallback: Python regex (slower but always works)
@@ -696,7 +696,7 @@ def _get_tokenizer() -> Any:
             if hasattr(mm, '_tokenizer') and mm._tokenizer is not None:
                 _LLM_TOKENIZER = mm._tokenizer
                 return _LLM_TOKENIZER
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -829,7 +829,7 @@ def _strip_html_naive(text: str) -> str:
     # Unescape HTML entities
     try:
         result = html.unescape(result)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return result
 
@@ -893,7 +893,7 @@ def _truncate_by_token_count(text: str, max_tokens: int) -> str:
             if len(tokens) > max_tokens:
                 text = tok.decode(tokens[:max_tokens])
             return text
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Fallback: rough estimate (4 chars per token)

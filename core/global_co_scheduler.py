@@ -510,7 +510,7 @@ class GlobalPeakCoScheduler:
             if peak_guard is not None:
                 try:
                     await peak_guard.__aexit__(None, None, None)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._active_guards -= 1
             self._telemetry.active_guards = self._active_guards
@@ -559,7 +559,7 @@ class GlobalPeakCoScheduler:
             elif self._state == CoSchedulerState.DEGRADED:
                 # Recover from degraded state when pressure drops
                 self._state = CoSchedulerState.ACTIVE
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fail-soft
 
 

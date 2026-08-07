@@ -522,7 +522,7 @@ def safe_get_cache_limit() -> int | None:
             return int(mx.get_cache_limit())
         if hasattr(mx, "metal") and hasattr(mx.metal, "get_cache_limit"):
             return int(mx.metal.get_cache_limit())
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -534,7 +534,7 @@ def _release_slab_pool() -> None:
     try:
         from ..mlx_memory import _slab as _slab_mod
         _slab_mod.release_slab_pool()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -628,7 +628,7 @@ def mlx_cleanup_aggressive() -> None:
             old_limit = int(mx.get_cache_limit())
         elif hasattr(mx, "metal") and hasattr(mx.metal, "get_cache_limit"):
             old_limit = int(mx.metal.get_cache_limit())
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     try:
@@ -653,7 +653,7 @@ def mlx_cleanup_aggressive() -> None:
                 mx.set_cache_limit(old_limit)
             elif hasattr(mx, "metal") and hasattr(mx.metal, "set_cache_limit"):
                 mx.metal.set_cache_limit(old_limit)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

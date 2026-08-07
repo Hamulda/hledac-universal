@@ -218,7 +218,7 @@ def compress_export_section(data: bytes) -> bytes:
         if len(compressed) < len(data):
             # Wrap in our wire format: [0x02][compressed] (plain zstd marker)
             return b"\x02" + compressed
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     except Exception as e:
         logger.debug("[zstd_dict_exporter] Plain zstd fallback failed: %s", e)
@@ -253,7 +253,7 @@ def decompress_export_section(wire: bytes) -> bytes:
         result = decompress_page(wire)
         if result:
             return result
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     except Exception as e:
         logger.debug("[zstd_dict_exporter] Rust decompress failed: %s", e)
@@ -264,7 +264,7 @@ def decompress_export_section(wire: bytes) -> bytes:
             import zstandard as zstd
             dctx = zstd.ZstdDecompressor()
             return dctx.decompress(wire[1:])
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.debug("[zstd_dict_exporter] Python zstd decompress failed: %s", e)

@@ -52,8 +52,9 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-import msgspec
 from typing import TYPE_CHECKING, Any
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.core.protocols import safe_get_finding_field, safe_get_payload_text
 from hledac.universal.pipeline.ioc_cooccurrence_miner import IOCooccurrenceMiner
 from hledac.universal.utils.graph_utils import lazy_ig as _lazy_ig
@@ -398,7 +399,7 @@ class EvidenceNetworkAnalyzer:
             if available_gb < 0.5:
                 logger.debug('EvidenceNetworkAnalyzer: RAM headroom %.1fGB < 0.5GB, skipping igraph analysis', available_gb)
                 return self._empty_result()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             coerced = self._coerce_entities(entities)
@@ -753,7 +754,7 @@ class EvidenceNetworkAnalyzer:
         return {'entities': [], 'edges': [], 'clusters': [], 'centrality': {}, 'contradictions': [], 'confidence': 0.0, 'analysis_type': 'evidence_network', 'not_implemented': False, 'todo_ref': self._TODO_REF, 'call_count': self._call_count}
 __all__ = ['EvidenceNetworkAnalyzer', 'EvidenceGraphNode', 'EvidenceGraphEdge', 'EvidenceGraph']
 
-class EvidenceGraphNode(msgspec.Struct, frozen=True, gc=False):
+class EvidenceGraphNode(Struct, frozen=True):
     """Single entity node in the evidence network.
 
     node_id convention: f"{ioc_type}:{value}" (lowercased, deduped).
@@ -765,7 +766,7 @@ class EvidenceGraphNode(msgspec.Struct, frozen=True, gc=False):
     confidence: float
     sources: tuple[str, ...] = ()
 
-class EvidenceGraphEdge(msgspec.Struct, frozen=True, gc=False):
+class EvidenceGraphEdge(Struct, frozen=True):
     """Directed relationship between two EvidenceGraphNodes.
 
     weight is bounded [0.0, 1.0]; evidence_count records how many findings
@@ -777,7 +778,7 @@ class EvidenceGraphEdge(msgspec.Struct, frozen=True, gc=False):
     weight: float
     evidence_count: int = 1
 
-class EvidenceGraph(msgspec.Struct, frozen=True, gc=False):
+class EvidenceGraph(Struct, frozen=True):
     """Read-only evidence network assembled from a batch of findings.
 
     Invariants:

@@ -37,12 +37,14 @@ Rules:
 """
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
+from operator import attrgetter, itemgetter
 __all__ = ['InvestigationAction', 'plan_next_investigation_actions', 'build_planner_state_from_report', 'summarize_planner_actions', 'MAX_ACTIONS']
 MAX_ACTIONS: int = 10
 _CORROBORATION_STRONG_THRESHOLD: float = 0.7
 _MIN_SOURCES_FOR_SYNTHESIS: int = 2
 
-class InvestigationAction(msgspec.Struct, frozen=True, gc=False):
+class InvestigationAction(Struct, frozen=True):
     """
     A single recommended investigation action.
 
@@ -299,10 +301,10 @@ def plan_next_investigation_actions(state: dict, *, max_actions: int=MAX_ACTIONS
     if total_accepted == 0 and (not mem_critical):
         if not any((a.action == 'extract_more_seeds_from_duckdb' for a in actions)):
             actions.append(InvestigationAction(action='extract_more_seeds_from_duckdb', target=current_query, priority=0.8, reason='No accepted findings yet; extract seeds from DuckDB', lane='public'))
-    actions.sort(key=lambda a: a.priority, reverse=True)
+    actions.sort(key=attrgetter("priority"), reverse=True)
     if not any((a.action == 'stop_enough_evidence' for a in actions)):
         actions.append(InvestigationAction(action='stop_enough_evidence', target=current_query, priority=0.01, reason='Default stop action (no stronger signal found)', lane='stop'))
-        actions.sort(key=lambda a: a.priority, reverse=True)
+        actions.sort(key=attrgetter("priority"), reverse=True)
     if len(actions) > max_actions:
         actions = actions[:max_actions - 1] + [next((a for a in actions if a.action == 'stop_enough_evidence'))]
     return actions
@@ -421,7 +423,7 @@ def build_planner_state_from_report(report: dict) -> dict:
             for k, v in corr.items():
                 try:
                     corroboration_scores[str(k)] = float(v)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError):  # noqa: BLE001
                     pass
     result['corroboration_scores'] = corroboration_scores
     missing_lanes: list[str] = list(pick('nonfeed_missing_expected_lanes') or pick('nonfeed_prelude_missing_lanes') or [])

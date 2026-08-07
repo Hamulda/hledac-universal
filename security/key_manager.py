@@ -141,12 +141,12 @@ def _key_material_guard(key_bytes: bytearray):
                 # advice=1 → MADV_DONTNEED (discard immediately)
                 try:
                     ml.madvise.madvise_free_reusable(addr, len(key_bytes), 0)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 # ADVERSARY-005: unregister from TEARDOWN tracker
                 if unregister_mlock_region is not None:
                     unregister_mlock_region(addr, len(key_bytes))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 
@@ -312,7 +312,7 @@ class KeyManager:
             mdb_path = self._db_path / "data.mdb"
             if mdb_path.exists():
                 madvise_lmdb_mmap(str(mdb_path), advice=1)  # MADV_NOCACHE
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             # rust extension not available — skip silently
             pass
         except Exception as exc:
@@ -325,13 +325,13 @@ class KeyManager:
 
         try:
             os.chmod(self._db_path, _stat.S_IRUSR | _stat.S_IWUSR | _stat.S_IXUSR)  # 0o700
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
         for suffix in ("*.mdb", "*.lock"):
             for file_path in self._db_path.glob(suffix):
                 try:
                     os.chmod(file_path, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
-                except OSError:
+                except OSError:  # noqa: BLE001
                     pass
 
     def _store_salt_in_lmdb(self, salt: bytes) -> None:
@@ -519,7 +519,7 @@ class KeyManager:
             with env.begin(write=True) as txn:
                 txn.delete(b"_master_salt")
             env.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         logger.warning("KeyManager: deleted master key from Keychain")
 

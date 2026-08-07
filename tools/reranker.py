@@ -15,8 +15,9 @@ and minimal memory footprint.
 import asyncio
 import logging
 from dataclasses import dataclass
-import msgspec
 from typing import Any
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.async_helpers import parallel_ok
 logger = logging.getLogger(__name__)
 MAX_RERANK_DOCS = 50
@@ -28,7 +29,7 @@ except ImportError:
     FLASHRANK_AVAILABLE = False
     logger.warning('FlashRank not installed. Install with: pip install flashrank')
 
-class RerankResult(msgspec.Struct, gc=False):
+class RerankResult(Struct):
     """Result from reranking operation."""
     document_id: str
     content: str
@@ -37,7 +38,7 @@ class RerankResult(msgspec.Struct, gc=False):
     score_delta: float
     rank: int
 
-class RerankRequest(msgspec.Struct, frozen=True, gc=False):
+class RerankRequest(Struct, frozen=True):
     """Request for reranking."""
     query: str
     documents: list[dict[str, Any]]

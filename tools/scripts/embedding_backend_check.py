@@ -56,7 +56,7 @@ def get_backend() -> str:
     try:
         from fastembed import TextEmbedding as _  # noqa: F401 — availability check only
         return "cpu_fallback"  # FastEmbed on CPU
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     return "hash_only"

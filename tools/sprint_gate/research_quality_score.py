@@ -49,7 +49,7 @@ def _coerce_feed_dominance_score(value, total_findings: int, feed_findings: int 
             f = float(value)
             if 0.0 <= f <= 1.0:
                 return f
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # noqa: BLE001
             pass
     else:
         pass

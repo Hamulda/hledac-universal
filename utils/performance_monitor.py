@@ -210,7 +210,7 @@ class SystemMonitor:
             self._monitoring_task.cancel()
             try:
                 await self._monitoring_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         logger.info('System monitoring stopped')
 
@@ -240,7 +240,7 @@ class SystemMonitor:
                 if battery:
                     battery_percent = battery.percent
                     is_charging = battery.power_plugged
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             new_metrics = SystemMetrics(cpu_percent=cpu_percent, memory_percent=memory_percent, memory_available_mb=memory_available_mb, thermal_state=thermal_state, memory_pressure=memory_pressure, battery_percent=battery_percent, is_charging=is_charging, timestamp=time.time())
             await self._check_state_changes(self._metrics, new_metrics)
@@ -330,12 +330,12 @@ class SystemMonitor:
             import psutil
             process = psutil.Process()
             snapshot['rss_mb'] = process.memory_info().rss / (1024 * 1024)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             asyncio.get_running_loop()
             snapshot['event_loop_lag_ms'] = 0.0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return snapshot
 
@@ -381,10 +381,10 @@ class FlowTraceSnapshotEmitter:
                 try:
                     from .flow_trace import trace_event
                     trace_event(component='performance_monitor', stage='system_snapshot', event_type='periodic_snapshot', status='ok', metadata=snapshot)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             except asyncio.CancelledError:
                 break
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 __all__ = ['PerformanceMetrics', 'PerformanceMonitor', 'QualityValidator', 'ThermalState', 'MemoryPressure', 'SystemMetrics', 'SystemMonitor', 'FlowTraceSnapshotEmitter']

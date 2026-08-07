@@ -27,6 +27,7 @@ import msgspec
 from datetime import UTC, datetime
 from enum import Enum
 import numpy as np
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 class TrendDirection(Enum):
@@ -283,7 +284,7 @@ class TemporalAnalyzer:
                     before_trend = TrendDirection.INCREASING if before_slope > 0 else TrendDirection.DECREASING
                     after_trend = TrendDirection.INCREASING if after_slope > 0 else TrendDirection.DECREASING
                     points.append(TurningPoint(timestamp=timestamps[i], significance=min(1.0, abs(before_slope - after_slope) / max(abs(before_slope), abs(after_slope))), direction_change=f'{before_trend.value} to {after_trend.value}', before_trend=before_trend, after_trend=after_trend))
-        points.sort(key=lambda p: p.significance, reverse=True)
+        points.sort(key=attrgetter("significance"), reverse=True)
         return points[:3]
 
     def _generate_projections(self, timestamps: list[datetime], values: list[float], horizon_days: int=30) -> tuple[dict[str, list[float]], float]:
@@ -476,7 +477,7 @@ class TemporalAnalyzer:
         if result.trend and result.trend.direction == TrendDirection.VOLATILE:
             recommendations.append('High volatility detected - consider risk mitigation strategies')
         if result.scenarios:
-            top_scenario = max(result.scenarios, key=lambda s: s.probability)
+            top_scenario = max(result.scenarios, key=attrgetter("probability"))
             recommendations.append(f'Most likely scenario: {top_scenario.name} ({top_scenario.probability:.0%})')
         return recommendations
 

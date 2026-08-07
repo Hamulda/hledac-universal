@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
     import uvloop
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 M1_8GB_CEILING_MB: float = 6.5 * 1024
 DEFAULT_DURATION_S = 300.0
@@ -141,7 +141,7 @@ async def run_hermetic_sprint(duration_s: float=DEFAULT_DURATION_S) -> Benchmark
     try:
         from hledac.universal.utils.concurrency import FETCH_SEMAPHORE
         fetch_limit = FETCH_SEMAPHORE.limit()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     snap = governor.snapshot()
     findings_per_min = findings_total / elapsed_s * 60 if elapsed_s > 0 else 0

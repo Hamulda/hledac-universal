@@ -25,6 +25,7 @@ from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     pass
 
@@ -239,7 +240,7 @@ def compute_runtime_loop_telemetry(
         # ── slowest_phases (top 10 by elapsed, desc) ───────────────────────
         slowest = sorted(
             [{"phase": k, "elapsed_s": round(v, 4)} for k, v in phase_totals.items()],
-            key=lambda x: x["elapsed_s"],
+            key=itemgetter("elapsed_s"),
             reverse=True,
         )[:10]
 

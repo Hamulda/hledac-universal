@@ -24,6 +24,7 @@ import sys
 import time
 import weakref
 
+from operator import attrgetter, itemgetter
 from hledac.universal.core.env_config import ENV
 from hledac.universal.runtime.protocols.cleanup_protocol import shutdown_aclose
 from hledac.universal.runtime.lifecycle_registry import ResourceLifecycleRegistry
@@ -94,6 +95,7 @@ except ImportError:
     BoundedTaskSet = None  # type: ignore[assignment,misc]
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 # orjson — strict import with fallback
 try:
@@ -143,7 +145,7 @@ def _harden_duckdb_permissions(db_path: Path) -> None:
     for f in files:
         try:
             os.chmod(f, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
 
@@ -225,7 +227,7 @@ def _get_TargetProfileSummary():
         return TargetProfileSummary
     from dataclasses import dataclass
 
-    class TargetProfileSummary(msgspec.Struct, gc=False):
+    class TargetProfileSummary(Struct):
         """F350M-R: gc=False for M1 8GB."""
         target_id: str = ""
         first_seen: float = 0.0
@@ -711,7 +713,7 @@ class RemoteParquetSource:
                         yield batch
                     batches = result.fetch_arrow_batch(self.batch_size)
                 return
-            except AttributeError:
+            except AttributeError:  # noqa: BLE001
                 pass  # Fall through to tuple-based path
             # Fallback: convert tuples to Arrow via from_pydict (single pass per batch)
             while True:
@@ -817,7 +819,7 @@ class RemoteParquetSource:
                     yield from batches
                     batches = result.fetch_arrow_batch(self.batch_size)
                 return
-            except AttributeError:
+            except AttributeError:  # noqa: BLE001
                 pass  # Fall through to tuple-based path
             while True:
                 rows = result.fetchmany(self.batch_size)
@@ -1205,7 +1207,7 @@ class ParquetHistoryReader:
                         yield batch
                     batches = result.fetch_arrow_batch(self.batch_size)
                 return
-            except AttributeError:
+            except AttributeError:  # noqa: BLE001
                 pass  # Fall through to tuple-based path
             # Fallback: convert tuples to Arrow via from_pydict (single pass per batch)
             while True:
@@ -1458,7 +1460,7 @@ def export_findings_to_parquet(
                         if writer is not None:
                             try:
                                 writer.close()
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                         return False
 
@@ -1485,13 +1487,13 @@ def export_findings_to_parquet(
             if writer is not None:
                 try:
                     writer.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return False
         finally:
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     except Exception:  # noqa: BLE001 — best-effort; DuckDB operation failure; non-critical
         return False
@@ -1507,7 +1509,7 @@ logger = logging.getLogger(__name__)
 from .sprint_facts.canonical_finding import ActivationResult, CanonicalFinding
 
 # ReplayResult is NOT in canonical_finding.py — keep it here only.
-class ReplayResult(msgspec.Struct, gc=False):
+class ReplayResult(Struct):
     """
     Sprint F300: msgspec.Struct for pending-sync replay operations.
     F350M-R: gc=False for M1 8GB.
@@ -4376,7 +4378,7 @@ class DuckDBShadowStore:
                     self, lambda _metrics: _metrics.clear() if _metrics is not None else None, self._arrow_metrics
                 )
                 _finalizer.atexit = False
-        except (TypeError, AttributeError, Exception):
+        except (TypeError, AttributeError, Exception):  # noqa: BLE001
             pass
         return True
 
@@ -11425,7 +11427,7 @@ class DuckDBShadowStore:
                                     extracted = _re.extract_iocs_flat(text)
                                     for ioc_val, ioc_type in extracted:
                                         rows.append((ioc_val, ioc_type, float(f.confidence), f.source_type or ""))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     if rows:
                         truth_graph.upsert_ioc_batch(rows)
@@ -12018,7 +12020,7 @@ class DuckDBShadowStore:
             cand["rrf_score"] = rrf
 
         sorted_candidates = sorted(
-            candidates.values(), key=lambda x: x["rrf_score"], reverse=True
+            candidates.values(), key=itemgetter("""), reverse=True
         )
 
         return sorted_candidates[:k_actual]

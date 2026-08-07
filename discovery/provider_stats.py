@@ -23,6 +23,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from operator import attrgetter, itemgetter
 _EWMA_ALPHA = 0.3
 _MAX_ERRORS_STORED = 50
 _MIN_RELIABILITY = 0.01
@@ -243,7 +244,7 @@ class ProviderStatsRegistry:
             payload = json.loads(path.read_text())
             for name, d in payload.items():
                 self._stats[name] = ProviderStats.from_dict(d)
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except (json.JSONDecodeError, KeyError, TypeError):  # noqa: BLE001
             pass
 
     def reset(self) -> None:
@@ -254,7 +255,7 @@ class ProviderStatsRegistry:
 
     def top_k(self, k: int=3) -> list[ProviderStats]:
         """Return top-k providers by composite score."""
-        sorted_providers = sorted(self._stats.values(), key=lambda s: s.score(), reverse=True)
+        sorted_providers = sorted(self._stats.values(), key=attrgetter("score")(), reverse=True)
         return sorted_providers[:k]
 
     def healthy_providers(self) -> list[ProviderStats]:

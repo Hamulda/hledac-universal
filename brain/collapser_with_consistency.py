@@ -61,14 +61,14 @@ class FindingCollapserWithConsistency:
             raw = rust.raw
             if hasattr(raw, "collapse_findings"):
                 self._collapser_available = True
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
 
         # Get consistency bridge
         try:
             from hledac.universal.brain.consistency_bridge import get_consistency_bridge
             self._consistency_bridge = get_consistency_bridge()
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
 
     async def collapse_with_consistency(

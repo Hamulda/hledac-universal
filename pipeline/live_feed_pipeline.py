@@ -50,10 +50,12 @@ import typing
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
+from operator import attrgetter, itemgetter
 from hledac.universal.core.rust_backend import get_accel
 
 import httpx
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.pipeline._deduper import (
     _DiskEntryDeduper,
@@ -153,7 +155,7 @@ def _get_pattern_offload_semaphore() -> asyncio.Semaphore:
 # ---------------------------------------------------------------------------
 
 
-class FeedPipelineEntryResult(msgspec.Struct, frozen=True, gc=False):
+class FeedPipelineEntryResult(Struct, frozen=True):
     """Result for a single feed entry."""
 
     entry_url: str
@@ -165,7 +167,7 @@ class FeedPipelineEntryResult(msgspec.Struct, frozen=True, gc=False):
     quality_reason_tag: str = ""  # comma-separated: "author_present" | "feed_title_context" | "language_match" | "title_only" | etc.  # noqa: E501
 
 
-class FeedSignalTelemetry(msgspec.Struct, frozen=True, gc=False):
+class FeedSignalTelemetry(Struct, frozen=True):
     """Observability surface for feed signal analysis — sidecar for FeedPipelineRunResult.
 
     Reduces typical RunResult payload by ~60-70%%. Only populated when non-empty
@@ -251,7 +253,7 @@ class FeedSignalTelemetry(msgspec.Struct, frozen=True, gc=False):
     assembly_tier: str = "unknown"
 
 
-class FeedPipelineRunResult(msgspec.Struct, frozen=True, gc=False):
+class FeedPipelineRunResult(Struct, frozen=True):
     """Result for a full feed pipeline run.
 
     Core payload only — observability fields moved to FeedSignalTelemetry sidecar.
@@ -411,7 +413,7 @@ class FeedIngestContext:
 # ==============================================================================
 
 
-class FallbackDecision(msgspec.Struct, frozen=True, gc=False):
+class FallbackDecision(Struct, frozen=True):
     """Structured fallback decision output.
 
     reason: canonical reason tag for the decision
@@ -717,7 +719,7 @@ def _compute_adapter_adjusted_confidence(
 # ---------------------------------------------------------------------------
 
 
-class FeedSourceRunResult(msgspec.Struct, frozen=True, gc=False):
+class FeedSourceRunResult(Struct, frozen=True):
     """Result for a single feed source run within a batch."""
 
     feed_url: str
@@ -734,7 +736,7 @@ class FeedSourceRunResult(msgspec.Struct, frozen=True, gc=False):
     findings_lost_to_dedup: int = 0
 
 
-class FeedSourceBatchRunResult(msgspec.Struct, frozen=True, gc=False):
+class FeedSourceBatchRunResult(Struct, frozen=True):
     """Result for a multi-feed source batch run."""
 
     total_sources: int
@@ -2983,7 +2985,7 @@ def compute_feed_dominance_score(
             _concentration_component = 1.0 / _source_count
             _score = (_rust_ratio * 0.6) + (_concentration_component * 0.4)
             return round(min(1.0, max(0.0, _score)), 3)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fail-safe: pure Python fallback (original logic).
@@ -3205,7 +3207,7 @@ async def async_run_feed_source_batch(
                 )
     except asyncio.CancelledError:
         raise  # never swallow
-    except TimeoutError:
+    except TimeoutError:  # noqa: BLE001
         pass
 
     total_fetched = sum(r.fetched_entries for r in results)
@@ -3235,7 +3237,7 @@ async def async_run_feed_source_batch(
     _feed_by_source: list[tuple[str, str, int]] = [(r.feed_url, r.label, r.accepted_findings) for r in results]
     _dominant = max(
         results,
-        key=lambda r: r.accepted_findings,
+        key=attrgetter("accepted_findings"),
         default=None,
     )
     _dom_source: str = ""

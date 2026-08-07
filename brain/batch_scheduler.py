@@ -121,7 +121,7 @@ class BatchScheduler:
         self._worker_task.cancel()
         try:
             await asyncio.wait_for(asyncio.shield(self._worker_task), timeout=timeout)  # noqa: F911  # Shield patterns MUST use asyncio.wait_for
-        except TimeoutError:
+        except TimeoutError:  # noqa: BLE001
             pass
         except asyncio.CancelledError:
             self._worker_task = None

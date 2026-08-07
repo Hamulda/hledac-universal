@@ -53,13 +53,13 @@ def _chmod_lmdb_path(path: pathlib.Path) -> None:
     """
     try:
         os.chmod(path, _stat.S_IRUSR | _stat.S_IWUSR | _stat.S_IXUSR)  # 0o700
-    except OSError:
+    except OSError:  # noqa: BLE001
         pass
     for suffix in ("*.mdb", "*.lock"):
         for file_path in path.glob(suffix):
             try:
                 os.chmod(file_path, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
 

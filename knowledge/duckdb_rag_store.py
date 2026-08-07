@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from operator import attrgetter, itemgetter
 from hledac.universal.utils.async_helpers import parallel, _check_gathered
 
 if TYPE_CHECKING:
@@ -338,7 +339,7 @@ class DuckDBRAGStore:
                 final_score=1.0 / (distance + 0.001),
             )
 
-        sorted_chunks = sorted(candidates.values(), key=lambda x: x.final_score, reverse=True)
+        sorted_chunks = sorted(candidates.values(), key=attrgetter("final_score"), reverse=True)
 
         # F350M-R P4 FIX: MMR was a no-op — now applies maximal_marginal_relevance
         if use_mmr and len(sorted_chunks) > k:
@@ -511,9 +512,9 @@ class DuckDBRAGStore:
                     return
                 try:
                     _s._pending_tasks.remove(task)
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return _cb
 
@@ -534,7 +535,7 @@ class DuckDBRAGStore:
                     ok_results, errors = _check_gathered(gathered)
                     for err in errors:
                         _logger.debug("[DUCKDB:RAG] close: pending task failed: %s", err)
-            except (asyncio.TimeoutError, Exception):
+            except (asyncio.TimeoutError, Exception):  # noqa: BLE001
                 pass
 
 
@@ -729,7 +730,7 @@ class DuckDBEntityStore:
             return []
 
         # Sort by distance (lower is better for cosine distance)
-        sorted_candidates = sorted(candidates.values(), key=lambda x: x.distance)
+        sorted_candidates = sorted(candidates.values(), key=attrgetter("distance"))
         return sorted_candidates[:k]
 
     async def search_similar_adaptive(

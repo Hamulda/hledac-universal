@@ -25,6 +25,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from operator import attrgetter, itemgetter
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -398,7 +399,7 @@ def rerank_findings(
         logger.warning(f"[reranker] ModernBERTEmbedder failed ({exc}), using confidence fallback")
         fallback = sorted(
             findings,
-            key=lambda x: x.get("confidence", 0.5),
+            key=attrgetter("get")("confidence", 0.5),
             reverse=True,
         )[:top_k]
         for f in fallback:
@@ -412,7 +413,7 @@ def rerank_findings(
         logger.warning(f"[reranker] batch_rerank_topk failed ({exc}), using confidence fallback")
         fallback = sorted(
             findings,
-            key=lambda x: x.get("confidence", 0.5),
+            key=attrgetter("get")("confidence", 0.5),
             reverse=True,
         )[:top_k]
         for f in fallback:

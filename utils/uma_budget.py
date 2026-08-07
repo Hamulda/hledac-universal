@@ -104,7 +104,7 @@ M1_FETCH_SOFT_CEILING_GB: float = round(_UMA_TOTAL_MB / 1024 * 0.88, 2)
 try:
     from hledac.universal.core.memory import set_memory_pressure_thresholds as _set_rust_thresholds
     _set_rust_thresholds(soft_gib=4.0, hard_gib=_THRESHOLD_CRITICAL_GIB)
-except Exception:
+except Exception:  # noqa: BLE001
     pass  # Fail-safe: Rust thresholds stay at defaults (4.0 / 5.5 GiB)
 GENERAL_HIGH_WATER_RATIO: float = 0.85
 MAX_L2_CACHE_SIZE_MB: int = 50
@@ -139,7 +139,7 @@ def get_system_memory_mb() -> tuple[int, int, int]:
         used_mb = int(used_bytes / 1024 ** 2)
         available_mb = int(avail_bytes / 1024 ** 2)
         return (total_mb, used_mb, available_mb)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     from hledac.universal.core.resource_governor import _get_cached_psutil, _read_virtual_memory_sync
     try:
@@ -190,7 +190,7 @@ def get_mlx_memory_mb() -> tuple[int, int, int]:
                     peak_mb = int(mx_core.get_peak_memory() / 1024 ** 2)
                 if hasattr(mx_core, 'get_cache_memory'):
                     cache_mb = int(mx_core.get_cache_memory() / 1024 ** 2)
-        except (AttributeError, OSError):
+        except (AttributeError, OSError):  # noqa: BLE001
             pass
     return (active_mb, peak_mb, cache_mb)
 
@@ -243,7 +243,7 @@ def get_uma_pressure_level() -> tuple[int, str]:
             if swap_total_gb >= 0.5:
                 swap_warn_pct = 30 if swap_total_gb < 4 else 60
                 swap_crit_pct = 55 if swap_total_gb < 4 else 85
-        except (AttributeError, OSError):
+        except (AttributeError, OSError):  # noqa: BLE001
             pass
     if total_mb >= _EMERGENCY_THRESHOLD_MB:
         return (usage_pct, 'emergency')

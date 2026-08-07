@@ -92,7 +92,7 @@ def _check_cache_size() -> None:
             _size_warning_logged = True
         elif ratio < 0.5:
             _size_warning_logged = False
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 class _InMemoryRunDeduper:

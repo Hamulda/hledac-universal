@@ -70,7 +70,7 @@ def main():
                                     files_to_fix.append(str(filepath))
                                     break
                                     
-                except (SyntaxError, IndentationError):
+                except (SyntaxError, IndentationError):  # noqa: BLE001
                     pass
     
     print(f"Found {len(files_to_fix)} source files with silent excepts without noqa")

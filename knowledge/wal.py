@@ -112,20 +112,20 @@ class WALManager:
         if self._wal_lmdb is not None:
             try:
                 self._wal_lmdb.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._wal_lmdb = None
         self._initialized = False
         if hasattr(self, '_finalize_handle') and self._finalize_handle is not None:
             try:
                 self._finalize_handle.detach()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._finalize_handle = None
         if hasattr(self, '_atexit_registered') and self._atexit_registered:
             try:
                 atexit.unregister(self._atexit_cleanup)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._atexit_registered = False
 
@@ -613,7 +613,7 @@ class WALManager:
             return
         try:
             await asyncio.to_thread(self.close)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _atexit_cleanup(self) -> None:
@@ -625,7 +625,7 @@ class WALManager:
         """
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _ensure_atexit(self) -> None:
@@ -657,7 +657,7 @@ class WALManager:
         """
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def __del__(self) -> None:
@@ -670,5 +670,5 @@ class WALManager:
         if hasattr(self, '_finalize_handle') and self._finalize_handle is not None:
             try:
                 self._finalize_handle()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass

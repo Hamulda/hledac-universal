@@ -474,7 +474,7 @@ async def _run_in_subprocess_isolation(
         try:
             proc.kill()
             await proc.wait()
-        except ProcessLookupError:
+        except ProcessLookupError:  # noqa: BLE001
             pass
         logger.warning("[SANDBOX] Subprocess isolation timeout after %.1fs: %s", timeout_s, args[0])
         return -1, b"", b"timeout"
@@ -483,7 +483,7 @@ async def _run_in_subprocess_isolation(
         try:
             proc.kill()
             await proc.wait()
-        except ProcessLookupError:
+        except ProcessLookupError:  # noqa: BLE001
             pass
         return -1, b"", str(e).encode()
     finally:
@@ -491,7 +491,7 @@ async def _run_in_subprocess_isolation(
         if profile_path:
             try:
                 profile_path.unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
 
@@ -668,7 +668,7 @@ async def run_whisper_in_subprocess(
             try:
                 proc.kill()
                 await proc.wait()
-            except ProcessLookupError:
+            except ProcessLookupError:  # noqa: BLE001
                 pass
             logger.warning("[ADVERSARY-001] Whisper subprocess timeout after %.1fs", timeout_s)
             return {
@@ -686,12 +686,12 @@ async def run_whisper_in_subprocess(
     finally:
         try:
             os.unlink(script_path.name)
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
         if use_sandbox and profile_path:
             try:
                 profile_path.unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
     return {
@@ -1255,7 +1255,7 @@ class MediaSandboxCoordinator:
         finally:
             try:
                 profile_path.unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
     async def _run_subprocess_isolation(
@@ -1426,7 +1426,7 @@ except Exception as e:
                 finally:
                     try:
                         temp_path.unlink(missing_ok=True)
-                    except OSError:
+                    except OSError:  # noqa: BLE001
                         pass
 
         except asyncio.TimeoutError:
@@ -1507,7 +1507,7 @@ except Exception as e:
                     real_pid = _struct.unpack("<I", data)[0]
                     _os.unlink(handshake_path)
                     break
-            except (FileNotFoundError, OSError):
+            except (FileNotFoundError, OSError):  # noqa: BLE001
                 pass
             await _asyncio.sleep(0.01)
 
@@ -1541,11 +1541,11 @@ except Exception as e:
         # Timeout — kill child
         try:
             await _asyncio.to_thread(_os.kill, real_pid, 9)
-        except (ProcessLookupError, OSError):
+        except (ProcessLookupError, OSError):  # noqa: BLE001
             pass
         try:
             _os.unlink(result_path)
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
         return b"", -1
 
@@ -1822,7 +1822,7 @@ async def run_pymupdf_sandboxed(
     file_size = None
     try:
         file_size = file_path.stat().st_size
-    except OSError:
+    except OSError:  # noqa: BLE001
         pass
 
     safe_env = {
@@ -1856,7 +1856,7 @@ async def run_pymupdf_sandboxed(
                         if returncode == 0 and stdout_data:
                             try:
                                 return json.loads(stdout_data.decode("utf-8", errors="replace"))
-                            except json.JSONDecodeError:
+                            except json.JSONDecodeError:  # noqa: BLE001
                                 pass
                 except Exception as exc:
                     logger.debug("[PYMUPDF-SANDBOX] MachRemap failed: %s", exc)
@@ -1885,7 +1885,7 @@ async def run_pymupdf_sandboxed(
         finally:
             try:
                 temp_path.unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
     except asyncio.TimeoutError:
@@ -1897,7 +1897,7 @@ async def run_pymupdf_sandboxed(
     finally:
         try:
             profile_path.unlink(missing_ok=True)
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
 

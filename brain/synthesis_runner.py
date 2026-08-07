@@ -28,6 +28,7 @@ E2E flow:
 from __future__ import annotations
 import msgspec
 
+from operator import attrgetter, itemgetter
 import asyncio
 import gc
 import hashlib
@@ -1649,7 +1650,7 @@ class SynthesisRunner:
         try:
             top = await self._rerank_findings(query, findings, max_findings)
         except Exception:
-            top = sorted(findings, key=lambda f: f.get("confidence", 0.0), reverse=True)[:max_findings]
+            top = sorted(findings, key=attrgetter("get")("confidence", 0.0), reverse=True)[:max_findings]
 
         # Issue #12.1 continued: GraphRAG — I/O-bound IOC relationship query
         graph_context = ""
@@ -2582,7 +2583,7 @@ class SynthesisRunner:
                 if graph_result and graph_result.get("insights"):
                     from hledac.universal.brain.graph_prompt_builder import build_graph_chatml_context
                     return build_graph_chatml_context(graph_result, query, token_budget=1500)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Fallback: find_connections for IOC relationships
@@ -2756,7 +2757,7 @@ class SynthesisRunner:
                             remaining_task.cancel()
                             try:
                                 await remaining_task
-                            except asyncio.CancelledError:
+                            except asyncio.CancelledError:  # noqa: BLE001
                                 pass
                         logger.debug("[SYNTHESIS] race_first_wins: %s won", winner_name)
                         return winner, winner_name, winner_logprobs
@@ -2769,7 +2770,7 @@ class SynthesisRunner:
                 task.cancel()
                 try:
                     await task
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # noqa: BLE001
                     pass
             raise
 
@@ -2900,7 +2901,7 @@ class SynthesisRunner:
                                 try:
                                     logprob_val = chunk.logprobs[-1][1] if isinstance(chunk.logprobs[-1], tuple) else chunk.logprobs[-1]
                                     token_logprobs.append(float(logprob_val))
-                                except (IndexError, TypeError, ValueError):
+                                except (IndexError, TypeError, ValueError):  # noqa: BLE001
                                     pass  # Fail-soft: skip if logprob extraction fails
                             # ISSUE-009: Speculative URL/IP detection — scan sliding window
                             # O(1) memory per token, avoids O(n²) full-string concat for detection
@@ -2922,7 +2923,7 @@ class SynthesisRunner:
                                     self._speculative_ips = spec_ips
                                     # APEX-1009: Return token_logprobs for uncertainty measurement
                                     return _msgspec_decode(_msgspec_encode(parsed)), True, token_logprobs
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass  # Decode failed, keep accumulating
                 except Exception as e:
                     logger.warning("[SYNTHESIS] stream_generate failed: %s — fallback", e)

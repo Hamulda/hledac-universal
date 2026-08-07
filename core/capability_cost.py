@@ -45,6 +45,7 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING
 
+from operator import attrgetter, itemgetter
 import msgspec
 
 if TYPE_CHECKING:
@@ -237,7 +238,7 @@ class CapabilityCostRegistry:
     def get_heaviest(self, limit: int = 10) -> list[CapabilityCost]:
         """Get the heaviest capabilities by peak_mb."""
         with self._lock:
-            sorted_costs = sorted(self._costs.values(), key=lambda c: c.peak_mb, reverse=True)
+            sorted_costs = sorted(self._costs.values(), key=attrgetter("peak_mb"), reverse=True)
             return sorted_costs[:limit]
 
 

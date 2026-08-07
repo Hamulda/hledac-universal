@@ -249,7 +249,7 @@ def _ensure_r0_artifacts() -> None:
             capture_output=True,
             timeout=60,
         )
-    except subprocess.TimeoutExpired as err:
+    except subprocess.TimeoutExpired as err:  # noqa: BLE001
         # Fail-safe: neblokuj testy kvůli autoprobe
         pass
 
@@ -352,7 +352,7 @@ try:
     from opentelemetry import trace
 
     _OTEL_AVAILABLE = True
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 
 
@@ -384,7 +384,7 @@ def session_event_loop():
         # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
         try:
             gc.collect()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -419,7 +419,7 @@ def session_duckdb_store():
             # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
             try:
                 gc.collect()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         yield store
@@ -435,19 +435,19 @@ def session_duckdb_store():
             asyncio.set_event_loop(_loop)
         try:
             _loop.run_until_complete(store.aclose())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # CRITICAL FIX F350M-R: reclaim DuckDB PyO3 50-200 MB buffer on M1 8GB
         try:
             gc.collect()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     finally:
         import shutil
 
         try:
             shutil.rmtree(tmp, ignore_errors=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -467,7 +467,7 @@ def session_otel_tracer():
         provider = trace.get_tracer_provider()
         if hasattr(provider, "shutdown"):
             provider.shutdown()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -550,7 +550,7 @@ def _gc_and_close_loops(request: pytest.FixtureRequest) -> None:
     try:
         if hasattr(asyncio, "_all_loops"):
             loops_before = {id(loop) for loop in asyncio._all_loops()}
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     yield
@@ -570,9 +570,9 @@ def _gc_and_close_loops(request: pytest.FixtureRequest) -> None:
                                 asyncio.gather(*pending, return_exceptions=True)
                             )
                         loop.close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # --- gc.collect ---------------------------------------------------------
@@ -582,7 +582,7 @@ def _gc_and_close_loops(request: pytest.FixtureRequest) -> None:
     # Note: both fixtures run — _cleanup handles frozen-state, this handles loops.
     try:
         gc.collect()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -604,7 +604,7 @@ def _env_config_cache_clear() -> None:
         from hledac.universal.core.env_config import _get_cached
         # @functools.cache stores in func.__wrapped__.__dict__ or func.__dict__
         _get_cached.cache_clear()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     yield
@@ -1054,7 +1054,7 @@ def _memory_profiler_gc_sync() -> None:
     """
     try:
         gc.unfreeze()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # Already unfrozen or freeze unavailable
     yield
 
@@ -1074,7 +1074,7 @@ def _hermes_cache_cleanup() -> None:
         cache = hermes_cache()
         if hasattr(cache, "clear_models"):
             cache.clear_models()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft: don't fail tests for cleanup errors
 
 
@@ -1092,7 +1092,7 @@ def _mlx_model_pool_cleanup() -> None:
 
         if hasattr(MLXModelPool, "reset_instance"):
             MLXModelPool.reset_instance()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft: don't fail tests for cleanup errors
 
 
@@ -1131,7 +1131,7 @@ def _asyncio_task_leak_guard(request: pytest.FixtureRequest) -> None:
         if canceled_tasks:
             try:
                 loop.run_until_complete(asyncio.gather(*canceled_tasks, return_exceptions=True))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Warn but don't fail — cleanup should happen in fixture teardown
         warnings.warn(
@@ -1200,7 +1200,7 @@ def _cleanup(request: pytest.FixtureRequest) -> None:
         if _cleanup_gc_frozen_state:
             try:
                 gc.unfreeze()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Issue #9: 2-pass GC for heavy tests (matches old _gc_after_heavy_tests)
         markers = {m.name for m in request.node.iter_markers()}
@@ -1344,7 +1344,7 @@ def _clear_all_lock_registries() -> None:
             registry = getattr(mod, '_LockRegistry', None)
             if registry is not None and isinstance(registry, dict):
                 registry.clear()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Best-effort cleanup
 
 
@@ -1378,7 +1378,7 @@ def _duckdb_pool_cleanup() -> None:
         from hledac.universal.core.rust_backend.query import _pool_close_all
 
         _pool_close_all()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft: don't fail tests for cleanup errors
 
 
@@ -1398,7 +1398,7 @@ def _lmdb_pool_cleanup() -> None:
         pool = get_lmdb_pool()
         if hasattr(pool, "shutdown"):
             pool.shutdown(wait=False)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft: don't fail tests for cleanup errors
 
 
@@ -1417,7 +1417,7 @@ def _bloom_filter_cleanup() -> None:
         from hledac.universal.tools.url_dedup import reset_default_bloom_filter
 
         reset_default_bloom_filter()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft: don't fail tests for cleanup errors
 
 
@@ -1501,7 +1501,7 @@ def isolated_duckdb_store():
                 _tardown_loop.run_until_complete(store.aclose())
             finally:
                 _tardown_loop.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     except Exception:
         yield None
@@ -1602,7 +1602,7 @@ def pytest_collection_modifyitems(
             if fspath_name and fspath_name in sprint_files:
                 if not item.get_closest_marker("phase_gate"):
                     item.add_marker(pytest.mark.phase_gate)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # --- CI slow-test skip ---

@@ -30,6 +30,8 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.async_helpers import parallel
 
@@ -53,7 +55,7 @@ class TaskPriority(Enum):
     LOW = 4
     BACKGROUND = 5
 
-class AgentCapability(msgspec.Struct, gc=False):
+class AgentCapability(Struct):
     """Capability definition for an agent."""
     agent_type: AgentType
     name: str
@@ -62,7 +64,7 @@ class AgentCapability(msgspec.Struct, gc=False):
     supported_operations: list[str] = field(default_factory=list)
     priority_boost: float = 1.0
 
-class AgentPerformance(msgspec.Struct, gc=False):
+class AgentPerformance(Struct):
     """Performance metrics for an agent."""
     agent_type: AgentType
     total_tasks: int = 0
@@ -78,7 +80,7 @@ class AgentPerformance(msgspec.Struct, gc=False):
             return 1.0
         return self.successful_tasks / self.total_tasks
 
-class TaskRequest(msgspec.Struct, frozen=True, gc=False):
+class TaskRequest(Struct, frozen=True):
     """Request for agent execution."""
     id: str
     operation: str
@@ -89,7 +91,7 @@ class TaskRequest(msgspec.Struct, frozen=True, gc=False):
     timeout: float = 60.0
     max_retries: int = 2
 
-class TaskResult(msgspec.Struct, frozen=True, gc=False):
+class TaskResult(Struct, frozen=True):
     """Result from agent execution."""
     task_id: str
     agent_type: AgentType
@@ -99,7 +101,7 @@ class TaskResult(msgspec.Struct, frozen=True, gc=False):
     duration: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class CoordinationStrategy(msgspec.Struct, frozen=True, gc=False):
+class CoordinationStrategy(Struct, frozen=True):
     """Strategy for task coordination."""
     parallel_execution: bool = True
     max_parallel_agents: int = 3

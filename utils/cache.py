@@ -187,7 +187,7 @@ class PyCacheDict[K, V]:
                             self._data.popitem(last=False)
                             self._evictions += 1
                         self._data[key] = (value, now)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def touch(self, key: K) -> bool:
@@ -529,7 +529,7 @@ class AsyncPyCacheDict[K, V]:
                             self._evictions += 1
                         self._data[key] = (value, now)
                         self._wvd_set(key, value)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def touch(self, key: K) -> bool:
@@ -941,7 +941,7 @@ class GenerationalCache[K, V]:
                     del gen[key]
                     self._evictions += 1
                     evicted += 1
-                except KeyError:
+                except KeyError:  # noqa: BLE001
                     pass
             remaining = count - evicted
             for _ in range(remaining):
@@ -955,7 +955,7 @@ class GenerationalCache[K, V]:
                     evicted += 1
                 except (StopIteration, KeyError):
                     break
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return evicted
 
@@ -976,9 +976,9 @@ class GenerationalCache[K, V]:
                     self._gen1[key] = val
                     self._promotions += 1
                     promoted += 1
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return promoted
 
@@ -999,9 +999,9 @@ class GenerationalCache[K, V]:
                     self._gen2[key] = val
                     self._promotions += 1
                     promoted += 1
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return promoted
 
@@ -1078,7 +1078,7 @@ class GenerationalCache[K, V]:
                     if len(self._gen0) >= self._maxsize:
                         self._promote_gen0_to_gen1()
                     self._gen0[key] = value
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def promote(self, key: K) -> bool:
@@ -1132,9 +1132,9 @@ class GenerationalCache[K, V]:
                                 del gen[key]
                                 self._evictions += 1
                                 evicted += 1
-                            except KeyError:
+                            except KeyError:  # noqa: BLE001
                                 pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return evicted
 
@@ -1339,7 +1339,7 @@ class RefcountEvictionCache[K, V]:
                 del gen[key]
                 self._evictions += 1
                 evicted += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return evicted
 
@@ -1432,7 +1432,7 @@ class RefcountEvictionCache[K, V]:
                 # Periodic generational promotion every 8 sets
                 if self._set_counter % 8 == 0:
                     self._promote_generations()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _promote_generations(self) -> None:
@@ -1445,7 +1445,7 @@ class RefcountEvictionCache[K, V]:
                     v = src_gen.pop(k, None)
                     if v is not None and len(dst_gen) < self._maxsize:
                         dst_gen[k] = v
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def get_refcount(self, key: K) -> int:
@@ -1502,9 +1502,9 @@ class RefcountEvictionCache[K, V]:
                             self._evictions += 1
                             self._evict_orphaned_total += 1
                             evicted += 1
-                        except KeyError:
+                        except KeyError:  # noqa: BLE001
                             pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return evicted
 

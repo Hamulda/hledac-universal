@@ -114,7 +114,7 @@ class StdoutJSONExporter:
             if self._flush_each_line:
                 try:
                     self._stream.flush()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         return SpanExportResult.SUCCESS if SpanExportResult is not None else 0
 
@@ -122,7 +122,7 @@ class StdoutJSONExporter:
         with self._lock:
             try:
                 self._stream.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def force_flush(self, timeout_millis: int=30000) -> bool:

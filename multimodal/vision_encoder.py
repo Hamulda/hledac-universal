@@ -297,9 +297,9 @@ class VisionEncoder:
                         except AttributeError:
                             try:
                                 mx_mod.metal.clear_cache()
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 elapsed = time.monotonic() - start_time
                 logger.debug('VisionEncoder: encoded %d images in %.3fs (%.3fs/img)', len(images), elapsed, elapsed / len(images) if images else 0)

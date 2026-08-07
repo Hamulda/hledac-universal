@@ -132,7 +132,7 @@ class _PythonHtmlDomain:
                         if len(results) >= self._MAX_LINKS:
                             break
                 return results
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Regex fallback
         return _python_extract_links_regex(html, base_url)
@@ -155,7 +155,7 @@ class _PythonHtmlDomain:
                         if len(results) >= self._MAX_LINKS:
                             break
                 return results
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return []
 
@@ -205,7 +205,7 @@ class _PythonHtmlDomain:
                 if body is not None:
                     text = body.text(separator=" ", strip=True)
                     return " ".join(text.split())  # normalize whitespace
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Regex fallback
         text = re.sub(r"<[^>]+>", " ", html)
@@ -247,7 +247,7 @@ def _python_extract_links_regex(html: str, base_url: str) -> list[str]:
             try:
                 resolved = urlparse.urljoin(base_url, href)
                 href = resolved
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         results.append(href)
     return results
@@ -258,6 +258,6 @@ def get_html_domain(ext: object | None) -> _RustHtmlDomain | _PythonHtmlDomain:
     if ext is not None and _HTML_PARSE_RUST_AVAILABLE:
         try:
             return _RustHtmlDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonHtmlDomain()

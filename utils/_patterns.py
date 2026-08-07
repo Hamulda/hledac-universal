@@ -39,6 +39,7 @@ __all__ = [
     "fail_safe_async",
     # Result aggregation
     "collect_results",
+    "collect_results_async",  # F320
     "aggregate_with_score",
     # Fail-safe decorators
     "never_raises",
@@ -273,6 +274,35 @@ def collect_results(
     M1 8GB: Sekvenční je lepší pro I/O bound operace na limitovaném RAM.
     """
     return [processor(item) for item in items]
+
+
+async def collect_results_async(
+    items: Sequence[T],
+    processor: Callable[[T], Awaitable[R]],
+) -> list[R]:
+    """
+    Async sekvenční sběr výsledků z async processoru.
+
+    Použití:
+        results = await collect_results_async(
+            batch_items,
+            lambda item: self._process_single(item)
+        )
+
+    Místo:
+        results = []
+        for item in items:
+            result = await self._process_single(item)
+            results.append(result)
+
+    M1 8GB: Sekvenční je lepší pro I/O bound operace na limitovaném RAM.
+    F320: Přidáno pro DRY batch processing patterns.
+    """
+    results: list[R] = []
+    for item in items:
+        result = await processor(item)
+        results.append(result)
+    return results
 
 
 def aggregate_with_score(

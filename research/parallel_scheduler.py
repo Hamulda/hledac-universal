@@ -19,9 +19,10 @@ ISSUE-037 opravy:
 - mx.eval() + clear_cache() pro MLX workers
 """
 from __future__ import annotations
-import msgspec
 
 import asyncio
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 import logging
 import time
 from collections.abc import Callable
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 if _MSGSpec:
 
-    class PrioritizedTask(msgspec.Struct, frozen=True, gc=False):
+    class PrioritizedTask(Struct, frozen=True):
         """Immutable prioritized task. msgspec offset access ~10× faster than dataclass.
 
         priority: higher = sooner (inverted for min-heap internally).
@@ -66,7 +67,7 @@ if _MSGSpec:
 else:
     from dataclasses import dataclass, field
 
-    class PrioritizedTask(msgspec.Struct, gc=False):
+    class PrioritizedTask(Struct):
         priority: float
         task_id: str
         coro_or_fn: Any
@@ -255,7 +256,7 @@ class ParallelResearchScheduler:
             import asyncio
             try:
                 asyncio.get_running_loop().run_until_complete(self.wait_all(timeout=30.0))
-            except RuntimeError:
+            except RuntimeError:  # noqa: BLE001
                 pass  # No running event loop
 
     def __enter__(self) -> "ParallelResearchScheduler":

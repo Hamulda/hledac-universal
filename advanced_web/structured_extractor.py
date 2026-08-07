@@ -64,6 +64,8 @@ import logging
 import re
 import msgspec
 from collections.abc import Iterable
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -78,7 +80,7 @@ MAX_PROPERTY_KEYS: int = 64
 _SCHEMA_TO_IOC_KIND: dict[str, str] = {'Person': 'identity', 'Organization': 'identity', 'LocalBusiness': 'identity', 'GovernmentOrganization': 'identity', 'NGO': 'identity', 'Corporation': 'identity', 'EducationalOrganization': 'identity', 'Article': 'document', 'NewsArticle': 'document', 'BlogPosting': 'document', 'ScholarlyArticle': 'document', 'Report': 'document', 'TechArticle': 'document', 'WebPage': 'document', 'Product': 'asset', 'Offer': 'asset', 'Vehicle': 'asset', 'CreativeWork': 'asset', 'Event': 'event', 'BusinessEvent': 'event', 'SocialEvent': 'event', 'Festival': 'event', 'Place': 'location', 'AdministrativeArea': 'location', 'Country': 'location', 'City': 'location', 'State': 'location', 'PostalAddress': 'location', 'WebSite': 'site', 'BreadcrumbList': 'site', 'ContactPoint': 'contact'}
 _DROPPED_PROPS: frozenset[str] = frozenset({'@context', 'potentialAction', 'subjectOf', 'mainEntityOfPage'})
 
-class ExtractedEntity(msgspec.Struct, frozen=True, gc=False):
+class ExtractedEntity(Struct, frozen=True):
     """A single structured entity extracted from a page."""
     entity_id: str
     entity_type: str
@@ -89,14 +91,14 @@ class ExtractedEntity(msgspec.Struct, frozen=True, gc=False):
     source_url: str
     extracted_at: str
 
-class ExtractedRelation(msgspec.Struct, frozen=True, gc=False):
+class ExtractedRelation(Struct, frozen=True):
     """A typed relation between two entities on the same page."""
     src_id: str
     dst_id: str
     relation: str
     source_url: str
 
-class StructuredExtraction(msgspec.Struct, frozen=True, gc=False):
+class StructuredExtraction(Struct, frozen=True):
     """Result of parsing one page's structured data."""
     entities: tuple[ExtractedEntity, ...]
     relations: tuple[ExtractedRelation, ...]
@@ -395,7 +397,7 @@ class StructuredExtractor:
                 entity_id = self._hash_entity(item_type, value, source_url)
                 entities.append(ExtractedEntity(entity_id=entity_id, entity_type=item_type, ioc_kind=ioc_kind, value=str(value)[:MAX_PROPERTY_LENGTH], url=url_val, properties=props, source_url=source_url, extracted_at=now))
             return (block_count, entities, relations)
-        except UnicodeDecodeError:
+        except UnicodeDecodeError:  # noqa: BLE001
             pass
         try:
             from selectolax.lexbor import LexborHTMLParser

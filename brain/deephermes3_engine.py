@@ -108,7 +108,7 @@ def _get_xxh3_hex_batch(items: list[str]) -> list[str]:
     if _xxh3_func_batch is not None:
         try:
             return _xxh3_func_batch([s.encode() for s in items])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return [hashlib.blake2b(s.encode(), digest_size=8).hexdigest() for s in items]
 
@@ -185,11 +185,11 @@ async def warmup_or_skip(engine: DeepHermes3Engine, system_prompt: str, few_shot
         if await engine._restore_warmup_cache(cache_path, expected_hash):
             logger.info(f'[WARMUP] Cache hit: {cache_path.name} (hash={expected_hash[:8]})')
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         cache_path.unlink(missing_ok=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 _fallback_sanitize_resolver = lazy('..security.pii_gate.fallback_sanitize')
@@ -589,7 +589,7 @@ class DeepHermes3Engine:
         try:
             from hledac.universal.transport.circuit_breaker import ModelCircuitBreaker
             self._model_breaker = ModelCircuitBreaker(model_id='hermes')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._prompt_bandit = None
         self._last_bandit_arm: str | None = None
@@ -618,14 +618,14 @@ class DeepHermes3Engine:
         if hasattr(self, '_batch_queue') and self._batch_queue is not None:
             try:
                 batch_depth = self._batch_queue.qsize()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         pending = 0
         if hasattr(self, '_pending_futures') and self._pending_futures:
             try:
                 pending = len(self._pending_futures)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if load_state is None:
@@ -786,7 +786,7 @@ class DeepHermes3Engine:
         def _safe_discard(f: asyncio.Future) -> None:
             try:
                 self._pending_futures.discard(f)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         future.add_done_callback(_safe_discard)
         if not hasattr(self.__class__, '_batch_tie_breaker'):
@@ -982,7 +982,7 @@ class DeepHermes3Engine:
             max_working_set = info.get('max_recommended_working_set_size', 0)
             if max_working_set > 0:
                 return min(cache_memory / max_working_set, 1.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return 0.0  # Default: no pressure
 
@@ -1329,7 +1329,7 @@ class DeepHermes3Engine:
                 # Pydantic v1 fallback
                 fields = getattr(schema_cls, '__fields__', {})
                 field_names = list(fields.keys()) if fields else []
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if field_names:
             error_parts.append(f'Expected fields: {field_names}')
@@ -1426,7 +1426,7 @@ class DeepHermes3Engine:
             import mlx.core as mx
             if hasattr(mx, 'get_active_memory'):
                 return mx.get_active_memory()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return 0
 
@@ -1598,7 +1598,7 @@ class DeepHermes3Engine:
                     if _uma_state in ('critical', 'emergency'):
                         logger.warning(f"[HERMES] UMA {_uma_state} ({getattr(_uma, 'system_used_gib', 0):.2f}GiB) — skipping draft model init")
                         _skip_draft = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if not _skip_draft:
                 await self._init_draft_model()
@@ -1635,7 +1635,7 @@ class DeepHermes3Engine:
             from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
             if _is_blitz() and os.environ.get('HLEDAC_ENABLE_BLITZ_TRIAGE', '0') == '1':
                 _blitz_triage = True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Check if speculative decoding is explicitly enabled
@@ -1800,7 +1800,7 @@ class DeepHermes3Engine:
             try:
                 import mlx.core as mx
                 mx.metal.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             logger.info('[SPEC] Draft model evicted successfully (~200MB freed)%s',
@@ -1866,7 +1866,7 @@ class DeepHermes3Engine:
             if _snap.get('uma_usage_pct', 0) > 85:
                 logger.debug('[BLITZ-11] triage_relevance: UMA > 85%%, pass-through=True')
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # ── Build triage prompt ──────────────────────────────────────────
@@ -2039,7 +2039,7 @@ class DeepHermes3Engine:
             if 'Apple' in device_name:
                 max_parallel = 1
                 logger.info('[FIX-1] Apple Silicon detected (%s) — forcing sequential prefill', device_name)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if self._model is None or self._tokenizer is None:
             return
@@ -2125,7 +2125,7 @@ class DeepHermes3Engine:
                             if hasattr(layer, 'quantize'):
                                 try:
                                     layer.quantize(group_size=64, bits=kv_bits)
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass
                     from mlx_lm import generate as mlx_generate
                     from mlx_lm.sample_utils import make_sampler
@@ -2222,7 +2222,7 @@ class DeepHermes3Engine:
             cache_path = Path.home() / '.hledac' / 'cache' / 'system_prompt_cache.npz'
             try:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             warmup_cache = self._warmup_cache
             warmup_hash = self._warmup_prompt_hash
@@ -2230,7 +2230,7 @@ class DeepHermes3Engine:
                 warmup_path = WARMUP_CACHE_DIR / f'warmup_{warmup_hash}.safetensors'
                 try:
                     WARMUP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             else:
                 warmup_path = None
@@ -2252,7 +2252,7 @@ class DeepHermes3Engine:
                     if hasattr(self._system_prompt_cache, 'offset'):
                         try:
                             data['_offset'] = mx.array([int(self._system_prompt_cache.offset)])  # type: ignore[union-attr]
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     if data:
                         mx.savez(str(cache_path), **data)
@@ -2314,7 +2314,7 @@ class DeepHermes3Engine:
                     else:
                         offset_val = int(arr)
                     self._system_prompt_cache.offset = offset_val  # type: ignore[union-attr]
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if restored > 0:
                 logger.info(f'[CACHE] Loaded from {cache_path} ({restored}/{n_layers} layers restored)')
@@ -2393,7 +2393,7 @@ class DeepHermes3Engine:
                     evicted_key, _ = prefix_cache.popitem(last=False)  # type: ignore[call-arg]
                     prefix_cache_stats['prefix_cache_evictions'] = prefix_cache_stats.get('prefix_cache_evictions', 0) + 1
                     logger.debug(f'[CACHE] Prefix cache evicted key {evicted_key[:8]}')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return formatted, None, tokenizer, prefix_tokens  # type: ignore[return-value]
 
@@ -2608,7 +2608,7 @@ class DeepHermes3Engine:
                 metal_active_bytes = getattr(stats, "active_bytes", None) or getattr(
                     stats, "metal_memory_bytes", None
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         uma_state = "ok"
@@ -2617,7 +2617,7 @@ class DeepHermes3Engine:
 
             _uma = sample_uma_status()
             uma_state = getattr(_uma, "state", "ok")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         config = get_kv_cache_config(
@@ -2659,7 +2659,7 @@ class DeepHermes3Engine:
                 metal_active_bytes = int(mx.get_active_memory())
             elif hasattr(mx.metal, "get_active_memory"):
                 metal_active_bytes = int(mx.metal.get_active_memory())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         uma_state = "ok"
@@ -2668,7 +2668,7 @@ class DeepHermes3Engine:
 
             _uma = sample_uma_status()
             uma_state = getattr(_uma, "state", "ok")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         config = get_kv_cache_config(
@@ -2718,7 +2718,7 @@ class DeepHermes3Engine:
                 try:
                     layer.quantize(group_size=64, bits=kv_bits)
                     self._kv_cache_stats["quantized_count"] += 1
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     def _build_generate_kwargs(self, formatted_prompt: str, temp: float, max_tok: int, prefix_cache, adapter_path: str | None=None, prompt_tokens: list[int] | None=None) -> dict:
@@ -2852,7 +2852,7 @@ class DeepHermes3Engine:
                     _uma_state = getattr(_uma, 'state', 'ok')
                     if _uma_state in ('high', 'critical'):
                         _should_clear = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-open: don't clear if sampling fails
 
         # Always update timestamp and counter regardless of whether we clear
@@ -2872,7 +2872,7 @@ class DeepHermes3Engine:
             if hasattr(_mx, 'clear_cache'):
                 _mx.clear_cache()
             _gc.collect()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def apply_lora_adapter_async(self, adapter_path: str | None) -> None:
@@ -3428,7 +3428,7 @@ class DeepHermes3Engine:
                         max_tok = min(max_tok, thermal_params.max_tokens_override)
                     if thermal_params.temperature_reduction > 0:
                         temp = max(0.0, temp - thermal_params.temperature_reduction)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fail-soft: ignore thermal params errors
 
         # ---- Context budget decision ----
@@ -3587,7 +3587,7 @@ class DeepHermes3Engine:
             if system_msg:
                 try:
                     prefix_cache = self._get_prefix_cache(system_msg)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             elif self._system_prompt_cache is not None:
                 prefix_cache = self._system_prompt_cache
@@ -3616,7 +3616,7 @@ class DeepHermes3Engine:
                 try:
                     estimated_size = len(formatted_prompt) * 64
                     self._store_session_cache(formatted_prompt, populated_kv, estimated_size)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # ---- Record success ----
@@ -3760,7 +3760,7 @@ class DeepHermes3Engine:
                 return
         try:
             _safe_mlx_eval_and_clear_cache('generate_stream_post')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # --- Stream helpers (CC-15: extracted for early-return / low-nesting) ---
@@ -3830,7 +3830,7 @@ class DeepHermes3Engine:
                     _m3_mx.clear_cache()
                 _gc.collect()
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return False
 
@@ -3881,7 +3881,7 @@ class DeepHermes3Engine:
             try:
                 import mlx.core as _m3_mx
                 _m3_mx.eval([])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             _, stream_kwargs = self._stream_kwargs_for_kv(max_tok, prompt_tokens, prefix_cache)
@@ -3912,7 +3912,7 @@ class DeepHermes3Engine:
                     if isinstance(self._stream_cancelled, asyncio.Event) and self._stream_cancelled.is_set():
                         yield from self._flush_token_buffer(token_buffer)
                         return
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Final flush
@@ -4502,14 +4502,14 @@ class DeepHermes3Engine:
         self._mlx_worker_thread = None
         try:
             gc.freeze()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         global _MLX_PREWARM_LAST_UNLOAD_TIME, _mlx_prewarm_active
         if _MLX_PREWARM_ENABLED and _mlx_prewarm_active:
             try:
                 import time as _time
                 _MLX_PREWARM_LAST_UNLOAD_TIME = _time.monotonic()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             logger.debug('[F267] MLX prewarm: skipping clear_cache, model kept warm')
         else:
@@ -4520,7 +4520,7 @@ class DeepHermes3Engine:
         try:
             from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
             get_ane_mlx_mutex().release('llm')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # G2: Notify observers that model is unloaded
         self._notify_state(ModelLoadState.UNLOADED)
@@ -4553,7 +4553,7 @@ class DeepHermes3Engine:
             if ex is not None:
                 try:
                     ex.shutdown(wait=False, cancel_futures=True)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     async def aclose(self) -> None:
@@ -4675,9 +4675,9 @@ class DeepHermes3Engine:
             if getattr(self, '_compile_executor', None) is not None:
                 try:
                     self._compile_executor.shutdown(wait=False, cancel_futures=True)  # type: ignore[union-attr]
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # GC path — never raise
 
     def reset_session(self, *, keep_cache_pool: bool = True) -> None:
@@ -4725,7 +4725,7 @@ class DeepHermes3Engine:
         try:
             import mlx.core as mx
             mx.eval([])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._kv_cache_stats = {'cache_uses': 0, 'cache_prefills': 1, 'quantized_count': 0, 'parallel_prefills': 0}
         self._session_cache_stats = {'session_cache_hits': 0, 'session_cache_misses': 0, 'session_cache_evictions': 0, 'session_cache_memory_mb': self._session_cache_memory_mb, 'session_cache_maxsize': self._session_cache_maxsize}
@@ -4766,7 +4766,7 @@ class DeepHermes3Engine:
             try:
                 # F350M-R: Wire MetalDevice — GPU memory telemetry via delegation
                 _active_bytes = self._metal_device.get_active_memory() if self._metal_device else 0
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return {'lazy_ops_eval_count': self._lazy_ops_eval_count, 'gpu_memory_active_bytes': _active_bytes, 'gpu_memory_active_gb': _active_bytes / 1024 ** 3, 'metal_pressure_fast_flush': self._telemetry_counters.get('metal_pressure_fast_flush', 0), 'pending_lazy_ops_estimate': self._lazy_ops_eval_count * EVAL_EVERY_N_TOKENS}
 
@@ -4777,9 +4777,9 @@ class DeepHermes3Engine:
             task.cancel()
             try:
                 await task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def load_model(self, model_id: str) -> bool:
@@ -4839,7 +4839,7 @@ class DeepHermes3Engine:
         finally:
             try:
                 mutex.release('llm')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _get_cache_size_mb(self) -> float:
@@ -4970,7 +4970,7 @@ class DeepHermes3Engine:
         try:
             from ..utils.mlx_memory import format_mlx_memory_snapshot
             logger.debug(f'[SUSTAIN] POST: {format_mlx_memory_snapshot()}')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return response.strip()
 
@@ -5158,7 +5158,7 @@ class DeepHermes3Engine:
                             layer.keys = data[k_key]
                             layer.values = data[v_key]
                             restored += 1
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
             if restored > 0:
                 logger.debug(f'[WARMUP] Restored {restored}/{len(self._warmup_cache)} layers (legacy)')

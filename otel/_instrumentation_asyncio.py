@@ -62,7 +62,7 @@ def _get_current_otel_context() -> dict[str, Any]:
             out['trace_id'] = tid
         if sid:
             out['span_id'] = sid
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return out
 

@@ -136,7 +136,7 @@ def _get_libc() -> ctypes.CDLL | None:
         if lib_c:
             _LIBC = ctypes.CDLL(lib_c, use_errno=True)
             return _LIBC
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -163,7 +163,7 @@ def _clone_dir(src: Path, dst: Path) -> bool:
             ret = _get_libc().clonefile(src_bytes, dst_bytes, 0)
             if ret == 0:
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Fallback: regular copy

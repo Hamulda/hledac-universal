@@ -45,7 +45,8 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
-import msgspec
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 if TYPE_CHECKING:
     pass
 from hledac.universal.utils.async_helpers import parallel_ok, safe_wait_for, parallel
@@ -57,7 +58,7 @@ _PIPELINE_WORKERS_STORE: int = 2
 _STORE_FLUSH_CONCURRENCY: int = 4
 _STORE_FLUSH_CHUNK_SIZE: int = 256
 
-class PipelineStats(msgspec.Struct, gc=False):
+class PipelineStats(Struct):
     """Statistics for the finding pipeline.
 
     Msgspec.Struct benefits:
@@ -172,12 +173,12 @@ class FindingPipeline:
         for _ in self._enrich_workers:
             try:
                 self._queue.put_nowait(None)
-            except asyncio.QueueFull:
+            except asyncio.QueueFull:  # noqa: BLE001
                 pass
         for _ in self._store_workers:
             try:
                 self._queue.put_nowait(None)
-            except asyncio.QueueFull:
+            except asyncio.QueueFull:  # noqa: BLE001
                 pass
         all_tasks: list[Awaitable[Any]] = []
         for task in self._enrich_workers:
@@ -216,7 +217,7 @@ class FindingPipeline:
                             if item is None:
                                 break
                             batch.append(item)
-                except TimeoutError:
+                except TimeoutError:  # noqa: BLE001
                     pass
                 if batch:
                     await self._process_enrich_batch(batch)
@@ -303,7 +304,7 @@ class FindingPipeline:
                             if item is None:
                                 break
                             pending.append(item)
-                except TimeoutError:
+                except TimeoutError:  # noqa: BLE001
                     pass
                 if pending and (len(pending) >= _PIPELINE_CHUNK_SIZE or time.monotonic() - last_flush >= flush_interval_s):
                     await self._flush_store_batch_concurrent(pending)

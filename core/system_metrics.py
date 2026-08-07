@@ -69,7 +69,7 @@ def _get_sysctlCached(name: str) -> int | float | None:
             val = int(raw) if raw.isdigit() else float(raw)
             _sysctl_cache[name] = (val, now)
             return val
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 

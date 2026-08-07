@@ -221,7 +221,7 @@ class CertstreamWebSocketClient:
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
             self._monitor_task = None
 
@@ -405,7 +405,7 @@ class CertstreamWebSocketClient:
                 elif hasattr(self._aho_matcher, 'iter'):
                     for _ in self._aho_matcher.iter(cn_lower):
                         return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Check SANs
@@ -422,7 +422,7 @@ class CertstreamWebSocketClient:
                     elif hasattr(self._aho_matcher, 'iter'):
                         for _ in self._aho_matcher.iter(san_lower):
                             return True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # Fallback: substring matching
@@ -452,7 +452,7 @@ class CertstreamWebSocketClient:
                 from datetime import datetime, timezone
                 dt = datetime.fromisoformat(cert.not_before.replace('Z', '+00:00'))
                 observed_at = dt.timestamp()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         try:

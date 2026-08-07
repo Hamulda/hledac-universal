@@ -373,7 +373,7 @@ def run_one_button_gate(repo_root: Path, profile: str, query: str, decision_gate
                     f231d_data = json.load(fh)
                     if f231d_data.get('research_quality') is True:
                         f232g_research_quality_present = True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     f233d_nonfeed_prelude_coverage = False
     if is_nonfeed_profile:
@@ -384,7 +384,7 @@ def run_one_button_gate(repo_root: Path, profile: str, query: str, decision_gate
                     f233d_data = json.load(fh)
                     if f233d_data.get('coverage_present') is True:
                         f233d_nonfeed_prelude_coverage = True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     canonical_fallback_detected = bool(decision_data.get('fallback_schema_blocked', False)) if decision_data else False
     capability_live_allowed = False

@@ -74,6 +74,6 @@ def get_xml_domain(ext: object | None) -> _RustXmlDomain | _PythonXmlDomain:
     if ext is not None:
         try:
             return _RustXmlDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonXmlDomain()

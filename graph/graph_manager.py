@@ -120,7 +120,7 @@ class GraphManager:
         try:
             self._graph.get_edge_data(src_idx, dst_idx)
             return
-        except Exception:
+        except Exception:  # noqa: BLE001
             # No edge exists, add new one
             pass
         # Add edge with relation_type as edge weight/data

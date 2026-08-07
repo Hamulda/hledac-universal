@@ -17,6 +17,7 @@ Sprint F264: Migrated to ``utils.msgspec_json`` facade.
 """
 import asyncio
 import logging
+import weakref
 from pathlib import Path
 from hledac.universal.utils.msgspec_json import decode, encode
 try:
@@ -48,7 +49,7 @@ class LMDBKVStore:
 
     Uses buffers=True for zero-copy reads and orjson for fast serialization.
     """
-    __slots__ = tuple(('_env', '_map_size', '_max_keys', '_path'))
+    __slots__ = tuple(('_env', '_finalizer', '_map_size', '_max_keys', '_path'))
 
     def __init__(self, path: str | Path | None=None, map_size: int=DEFAULT_MAP_SIZE, max_keys: int=MAX_KEYS):
         """
@@ -78,6 +79,17 @@ class LMDBKVStore:
         else:
             self._env = lmdb.open(str(self._path), map_size=map_size, max_dbs=1, writemap=False, metasync=True, readahead=False)
         logger.info(f'LMDB KV store initialized at {self._path}')
+        # F264: Use weakref.finalize for deterministic LMDB cleanup
+        self._finalizer = weakref.finalize(self, self._cleanup)
+
+    def _cleanup(self) -> None:
+        """Called by weakref.finalize when LMDBKVStore is garbage collected."""
+        try:
+            if hasattr(self, '_env') and self._env:
+                self._env.close()
+                logger.info('LMDB KV store closed via finalizer')
+        except Exception:  # noqa: BLE001
+            pass  # Never raise in cleanup
 
     def get(self, key: str) -> dict | None:
         """
@@ -202,7 +214,7 @@ class LMDBKVStore:
         """
         try:
             self._env.sync(False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def compact(self) -> dict[str, int] | None:
@@ -224,6 +236,9 @@ class LMDBKVStore:
 
     def close(self) -> None:
         """Close the database."""
+        # F264: Detach finalizer when explicitly closed
+        if hasattr(self, '_finalizer'):
+            self._finalizer.detach()
         if hasattr(self, '_env') and self._env:
             self._env.close()
             logger.info('LMDB KV store closed')
@@ -233,12 +248,6 @@ class LMDBKVStore:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.close()
-
-    def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception:
-            pass
 
 class AsyncLMDBKVStore:
     """
@@ -325,12 +334,12 @@ class AsyncLMDBKVStore:
             if self._use_async:
                 try:
                     self._env.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             else:
                 try:
                     self._env.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._env = None
             logger.info('AsyncLMDBKVStore closed')

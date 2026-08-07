@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 import msgspec
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 class PIICategory(Enum):
@@ -161,7 +162,7 @@ class SecurityGate:
 
     def _mask_pii(self, text: str, matches: list[PIIMatch]) -> str:
         """Mask PII in text"""
-        sorted_matches = sorted(matches, key=lambda m: m.start, reverse=True)
+        sorted_matches = sorted(matches, key=attrgetter("start"), reverse=True)
         segments = []
         last_pos = len(text)
         for match in sorted_matches:

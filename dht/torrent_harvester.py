@@ -92,7 +92,7 @@ async def harvest_torrent_metadata(
                 "Torrent harvest skipped: memory %s", decision.uma_state,
             )
             return []
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     if not info_hashes:
@@ -411,7 +411,7 @@ def _call_ioc_extractor(text: str) -> list[tuple[str, str]]:
             _python_extract_iocs_simd_single,
         )
         return _python_extract_iocs_simd_single(text)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: forensics/ioc_extractor combined regex
@@ -439,7 +439,7 @@ def _call_ioc_extractor(text: str) -> list[tuple[str, str]]:
             else:
                 results.append((value, name))
         return results
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return []

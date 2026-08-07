@@ -239,7 +239,7 @@ async def generate_stream_adaptive(
 
         if rust.is_available:
             bridge = rust.mlx.MLXBridge(engine, None)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Sample memory pressure periodically
@@ -296,7 +296,7 @@ async def generate_stream_adaptive(
                                 bridge.update_pressure(0.75)
                             else:
                                 bridge.update_pressure(0.5)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Push token to buffer

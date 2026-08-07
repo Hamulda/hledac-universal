@@ -46,6 +46,7 @@ ISSUE-001 Phase 2: SQLite3 → DuckDB Migration
 from __future__ import annotations
 import msgspec
 
+from operator import attrgetter, itemgetter
 import asyncio
 import hashlib
 import logging
@@ -138,7 +139,7 @@ def _extract_macro_urls(zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
                                     break
                                 metadata.macro_urls.append(url.decode('utf-8', errors='ignore'))
                     metadata.has_macros = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 break
     else:
@@ -152,7 +153,7 @@ def _extract_macro_urls(zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
                         if len(metadata.macro_urls) >= MAX_MACRO_URLS:
                             break
                         metadata.macro_urls.append(url.decode('utf-8', errors='ignore'))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 break
 MAX_SPEAKER_NOTES: int = 50
@@ -858,13 +859,13 @@ class UniversalMetadataExtractor:
             import pwd
             owner = pwd.getpwuid(stat.st_uid).pw_name
             group = grp.getgrgid(stat.st_gid).gr_name
-        except (ImportError, KeyError):
+        except (ImportError, KeyError):  # noqa: BLE001
             pass
         mime_type = None
         try:
             import mimetypes
             mime_type, _ = mimetypes.guess_type(file_path)
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         return GenericMetadata(file_name=path.name, file_path=str(path.absolute()), file_size=stat.st_size, file_extension=path.suffix.lower(), mime_type=mime_type, created=datetime.fromtimestamp(stat.st_ctime), modified=datetime.fromtimestamp(stat.st_mtime), accessed=datetime.fromtimestamp(stat.st_atime), permissions=stat.st_mode, owner=owner, group=group, inode=stat.st_ino, device_id=stat.st_dev, hard_links=stat.st_nlink, blocks=getattr(stat, 'st_blocks', None), block_size=getattr(stat, 'st_blksize', None), md5_hash=hashes.get('md5'), sha256_hash=hashes.get('sha256'), sha1_hash=hashes.get('sha1'), entropy=entropy)
 
@@ -904,7 +905,7 @@ class UniversalMetadataExtractor:
                         try:
                             fl = exif_data['FocalLength']
                             metadata.focal_length = _exif_to_float(fl)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
                     if 'ExposureTime' in exif_data:
                         metadata.exposure_time = str(exif_data['ExposureTime'])
@@ -912,24 +913,24 @@ class UniversalMetadataExtractor:
                         try:
                             fn = exif_data['FNumber']
                             metadata.f_number = _exif_to_float(fn)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
                     if 'ISOSpeedRatings' in exif_data:
                         try:
                             iso = exif_data['ISOSpeedRatings']
                             metadata.iso = int(_exif_to_float(iso))
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
                     if 'Flash' in exif_data:
                         flash = exif_data['Flash']
                         try:
                             metadata.flash = bool(int(flash)) if not isinstance(flash, bool) else flash
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
                     if 'Orientation' in exif_data:
                         try:
                             metadata.orientation = int(exif_data['Orientation'])
-                        except ValueError:
+                        except ValueError:  # noqa: BLE001
                             pass
                     if self.enable_gps:
                         gps_info = exif.get(34853) or exif.get('GPSInfo')
@@ -1022,7 +1023,7 @@ class UniversalMetadataExtractor:
                 is_encrypted=rust_meta.is_encrypted,
             )
             return metadata
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback to pypdf
@@ -1099,13 +1100,13 @@ class UniversalMetadataExtractor:
                     try:
                         permissions = doc.permissions
                         metadata.permissions = {'read': bool(permissions & 1), 'write': bool(permissions & 2), 'print': bool(permissions & 4), 'copy': bool(permissions & 8)}
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 try:
                     for xref in range(1, doc.xref_length()):
                         if doc.xref_get_key(xref, 'Type') == '/EmbeddedFiles':
                             metadata.embedded_files.append(f'xref:{xref}')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 return metadata
         except Exception:
@@ -1150,13 +1151,13 @@ class UniversalMetadataExtractor:
                 if piexif.ExifIFD.ISOSpeedRatings in exif_ifd:
                     try:
                         metadata.iso = int(_exif_to_float(exif_ifd[piexif.ExifIFD.ISOSpeedRatings]))
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError):  # noqa: BLE001
                         pass
                 if piexif.ExifIFD.Flash in exif_ifd:
                     flash = exif_ifd[piexif.ExifIFD.Flash]
                     try:
                         metadata.flash = bool(int(flash)) if not isinstance(flash, bool) else flash
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError):  # noqa: BLE001
                         pass
                 metadata.lens = exif_ifd.get(piexif.ExifIFD.LensModel)
             gps_ifd = exif_dict.get('GPS', {})
@@ -1294,7 +1295,7 @@ class UniversalMetadataExtractor:
                     mx.clear_cache()
                 elif hasattr(mx.metal, 'clear_cache'):
                     mx.metal.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return (caption, tags[:10])
         except Exception:
@@ -1383,13 +1384,13 @@ class UniversalMetadataExtractor:
                         if field == 'year':
                             try:
                                 setattr(metadata, field, int(str(value)[:4]))
-                            except ValueError:
+                            except ValueError:  # noqa: BLE001
                                 pass
                         elif field in ['track_number', 'disc_number']:
                             try:
                                 num = str(value).split('/')[0]
                                 setattr(metadata, field, int(num))
-                            except ValueError:
+                            except ValueError:  # noqa: BLE001
                                 pass
                         else:
                             setattr(metadata, field, value)
@@ -1458,7 +1459,7 @@ class UniversalMetadataExtractor:
                     if info.flag_bits & 1:
                         metadata.is_encrypted = True
                         break
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return metadata
 
@@ -1484,7 +1485,7 @@ class UniversalMetadataExtractor:
                     files.append({'name': member.name, 'size': member.size, 'is_directory': member.isdir(), 'modified': datetime.fromtimestamp(member.mtime), 'mode': member.mode, 'uid': member.uid, 'gid': member.gid})
                 metadata.uncompressed_size = total_size
                 metadata.files = files
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return metadata
 
@@ -1543,7 +1544,7 @@ class UniversalMetadataExtractor:
                                     texts.append(elem.text.strip())
                             if texts:
                                 metadata.speaker_notes.append(' '.join(texts[:5]))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 for name in zf.namelist():
                     if len(metadata.hidden_slides) >= MAX_HIDDEN_SLIDES:
@@ -1558,7 +1559,7 @@ class UniversalMetadataExtractor:
                                 if show == '0':
                                     idx = sld.get('id')
                                     metadata.hidden_slides.append({'id': idx, 'hidden': True})
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 _extract_macro_urls(zf, metadata)
                 for name in zf.namelist():
@@ -1571,10 +1572,10 @@ class UniversalMetadataExtractor:
                             font_name = root.get('name')
                             if font_name:
                                 metadata.embedded_fonts.append({'name': font_name, 'file': name})
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 metadata.internal_paths = [n for n in zf.namelist() if n.startswith('ppt/')][:MAX_INTERNAL_PATHS]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return metadata
 
@@ -1610,7 +1611,7 @@ class UniversalMetadataExtractor:
                             metadata.author = child.text
                         elif 'title' in child.tag.lower() and (not metadata.title):
                             metadata.title = child.text
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return metadata
 
@@ -1649,7 +1650,7 @@ class UniversalMetadataExtractor:
                                 metadata.author = value
                             elif var_name == 'DESCRIPTION':
                                 metadata.description = value
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return metadata
 
@@ -1718,9 +1719,9 @@ class UniversalMetadataExtractor:
                         if ole.exists('__substg1.0_0C1F001F'):
                             metadata.from_addr = ole.openstream('__substg1.0_0C1F001F').read().decode('utf-16-le', errors='ignore').rstrip('\x00')
                         ole.close()
-                except ImportError:
+                except ImportError:  # noqa: BLE001
                     pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return metadata
 
@@ -1747,19 +1748,19 @@ class UniversalMetadataExtractor:
                 try:
                     dt = datetime.strptime(exif['DateTime'], '%Y:%m:%d %H:%M:%S')
                     events.append(TimelineEvent(timestamp=dt, event_type='captured', source='exif'))
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
             if 'DateTimeOriginal' in exif:
                 try:
                     dt = datetime.strptime(exif['DateTimeOriginal'], '%Y:%m:%d %H:%M:%S')
                     events.append(TimelineEvent(timestamp=dt, event_type='captured_original', source='exif'))
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
             if 'DateTimeDigitized' in exif:
                 try:
                     dt = datetime.strptime(exif['DateTimeDigitized'], '%Y:%m:%d %H:%M:%S')
                     events.append(TimelineEvent(timestamp=dt, event_type='digitized', source='exif'))
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
         if result.pdf:
             if result.pdf.creation_date:
@@ -1771,7 +1772,7 @@ class UniversalMetadataExtractor:
                 events.append(TimelineEvent(timestamp=result.docx.created, event_type='created', source='docx_core_properties'))
             if result.docx.modified:
                 events.append(TimelineEvent(timestamp=result.docx.modified, event_type='modified', source='docx_core_properties'))
-        events.sort(key=lambda e: e.timestamp or datetime.min)
+        events.sort(key=attrgetter("timestamp") or datetime.min)
         return events
 
     def _build_attribution(self, result: MetadataResult) -> AttributionData:

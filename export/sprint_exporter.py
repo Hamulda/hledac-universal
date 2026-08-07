@@ -52,6 +52,7 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
 import asyncio
 import logging
 
+from operator import attrgetter, itemgetter
 from hledac.universal.utils.async_helpers import parallel
 
 from hledac.universal.utils.executor_decorator import offload_to
@@ -612,7 +613,7 @@ class JSONFormatter:
                                         nid = n.get("value") or n.get("id") or str(n)
                                         if n.get("ioc_type"):
                                             type_map[nid] = n["ioc_type"]
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass  # Non-fatal
                             # Apply type map to topology nodes
                             for n in nodes_raw:
@@ -651,7 +652,7 @@ class JSONFormatter:
                                                 "confidence": n.get("confidence", 0.5),
                                             })
                                     graph_data = {"nodes": nodes_out, "edges": edges_out}
-                                except Exception:
+                                except Exception:  # noqa: BLE001
                                     pass  # Fail-soft
 
                 # Get timeline data from TimeSeriesSplicer (opt-in)
@@ -664,7 +665,7 @@ class JSONFormatter:
                             tl = await splicer.export_timeline(sprint_id, limit=2000)
                             if isinstance(tl, list):
                                 timeline_data = tl
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # Non-fatal, timeline is optional
 
                 # ISSUE [FINAL]-019-05: Extract WARC snippets for dashboard WARC replay panel.
@@ -680,7 +681,7 @@ class JSONFormatter:
                         _candidates = getattr(evidence_log, 'warc_snippets', None)
                         if isinstance(_candidates, list):
                             _snippets_candidates = _candidates
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # ISSUE [FINAL]-019-05: Global fallback — when EvidenceLog is not injected,
@@ -689,7 +690,7 @@ class JSONFormatter:
                     try:
                         from hledac.universal.evidence_log import get_warc_snippets
                         _snippets_candidates = get_warc_snippets()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 # Use discovered snippets (deduplicated by URL to avoid repeats in dashboard)
@@ -1831,7 +1832,7 @@ async def _generate_next_sprint_seeds(
             # Bounded output — keep total seed count manageable
             MAX_SEEDS = 15  # noqa: N806
             if len(seeds) > MAX_SEEDS:
-                seeds.sort(key=lambda s: s.get("priority", 0.5), reverse=True)
+                seeds.sort(key=attrgetter("get")("priority", 0.5), reverse=True)
                 seeds = seeds[:MAX_SEEDS]
 
         # Surface next_seeds_source in the wrapper

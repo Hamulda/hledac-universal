@@ -241,7 +241,7 @@ class LazyModel[T]:
         try:
             loop = asyncio.get_running_loop()
             self._evict_task = loop.call_later(self._ttl, self._evict)
-        except RuntimeError:
+        except RuntimeError:  # noqa: BLE001
             pass  # No running loop — eviction will not fire (batch mode OK)
 
     def _evict(self) -> None:

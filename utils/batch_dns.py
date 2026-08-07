@@ -498,7 +498,7 @@ class BatchDNSResolver:
                     result[host] = [host]
                     self._stats.cache_hits += 1
                     continue
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
 
                 misses.append(host)

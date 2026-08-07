@@ -22,6 +22,7 @@ import threading
 import time
 from typing import NamedTuple, cast
 
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -793,7 +794,7 @@ def extract_high_precision_entities(text: str) -> list[ExtractedEntity]:
         validated.append(e)
 
     # Sort by start offset
-    validated.sort(key=lambda x: x.start)
+    validated.sort(key=attrgetter("start"))
     return validated
 
 
@@ -1041,7 +1042,7 @@ def _configure_patterns_impl(registry: tuple[tuple[str, str], ...]) -> None:
     if old is not None:
         try:
             old.close()
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError):  # noqa: BLE001
             pass  # fail-safe: close not available or already None — non-fatal
 
     # Build Rust ACO eagerly if available and patterns don't overlap
@@ -1238,7 +1239,7 @@ def match_text(
                 ))
 
     # Sort by start offset
-    hits.sort(key=lambda h: h.start)
+    hits.sort(key=attrgetter("start"))
     return hits
 
 
@@ -1321,7 +1322,7 @@ def match_text_batch(
                     label=sys.intern(r_label),
                 ))
 
-            hits.sort(key=lambda h: h.start)
+            hits.sort(key=attrgetter("start"))
             results.append(hits)
         return results
 
@@ -1341,7 +1342,7 @@ def reset_pattern_matcher() -> None:
     if old is not None:
         try:
             old.close()
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError):  # noqa: BLE001
             pass  # fail-safe: close not available or already None
     _matcher_state._rust_aco = None
     _matcher_state._pattern_version = 0

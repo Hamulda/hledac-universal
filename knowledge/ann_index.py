@@ -904,7 +904,7 @@ class _ANNIndex:
                             idx = self._usearch_labels.index(key)
                             try:
                                 self._usearch_index.remove(idx)
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                             self._usearch_labels.remove(key)
         except Exception as e:
@@ -925,7 +925,7 @@ class _ANNIndex:
                             idx = self._usearch_labels_multilingual.index(key)
                             try:
                                 self._usearch_index_multilingual.remove(idx)
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                             self._usearch_labels_multilingual.remove(key)
         except Exception as e:

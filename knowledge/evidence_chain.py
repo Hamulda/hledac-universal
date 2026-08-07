@@ -25,6 +25,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode, decode as _msgspec_decode
 __all__ = ['ChainStep', 'EvidenceChain', 'EvidenceChainBuilder', 'MAX_CHAIN_DEPTH', 'MAX_CHAINS_PER_SPRINT', 'MAX_CHAIN_JSON_BYTES', 'serialize_chain', 'deserialize_chain', 'summarize_chain_support', 'source_family_from_step_or_finding', 'corroboration_level', 'SOURCE_FAMILY_FEED', 'SOURCE_FAMILY_CT', 'SOURCE_FAMILY_PUBLIC', 'SOURCE_FAMILY_DEEP', 'SOURCE_FAMILY_DOC', 'CORROBORATION_NONE', 'CORROBORATION_SINGLE', 'CORROBORATION_MULTI']
 SOURCE_FAMILY_FEED = 'feed'
@@ -50,7 +51,7 @@ STEP_TYPE_EVIDENCE_TRIAGE = 'evidence_triage'
 STEP_TYPE_ATTRIBUTION = 'attribution_scoring'
 STEP_TYPE_PIVOT = 'pivot_planning'
 
-class ChainStep(msgspec.Struct, frozen=True, gc=False):
+class ChainStep(Struct, frozen=True):
     """
     Single step in an evidence chain.
 
@@ -71,7 +72,7 @@ class ChainStep(msgspec.Struct, frozen=True, gc=False):
     confidence: float
     reason: str
 
-class EvidenceChain(msgspec.Struct, gc=False):
+class EvidenceChain(Struct):
     """
     Complete reasoning chain for a root finding.
 

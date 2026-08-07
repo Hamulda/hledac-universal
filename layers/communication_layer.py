@@ -28,6 +28,7 @@ import msgspec
 from typing import Any
 from collections.abc import Callable, Coroutine
 from hledac.universal.project_types import CommunicationConfig, MessagePriority
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 import itertools
 from hledac.universal.utils.async_helpers import parallel_ok
@@ -265,7 +266,7 @@ try:
     from ...communication.agent_messaging import AgentMessagingSystem
     from ...communication.agent_model_bridge import AgentModelBridge
     HAS_COMM_MODULES = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 try:
     from ...emergent_communication.a2a_protocol_adapter import A2AAgentCard, A2AProtocolAdapter
@@ -401,7 +402,7 @@ class CommunicationLayer:
             self._batch_task.cancel()
             try:
                 await self._batch_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         if self._optimizer:
             await self._optimizer.stop()
@@ -521,7 +522,7 @@ class CommunicationLayer:
             import psutil
             free_gb = psutil.virtual_memory().available / 1024 ** 3
             self._max_batch = 8 if free_gb > 4.0 else 4
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _queue_query(self, query_id: str, prompt: str, complexity: str, priority: int, max_tokens: int, temperature: float, voi_score: float=0.5) -> dict[str, Any] | None:
@@ -551,7 +552,7 @@ class CommunicationLayer:
                 async with asyncio.timeout(0):
                     await self._batch_shutdown.wait()
                 break
-            except TimeoutError:
+            except TimeoutError:  # noqa: BLE001
                 pass
             try:
                 self._update_max_batch()
@@ -643,7 +644,7 @@ class CommunicationLayer:
         """Add response to cache."""
         cache_key = hashlib.sha256(f'{prompt}:{complexity}'.encode()).hexdigest()[:32]
         if len(self._cache) >= self._cache_size:
-            oldest = min(self._cache.values(), key=lambda e: e.last_access)
+            oldest = min(self._cache.values(), key=attrgetter("last_access"))
             del self._cache[oldest.key]
         self._cache[cache_key] = CacheEntry(key=cache_key, response=response, created_at=time.time())
 

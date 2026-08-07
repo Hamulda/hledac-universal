@@ -541,7 +541,7 @@ class AzureBlobEnumerator:
                             'provider': 'azure'
                         }
                     )
-        except TimeoutError:
+        except TimeoutError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.debug(f'Error checking Azure container {account_name}/{container_name}: {e}')
@@ -653,7 +653,7 @@ class DatabasePortScanner:
                 async with asyncio.timeout(2):
                     banner = await reader.read(1024)
                 banner = banner.decode('utf-8', errors='ignore').strip()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             writer.close()
             await writer.wait_closed()
@@ -821,7 +821,7 @@ class DatabasePortScanner:
                     body = resp.json()
                     result['version'] = body.get('version', {}).get('number')
                     result['cluster_name'] = body.get('cluster_name')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             elif resp.status_code == 401:
                 result['auth_required'] = True
@@ -1212,7 +1212,7 @@ class GraphQLIntrospector:
                     text = await resp.text()
                     if 'introspection' in text.lower() or '__schema' in text.lower():
                         return ExposedService(service_type=ServiceType.GRAPHQL.value, host=urlparse(url).netloc, port=443 if url.startswith('https') else 80, exposure_type=ExposureType.PUBLIC.value, risk_level=RiskLevel.MEDIUM.value, metadata={'endpoint': url, 'introspection_enabled': False, 'note': 'GraphQL endpoint detected but introspection disabled'})
-        except httpx.HTTPError:
+        except httpx.HTTPError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.debug(f'Error checking GraphQL endpoint {url}: {e}')
@@ -1419,7 +1419,7 @@ class ContainerAPIExplorer:
                         data = await resp.json()
                         if 'gitVersion' in data or 'major' in data:
                             return ExposedService(service_type=ServiceType.KUBERNETES.value, host=host, port=port, exposure_type=ExposureType.OPEN.value, risk_level=RiskLevel.CRITICAL.value, metadata={'version': data.get('gitVersion'), 'major': data.get('major'), 'minor': data.get('minor'), 'platform': data.get('platform'), 'endpoint': url})
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 elif resp.status in [401, 403]:
                     text = await resp.text()
@@ -1543,7 +1543,7 @@ class SwaggerEnumerator:
                             'note': 'Swagger/OpenAPI spec detected but access-restricted',
                         },
                     )
-        except httpx.HTTPError:
+        except httpx.HTTPError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.debug(f'Error checking Swagger path {url}: {e}')
@@ -1636,7 +1636,7 @@ class SwaggerEnumerator:
                         'base_path': base_path,
                     },
                 )
-        except httpx.HTTPError:
+        except httpx.HTTPError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.debug(f'Error fetching Swagger spec {url}: {e}')
@@ -1706,7 +1706,7 @@ class SwaggerEnumerator:
                               if k in ('paths', 'info', 'openapi', 'swagger',
                                        'security', 'components',
                                        'securityDefinitions')}
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return result if result else None
@@ -1978,7 +1978,7 @@ class DirectoryListingDetector:
                         'server': resp.headers.get('server', 'unknown'),
                     },
                 )
-        except httpx.HTTPError:
+        except httpx.HTTPError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.debug(f'Error checking directory listing {url}: {e}')
@@ -2350,13 +2350,13 @@ class APICache:
     def __exit__(self, exc_type, exc, tb) -> None:
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def __del__(self) -> None:
         try:
             self._conn.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 async def search_shodan(query: str, api_key: str | None=None) -> list[dict[str, Any]]:
@@ -2388,7 +2388,7 @@ async def search_shodan(query: str, api_key: str | None=None) -> list[dict[str, 
             logger.info(f'Shodan cache hit for query: {query}')
             cache.close()
             return results
-        except json.JSONDecodeError:
+        except json.JSONDecodeError:  # noqa: BLE001
             pass
     timeout = httpx.Timeout(total=30)
     try:
@@ -2451,7 +2451,7 @@ async def search_censys(query: str, api_id: str | None=None, api_secret: str | N
             logger.info(f'Censys cache hit for query: {query}')
             cache.close()
             return results
-        except json.JSONDecodeError:
+        except json.JSONDecodeError:  # noqa: BLE001
             pass
     timeout = httpx.Timeout(total=30)
     try:
@@ -2735,7 +2735,7 @@ async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | No
                 if 'x-powered-by' in headers:
                     banner_parts.append(f"X-Powered-By: {headers['x-powered-by']}")
                 return '\n'.join(banner_parts)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     else:
         # Raw TCP banner
@@ -2758,7 +2758,7 @@ async def banner_grabber(host: str, port: int, timeout: float = 5.0) -> str | No
             finally:
                 writer.close()
                 await writer.wait_closed()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     return None

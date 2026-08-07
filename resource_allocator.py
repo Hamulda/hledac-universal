@@ -33,6 +33,7 @@ from hledac.universal.core.psutil_shim import PSUTIL_AVAILABLE as _PSUTIL_AVAILA
 from hledac.universal.core.psutil_shim import process as _process
 from hledac.universal.utils.uma_budget import M1_FETCH_SOFT_CEILING_GB
 from hledac.universal.utils.config_introspection import safe_attr_get
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 MLX_AVAILABLE = False
 _FALLBACK_RAM_ESTIMATE_MB: float = 500.0
@@ -221,7 +222,7 @@ class ResourceAllocator:
                 # Cancel lowest priority task to free memory immediately
                 if self.active_requests:
                     lowest = max(
-                        self.active_requests.values(), key=lambda b: b.priority
+                        self.active_requests.values(), key=attrgetter("priority")
                     )
                     self.cancel(lowest.request_id)
                     logger.info(

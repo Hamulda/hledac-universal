@@ -43,6 +43,7 @@ active consumption in acquisition planning.
 
 import logging
 
+from operator import attrgetter, itemgetter
 import msgspec.json as _json
 import re as _re
 from typing import Any
@@ -111,7 +112,7 @@ def load_next_sprint_seeds(sprint_id: str) -> list[dict[str, Any]]:
             validated.append(entry)
 
         # Sort by priority descending (match exporter sort order)
-        validated.sort(key=lambda s: s.get("priority", 0.0), reverse=True)
+        validated.sort(key=attrgetter("get")("priority", 0.0), reverse=True)
 
         if len(validated) > MAX_SEEDS_BOUND:
             validated = validated[:MAX_SEEDS_BOUND]

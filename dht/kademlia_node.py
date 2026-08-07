@@ -273,7 +273,7 @@ class BEP5UDPProtocol(asyncio.DatagramProtocol):
             self._pending_created.pop(tid, None)
             if not fut.done():
                 fut.set_result((msg, addr))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def error_received(self, exc: Exception) -> None:
@@ -673,7 +673,7 @@ class KademliaNode:
                         ip = '.'.join((str(b) for b in ip_bytes))
                         nport = int.from_bytes(raw_port, 'big')
                         self._update_routing(nid.hex(), {'host': ip, 'port': nport})
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         tasks = [_query_one(h, p) for h, p in self.bootstrap_nodes]
         if tasks:
@@ -689,7 +689,7 @@ class KademliaNode:
             self._refresh_task.cancel()
             try:
                 await self._refresh_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         if self.local_graph_store:
             try:
@@ -699,7 +699,7 @@ class KademliaNode:
         if self._bep5_transport is not None and (not self._bep5_transport.is_closing()):
             try:
                 self._bep5_transport.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._bep5_transport = None
             self._bep5_protocol = None
@@ -720,7 +720,7 @@ class KademliaNode:
                 nid = r.get(b'id')
                 if isinstance(nid, bytes) and len(nid) == 20:
                     self._update_routing(nid.hex(), {'host': addr[0], 'port': addr[1]})
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _dht_bootstrap_fallback(self) -> None:
@@ -755,7 +755,7 @@ class KademliaNode:
                         return
                     for nid, nip, nport in _parse_compact_nodes(compact):
                         self._update_routing(nid.hex(), {'host': nip, 'port': nport})
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 finally:
                     if sock:
@@ -797,7 +797,7 @@ class KademliaNode:
             return
         try:
             safe_create_task(self.local_graph_store.put_dht_node(node_id, host, port))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _load_routing_from_lmdb(self) -> None:
@@ -825,7 +825,7 @@ class KademliaNode:
                         if host and port:
                             self._update_routing(nid, {'host': host, 'port': port})
             self._routing_loaded = True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _flatten_routing_table(self) -> list[dict[str, Any]]:
@@ -855,7 +855,7 @@ class KademliaNode:
         try:
             await self.local_graph_store.save_routing_snapshot(nodes)
             self._nodes_since_snapshot = 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _maybe_persist_snapshot(self) -> None:
@@ -869,7 +869,7 @@ class KademliaNode:
             return
         try:
             safe_create_task(self._save_routing_snapshot_to_lmdb())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _find_closest_nodes(self, key: str, count: int) -> list[dict[str, Any]]:
@@ -1033,7 +1033,7 @@ class KademliaNode:
             if approx > MAX_ITEM_BYTES:
                 logger.warning('DHT store skipped: value too large')
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         await self._transport.send_message(peer_id, 'dht_store', {'key': key, 'value': value}, '')
         self._update_routing(peer_id)
@@ -1382,7 +1382,7 @@ class KademliaNode:
                 data = await loop.sock_recv(sock, 65535)
             if data:
                 return self._bdecode(data)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -1396,7 +1396,7 @@ class KademliaNode:
                 data = await loop.sock_recv(sock, 65535)
             if data:
                 return self._bdecode(data)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -1523,7 +1523,7 @@ class KademliaNode:
         try:
             writer.close()
             await writer.wait_closed()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _build_ext_message(self, msg_id: int, payload: dict) -> bytes:

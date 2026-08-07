@@ -48,7 +48,7 @@ def _ensure_rust_bindings() -> None:
         )
         _json_pointer_extract = _jpe
         _json_pointer_extract_multi = _jpem
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
 

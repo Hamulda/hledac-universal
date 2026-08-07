@@ -140,7 +140,7 @@ def apply_thread_qos(qos_class: int) -> bool:
         if rust.is_available:
             # B-5: new API — no pthread_id needed (always sets calling thread)
             return rust.apply_current_thread_qos(qos_class) == 0
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 
@@ -165,7 +165,7 @@ def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
 
     try:
         fcntl.fcntl(fd, F_NOCACHE, 1)
-    except OSError:
+    except OSError:  # noqa: BLE001
         # Fail-safe: never let fcntl failure abort the write
         # Catches: platform not supported, invalid fd, etc.
         pass

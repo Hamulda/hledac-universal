@@ -194,7 +194,7 @@ class RobotsParser:
                     try:
                         delay = float(value)
                         crawl_delays[current_agent] = delay
-                    except ValueError:
+                    except ValueError:  # noqa: BLE001
                         pass
                 elif directive == 'sitemap':
                     sitemaps.append(value)

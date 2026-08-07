@@ -98,7 +98,7 @@ def unregister_mlock_region(addr: int, length: int) -> None:
     """
     try:
         _mlock_registry.remove((addr, length))
-    except ValueError:
+    except ValueError:  # noqa: BLE001
         pass
 
 
@@ -185,7 +185,7 @@ def wipe_bytearrays_in_namespace(
         if hasattr(obj, "__slots__") or hasattr(obj, "__dict__"):
             try:
                 secure_zero_typed(obj)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe
 
     def _walk_dict(d: dict) -> None:
@@ -201,7 +201,7 @@ def wipe_bytearrays_in_namespace(
                         mod_file = getattr(val, "__file__", "")
                         if mod_file and ("site-packages" in str(mod_file) or "/.venv/" in str(mod_file)):
                             continue  # skip stdlib/vendor
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                 if isinstance(val, dict):
@@ -212,7 +212,7 @@ def wipe_bytearrays_in_namespace(
                             _process_object(item)
                 else:
                     _process_object(val)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-safe
 
     if isinstance(root, dict):
@@ -220,7 +220,7 @@ def wipe_bytearrays_in_namespace(
     else:
         try:
             _walk_dict(vars(root))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     return wiped_count, wiped_bytes
@@ -328,11 +328,11 @@ def _purge_directory_contents(dir_path: str) -> None:
                 except Exception:
                     try:
                         os.unlink(entry.path)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             elif entry.is_dir():
                 _purge_directory_contents(entry.path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -360,7 +360,7 @@ def _secure_delete_file(file_path: str) -> None:
         result = os.system(f'rm -P "{file_path}" 2>/dev/null')
         if result == 0:
             return
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: Python multi-pass overwrite
@@ -387,14 +387,14 @@ def _secure_delete_file(file_path: str) -> None:
                     os.fsync(fd)
                 finally:
                     os.close(fd)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     finally:
         try:
             os.unlink(file_path)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -446,19 +446,19 @@ def kv_cache_munlock() -> int:
                 # munlock
                 try:
                     rust.munlock_key_region(addr, length)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
                 # MADV_FREE_REUSABLE (make pages reclaimable immediately)
                 try:
                     rust.madvise_free_reusable(addr, length, 0)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
                 # Linux: madvise_dontdump_region after munlock
                 try:
                     rust.madvise_dontdump_region(addr, length)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             else:
                 # Python fallback: use ctypes directly
@@ -546,7 +546,7 @@ def gc_collect_with_madvise(skip_gc: bool = False) -> float:
                     f"[WIPE] RSS={rss_gib:.1f}GiB > 5.0GiB: skipping GC, running madvise only"
                 )
                 skip_gc = True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # psutil unavailable — proceed with GC
 
     # --- GC collect (generation 2 = all generations) ---
@@ -560,9 +560,9 @@ def gc_collect_with_madvise(skip_gc: bool = False) -> float:
         mx.eval([])  # eval barrier before clear_cache
         if hasattr(mx.metal, "clear_cache"):
             mx.metal.clear_cache()
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # --- madvise DONTNEED on entire process heap ---

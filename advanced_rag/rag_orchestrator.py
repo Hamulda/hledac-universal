@@ -234,7 +234,7 @@ class RAGOrchestrator:
             if store is not None:
                 try:
                     return await store._embed_single(text)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return []
 

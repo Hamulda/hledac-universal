@@ -17,7 +17,7 @@ from collections.abc import Callable
 from enum import Enum, IntEnum
 from typing import Any
 
-import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
 class ThermalState(IntEnum):
@@ -44,7 +44,7 @@ class MemoryZone(Enum):
     LOW = 'low'
 
 
-class MemoryAllocation(msgspec.Struct, gc=False):
+class MemoryAllocation(Struct):
     """Represents a memory allocation."""
     allocation_id: str
     zone: MemoryZone
@@ -56,7 +56,7 @@ class MemoryAllocation(msgspec.Struct, gc=False):
     on_evict: Callable | None = None
 
 
-class MemoryStatistics(msgspec.Struct, gc=False):
+class MemoryStatistics(Struct):
     """Memory usage statistics."""
     total_memory_mb: float
     used_memory_mb: float
@@ -68,7 +68,7 @@ class MemoryStatistics(msgspec.Struct, gc=False):
     allocation_count: int = 0
 
 
-class ZoneStatistics(msgspec.Struct, frozen=True, gc=False):
+class ZoneStatistics(Struct, frozen=True):
     """Statistics for a specific memory zone (immutable, msgspec zero-copy)."""
     zone: str
     allocation_count: int
@@ -93,7 +93,7 @@ class ResearchPhase(Enum):
     VALIDATION = 'validation'
 
 
-class ContextItem(msgspec.Struct, gc=False):
+class ContextItem(Struct):
     """Individual context item with metadata for three-tier storage."""
     item_id: str
     content: str
@@ -107,7 +107,7 @@ class ContextItem(msgspec.Struct, gc=False):
     confidence: float = 0.5
 
 
-class CompressedContext(msgspec.Struct, gc=False):
+class CompressedContext(Struct):
     """Compressed context container."""
     context_id: str
     original_size: int
@@ -134,7 +134,7 @@ class CacheLocation(Enum):
     L2_DISK = 'l2_disk'
 
 
-class CacheEntry(msgspec.Struct, gc=False):
+class CacheEntry(Struct):
     """Single cache entry with FAISS embedding support."""
     cache_id: str
     content: Any

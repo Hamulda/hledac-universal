@@ -19,7 +19,7 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 if TYPE_CHECKING:
     pass
@@ -28,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 # Lazy singleton — not loaded until first call
 _RUST_DOMAIN: Any | None = None
+
+# Type vars for generic rust_stage()
+_R = TypeVar("_R")
+_F = TypeVar("_F")
 
 
 def try_get_domain() -> Any | None:
@@ -60,133 +64,78 @@ def try_get_domain() -> Any | None:
         return None
 
 
-def rust_map(items: list[str], fn_name: str) -> list[Any]:
-    """MAP stage via Rust pipeline_compose.
+# ── Generic Rust Stage Runner (DRY — replaced 6x identical try/except patterns) ──
+def _rust_stage(
+    rust_fn_name: str,
+    fallback_fn: Callable[..., _R],
+    *args: Any,
+    **kwargs: Any,
+) -> _R:
+    """
+    DRY helper: try Rust function, fall back to Python on any failure.
+
+    Canonical pattern (DRY from 6x rust_* functions):
+        1. Get Rust domain (cached)
+        2. If None, use fallback
+        3. Try to call domain.{rust_fn_name}(...)
+        4. On exception, log warning and use fallback
 
     Args:
-        items: list of strings to transform
-        fn_name: one of len, lower, upper, strip, hash_xxh3, hash_xxh3_hex
+        rust_fn_name: Method name on Rust domain (e.g. "pipeline_map")
+        fallback_fn: Python fallback callable
+        *args, **kwargs: Forwarded to both Rust and fallback
 
     Returns:
-        list of transformed values (strings or ints for 'len')
-
+        Result from Rust or fallback
     """
     domain = try_get_domain()
     if domain is None:
-        return _python_fallback_map(items, fn_name)
+        return fallback_fn(*args, **kwargs)
     try:
-        return domain.pipeline_map(items, fn_name)
+        rust_fn = getattr(domain, rust_fn_name, None)
+        if rust_fn is None:
+            logger.warning(f"Rust function '{rust_fn_name}' not found, using fallback")
+            return fallback_fn(*args, **kwargs)
+        return rust_fn(*args, **kwargs)
     except Exception as exc:
-        logger.warning(f"rust_map({fn_name}) failed: {exc}, falling back to Python")
-        return _python_fallback_map(items, fn_name)
+        logger.warning(f"rust_{rust_fn_name} failed: {exc}, falling back to Python")
+        return fallback_fn(*args, **kwargs)
+
+
+# ── Public API (refactored to use _rust_stage) ─────────────────────────────────
+
+
+def rust_map(items: list[str], fn_name: str) -> list[Any]:
+    """MAP stage via Rust pipeline_compose."""
+    return _rust_stage("pipeline_map", _python_fallback_map, items, fn_name)
 
 
 def rust_filter(items: list[str], fn_name: str) -> list[str]:
-    """FILTER stage via Rust pipeline_compose.
-
-    Args:
-        items: list of strings to filter
-        fn_name: one of not_empty, has_at, has_scheme, is_ascii, len_gt_0, len_lt_2048
-
-    Returns:
-        list of strings that pass the predicate
-
-    """
-    domain = try_get_domain()
-    if domain is None:
-        return _python_fallback_filter(items, fn_name)
-    try:
-        return domain.pipeline_filter(items, fn_name)
-    except Exception as exc:
-        logger.warning(f"rust_filter({fn_name}) failed: {exc}, falling back to Python")
-        return _python_fallback_filter(items, fn_name)
+    """FILTER stage via Rust pipeline_compose."""
+    return _rust_stage("pipeline_filter", _python_fallback_filter, items, fn_name)
 
 
 def rust_filter_map(items: list[str], fn_name: str) -> list[Any]:
-    """FILTER-MAP stage via Rust pipeline_compose (single rayon pass).
-
-    Args:
-        items: list of strings
-        fn_name: predicate name (see rust_filter)
-
-    Returns:
-        list of transformed values for items that pass the predicate
-
-    """
-    domain = try_get_domain()
-    if domain is None:
-        filtered = _python_fallback_filter(items, fn_name)
-        return filtered  # fallback: filter-only (no map)
-    try:
-        return domain.pipeline_filter_map(items, fn_name)
-    except Exception as exc:
-        logger.warning(f"rust_filter_map({fn_name}) failed: {exc}, falling back to Python")
-        return _python_fallback_filter(items, fn_name)
+    """FILTER-MAP stage via Rust pipeline_compose (single rayon pass)."""
+    # Special case: fallback is filter-only (no map)
+    fallback = _python_fallback_filter(items, fn_name)
+    return _rust_stage("pipeline_filter_map", lambda: fallback, items, fn_name)
 
 
 def rust_fold(items: list[str], fn_name: str, initial: str = "0") -> str:
-    """FOLD stage via Rust pipeline_compose.
-
-    Args:
-        items: list of strings
-        fn_name: one of len_sum, count_not_empty, sum, sum_f64
-        initial: starting accumulator value (default "0")
-
-    Returns:
-        final accumulated string value
-
-    """
-    domain = try_get_domain()
-    if domain is None:
-        return _python_fallback_fold(items, fn_name, initial)
-    try:
-        return domain.pipeline_fold(items, fn_name, initial)
-    except Exception as exc:
-        logger.warning(f"rust_fold({fn_name}) failed: {exc}, falling back to Python")
-        return _python_fallback_fold(items, fn_name, initial)
+    """FOLD stage via Rust pipeline_compose."""
+    return _rust_stage("pipeline_fold", _python_fallback_fold, items, fn_name, initial)
 
 
 def rust_count(items: list[str], fn_name: str) -> int:
-    """COUNT stage via Rust pipeline_compose.
-
-    Args:
-        items: list of strings
-        fn_name: predicate name (see rust_filter)
-
-    Returns:
-        count of items matching the predicate
-
-    """
-    domain = try_get_domain()
-    if domain is None:
-        filtered = _python_fallback_filter(items, fn_name)
-        return len(filtered)
-    try:
-        return domain.pipeline_count(items, fn_name)
-    except Exception as exc:
-        logger.warning(f"rust_count({fn_name}) failed: {exc}, falling back to Python")
-        filtered = _python_fallback_filter(items, fn_name)
-        return len(filtered)
+    """COUNT stage via Rust pipeline_compose."""
+    fallback = len(_python_fallback_filter(items, fn_name))
+    return _rust_stage("pipeline_count", lambda: fallback, items, fn_name)
 
 
 def rust_batch_stats(items: list[str]) -> dict[str, Any]:
-    """Batch statistics via Rust pipeline_compose.
-
-    Args:
-        items: list of strings
-
-    Returns:
-        dict with keys: count (int), sum (int), min (int), max (int), unique (int)
-
-    """
-    domain = try_get_domain()
-    if domain is None:
-        return _python_fallback_batch_stats(items)
-    try:
-        return domain.pipeline_batch_stats(items)
-    except Exception as exc:
-        logger.warning(f"rust_batch_stats failed: {exc}, falling back to Python")
-        return _python_fallback_batch_stats(items)
+    """Batch statistics via Rust pipeline_compose."""
+    return _rust_stage("pipeline_batch_stats", _python_fallback_batch_stats, items)
 
 
 # ---------------------------------------------------------------------------

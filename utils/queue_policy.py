@@ -25,7 +25,7 @@ def put_drop_oldest(queue: asyncio.Queue, item: Any) -> None:
             try:
                 oldest = queue.get_nowait()
                 logger.debug(f"Queue overflow, dropped oldest: {type(oldest).__name__}")
-            except asyncio.QueueEmpty:
+            except asyncio.QueueEmpty:  # noqa: BLE001
                 pass
         queue.put_nowait(item)
     except asyncio.QueueFull:

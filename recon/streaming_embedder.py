@@ -442,7 +442,7 @@ class StreamingEmbedder:
                             )
                             # TaskGroup will cancel remaining children on scope exit
                             break
-        except* asyncio.TimeoutError:
+        except* asyncio.TimeoutError:  # noqa: BLE001
             # Structured cancellation already applied by TaskGroup
             pass
         except* asyncio.CancelledError:
@@ -543,7 +543,7 @@ class StreamingEmbedder:
                                 yield (ids, embs)
                         except Exception as e:
                             logger.debug(f"[StreamingEmbed] fallback batch error: {e}")
-        except* asyncio.TimeoutError:
+        except* asyncio.TimeoutError:  # noqa: BLE001
             pass
         except* asyncio.CancelledError:
             raise

@@ -352,7 +352,7 @@ class BoundedInferencePipeline:
                     '[Pipeline] shutdown timed out after %.1fs',
                     _PIPELINE_SHUTDOWN_S,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self._prep_tasks.clear()

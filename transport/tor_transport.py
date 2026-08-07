@@ -4,6 +4,7 @@ import os
 import shutil
 import signal
 import socket
+import weakref
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
@@ -12,14 +13,15 @@ import aiofiles
 
 from .base import Transport, TransportConfig, TransportResult
 logger = logging.getLogger(__name__)
+from hledac.universal.utils.safe_swallow import safe_swallow
 MAX_CIRCUIT_REQUESTS: int = 3
-_TOR_TRANSPORT_SINGLETON: TorTransport | None = None
+_TOR_TRANSPORT_SINGLETON: 'TorTransport | None' = None
 
-def get_tor_transport_singleton() -> TorTransport | None:
+def get_tor_transport_singleton() -> 'TorTransport | None':
     """Return the module-level TorTransport singleton or None."""
     return _TOR_TRANSPORT_SINGLETON
 
-def set_tor_transport_singleton(transport: TorTransport) -> None:
+def set_tor_transport_singleton(transport: 'TorTransport') -> None:
     """Set the module-level TorTransport singleton. Call after start() succeeds."""
     global _TOR_TRANSPORT_SINGLETON
     _TOR_TRANSPORT_SINGLETON = transport
@@ -77,6 +79,9 @@ class TorTransport(Transport):
         self._circuits_created: int = 0
         self._circuit_failures: int = 0
 
+        # Weakref finalizer for GC safety net
+        self._finalizer = weakref.finalize(self, self._cleanup)
+
     async def start(self) -> bool:
         """Spustit Tor daemon autonomně. Vrátí True pokud circuit established."""
         tor_bin = shutil.which('tor')
@@ -120,7 +125,7 @@ class TorTransport(Transport):
                         handler = self.handlers.get(msg_type)
                         if handler:
                             await handler(data)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK')
                     await writer.drain()
@@ -134,7 +139,7 @@ class TorTransport(Transport):
             except Exception:
                 try:
                     writer.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         self.http_server = await asyncio.start_server(_http_handler, '127.0.0.1', 0)
@@ -217,7 +222,7 @@ class TorTransport(Transport):
                 else:
                     try:
                         os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
+                    except ProcessLookupError:  # noqa: BLE001
                         pass
             except Exception as e:
                 logger.warning(f'Tor stop: {e}')
@@ -242,24 +247,23 @@ class TorTransport(Transport):
         """Sprint F214Q B.3: Export circuit telemetry for MetricsRegistry."""
         return {'circuits_created': self._circuits_created, 'circuit_failures': self._circuit_failures}
 
-    def __del__(self):
+    def _cleanup(self) -> None:
+        """Called by weakref.finalize when TorTransport is garbage collected.
+
+        This is a last-resort safety net. Proper cleanup should use stop() explicitly.
         """
-        Sprint F214Q B.3: Fallback cleanup guard — logs warning if stop() was not called.
-        Does NOT call stop() here (can raise in destructor).
-        Cleanup must be done via stop() explicitly.
-        G1: Safety-net wipe of onion address even if stop() was never called.
-        """
-        # G1: wipe identity in destructor as last-resort safety net
         try:
             onion_addr = getattr(self, "onion_address", None)
             if onion_addr:
                 from hledac.universal.utils.secure_zero import wipe_tor_identity
-
                 wipe_tor_identity(onion_addr)
-        except Exception:
-            pass  # swallow all errors in destructor
+        except Exception as e:
+            safe_swallow("tor_transport_cleanup_Exception", logger=logger, exc=e)
+
         if getattr(self, "tor_process", None) is not None or getattr(self, "http_server", None) is not None:
-            logger.warning(f"TorTransport.__del__: stop() not called — Tor process or HTTP server may leak. circuits_created={getattr(self, '_circuits_created', 0)}, circuit_failures={getattr(self, '_circuit_failures', 0)}")
+            logger.warning(f"TorTransport: stop() not called before GC — Tor process or HTTP server may leak. "
+                         f"circuits_created={getattr(self, '_circuits_created', 0)}, "
+                         f"circuit_failures={getattr(self, '_circuit_failures', 0)}")
 
     async def wait_ready(self):
         await self._ready.wait()
@@ -346,7 +350,7 @@ class TorTransport(Transport):
                     ctrl.authenticate()
                     return True
             await asyncio.to_thread(_check)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def on_phase_boundary(self, old_phase: str, new_phase: str) -> None:
@@ -413,7 +417,7 @@ class TorTransport(Transport):
         try:
             parsed = urlparse(config.url)
             domain = parsed.netloc
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         await self._maybe_rotate_circuit(domain=domain)
         from hledac.universal.core.env_config import ENV
@@ -479,7 +483,7 @@ async def jarm_fingerprint(host: str, port: int=443) -> str | None:
             try:
                 async with asyncio.timeout(1.0):
                     await w.wait_closed()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         except (TimeoutError, OSError, ssl.SSLError, ConnectionRefusedError):
             tokens.append('TIMEOUT')

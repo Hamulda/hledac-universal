@@ -15,8 +15,9 @@ import logging
 import sys
 import time
 from dataclasses import asdict, dataclass, is_dataclass
-import msgspec
 from enum import Enum
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 import numpy as np
@@ -67,7 +68,7 @@ def _deserialize_cnew(data: bytes) -> dict[str, ContextItem]:
         result[k] = _deserialize_context_item(v)
     return result
 
-class ContextItem(msgspec.Struct, gc=False):
+class ContextItem(Struct):
     """Individual context item with metadata."""
     item_id: str
     content: str
@@ -81,7 +82,7 @@ class ContextItem(msgspec.Struct, gc=False):
     confidence: float = 0.5
     phase_relevance: dict[str, float] = None
 
-class ContextStats(msgspec.Struct, gc=False):
+class ContextStats(Struct):
     """Context management statistics."""
     hot_items: int
     warm_items: int

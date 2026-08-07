@@ -17,9 +17,10 @@ from __future__ import annotations
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
-class SourceHitLog(msgspec.Struct, frozen=True, gc=False):
+class SourceHitLog(Struct, frozen=True):
     """
     Per-sprint source attribution record.
 
@@ -38,7 +39,7 @@ class SourceHitLog(msgspec.Struct, frozen=True, gc=False):
     findings_count: int
 
 
-class SprintScorecard(msgspec.Struct, frozen=True, gc=False):
+class SprintScorecard(Struct, frozen=True):
     """
     Per-sprint aggregated scores.
 

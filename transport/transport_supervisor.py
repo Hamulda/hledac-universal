@@ -140,7 +140,7 @@ class TransportSupervisor:
                 self._task.cancel()
                 try:
                     await self._task
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # noqa: BLE001
                     pass
         for name, transport in list(self._transports.items()):
             try:
@@ -174,7 +174,7 @@ class TransportSupervisor:
                 loser.cancel()
                 try:
                     await loser
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # noqa: BLE001
                     pass
                 if self._stop_event.is_set():
                     break

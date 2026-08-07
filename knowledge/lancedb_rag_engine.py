@@ -35,6 +35,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
 import numpy as np
@@ -46,7 +47,7 @@ _MAX_BATCH_SIZE = 32
 _MAX_DOCS = 50000
 _EMBEDDING_DIM = 256
 
-class RAGDocument(msgspec.Struct, gc=False):
+class RAGDocument(Struct):
     """Document for LanceDB-backed RAG."""
     id: str
     content: str
@@ -56,7 +57,7 @@ class RAGDocument(msgspec.Struct, gc=False):
     def __hash__(self):
         return hash(self.id)
 
-class RetrievedChunk(msgspec.Struct, frozen=True, gc=False):
+class RetrievedChunk(Struct, frozen=True):
     """Retrieved document chunk with scores."""
     document: RAGDocument
     chunk_text: str

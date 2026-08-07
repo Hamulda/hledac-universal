@@ -44,7 +44,7 @@ _CanonicalFinding = None
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding as _CF
     _CanonicalFinding = _CF
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 _ENABLED: bool = os.environ.get('HLEDAC_ENABLE_BGP_PDNS', '0').lower() in ('1', 'true', 'yes', 'on')
 BGP_LOOKUP_AVAILABLE: bool = _ENABLED
@@ -121,7 +121,7 @@ async def _rate_limited_request(session: httpx.AsyncClient, url: str, last_reque
         resp = await session.get(url, timeout=httpx.Timeout(timeout), headers=headers)
         if resp.status_code == 200:
             return resp.json()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -134,7 +134,7 @@ async def _rate_limited_text(session: httpx.AsyncClient, url: str, last_request:
         resp = await session.get(url, timeout=httpx.Timeout(timeout), headers=_DEFAULT_HEADERS)
         if resp.status_code == 200:
             return resp.text
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 

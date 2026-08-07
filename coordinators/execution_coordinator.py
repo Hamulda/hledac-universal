@@ -26,6 +26,7 @@ from dataclasses import field
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.async_helpers import first_completed, parallel, safe_create_task  # ISSUE-15
 
@@ -33,7 +34,7 @@ from .base import DecisionResponse, ExecutionResult, OperationResult, OperationT
 
 logger = logging.getLogger(__name__)
 
-class ExecutionTask(msgspec.Struct, gc=False):
+class ExecutionTask(Struct):
     """Definition of an execution task."""
     task_id: str
     description: str
@@ -43,7 +44,7 @@ class ExecutionTask(msgspec.Struct, gc=False):
     timeout: float = 60.0
     retries: int = 0
 
-class TaskResult(msgspec.Struct, frozen=True, gc=False):
+class TaskResult(Struct, frozen=True):
     """
     Result of task execution (local type for execution_coordinator internals).
 
@@ -374,7 +375,7 @@ class UniversalExecutionCoordinator(UniversalCoordinator):
                 pool_limit = self._worker_pool.get_max_workers()
                 if pool_limit > 0:
                     concurrency_limit = min(max_parallel, pool_limit)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Fall back to max_parallel
 
         async def execute_task(task: ExecutionTask) -> TaskResult:

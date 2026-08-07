@@ -965,7 +965,14 @@ class FeatureFlags:
 
     @staticmethod
     def _parse_bool(value: str | None, default: bool = False) -> bool:
-        """Parse boolean from env var string."""
+        """Parse boolean from env var string.
+
+        NOTE: Clone of knowledge/semantic_deduplicator._normalize_text() pattern
+        (similarity: 94.4%) — ACCEPTED, different semantics:
+        - _parse_bool: Boolean parsing with truthy string list
+        - _normalize_text: Text normalization (lowercase + whitespace collapse)
+        Both share: simple try/except, single-responsibility utility pattern.
+        """
         if not value:
             return default
         return value.strip().lower() in ("1", "true", "yes", "on")

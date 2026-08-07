@@ -30,6 +30,7 @@ import re
 import time as _time
 from dataclasses import dataclass
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -47,7 +48,7 @@ MAX_TEMPORAL_ANOMALIES = 100
 _MAYBE_MEMORY: ResearchSessionMemory | None = None
 
 
-class EntityObservation(msgspec.Struct, gc=False):
+class EntityObservation(Struct):
     observation_id: str
     entity_value: str
     entity_type: str
@@ -58,7 +59,7 @@ class EntityObservation(msgspec.Struct, gc=False):
     finding_id: str
 
 
-class EntityHistory(msgspec.Struct, gc=False):
+class EntityHistory(Struct):
     entity_value: str
     observations: list[EntityObservation]
     sprint_count: int

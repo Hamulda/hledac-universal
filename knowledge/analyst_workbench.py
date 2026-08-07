@@ -38,11 +38,13 @@ If model is used (opt-in):
   - Never concurrent with JS renderer (enforced by caller)
 """
 import logging
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 import re
 import time
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from hledac.universal.knowledge.evidence_chain import EvidenceChain
@@ -66,7 +68,7 @@ MAX_TEXT_PER_CLUSTER: int = 200
 MAX_RISK_HYPOTHESES: int = 5
 MAX_PIVOT_RECOMMENDATIONS: int = 5
 
-class AnalystBrief(msgspec.Struct, frozen=True, gc=False):
+class AnalystBrief(Struct, frozen=True):
     """
     Sprint F204E: Analyst brief produced at sprint teardown.
     F225B: Added source_family_summary, evidence_gaps, risk_hypotheses,
@@ -111,7 +113,7 @@ class AnalystBrief(msgspec.Struct, frozen=True, gc=False):
     pivot_recommendations: tuple[str, ...] = field(default_factory=lambda: ())
     target_memory_feedback: dict[str, Any] = field(default_factory=lambda: {})
 
-class EvidencePointer(msgspec.Struct, frozen=True, gc=False):
+class EvidencePointer(Struct, frozen=True):
     """
     Evidence pointer for an analyst answer.
 
@@ -134,7 +136,7 @@ class EvidencePointer(msgspec.Struct, frozen=True, gc=False):
     envelope_available: bool
     snippet: str | None = None
 
-class RelatedEntity(msgspec.Struct, frozen=True, gc=False):
+class RelatedEntity(Struct, frozen=True):
     """
     Related entity from graph traversal.
 
@@ -151,7 +153,7 @@ class RelatedEntity(msgspec.Struct, frozen=True, gc=False):
     hops: int
     relation_types: frozenset[str] = field(default_factory=frozenset)
 
-class AnalystAnswer(msgspec.Struct, gc=False):
+class AnalystAnswer(Struct):
     """
     Complete analyst answer with evidence.
 
@@ -529,7 +531,7 @@ class AnalystWorkbench:
             if f.get('payload_text'):
                 snippet = _extract_snippet(f['payload_text'], f.get('query', ''), max_len=200)
             pointers.append(_build_evidence_pointer(f, snippet))
-        pointers.sort(key=lambda p: p.confidence, reverse=True)
+        pointers.sort(key=attrgetter("confidence"), reverse=True)
         return pointers[:MAX_EVIDENCE_PTRS]
 
     def ask_sync(self, question: str, use_model: bool=False, model_name: str | None=None) -> AnalystAnswer:

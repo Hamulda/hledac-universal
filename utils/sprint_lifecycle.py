@@ -364,7 +364,7 @@ class SprintLifecycleManager:
                 coro = shutdown_coro()
                 if coro is not None:
                     loop.call_soon_threadsafe(lambda c=coro: asyncio.create_task(c))
-            except RuntimeError:
+            except RuntimeError:  # noqa: BLE001
                 pass
         try:
             signal.signal(signal.SIGINT, _handler)
@@ -386,7 +386,7 @@ class SprintLifecycleManager:
                 exc = task.exception()
                 if exc is not None:
                     logger.warning(f'[LIFECYCLE] Background task {task.get_name()} failed: {exc}')
-        except asyncio.InvalidStateError:
+        except asyncio.InvalidStateError:  # noqa: BLE001
             pass
 
     @property
@@ -417,7 +417,7 @@ class SprintLifecycleManager:
         if state_val:
             try:
                 self._state = SprintLifecycleState(state_val)
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass
 
     async def cancel(self) -> None:
@@ -426,7 +426,7 @@ class SprintLifecycleManager:
             self._windown_task.cancel()
             try:
                 await self._windown_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         for t in list(self._bg_tasks):
             t.cancel()

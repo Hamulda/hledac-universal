@@ -860,7 +860,7 @@ class HttpTransport:
             try:
                 if hasattr(resp, "url") and resp.url:
                     final_url = str(resp.url)
-            except (ValueError, AttributeError):
+            except (ValueError, AttributeError):  # noqa: BLE001
                 pass
 
             resp_headers = dict(resp.headers) if hasattr(resp, "headers") else {}

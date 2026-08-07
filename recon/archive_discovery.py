@@ -53,6 +53,7 @@ from hledac.universal.utils.msgspec_json import loads as _msgspec_loads
 from urllib.parse import quote, urlparse
 import httpx
 from hledac.universal.transport.session_pool import session_pool
+from operator import attrgetter, itemgetter
 try:
     from bs4 import BeautifulSoup
     BS4_AVAILABLE = True
@@ -566,7 +567,7 @@ class ArchiveResurrector:
         snapshots.extend(cache_snapshots)
         social_snapshots = await self._check_social_archive(url)
         snapshots.extend(social_snapshots)
-        snapshots.sort(key=lambda x: x.timestamp, reverse=True)
+        snapshots.sort(key=attrgetter("timestamp"), reverse=True)
         return snapshots[:self.max_snapshots]
 
     async def _check_wayback(self, url: str, target_date: datetime | None) -> list[Snapshot]:
@@ -744,7 +745,7 @@ class ArchiveResurrector:
                 for tag in parser.css('meta[name="description"]'):
                     metadata['description'] = tag.attributes.get('content', '')
                 return metadata
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if BS4_AVAILABLE:
             try:
@@ -767,7 +768,7 @@ class ArchiveResurrector:
                 if desc:
                     metadata['description'] = desc.get('content', '')
                 return metadata
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         try:
             title_match = re.search('<title[^>]*>([^<]+)</title>', content, re.IGNORECASE)
@@ -782,7 +783,7 @@ class ArchiveResurrector:
             desc_match = re.search('<meta\\s+name=["\\\']description["\\\']\\s+content=["\\\']([^"\\\']+)["\\\']', content, re.IGNORECASE)
             if desc_match:
                 metadata['description'] = desc_match.group(1)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return metadata
 

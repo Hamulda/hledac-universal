@@ -109,7 +109,7 @@ def decode_response_bytes(
     if http_charset:
         try:
             return raw_b.decode(http_charset, errors="strict")
-        except (LookupError, UnicodeDecodeError):
+        except (LookupError, UnicodeDecodeError):  # noqa: BLE001
             pass  # unknown encoding or invalid bytes — fall through
 
     # 1) charset_normalizer (best accuracy)
@@ -125,7 +125,7 @@ def decode_response_bytes(
     # 3) UTF-8 strict
     try:
         return raw_b.decode("utf-8", errors="strict")
-    except UnicodeDecodeError:
+    except UnicodeDecodeError:  # noqa: BLE001
         pass
 
     # 4) UTF-8 with surrogateescape (preserves invalid bytes as surrogate codes).

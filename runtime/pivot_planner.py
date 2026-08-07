@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from hledac.universal.runtime.hermes_pivot_contract import MAX_INFERENCE_ITEMS, HermesInferenceOutput
 from hledac.universal.utils.confidence import normalize_source_quality
+from operator import attrgetter, itemgetter
 __all__ = ['Pivot', 'PivotStats', 'PivotType', 'PivotPlanner', 'MAX_PIVOTS', 'MAX_PIVOT_CANDIDATES', 'generate_pivot_candidates_from_query', 'score_pivot_for_mission', 'estimate_pivot_cost', 'explain_pivot_score', 'apply_scoring_metadata', 'HermesInferenceOutput', 'MAX_INFERENCE_ITEMS']
 try:
     from hledac.universal.runtime.hypothesis_feedback import HypothesisFeedbackSummary
@@ -172,7 +173,7 @@ def _deserialize_envelope(finding: Any) -> dict | None:
         env = _json.loads(payload)
         if isinstance(env, dict) and env.get('audit_reason'):
             return env
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -513,7 +514,7 @@ class PivotPlanner:
         try:
             pivots = self._generate_pivots_from_findings(findings, graph_stats=graph_stats, feedback_summary=feedback_summary)
             pivots = self._deduplicate_pivots(pivots)
-            pivots.sort(key=lambda p: p.expected_value, reverse=True)
+            pivots.sort(key=attrgetter("expected_value"), reverse=True)
             return pivots[:max_pivots]
         except Exception as e:
             logger.debug(f'[F202G] plan_pivots failed: {e}')
@@ -597,7 +598,7 @@ class PivotPlanner:
                 for p in pivots:
                     boost = score_pivot_for_mission(p, mission_intent)
                     object.__setattr__(p, 'expected_value', p.expected_value * boost)
-            pivots.sort(key=lambda p: p.expected_value, reverse=True)
+            pivots.sort(key=attrgetter("expected_value"), reverse=True)
             return pivots[:max_pivots]
         except Exception as e:
             logger.debug(f'[F256] score_with_hermes_output failed: {e}')
@@ -906,12 +907,12 @@ def generate_pivot_candidates_from_query(query: str, max_candidates: int=MAX_PIV
     elif ioc_type == 'email':
         candidates.append(Pivot(priority=-0.7, pivot_id=f'{pivot_id_base}-leak', pivot_type=PivotType.LEAK, ioc_value=ioc_value, ioc_type='email', reason='Check email for breach/leak exposure', expected_value=0.7, source_hint=source_hint, evidence_pointers=()))
         candidates.append(Pivot(priority=-0.5, pivot_id=f'{pivot_id_base}-identity', pivot_type=PivotType.IDENTITY, ioc_value=ioc_value, ioc_type='email', reason='Identity resolution for email address', expected_value=0.5, source_hint=source_hint, evidence_pointers=()))
-    candidates.sort(key=lambda p: p.priority)
+    candidates.sort(key=attrgetter("priority"))
     if len(candidates) > max_candidates:
         candidates = candidates[:max_candidates]
     if mission_intent and candidates:
         candidates = [apply_scoring_metadata(p, mission_intent) for p in candidates]
-        candidates.sort(key=lambda p: p.expected_value, reverse=True)
+        candidates.sort(key=attrgetter("expected_value"), reverse=True)
     return candidates
 
 async def _score_with_model(pivot: Pivot, context: dict, tot_adapter: Any) -> float:
@@ -937,6 +938,6 @@ async def _score_with_model(pivot: Pivot, context: dict, tot_adapter: Any) -> fl
         should_use, confidence = tot_adapter.should_activate_tot(query, context)
         if should_use:
             return min(1.0, (pivot.expected_value + confidence) / 2.0)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return pivot.expected_value

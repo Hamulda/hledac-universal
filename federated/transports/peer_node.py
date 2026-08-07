@@ -496,27 +496,27 @@ class PeerNodeTransport:
         if self._listener_task is not None:
             try:
                 self._listener_task.cancel()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 await safe_wait_for(self._listener_task, timeout=1.0, label='listener_task')
-            except TimeoutError:
+            except TimeoutError:  # noqa: BLE001
                 pass
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._listener_task = None
         if self._transport is not None:
             try:
                 self._transport.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._transport = None
         if self._mdns_browser is not None:
             try:
                 self._mdns_browser.cancel()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._mdns_browser = None
         self._peers.clear()

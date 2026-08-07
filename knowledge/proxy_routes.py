@@ -45,7 +45,9 @@ import threading
 import time as _time
 from typing import TYPE_CHECKING, Any
 
+from operator import attrgetter, itemgetter
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.logging_config import get_logger
 
@@ -76,7 +78,7 @@ _MIN_OBSERVATIONS_FOR_ROUTING: int = 3
 # RouteEdge DTO
 # ---------------------------------------------------------------------------
 
-class RouteEdge(msgspec.Struct, frozen=True, gc=False):
+class RouteEdge(Struct, frozen=True):
     """Immutable route edge snapshot from DuckDB.
 
     Represents one (domain, proxy, transport) triple with
@@ -169,7 +171,7 @@ class RouteEdge(msgspec.Struct, frozen=True, gc=False):
         return cls(domain=domain, proxy=proxy, transport=transport)
 
 
-class RouteRecommendation(msgspec.Struct, frozen=True, gc=False):
+class RouteRecommendation(Struct, frozen=True):
     """Recommendation from the route graph for a fetch operation."""
 
     domain: str
@@ -354,7 +356,7 @@ class RouteGraphService:
 
             # Fallback: best composite score from all edges
             if edges:
-                edges_sorted = sorted(edges, key=lambda e: e.composite_score, reverse=True)
+                edges_sorted = sorted(edges, key=attrgetter("composite_score"), reverse=True)
                 chosen = edges_sorted[0]
                 return RouteRecommendation(
                     domain=domain,

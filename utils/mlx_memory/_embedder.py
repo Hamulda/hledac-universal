@@ -212,7 +212,7 @@ class MetalBufferPool:
             if buf._shared_buf is not None:
                 try:
                     buf._shared_buf.release()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 buf._shared_buf = None
             buf.mx_buffer = None

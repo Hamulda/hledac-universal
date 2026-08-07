@@ -6,6 +6,7 @@ Trénink na pozadí, inference volitelná podle velikosti grafu.
 from itertools import combinations
 import array
 
+from operator import attrgetter, itemgetter
 import concurrent.futures
 import heapq
 import logging
@@ -386,7 +387,7 @@ class GNNPredictor:
             for node, score in zip(graph_nodes, query_scores, strict=False)
             if node['id'] != query_node_id and node['id'] not in existing_neighbors
         ]
-        predictions.sort(key=lambda x: x['predicted_link_probability'], reverse=True)
+        predictions.sort(key=itemgetter("'"), reverse=True)
         return predictions[:top_k]
 
     def _cleanup_mlx_memory(self) -> None:
@@ -397,7 +398,7 @@ class GNNPredictor:
             gc.collect()
             if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # ── main ─────────────────────────────────────────────────────────────────────
@@ -419,7 +420,7 @@ class GNNPredictor:
             from hledac.universal.resource_allocator import get_memory_pressure_level
             if get_memory_pressure_level() == 'critical':
                 return []
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -527,7 +528,7 @@ def predict_from_edge_list(edge_list: list[tuple[str, str, str, float]], top_k: 
                     rel = _most_common_rel(edge_list, val)
                     results.append({'src': 'graph', 'dst': val, 'score': float(score), 'rel_type': rel})
                 return results
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     freq = Counter((dst for _, dst, _, _ in edge_list))
     seen_src = {src for src, _, _, _ in edge_list}
@@ -590,8 +591,8 @@ def get_anomaly_scores(edge_list: list[tuple[str, str, str, float]]) -> list[dic
             threshold = 0.7
             anomalies = [{'value': n, 'anomaly_score': float(s)} for n, s in scores.items() if s >= threshold]
             if anomalies:
-                return sorted(anomalies, key=lambda x: x['anomaly_score'], reverse=True)
-    except Exception:
+                return sorted(anomalies, key=itemgetter("'"), reverse=True)
+    except Exception:  # noqa: BLE001
         pass
     degree = Counter((src for src, _, _, _ in edge_list))
     degree.update(Counter((dst for _, dst, _, _ in edge_list)))

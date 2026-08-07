@@ -96,7 +96,7 @@ async def async_transform[T, R](
                     pending.discard(winner_task)
                     try:
                         yield winner_task.result()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             # Drain all remaining tasks with gather — runs inside the TaskGroup
             # scope so all tasks complete before cancellation on scope exit.
@@ -263,7 +263,7 @@ async def aclose_safe(agen: AsyncIterator) -> None:
     try:
         if hasattr(agen, "aclose"):
             await agen.aclose()
-    except (AttributeError, StopAsyncIteration, RuntimeError):
+    except (AttributeError, StopAsyncIteration, RuntimeError):  # noqa: BLE001
         # Already closed or doesn't support aclose
         pass
 

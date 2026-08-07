@@ -71,6 +71,6 @@ def get_simd_domain(ext: object | None) -> _RustSimdDomain | _PythonSimdDomain:
     if ext is not None:
         try:
             return _RustSimdDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonSimdDomain()

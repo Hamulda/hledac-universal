@@ -144,7 +144,7 @@ class VLMAnalyzer:
             if psutil.Process().memory_info().rss > 5.0 * 1024**3:
                 logger.warning("[VLMAnalyzer] Skipping due to memory pressure")
                 return ""
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
 
         # Try to load model if configured

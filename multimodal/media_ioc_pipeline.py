@@ -238,7 +238,7 @@ class MediaIocPipeline:
             if self._decoder is not None:
                 try:
                     await self._decoder.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._decoder = None
             self._ioc_scanner = None
@@ -687,7 +687,7 @@ def _python_fallback_scan(text: str, combined_regex: Any) -> list[dict[str, Any]
                     'confidence': 0.85,
                     'scanner': 'python_fallback',
                 })
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return iocs
 

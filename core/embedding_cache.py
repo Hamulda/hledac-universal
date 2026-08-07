@@ -72,13 +72,13 @@ class _L2Store:
             if self._mmap is not None:
                 try:
                     self._mmap.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._mmap = None
             if self._fp is not None:
                 try:
                     self._fp.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._fp = None
             raise
@@ -118,7 +118,7 @@ class _L2Store:
             vec.flags.writeable = False
             try:
                 self._free_offsets.remove(offset)
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass
             return vec
 

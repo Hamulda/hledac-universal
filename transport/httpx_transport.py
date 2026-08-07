@@ -541,7 +541,7 @@ async def _validate_redirect_url(redirect_url: str) -> None:
             raise _SSRFBlockError(f"Redirect to private/reserved IP blocked: {redirect_url}")
         # Literal IP is valid and safe — no DNS resolution needed
         return
-    except ValueError:
+    except ValueError:  # noqa: BLE001
         pass  # Not a literal IP, must be domain — resolve DNS below
 
     # Resolve DNS and check all resolved IPs for private ranges
@@ -561,7 +561,7 @@ async def _validate_redirect_url(redirect_url: str) -> None:
                         f"Redirect to private/reserved IP via DNS rebinding blocked: {redirect_url} "
                         f"(resolved to {ip_str})"
                     )
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass  # Not an IP format, skip (shouldn't happen from getaddrinfo)
     except _SSRFBlockError:
         raise

@@ -6,7 +6,8 @@ Extracts main text from HTML and structured data from previews.
 import logging
 import re
 from dataclasses import dataclass, field
-import msgspec
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 logger = logging.getLogger(__name__)
 try:
     from bs4 import BeautifulSoup
@@ -127,7 +128,7 @@ def extract_structured_snippet(data: str, max_chars: int=20000) -> str:
         if values:
             snippet = ' | '.join(values[:5])
             return snippet[:max_chars]
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # noqa: BLE001
         pass
     return data[:max_chars]
 
@@ -146,7 +147,7 @@ def _extract_title_selectolax(html: str) -> str:
         title = tree.css_first('title')
         if title:
             return title.text(strip=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return ''
 

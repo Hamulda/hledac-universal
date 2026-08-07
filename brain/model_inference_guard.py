@@ -105,7 +105,7 @@ class ModelInferenceGuard:
                 _uma = uma_fn()
                 if getattr(_uma, 'state', None) == 'emergency':
                     return ModelGuardDecision(allowed=True, model_key=model_key, state='emergency_bypass', retry_after_s=0.0, reason='UMA emergency — circuit breaker bypassed (memory-aware fail-open)')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         breaker = self._breakers.get(model_key)
         if breaker is None:

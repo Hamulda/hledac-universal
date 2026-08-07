@@ -117,7 +117,7 @@ class AsyncEmbeddingBatcher:
             self._loop_task.cancel()
             try:
                 await self._loop_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         self._started = False
         self._stopping = False
@@ -285,7 +285,7 @@ async def _cancel_preload_task(model_id: str) -> None:
             task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                 pass
 _MLX_AVAILABLE: bool = False
 _MLX_EMBED_AVAILABLE: bool = False
@@ -822,7 +822,7 @@ class MLXDispatcher:
             try:
                 mx.eval([])
                 mx.metal.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         logger.info('[MLXDispatcher] Unloaded — metal cache cleared')
 
@@ -843,7 +843,7 @@ class MLXDispatcher:
                 old_task.cancel()
                 try:
                     await asyncio.wait_for(asyncio.shield(old_task), timeout=0.5)
-                except (asyncio.CancelledError, asyncio.TimeoutError):
+                except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                     pass
 
         async def _preload() -> None:

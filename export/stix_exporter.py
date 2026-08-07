@@ -102,7 +102,7 @@ async def collect_cti_export_inputs(report: dict[str, Any], store: Any) -> CTIEx
             if hasattr(store, 'async_query_recent_findings'):
                 rows = await store.async_query_recent_findings(limit=MAX_EXPORT_FINDINGS)
                 return list(rows) if rows else []
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return []
 
@@ -822,7 +822,7 @@ _stix2_available: bool = False
 try:
     import stix2 as _stix2_module
     _stix2_available = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 def _build_stix2_bundle(data: dict[str, Any]) -> dict[str, Any]:

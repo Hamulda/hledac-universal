@@ -17,9 +17,10 @@ from __future__ import annotations
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
-class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
+class CanonicalFinding(Struct, frozen=True):
     """
     Sprint 8P: Canonical internal finding DTO.
 
@@ -72,7 +73,7 @@ class CanonicalFinding(msgspec.Struct, frozen=True, gc=False):
 from .._quality_types import FindingQualityDecision
 
 
-class ActivationResult(msgspec.Struct, frozen=True, gc=False):
+class ActivationResult(Struct, frozen=True):
     """
     Sprint F300: Result of activating a finding in the sprint facts store.
 

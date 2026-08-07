@@ -19,9 +19,10 @@ MUST NOT IMPORT:
 from __future__ import annotations
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
-class FindingQualityDecision(msgspec.Struct, frozen=True, gc=False):
+class FindingQualityDecision(Struct, frozen=True):
     """
     Sprint 8W: Quality decision contract for CanonicalFinding ingest.
 

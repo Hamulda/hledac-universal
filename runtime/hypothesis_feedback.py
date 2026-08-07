@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import time
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 __all__ = ['HypothesisFeedbackRecord', 'HypothesisFeedbackSummary', 'HypothesisFeedbackAdapter', 'MAX_FEEDBACK_RECORDS', 'MAX_PRUNED_TYPES']
 logger = logging.getLogger(__name__)
 MAX_FEEDBACK_RECORDS: int = 10000
@@ -41,7 +42,7 @@ MAX_PRUNED_TYPES: int = 20
 _ZERO_YIELD_PENALTY_THRESHOLD: int = 3
 _PENALTY_FACTOR: float = 0.5
 
-class HypothesisFeedbackRecord(msgspec.Struct, frozen=True, gc=False):
+class HypothesisFeedbackRecord(Struct, frozen=True):
     """
     A single feedback record for one pivot outcome.
 
@@ -64,7 +65,7 @@ class HypothesisFeedbackRecord(msgspec.Struct, frozen=True, gc=False):
     signal_value: float
     ts: float
 
-class HypothesisFeedbackSummary(msgspec.Struct, frozen=True, gc=False):
+class HypothesisFeedbackSummary(Struct, frozen=True):
     """
     Aggregated feedback summary per (target_id, pivot_type, ioc_type).
 

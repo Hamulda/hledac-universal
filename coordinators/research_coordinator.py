@@ -37,7 +37,10 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from operator import attrgetter, itemgetter
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.async_helpers import ParallelResult, parallel, safe_wait_for
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
@@ -61,7 +64,7 @@ class ExcavationStrategy(Enum):
     RELEVANCE = 'relevance'
     HYBRID = 'hybrid'
 
-class ResearchContext(msgspec.Struct, frozen=True, gc=False):
+class ResearchContext(Struct, frozen=True):
     """Context for research operations."""
     query: str
     sources_used: list[str] = ()
@@ -69,7 +72,7 @@ class ResearchContext(msgspec.Struct, frozen=True, gc=False):
     confidence_scores: dict[str, float] = {}
     metadata: dict[str, Any] = {}
 
-class ResearchResult(msgspec.Struct, frozen=True, gc=False):
+class ResearchResult(Struct, frozen=True):
     """Structured research result."""
     source: str
     summary: str
@@ -78,7 +81,7 @@ class ResearchResult(msgspec.Struct, frozen=True, gc=False):
     execution_time: float
     sources_found: int = 0
 
-class ExcavationConfig(msgspec.Struct, frozen=True, gc=False):
+class ExcavationConfig(Struct, frozen=True):
     """Configuration for deep excavation."""
     max_depth: int = 10
     max_breadth: int = 5
@@ -92,7 +95,7 @@ class ExcavationConfig(msgspec.Struct, frozen=True, gc=False):
     auto_summarize: bool = True
     progress_callback: collections.abc.Callable | None = None
 
-class ResearchPaper(msgspec.Struct, gc=False):
+class ResearchPaper(Struct):
     """Research paper node with citation tracking."""
     id: str
     title: str
@@ -116,7 +119,7 @@ class ResearchPaper(msgspec.Struct, gc=False):
             return self.id == other.id
         return False
 
-class ResearchThread(msgspec.Struct, frozen=True, gc=False):
+class ResearchThread(Struct, frozen=True):
     """Research thread tracking context."""
     id: str
     root_topic: str
@@ -126,7 +129,7 @@ class ResearchThread(msgspec.Struct, frozen=True, gc=False):
     path: list[str] = ()
     created_at: datetime = datetime.now(UTC)
 
-class MetaPattern(msgspec.Struct, frozen=True, gc=False):
+class MetaPattern(Struct, frozen=True):
     """Meta-pattern detected across research."""
     pattern_id: str
     name: str
@@ -136,7 +139,7 @@ class MetaPattern(msgspec.Struct, frozen=True, gc=False):
     confidence: float
     cross_domain: bool = False
 
-class ResearchTheory(msgspec.Struct, frozen=True, gc=False):
+class ResearchTheory(Struct, frozen=True):
     """Theory generated from research patterns."""
     theory_id: str
     name: str
@@ -148,7 +151,7 @@ class ResearchTheory(msgspec.Struct, frozen=True, gc=False):
     novelty_score: float
     confidence: float
 
-class HierarchicalPlan(msgspec.Struct, frozen=True, gc=False):
+class HierarchicalPlan(Struct, frozen=True):
     """Hierarchical research plan."""
     plan_id: str
     objective: str
@@ -204,7 +207,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             try:
                 oldest = next(iter(self._papers))
                 del self._papers[oldest]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _add_citation_link(self, a: str, b: str) -> None:
@@ -215,7 +218,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
                 try:
                     oldest = self._citation_links_order.popleft()
                     self._citation_links.discard(oldest)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._citation_links.add(link)
             self._citation_links_order.append(link)
@@ -418,7 +421,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         all_sources = []
         for r in results:
             all_sources.append({'source': r.source, 'summary': r.summary, 'confidence': r.confidence, 'execution_time': r.execution_time})
-        all_sources.sort(key=lambda x: x['confidence'], reverse=True)
+        all_sources.sort(key=itemgetter("'"), reverse=True)
         best_source = all_sources[0] if all_sources else None
         summary_parts = [f'Multi-source research completed using {len(results)} backends', f'Average confidence: {avg_confidence:.2f}']
         if best_source:
@@ -623,7 +626,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             try:
                 if pathfinder is not None and getattr(pathfinder, 'initialized', False):
                     await pathfinder.cleanup()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def execute_research_plan(self, plan: dict[str, Any], context: dict[str, Any] | None=None, graph_analysis: bool=False) -> list[dict[str, Any]]:
@@ -780,7 +783,7 @@ class UniversalResearchCoordinator(UniversalCoordinator):
         self._deep_stats['total_papers_found'] += len(thread.papers)
         self._deep_stats['excavations_completed'] += 1
         logger.info(f'Excavation complete: {len(thread.papers)} papers, depth {max_reached}')
-        return {'thread_id': thread_id, 'papers_found': len(thread.papers), 'max_depth_reached': max_reached, 'levels': dict(level_stats), 'top_papers': [{'id': p.id, 'title': p.title[:100], 'depth': p.depth, 'relevance': p.relevance_score} for p in sorted(thread.papers.values(), key=lambda x: x.relevance_score, reverse=True)[:20]], 'citation_graph': self.get_citation_graph(thread_id) if config.build_citation_graph else None}
+        return {'thread_id': thread_id, 'papers_found': len(thread.papers), 'max_depth_reached': max_reached, 'levels': dict(level_stats), 'top_papers': [{'id': p.id, 'title': p.title[:100], 'depth': p.depth, 'relevance': p.relevance_score} for p in sorted(thread.papers.values(), key=attrgetter("relevance_score"), reverse=True)[:20]], 'citation_graph': self.get_citation_graph(thread_id) if config.build_citation_graph else None}
 
     async def _fetch_citations(self, paper: ResearchPaper, direction: str='forward') -> list[ResearchPaper]:
         """Fetch citations for a paper (placeholder for academic APIs)."""

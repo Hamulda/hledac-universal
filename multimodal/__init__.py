@@ -32,12 +32,12 @@ def check_ram_guard(governor: Any | None = None) -> bool:
         try:
             if governor.is_critical():
                 return False
-        except AttributeError:
+        except AttributeError:  # noqa: BLE001
             pass
         try:
             if governor.is_emergency():
                 return False
-        except AttributeError:
+        except AttributeError:  # noqa: BLE001
             pass
         return True
     except Exception:

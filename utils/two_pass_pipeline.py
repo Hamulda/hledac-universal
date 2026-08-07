@@ -135,7 +135,7 @@ class TwoPassPipeline:
             finally:
                 try:
                     self._queue.task_done()
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
 
     async def run(self) -> list[_R]:

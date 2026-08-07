@@ -45,7 +45,7 @@ try:
     import psutil
 
     _psutil = psutil
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass  # _psutil stays None, fail-safe
 
 

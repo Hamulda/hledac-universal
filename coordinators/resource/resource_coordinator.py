@@ -495,7 +495,7 @@ class BackpressureMonitor:
                     from hledac.universal.core.concurrency_registry import ConcurrencyBudgetRegistry
                     registry = await ConcurrencyBudgetRegistry.get_instance_async()
                     await registry.adjust_for_state(new_decision.uma_state)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-safe: registry errors never block backpressure decision
                 logger.info(
                     f"[BACKPRESSURE] uma_state: {self._last_state} → "

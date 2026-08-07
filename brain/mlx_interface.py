@@ -144,7 +144,7 @@ def get_active_memory() -> int:
         mx = get_mlx()
         if hasattr(mx, "get_active_memory"):
             return int(mx.get_active_memory())
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0
 
@@ -178,7 +178,7 @@ def metal_clear_cache() -> None:
         mx.eval([])
         if hasattr(mx, "clear_cache"):
             mx.clear_cache()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

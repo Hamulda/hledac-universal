@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 import msgspec
 from typing import Any
 from hledac.universal.layers.temporal_signal_layer import TemporalEvent, TemporalSignalLayer, event_from_finding_like
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 MAX_PREDICTIONS = 20
 MAX_HISTORY_PER_TYPE = 256
@@ -142,7 +143,7 @@ class TemporalIOCPredictor:
             existing = deduped.get(p.ioc_value)
             if existing is None or p.confidence > existing.confidence:
                 deduped[p.ioc_value] = p
-        sorted_preds = sorted(deduped.values(), key=lambda x: x.confidence, reverse=True)
+        sorted_preds = sorted(deduped.values(), key=attrgetter("confidence"), reverse=True)
         result = sorted_preds[:max_k]
         self._stats['predictions_generated'] += len(result)
         return [{'ioc_value': p.ioc_value, 'ioc_type': p.ioc_type, 'confidence': p.confidence, 'source_node': p.source_node, 'prediction_method': p.prediction_method} for p in result]

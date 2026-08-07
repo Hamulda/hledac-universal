@@ -361,7 +361,7 @@ class BaseIntelligenceLane(ABC):
         # Add to bloom
         try:
             bloom.add(key)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # LRU-ish cache eviction
@@ -539,7 +539,7 @@ class BaseIntelligenceLane(ABC):
         try:
             from hledac.universal.transport.circuit_breaker import domain_breaker_record_success
             domain_breaker_record_success(domain)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _record_failure(self, domain: str, is_timeout: bool = False, kind: str = "") -> None:
@@ -547,7 +547,7 @@ class BaseIntelligenceLane(ABC):
         try:
             from hledac.universal.transport.circuit_breaker import domain_breaker_record_failure
             domain_breaker_record_failure(domain, is_timeout=is_timeout, failure_kind=kind)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _get_stats(self) -> dict[str, int]:

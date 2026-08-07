@@ -587,5 +587,5 @@ async def domain_mv_lifecycle() -> AsyncIterator[DuckDBDomainMv]:
         task.cancel()
         try:
             await task
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass

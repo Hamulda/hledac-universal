@@ -167,7 +167,7 @@ class _DuckDBPool:
                         self._total_connections -= 1
                         try:
                             conn.close()
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                         self._stats.health_check_failures += 1
                     else:
@@ -175,7 +175,7 @@ class _DuckDBPool:
                         self._stats.pool_hits += 1
                         del pool[idx]
                         return (conn, db_path)
-                except (IndexError, TypeError):
+                except (IndexError, TypeError):  # noqa: BLE001
                     pass
         self._stats.pool_misses += 1
         with self._lock:
@@ -192,7 +192,7 @@ class _DuckDBPool:
                 if self._health_check and (not _health_check_duckdb(conn)):
                     try:
                         conn.close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     self._stats.health_check_failures += 1
                     self._stats.pool_misses += 1
@@ -212,7 +212,7 @@ class _DuckDBPool:
             if self._health_check and (not _health_check_duckdb(conn)):
                 try:
                     conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._stats.health_check_failures += 1
                 self._total_connections -= 1
@@ -223,7 +223,7 @@ class _DuckDBPool:
             else:
                 try:
                     conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._total_connections -= 1
 
@@ -239,7 +239,7 @@ class _DuckDBPool:
                 for conn in pool:
                     try:
                         conn.close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             self._pools.clear()
             self._round_robin.clear()
@@ -341,7 +341,7 @@ def close_hermes_pools() -> None:
     for pool in (_hermes_prep_pool, _hermes_post_pool, _hermes_inference_pool, _hermes_compile_pool):
         try:
             pool.shutdown(wait=False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 class _MLXPool:

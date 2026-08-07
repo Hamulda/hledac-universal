@@ -56,7 +56,7 @@ def evidence_log_init(
             object.__setattr__(elog, "_init_task", _task)
         else:
             loop.run_until_complete(elog.initialize())
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft: initialize() failures never block sprint
 
     try:
@@ -71,5 +71,5 @@ def evidence_log_init(
             },
             confidence=1.0,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft: evidence events never block sprint

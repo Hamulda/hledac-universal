@@ -370,7 +370,7 @@ class I2PSAMv3Client:
                             k, v = part.split('=', 1)
                             fields[k] = v
                     return fields
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return None
 
@@ -430,7 +430,7 @@ class I2PSAMv3Client:
                     if hl.startswith('content-length:'):
                         try:
                             content_length = int(hl.split(':', 1)[1].strip())
-                        except ValueError:
+                        except ValueError:  # noqa: BLE001
                             pass
 
                 # Read body
@@ -468,7 +468,7 @@ class I2PSAMv3Client:
                     cmd = f'SESSION DESTROY ID={self._session_name}\n'
                     self._writer.write(cmd.encode())  # type: ignore[union-attr]
                     await self._writer.drain()  # type: ignore[union-attr]
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
             self._session_name = None
             self._session_dest = None
@@ -478,7 +478,7 @@ class I2PSAMv3Client:
         """Full disconnection: destroy session + close TCP."""
         try:
             await self.destroy_session()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         await self._close_writer()
         self._connected = False
@@ -490,7 +490,7 @@ class I2PSAMv3Client:
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
             self._writer = None
 
@@ -658,7 +658,7 @@ class I2PTransport(Transport):
             if self._sam_v3_client:
                 try:
                     await self._sam_v3_client.disconnect()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._sam_v3_client = None
         return False
@@ -899,7 +899,7 @@ class I2PTransport(Transport):
             else:
                 async with asyncio.timeout(5.0):
                     await self.get_session()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def on_phase_boundary(self, old_phase: str, new_phase: str) -> None:

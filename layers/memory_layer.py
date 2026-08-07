@@ -190,7 +190,7 @@ class _MemoryStateManager:
             self._health_check_task.cancel()
             try:
                 await self._health_check_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         logger.debug('✅ _MemoryStateManager monitoring stopped (explicit)')
 
@@ -495,12 +495,12 @@ class MemoryLayer:
                 self._deep_hermes_engine = ctx.get('deephermes3_engine')
                 if self._deep_hermes_engine is not None:
                     logger.info('M-05: DeepHermes3Engine resolved from context')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             if self._deep_hermes_engine is None:
                 try:
                     self._deep_hermes_engine = ctx.get('hermes_engine')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         await self.initialize()
         ctx.set('memory', self)
@@ -847,7 +847,7 @@ def _mngr_atexit_cleanup() -> None:
         if m.is_attached and m.device_path:
             try:
                 subprocess.run(['hdiutil', 'detach', m.device_path, '-force'], capture_output=True, timeout=10)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     _mngr_registry.clear()
 
@@ -1011,7 +1011,7 @@ class RAMDiskManager:
         if self.device_path:
             try:
                 subprocess.run(['hdiutil', 'detach', self.device_path, '-force'], capture_output=True, check=False)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self.is_attached = False
         self.device_path = None
@@ -1146,7 +1146,7 @@ class SharedMemoryManager:
             try:
                 queue.close()
                 queue.join_thread()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self.active_blocks.clear()
         self.shared_memory_objects.clear()
@@ -1237,7 +1237,7 @@ class EntropyMaskingManager:
         for _block_id, noise_mmap in self.noise_blocks.items():
             try:
                 noise_mmap.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         try:
             import glob
@@ -1247,7 +1247,7 @@ class EntropyMaskingManager:
         for temp_file in temp_files:
             try:
                 os.unlink(temp_file)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self.noise_blocks.clear()
         self.active_masking = False

@@ -30,7 +30,7 @@ class OwnedResource(msgspec.Struct, gc=False):
             if self.cleanup:
                 try:
                     self.cleanup()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
 class ResourceLifecycleRegistry:

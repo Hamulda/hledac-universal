@@ -36,6 +36,7 @@ import time
 from pathlib import Path
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str, loads as _msgspec_loads
+from operator import attrgetter, itemgetter
 try:
     import orjson
     ORJSON_AVAILABLE = True
@@ -77,14 +78,14 @@ def _json_loads(data) -> Any:
     if ORJSON_AVAILABLE:
         try:
             return orjson.loads(data)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     try:
         if isinstance(data, bytes):
             return _msgspec_loads(data.decode('utf-8'))
         elif isinstance(data, str):
             return _msgspec_loads(data)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -268,7 +269,7 @@ class MemoryManager:
             value = await self.get(session_id, key)
             if value is not None:
                 history.append({'key': key, 'value': value})
-        history.sort(key=lambda x: x['value'].get('timestamp', 0) if isinstance(x['value'], dict) else 0, reverse=True)
+        history.sort(key=itemgetter("'").get('timestamp', 0) if isinstance(x['value'], dict) else 0, reverse=True)
         return history[:limit]
 
     async def clear_session(self, session_id: str) -> bool:
@@ -368,7 +369,7 @@ class MemoryManager:
     def __del__(self) -> None:
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 _memory_manager: MemoryManager | None = None
 

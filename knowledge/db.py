@@ -38,6 +38,7 @@ import logging
 import weakref
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -159,14 +160,14 @@ def _get_rust_pool() -> bool | None:
 # ============================================================================
 
 
-class DBCoordinates(msgspec.Struct, frozen=True, gc=False):
+class DBCoordinates(Struct, frozen=True):
     """Coordinates for a database operation."""
     db: str  # "duckdb" | "lmdb"
     table: str | None = None
     schema: str | None = None
 
 
-class QueryResult(msgspec.Struct, gc=False):
+class QueryResult(Struct):
     """Generic query result."""
     rows: list[dict[str, Any]]
     columns: list[str]

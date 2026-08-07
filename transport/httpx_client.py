@@ -211,7 +211,7 @@ async def close_httpx_client_async() -> None:
     # F4.3: Sync session_pool state
     try:
         await _pool_close()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # session_pool tracks its own state
 
 

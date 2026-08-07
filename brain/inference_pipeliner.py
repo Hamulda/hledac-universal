@@ -152,7 +152,7 @@ class InferencePipeliner:
             self._dispatch_task.cancel()
             try:
                 await self._dispatch_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         while self._pending:
             req = self._pending.popleft()

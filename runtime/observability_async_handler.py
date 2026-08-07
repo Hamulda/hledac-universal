@@ -269,7 +269,7 @@ class AsyncLogHandler:
                 self._queue.task_done()
             except queue.Empty:
                 continue
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def emit(self, message: str) -> None:
@@ -282,12 +282,12 @@ class AsyncLogHandler:
             if self._drop_oldest:
                 try:
                     self._queue.get_nowait()
-                except queue.Empty:
+                except queue.Empty:  # noqa: BLE001
                     pass
             self._queue.put_nowait(message)
-        except asyncio.QueueFull:
+        except asyncio.QueueFull:  # noqa: BLE001
             pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def stop(self) -> None:
@@ -325,7 +325,7 @@ async def configure_async_logging() -> None:
                 logger_factory=sl.stdlib.LoggerFactory(),
                 cache_logger_on_first_use=True,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -346,7 +346,7 @@ def _inject_trace_context_async(
             if ctx.is_valid:
                 out["trace_id"] = format(ctx.trace_id, "032x")
                 out["span_id"] = format(ctx.span_id, "016x")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     if out:
@@ -385,7 +385,7 @@ def _json_renderer_async(
                     AsyncLogHandler._instance.emit(line), name="log:emit"
                 )
                 return ""  # structlog requires non-None return
-            except RuntimeError:
+            except RuntimeError:  # noqa: BLE001
                 # No event loop - fall through to sync write
                 pass
 
@@ -401,7 +401,7 @@ def _json_renderer_async(
         try:
             fallback = f"[{_method.upper()}] {event}"
             sys.stderr.write(fallback + "\n")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return ""
 
@@ -418,6 +418,6 @@ def _get_trace_context_for_renderer() -> dict[str, Any]:
             if ctx.is_valid:
                 out["trace_id"] = format(ctx.trace_id, "032x")
                 out["span_id"] = format(ctx.span_id, "016x")
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return out

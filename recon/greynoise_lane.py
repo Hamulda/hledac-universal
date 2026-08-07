@@ -139,7 +139,7 @@ async def query_greynoise_ip(
             if not is_blitz_mode():
                 import random as _rng
                 await asyncio.sleep(abs(_rng.gauss(0.0, _sigma)))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft: jitter is best-effort
 
     key = api_key or _get_api_key()

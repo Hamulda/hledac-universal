@@ -208,7 +208,7 @@ def archive_http_response_cached(
     _loop = None
     try:
         _loop = asyncio.get_running_loop()
-    except RuntimeError:
+    except RuntimeError:  # noqa: BLE001
         pass  # No running loop — use sync fallback
 
     if _loop is not None:
@@ -1632,14 +1632,14 @@ class EvidenceLog:
             self._flush_task.cancel()
             try:
                 await safe_wait_for(self._flush_task, timeout=1.0, label='_flush_task')
-            except (TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                 pass
             self._flush_task = None
         if self._async_write_task is not None and (not self._async_write_task.done()):
             self._async_write_task.cancel()
             try:
                 await safe_wait_for(self._async_write_task, timeout=1.0, label='_async_write_task')
-            except (TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                 pass
             self._async_write_task = None
         if self._mpsc2_reader is not None:
@@ -1871,7 +1871,7 @@ class EvidenceLog:
                     if received:
                         batch.extend(received)
                         _events_since_last_flush += len(received)
-            except TimeoutError:
+            except TimeoutError:  # noqa: BLE001
                 pass
             if self._flush_shutdown.is_set():
                 break
@@ -3511,7 +3511,7 @@ class EvidenceLog:
                                 if line_str:
                                     data = orjson.loads(line_str)
                                     events.append(EvidenceEvent.from_dict(data))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                             current_line = bytearray()
                             if len(events) > max_events:
@@ -3525,7 +3525,7 @@ class EvidenceLog:
                         if line_str:
                             data = orjson.loads(line_str)
                             events.append(EvidenceEvent.from_dict(data))
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             # Yield in correct order (oldest to newest)
@@ -3826,7 +3826,7 @@ class EvidenceLog:
             try:
                 with contextlib.suppress(asyncio.CancelledError):
                     await safe_wait_for(self._cancel_watcher_task, timeout=2.0)
-            except (TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                 pass
             except Exception:  # noqa: BLE001
                 pass
@@ -3841,13 +3841,13 @@ class EvidenceLog:
                 self._flush_task.cancel()
                 try:
                     await safe_wait_for(self._flush_task, timeout=5.0, label='_flush_task')
-                except (TimeoutError, asyncio.CancelledError):
+                except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                     pass
             except asyncio.CancelledError:
                 self._flush_task.cancel()
                 try:
                     await safe_wait_for(self._flush_task, timeout=5.0, label='_flush_task')
-                except (TimeoutError, asyncio.CancelledError):
+                except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                     pass
             finally:
                 self._flush_task = None
@@ -3860,13 +3860,13 @@ class EvidenceLog:
                 self._async_write_task.cancel()
                 try:
                     await safe_wait_for(self._async_write_task, timeout=2.0, label='_async_write_task')
-                except (TimeoutError, asyncio.CancelledError):
+                except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                     pass
             except asyncio.CancelledError:
                 self._async_write_task.cancel()
                 try:
                     await safe_wait_for(self._async_write_task, timeout=2.0, label='_async_write_task')
-                except (TimeoutError, asyncio.CancelledError):
+                except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
                     pass
             finally:
                 self._async_write_task = None
@@ -3985,7 +3985,7 @@ class EvidenceLog:
                 # No running loop — use Runner for clean loop lifecycle management.
                 with asyncio.Runner() as runner:
                     runner.run(self.aclose())
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Best-effort cleanup — never raise from close()
             pass
 

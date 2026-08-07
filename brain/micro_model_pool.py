@@ -87,7 +87,7 @@ class UmaFragmentationMonitor:
         try:
             if hasattr(mx, 'metal') and hasattr(mx.metal, 'get_active_memory'):
                 return mx.metal.get_active_memory()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return 0
     
@@ -103,7 +103,7 @@ class UmaFragmentationMonitor:
         try:
             if hasattr(mx, 'metal') and hasattr(mx.metal, 'get_wired_memory'):
                 return mx.metal.get_wired_memory()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return 0
     
@@ -139,14 +139,14 @@ class UmaFragmentationMonitor:
         # Clear MLX caches first
         try:
             mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         
         # Clear Metal caches
         try:
             if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
                 mx.metal.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         
         # Force garbage collection
@@ -155,7 +155,7 @@ class UmaFragmentationMonitor:
         # Barrier: ensure all Metal operations complete before allocation
         try:
             mx.eval([])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     
     def calculate_fragmentation_score(self) -> float:
@@ -732,7 +732,7 @@ class MicroModelPool:
             if warmup:
                 try:
                     self._warmup_model(loaded)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # Warmup failure is non-fatal
             
             with self._lock:
@@ -794,7 +794,7 @@ class MicroModelPool:
                 )
             
             loaded.is_warmed = True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     
     def get_model(

@@ -234,7 +234,7 @@ class ArtiClient:
                 writer.close()
                 try:
                     await writer.wait_closed()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 return True
         except (TimeoutError, OSError, ConnectionRefusedError):
@@ -289,9 +289,9 @@ class ArtiClient:
                 self._writer.close()
                 try:
                     await self._writer.wait_closed()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._writer = None
         self._reader = None
@@ -554,9 +554,9 @@ class ArtiClient:
                 try:
                     async with asyncio.timeout(1.0):
                         await writer.wait_closed()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # ── Health & telemetry (mirrors I2PSAMv3Client.session_status) ──────────
@@ -663,7 +663,7 @@ class ArtiTransport(Transport):
                 status = await self._arti_client.session_status()
                 if status is None:
                     logger.debug('Arti keepalive: session status failed')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def on_phase_boundary(

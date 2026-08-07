@@ -258,7 +258,7 @@ class SemanticGravityField:
             if index_ready and self._index is not None:
                 try:
                     self._index.add(self._write_pos % self._max_embeddings, normalized[i])
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             self._write_pos += 1

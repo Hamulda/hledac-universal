@@ -407,7 +407,7 @@ class QuotientFilterFrontier:
         if self._quotient_filter is not None:
             try:
                 self._quotient_filter.remove(url)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def get_stats(self) -> FrontierStats:
@@ -427,7 +427,7 @@ class QuotientFilterFrontier:
                 from pyprobables import QuotientFilter
                 filter_size = self._quotient_filter.size
                 self._quotient_filter = QuotientFilter(filter_size=filter_size)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 class PersistentFrontier:

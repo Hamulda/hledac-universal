@@ -294,7 +294,7 @@ class AttributionConfidenceScorer:
                     factor = method(left, right)
                     if factor is not None:
                         factors.append(factor)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if factors:
                 confidence = sum((f.weighted_score for f in factors))
@@ -336,7 +336,7 @@ class AttributionConfidenceScorer:
                         continue
                 if not self._check_limit():
                     break
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return scores
 

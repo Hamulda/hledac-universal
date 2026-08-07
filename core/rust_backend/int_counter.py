@@ -79,6 +79,6 @@ def get_int_counter_domain(ext: object | None) -> _RustIntCounterDomain | _Pytho
     if ext is not None:
         try:
             return _RustIntCounterDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonIntCounterDomain()

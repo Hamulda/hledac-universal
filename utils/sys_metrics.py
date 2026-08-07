@@ -130,7 +130,7 @@ async def process_rss_gib() -> float:
 
         if rust.is_available:
             return rust.memory.get_process_rss_gib()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0.0
 
@@ -146,7 +146,7 @@ async def available_memory_gib() -> float:
 
         if rust.is_available:
             return rust.memory.get_available_memory_gib()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0.0
 
@@ -164,7 +164,7 @@ async def memory_pressure_level() -> int:
 
         if rust.is_available:
             return rust.memory.memory_pressure_level()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0
 
@@ -181,7 +181,7 @@ async def metal_active_memory_gib() -> float:
 
         if rust.is_available:
             return rust.memory.get_metal_active_memory_gib()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0.0
 

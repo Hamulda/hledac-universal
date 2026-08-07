@@ -226,7 +226,7 @@ def is_whisper_available() -> bool:
         level = get_current_degradation_level()
         if level is QoSLevel.EMERGENCY or level is QoSLevel.BATTERY:
             return False
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-open: governor unavailable → allow whisper
     if not _check_platform():
         return False
@@ -307,7 +307,7 @@ async def _download_model_ggml(model_size: str) -> Path | None:
             content = await fetch_content(url, timeout=_MODEL_DOWNLOAD_TIMEOUT_S)
             if content:
                 target_path.write_bytes(content)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fallback to direct curl
             pass
 
@@ -444,7 +444,7 @@ async def _ensure_coreml_model(
             content = await fetch_content(coreml_url, timeout=_MODEL_DOWNLOAD_TIMEOUT_S)
             if content:
                 zip_path.write_bytes(content)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         if not zip_path.exists():
@@ -635,7 +635,7 @@ class WhisperEngine:
                 try:
                     if hasattr(self._model, 'free'):
                         self._model.free()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._model = None
                 logger.debug(
@@ -687,7 +687,7 @@ class WhisperEngine:
                 try:
                     if hasattr(self._model, 'free'):
                         self._model.free()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._model = None
             self._whisper_params = None
@@ -698,7 +698,7 @@ class WhisperEngine:
             for tmp_dir in self._temp_dirs:
                 try:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._temp_dirs.clear()
 
@@ -708,7 +708,7 @@ class WhisperEngine:
                     get_mlx_family_mutex,
                 )
                 get_mlx_family_mutex().release('embed_ane')
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
 
     async def transcribe(

@@ -40,7 +40,7 @@ def _set_thread_qos(qos_class: int) -> None:
     try:
         libpthread = ctypes.CDLL('/usr/lib/libSystem.B.dylib')
         libpthread.pthread_set_qos_class_self_np(qos_class, 0)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 def _set_background() -> None:

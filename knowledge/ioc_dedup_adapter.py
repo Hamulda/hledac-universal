@@ -33,6 +33,7 @@ import logging
 import weakref
 from dataclasses import dataclass
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 from hledac.universal.paths import LMDB_ROOT
 if TYPE_CHECKING:
@@ -50,13 +51,13 @@ def _ioc_dedup_at_exit_close(instance: IocDedupAdapter) -> None:
     try:
         if instance._dirty:
             instance._persist_lmdb()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         if instance._lmdb_env is not None:
             instance._lmdb_env.close()
             instance._lmdb_env = None
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 def _normalize_ioc_value(value: str, ioc_type: str) -> str:
@@ -87,7 +88,7 @@ def _normalize_ioc_value(value: str, ioc_type: str) -> str:
         return value.lower()
     return value
 
-class _IocEntryPython(msgspec.Struct, gc=False):
+class _IocEntryPython(Struct):
     """Python fallback entry matching ioc_dedup.rs::IocEntry."""
     normalized_value: str
     ioc_type: str
@@ -183,7 +184,7 @@ class IocDedupStorePythonFallback:
         self._total_seen = 0
         self._total_deduped = 0
 
-class IocDedupStats(msgspec.Struct, frozen=True, gc=False):
+class IocDedupStats(Struct, frozen=True):
     """Stats snapshot from IocDedupAdapter."""
     total_seen: int = 0
     total_deduped: int = 0
@@ -230,7 +231,7 @@ class IocDedupAdapter:
             self._store = IocDedupStorePythonFallback(sprint_id=sprint_id)
         try:
             _IOC_DEDUP_LMDB_PATH.mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._finalizer = weakref.finalize(self, _ioc_dedup_at_exit_close, self)
         atexit.register(self._finalizer)
@@ -440,6 +441,6 @@ class IocDedupAdapter:
         if self._lmdb_env is not None:
             try:
                 self._lmdb_env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._lmdb_env = None

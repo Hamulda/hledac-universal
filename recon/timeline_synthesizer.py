@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 import msgspec
 from datetime import datetime
 from typing import Any
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 MAX_TIMELINE_EVENTS: int = 200
 MAX_EVENT_AGE_DAYS: int = 365 * 5
@@ -287,7 +288,7 @@ class TimelineSynthesizer:
                 self._stats['invalid_skipped'] += 1
                 continue
             valid_events.append(event)
-        valid_events.sort(key=lambda e: e.ts)
+        valid_events.sort(key=attrgetter("ts"))
         if len(valid_events) > MAX_TIMELINE_EVENTS:
             valid_events = valid_events[:MAX_TIMELINE_EVENTS]
         self._stats['events_output'] = len(valid_events)

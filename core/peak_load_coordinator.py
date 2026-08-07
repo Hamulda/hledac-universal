@@ -573,7 +573,7 @@ class GlobalPeakLoadCoordinator:
                                 self._preempt_signal.wait(),
                                 timeout=min(1.0, timeout_s - elapsed),
                             )
-                        except asyncio.TimeoutError:
+                        except asyncio.TimeoutError:  # noqa: BLE001
                             pass  # Continue loop, will check again
                         continue
 
@@ -600,7 +600,7 @@ class GlobalPeakLoadCoordinator:
                         timeout=min(_PREEMPTION_CHECK_INTERVAL_S, timeout_s - elapsed),
                     )
                     self._high_water_event.clear()
-                except asyncio.TimeoutError:
+                except asyncio.TimeoutError:  # noqa: BLE001
                     pass  # Continue loop, will check again
 
         finally:

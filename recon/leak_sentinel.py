@@ -121,7 +121,7 @@ def _redact_text(text: str) -> str:
     try:
         from hledac.universal.security.pii_gate import fallback_sanitize
         result = fallback_sanitize(result)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return result
 
@@ -344,7 +344,7 @@ def _dict_to_canonical(finding: dict, query: str, source_type: str, index: int) 
         full_payload = _leak_json_dumps(payload)
         if len(full_payload) + len(payload_text) < 8000:
             payload_text = payload_text + '|' + full_payload
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return CanonicalFinding(finding_id=finding_id, query=query, source_type=source_type, confidence=0.6, ts=time.time(), provenance=('leak_sentinel',), payload_text=payload_text)
 

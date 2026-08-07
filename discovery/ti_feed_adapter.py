@@ -328,18 +328,75 @@ class CisaKevAdapter(SourceAdapter):
         return tuple(entries)
 logger = logging.getLogger(__name__)
 
-async def fetch_urlhaus(max_items: int=100) -> list[dict]:
-    """URLhaus — live malware URL feed, public API, no key required."""
+
+async def _generic_get_feed(
+    url: str,
+    source_name: str,
+    *,
+    path: str = 'urls',
+    timeout: float = 15.0,
+    filter_key: str | None = None,
+    filter_value: str | None = None,
+    max_items: int = 100,
+) -> list[dict]:
+    """Generic GET feed fetcher — consolidates URLhaus/ThreatFox/SSLBL patterns."""
     try:
         s = await async_get_httpx_session()
-        data, status, err = await checked_httpx_get(s, 'https://urlhaus-api.abuse.ch/v1/urls/recent/', timeout=httpx.Timeout(15), failure_kind='urlhaus')
+        data, status, err = await checked_httpx_get(s, url, timeout=httpx.Timeout(timeout), failure_kind=source_name)
         if err:
-            logger.debug(f'[URLhaus] {err}')
+            logger.debug(f'[{source_name}] {err}')
             return []
-        return [{'ioc': e.get('url'), 'ioc_type': 'url', 'threat_type': e.get('threat'), 'title': f"URLhaus: {e.get('threat', 'malware')}", 'source': 'urlhaus'} for e in data.get('urls', [])[:max_items] if e.get('url_status') == 'online']
+        items = data.get(path, [])[:max_items]
+        if filter_key and filter_value:
+            items = [e for e in items if e.get(filter_key) == filter_value]
+        return items
     except Exception as e:
-        logger.debug(f'[URLhaus] {e}')
+        logger.debug(f'[{source_name}] {e}')
     return []
+
+
+async def _generic_post_feed(
+    url: str,
+    source_name: str,
+    *,
+    payload: dict | None = None,
+    timeout: float = 20.0,
+    data_path: str = 'data',
+    max_items: int = 25,
+    extractor: callable | None = None,
+) -> list[dict]:
+    """Generic POST feed fetcher — consolidates MalwareBazaar/ThreatFox patterns."""
+    try:
+        s = await async_get_httpx_session()
+        resp, err = await checked_httpx_post(s, url, json=payload or {}, timeout=httpx.Timeout(timeout), failure_kind=source_name)
+        if err:
+            logger.debug(f'[{source_name}] {err}')
+            return []
+        data = await resp.json()
+        items = data.get(data_path, [])[:max_items]
+        if extractor:
+            return extractor(items)
+        return items
+    except Exception as e:
+        logger.debug(f'[{source_name}] {e}')
+    return []
+
+
+async def fetch_urlhaus(max_items: int=100) -> list[dict]:
+    """URLhaus — live malware URL feed, public API, no key required."""
+    items = await _generic_get_feed(
+        'https://urlhaus-api.abuse.ch/v1/urls/recent/',
+        'urlhaus',
+        path='urls',
+        filter_key='url_status',
+        filter_value='online',
+        timeout=15.0,
+        max_items=max_items,
+    )
+    return [
+        {'ioc': e.get('url'), 'ioc_type': 'url', 'threat_type': e.get('threat'), 'title': f"URLhaus: {e.get('threat', 'malware')}", 'source': 'urlhaus'}
+        for e in items
+    ]
 
 async def fetch_threatfox(days: int=1) -> list[dict]:
     """ThreatFox IOC feed — public API, no key required."""
@@ -737,7 +794,7 @@ async def search_github_gists(keyword: str, max_results: int=10) -> list[dict]:
                     snippet_text = body_el.text(strip=True)[:200] if body_el else ''
                     if meta_url:
                         results.append({'url': f'https://gist.github.com{meta_url}', 'title': meta_a.text(strip=True) if meta_a else '', 'snippet': snippet_text, 'source': 'github_gist_search'})
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if not results:
             from bs4 import BeautifulSoup
@@ -810,7 +867,7 @@ async def search_ahmia(query: str, max_results: int=20, use_onion: bool=False) -
                     if a:
                         href = a.attributes.get('href', '')
                         results.append({'title': a.text(strip=True), 'url': href, 'snippet': p.text(strip=True) if p else '', 'source': 'ahmia_onion' if use_onion else 'ahmia_clearnet'})
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if not results:
             from bs4 import BeautifulSoup
@@ -924,7 +981,7 @@ class WaybackArchiveAdapter(SourceAdapter):
                         entries.append(NormalizedEntry(entry_hash=entry_hash, source_url=ar.url or '', title=ar.title or f'Archive: {ar.url}', body_text=ar.content[:500] if ar.content else '', published_at=published_ts, source_type=self.SOURCE_TYPE, raw_identifiers=(), source_tier=self.SOURCE_TIER, rich_content_available=False))
                         if len(entries) >= limit:
                             return tuple(entries)
-        except (TimeoutError, Exception):
+        except (TimeoutError, Exception):  # noqa: BLE001
             pass
         return tuple(entries)
 from hledac.universal.tool_registry import register_task
@@ -1111,11 +1168,11 @@ def _register_structured_adapters() -> None:
     from hledac.universal.discovery.source_registry import register_source_adapter
     try:
         register_source_adapter(NvdApiAdapter.SOURCE_TYPE, NvdApiAdapter)
-    except ValueError:
+    except ValueError:  # noqa: BLE001
         pass
     try:
         register_source_adapter(CisaKevAdapter.SOURCE_TYPE, CisaKevAdapter)
-    except ValueError:
+    except ValueError:  # noqa: BLE001
         pass
 _register_structured_adapters()
 
@@ -1366,7 +1423,7 @@ async def query_team_cymru_asn(ip: str) -> dict:
         txt = result[0].text if result else ''
         parts = txt.split('|')
         return {'ip': ip, 'asn': parts[0].strip() if parts else None, 'country': parts[2].strip() if len(parts) > 2 else None, 'registry': parts[3].strip() if len(parts) > 3 else None, 'source': 'team_cymru_aiodns'}
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     except Exception as e:
         logger.debug(f'[Cymru aiodns] {e}')
@@ -1443,17 +1500,22 @@ async def fetch_malwarebazaar_recent(tag: str | None=None, max_items: int=25) ->
     payload: dict = {'query': 'get_recent', 'selector': 'time'}
     if tag:
         payload = {'query': 'get_taginfo', 'tag': tag, 'limit': max_items}
-    try:
-        s = await async_get_httpx_session()
-        resp, err = await checked_httpx_post(s, 'https://mb-api.abuse.ch/api/v1/', json=payload, timeout=httpx.Timeout(20), failure_kind='malwarebazaar_recent')
-        if err:
-            logger.debug(f'[MalwareBazaar] {err}')
-            return []
-        data = await resp.json()
-        return [{'sha256': e.get('sha256_hash', ''), 'malware_family': e.get('signature', ''), 'file_type': e.get('file_type', ''), 'first_seen': e.get('first_seen', ''), 'tags': e.get('tags', []), 'ioc': e.get('sha256_hash', ''), 'ioc_type': 'sha256', 'title': f"MalwareBazaar: {e.get('signature', '?')}", 'source': 'malwarebazaar'} for e in data.get('data', [])[:max_items]]
-    except Exception as e:
-        logger.debug(f'[MalwareBazaar] {e}')
-    return []
+
+    def _extract_malwarebazaar(items: list) -> list[dict]:
+        return [
+            {'sha256': e.get('sha256_hash', ''), 'malware_family': e.get('signature', ''), 'file_type': e.get('file_type', ''), 'first_seen': e.get('first_seen', ''), 'tags': e.get('tags', []), 'ioc': e.get('sha256_hash', ''), 'ioc_type': 'sha256', 'title': f"MalwareBazaar: {e.get('signature', '?')}", 'source': 'malwarebazaar'}
+            for e in items
+        ]
+
+    return await _generic_post_feed(
+        'https://mb-api.abuse.ch/api/v1/',
+        'malwarebazaar_recent',
+        payload=payload,
+        data_path='data',
+        max_items=max_items,
+        timeout=20.0,
+        extractor=_extract_malwarebazaar,
+    )
 
 @register_task('malwarebazaar_search')
 async def _handle_malwarebazaar_search(task, scheduler):
@@ -1510,5 +1572,5 @@ async def _handle_cve_to_github(task, scheduler):
                 await scheduler._buffer_ioc_pivot('url', r.get('url', ''), 0.7)
         if results:
             await parallel_ok(*[_buffer_one(r) for r in results], label='ti_feed_adapter:cve_to_github')
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass

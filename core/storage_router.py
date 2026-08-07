@@ -294,7 +294,7 @@ class StorageRouter:
                     logger.warning('[StorageRouter] emergency pressure — spilling %s → %s', policy.kind.value, policy.spill_target.value)
                     self._stats['spills'] += 1
                     return _DECISION_MATRIX.get('embedding.float32[768]', _POLICY_WARM_EMBEDDING_768)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return policy
 
@@ -538,7 +538,7 @@ class StorageRouter:
             if backend is not None and hasattr(backend, 'get_stats'):
                 try:
                     stats[f'backend.{kind.value}'] = backend.get_stats()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         return stats
 

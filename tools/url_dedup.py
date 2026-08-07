@@ -170,7 +170,7 @@ if rust.is_available:
     if _tracking_params_fn is not None:
         try:
             _RUST_TRACKING_PARAMS = frozenset(_tracking_params_fn())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 # Rust MmapBloomFilter — file-backed persistent dedup (F266-U1).
@@ -1301,7 +1301,7 @@ def dedupe_url_list(
             unique.append(raw_url)
         return (unique, dropped)
 
-    except AttributeError:
+    except AttributeError:  # noqa: BLE001
         # add_batch not available on this strategy — fall back to per-item.
         pass
 

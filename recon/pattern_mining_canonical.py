@@ -114,10 +114,10 @@ class PatternMiningAdapter:
                     try:
                         payload = json.loads(f.payload_text)
                         value = payload.get('confidence', 0.5)
-                    except (json.JSONDecodeError, TypeError):
+                    except (json.JSONDecodeError, TypeError):  # noqa: BLE001
                         pass
                 events.append(Event(timestamp=datetime.fromtimestamp(ts), entity_id=entity_id, event_type=event_type, value=value, metadata={'query': getattr(f, 'query', '')}))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._stats['events_extracted'] = len(events)
         return events
@@ -132,7 +132,7 @@ class PatternMiningAdapter:
                 entity_id = f.finding_id if hasattr(f, 'finding_id') else str(id(f))
                 action_type = f.source_type if hasattr(f, 'source_type') else 'unknown'
                 actions.append(Action(timestamp=datetime.fromtimestamp(ts), user_id=user_id, action_type=action_type, target=entity_id, metadata={'source_type': action_type}))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._stats['actions_extracted'] = len(actions)
         return actions

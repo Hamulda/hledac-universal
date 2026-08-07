@@ -12,6 +12,7 @@ Canonical home for Hermes3Engine inference results used by:
 from __future__ import annotations
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -21,7 +22,7 @@ MAX_INFERENCE_ITEMS: int = 50  # cap hermes_outputs list in advisory runner
 # --------------------------------------------------------------------------- #
 # Struct
 # --------------------------------------------------------------------------- #
-class HermesInferenceOutput(msgspec.Struct, frozen=True, gc=False):
+class HermesInferenceOutput(Struct, frozen=True):
     """Hermes3Engine structured inference output for pivot planning.
 
     Migrated from @dataclass(slots=True) to msgspec.Struct(frozen=True) for:

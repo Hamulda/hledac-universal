@@ -54,6 +54,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 import numpy as np
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 try:
     import mlx.core as mx
@@ -549,7 +550,7 @@ class PatternMiningEngine:
             logger.warning(f'Insufficient events for temporal mining: {len(events)} < {min_events}')
             return []
         patterns = []
-        sorted_events = sorted(events, key=lambda e: e.timestamp)
+        sorted_events = sorted(events, key=attrgetter("timestamp"))
         timestamps = [e.timestamp for e in sorted_events]
         values = [e.value for e in sorted_events if e.value is not None]
         period_patterns = self._detect_periodicity(timestamps, values)
@@ -784,7 +785,7 @@ class PatternMiningEngine:
         for user_id, user_acts in user_actions.items():
             if len(user_acts) < min_actions:
                 continue
-            user_acts.sort(key=lambda a: a.timestamp)
+            user_acts.sort(key=attrgetter("timestamp"))
             sequence_pattern = self._extract_action_sequence(user_id, user_acts)
             if sequence_pattern:
                 patterns.append(sequence_pattern)
@@ -881,7 +882,7 @@ class PatternMiningEngine:
         """Analyze communication pattern between a specific pair."""
         if len(comms) < 2:
             return None
-        comms.sort(key=lambda c: c.timestamp)
+        comms.sort(key=attrgetter("timestamp"))
         response_times = []
         for i in range(1, len(comms)):
             delta = (comms[i].timestamp - comms[i - 1].timestamp).total_seconds()

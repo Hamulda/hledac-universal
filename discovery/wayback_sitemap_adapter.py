@@ -192,7 +192,7 @@ async def async_search_wayback_sitemap(domain_or_url: str, max_results: int=50, 
                 if sm_result.status_code == 200 and sm_result.text:
                     sm_bytes = sm_result.text.encode('utf-8')
                     return (url, _parse_sitemap_xml(sm_bytes)[:_MAX_URLS_PER_SITEMAP])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return (url, [])
     fetch_tasks = [fetch_sitemap(sm_url) for sm_url in sitemap_urls]
@@ -249,7 +249,7 @@ def _extract_domain(raw: str) -> str | None:
         parsed = urllib.parse.urlparse(raw)
         if parsed.netloc:
             return parsed.netloc
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 

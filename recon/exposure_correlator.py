@@ -145,7 +145,7 @@ def _extract_jarm_from_payload(payload_text: str | None) -> str | None:
         h = data.get('jarm_hash') or data.get('jarm') or data.get('hash')
         if h and len(h) == 62:
             return h
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -177,7 +177,7 @@ async def _check_bucket_head(session: httpx.AsyncClient, bucket_name: str, provi
             status = resp.status
             if status in (200, 403):
                 return {'url': url, 'bucket_name': bucket_name, 'provider': provider, 'status': status, 'is_open': status == 200, 'headers': dict(resp.headers)}
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 

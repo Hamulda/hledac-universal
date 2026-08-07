@@ -15,7 +15,6 @@ FastEmbed uses quantized ONNX models for maximum inference speed
 and minimal memory footprint (~50MB vs ~420MB for PyTorch).
 """
 from __future__ import annotations
-import msgspec
 
 import hashlib
 import logging
@@ -29,6 +28,8 @@ from enum import Enum
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from hledac.universal.utils.async_helpers import parallel_ok
 import compression.zstd as _zstd
 ZSTD_AVAILABLE = True
@@ -149,7 +150,7 @@ def _deserialize_cache(data: bytes) -> dict[str, CacheEntry]:
                         continue
                     result[k] = _dict_to_entry(inner, fallback_key=k)
                 return result
-        except (_msgspec_lib.ValidationError, _msgspec_lib.DecodeError, Exception):
+        except (_msgspec_lib.ValidationError, _msgspec_lib.DecodeError, Exception):  # noqa: BLE001
             pass
     try:
         raw = decode(payload)
@@ -201,7 +202,7 @@ class CacheLocation(Enum):
     L1_MEMORY = L1_MEMORY
     L2_DISK = L2_DISK
 
-class CacheEntry(msgspec.Struct, gc=False):
+class CacheEntry(Struct):
     """Single cache entry."""
     cache_id: str
     content: Any
@@ -213,7 +214,7 @@ class CacheEntry(msgspec.Struct, gc=False):
     cache_type: CacheType
     metadata: dict[str, Any]
 
-class CacheStats(msgspec.Struct, gc=False):
+class CacheStats(Struct):
     """Cache performance statistics."""
     total_entries: int
     l1_entries: int

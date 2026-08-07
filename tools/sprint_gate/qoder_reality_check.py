@@ -16,6 +16,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 import msgspec
 from pathlib import Path
+from operator import attrgetter, itemgetter
 REPO_ROOT = Path('/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal')
 QODER_ROOT_DEFAULT = REPO_ROOT / '.qoder/repowiki/en/content'
 OUTPUT_JSON_DEFAULT = REPO_ROOT / 'probe_qoder_reality/qoder_reality_matrix.json'
@@ -419,7 +420,7 @@ def scan_qoder_wiki(qoder_root: Path) -> tuple[dict[str, ModuleReality], list[Ov
 def write_json(modules: dict[str, ModuleReality], overclaims: list[Overclaim], gaps: list[HighRiskGap], summary: dict, output_path: Path) -> None:
     """Write JSON reality matrix."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    data = {'qoder_root': str(REPO_ROOT / '.qoder/repowiki/en/content'), 'documents_scanned': summary['documents_scanned'], 'references_extracted': summary['references_extracted'], 'modules': [asdict(m) for m in sorted(modules.values(), key=lambda m: m.path)], 'overclaims': [asdict(o) for o in overclaims], 'high_risk_gaps': [asdict(g) for g in gaps], 'summary': summary}
+    data = {'qoder_root': str(REPO_ROOT / '.qoder/repowiki/en/content'), 'documents_scanned': summary['documents_scanned'], 'references_extracted': summary['references_extracted'], 'modules': [asdict(m) for m in sorted(modules.values(), key=attrgetter("path"))], 'overclaims': [asdict(o) for o in overclaims], 'high_risk_gaps': [asdict(g) for g in gaps], 'summary': summary}
     output_path.write_text(json.dumps(data, indent=2))
     print(f"JSON written: {output_path} ({len(data['modules'])} modules)")
 
@@ -429,44 +430,44 @@ def write_markdown(modules: dict[str, ModuleReality], overclaims: list[Overclaim
     for m in modules.values():
         by_verdict[m.verdict].append(m)
     lines = ['# Qoder Repowiki Reality Matrix', '', f"**Scanned**: {summary['documents_scanned']} documents, {summary['references_extracted']} references, {summary['modules_total']} unique modules ({summary['modules_exist']} exist, {summary['modules_missing']} missing)", '', '---', '', '## Executive Summary', '', f'- **CANONICAL_OWNER**: {len(by_verdict.get(VERDICT_CANONICAL_OWNER, []))} modules', f'- **ACTIVE_RUNTIME**: {len(by_verdict.get(VERDICT_ACTIVE_RUNTIME, []))} modules', f'- **ACTIVE_PIPELINE**: {len(by_verdict.get(VERDICT_ACTIVE_PIPELINE, []))} modules', f'- **ACTIVE_SIDECAR**: {len(by_verdict.get(VERDICT_ACTIVE_SIDECAR, []))} modules', f'- **ACTIVE_DIAGNOSTIC**: {len(by_verdict.get(VERDICT_ACTIVE_DIAGNOSTIC, []))} modules', f'- **ACTIVE_SUPPORT**: {len(by_verdict.get(VERDICT_ACTIVE_SUPPORT, []))} modules', f'- **ACTIVE_CAPABILITY**: {len(by_verdict.get(VERDICT_ACTIVE_CAPABILITY, []))} modules', f'- **ACTIVE_ENTRYPOINT**: {len(by_verdict.get(VERDICT_ACTIVE_ENTRYPOINT, []))} modules', f'- **PATH_AUTHORITY**: {len(by_verdict.get(VERDICT_PATH_AUTHORITY, []))} modules', f'- **DONOR_OR_OPTIONAL**: {len(by_verdict.get(VERDICT_DONOR_OR_OPTIONAL, []))} modules', f'- **SECURITY_CRITICAL**: {len(by_verdict.get(VERDICT_SECURITY_CRITICAL, []))} modules', f'- **STORAGE_AUTHORITY**: {len(by_verdict.get(VERDICT_STORAGE_AUTHORITY, []))} modules', f'- **TRANSPORT_AUTHORITY**: {len(by_verdict.get(VERDICT_TRANSPORT_AUTHORITY, []))} modules', f'- **DONOR**: {len(by_verdict.get(VERDICT_DONOR, []))} modules', f'- **LEGACY**: {len(by_verdict.get(VERDICT_LEGACY, []))} modules', f'- **DEPRECATED**: {len(by_verdict.get(VERDICT_DEPRECATED, []))} modules', f'- **TEST_ONLY**: {len(by_verdict.get(VERDICT_TEST_ONLY, []))} modules', f'- **DEAD_OR_UNWIRED**: {len(by_verdict.get(VERDICT_DEAD_OR_UNWIRED, []))} modules', f'- **MISSING_DOC_TARGET**: {len(by_verdict.get(VERDICT_MISSING_DOC_TARGET, []))} modules', f'- **UNKNOWN_NEEDS_REVIEW**: {len(by_verdict.get(VERDICT_UNKNOWN_NEEDS_REVIEW, []))} modules', '', '---', '', '## Canonical Hot Path Map', '', '```', 'core/__main__.py (CANONICAL_OWNER)', '  └── run_sprint()', '        ├── runtime/sprint_scheduler.py (ACTIVE_RUNTIME)', '        │     ├── runtime/sprint_lifecycle.py', '        │     ├── runtime/sprint_lifecycle_runner.py', '        │     ├── runtime/sprint_advisory_runner.py (ACTIVE_SIDECAR)', '        │     ├── runtime/sidecar_bus.py (ACTIVE_SIDECAR)', '        │     ├── runtime/sidecar_dispatcher.py (ACTIVE_SIDECAR)', '        │     └── runtime/shadow_*.py (ACTIVE_DIAGNOSTIC)', '        ├── knowledge/duckdb_store.py (STORAGE_AUTHORITY)', '        ├── knowledge/semantic_store.py (STORAGE_AUTHORITY)', '        ├── export/sprint_exporter.py', '        └── pipeline/live_public_pipeline.py (ACTIVE_PIPELINE)', '              └── pipeline/live_feed_pipeline.py (ACTIVE_PIPELINE)', '```', '', '---', '', '## Active Runtime Modules', '']
-    for m in sorted(by_verdict.get(VERDICT_ACTIVE_RUNTIME, []), key=lambda x: x.path):
+    for m in sorted(by_verdict.get(VERDICT_ACTIVE_RUNTIME, []), key=attrgetter("path")):
         lines.append(f"- `{m.path}` — {(m.qoder_docs[0] if m.qoder_docs else 'no docs')}")
     lines.extend(['', '## Active Pipeline Modules', ''])
-    for m in sorted(by_verdict.get(VERDICT_ACTIVE_PIPELINE, []), key=lambda x: x.path):
+    for m in sorted(by_verdict.get(VERDICT_ACTIVE_PIPELINE, []), key=attrgetter("path")):
         lines.append(f'- `{m.path}` — {len(m.qoder_docs)} doc(s)')
     lines.extend(['', '## Active Sidecar Modules', ''])
-    for m in sorted(by_verdict.get(VERDICT_ACTIVE_SIDECAR, []), key=lambda x: x.path):
+    for m in sorted(by_verdict.get(VERDICT_ACTIVE_SIDECAR, []), key=attrgetter("path")):
         lines.append(f'- `{m.path}`')
     lines.extend(['', '## Active Diagnostic Modules', ''])
-    for m in sorted(by_verdict.get(VERDICT_ACTIVE_DIAGNOSTIC, []), key=lambda x: x.path):
+    for m in sorted(by_verdict.get(VERDICT_ACTIVE_DIAGNOSTIC, []), key=attrgetter("path")):
         lines.append(f'- `{m.path}`')
     lines.extend(['', '## Security-Critical Modules', ''])
-    for m in sorted(by_verdict.get(VERDICT_SECURITY_CRITICAL, []), key=lambda x: x.path):
+    for m in sorted(by_verdict.get(VERDICT_SECURITY_CRITICAL, []), key=attrgetter("path")):
         lines.append(f"- `{m.path}` — {(m.risks[0] if m.risks else 'no risks noted')}")
     lines.extend(['', '## Storage Authority Modules', ''])
-    for m in sorted(by_verdict.get(VERDICT_STORAGE_AUTHORITY, []), key=lambda x: x.path):
+    for m in sorted(by_verdict.get(VERDICT_STORAGE_AUTHORITY, []), key=attrgetter("path")):
         lines.append(f'- `{m.path}`')
     lines.extend(['', '## Transport Authority Modules', ''])
-    for m in sorted(by_verdict.get(VERDICT_TRANSPORT_AUTHORITY, []), key=lambda x: x.path):
+    for m in sorted(by_verdict.get(VERDICT_TRANSPORT_AUTHORITY, []), key=attrgetter("path")):
         lines.append(f'- `{m.path}`')
     lines.extend(['', '## Donor / Legacy / Deprecated Modules', ''])
     for verdict in [VERDICT_DONOR, VERDICT_LEGACY, VERDICT_DEPRECATED]:
         if by_verdict.get(verdict):
             lines.append(f'\n### {verdict} ({len(by_verdict[verdict])})')
-            for m in sorted(by_verdict[verdict], key=lambda x: x.path)[:20]:
+            for m in sorted(by_verdict[verdict], key=attrgetter("path"))[:20]:
                 lines.append(f'- `{m.path}` — {len(m.qoder_docs)} doc(s)')
             if len(by_verdict[verdict]) > 20:
                 lines.append(f'  ... and {len(by_verdict[verdict]) - 20} more')
     lines.extend(['', '## Missing Documentation Targets', ''])
     missing = [m for m in modules.values() if not m.exists]
     if missing:
-        for m in sorted(missing, key=lambda x: x.path)[:30]:
+        for m in sorted(missing, key=attrgetter("path"))[:30]:
             lines.append(f'- `{m.path}` — referenced by {len(m.qoder_docs)} doc(s)')
     else:
         lines.append('None — all referenced files exist.')
     lines.extend(['', '## Unknown / Needs Review', ''])
     unknown = by_verdict.get(VERDICT_UNKNOWN_NEEDS_REVIEW, [])
-    for m in sorted(unknown, key=lambda x: x.path)[:20]:
+    for m in sorted(unknown, key=attrgetter("path"))[:20]:
         lines.append(f'- `{m.path}` — {m.recommended_action}')
     lines.extend(['', '## Overclaims (Grouped)', ''])
     if overclaims:

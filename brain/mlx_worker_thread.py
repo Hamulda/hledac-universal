@@ -80,11 +80,11 @@ def _worker_at_exit_shutdown(instance: MLXWorkerThread) -> None:
         if instance._loop is not None and (not instance._loop.is_closed()):
             try:
                 instance._loop.call_soon_threadsafe(instance._loop.stop)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if instance._thread is not None and instance._thread.is_alive():
             instance._thread.join(timeout=SHUTDOWN_TIMEOUT_S)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 class MLXWorkerThread:
@@ -268,7 +268,7 @@ class MLXWorkerThread:
                 from hledac.universal.utils.mlx_memory import get_metal_stream_context
                 _stream_ctx = get_metal_stream_context()
                 _stream_ctx.__enter__()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             if self._spsc_pair is not None:
                 try:
@@ -296,7 +296,7 @@ class MLXWorkerThread:
                     if pending:
                         try:
                             loop.run_until_complete(safe_gather_fire_and_forget(*pending, label='mlx_worker:shutdown'))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     loop.close()
                     gc.collect()
@@ -380,7 +380,7 @@ class MLXWorkerThread:
         except asyncio.TimeoutError:
             try:
                 cf_future.cancel()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             raise
         finally:

@@ -309,7 +309,7 @@ def _so_mtime() -> float | None:
                         break
             if os.path.isfile(path):
                 return os.path.getmtime(path)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 

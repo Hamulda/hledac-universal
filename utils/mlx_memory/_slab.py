@@ -27,6 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 _SLAB_CLASSES_BYTES: tuple[int, ...] = (64 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 64 * 1024 * 1024, 128 * 1024 * 1024, 256 * 1024 * 1024)
 _SLAB_CLASS_NAMES: tuple[str, ...] = ('64KB', '256KB', '1MB', '4MB', '16MB', '64MB', '128MB', '256MB')
@@ -116,7 +117,7 @@ class MetalSlabPool:
                     logger.debug(f'[MetalSlabPool] HIT slab={slab_id[:8]} size={actual_size // 1024}KB')
                     return slab
             if len(slabs) >= _SLABS_PER_CLASS:
-                lru_slab = min(slabs.values(), key=lambda s: s.last_access)
+                lru_slab = min(slabs.values(), key=attrgetter("last_access"))
                 self._evict_slab(lru_slab, size_cls)
             if self._stats_allocated_bytes + actual_size > _MAX_SLAB_TOTAL_BYTES:
                 self._aggressive_cleanup()

@@ -241,7 +241,7 @@ class RustFederatedQTable:
                 state_key = str(state)
                 action_key = str(action)
                 return float(self._rust.get_q(state_key, action_key))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return self._python.get_q(state, action)
 
@@ -251,7 +251,7 @@ class RustFederatedQTable:
             try:
                 state_key = str(state)
                 return str(self._rust.get_best_action(state_key, actions))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return self._python.get_best_action(state, actions)
 
@@ -272,7 +272,7 @@ class RustFederatedQTable:
                 action_key = str(action)
                 self._rust.update(state_key, action_key, float(reward), next_key)
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._python.update(state, action, reward, next_state)
 
@@ -294,7 +294,7 @@ class RustFederatedQTable:
                     for lane, state, action, reward, next_state in items
                 ]
                 return int(self._rust.update_batch(rust_items))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Fallback: serial Python
         for _lane, state, action, reward, next_state in items:
@@ -306,7 +306,7 @@ class RustFederatedQTable:
         if self._rust is not None:
             try:
                 return dict(self._rust.to_dict())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return self._python.to_dict()
 
@@ -315,7 +315,7 @@ class RustFederatedQTable:
         if self._rust is not None:
             try:
                 return bool(self._rust.persist_to_file(path))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Python fallback: serialize to dict then write JSON
         try:
@@ -333,7 +333,7 @@ class RustFederatedQTable:
         if self._rust is not None:
             try:
                 return bool(self._rust.load_from_file(path))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Python fallback
         try:
@@ -350,7 +350,7 @@ class RustFederatedQTable:
         if self._rust is not None:
             try:
                 return int(self._rust.len())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return len(self._python)
 
@@ -359,6 +359,6 @@ class RustFederatedQTable:
         if self._rust is not None:
             try:
                 return bool(self._rust.is_empty())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return len(self._python) == 0

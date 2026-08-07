@@ -30,6 +30,7 @@ Performance (F350M-R):
 import logging
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 import orjson
 
@@ -44,7 +45,7 @@ MAX_PROFILE_ENTRIES: int = 500
 
 # ── Dataclasses ────────────────────────────────────────────────────────────────
 
-class SprintDiffResult(msgspec.Struct, frozen=True, gc=False):
+class SprintDiffResult(Struct, frozen=True):
     target_id: str
     current_sprint_id: str
     previous_sprint_id: str | None
@@ -53,7 +54,7 @@ class SprintDiffResult(msgspec.Struct, frozen=True, gc=False):
     changed_entities: list[dict]
 
 
-class TargetProfileSummary(msgspec.Struct, gc=False):
+class TargetProfileSummary(Struct):
     target_id: str
     first_seen: float
     last_seen: float

@@ -189,7 +189,7 @@ def _extract_domain_from_url(url: str | None) -> str | None:
             if host.startswith('www.'):
                 host = host[4:]
             return host
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -412,7 +412,7 @@ class ForensicsEnricher:
                         if whois_ip_data or rdns_ip_data:
                             enrichment['x_originating_ip_enrichment'] = {'ip': x_originating_ip, 'whois': whois_ip_data, 'rdns': rdns_ip_data}
                             forensics_result.enrichment_available = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         if any((v is not None for k, v in enrichment.items() if k not in ('finding_id', 'file_path', 'enrichment_available'))):
             enrichment['enrichment_available'] = True
@@ -700,22 +700,22 @@ class ForensicsEnricher:
                     try:
                         ans = await resolver.resolve(domain, 'A')
                         result['a'] = [str(r) for r in ans]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         ans = await resolver.resolve(domain, 'AAAA')
                         result['aaaa'] = [str(r) for r in ans]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         ans = await resolver.resolve(domain, 'MX')
                         result['mx'] = [f'{r.preference} {r.exchange}' for r in ans]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         ans = await resolver.resolve(domain, 'NS')
                         result['ns'] = [str(r) for r in ans]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return result
                 except ImportError:
@@ -726,7 +726,7 @@ class ForensicsEnricher:
                             from hledac.universal.runtime.worker_pool import io_bound
                             ans = await io_bound(dns.resolver.resolve, domain, rtype, lifetime=_EXTERNAL_LOOKUP_TIMEOUT)
                             res[key] = [fmt(rec) for rec in ans]
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     return res
             async with asyncio.timeout(_EXTERNAL_LOOKUP_TIMEOUT):
@@ -928,7 +928,7 @@ def make_canonical_finding_from_enrichment(original_finding: Any, enrichment: di
             if facet:
                 enrichment_with_facet = _merge_facet_into_enrichment(enrichment, facet)
                 payload_text = _bound_enrichment_for_payload(enrichment_with_facet)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return CanonicalFinding(finding_id=finding_id, query=query, source_type=new_source_type, confidence=confidence, ts=ts, provenance=('forensic_analysis', parent_source_type), payload_text=payload_text)
     except Exception as exc:

@@ -133,7 +133,7 @@ class PromptBandit:
                         if hasattr(orch, '_metrics_registry'):
                             metrics = getattr(orch._metrics_registry, '_metrics', {})
                             ane_load = metrics.get('ane_activity_estimate', 0.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         try:
             import psutil
@@ -146,9 +146,9 @@ class PromptBandit:
                     gpu_load = min(1.0, mx.get_active_memory() / (4 * 1024 ** 3))
                 else:
                     gpu_load = 0.0
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return [complexity, task, hour, thermal_state, on_battery, available_ram, ane_load, gpu_load, 1.0]
 
@@ -214,7 +214,7 @@ class PromptBandit:
                     self._enforce_arm_cap()
             self._A[idx] += np.outer(x_np, x_np)
             self._b[idx] += reward * x_np
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         self._save_counter += 1
         if self._save_counter % 10 == 0:

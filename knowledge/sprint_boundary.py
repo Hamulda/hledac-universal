@@ -57,7 +57,7 @@ class SprintBoundaryCoordinator:
         # 1. Invalidate query cache
         try:
             self._cache.invalidate()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 2. Advance dedup store (getattr for type-safe call on protocol object)
@@ -65,5 +65,5 @@ class SprintBoundaryCoordinator:
             advance_fn = getattr(self._dedup, "advance_ioc_sprint", None)
             if advance_fn is not None:
                 advance_fn(sprint_id)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass

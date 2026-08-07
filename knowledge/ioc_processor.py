@@ -199,12 +199,12 @@ class IOCProcessor:
             # Try SIMD path first (fastest on M1)
             try:
                 return ioc_domain.extract_iocs_simd(text)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             # Fallback to basic Rust regex extractor
             try:
                 return ioc_domain.extract_iocs_flat(text)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Python fallback — named-group combined regex, single pass
@@ -228,7 +228,7 @@ class IOCProcessor:
             ioc_domain = self._accel.ioc
             try:
                 return ioc_domain.batch_extract_iocs_simd(texts)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Python fallback — parallel via ThreadPoolExecutor
@@ -257,7 +257,7 @@ class IOCProcessor:
             ioc_domain = self._accel.ioc
             try:
                 return ioc_domain.batch_extract_iocs_simd_indexed(texts)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Python fallback
@@ -277,7 +277,7 @@ class IOCProcessor:
             url_domain = self._accel.url
             if url_domain is not None:
                 return url_domain.normalize(url)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return _python_url_normalize(url)
@@ -292,7 +292,7 @@ class IOCProcessor:
             try:
                 # is_rust_available already guarantees ioc is not None
                 return self._accel.ioc.batch_dedup_urls(urls)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return _python_batch_dedup_urls(urls)

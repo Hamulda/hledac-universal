@@ -186,7 +186,7 @@ class _TokenBucket:
                 try:
                     async with asyncio.timeout(min(remaining, 0.1)):
                         await condition.wait()
-                except asyncio.TimeoutError:
+                except asyncio.TimeoutError:  # noqa: BLE001
                     pass  # Timeout expired, loop will re-check tokens
                 except asyncio.CancelledError:
                     raise

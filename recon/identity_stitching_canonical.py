@@ -29,6 +29,7 @@ from dataclasses import dataclass
 import msgspec
 from typing import Any
 from hledac.universal.utils.msgspec_json import dumps_str as _msgspec_dumps_str
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 MAX_COMPARISONS: int = 2000
 IDENTITY_MATCH_THRESHOLD: float = 0.7
@@ -122,7 +123,7 @@ class IdentityStitchingAdapter:
                 try:
                     ip = self._to_identity_profile(esp)
                     self._engine.add_profile(ip)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._stats['profiles_added'] = len(profiles)
             start = time.monotonic()
@@ -207,7 +208,7 @@ class IdentityStitchingAdapter:
                 if cand.candidate_id in right_to_left:
                     relevant_scores.append(right_to_left[cand.candidate_id])
                 if relevant_scores:
-                    best_score = max(relevant_scores, key=lambda s: s.confidence)
+                    best_score = max(relevant_scores, key=attrgetter("confidence"))
                     enriched_cand = enrich_candidate_with_attribution(cand, best_score)
                     enriched.append(enriched_cand)
                 else:

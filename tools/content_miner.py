@@ -17,10 +17,12 @@ Optimization Strategy:
 import logging
 import re
 from dataclasses import dataclass, field
-import msgspec
 from typing import Any
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from urllib.parse import urljoin, urlparse
 
+from operator import attrgetter, itemgetter
 # selectolax — strict import with fallback
 try:
     from selectolax.parser import HTMLParser
@@ -79,7 +81,7 @@ _NH3_FALLBACK_PATTERNS: list[tuple[re.Pattern, str]] = [
 _TAG_STRIP_PATTERN = re.compile(r'<[^>]+>')
 _MULTI_SPACE_PATTERN = re.compile(r'\s+')
 
-class MiningResult(msgspec.Struct, gc=False):
+class MiningResult(Struct):
     """Result of content mining operation"""
     content: str
     title: str = ''
@@ -267,13 +269,13 @@ class RustMiner:
                 # preserves structural tags — strip all remaining tags for text output
                 text = _TAG_STRIP_PATTERN.sub(' ', cleaned)
                 return _MULTI_SPACE_PATTERN.sub(' ', text).strip()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # FALLBACK: html_text_fast canonical helper
         if _CANONICAL_HTML_TEXT_AVAILABLE and html_to_text_fast is not None:
             try:
                 return html_to_text_fast(html) or ''
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # ULTIMATE FALLBACK: regex patterns (no external dependencies)
         try:
@@ -556,7 +558,7 @@ def extract_embedded_json(html_content: str, url: str='', max_scripts: int=3, ma
                     result['extracted_texts'] = limited_texts
                     if result is not None and 'embedded_state' in result:
                         logger.info(f"[EMBEDDED JSON] url={url} kind=next_data bytes={len(json_str)} extracted_chars={result['embedded_state']['extracted_chars']}")
-                except json_module.JSONDecodeError:
+                except json_module.JSONDecodeError:  # noqa: BLE001
                     pass
         if len(result['extracted_texts']) == 0 or len(result['extracted_texts']) < max_scripts:
             json_pattern = '<script[^>]*type=["\\\']application/json["\\\'][^>]*>(.*?)</script>'
@@ -580,7 +582,7 @@ def extract_embedded_json(html_content: str, url: str='', max_scripts: int=3, ma
                             result['embedded_state'] = {'type': 'json_script', 'preview': json_str[:500], 'size': len(json_str), 'extracted_chars': sum((len(t) for t in limited_texts))}
                             result['extracted_texts'] = limited_texts
                         logger.info(f'[EMBEDDED JSON] url={url} kind=json_script_{i} bytes={len(json_str)} extracted_chars={sum((len(t) for t in limited_texts))}')
-                    except json_module.JSONDecodeError:
+                    except json_module.JSONDecodeError:  # noqa: BLE001
                         pass
     except Exception as e:
         logger.debug(f'Embedded JSON extraction failed: {e}')
@@ -888,7 +890,7 @@ class MetadataExtractor:
                         if 'GPS GPSLongitudeRef' in tags and str(tags['GPS GPSLongitudeRef']) == 'W':
                             lon = -lon
                         result['gps_coords'] = (lat, lon)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 if 'EXIF DateTimeOriginal' in tags:
                     result['creation_date'] = str(tags['EXIF DateTimeOriginal'])
@@ -1147,9 +1149,9 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
                         return
                     candidates.append((entry.path, entry, stat))
                     total_bytes += stat.st_size
-                except OSError:
+                except OSError:  # noqa: BLE001
                     pass
-        except PermissionError:
+        except PermissionError:  # noqa: BLE001
             pass
     try:
         with os.scandir(root_dir) as it:
@@ -1174,7 +1176,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
             if prefix_bytes:
                 try:
                     text = prefix_bytes.decode('utf-8', errors='replace')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             imports: list[str] = []
             if text:
@@ -1205,7 +1207,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
             except TimeoutError:
                 truncated = True
                 truncation_reason = 'time_budget'
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     else:
         for path, entry, stat_result in candidates:
@@ -1241,7 +1243,7 @@ def build_structure_map(root_dir: str, *, limits: dict, state: dict) -> dict:
     elapsed_ms = int((time.monotonic() - start_time) * 1000)
     total_files = len(files_data)
     churn_ratio = len(changed_files) / total_files if total_files > 0 else 0.0
-    sorted_files = sorted(files_data, key=lambda f: f['rel_path'])
+    sorted_files = sorted(files_data, key=itemgetter("'"))
     fingerprint_input = {'files': [(f['rel_path'], f['prefix_hash'], f.get('mtime_ns', 0)) for f in sorted_files], 'edges': [(e['src'], e['dst']) for e in edges], 'limits_used': {'max_files': max_files, 'max_bytes_total': max_bytes_total, 'max_parse_bytes_per_file': max_parse_bytes, 'time_budget_ms': time_budget_ms, 'prefix_hash_bytes': prefix_hash_bytes, 'incremental': incremental, 'parallel_scan_threshold': parallel_threshold, 'max_workers': max_workers}, 'version': '1.0'}
     fingerprint = _compute_fingerprint(fingerprint_input)
     return {'fingerprint': fingerprint, 'files': files_data, 'edges': edges, 'meta': {'version': '1.0', 'limits_used': fingerprint_input['limits_used'], 'elapsed_ms': elapsed_ms, 'total_files': total_files, 'changed_files': len(changed_files), 'changed_modules': changed_modules, 'churn_ratio': churn_ratio, 'truncated': truncated, 'truncation_reason': truncation_reason, 'errors': errors}}
@@ -1276,12 +1278,12 @@ def _hash_bytes(data: bytes) -> str:
     if _RUST_XXHASH_AVAILABLE and _content_hash_64_rust:
         try:
             return f'{_content_hash_64_rust(data):016x}'
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     try:
         import xxhash
         return xxhash.xxh3_64(data).hexdigest()
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     return hashlib.sha256(data).hexdigest()[:16]
 

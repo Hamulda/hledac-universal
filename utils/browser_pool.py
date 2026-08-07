@@ -232,7 +232,7 @@ class BrowserPool:
             self._prewarm_task.cancel()
             try:
                 await self._prewarm_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
             self._prewarm_task = None
 
@@ -256,7 +256,7 @@ class BrowserPool:
                 # Browser died — launch a replacement
                 logger.debug("[BrowserPool] idle browser was dead, launching replacement")
                 return await self._launch_browser()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fall through to launch below
 
         # Slow path: launch new browser (lock prevents thundering herd)

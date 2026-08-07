@@ -28,7 +28,7 @@ def _init_lz4() -> bool:
                 if fn is not None:
                     _lz4_fn = fn
                     return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 _lz4_frame_available: bool | None = None
@@ -171,7 +171,7 @@ class LZ4JSONLWriter:
                 await safe_wait_for(self._writer_task, timeout=5.0, label='_writer_task')
             except asyncio.TimeoutError:
                 self._writer_task.cancel()
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         await self._close_files()
 
@@ -257,7 +257,7 @@ class LZ4JSONLWriter:
                     self._file_jsonl.write(line.decode('utf-8', errors='replace'))
                     self._file_jsonl.write('\n')
                 self._file_jsonl.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _close_files(self) -> None:
@@ -266,7 +266,7 @@ class LZ4JSONLWriter:
             if f is not None:
                 try:
                     f.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         self._file_zst = None
         self._file_jsonl = None

@@ -86,7 +86,7 @@ def _python_extract_links_regex(html: str, base_url: str) -> list[str]:
             try:
                 resolved = urlparse.urljoin(base_url, href)
                 href = resolved
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         results.append(href)
     return results
@@ -1169,7 +1169,7 @@ def _python_madvise_free_reusable(addr: int, length: int) -> bool:
             libc = ctypes.CDLL(None)
             result = libc.madvise(addr, length, 7)  # MADV_FREE_REUSABLE
             return result == 0
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 
@@ -1243,7 +1243,7 @@ def _acquire_ro_conn(db_path: str) -> Any:
             _POOL_PATHS.discard(evict_conn.database_path if hasattr(evict_conn, "database_path") else None)
             try:
                 evict_conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Try to reuse existing connection for this db_path (LRU hit)
         for i, (path, conn) in enumerate(_POOL):
@@ -1268,7 +1268,7 @@ def _acquire_ro_conn(db_path: str) -> Any:
             new_conn.execute("SET memory_limit = '1GB'")
             new_conn.execute("PRAGMA threads = 2")
             new_conn.execute("SET preserve_insertion_order = false")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     except Exception:
         raise
@@ -1291,7 +1291,7 @@ def _pool_close_all() -> None:
             _, conn = _POOL.popleft()
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         _POOL_PATHS.clear()
 
@@ -1314,7 +1314,7 @@ def _python_parallel_duckdb_queries(db_path: str, queries: list[str]) -> list[di
         for future in concurrent.futures.as_completed(futures):
             try:
                 results.extend(future.result())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     return results
 
@@ -1338,7 +1338,7 @@ def _python_query_duckdb(db_path: str, sql: str) -> list[dict[str, Any]]:
                         break
             try:
                 conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             raise
     except Exception:

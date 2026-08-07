@@ -256,7 +256,7 @@ def analyze_class(node: ast.ClassDef, force: bool = False) -> ClassMigration:
                                     old_expr=f"field(default_factory=lambda: {lambda_body})",
                                     new_expr=f"msgspec.field(default_factory=lambda: {lambda_body})",
                                 ))
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
 
     return ClassMigration(

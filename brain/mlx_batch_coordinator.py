@@ -125,7 +125,7 @@ class MLXBatchCoordinator:
         try:
             async with asyncio.timeout(timeout):
                 await asyncio.shield(self._worker_task)
-        except (TimeoutError, asyncio.CancelledError):
+        except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
             pass
         finally:
             self._worker_task = None

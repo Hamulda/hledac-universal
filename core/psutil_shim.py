@@ -179,12 +179,12 @@ def memory_info() -> dict[str, float]:
         result["total_gb"] = vm.total / (1024**3)
         result["used_gb"] = vm.used / (1024**3)
         result["percent"] = vm.percent
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         p = process()
         if p is not None:
             result["rss_gb"] = p.memory_info().rss / 1e9
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return result

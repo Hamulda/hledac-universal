@@ -52,6 +52,7 @@ import logging
 import os
 import time
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -82,7 +83,7 @@ SEARCH_MS_EXCESSIVE: float = 50.0
 M1_RSS_GUARD_BYTES: int = int(5.5 * 1024 ** 3)
 MAX_BRUTE_FORCE_ROWS: int = 10000
 
-class TuneResult(msgspec.Struct, frozen=True, gc=False):
+class TuneResult(Struct, frozen=True):
     """Outcome of a single auto-tune attempt (immutable, log-friendly)."""
     success: bool
     triggered: bool
@@ -100,7 +101,7 @@ class TuneResult(msgspec.Struct, frozen=True, gc=False):
         """True iff the partition count was actually modified."""
         return self.triggered and self.success and (self.new_partitions != self.old_partitions or self.new_num_sub_vectors != self.old_num_sub_vectors)
 
-class TuneState(msgspec.Struct, frozen=True, gc=False):
+class TuneState(Struct, frozen=True):
     """Persistent state — JSON-serialized to ``state_path`` for cross-session."""
     last_tune_at: float = 0.0
     last_num_partitions: int = DEFAULT_NUM_PARTITIONS

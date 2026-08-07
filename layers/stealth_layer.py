@@ -1167,7 +1167,7 @@ class StealthLayer:
         if self.config.enable_fingerprint_rotation and self._detection_evader:
             try:
                 return {'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.0', 'screen': {'width': 1920, 'height': 1080}, 'timezone': 'America/New_York', 'language': 'en-US', 'platform': 'MacIntel', 'plugins': ['Chrome PDF Plugin', 'Native Client']}
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return {'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'screen': {'width': 1920, 'height': 1080}}
 
@@ -1343,7 +1343,7 @@ class StealthLayer:
         try:
             _header_engine = ZeroAttributionEngine()
             _header_engine.fingerprint_rotate_headers()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if self._fingerprint_randomizer:
             return self._fingerprint_randomizer.rotate()

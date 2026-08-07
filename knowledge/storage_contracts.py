@@ -37,12 +37,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     from knowledge.sprint_facts.canonical_finding import CanonicalFinding
 
 
-class CanonicalFindingContract(msgspec.Struct, frozen=True, gc=False):
+class CanonicalFindingContract(Struct, frozen=True):
     """
     ISSUE [ARCH-DB-001]: Unified schema contract for Storage Trinity.
 
@@ -143,7 +144,7 @@ def _convert_to_contract(
         return None
 
 
-class WALRecordContract(msgspec.Struct, frozen=True, gc=False):
+class WALRecordContract(Struct, frozen=True):
     """
     ISSUE [ARCH-DB-001]: Contract for WAL LMDB records.
 
@@ -163,7 +164,7 @@ class WALRecordContract(msgspec.Struct, frozen=True, gc=False):
     payload_text: str | None = None
 
 
-class EntityEmbeddingContract(msgspec.Struct, frozen=True, gc=False):
+class EntityEmbeddingContract(Struct, frozen=True):
     """
     ISSUE [ARCH-DB-001]: Contract for entity embeddings in DuckDBVectorStore.
 
@@ -187,7 +188,7 @@ class EntityEmbeddingContract(msgspec.Struct, frozen=True, gc=False):
     updated_at: float = 0.0
 
 
-class RAGChunkContract(msgspec.Struct, frozen=True, gc=False):
+class RAGChunkContract(Struct, frozen=True):
     """
     ISSUE [ARCH-DB-001]: Contract for RAG chunk embeddings in DuckDBVectorStore.
 

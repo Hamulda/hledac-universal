@@ -59,7 +59,7 @@ def _madvise_heap_critical() -> None:
             logger.debug("[HERMES cache] madvise(DONTNEED) whole-process heap → failed (errno available)")
         else:
             logger.debug("[HERMES cache] madvise(DONTNEED) whole-process heap → OK")
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         # Rust extension not built — silent no-op (metal memory still reclaimed via mx.eval)
         pass
     except Exception as _e:
@@ -140,9 +140,9 @@ def _mlx_cache_clear(reason: str) -> None:
     try:
         from hledac.universal.utils.mlx_memory import mlx_cleanup_sync
         mlx_cleanup_sync()
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     logger.debug("[HERMES cache] MLX clear (" + str(reason) + ")")
 
@@ -235,14 +235,14 @@ class HermesModelCache:
         try:
             from otel._instrumentation import set_attribute
             set_attribute(attr, count)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _safe_call_hook(self, hook: Callable[[str], None], key: str) -> None:
         """Call an eviction hook. Fail-open on any error."""
         try:
             hook(key)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # ─── Lock helper for async contexts ──────────────────────────────────────
@@ -268,7 +268,7 @@ class HermesModelCache:
         """Release the RLock. Always called from finally in async wrappers."""
         try:
             self._lock.release()
-        except RuntimeError:
+        except RuntimeError:  # noqa: BLE001
             # Not held — no-op (safe for error paths)
             pass
 
@@ -586,7 +586,7 @@ class HermesModelCache:
             except asyncio.CancelledError:
                 logger.debug("[HermesModelCache] Pressure monitor cancelled")
                 return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Fail-open: never let the monitor crash the engine
                 pass
 
@@ -614,7 +614,7 @@ class HermesModelCache:
             from hledac.universal.core.memory_pressure import get_broadcaster
             bc = get_broadcaster()
             safe_create_task(bc.start(), name="memory_pressure:start")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Non-fatal — broadcaster may not be available
         logger.info("[HermesModelCache] Monitor task started")
 
@@ -625,7 +625,7 @@ class HermesModelCache:
         self._monitor_task.cancel()
         try:
             await self._monitor_task
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
         self._monitor_task = None
         logger.info("[HermesModelCache] Monitor task stopped")
@@ -668,7 +668,7 @@ def _set_eviction_attr(name: str, value: str | int) -> None:
         from otel._instrumentation import set_attribute
 
         set_attribute(name, value)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

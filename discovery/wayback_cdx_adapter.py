@@ -101,7 +101,7 @@ async def async_search_wayback_cdx(
 
                 try:
                     get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_failure(failure_kind="wayback_cdx")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if err:
                 elapsed = time.monotonic() - start

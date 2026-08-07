@@ -1,5 +1,6 @@
 """
 from __future__ annotations
+from operator import attrgetter, itemgetter
 runtime/sidecar_protocol.py — F350M-R: Protocol-Based Sidecar Registry
 ======================================================================
 
@@ -265,7 +266,7 @@ class SidecarRegistry:
                 continue
 
         # Sort by priority (highest first)
-        available.sort(key=lambda s: s.priority, reverse=True)
+        available.sort(key=attrgetter("priority"), reverse=True)
         return available
 
     @classmethod

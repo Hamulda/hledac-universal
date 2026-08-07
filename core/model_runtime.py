@@ -136,7 +136,7 @@ class ModelLifecycle:
             else:
                 import psutil
                 available_bytes = psutil.virtual_memory().available
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Try Rust backend for sysctl HW_MEMSIZE check
@@ -154,7 +154,7 @@ class ModelLifecycle:
                     return
         except RuntimeError:
             raise  # Re-raise our own RuntimeError
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to Python-side check
 
         # Python-side fallback check

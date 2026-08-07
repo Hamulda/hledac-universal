@@ -38,7 +38,9 @@ from dataclasses import field
 from enum import Enum
 from typing import Any
 
+from operator import attrgetter, itemgetter
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 import numpy as np
 
 from hledac.universal.utils.async_helpers import parallel_ok
@@ -89,7 +91,7 @@ def _get_seeded_rng() -> random.Random | secrets.SystemRandom:
         if seed_state is not None:
             # Use the PRNG seed from SprintSeedState for deterministic replay
             return random.Random(seed_state.prng_seed)
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError):  # noqa: BLE001
         pass
     return _RNG
 
@@ -129,7 +131,7 @@ _ENSEMBLE_CO_T_ONLY_REMAINING_S = 120   # 2 min: ensemble → CoT only
 _ENSEMBLE_SKIP_TOT_REMAINING_S = 300    # 5 min: ensemble → CoT + Graph (skip ToT)
 
 
-class SprintClock(msgspec.Struct, frozen=True, gc=False):
+class SprintClock(Struct, frozen=True):
     """BLITZ-04: Time-awareness clock injected into reasoning coordinators.
 
     Wraps sprint timing fields that already exist in SprintTelemetry
@@ -203,7 +205,7 @@ class ReasoningStrategy(Enum):
     GRAPH_REASONING = 'graph'
     HYBRID = 'hybrid'
 
-class ReasoningStep(msgspec.Struct, gc=False):
+class ReasoningStep(Struct):
     """Single reasoning step."""
     step_id: str
     description: str
@@ -213,14 +215,14 @@ class ReasoningStep(msgspec.Struct, gc=False):
     parent_steps: list[str] = field(default_factory=list)
     sub_steps: list[str] = field(default_factory=list)
 
-class ReasoningChain(msgspec.Struct, frozen=True, gc=False):
+class ReasoningChain(Struct, frozen=True):
     """Chain of reasoning steps."""
     chain_id: str
     steps: list[ReasoningStep] = field(default_factory=list)
     final_conclusion: str | None = None
     overall_confidence: float = 0.0
 
-class ThoughtNode(msgspec.Struct, frozen=True, gc=False):
+class ThoughtNode(Struct, frozen=True):
     """Node in Tree of Thoughts."""
     node_id: str
     thought: str
@@ -535,7 +537,7 @@ class _TotValuePredictor:
                 # We don't await here — the cost_model.update() is called
                 # synchronously from the ToT loop via the coordinator
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     @property
@@ -1207,7 +1209,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             if len(new_leaves) > beam_width:
                 cost_penalty = 0.05  # lambda: mild cost penalty for beam selection
                 new_leaves.sort(
-                    key=lambda n: n.value_estimate - cost_penalty * n.cost,
+                    key=attrgetter("value_estimate") - cost_penalty * n.cost,
                     reverse=True,
                 )
                 new_leaves = new_leaves[:beam_width]
@@ -1238,7 +1240,7 @@ class UniversalMetaReasoningCoordinator(UniversalCoordinator):
             try:
                 await checkpointer.checkpoint(nodes=nodes)  # final step
                 await checkpointer.stop(final_checkpoint=False)  # already did it above
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return {

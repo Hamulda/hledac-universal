@@ -191,7 +191,7 @@ class StealthCrawler:
         """
         try:
             _ = asyncio.get_running_loop()
-        except RuntimeError:
+        except RuntimeError:  # noqa: BLE001
             pass
         else:
             raise TypeError(
@@ -293,7 +293,7 @@ class StealthCrawler:
                 if bloom is not None:
                     try:
                         is_new = bloom.add(url)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 if is_new and len(results) < num_results:
                     results.append(
@@ -388,7 +388,7 @@ class StealthCrawler:
                 if bloom is not None:
                     try:
                         is_new = bloom.add(url)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 if is_new:
                     snippet = snippets[i] if i < len(snippets) else ""
@@ -418,7 +418,7 @@ class StealthCrawler:
                 if bloom is not None:
                     try:
                         is_new = bloom.add(url)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 if is_new:
                     results.append(
@@ -737,7 +737,7 @@ def quick_scrape(url: str, **kwargs) -> ScrapingResult:
     import asyncio
     try:
         _ = asyncio.get_running_loop()
-    except RuntimeError:
+    except RuntimeError:  # noqa: BLE001
         pass
     else:
         raise TypeError(

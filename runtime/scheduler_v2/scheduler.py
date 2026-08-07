@@ -255,7 +255,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
     async def _async_prewarm_temporal(self) -> None:
         try:
             await asyncio.sleep(0.5)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # ── Acquisition ────────────────────────────────────────────────────────
@@ -334,7 +334,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         if self._rayon_manager is not None:
             try:
                 self._rayon_manager.shutdown()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe
 
     # ── [META]-004: Rayon pool management ──────────────────────────────────
@@ -355,7 +355,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
         if self._rayon_manager is not None:
             try:
                 self._rayon_manager.set_phase(phase)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe: pool resize errors are non-critical
 
     # ── Critical inject methods (needed for aclose / tests) ─────────────────
@@ -460,7 +460,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 try:
                     async with asyncio.timeout(timeout_s):
                         await _duckdb_raw.aclose(timeout_s=timeout_s)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             _elog = getattr(self, "_evidence_log", None)
@@ -470,13 +470,13 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                     if _elog_raw is not None and hasattr(_elog_raw, "aclose"):
                         async with asyncio.timeout(timeout_s):
                             await _elog_raw.aclose(timeout_s=timeout_s)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             try:
                 from hledac.universal.knowledge.graph_service import shutdown_graph
                 shutdown_graph()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # F350M-R ISSUE-W5-A: close MemoryManager singleton — was never called.
@@ -485,7 +485,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 from hledac.universal.memory import close_memory_manager
                 _t = safe_create_task_tracked(close_memory_manager(), name="teardown:close_memory_manager", scope=TaskScope.TEARDOWN)
                 _bg_tasks.append(_t)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # F350M-R: close all HTTP session pools (httpx, httpx-socks, curl_cffi).
@@ -496,7 +496,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 from hledac.universal.transport.session_pool import session_pool
                 _t2 = safe_create_task_tracked(session_pool.close_all(), name="teardown:session_pool_close", scope=TaskScope.TEARDOWN)
                 _bg_tasks.append(_t2)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # F350M-R: stop TorTransport singleton if one was started.
@@ -509,7 +509,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 if _tor is not None and hasattr(_tor, "stop"):
                     _t3 = safe_create_task_tracked(_tor.stop(), name="teardown:tor_stop", scope=TaskScope.TEARDOWN)
                     _bg_tasks.append(_t3)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # ISSUE-2.4 FIX: unload SLM model from Metal via HTNPlanner.teardown().
@@ -521,7 +521,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 if _planner is not None and hasattr(_planner, "teardown"):
                     _t4 = safe_create_task_tracked(_planner.teardown(), name="teardown:pivot_planner", scope=TaskScope.TEARDOWN)
                     _bg_tasks.append(_t4)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Await all background tasks before the outer timeout fires.
@@ -529,7 +529,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
             for _task in _bg_tasks:
                 try:
                     await _task
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # ISSUE-2.5 FIX: Stop UmaWatchdog monitoring loop.
@@ -540,7 +540,7 @@ class SprintSchedulerV2(msgspec.Struct, frozen=False, gc=True):
                 _lc = getattr(self, "_lifecycle", None)
                 if _lc is not None and hasattr(_lc, "_stop_uma_watchdog"):
                     _lc._stop_uma_watchdog()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             sys.stdout.write("[aclean] done\n")

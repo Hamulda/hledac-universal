@@ -94,7 +94,7 @@ async def async_getaddrinfo(
                     for addr in ips
                 ]
             return []
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # Fallback: stdlib loop.getaddrinfo()

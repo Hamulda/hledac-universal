@@ -89,14 +89,14 @@ class NetworkReconnaissanceLane(BaseIntelligenceLane):
         try:
             socket.inet_pton(socket.AF_INET, target)
             return ResolveResult(resolved=target, kind="ipv4", metadata={"aggressive": aggressive})
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
         # IPv6
         try:
             socket.inet_pton(socket.AF_INET6, target)
             return ResolveResult(resolved=target, kind="ipv6", metadata={"aggressive": aggressive})
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
         # Domain / hostname

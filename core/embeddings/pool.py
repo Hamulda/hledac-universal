@@ -29,7 +29,11 @@ import threading
 import sys as _sys
 from typing import Any
 
-from hledac.universal.utils.mlx_cache import get_dynamic_metal_cache_limit
+from hledac.universal.utils.mlx_memory import (
+    get_dynamic_metal_cache_limit,
+    mlx_cleanup_aggressive as _canonical_mlx_cleanup_aggressive,
+    mlx_cleanup_sync as _canonical_mlx_cleanup_sync,
+)
 
 logger = logging.getLogger(__name__)
 

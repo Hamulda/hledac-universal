@@ -20,7 +20,7 @@ _LIB = None
 if sys.platform == "darwin":
     try:
         _LIB = ctypes.CDLL(ctypes.util.find_library("c"))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 _MADV_FREE_REUSABLE = 7  # macOS MADV_FREE_REUSABLE
@@ -115,6 +115,6 @@ def get_madvise_domain(ext: object | None) -> _RustMadvisDomain | _PythonMadvisD
     if ext is not None:
         try:
             return _RustMadvisDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonMadvisDomain()

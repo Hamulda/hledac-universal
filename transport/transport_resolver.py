@@ -56,7 +56,7 @@ def _extract_host(url: str) -> str:
         result = url_ops.extract_host(url)
         _extract_host_cache.set(url, result)
         return result
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         netloc = url.split('://', 1)[1].split('/', 1)[0]
@@ -99,7 +99,7 @@ def _probe_tcp_port(host: str, port: int, timeout: float = 2.0) -> bool:
     finally:
         try:
             s.close()
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
 class RouteDecision(Enum):
@@ -359,7 +359,7 @@ class TransportResolver:
                     await transport.start()
                     logger.info('Using Nym transport (medium risk)')
                     return transport
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if self._tor_class and await self.async_is_tor_available():
                 try:
@@ -367,7 +367,7 @@ class TransportResolver:
                     await transport.start()
                     logger.info('Using Tor transport (medium risk)')
                     return transport
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         logger.warning('No transport available, returning None')
         return None

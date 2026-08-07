@@ -765,7 +765,7 @@ async def search_academic(query: str, max_results: int=MAX_ACADEMIC_PAPERS) -> l
                 if year_elem:
                     try:
                         year = int(year_elem.text())
-                    except (ValueError, TypeError):
+                    except (ValueError, TypeError):  # noqa: BLE001
                         pass
                 results.append(AcademicPaper(title=title, authors=authors, year=year, link=url, source='repec', abstract='', doi=None, citations=0, tags=[]))
             return results[:20]
@@ -855,7 +855,7 @@ class OpenSourceCollectors:
             try:
                 from hledac.universal.core.protocols import get_governor
                 self._governor = get_governor()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return self._governor
 

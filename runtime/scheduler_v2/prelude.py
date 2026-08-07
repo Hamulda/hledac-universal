@@ -208,7 +208,7 @@ async def run_pdns_prelude_lane(query: str, result: Any, duckdb_store: Any, time
                         return 0
                 safe_create_task_tracked(_pdns_ingest_bg(), name='prelude:pdns_ingest', scope=TaskScope.PRELUDE)
                 _pdns_acc = len(_pdns_cands)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         result.pdns_advisory_findings_produced = _pdns_acc
         return LaneResult(lane='PASSIVE_DNS', attempted=True, skipped=False, built_count=len(_pdns_cands), accepted_count=_pdns_acc)
@@ -335,7 +335,7 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
                         _cache_used = True
                     if _first_done_domain is None:
                         _first_done_domain = _domain
-                except BaseException:
+                except BaseException:  # noqa: BLE001
                     pass
 
         result.doh_cache_used = _cache_used
@@ -359,7 +359,7 @@ async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_
                             return 0
                     safe_create_task_tracked(_doh_ingest_bg(), name='prelude:doh_ingest', scope=TaskScope.PRELUDE)
                     _doh_acc = len(_all_cands)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             result.doh_advisory_findings_produced = _doh_acc
             return LaneResult(lane='DOH', attempted=True, skipped=False, built_count=len(_all_cands), accepted_count=_doh_acc)

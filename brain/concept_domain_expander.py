@@ -27,6 +27,7 @@ import logging
 import re
 from typing import Any
 
+from operator import attrgetter, itemgetter
 from hledac.universal.utils.async_helpers import safe_wait_for
 
 logger = logging.getLogger(__name__)
@@ -400,7 +401,7 @@ def _heuristic_expand_concept(query: str) -> list[SyntheticDomainCandidate]:
                 )
 
     # Sort by confidence, return top 5
-    candidates.sort(key=lambda c: c.confidence, reverse=True)
+    candidates.sort(key=attrgetter("confidence"), reverse=True)
     return candidates[:5]
 
 

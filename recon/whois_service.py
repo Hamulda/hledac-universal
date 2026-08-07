@@ -207,7 +207,7 @@ async def _rdap_lookup_domain(domain: str) -> dict[str, Any]:
                         result = data
                 finally:
                     await resp.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     finally:
         if is_own:
@@ -329,7 +329,7 @@ async def _whois_fallback_lookup(domain: str) -> WhoisResult:
         try:
             writer.close()
             await writer.wait_closed()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return result
 

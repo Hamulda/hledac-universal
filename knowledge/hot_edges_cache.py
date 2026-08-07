@@ -866,7 +866,7 @@ def _get_duckdb_ro() -> duckdb.DuckDBPyConnection | None:
             conn.execute("SET memory_limit = '1GB'")
             conn.execute("PRAGMA threads = 2")
             conn.execute("SET preserve_insertion_order = false")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft for read-only connection
         return conn
     except Exception as e:

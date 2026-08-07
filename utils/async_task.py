@@ -156,7 +156,7 @@ class BoundedTaskSet:
                     exc = f.exception()
                     if exc is not None:
                         logger.warning('[BoundedTaskSet] Task %s failed: %r', f.get_name(), exc)
-            except asyncio.InvalidStateError:
+            except asyncio.InvalidStateError:  # noqa: BLE001
                 pass
         task.add_done_callback(_done_callback)
         return task

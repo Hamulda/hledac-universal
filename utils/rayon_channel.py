@@ -154,14 +154,14 @@ async def dispatch_rayon(
         # Abort the rayon task on timeout
         try:
             await asyncio.to_thread(rayon_abort_channel, handle)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # best-effort abort
         raise
     except BaseException:
         # On any other exception/cancellation, best-effort abort
         try:
             await asyncio.to_thread(rayon_abort_channel, handle)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         raise
 

@@ -82,13 +82,13 @@ async def close_ipfs_session_pool() -> None:
         try:
             if sess is not None and (not sess.is_closed):
                 await sess.aclose()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     for sess in sessions:
         try:
             if sess is not None and (not sess.is_closed):
                 await sess.aclose()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 def reset_ipfs_session_pool_for_tests() -> None:
@@ -593,7 +593,7 @@ async def fetch_ipfs(cid: str, timeout: int=30) -> bytes | None:
                             if file_size > MAX_FILE_SIZE_BYTES:
                                 logger.warning(f'IPFS file {cid} from {name} exceeds 10MB limit ({file_size} bytes) → skipping')
                                 return None
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
             except (httpx.TimeoutException, asyncio.TimeoutError, httpx.HTTPError):
                 continue
@@ -650,7 +650,7 @@ async def search_ipfs(query: str) -> list[str]:
                 cids.append(cid)
         if cids:
             return cids
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     keywords = [w.strip().lower() for w in query.split() if len(w.strip()) >= 4][:5]
     if not keywords:
@@ -735,7 +735,7 @@ async def fetch_findings_from_cids(cids: list[str], query: str, timeout_per_cid:
         if decision.uma_state in ('critical', 'emergency'):
             logger.debug('IPFS bulk fetch skipped: memory %s', decision.uma_state)
             return []
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     if not cids:
         return []

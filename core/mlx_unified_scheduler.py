@@ -242,7 +242,7 @@ class MLXUnifiedScheduler:
                 if cached_tokens is not None:
                     cache_hit = True
                     self._update_stats(cache_hits=self._stats.cache_hits + 1)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if not cache_hit:
             self._update_stats(cache_misses=1)
@@ -258,7 +258,7 @@ class MLXUnifiedScheduler:
         try:
             from hledac.universal.core.telemetry.context_state import update_lane_latency
             update_lane_latency('llm', latency_ms)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return result
 
@@ -318,7 +318,7 @@ class MLXUnifiedScheduler:
             try:
                 from hledac.universal.core.telemetry.context_state import update_lane_latency
                 update_lane_latency('embedding', latency_ms)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return ane_embeddings
 
@@ -357,7 +357,7 @@ class MLXUnifiedScheduler:
         try:
             from hledac.universal.core.telemetry.context_state import update_lane_latency
             update_lane_latency('embedding', latency_ms)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return result
 
@@ -382,7 +382,7 @@ class MLXUnifiedScheduler:
         try:
             from hledac.universal.core.telemetry.context_state import update_lane_latency
             update_lane_latency('background', 0.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if self._worker_thread is not None and hasattr(self._worker_thread, 'is_active') and self._worker_thread.is_active():
             return await self._worker_thread.submit(coro, timeout=120.0)
@@ -439,17 +439,17 @@ class MLXUnifiedScheduler:
         if self._token_cache is not None and hasattr(self._token_cache, 'clear_cache'):
             try:
                 self._token_cache.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._finalizer.detach()
         if self._ane_mutex is not None:
             try:
                 self._ane_mutex.release(runtime='ane')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 self._ane_mutex.release(runtime='llm')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         logger.info('[MLXScheduler] Shutdown complete')
 
@@ -573,7 +573,7 @@ class MLXUnifiedScheduler:
                 mx.clear_cache()
             elif hasattr(mx.metal, 'clear_cache'):
                 mx.metal.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def __repr__(self) -> str:
@@ -586,12 +586,12 @@ def _scheduler_at_exit(instance: MLXUnifiedScheduler) -> None:
         if hasattr(instance, '_ane_mutex') and instance._ane_mutex is not None:
             try:
                 instance._ane_mutex.release(runtime='ane')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 instance._ane_mutex.release(runtime='llm')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 __all__ = ['MLXUnifiedScheduler', 'LanePriority', 'SchedulerStats', 'EmbeddedModelInfo']

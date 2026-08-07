@@ -210,7 +210,7 @@ def _read_rust_module(module_name: str) -> str:
         if path.exists():
             try:
                 return path.read_text()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     return ""
 

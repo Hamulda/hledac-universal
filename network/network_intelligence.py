@@ -178,7 +178,7 @@ def _is_ip(value: str) -> bool:
     if len(parts) == 4:
         try:
             return all((0 <= int(p) <= 255 for p in parts))
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
     return False
 __all__ = ['NetworkIntelAdapter', 'NetworkIntelResult', 'MAX_NETWORKINTEL_TARGETS']

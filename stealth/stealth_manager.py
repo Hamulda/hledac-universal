@@ -293,7 +293,7 @@ class StealthManager:
                     domain = domain[4:]
             elif parsed.path and '.onion' in parsed.path:
                 domain = parsed.path
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if not domain:
             return (True, None)
@@ -461,11 +461,24 @@ class StealthSession:
             try:
                 delay = float(retry_after)
                 return delay
-            except (ValueError, TypeError):
+            except (ValueError, TypeError):  # noqa: BLE001
                 pass
         base_delay = BASE_RETRY_DELAY * 2 ** attempt
         jitter = base_delay * RETRY_JITTER_PCT * (2 * _JITTER_RNG.random() - 1)
         return base_delay + jitter
+
+    async def _should_retry_transient(self, attempt: int, error: Exception, log_msg: str) -> bool:
+        """
+        Check if transient error warrants retry. Returns True if retried, False if should raise.
+
+        Consolidated retry logic extracted from the duplicate exception handlers.
+        """
+        if attempt < MAX_RETRY_ATTEMPTS - 1 and self._is_transient_error(0, error):
+            delay = self._calculate_retry_delay(attempt)
+            logger.warning(f'{log_msg}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})')
+            await asyncio.sleep(delay)
+            return True
+        return False
 
     @staticmethod
     def _is_onion_url(url: str) -> bool:
@@ -582,20 +595,14 @@ class StealthSession:
                 return result
             except httpx.TimeoutException as e:
                 last_exception = e
-                if attempt < MAX_RETRY_ATTEMPTS - 1 and self._is_transient_error(0, e):
-                    delay = self._calculate_retry_delay(attempt)
-                    logger.warning(f'Timeout error, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})')
-                    await asyncio.sleep(delay)
+                if self._should_retry_transient(attempt, e, 'Timeout'):
                     continue
                 logger.warning(f'Request timeout: {url}')
                 self.manager._failure_count += 1
                 raise
             except Exception as e:
                 last_exception = e
-                if attempt < MAX_RETRY_ATTEMPTS - 1 and self._is_transient_error(0, e):
-                    delay = self._calculate_retry_delay(attempt)
-                    logger.warning(f'Transient error {e}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})')
-                    await asyncio.sleep(delay)
+                if self._should_retry_transient(attempt, e, f'Transient error {e}'):
                     continue
                 logger.warning(f'Request failed: {e}')
                 self.manager._failure_count += 1

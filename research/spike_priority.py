@@ -192,7 +192,7 @@ class MLXSpikeNetwork:
                     _mlx = _mx_arrays()
                     _mlx.eval(self._potentials)
                     _mlx.metal.clear_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         except Exception:
             self._ane_model = None
@@ -208,7 +208,7 @@ class MLXSpikeNetwork:
             _mlx = _mx_arrays()
             _mlx.eval(self._potentials)
             _mlx.metal.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _benchmark_once(self) -> bool:

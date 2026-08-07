@@ -150,7 +150,7 @@ def keyword_scan(filepath: Path, keywords: list[str]) -> list[tuple[int, str]]:
                 for kw in keywords:
                     if kw in line:
                         matches.append((i, line.strip()[:120]))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return matches
 

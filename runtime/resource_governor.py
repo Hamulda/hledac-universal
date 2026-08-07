@@ -96,7 +96,7 @@ try:
     register_capability_cost("banner_grab", rss_mb=128, peak_mb=192, tier="light", tags=("network", "recon"))
     register_capability_cost("ipv6_recon", rss_mb=128, peak_mb=192, tier="light", tags=("network", "recon"))
     register_capability_cost("pattern_mining", rss_mb=256, peak_mb=384, tier="medium", tags=("analytics", "ml"))
-except Exception:
+except Exception:  # noqa: BLE001
     # Fail-soft: capability_cost module may not be available in all environments
     pass
 
@@ -266,7 +266,7 @@ class M1ResourceGovernor:
             pressure = 2
         try:
             sync_adaptive_state(pressure, 0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _ensure_consumer_running(self) -> None:
@@ -531,7 +531,7 @@ class M1ResourceGovernor:
                 if rss_gib > MISSION_PEAK_RSS_GIB - 0.5:
                     tier_info = f" ({cost.tier} tier)" if cost else ""
                     return SidecarAdmission(allowed=False, sidecar_name=sidecar_name, reason=f'rss_exceeds_headroom_limit{tier_info}', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=actual_mb)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return SidecarAdmission(allowed=True, sidecar_name=sidecar_name, reason='admitted', rss_gib=rss_gib, uma_state=uma_state, estimated_mb=actual_mb)
 
@@ -647,7 +647,7 @@ class M1ResourceGovernor:
         try:
             model_status = self._get_model_status()
             model_loaded = model_status.get('loaded', False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if model_loaded:
             return BranchAdmission(allowed=True, reason='model_loaded_reduced_concurrency', uma_state=uma_state, branch_concurrency=2, estimated_mb=estimated_mb)
@@ -681,7 +681,7 @@ class M1ResourceGovernor:
                 try:
                     from metrics_registry import get_metrics_registry
                     get_metrics_registry().inc('lane_blocked_reason')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 return LaneAdmission(allowed=False, reason=f'uma_{uma_state}_blocking_{risk_level}_lane', uma_state=uma_state, risk_level=risk_level)
         if risk_level in ('high', 'critical'):
@@ -692,17 +692,17 @@ class M1ResourceGovernor:
                     try:
                         from metrics_registry import get_metrics_registry
                         get_metrics_registry().inc('lane_blocked_reason')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return LaneAdmission(allowed=False, reason='high_water_exceeded_85pct', uma_state=uma_state, risk_level=risk_level)
                 if rss_gib > MISSION_PEAK_RSS_GIB - 0.5:
                     try:
                         from metrics_registry import get_metrics_registry
                         get_metrics_registry().inc('lane_blocked_reason')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return LaneAdmission(allowed=False, reason='rss_exceeds_headroom_limit', uma_state=uma_state, risk_level=risk_level)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return LaneAdmission(allowed=True, reason='admitted', uma_state=uma_state, risk_level=risk_level)
 
@@ -724,7 +724,7 @@ class M1ResourceGovernor:
                 system_used_gib = uma.system_used_gib
                 swap_detected = uma.swap_detected
                 io_only = uma.io_only
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return GovernorSnapshot(uma_state=self._uma_state, model_loaded=self._model_loaded, fetch_limit=self._fetch_limit, branch_concurrency=self._branch_concurrency, renderer_denied_count=self._renderer_denied_count, model_denied_count=self._model_denied_count, system_used_gib=system_used_gib, io_only=io_only, free_uma_gib=free_uma_gib, swap_detected=swap_detected, ema_branch_pressure=round(self._ema_branch_timeouts, 3))
 

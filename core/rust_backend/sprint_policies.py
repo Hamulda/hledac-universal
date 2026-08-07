@@ -400,6 +400,6 @@ def get_sprint_policies_domain(ext: object | None) -> _RustSprintPoliciesDomain 
     if ext is not None:
         try:
             return _RustSprintPoliciesDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonSprintPoliciesDomain()

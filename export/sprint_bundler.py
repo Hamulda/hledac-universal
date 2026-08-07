@@ -228,7 +228,7 @@ async def bundle_sprint(
                 import shutil as _shutil
 
                 _shutil.copy2(dashboard_html, output_path.with_suffix(".html"))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Non-fatal
         except Exception as e:
             logger.warning(f"[BUNDLER] Failed to read dashboard: {e}")
@@ -440,7 +440,7 @@ async def extract_bundle_streaming(
                             try:
                                 import compression.zstd
                                 content = compression.zstd.decompress(data)
-                            except ImportError:
+                            except ImportError:  # noqa: BLE001
                                 pass
 
                         text = content.decode("utf-8")
@@ -496,7 +496,7 @@ async def extract_bundle_streaming(
                                     entry_idx["confidence_sum"] += confidence
                                     entry_idx["last_confirmed_ts"] = now
 
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                     except Exception as e:
                         logger.debug("[BUNDLER] Evidence indexing failed: %s", e)
@@ -572,7 +572,7 @@ async def index_bundle_entities(
                 )
                 if ok:
                     indexed += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         logger.info(

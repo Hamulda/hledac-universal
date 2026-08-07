@@ -459,7 +459,7 @@ def compute_delta(previous_json: Path | None, current_json: Path) -> EvidenceDel
         try:
             with open(previous_json) as f:
                 prev_data = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError):  # noqa: BLE001
             pass
     curr_kpi = _load_kpi(current_json)
     prev_kpi = _load_kpi(previous_json) if previous_json else {}

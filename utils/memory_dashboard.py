@@ -123,17 +123,17 @@ class UnifiedMemoryMonitor:
             try:
                 if hasattr(mx.metal, 'get_active_memory'):
                     metal_active_gb = mx.get_active_memory() / 1024 ** 3
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 if hasattr(mx.metal, 'get_peak_memory'):
                     metal_peak_gb = mx.get_peak_memory() / 1024 ** 3
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 if hasattr(mx.metal, 'get_cache_memory'):
                     metal_cache_gb = mx.get_cache_memory() / 1024 ** 3
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         snapshot = UnifiedMemorySnapshot(sys_total_gb=sys_total_gb, sys_available_gb=sys_available_gb, sys_used_gb=sys_used_gb, sys_percent=sys_percent, metal_active_gb=metal_active_gb, metal_peak_gb=metal_peak_gb, metal_cache_gb=metal_cache_gb)
         self._last_snapshot = snapshot

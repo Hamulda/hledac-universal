@@ -16,12 +16,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from time import perf_counter
 from typing import Any
 _dd_int_int_factory: defaultdict[int, int] = defaultdict(int)
 logger = logging.getLogger(__name__)
 
-class SearchDocument(msgspec.Struct, gc=False):
+class SearchDocument(Struct):
     """OSINT document for BM25 indexing."""
     url: str
     title: str
@@ -32,7 +33,7 @@ class SearchDocument(msgspec.Struct, gc=False):
     def __hash__(self):
         return hash(self.url)
 
-class SearchResult(msgspec.Struct, frozen=True, gc=False):
+class SearchResult(Struct, frozen=True):
     """Search results with timing metadata."""
     query: str
     results: list[SearchDocument]

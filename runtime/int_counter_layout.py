@@ -44,6 +44,7 @@ Always-on, no feature flag.
 M1 8GB safe: bounded by construction, no recursion, fail-soft throughout.
 """
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
 import array

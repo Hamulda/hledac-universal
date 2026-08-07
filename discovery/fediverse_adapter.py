@@ -144,7 +144,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True, gc=False):
                     try:
                         from urllib.parse import urlparse as _urlparse
                         get_breaker(_urlparse(api_url).netloc).record_success()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return data.get('statuses', [])
                 elif resp.status_code == 429:
@@ -153,7 +153,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True, gc=False):
                     try:
                         from urllib.parse import urlparse as _urlparse
                         get_breaker(_urlparse(api_url).netloc).record_failure(failure_kind='fediverse_search:429')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return []
         except Exception as e:
@@ -311,7 +311,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True, gc=False):
                         from urllib.parse import urlparse as _urlparse
                         from hledac.universal.transport.circuit_breaker import get_breaker as _get_breaker
                         _get_breaker(_urlparse(api_url).netloc).record_success()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return data.get('statuses', [])
                 if resp.status_code == 429:
@@ -320,7 +320,7 @@ class FediverseAdapter(msgspec.Struct, frozen=True, gc=False):
                         from urllib.parse import urlparse as _urlparse
                         from hledac.universal.transport.circuit_breaker import get_breaker as _get_breaker
                         _get_breaker(_urlparse(api_url).netloc).record_failure(failure_kind='fediverse_search:429')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return []
         except Exception as e:

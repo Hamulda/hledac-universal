@@ -135,6 +135,6 @@ class LightpandaManager:
             except Exception:
                 try:
                     self._proc.kill()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._proc = None

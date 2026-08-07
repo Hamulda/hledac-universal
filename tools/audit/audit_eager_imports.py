@@ -18,6 +18,7 @@ import ast
 import sys
 from pathlib import Path
 
+from operator import attrgetter, itemgetter
 HEAVY_MODULES = {
     "duckdb",
     "lancedb",
@@ -264,7 +265,7 @@ def main() -> None:
 
     if real_violations:
         print(f"\n[FAIL] Eager top-level imports found: {len(real_violations)}")
-        for v in sorted(real_violations, key=lambda x: x["file"]):
+        for v in sorted(real_violations, key=itemgetter("line")):
             print(f"  {v['file'].replace(str(root)+'/','')}:{v['line']}: {v['kind']} {v['module']}")
         print("\nFix by moving the import inside the function/class that uses it,")
         print("or add the file to ALLOWED if it's a core MLX/brain component.")

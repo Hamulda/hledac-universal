@@ -260,7 +260,7 @@ async def _search_pastebin(query: str, session: httpx.AsyncClient) -> list[Paste
                 bloom = _get_paste_bloom()
                 if not bloom.add(uri):
                     return None
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             async with sem:
                 text = await _scrape_pastebin_raw(pid, session)
@@ -298,7 +298,7 @@ async def _search_paste_gg(query: str, session: ClientSession) -> list[PasteFind
                 bloom = _get_paste_bloom()
                 if not bloom.add(uri):
                     return None
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             async with sem:
                 text = await _scrape_paste_gg(paste_id, session)
@@ -344,7 +344,7 @@ async def _search_rentry(query: str, session: httpx.AsyncClient) -> list[PasteFi
                 bloom = _get_paste_bloom()
                 if not bloom.add(uri):
                     return None
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             async with sem:
                 text = await _scrape_rentry(path, session)

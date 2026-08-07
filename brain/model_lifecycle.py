@@ -92,7 +92,7 @@ def init_mlx_buffers_ifneeded() -> bool:
         if mx.is_available():
             _init_mlx_buffers_impl(mx)
             return True
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 
@@ -103,7 +103,7 @@ def _init_mlx_buffers_impl(mx: Any) -> None:
         _warm = mx.zeros([1_000_000], dtype=mx.float32)  # 4 MB warmup
         mx.eval(_warm)
         del _warm
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-open: non-critical
 
 
@@ -129,7 +129,7 @@ def unload_model(model: Any | None = None) -> None:
 
         engine.unload(model)
         return
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fail-open: if engine is not available, try mlx.core directly

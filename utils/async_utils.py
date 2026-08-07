@@ -56,7 +56,7 @@ class TaskResult:
 _UnifiedMemoryMonitor = None
 try:
     from .memory_dashboard import UnifiedMemoryMonitor as _UnifiedMemoryMonitor
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 def _get_memory_level() -> float:
@@ -66,7 +66,7 @@ def _get_memory_level() -> float:
             monitor = _UnifiedMemoryMonitor()
             snap = monitor.snapshot()
             return snap.pressure
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return 0.0
 
@@ -273,7 +273,7 @@ class BoundedTaskSet:
                     exc = f.exception()
                     if exc is not None:
                         logger.warning(f'[BoundedTaskSet] Task {f.get_name()} failed: {exc!r}')
-            except asyncio.InvalidStateError:
+            except asyncio.InvalidStateError:  # noqa: BLE001
                 pass
         task.add_done_callback(_done_callback)
         return task

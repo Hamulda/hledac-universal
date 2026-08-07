@@ -144,7 +144,7 @@ async def _run_sequential_v1(ctx: _MockContext, lifecycle: _MockLifecycle, n_bra
         try:
             async with asyncio.timeout(branch_timeout):
                 await _simulate_branch(f"branch_{i}", latency_s=0.05, count=i + 1)
-        except TimeoutError:
+        except TimeoutError:  # noqa: BLE001
             pass  # branch timeout — fail-soft, continue to next
     return _time.perf_counter() - t0
 
@@ -166,7 +166,7 @@ async def _run_parallel_taskgroup(
             for i in range(n_branches):
                 t = tg.create_task(_simulate_branch(f"branch_{i}", latency_s=0.05, count=i + 1))
                 tasks.append(t)
-    except* BaseException as eg:
+    except* BaseException as eg:  # noqa: BLE001
         # ExceptionGroup handling — at least one branch failed
         pass
 
@@ -238,7 +238,7 @@ async def _run_cancellation_test() -> dict[str, bool]:
                 tasks.append(t)
             cancel_task = asyncio.create_task(_outer_cancel())
             await inner_done.wait()
-    except* BaseException:
+    except* BaseException:  # noqa: BLE001
         pass  # CancelledError or ExceptionGroup
 
     return {

@@ -155,7 +155,7 @@ async def _evidence_triage_runner(findings: list, store: DuckDBShadowStore, quer
             payload = orjson.loads(finding.payload_text)
             if isinstance(payload, dict) and 'triage' in payload:
                 triage_count += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return triage_count
 
@@ -373,13 +373,13 @@ async def _embedding_runner(findings: list, store: DuckDBShadowStore, query: str
                             key = hashlib.blake2b(finding_id.encode(), digest_size=32).hexdigest()
                             text_hash = hashlib.sha256(finding_id.encode()).hexdigest()
                             ann.upsert(key, emb, text_hash)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         try:
             from hledac.universal.knowledge.ann_index import get_ann_index_async
             ann = await get_ann_index_async()
             ann.prewarm(top_k=128)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     except Exception as exc:
         _sidecarlogger.debug('embedding_runner: exception during embed: %s: %s', type(exc).__name__, exc)

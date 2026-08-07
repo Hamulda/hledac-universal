@@ -77,7 +77,7 @@ def fix_broken_file(path: str) -> tuple[bool, str]:
         import ast
         ast.parse(source)
         return True, "already parses"
-    except SyntaxError:
+    except SyntaxError:  # noqa: BLE001
         pass
 
     n_fixed = 0

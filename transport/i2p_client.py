@@ -218,7 +218,7 @@ async def discover_eepsites() -> list[dict]:
                         if title_match:
                             title = title_match.group(1).strip()
                     return {'url': eepsite['url'], 'name': eepsite['name'], 'content': content[:10000], 'title': title}
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return None
     tasks = [fetch_one(e) for e in KNOWN_EEPSITES]
@@ -273,6 +273,6 @@ async def get_i2p_router_info() -> dict | None:
                 return _json.decode(text)
             except Exception:
                 return {'raw': text[:1000]}
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None

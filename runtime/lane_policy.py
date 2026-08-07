@@ -31,6 +31,7 @@ Invariant: Always-on, bounded, fail-safe — no feature flags.
 from __future__ import annotations
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from enum import Enum, auto
 from typing import Protocol, runtime_checkable, Any
 
@@ -67,7 +68,7 @@ class LanePolicy(Protocol):
     def get_budget_fraction(self, total_budget: float) -> float: ...
 
 
-class QualityScore(msgspec.Struct, frozen=True, gc=False):
+class QualityScore(Struct, frozen=True):
     """
     Immutable quality score s confidence.
 
@@ -105,7 +106,7 @@ class QualityScore(msgspec.Struct, frozen=True, gc=False):
         return self.score >= threshold and self.confidence >= 0.5
 
 
-class LaneContext(msgspec.Struct, frozen=True, gc=False):
+class LaneContext(Struct, frozen=True):
     """
     Runtime context for lane policy evaluation.
 
@@ -146,7 +147,7 @@ class LaneContext(msgspec.Struct, frozen=True, gc=False):
         )
 
 
-class PolicyResult(msgspec.Struct, frozen=True, gc=False):
+class PolicyResult(Struct, frozen=True):
     """
     Výsledek policy evaluation.
 

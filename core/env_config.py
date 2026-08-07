@@ -115,11 +115,6 @@ class _CacheAccessor:
         val = _get_cached(name)
         return val if val else default
 
-    def get_str(self, name: str, default: str = "") -> str:
-        """Return env var as str; missing/empty → default."""
-        val = _get_cached(name)
-        return val if val else default
-
     def get_memory_bytes(self, name: str, default: str = "3GB") -> int:
         """Return env var as memory bytes (e.g. '3GB', '512MB', '1TB').
 

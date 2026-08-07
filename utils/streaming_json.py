@@ -417,7 +417,7 @@ def _decode_simdjson_bytes(val: bytes) -> object:
     try:
         import orjson
         return orjson.loads(val)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # Fallback: treat as string
     try:

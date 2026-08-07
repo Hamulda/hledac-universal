@@ -42,6 +42,8 @@ except ImportError:
     NDArray = 'NDArray'
     HAS_NUMPY = False
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
@@ -121,7 +123,7 @@ class MemoryZone(Enum):
     MEDIUM = 'medium'
     LOW = 'low'
 
-class MemoryAllocation(msgspec.Struct, gc=False):
+class MemoryAllocation(Struct):
     """Represents a memory allocation."""
     allocation_id: str
     zone: MemoryZone
@@ -132,7 +134,7 @@ class MemoryAllocation(msgspec.Struct, gc=False):
     evictable: bool = True
     on_evict: Callable | None = None
 
-class MemoryStatistics(msgspec.Struct, gc=False):
+class MemoryStatistics(Struct):
     """Memory usage statistics."""
     total_memory_mb: float
     used_memory_mb: float
@@ -143,7 +145,7 @@ class MemoryStatistics(msgspec.Struct, gc=False):
     last_cleanup_time: float
     allocation_count: int = 0
 
-class ZoneStatistics(msgspec.Struct, frozen=True, gc=False):
+class ZoneStatistics(Struct, frozen=True):
     """Statistics for a specific memory zone (immutable, msgspec zero-copy)."""
     zone: str
     allocation_count: int
@@ -254,7 +256,7 @@ class UniversalMemoryCoordinator:
                 return ThermalState.HOT
             elif thermal_state == 3:
                 return ThermalState.CRITICAL
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -297,7 +299,7 @@ class UniversalMemoryCoordinator:
                     if zones:
                         with open(zones[0]) as _f:
                             linux_thermal = int(_f.read().strip()) // 1000  # m°C → °C
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # macOS: NSProcessInfo.thermalState je primární (volá se v _update_thermal_state)
@@ -460,7 +462,7 @@ class UniversalMemoryCoordinator:
                     # else: cache se neaktualizuje, ponechá předchozí hodnotu
             except asyncio.CancelledError:
                 raise  # Re-raise — CancelledError nesmí být polykána
-            except TimeoutError:
+            except TimeoutError:  # noqa: BLE001
                 # Timeout — ponechat starou cached hodnotu
                 pass
             except Exception:
@@ -1169,7 +1171,7 @@ class ResearchPhase(Enum):
     SYNTHESIS = 'synthesis'
     VALIDATION = 'validation'
 
-class ContextItem(msgspec.Struct, gc=False):
+class ContextItem(Struct):
     """Individual context item with metadata for three-tier storage."""
     item_id: str
     content: str
@@ -1182,7 +1184,7 @@ class ContextItem(msgspec.Struct, gc=False):
     content_type: str = 'general'
     confidence: float = 0.5
 
-class CompressedContext(msgspec.Struct, gc=False):
+class CompressedContext(Struct):
     """Compressed context container."""
     context_id: str
     original_size: int
@@ -1446,7 +1448,7 @@ class CacheLocation(Enum):
     L1_MEMORY = 'l1_memory'
     L2_DISK = 'l2_disk'
 
-class CacheEntry(msgspec.Struct, gc=False):
+class CacheEntry(Struct):
     """Single cache entry with FAISS embedding support."""
     cache_id: str
     content: Any

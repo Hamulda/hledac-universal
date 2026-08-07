@@ -83,7 +83,7 @@ class MetalDevice:
             import mlx.core as mx
             if hasattr(mx, 'get_active_memory'):
                 return mx.get_active_memory()  # type: ignore[union-attr]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return 0
 
@@ -95,7 +95,7 @@ class MetalDevice:
             import mlx.core as mx
             if hasattr(mx, 'get_peak_memory'):
                 return mx.get_peak_memory()  # type: ignore[union-attr]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return 0
 

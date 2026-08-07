@@ -71,7 +71,7 @@ def scan_probe_artifacts(repo_root: Path) -> SprintCollisionReport:
                     with open(json_path, encoding='utf-8') as f:
                         data = json.load(f)
                         sprint_id = data.get('sprint_id', name)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             md_files = list(item.glob('REPORT_*.md'))
             if md_files:

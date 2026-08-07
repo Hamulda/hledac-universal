@@ -9,6 +9,7 @@ from __future__ import annotations
 
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -48,7 +49,7 @@ _MIN_SCORE = 0.0
 # ----------------------------------------------------------------------
 # Dataclass
 # ----------------------------------------------------------------------
-class LaneCorroborationScore(msgspec.Struct, frozen=True, gc=False):
+class LaneCorroborationScore(Struct, frozen=True):
     """Lane-level corroboration score for a sprint result.
 
     Attributes
@@ -66,7 +67,7 @@ class LaneCorroborationScore(msgspec.Struct, frozen=True, gc=False):
     corroboration_reason: str
 
 
-class LaneTerminalCoverage(msgspec.Struct, frozen=True, gc=False):
+class LaneTerminalCoverage(Struct, frozen=True):
     """Terminal coverage — did lanes attempt/complete (regardless of outcome quality).
 
     Unlike corroboration_score, this counts ATTEMPTED_ERROR and ATTEMPTED_TIMEOUT

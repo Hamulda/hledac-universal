@@ -133,7 +133,7 @@ BS4_AVAILABLE = False
 try:
     from bs4 import BeautifulSoup
     BS4_AVAILABLE = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass  # noqa: BLE001  # fail-soft suppression: module
 
 

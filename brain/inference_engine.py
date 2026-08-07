@@ -47,6 +47,7 @@ from enum import Enum
 from typing import Any
 import msgspec
 
+from operator import attrgetter, itemgetter
 from hledac.universal.brain.deephermes3_engine import _get_xxh3_hex
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.exceptions import InferenceLoopExceeded
@@ -386,7 +387,7 @@ class InferenceEngine:
                 # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
                 try:
                     gc.collect()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         loop = asyncio.get_running_loop()
         return loop.run_until_complete(coro)
@@ -400,7 +401,7 @@ class InferenceEngine:
         if hasattr(self, '_thread_pool') and self._thread_pool is not None:
             try:
                 self._thread_pool.shutdown(wait=False, cancel_futures=True)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _init_inference_rules(self) -> None:
@@ -424,7 +425,7 @@ class InferenceEngine:
                 net_b = '.'.join(ip_b.split('.')[:3])
                 if net_a == net_b:
                     return True
-            except (AttributeError, IndexError):
+            except (AttributeError, IndexError):  # noqa: BLE001
                 pass
         loc_a = a.get('location') or a.get('metadata', {}).get('location')
         loc_b = b.get('location') or b.get('metadata', {}).get('location')
@@ -631,7 +632,7 @@ class InferenceEngine:
             hypothesis = Hypothesis(statement=explanation, prior_probability=prior, posterior_probability=posterior, supporting_evidence=supporting, conflicting_evidence=conflicting, inference_chain=chain)
             if posterior >= self.min_confidence_threshold:
                 hypotheses.append(hypothesis)
-        hypotheses.sort(key=lambda h: h.posterior_probability, reverse=True)
+        hypotheses.sort(key=attrgetter("posterior_probability"), reverse=True)
         logger.info(f'Abductive reasoning: {len(observations)} observations → {len(hypotheses)} hypotheses')
         return hypotheses[:max_hypotheses]
 
@@ -1042,7 +1043,7 @@ class InferenceEngine:
             if norm_a > 0 and norm_b > 0:
                 return dot / (norm_a * norm_b)
             return 0.0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         a_arr = np.array([ord(c) for c in a_padded], dtype=np.float32)
         b_arr = np.array([ord(c) for c in b_padded], dtype=np.float32)
@@ -1152,7 +1153,7 @@ class InferenceEngine:
                     chain = self._path_to_chain(list(reversed(path)))
                     if chain:
                         indirect_chains.extend(chain)
-        indirect_chains.sort(key=lambda x: x.confidence, reverse=True)
+        indirect_chains.sort(key=attrgetter("confidence"), reverse=True)
         return indirect_chains
 
     def _find_all_paths(self, start_id: str, max_depth: int) -> list[list[str]]:
@@ -1209,7 +1210,7 @@ class InferenceEngine:
             if hyp.statement not in seen_statements:
                 seen_statements.add(hyp.statement)
                 unique_hypotheses.append(hyp)
-        unique_hypotheses.sort(key=lambda h: h.posterior_probability, reverse=True)
+        unique_hypotheses.sort(key=attrgetter("posterior_probability"), reverse=True)
         return unique_hypotheses
 
     def get_evidence_stats(self) -> dict[str, Any]:

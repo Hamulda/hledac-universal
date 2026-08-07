@@ -1,0 +1,20 @@
+{
+  "schema": "haft.profile-onboarding.work-input/v1",
+  "project_root": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
+  "suggestion_ref": "profile-suggestion:sha256:6077e0467e099e936c908d3a770e1df34915f07aededd0aacbe1408ee6939109",
+  "detector_version": "haft.project-profile-detector/file-metadata-v3",
+  "policy_version": "haft.project-profile-detector-policy/supported-singleton-v3",
+  "observation_digest": "sha256:316f1bc6e27848554e1b40c5cc06dbb45c130c8c5670db40472137ba9ee3ce0c",
+  "scopes": [
+    {
+      "component_candidate_ref": "profile-component-suggestion:sha256:a7cb79bbcf475d44743ee57b17040c12101d4e3712f54ddeb1ddfe7254bb85f0",
+      "scope_id": "software",
+      "realization_kind": "software"
+    },
+    {
+      "component_candidate_ref": "profile-component-suggestion:sha256:d5066ae0bb37687f6828ad551cef8bc0fed6afa643fe535feb4ec645ed47bffc",
+      "scope_id": "models",
+      "realization_kind": "non_software"
+    }
+  ]
+}

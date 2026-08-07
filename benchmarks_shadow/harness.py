@@ -15,6 +15,7 @@ from math import sqrt
 from pathlib import Path
 from typing import Any
 import psutil
+from operator import attrgetter, itemgetter
 try:
     import numpy as _np
     np = _np
@@ -53,7 +54,7 @@ def _read_findings_count_from_latest_export() -> int:
     if not reports_dir.is_dir():
         return 0
     try:
-        json_files = sorted(reports_dir.glob('sprint_*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
+        json_files = sorted(reports_dir.glob('sprint_*.json'), key=attrgetter("stat")().st_mtime, reverse=True)
         if not json_files:
             return 0
         with open(json_files[0], encoding='utf-8') as fh:

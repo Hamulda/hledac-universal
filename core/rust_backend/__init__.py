@@ -326,7 +326,7 @@ class AccelBackend:
         if self._container is not None:
             try:
                 force = self._container.try_get("rust.force")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # container not available or rust.force not registered
 
         # 1-2. Env var override (backward compat — always-on, no toggles)
@@ -739,18 +739,23 @@ class _RustCompatShim:
       - Capability scoring
       - Container-based force override
       - Graceful fallback to None when unavailable
+
+    F320: Refactored to use class-level lock + instance for thread-safety.
     """
 
     __slots__ = ("_accel", "_raw_accessor")
+    _singleton_lock: "threading.Lock" = threading.Lock()
+    _singleton_instance: "_RustCompatShim | None" = None
 
     def __new__(cls) -> "_RustCompatShim":
-        global _rust_compat_instance
-        if _rust_compat_instance is None:
-            instance = super().__new__(cls)
-            instance._accel = AccelBackend()
-            instance._raw_accessor = None
-            _rust_compat_instance = instance
-        return _rust_compat_instance
+        # F320: Thread-safe singleton using class-level lock
+        with cls._singleton_lock:
+            if cls._singleton_instance is None:
+                instance = super().__new__(cls)
+                instance._accel = AccelBackend()
+                instance._raw_accessor = None
+                cls._singleton_instance = instance
+            return cls._singleton_instance
 
     def __init__(self) -> None:
         # Skip if already initialized (singleton — __new__ handles idempotence)

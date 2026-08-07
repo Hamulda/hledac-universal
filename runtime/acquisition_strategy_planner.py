@@ -22,6 +22,7 @@ Planner/Runner section boundaries, and F350M-R cleanup notes.
 from __future__ import annotations
 import logging
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 import re
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -114,7 +115,7 @@ def _feed_budget_to_dict(fdb) -> dict:
         return {'max_feed_accepted_before_nonfeed_terminal': getattr(fdb, 'max_feed_accepted_before_nonfeed_terminal', 0) or 0, 'max_feed_per_source': getattr(fdb, 'max_feed_per_source', 0) or 0, 'max_feed_share_before_nonfeed_terminal': getattr(fdb, 'max_feed_share_before_nonfeed_terminal', 0.0) or 0.0}
     return {}
 
-class FeedDominanceBudget(msgspec.Struct, frozen=True, gc=False):
+class FeedDominanceBudget(Struct, frozen=True):
     """F216E / Sprint C: Canonical feed dominance budget policy.
 
     Limits how many feed findings can be accepted before nonfeed lanes
@@ -228,7 +229,7 @@ class RiskLevel(StrEnum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class AcquisitionLanePlan(msgspec.Struct, frozen=True, gc=False):
+class AcquisitionLanePlan(Struct, frozen=True):
     """Plan for one acquisition lane."""
     lane: str
     enabled: bool
@@ -238,7 +239,7 @@ class AcquisitionLanePlan(msgspec.Struct, frozen=True, gc=False):
     concurrency: int = 2
     risk_level: str = RiskLevel.MEDIUM
 
-class AcquisitionContext(msgspec.Struct, frozen=True, gc=False):
+class AcquisitionContext(Struct, frozen=True):
     """Derived flags bundle for lane planning — constructed once per _build_plan_impl call."""
     query: str
     duration_s: float
@@ -261,13 +262,13 @@ class AcquisitionContext(msgspec.Struct, frozen=True, gc=False):
     _feed_max_items: int = field(default=50)
     _feed_cap_reason: str | None = field(default=None)
 
-class LaneSpec(msgspec.Struct, frozen=True, gc=False):
+class LaneSpec(Struct, frozen=True):
     """Static per-lane execution constants."""
     max_items: int
     timeout_s: int
     risk_level: str
 
-class LaneRule(msgspec.Struct, frozen=True, gc=False):
+class LaneRule(Struct, frozen=True):
     """Table-driven lane planning rule.
 
     One rule per AcquisitionLane.  The enabled/reason/concurrency logic
@@ -476,7 +477,7 @@ class AcquisitionStrategySnapshot(msgspec.Struct, gc=False):
     bootstrap_enabled: bool = False
     has_domain: bool = False
 
-class MandatoryLaneTerminality(msgspec.Struct, frozen=True, gc=False):
+class MandatoryLaneTerminality(Struct, frozen=True):
     """[F208A] Sprint F300 migration: @dataclass(slots=True) → msgspec.Struct.
 
     A mandatory lane must reach a terminal state (attempted, skipped, error, timeout)
@@ -931,7 +932,7 @@ def lane_skip_reason(snapshot: AcquisitionStrategySnapshot, lane_name: str) -> s
             return None if plan.enabled else plan.reason
     return None
 
-class SourceFamilyOutcome(msgspec.Struct, frozen=True, gc=False):
+class SourceFamilyOutcome(Struct, frozen=True):
     """Normalized outcome for one source family (lane) in the scheduler report.
     Migrated from @dataclass(frozen=True) → msgspec.Struct.
 
@@ -1137,7 +1138,7 @@ def normalize_source_family_outcome(family: str, raw: dict) -> SourceFamilyOutco
     _ts = _derive_terminal(_ts_raw, attempted, skipped, skip_reason, _error, _timeout, accepted_count)
     return SourceFamilyOutcome(family=_canonical_family, attempted=attempted, skipped=skipped, skip_reason=skip_reason, raw_count=raw_count, built_count=built_count, accepted_count=accepted_count, error=_error, timeout=_timeout, duration_s=_d.get('duration_s'), terminal_state=_ts)
 
-class AcquisitionLaneOutcome(msgspec.Struct, frozen=True, gc=False):
+class AcquisitionLaneOutcome(Struct, frozen=True):
     """Acquisition lane outcome DTO. Migrated from @dataclass(frozen=True) → msgspec.Struct."""
     lane: str
     enabled: bool
@@ -1682,7 +1683,7 @@ def _wallet_to_findings(wallet_analysis, query: str) -> list:
         risk = getattr(wallet_analysis, 'risk_score', None)
         finding = CanonicalFinding(finding_id=f'bc-{address[:16]}', source_type=getattr(SourceType, 'BLOCKCHAIN_FORENSICS', 'blockchain_forensics') if SourceType else 'blockchain_forensics', confidence=0.75, query=query[:128], ts=0.0, payload_text=f'address:{address} chain:{chain} balance:{balance} risk_score:{risk}', provenance=('source:blockchain', f'address:{address}'))
         findings.append(finding)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return findings
 
@@ -1771,7 +1772,7 @@ def build_lane_query(base_query: str, lane: str, seed_context: NonfeedSeedContex
             variants = expand_osint_query(base_query, max_variants=1)
             if variants:
                 return variants[0][:200]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         trimmed = base_query[:200] if len(base_query) > 200 else base_query
         return trimmed
@@ -1836,7 +1837,7 @@ def normalize_passive_dns_query(base_query: str, seed_context: NonfeedSeedContex
             if expansions:
                 logger.debug('passive_dns keyword_expand: kw=%r -> domain=%r', kw, expansions[0])
                 return expansions[0]
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     if base_query and base_query.strip():
         logger.debug('passive_dns freetext_fallback: raw_query=%r', base_query)

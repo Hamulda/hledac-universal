@@ -140,7 +140,7 @@ class WARCReplayResult:
                 from datetime import datetime
                 try:
                     ts = datetime.strptime(self.timestamp[:14], '%Y%m%d%H%M%S').timestamp()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             finding_id = str(uuid.uuid4())
             payload_parts = [
@@ -210,7 +210,7 @@ class WARCContentAdapter:
                 limit = 5 * 1024 * 1024  # 5 MB
             elif mem.available < 4 * 1024 * 1024 * 1024:  # < 4 GB available
                 limit = 10 * 1024 * 1024  # 10 MB
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return limit
 
@@ -318,7 +318,7 @@ class WARCContentAdapter:
                         parsed_via_fastwarc = True
                 except Exception:
                     continue
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Step 3: naive WARC/1.1 parsing (fallback when fastwarc unavailable/failed)
@@ -342,7 +342,7 @@ class WARCContentAdapter:
                         if line.lower().startswith('content-length:'):
                             try:
                                 content_length = int(line.split(':', 1)[1].strip())
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                             break
                     if content_length <= 0 or content_length > byte_limit:
@@ -439,7 +439,7 @@ class WARCContentAdapter:
                 import gzip
                 try:
                     body = gzip.decompress(body)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return body, content_type, status_code
         except Exception:

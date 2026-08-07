@@ -2002,7 +2002,7 @@ def _rdap_extract_domain_payload(
             registrar_name = registrar_raw.get("name", "") or registrar_raw.get("fullName", "")
         elif registrar_raw:
             registrar_name = str(registrar_raw)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-safe: registrar is optional
 
     # Nameserver list (used only in domain payload)

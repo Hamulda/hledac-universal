@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from operator import attrgetter, itemgetter
 try:
     import httpx
     HTTP_CLIENT_AVAILABLE = True
@@ -205,7 +206,7 @@ class DataLeakHunter:
             self._monitoring_task.cancel()
             try:
                 await self._monitoring_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
         logger.info('⏹️ Stopped monitoring')
 
@@ -483,7 +484,7 @@ class DataLeakHunter:
             alerts = [a for a in alerts if a.target == target]
         if severity:
             alerts = [a for a in alerts if a.severity == severity]
-        return sorted(alerts, key=lambda x: x.timestamp, reverse=True)[:limit]
+        return sorted(alerts, key=attrgetter("timestamp"), reverse=True)[:limit]
 
     async def cleanup(self) -> None:
         """Cleanup resources"""
@@ -570,7 +571,7 @@ class PasteMonitorClient:
                 import compression.zstd as _zstd
                 raw_bytes = await asyncio.to_thread(zst_path.read_bytes)
                 return orjson.loads(_zstd.decompress(raw_bytes))
-            except (ImportError, Exception):
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             raw_bytes = await asyncio.to_thread(json_path.read_bytes)

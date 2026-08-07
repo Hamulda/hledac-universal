@@ -89,14 +89,14 @@ def _parse_timestamp(raw: str | None) -> float | None:
         normalized = _normalize_iso(raw)
         dt = datetime.datetime.fromisoformat(normalized)
         return dt.timestamp()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     # Try RFC 2822 (RSS pubDate) via email.utils
     try:
         from email.utils import parsedate_to_datetime
         dt = parsedate_to_datetime(raw)
         return dt.timestamp()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -131,7 +131,7 @@ def _sanitize_xml(raw: str) -> str:
 
         if rust.is_available:
             return rust.xml.sanitize_xml(raw)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: pure-Python implementation

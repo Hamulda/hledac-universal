@@ -117,7 +117,7 @@ class _HttpxPool:
                     try:
                         if hasattr(old_client, 'aclose'):
                             safe_create_task(old_client.aclose(), name=f'httpx:evict:{oldest_key}')
-                    except AttributeError:  # aclose not available on evicted client
+                    except AttributeError:  # aclose not available on evicted client  # noqa: BLE001
                         pass
             try:
                 import httpx
@@ -140,7 +140,7 @@ class _HttpxPool:
             try:
                 if hasattr(client, 'aclose'):
                     await client.aclose()
-            except AttributeError:  # aclose not available on closed client
+            except AttributeError:  # aclose not available on closed client  # noqa: BLE001
                 pass
         logger.debug(f'[HTTPX] {len(clients)} clients closed')
 _CURL_CFFI_MAX_PROFILES = 3
@@ -202,7 +202,7 @@ class _CurlCffiPool:
                     try:
                         if hasattr(old_session, 'aclose'):
                             safe_create_task(old_session.aclose(), name=f'curl:profile_evict:{oldest_key}')
-                    except AttributeError:  # aclose not available on evicted session
+                    except AttributeError:  # aclose not available on evicted session  # noqa: BLE001
                         pass
             try:
                 from curl_cffi.requests import AsyncSession  # type: ignore[unresolved-import]
@@ -234,7 +234,7 @@ class _CurlCffiPool:
                 try:
                     if hasattr(_evicted_sess, 'aclose'):
                         safe_create_task(_evicted_sess.aclose(), name=f'curl:host_evict:{oldest_host}')
-                except AttributeError:  # aclose not available on evicted session
+                except AttributeError:  # aclose not available on evicted session  # noqa: BLE001
                     pass
         self._host_sessions[host] = (session, now, profile)
         self._host_order.append(host)
@@ -252,7 +252,7 @@ class _CurlCffiPool:
             try:
                 if hasattr(session, 'aclose'):
                     await session.aclose()
-            except AttributeError:  # aclose not available on session
+            except AttributeError:  # aclose not available on session  # noqa: BLE001
                 pass
         logger.debug(f'[curl_cffi] {len(profile_sessions)} profiles + {len(host_sessions)} hosts closed')
 _httpx_pool = _HttpxPool()
@@ -321,7 +321,7 @@ async def get_transport_client(policy: TransportPolicy, url: str) -> tuple[bool,
         from urllib.parse import urlparse
         parsed = urlparse(url)
         host = parsed.netloc or ''
-    except (ValueError, OSError):  # urlparse: ValueError for malformed URLs, OSError for IDN encoding
+    except (ValueError, OSError):  # urlparse: ValueError for malformed URLs, OSError for IDN encoding  # noqa: BLE001
         pass
     kind = policy.kind
     if kind == TransportKind.HTTPX_H2:
@@ -415,7 +415,7 @@ async def fetch_via_unified(url: str, policy: TransportPolicy | None=None, heade
             try:
                 if hasattr(resp, 'url') and resp.url:
                     final_url = str(resp.url)
-            except (ValueError, AttributeError):  # str(resp.url) can raise ValueError or AttributeError
+            except (ValueError, AttributeError):  # str(resp.url) can raise ValueError or AttributeError  # noqa: BLE001
                 pass
             return {'url': url, 'final_url': final_url, 'status_code': resp.status_code, 'content_type': resp.headers.get('Content-Type', ''), 'text': body.decode('utf-8', errors='replace') if body else '', 'fetched_bytes': len(body), 'declared_length': -1, 'elapsed_ms': elapsed_ms, 'error': None, 'failure_stage': None, 'headers': dict(resp.headers) if hasattr(resp, 'headers') else {}}
         else:
@@ -546,7 +546,7 @@ async def fetch_via_unified_with_race_fallback(
                     for p in pending:
                         p.cancel()
                     return fb_result
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # All fallbacks failed — cancel pending and return original error
         for p in pending:

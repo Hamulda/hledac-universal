@@ -164,7 +164,7 @@ class TorrentMetadataFetcher(msgspec.Struct, frozen=True, gc=False):
             try:
                 writer.close()
                 await writer.wait_closed()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _build_extended_message(self, msg_id: int, payload: dict) -> bytes:

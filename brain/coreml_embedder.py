@@ -28,7 +28,7 @@ _ort: Any = None
 try:
     import onnxruntime as _ort
     _ORT_AVAILABLE = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 ort = _ort
 _MODEL_NAME = 'BAAI/bge-small-en-v1.5'
@@ -223,7 +223,7 @@ class CoreMLEmbedder:
             from hledac.universal.utils.sync_bridge import run_sync_async
             try:
                 run_sync_async(client.close())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._backend = None
         self._is_loaded = False
@@ -272,7 +272,7 @@ class CoreMLEmbedder:
                 try:
                     from transformers import AutoTokenizer
                     self._hf_tokenizer = AutoTokenizer.from_pretrained(_MODEL_NAME)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if self._hf_tokenizer is not None:
                 tok_result = self._hf_tokenizer(texts, return_tensors='np', padding=True, truncation=True, max_length=512)

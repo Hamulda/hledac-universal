@@ -34,6 +34,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.async_helpers import safe_create_task
 
@@ -49,7 +50,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class StageResult(msgspec.Struct, frozen=True, gc=False):
+class StageResult(Struct, frozen=True):
     """Typed result from a single stage run.
 
     All fields are explicitly typed for mypy/catch mismatches.
@@ -64,7 +65,7 @@ class StageResult(msgspec.Struct, frozen=True, gc=False):
     items_out: int  # batch size output
 
 
-class StageStats(msgspec.Struct, gc=False):
+class StageStats(Struct):
     """Per-stage statistics accumulated during a pipeline run."""
 
     name: str

@@ -306,7 +306,7 @@ class DLQManager:
                         payload.created_at.isoformat(),
                     ),
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         except Exception as e:
@@ -384,7 +384,7 @@ class DLQManager:
                         payload.created_at.isoformat(),
                     ),
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             await conn.commit()
@@ -500,7 +500,7 @@ class DLQManager:
                 """,
                 (datetime.now(timezone.utc).isoformat(), payload_id),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             conn.close()
@@ -524,7 +524,7 @@ class DLQManager:
                 (datetime.now(timezone.utc).isoformat(), payload_id),
             )
             await conn.commit()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             await conn.close()
@@ -684,7 +684,7 @@ def dlq_catch(
                     if metadata_extractor:
                         try:
                             metadata = metadata_extractor(*args, **kwargs)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                     # Get sprint_id from ENV if available
@@ -692,7 +692,7 @@ def dlq_catch(
                     try:
                         from hledac.universal.core.env_config import ENV
                         sprint_id = ENV.get('HLEDAC_SPRINT_ID', 'unknown')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                     # Store in DLQ (fire-and-forget)
@@ -735,7 +735,7 @@ def dlq_catch(
                     if metadata_extractor:
                         try:
                             metadata = metadata_extractor(*args, **kwargs)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                     # Get sprint_id
@@ -743,7 +743,7 @@ def dlq_catch(
                     try:
                         from hledac.universal.core.env_config import ENV
                         sprint_id = ENV.get('HLEDAC_SPRINT_ID', 'unknown')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
                     # Store in DLQ

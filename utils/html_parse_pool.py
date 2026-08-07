@@ -76,7 +76,7 @@ def _parse_links_worker(html: str) -> list[dict[str, str]]:
             if href.startswith("http"):
                 results.append({"url": href, "title": text[:200]})
         return results
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     # Fallback: BeautifulSoup (GIL-bound, slower)
@@ -116,7 +116,7 @@ def _parse_text_worker(html: str) -> str:
         text = re.sub(r"\s+", " ", text).strip()
         if text:
             return text
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     # Tier 2: BeautifulSoup (slower, GIL-bound)

@@ -196,7 +196,7 @@ async def fetch_with_macos_webkit(url: str, *, timeout_s: float=_DEFAULT_TIMEOUT
                         err_reason = err_result.get('reason', '')
                         if err_reason == MACOS_WEBKIT_REASONS.MAX_BYTES_EXCEEDED:
                             return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.MAX_BYTES_EXCEEDED, elapsed_ms=elapsed_ms, rendered_bytes=err_result.get('rendered_bytes', 0))
-                    except (ValueError, UnicodeDecodeError):
+                    except (ValueError, UnicodeDecodeError):  # noqa: BLE001
                         pass
                     return WebKitRenderResult(html=None, ok=False, reason=MACOS_WEBKIT_REASONS.WORKER_ERROR, elapsed_ms=elapsed_ms, rendered_bytes=0)
                 try:

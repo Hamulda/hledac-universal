@@ -124,7 +124,7 @@ class DuckDBFTSStore:
                 self._conn.execute("SET memory_limit = '512MB'")
                 self._conn.execute("PRAGMA threads = 2")
                 self._conn.execute("SET preserve_insertion_order = false")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-soft
             self._ensure_schema()
             self._init_wal()
@@ -152,7 +152,7 @@ class DuckDBFTSStore:
                 "INSERT OR IGNORE INTO _fts_meta (key, value) VALUES ('schema_version', ?)",
                 [str(_SCHEMA_VERSION)]
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft
 
     def _wal_source_hash(self) -> str:
@@ -213,7 +213,7 @@ class DuckDBFTSStore:
             self._upsert_batch([doc])
         try:
             wal_path.unlink(missing_ok=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._wal_dirty = False
         logger.info('DuckDBFTSStore: WAL consolidated %d entries', len(entries))
@@ -316,7 +316,7 @@ class DuckDBFTSStore:
         finally:
             try:
                 self._conn.unregister(reg_name)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         for d in batch:
             self._invalidate_bm25(d.source, d.doc_id)

@@ -33,6 +33,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from operator import attrgetter, itemgetter
 # Add project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -272,7 +273,7 @@ def format_markdown(results: dict) -> str:
     # Best by throughput
     valid = [r for r in results["results"] if not r["failure"]]
     if valid:
-        best = max(valid, key=lambda r: r["docs_per_sec"])
+        best = max(valid, key=itemgetter("docs_per_sec"))
         lines.append(f"**Best throughput**: batch_size={best['batch_size']} at {best['docs_per_sec']:.1f} docs/s")
     return "\n".join(lines)
 

@@ -112,7 +112,7 @@ def _structured_correctness_probe() -> tuple[bool, str | None]:
             try:
                 import os
                 os.unlink(script_path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     except subprocess.TimeoutExpired:
         return (True, None)

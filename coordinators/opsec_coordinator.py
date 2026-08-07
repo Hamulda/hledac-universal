@@ -28,6 +28,7 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from .base import DecisionResponse, ExecutionResult, OperationResult, OperationType, UniversalCoordinator
 
@@ -42,7 +43,7 @@ class SecurityLevel(Enum):
     MAXIMUM = 4
 
 
-class SecurityContext(msgspec.Struct, gc=False):
+class SecurityContext(Struct):
     """Security context for operations."""
     operation_id: str
     security_level: SecurityLevel
@@ -53,7 +54,7 @@ class SecurityContext(msgspec.Struct, gc=False):
     audit_log: list[dict[str, Any]] = field(default_factory=list)
 
 
-class SecurityResult(msgspec.Struct, frozen=True, gc=False):
+class SecurityResult(Struct, frozen=True):
     """Result of security operation."""
     operation_type: str
     success: bool

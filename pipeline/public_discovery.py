@@ -19,6 +19,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     pass
@@ -40,7 +41,7 @@ def _ensure_discovery_patched() -> None:
         from hledac.universal.discovery.duckduckgo_adapter import search_multi_engine as _search_multi_engine_bootstrap
         _async_search_multi_engine_var.set(_search_multi_engine_bootstrap)
 
-class FetchPolicy(msgspec.Struct, frozen=True, gc=False):
+class FetchPolicy(Struct, frozen=True):
     """Bounded fetch policy for canonical public sprint."""
 
     use_js: bool = False
@@ -74,7 +75,7 @@ def _compute_fetch_policy(url: str, discovery_score: float | None, discovery_rea
         netloc = parsed.netloc.lower()
         if any((d in netloc for d in _JS_DOMAINS)):
             return FetchPolicy.js_capable()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return FetchPolicy.default()
 
@@ -233,7 +234,7 @@ def _extract_domain_from_query(query: str) -> str | None:
                 host = parsed.netloc or parsed.path.split("/")[0]
                 if host:
                     q = host
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if ":" in q:
             q = q.rsplit(":", 1)[0]
@@ -540,14 +541,14 @@ class _DiscoveryEngine:
             try:
                 selected, *_ = await _inject_ct_subdomain_hits(tuple(selected), self.query)
                 ct_injected = len(selected)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         cc_injected = 0
         if _query_looks_like_domain_for_cc(self.query):
             try:
                 selected, *_ = await _inject_commoncrawl_hits(tuple(selected), self.query)
                 cc_injected = len(selected)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         onion_findings_count = 0
         discovery_elapsed_s = time.monotonic() - start
@@ -574,7 +575,7 @@ async def limited_academic_search(query: str, uma_state: str, telemetry: dict) -
             for hit in academic_hits:
                 telemetry["academic_hits"] = telemetry.get("academic_hits", 0) + 1
                 academic_count += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return academic_count
 

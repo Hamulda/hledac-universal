@@ -406,7 +406,7 @@ def reset_session_manager(name: str = "default") -> bool:
             try:
                 loop = asyncio.get_running_loop()
                 loop.run_until_complete(mgr.close_all())
-            except RuntimeError:
+            except RuntimeError:  # noqa: BLE001
                 pass  # No running loop
             return True
         return False
@@ -426,7 +426,7 @@ def reset_all_session_managers() -> int:
                 try:
                     loop = asyncio.get_running_loop()
                     loop.run_until_complete(mgr.close_all())
-                except RuntimeError:
+                except RuntimeError:  # noqa: BLE001
                     pass
         return count
 

@@ -129,7 +129,7 @@ def extract_iocs_batch(
                     if text_idx < len(result):
                         result[text_idx].append((value, ioc_type, confidence))
                 return result
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Try batch SIMD (R4.3: regex-automata Teddy/NEON + rayon parallel)
@@ -184,7 +184,7 @@ def extract_iocs_batch(
                             text_result.append((v, t, confidence))
                     normalized.append(text_result)
                 return normalized
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Serial fallback: per-text Rust extraction
@@ -203,7 +203,7 @@ def extract_iocs_batch(
                     except Exception:
                         results.append([])
                 return results
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Pure Python fallback — last resort
@@ -247,7 +247,7 @@ def extract_iocs_batch_indexed(
             if batch_fn is not None:
                 simd_raw = batch_fn(texts)
                 return [(idx, val, typ, confidence) for idx, val, typ in simd_raw]
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Try fast batch → regroup with index
@@ -266,7 +266,7 @@ def extract_iocs_batch_indexed(
                     for value, ioc_type in text_iocs:
                         result.append((idx, value, ioc_type, confidence))
                 return result
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Pure Python fallback

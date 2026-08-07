@@ -168,7 +168,7 @@ def _evict_oldest_if_needed(max_size_gb: float) -> None:
                 import shutil
                 shutil.rmtree(entry)
                 current_size -= size / (1024**3)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
     except Exception as e:

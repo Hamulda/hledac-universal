@@ -448,7 +448,7 @@ class RustWorkerPool:
                 _abort = rust.raw.rayon_abort_channel
                 if _abort is not None:
                     _abort(handle)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Best-effort — don't mask original errors
             async with async_lock:
                 self._active_count -= 1
@@ -485,7 +485,7 @@ class RustWorkerPool:
             # so this is truly best-effort — the thread is already done.
             try:
                 rayon_abort_channel(handle)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             raise
 

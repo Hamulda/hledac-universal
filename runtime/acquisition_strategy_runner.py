@@ -45,6 +45,56 @@ _LANE_TO_FAMILY: dict[str, str] = {
     AcquisitionLane.DOH: 'doh',
 }
 
+
+def _build_lane_outcome(
+    lane: AcquisitionLane,
+    plan,
+    start: float,
+    *,
+    error: str | None = None,
+    timeout: bool = False,
+    produced_items: int = 0,
+    candidate_findings: tuple = (),
+    rejection_reasons: tuple = (),
+    rejected_count: int = 0,
+    sample_rejections: tuple = (),
+    source_family: str | None = None,
+    **extra_fields,
+) -> AcquisitionLaneOutcome:
+    """
+    Helper to build AcquisitionLaneOutcome with common fields filled.
+
+    Consolidates the repetitive outcome construction pattern across all lane runners.
+    """
+    return AcquisitionLaneOutcome(
+        lane=lane,
+        enabled=plan.enabled,
+        attempted=True,
+        timeout=timeout,
+        accepted_findings=0,
+        produced_items=produced_items,
+        error=error,
+        duration_s=time.monotonic() - start,
+        source_family=source_family or _LANE_TO_FAMILY.get(str(lane), 'unknown'),
+        candidate_findings=candidate_findings,
+        rejection_reasons=rejection_reasons,
+        rejected_count=rejected_count,
+        sample_rejections=sample_rejections,
+        **extra_fields,
+    )
+
+
+async def _accumulate_to_graph(
+    findings: list,
+    sprint_id_suffix: str,
+) -> None:
+    """Helper: accumulate findings to graph, fail-soft."""
+    if findings and graph_accumulator is not None:
+        try:
+            graph_accumulator.accumulate_findings(findings, sprint_id=sprint_id_suffix)
+        except Exception:  # noqa: BLE001
+            pass
+
 _ct_adapter: Any = None
 
 def _get_ct_adapter():
@@ -114,7 +164,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f'ct-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 if ct_outcome.error:
                     ct_error = ct_outcome.error
@@ -137,7 +187,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
             if not callable(_WDM):
                 raise ImportError('WaybackDiffMiner not callable')
         except Exception as _exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=0, duration_s=time.monotonic() - start, source_family='archive', error=f'adapter_not_runtime_safe: {_exc}', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
+            return _build_lane_outcome(AcquisitionLane.WAYBACK, plan, start, error=f'adapter_not_runtime_safe: {_exc}', produced_items=0, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=0, wayback_query=shaped_query_str, source_family='archive')
         try:
             async with asyncio.timeout(plan.timeout_s):
                 shaped_query = build_lane_query(query, AcquisitionLane.WAYBACK, seed_context)
@@ -152,16 +202,12 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 rejection_reasons = tuple(rejections)
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
-                if candidate_findings and graph_accumulator is not None:
-                    try:
-                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f'wayback-{int(time.time())}')
-                    except Exception:
-                        pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=len(result.change_events), duration_s=time.monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str)
+                await _accumulate_to_graph(list(candidate_findings), f'wayback-{int(time.time())}')
+                return _build_lane_outcome(AcquisitionLane.WAYBACK, plan, start, produced_items=len(result.change_events), candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str, source_family='archive')
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=0, wayback_query=shaped_query_str)
+            return _build_lane_outcome(AcquisitionLane.WAYBACK, plan, start, timeout=True, error='timeout', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=0, wayback_query=shaped_query_str, source_family='archive')
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.WAYBACK, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='archive', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=0, wayback_query=shaped_query_str)
+            return _build_lane_outcome(AcquisitionLane.WAYBACK, plan, start, error=f'{type(exc).__name__}:{exc}', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=0, wayback_query=shaped_query_str, source_family='archive')
 
     async def _run_pdns_lane(plan) -> AcquisitionLaneOutcome:
         """Run passive DNS lookup lane."""
@@ -188,18 +234,14 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 rejection_reasons = tuple(rejections)
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
-                if candidate_findings and graph_accumulator is not None:
-                    try:
-                        graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f'pdns-{int(time.time())}')
-                    except Exception:
-                        pass
-                return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=produced, duration_s=time.monotonic() - start, source_family='passive_dns', error=pdns_error, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query)
+                await _accumulate_to_graph(list(candidate_findings), f'pdns-{int(time.time())}')
+                return _build_lane_outcome(AcquisitionLane.PASSIVE_DNS, plan, start, error=pdns_error, produced_items=produced, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query, source_family='passive_dns')
         except TimeoutError:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, timeout=True, duration_s=time.monotonic() - start, error='timeout', source_family='passive_dns', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=0, passive_dns_query=shaped_query)
+            return _build_lane_outcome(AcquisitionLane.PASSIVE_DNS, plan, start, timeout=True, error='timeout', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=0, passive_dns_query=shaped_query, source_family='passive_dns')
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            return AcquisitionLaneOutcome(lane=AcquisitionLane.PASSIVE_DNS, enabled=plan.enabled, attempted=True, error=f'{type(exc).__name__}:{exc}', duration_s=time.monotonic() - start, source_family='passive_dns', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=0, passive_dns_query=shaped_query)
+            return _build_lane_outcome(AcquisitionLane.PASSIVE_DNS, plan, start, error=f'{type(exc).__name__}:{exc}', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=0, passive_dns_query=shaped_query, source_family='passive_dns')
 
     async def _run_academic_lane(plan) -> AcquisitionLaneOutcome:
         """Run academic search lane — R9: bounded, research-profile-only."""
@@ -222,7 +264,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f'academic-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.ACADEMIC, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=len(search_results), duration_s=time.monotonic() - start, source_family='academic', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections)
         except asyncio.CancelledError:
@@ -279,7 +321,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f'ipfs-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.IPFS, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=produced, duration_s=time.monotonic() - start, source_family='ipfs', candidate_findings=candidate_findings, ipfs_cid_count=ipfs_cid_count, ipfs_terminal_state=terminal_state)
         except asyncio.CancelledError:
@@ -303,7 +345,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if all_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(all_findings, sprint_id=f'open_source-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.OPEN_SOURCE, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=len(all_findings), duration_s=time.monotonic() - start, source_family='public')
         except TimeoutError:
@@ -347,7 +389,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if candidate_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(list(candidate_findings), sprint_id=f'doh-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.DOH, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=doh_raw_count, duration_s=time.monotonic() - start, source_family='doh', doh_query=domain)
         except TimeoutError:
@@ -381,7 +423,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if all_blockchain_findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(all_blockchain_findings, sprint_id=f'blockchain-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.BLOCKCHAIN, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=total_tx, duration_s=time.monotonic() - start, source_family='blockchain')
         except TimeoutError:
@@ -404,7 +446,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f'shodan-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.SHODAN, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='shodan_intel')
         except TimeoutError:
@@ -423,7 +465,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f'censys-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.CENSYS, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='censys_intel')
         except TimeoutError:
@@ -442,7 +484,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 if findings and graph_accumulator is not None:
                     try:
                         graph_accumulator.accumulate_findings(findings, sprint_id=f'greynoise-{int(time.time())}')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return AcquisitionLaneOutcome(lane=AcquisitionLane.GREYNOISE, enabled=plan.enabled, attempted=True, accepted_findings=0, produced_items=len(findings), duration_s=time.monotonic() - start, source_family='greynoise_intel')
         except TimeoutError:
@@ -489,6 +531,6 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 accepted = sum((1 for r in lane_results if isinstance(r, dict) and r.get('accepted')))
                 outcomes[outcome_idx] = AcquisitionLaneOutcome(lane=outcome.lane, enabled=outcome.enabled, attempted=outcome.attempted, accepted_findings=accepted, produced_items=outcome.produced_items, timeout=outcome.timeout, error=outcome.error, duration_s=outcome.duration_s, source_family=outcome.source_family, ct_query=outcome.ct_query, ct_results_raw=outcome.ct_results_raw, candidate_findings=outcome.candidate_findings, rejection_reasons=outcome.rejection_reasons, rejected_count=outcome.rejected_count, sample_rejections=outcome.sample_rejections, ct_candidates_built=outcome.ct_candidates_built, wayback_raw_count=outcome.wayback_raw_count, passive_dns_raw_count=outcome.passive_dns_raw_count, doh_query=outcome.doh_query, wayback_query=outcome.wayback_query, passive_dns_query=outcome.passive_dns_query, ipfs_cid_count=outcome.ipfs_cid_count, ipfs_terminal_state=outcome.ipfs_terminal_state)
                 idx += lane_len
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return tuple(outcomes)

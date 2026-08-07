@@ -170,7 +170,7 @@ async def export_sprint_streaming(store: Any, handoff: ExportHandoff, sprint_id:
                             await f.write(b'\n\n')
                         result.sections_written += 1
                         return
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # Fall through to uncompressed write
             # Uncompressed path (small sections or compression unavailable)
             async with _f273e_aiofiles.open(output_path, 'a', encoding='utf-8') as f:
@@ -307,7 +307,7 @@ def _get_findings_with_iocs(store: Any, handoff: Any) -> list[dict]:
                 _running_loop = _asyncio.get_running_loop()
                 _query_future = _asyncio.run_coroutine_threadsafe(store.async_query_recent_findings(limit=1000), _running_loop)
                 return _query_future.result()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return []
 
@@ -341,13 +341,13 @@ def _get_graph_manager(store: Any, handoff: Any) -> Any:
                 graph_data = store.get_ioc_graph(limit=500)
                 if graph_data and isinstance(graph_data, dict):
                     object.__setattr__(gm, '_edges', graph_data.get('edges', graph_data.get('links', [])))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return gm
     try:
         if hasattr(store, 'get_ioc_graph'):
             return store.get_ioc_graph(limit=200)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     class _EmptyGraph:

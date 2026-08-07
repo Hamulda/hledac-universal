@@ -63,7 +63,7 @@ def _get_hash_func():
     try:
         import xxhash
         return lambda s: xxhash.xxh3_64(s.encode()).intdigest()
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     
     # Fallback: blake2b is fast and available in stdlib

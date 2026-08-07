@@ -57,7 +57,7 @@ try:
     _monitoring = monitoring
     # Cache event constants locally for fast access
     _monitoring_events = getattr(monitoring, "events", None)
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass  # Python < 3.14 — monitoring not available
 
 

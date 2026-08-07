@@ -1270,7 +1270,7 @@ class M1ThermalMonitor:
             )
             if ret == 0:
                 return value.value
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -1298,7 +1298,7 @@ class M1ThermalMonitor:
             )
             if result.returncode == 0:
                 return float(result.stdout.strip())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -1324,7 +1324,7 @@ class M1ThermalMonitor:
 
             if hasattr(_mx.metal, "get_device_temperature"):
                 return float(_mx.metal.get_device_temperature())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # 2. Zkusit sysctl pro GPU
         for path in M1ThermalMonitor._GPU_TEMP_PATHS:
@@ -1743,7 +1743,7 @@ class M1ResourceGovernor:
                     _telemetry["degraded_last_reason"] = reason
                 else:
                     _telemetry["degraded_exit_count"] = _telemetry.get("degraded_exit_count", 0) + 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     @property
@@ -1936,7 +1936,7 @@ class M1ResourceGovernor:
             if thermal_status.gpu_temperature_c is not None:
                 get_metrics_registry().set_gauge("thermal_gpu_temp_c", thermal_status.gpu_temperature_c)
             get_metrics_registry().set_gauge("thermal_headroom", thermal_status.thermal_headroom * 100.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # HW-03: Compute thermal scaling factors from headroom
@@ -2084,13 +2084,13 @@ class M1ResourceGovernor:
             with _UMA_TELEMETRY_LOCK:
                 last_state = _telemetry["last_state"]
             _record_transition(last_state, current_latch, decision.io_only)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # B5: propagate UMA state to memory_cycle for dynamic GC thresholds
         try:
             from hledac.universal.core.memory_cycle import _apply_gc_thresholds
             _apply_gc_thresholds(decision.uma_state)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # F350M-R: Apply madvise to all mmap handles at CRITICAL/EMERGENCY
         if decision.uma_state in (UMAState.CRITICAL, UMAState.EMERGENCY):
@@ -2108,7 +2108,7 @@ class M1ResourceGovernor:
                         thermal_headroom=decision.thermal_headroom,
                     )
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # UNIFIED-002: Propagate UMA pressure state to AsyncUMAGuard for
         # dynamic hard-limit adjustment. This closes the race condition where
@@ -2116,7 +2116,7 @@ class M1ResourceGovernor:
         try:
             guard = get_uma_guard()
             guard.update_hard_limit(decision.uma_state)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # UNIFIED-003: Propagate UMA pressure to GlobalPeakCoScheduler for
         # preemption + mutex group awareness. This ensures CRITICAL/EMERGENCY
@@ -2125,7 +2125,7 @@ class M1ResourceGovernor:
             from hledac.universal.core.global_co_scheduler import get_co_scheduler
             scheduler = get_co_scheduler()
             asyncio.create_task(scheduler.on_pressure_change(decision.uma_state))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # [FINAL]-019: Propagate QoS profile to context variable and module cache.
         # Subsystems call is_capability_allowed() to self-gate expensive operations.
@@ -2134,7 +2134,7 @@ class M1ResourceGovernor:
             global _last_qos_profile
             _last_qos_profile = decision.qos_profile
             _qos_signal.set(decision.qos_profile)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def apply_madvise_critical(self) -> None:
@@ -2153,15 +2153,15 @@ class M1ResourceGovernor:
         """
         try:
             self._apply_madvise_to_duckdb_paths()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             self._apply_madvise_to_lmdb_paths()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             self._malloc_zone_pressure_relief()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _apply_madvise_to_duckdb_paths(self) -> None:
@@ -2176,9 +2176,9 @@ class M1ResourceGovernor:
                 if path and str(path) != ":memory:":
                     try:
                         madvise_lmdb_mmap(str(path), advice=1)  # MADV_NOCACHE
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _apply_madvise_to_lmdb_paths(self) -> None:
@@ -2189,27 +2189,27 @@ class M1ResourceGovernor:
             from hledac.universal.knowledge.sprint_seeds_store import _LMDB_PATH as _SEEDS_LMDB
             if _SEEDS_LMDB:
                 _lmdb_paths.append(str(_SEEDS_LMDB))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             from hledac.universal.knowledge.ioc_dedup_adapter import _IOC_DEDUP_LMDB_PATH
             if _IOC_DEDUP_LMDB_PATH:
                 _lmdb_paths.append(str(_IOC_DEDUP_LMDB_PATH))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             from hledac.universal.paths import LMDB_ROOT
             unified = LMDB_ROOT / "unified_cache.lmdb"
             if unified.exists():
                 _lmdb_paths.append(str(unified))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # Apply madvise to each collected path
         for path in _lmdb_paths:
             try:
                 from hledac.universal.tools.file_cache import madvise_lmdb_mmap
                 madvise_lmdb_mmap(path, advice=1)  # MADV_NOCACHE
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _malloc_zone_pressure_relief(self) -> None:
@@ -2230,7 +2230,7 @@ class M1ResourceGovernor:
                     result,
                     errno.errorcode.get(ctypes.get_errno(), "unknown"),
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def apply_madvise_to_file(self, path: str, advice: int = 1) -> bool:
@@ -2734,7 +2734,7 @@ class ResourceGovernor:
                         f"rejecting LOW priority (utilization: {snapshot.utilization_fraction:.1%})"
                     )
                     return False
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError):  # noqa: BLE001
             # Coordinator not available - continue with local checks
             pass
 
@@ -2763,7 +2763,7 @@ class ResourceGovernor:
                     gpu_total = _get_mx().metal.get_recommended_max_memory() / (1024 * 1024)
                 if gpu_used + ram_needed > gpu_total * factor:
                     return False
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # HW-01: GPU thermal check přes M1ThermalMonitor — sjednocená cesta
         thermal_status = self._thermal_monitor.read_thermal_status()
@@ -2778,7 +2778,7 @@ class ResourceGovernor:
                 ane = _get_mx().metal.get_ane_utilization()
                 if ane > 0.9 and priority == Priority.LOW:
                     return False
-        except AttributeError:
+        except AttributeError:  # noqa: BLE001
             pass
         if self._cost_model is not None:
             risk = self._cost_model.predict_overrun_risk(cost_estimate)
@@ -2799,7 +2799,7 @@ class ResourceGovernor:
         try:
             guard = get_uma_guard()
             return guard.reserve(estimated_mb=ram_mb, priority=priority, timeout_s=30.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Fallback to legacy behavior if guard unavailable
             pass
 
@@ -2948,7 +2948,7 @@ async def _get_memory_pressure_status_async() -> str:
             proc.kill()
             try:
                 await proc.wait()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return "UNKNOWN"
 
@@ -3064,7 +3064,7 @@ def sample_uma_status() -> UMAStatus:
         sm = _get_cached_psutil("swap_memory", _read_swap_memory_sync)
         if sm is not None:
             swap_used_gib = sm.used / 1024**3
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     metal_cache_limit_bytes, metal_wired_limit_bytes = _get_metal_limits_status_8ab()
     metal_active_gib: float = 0.0
@@ -3080,7 +3080,7 @@ def sample_uma_status() -> UMAStatus:
                 metal_peak_gib = mx.get_peak_memory() / 1024**3
             elif hasattr(mx.metal, "get_peak_memory"):
                 metal_peak_gib = mx.metal.get_peak_memory() / 1024**3
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     state = evaluate_uma_state(system_used_gib)
     _pressure_result = _get_cached_psutil("memory_pressure", _read_memory_pressure_sync)
@@ -3261,7 +3261,7 @@ class UMAAlarmDispatcher:
                 await self._check_and_dispatch()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _check_and_dispatch(self) -> None:

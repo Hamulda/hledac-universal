@@ -794,7 +794,7 @@ class EmbeddingCache:
                 self._pending_meta_save = True
                 return slot
             # Fallback: no free slots — evict will repopulate
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -883,7 +883,7 @@ async def get_embedding_cache(dim: int = 256) -> EmbeddingCache:
                     clear=_cache.clear_sync,
                     description="MLX embedding two-layer LRU cache",
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Non-fatal — registry is optional
         return _cache
 

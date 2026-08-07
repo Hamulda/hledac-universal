@@ -40,9 +40,11 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from hledac.universal.utils.async_helpers import parallel_ok
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 def _ensure_utc_aware(value: datetime) -> datetime:
@@ -79,7 +81,7 @@ except Exception:
     GLINER_AVAILABLE = False
     logger.debug('GLiNER check failed, using fallback NER')
 
-class EntityCandidate(msgspec.Struct, gc=False):
+class EntityCandidate(Struct):
     """
     Represents a candidate entity from Wikidata.
 
@@ -111,7 +113,7 @@ class EntityCandidate(msgspec.Struct, gc=False):
         """Create from dictionary."""
         return cls(entity_text=data['entity_text'], wikidata_id=data['wikidata_id'], label=data['label'], description=data['description'], types=data.get('types', []), context_score=data.get('context_score', 0.0), popularity_score=data.get('popularity_score', 0.0), final_score=data.get('final_score', 0.0))
 
-class LinkedEntity(msgspec.Struct, gc=False):
+class LinkedEntity(Struct):
     """
     Represents a successfully linked entity.
 
@@ -452,11 +454,11 @@ class EntityLinker:
             candidate.context_score = context_score
             candidate.final_score = final_score
             scored_candidates.append(candidate)
-        scored_candidates.sort(key=lambda x: x.final_score, reverse=True)
+        scored_candidates.sort(key=attrgetter("final_score"), reverse=True)
         best = scored_candidates[0]
         if best.final_score >= self.confidence_threshold:
             return best
-        scored_candidates.sort(key=lambda x: x.popularity_score, reverse=True)
+        scored_candidates.sort(key=attrgetter("popularity_score"), reverse=True)
         return scored_candidates[0]
 
     async def link_entities(self, text: str, context: str='') -> list[LinkedEntity]:
@@ -516,7 +518,7 @@ class EntityLinker:
             async with semaphore:
                 candidates = await self.query_wikidata(entity)
                 if candidates:
-                    best = max(candidates, key=lambda x: x.popularity_score)
+                    best = max(candidates, key=attrgetter("popularity_score"))
                     return (entity, best.label)
                 return (entity, None)
         tasks = [resolve_one(e) for e in entities]

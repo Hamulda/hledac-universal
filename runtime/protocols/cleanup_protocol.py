@@ -273,7 +273,7 @@ async def manage_cleanup(
         for mr in reversed_managed:
             try:
                 await mr.resource.aclose(timeout_s=mr.timeout_s)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass  # Preserve the first cancellation
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
@@ -286,7 +286,7 @@ async def manage_cleanup(
         for mr in reversed_managed:
             try:
                 await mr.resource.aclose(timeout_s=mr.timeout_s)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass  # CancelledError during cleanup = not our concern
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)

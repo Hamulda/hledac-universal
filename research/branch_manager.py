@@ -337,7 +337,7 @@ class BranchManager:
                 )
             if results:
                 return results
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Try graph history
@@ -356,7 +356,7 @@ class BranchManager:
                 )
             if results:
                 return results
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return results

@@ -337,7 +337,7 @@ class TaskPrioritizerWrapper:
         try:
             _mlx.eval(self.model.parameters(), self.optimizer.state)
             _mlx.metal.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft: Metal cache cleanup is best-effort
 
         self.trained = True

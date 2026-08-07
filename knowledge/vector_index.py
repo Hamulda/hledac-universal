@@ -549,7 +549,7 @@ class LanceDbIndex(VectorIndex):
                         try:
                             self._table.create_fts_index(col, replace=False)
                             logger.info("[LanceDbIndex] Created FTS index: %s", fts_name)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
             self._lancedb_has_fts = True
         except Exception:

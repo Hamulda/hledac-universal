@@ -141,7 +141,7 @@ class ThreatIntelligence:
                             _, raw = await query_greynoise_ip(ioc_val, use_community=True)
                             if raw.get('classification') == 'malicious':
                                 threats.append({'type': 'greynoise_malicious_ip', 'ioc': ioc_val, 'source': 'greynoise', 'severity': 'high', 'detail': raw})
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         for t in threats:
             stats['total'] += 1
@@ -188,7 +188,7 @@ class ThreatIntelligence:
                 for cidr in cidrs:
                     if addr in ipaddress.ip_network(cidr, strict=False):
                         return urls[0].rstrip('/')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return 'https://rdap.arin.net/registry'
 
@@ -221,7 +221,7 @@ class ThreatIntelligence:
                 _, raw = await query_greynoise_ip(ioc_str, use_community=True)
                 if raw.get('classification') in ('malicious', 'suspicious'):
                     result.update({'found': True, 'severity': 'high', 'classification': raw['classification'], 'sources': result['sources'] + ['greynoise']})
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if _looks_like_ip(ioc_str):
             try:
@@ -240,7 +240,7 @@ class ThreatIntelligence:
                         country = data.get('country', '')
                         asn_info = [e.get('handle', '') for e in data.get('entities', [])]
                         result.update({'found': True, 'sources': result['sources'] + ['rdap'], 'org': org, 'country': country, 'asn_entities': asn_info[:3]})
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if _looks_like_ip(ioc_str) and os.getenv('HLEDAC_ENABLE_BGPTOOLS', '1') != '0':
             try:
@@ -253,7 +253,7 @@ class ThreatIntelligence:
                         pfx = data.get('prefix', '')
                         name = data.get('name', '')
                         result.update({'sources': result['sources'] + ['bgptools'], 'asn': asn, 'prefix': pfx, 'asn_name': name})
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return result
 

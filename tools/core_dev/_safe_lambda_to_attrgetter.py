@@ -3,8 +3,8 @@
 Safe codemod to replace simple lambda x: x.attr patterns with operator.attrgetter.
 
 This version is conservative - only replaces patterns that are definitely safe:
-- key=lambda x: x.attr -> key=attrgetter('attr')
-- key=lambda x: x['attr'] -> key=itemgetter('attr')
+- key=attrgetter("attr") -> key=attrgetter('attr')
+- key=itemgetter("'") -> key=itemgetter('attr')
 
 Does NOT replace complex patterns like:
 - lambda x: x.method()
@@ -59,7 +59,7 @@ def replace_simple_lambda(content: str) -> tuple[str, int]:
     """Replace simple lambda patterns with attrgetter/itemgetter."""
     count = 0
     
-    # Pattern 1: key=lambda x: x.attr
+    # Pattern 1: key=attrgetter("attr")
     def repl_attr(m):
         nonlocal count
         var = m.group(1)
@@ -70,7 +70,7 @@ def replace_simple_lambda(content: str) -> tuple[str, int]:
     pattern1 = r'key=lambda\s+(\w+):\s*\1\.(\w+)'
     new_content = re.sub(pattern1, repl_attr, content)
     
-    # Pattern 2: key=lambda x: x['attr']
+    # Pattern 2: key=itemgetter("'")
     def repl_item(m):
         nonlocal count
         var = m.group(1)
@@ -81,8 +81,8 @@ def replace_simple_lambda(content: str) -> tuple[str, int]:
     pattern2 = r'key=lambda\s+(\w+):\s*\1\[([\'\"])(\w+)\2\]'
     new_content = re.sub(pattern2, repl_item, new_content)
     
-    # Pattern 3: key=lambda x: x.attr1.attr2 - NOT safe, skip
-    # Pattern 4: key=lambda x: x.method() - NOT safe, skip
+    # Pattern 3: key=attrgetter("attr1").attr2 - NOT safe, skip
+    # Pattern 4: key=attrgetter("method")() - NOT safe, skip
     
     return new_content, count
 
@@ -131,7 +131,7 @@ def main():
         if path.is_dir():
             for root, dirs, files in os.walk(path):
                 # Skip certain directories
-                dirs[:] = [d for d in dirs if d not in ['venv', '__pycache__', '.venv', 'archive', '.git', 'test']]
+                dirs[:] = [d for d in dirs if d not in ['venv', '__pycache__', '.venv', '.venv-test', 'archive', '.git', 'test']]
                 
                 for f in files:
                     if f.endswith('.py'):

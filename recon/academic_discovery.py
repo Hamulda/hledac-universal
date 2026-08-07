@@ -434,7 +434,7 @@ async def search_arxiv(query: str, max_results: int = 10) -> list[dict[str, Any]
             if published:
                 try:
                     year = int(published[:4])
-                except (ValueError, IndexError):
+                except (ValueError, IndexError):  # noqa: BLE001
                     pass
 
             paper = AcademicPaper(
@@ -485,7 +485,7 @@ async def search_crossref(query: str, max_results: int = 10) -> list[dict[str, A
             if published:
                 try:
                     year = int(published[:4])
-                except (ValueError, IndexError):
+                except (ValueError, IndexError):  # noqa: BLE001
                     pass
 
             paper = AcademicPaper(

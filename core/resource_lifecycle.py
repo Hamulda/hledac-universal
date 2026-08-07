@@ -723,7 +723,7 @@ class ResourceLifecycleManager:
             mx.eval([])
             mx.metal.clear_cache()
             logger.debug("[RLM] MLX Metal cache cleared")
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.warning("[RLM] MLX cleanup error (non-fatal): %s", e)
@@ -780,7 +780,7 @@ class ResourceLifecycleManager:
         for sig, old_handler in self._signal_handlers.items():
             try:
                 signal.signal(sig, old_handler)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._signal_handlers.clear()
 
@@ -816,11 +816,11 @@ class ResourceLifecycleManager:
                     f"[RLM] RSS ({rss_gib:.1f} GiB) exceeds block threshold "
                     f"({_RSS_BLOCK_GIB} GiB). Blocking new allocations."
                 )
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass  # psutil not available — skip check
         except RuntimeError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def is_memory_pressured(self) -> bool:
@@ -943,7 +943,7 @@ class ResourceLifecycleManager:
                 if hasattr(session, "aclose"):
                     async with asyncio.timeout(1.0):
                         await session.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._sessions.clear()
 
@@ -951,7 +951,7 @@ class ResourceLifecycleManager:
         for name, executor in list(self._executors.items()):
             try:
                 executor.shutdown(wait=False)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._executors.clear()
 
@@ -959,7 +959,7 @@ class ResourceLifecycleManager:
         for conn in self._duckdb_connections:
             try:
                 await asyncio.to_thread(conn.close)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._duckdb_connections.clear()
 
@@ -1023,7 +1023,7 @@ class TrackedResource:
                         type(self).__module__,
                         type(self).__qualname__,
                     )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         cls.__init__ = _tracked_init  # type: ignore[method-assign]

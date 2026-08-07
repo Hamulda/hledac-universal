@@ -186,7 +186,7 @@ async def fetch_nw_quic(
         if is_dark_web_url(url):
             logger.debug("nw_quic: dark web URL skipped: %s", url[:80])
             return None
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     timeout = timeout_ms if timeout_ms is not None else NW_QUIC_TIMEOUT_MS

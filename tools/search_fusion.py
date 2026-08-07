@@ -2,6 +2,7 @@
 from urllib.parse import urlsplit, urlunsplit
 
 
+from operator import attrgetter, itemgetter
 def normalize_url(url: str) -> str:
     if not url:
         return ""
@@ -38,7 +39,7 @@ def reciprocal_rank_fusion(rows: list[dict], k: int = 60) -> list[dict]:
         row["provider_count"] = len(row.pop("_providers"))
         row["score"] = row.pop("_rrf") + 0.02 * row["provider_count"]
         out.append(row)
-    out.sort(key=lambda x: x["score"], reverse=True)
+    out.sort(key=itemgetter("_rrf"), reverse=True)
     return out
 
 def top_k(rows: list[dict], k: int = 10) -> list[dict]:

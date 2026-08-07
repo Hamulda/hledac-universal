@@ -73,7 +73,7 @@ class BGPAdvisorAdapter:
                 ips_to_query,
             )
             self._adapter = adapter
-        except Exception:
+        except Exception:  # noqa: BLE001
             # fail-soft: overall failure doesn't crash the sprint
             pass
 
@@ -95,9 +95,9 @@ def _sync_enrich_ips(adapter: BGPAdapter, ips: list[str]) -> None:
                             result.prefix or "unknown",
                             result.org_name or "unknown",
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-soft per-IP
         finally:
             loop.close()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft overall

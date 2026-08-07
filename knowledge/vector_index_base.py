@@ -102,7 +102,7 @@ try:
 
     _mlx_cosine_similarity_batch = _mlx_cosine_similarity_batch_impl
     _MLX_AVAILABLE = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 

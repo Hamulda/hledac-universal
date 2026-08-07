@@ -291,7 +291,7 @@ async def _mongo_extract(host: str, port: int = 27017) -> NativeExtractionResult
                         try:
                             import orjson
                             documents.append(orjson.loads(doc_json))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
             if entry.error:
                 errors.append(entry.error)

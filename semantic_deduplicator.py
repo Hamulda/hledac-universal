@@ -113,7 +113,7 @@ class _SemanticDedupLMDB:
         if self._env is not None:
             try:
                 self._env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._env = None
 
@@ -242,7 +242,7 @@ class SemanticDedupCache:
                 if check_ann_duplicate(emb, text_hash, key):
                     self._duplicate_count += 1
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             if self._lmdb_store is not None and self._lmdb_store._boot_error is None:
                 self._lmdb_store.put(key, emb)

@@ -93,7 +93,7 @@ def _check_cryptokit() -> bool:
             import msgspec.json as _json
             data = _json.decode(result.stdout)
             return data.get('ok', False) and data.get('data', {}).get('aes_gcm_available', False) == 'true'
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 CRYPTOKIT_AVAILABLE = _check_cryptokit()
@@ -394,7 +394,7 @@ class LootManager:
                     dir_path = Path(root) / dir_name
                     try:
                         os.rmdir(dir_path)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             try:
                 os.rmdir(path)
@@ -467,7 +467,7 @@ class LootManager:
                     result = self._decrypt_cryptokit(encrypted_data, password, output_path)
                     if result:
                         return result
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if CRYPTO_AVAILABLE:
                 return self._decrypt_fernet(encrypted_data, password, output_path)

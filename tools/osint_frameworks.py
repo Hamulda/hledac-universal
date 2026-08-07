@@ -79,7 +79,7 @@ class OSINTFrameworkRunner:
                 try:
                     if os.path.exists(out_file + ext):
                         os.unlink(out_file + ext)
-                except FileNotFoundError:
+                except FileNotFoundError:  # noqa: BLE001
                     pass
 
     async def run_sherlock(self, username: str) -> list[dict]:
@@ -144,7 +144,7 @@ class OSINTFrameworkRunner:
                     for site, result in data.items():
                         if result.get('status') == 'found':
                             findings.append({'type': 'profile', 'url': result.get('url', site), 'source': 'maigret', 'username': username})
-            except json.JSONDecodeError:
+            except json.JSONDecodeError:  # noqa: BLE001
                 pass
             return findings
         except TimeoutError:

@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
 
+from operator import attrgetter, itemgetter
 import msgspec
 from hledac.universal.utils.msgspec_json import decode as _msgspec_decode, encode as _msgspec_encode
 from pathlib import Path
@@ -59,7 +60,7 @@ _NL_AVAILABLE = False
 try:
     import NaturalLanguage
     _NL_AVAILABLE = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 MAX_STRICT_TEXT_LENGTH = 10000
 MAX_STRICT_LABELS = 5
@@ -163,7 +164,7 @@ class _NERPersistentWorker:
                             continue
                         except Exception:
                             break
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Start stdout reader (parses responses and dispatches to correct queue)
@@ -240,18 +241,18 @@ class _NERPersistentWorker:
             if self._reader_task:
                 self._reader_task.cancel()
                 self._reader_task = None
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             if self._stderr_task:
                 self._stderr_task.cancel()
                 self._stderr_task = None
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             if self._proc:
                 self._proc.terminate()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._proc = None
         self._started = False
@@ -337,7 +338,7 @@ class _NERPersistentWorker:
         if self._proc:
             try:
                 self._proc.terminate()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._proc = None
 
@@ -347,14 +348,14 @@ class _NERPersistentWorker:
         if self._reader_task:
             try:
                 await asyncio.wait_for(asyncio.shield(self._reader_task), timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                 pass
             self._reader_task = None
 
         if self._stderr_task:
             try:
                 await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=3.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                 pass
             self._stderr_task = None
 
@@ -363,7 +364,7 @@ class _NERPersistentWorker:
                 async with self._stdin_lock:
                     if self._proc.stdin:
                         self._proc.stdin.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 async with asyncio.timeout(5.0):
@@ -373,9 +374,9 @@ class _NERPersistentWorker:
                 try:
                     async with asyncio.timeout(3.0):
                         await self._proc.wait()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._proc = None
 
@@ -950,7 +951,7 @@ n        Pokud je model již načten, nic nedělá.
         finally:
             try:
                 os.unlink(temp_script)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def get_info(self) -> dict[str, Any]:
@@ -961,7 +962,7 @@ n        Pokud je model již načten, nic nedělá.
             if _t:
                 try:
                     num_threads = _t.get_num_threads()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         return {'model_name': self.model_name, 'is_loaded': self.is_loaded, 'initialized': self._initialized, 'device': 'cpu', 'num_threads': num_threads, 'memory_strict_limits': {'max_text_length': MAX_STRICT_TEXT_LENGTH, 'max_labels': MAX_STRICT_LABELS, 'max_texts': MAX_STRICT_TEXTS}}
 _default_engine: NEREngine | None = None
@@ -1067,7 +1068,7 @@ def _get_spacy():
         try:
             import spacy
             _SPACY_NLP = spacy.load('en_core_web_sm')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _SPACY_NLP
 
@@ -1097,13 +1098,13 @@ def extract_iocs_from_text(text: str) -> list[dict]:
             if tld in _DOMAIN_TLD_DENYLIST:
                 continue
             _add(m, 'domain', 0.7)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     for ioc_type, pattern in _IOC_PATTERNS:
         try:
             for m in pattern.findall(text[:10000]):
                 _add(m, ioc_type, _IOC_CONFIDENCE.get(ioc_type, 0.7))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     nlp = _get_spacy()
     if nlp is not None:
@@ -1112,7 +1113,7 @@ def extract_iocs_from_text(text: str) -> list[dict]:
             for ent in doc.ents:
                 if ent.label_ in ('ORG', 'PERSON', 'GPE', 'PRODUCT'):
                     _add(ent.text, ent.label_.lower(), 0.65)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return results
 
@@ -1244,7 +1245,7 @@ def extract_entities_from_texts(texts: list[str], *, min_count: int=1, max_entit
             continue
         ent['confidence'] = round(min(1.0, ent['confidence'] + _math.log1p(ent['count'] - 1) * 0.05), 4)
         entities.append(ent)
-    entities.sort(key=lambda e: e['count'] * e['confidence'], reverse=True)
+    entities.sort(key=itemgetter("'") * e['confidence'], reverse=True)
     return entities[:max_entities]
 
 def extract_entities_from_findings(findings: list[dict], *, min_count: int=1, max_entities: int=100, include_types: list[str] | None=None) -> list[dict]:
@@ -1318,7 +1319,7 @@ def extract_entities_from_findings(findings: list[dict], *, min_count: int=1, ma
             continue
         ent['confidence'] = round(min(1.0, ent['confidence'] + _math.log1p(ent['count'] - 1) * 0.05), 4)
         entities.append(ent)
-    entities.sort(key=lambda e: e['count'] * e['confidence'], reverse=True)
+    entities.sort(key=itemgetter("'") * e['confidence'], reverse=True)
     return entities[:max_entities]
 
 def _extract_cooccurrence_hints_from_text(text: str) -> dict[str, list[str]]:
@@ -1358,7 +1359,7 @@ def _extract_cooccurrence_hints_from_text(text: str) -> dict[str, list[str]]:
                     if v and v not in seen_org:
                         seen_org.add(v)
                         hints['orgs'].append(v)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     for k in hints:
         hints[k] = hints[k][:10]
@@ -1433,7 +1434,7 @@ def _top_by_score(entities: list[dict], k: int=10) -> list[dict]:
     """Return top-k entities sorted by count * confidence."""
     if not entities:
         return []
-    scored = sorted(entities, key=lambda e: e['count'] * e.get('confidence', 0.5), reverse=True)
+    scored = sorted(entities, key=itemgetter("'") * e.get('confidence', 0.5), reverse=True)
     return scored[:k]
 
 def _corroborated_findings(entities: list[dict], min_sources: int=2) -> list[dict]:
@@ -1570,7 +1571,7 @@ class FeedbackPack(msgspec.Struct, gc=False):
             if len(shortlist) >= max_items:
                 break
             _add({'action_type': 'semantic_pivot', 'query': piv.get('text', '')[:200], 'rationale': f"semantic similarity {piv.get('score', 0):.2f}", 'priority': piv.get('score', 0.3), 'pivot_type': 'semantic'})
-        shortlist.sort(key=lambda x: x.get('priority', 0), reverse=True)
+        shortlist.sort(key=attrgetter("get")('priority', 0), reverse=True)
         return shortlist[:max_items]
 
     @property

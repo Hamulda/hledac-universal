@@ -98,7 +98,7 @@ def benchmark_compression(raw_data: bytes, name: str, n_runs: int=100) -> dict[s
     try:
         import compression.zstd
         has_zstd = True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     gc.collect()
     rss_before = get_rss_kb()

@@ -297,7 +297,7 @@ class TransportRouter:
             for pattern in self._API_PATH_PATTERNS:
                 if re.match(pattern, f'{parsed.scheme}://{hostname}{path}'):
                     return True
-        except re.error:  # invalid regex pattern in _API_PATH_PATTERNS
+        except re.error:  # invalid regex pattern in _API_PATH_PATTERNS  # noqa: BLE001
             pass
         return False
 
@@ -350,7 +350,7 @@ class TransportRouter:
             for pattern in self._API_PATH_PATTERNS:
                 if re.match(pattern, f'{parsed.scheme}://{hostname}{parsed.path}'):
                     return True
-        except re.error:  # invalid regex pattern in _API_PATH_PATTERNS
+        except re.error:  # invalid regex pattern in _API_PATH_PATTERNS  # noqa: BLE001
             pass
         return False
 _router = TransportRouter()

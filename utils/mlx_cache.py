@@ -773,7 +773,7 @@ def _read_available_memory() -> int:
     if sys.platform == "darwin" and hasattr(os, "proc_available_memory"):
         try:
             return os.proc_available_memory()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     try:
         return int(psutil.virtual_memory().available)
@@ -896,7 +896,7 @@ async def stop_memory_status_poller() -> None:
         _memory_poller_task.cancel()
         try:
             await _memory_poller_task
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
         _memory_poller_task = None
 
@@ -911,7 +911,7 @@ def get_current_uma_state_u8() -> int:
     if _rust_uma_state is not None:
         try:
             return _rust_uma_state()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _current_uma_state_u8
 

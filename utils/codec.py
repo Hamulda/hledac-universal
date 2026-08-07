@@ -196,7 +196,7 @@ def _ensure_rust_json() -> Any:
         if _rust_backend.is_available:
             _rust_json = _rust_backend.json
             return _rust_json
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -326,7 +326,7 @@ def encode_compact_sorted(obj: Any) -> str:
     if rust is not None:
         try:
             return rust.compact_sorted(obj)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     if ORJSON_AVAILABLE and orjson is not None:
         return orjson.dumps(obj, option=_ORJSON_OPT_SORT_KEYS).decode("utf-8")  # type: ignore[no-any-return]
@@ -349,7 +349,7 @@ def encode_pretty_sorted(obj: Any) -> str:
     if rust is not None:
         try:
             return rust.pretty_sorted(obj)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     if ORJSON_AVAILABLE and orjson is not None:
         return orjson.dumps(  # type: ignore[no-any-return]
@@ -487,7 +487,7 @@ def encode_stix(obj: Any, *, pretty: bool = False, sort_keys: bool = True) -> by
                 return rust.dumps_pretty_bytes(obj, sort_keys=False)  # type: ignore[no-any-return]
             elif sort_keys:
                 return rust.dumps_compact_bytes(obj)  # type: ignore[no-any-return]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # Fall through to standard path
 

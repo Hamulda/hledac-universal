@@ -107,7 +107,7 @@ class StoreStage:
                     flushed = await self._flush_batch()
                     stored_count += flushed
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
         except Exception:
             metrics.record_error()

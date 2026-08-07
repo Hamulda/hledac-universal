@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 # -- Bounds (M1 8GB safe) -----------------------------------------------------
@@ -369,7 +370,7 @@ class ContradictionFeedbackBridge:
                 self._run_adversarial_verifier(findings)
             )
             engines_available.append("adversarial")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 2. InsightEngine
@@ -378,7 +379,7 @@ class ContradictionFeedbackBridge:
                 self._run_insight_engine(findings)
             )
             engines_available.append("insight")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 3. DempsterShafer
@@ -387,7 +388,7 @@ class ContradictionFeedbackBridge:
                 self._run_dempster_shafer(findings)
             )
             engines_available.append("dempster_shafer")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 4. EvidenceNetworkAnalyzer
@@ -396,7 +397,7 @@ class ContradictionFeedbackBridge:
                 self._run_evidence_network(findings)
             )
             engines_available.append("evidence_network")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 5. GraphRAG (if available)
@@ -405,7 +406,7 @@ class ContradictionFeedbackBridge:
                 self._run_graph_rag(findings)
             )
             engines_available.append("graph_rag")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Collect results (with timeout per engine)
@@ -464,7 +465,7 @@ class ContradictionFeedbackBridge:
             re_fetch_candidates.append(candidate)
 
         # Sort by severity, cap at max
-        re_fetch_candidates.sort(key=lambda c: c.severity, reverse=True)
+        re_fetch_candidates.sort(key=attrgetter("severity"), reverse=True)
         re_fetch_candidates = re_fetch_candidates[:RE_FETCH_CANDIDATES_MAX]
 
         # Quality gate decision

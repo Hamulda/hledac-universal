@@ -210,7 +210,7 @@ class SeverityPriorityQueue:
                     timeout=timeout,
                 )
                 return True
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # noqa: BLE001
                 # Timeout waiting for space — try overflow strategy
                 pass
 
@@ -650,7 +650,7 @@ def calculate_entropy(
             if normalize:
                 return min(rust_entropy / 6.5, 1.0)
             return rust_entropy
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to pure-Python path (fail-soft)
 
     # Pure-Python fallback

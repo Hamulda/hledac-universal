@@ -21,6 +21,7 @@ It is NOT the analytics backend — DuckPGQGraph serves that role.
 PIVOT:  MATCH (n:IOC)-[r*1..2]-(m:IOC) WHERE n.value=$v AND n.ioc_type=$t RETURN m, r
 """
 import asyncio
+import logging
 import math
 import orjson
 import re
@@ -31,6 +32,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 import xxhash
+
+logger = logging.getLogger(__name__)
 
 from hledac.universal.brain.jtms import JTMS, Justification, apply_temporal_decay
 
@@ -494,11 +497,11 @@ class IOCGraph:
                 ')'
             )
             self._schema_has_temporal = True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             self._conn.execute('CREATE REL TABLE OBSERVED(FROM IOC TO IOC, finding_id STRING, source_type STRING, first_seen DOUBLE, last_seen DOUBLE)')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # SWARM-003: PREDICTED edge type for link prediction results
@@ -516,7 +519,7 @@ class IOCGraph:
                 'verified BOOLEAN DEFAULT false'
                 ')'
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # SWARM-003: PREDICTED edge type for link prediction results
@@ -535,7 +538,7 @@ class IOCGraph:
                 'verified BOOLEAN DEFAULT false'
                 ')'
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # [META]-006: Probe whether existing DB has temporal fields
@@ -564,12 +567,12 @@ class IOCGraph:
 
         try:
             await self.flush_buffers()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._closed = True
         try:
             await asyncio.to_thread(self._close_sync)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _close_sync(self) -> None:
@@ -645,7 +648,7 @@ class IOCGraph:
                 'observation_count INTEGER'
                 ')'
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Schema already exists (Kuzu raises on duplicate CREATE)
             pass
 
@@ -659,7 +662,7 @@ class IOCGraph:
                 'last_seen DOUBLE'
                 ')'
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # SWARM-003: Create PREDICTED edge table
@@ -677,7 +680,7 @@ class IOCGraph:
                 'verified BOOLEAN DEFAULT false'
                 ')'
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -780,7 +783,7 @@ class IOCGraph:
                     pred_count += 1
                 total_copied += pred_count
                 logger.info('[IOCGraph] persist_to_disk: %d PREDICTED edges copied', pred_count)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         except Exception as exc:
@@ -790,12 +793,12 @@ class IOCGraph:
             if target_conn is not None:
                 try:
                     target_conn.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if target_db is not None:
                 try:
                     target_db.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         logger.info(
@@ -1218,7 +1221,7 @@ class IOCGraph:
                                 {'id': nid, 't': t, 'v': v, 'ts': now, 'c': c}
                             )
                             created.append(nid)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
             if existing:
                 try:
@@ -1234,7 +1237,7 @@ class IOCGraph:
                                 'MATCH (n:IOC) WHERE n.id = $id SET n.last_seen = $ts',
                                 {'id': nid, 'ts': now}
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
             return created
 
@@ -1291,7 +1294,7 @@ class IOCGraph:
                             {'id': node_id, 't': ioc_type, 'v': value, 'c': confidence, 'eo': obs_at, 'lo': obs_at}
                         )
                         created.append(node_id)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
         if existing_to_update:
@@ -1320,7 +1323,7 @@ class IOCGraph:
                             'n.observation_count = n.observation_count + 1',
                             {'id': node_id, 'ts': obs_at}
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
         return created
@@ -1370,7 +1373,7 @@ class IOCGraph:
                 for ioc_id_a, ioc_id_b, fid, ts, src in missing:
                     try:
                         conn.execute('MATCH (a:IOC), (b:IOC) WHERE a.id = $ida AND b.id = $idb CREATE (a)-[r:OBSERVED {finding_id: $fid, source_type: $st, first_seen: $ts, last_seen: $ts}]->(b)', {'ida': ioc_id_a, 'idb': ioc_id_b, 'fid': fid, 'st': src, 'ts': ts})
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
         if existing_obs:
             try:
@@ -1380,7 +1383,7 @@ class IOCGraph:
                 for ioc_id_a, ioc_id_b, ts in existing_obs:
                     try:
                         conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb SET r.last_seen = $ts', {'ida': ioc_id_a, 'idb': ioc_id_b, 'ts': ts})
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
     async def pivot(self, ioc_value: str, ioc_type: str, depth: int=2) -> list[dict[str, Any]]:
@@ -1626,7 +1629,7 @@ class IOCGraph:
                         'first_seen': float(row[3]) if row[3] is not None else 0.0,
                         'last_seen': float(row[4]) if row[4] is not None else 0.0,
                     }
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # --- Phase 2: Arrow-accelerated edge collection ---
@@ -1671,7 +1674,7 @@ class IOCGraph:
                             })
                             degree_map[src] = degree_map.get(src, 0) + 1
                             degree_map[dst] = degree_map.get(dst, 0) + 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         total_nodes = len(node_set)
@@ -1783,7 +1786,7 @@ class IOCGraph:
                         'first_seen': float(row[3]) if row[3] is not None else 0.0,
                         'last_seen': float(row[4]) if row[4] is not None else 0.0,
                     }
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # seed node missing — still valid, report what we have
         # Phase 2: Extract induced edges (both endpoints in node_set)
         node_ids = list(node_set.keys())
@@ -1841,7 +1844,7 @@ class IOCGraph:
                             degree_map[dst] = (
                                 degree_map.get(dst, 0) + 1
                             )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # edge extraction failed — return nodes only
 
         total_nodes = len(node_set)
@@ -1887,14 +1890,14 @@ class IOCGraph:
             res = conn.execute('MATCH (n:IOC) RETURN count(n)')
             row = res.get_next()
             nodes = int(row[0]) if row else 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         edges = 0
         try:
             res = conn.execute('MATCH ()-[r:OBSERVED]->() RETURN count(r)')
             row = res.get_next()
             edges = int(row[0]) if row else 0
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return {'nodes': nodes, 'edges': edges}
 
@@ -1942,19 +1945,16 @@ class IOCGraph:
                         continue
                     objects.append(orjson.loads(obj.serialize()))
                 except Exception as e:
-                    import logging
-                    logging.warning(f'STIX build failed for {node_id}: {e}')
+                    logger.warning(f'STIX build failed for {node_id}: {e}')
                     continue
         except Exception as e:
-            import logging
-            logging.warning(f'STIX export query failed: {e}')
+            logger.warning(f'STIX export query failed: {e}')
         if objects:
             try:
                 bundle = stix2.Bundle(objects=objects)
                 stix2.parse(bundle.serialize())
             except Exception as e:
-                import logging
-                logging.warning(f'STIX bundle validation warning: {e}')
+                logger.warning(f'STIX bundle validation warning: {e}')
                 objects = []
         return objects
 
@@ -2042,7 +2042,7 @@ class IOCGraph:
                 communities = result.get('communities')
                 if communities and isinstance(communities, dict):
                     return {str(k): int(v) for k, v in communities.items()}
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback: igraph label propagation
@@ -2145,7 +2145,7 @@ class IOCGraph:
                 if pagerank and isinstance(pagerank, dict):
                     score = pagerank.get(target_id, 0.0)
                     return float(score)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback: igraph PageRank
@@ -2169,7 +2169,7 @@ class IOCGraph:
             target_idx = id_to_idx.get(target_id)
             if target_idx is not None and target_idx < len(pr_scores):
                 return float(pr_scores[target_idx])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return 0.0
@@ -2409,7 +2409,7 @@ class IOCGraph:
                                     for k, v in rust_comm.items()
                                     if int(k) - 1 in idx_to_nid
                                 }
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # igraph result is sufficient
         except Exception as e:
             import logging
@@ -2466,8 +2466,7 @@ class IOCGraph:
                     degree_map=degree_map,
                 )
             except Exception as e:
-                import logging
-                logging.warning(
+                logger.warning(
                     f'[IOCGraph] topology: centrality failed: {e}'
                 )
 
@@ -2607,7 +2606,7 @@ class IOCGraph:
                                         cv.get('eigenvector', 0.0)
                                     )
                     return centrality
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback: igraph
@@ -2637,7 +2636,7 @@ class IOCGraph:
                 )
                 for i, nid in enumerate(node_ids):
                     centrality[nid]['pagerank'] = float(pr[i])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Betweenness (capped at 2000 nodes to avoid O(n²) blowup)
@@ -2646,7 +2645,7 @@ class IOCGraph:
                     bet = g.betweenness(directed=False)
                     for i, nid in enumerate(node_ids):
                         centrality[nid]['betweenness'] = float(bet[i])
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # Eigenvector
@@ -2654,7 +2653,7 @@ class IOCGraph:
                 ev = g.eigenvector_centrality(directed=False)
                 for i, nid in enumerate(node_ids):
                     centrality[nid]['eigenvector'] = float(ev[i])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Closeness
@@ -2662,7 +2661,7 @@ class IOCGraph:
                 close = g.closeness()
                 for i, nid in enumerate(node_ids):
                     centrality[nid]['closeness'] = float(close[i])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         except Exception as e:
@@ -2748,7 +2747,7 @@ class IOCGraph:
                 if pagerank and isinstance(pagerank, dict):
                     score = pagerank.get(target_id, 0.0)
                     return float(score)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback: igraph PageRank
@@ -2768,7 +2767,7 @@ class IOCGraph:
             target_idx = id_to_idx.get(target_id)
             if target_idx is not None and target_idx < len(pr_scores):
                 return float(pr_scores[target_idx])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         return 0.0

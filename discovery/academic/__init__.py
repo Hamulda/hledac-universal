@@ -112,23 +112,23 @@ async def search_all_academic(query: str, max_results_per_source: int=10, timeou
     try:
         arxiv_mod = _lazy_import('arxiv')
         tasks.append(run_adapter('arxiv', arxiv_mod.search_arxiv, max_results=max_results_per_source))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         s2orc_mod = _lazy_import('s2orc')
         tasks.append(run_adapter('s2orc', s2orc_mod.search_s2orc, max_results=max_results_per_source, include_citations=True))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         openalex_mod = _lazy_import('openalex')
         tasks.append(run_adapter('openalex', openalex_mod.search_openalex, max_results=max_results_per_source))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         core_mod = _lazy_import('core')
         if core_mod.COREAdapter().has_api_key:
             tasks.append(run_adapter('core', core_mod.search_core_fulltext, max_results=max_results_per_source))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         completed = await safe_wait_for(parallel_ok(*tasks, label='__init__:209'), timeout=timeout_s, label='academic_search_gather')

@@ -130,7 +130,7 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
     """Done-callback: log unhandled exception from a background task."""
     try:
         task.result()
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # noqa: BLE001
         pass
     except BaseException as e:
         try:
@@ -140,7 +140,7 @@ def _log_task_exception(task: asyncio.Task[Any]) -> None:
 
             try:
                 sys.stderr.write(f"Unhandled task exception in background_task: {e!r}\n")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 
@@ -904,7 +904,7 @@ async def bounded_parallel_map[T, R](
                 if not is_blitz_mode():
                     import random as _rng
                     await asyncio.sleep(min(abs(_rng.gauss(0.0, _bpm_jitter)), jitter_max_s))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         async with sem:

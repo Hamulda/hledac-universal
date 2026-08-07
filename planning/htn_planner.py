@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 from hledac.universal.planning.cost_model import AdaptiveCostModel
 from hledac.universal.planning.search import anytime_beam_search
 from hledac.universal.planning.slm_decomposer import SLMDecomposer
+from hledac.universal.utils._patterns import async_cleanup  # F320: DRY cleanup pattern
 logger = logging.getLogger(__name__)
 
 class PlannerRuntimeRequest(msgspec.Struct, frozen=True, gc=False):
@@ -216,7 +217,7 @@ class HTNPlanner:
             elif hasattr(gov, '_active_tasks'):
                 state['active_tasks'] = getattr(gov, '_active_tasks', 0)
                 state['rss_gb'] = getattr(gov, '_rss_gb', 2.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return state
 
@@ -233,7 +234,7 @@ class HTNPlanner:
             result = self.cost_model.predict(task_type, params, system_state)
             if result is not None and len(result) >= 4:
                 return (result[0], result[1], result[2], result[3])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -263,7 +264,7 @@ class HTNPlanner:
                 network = max(_MIN_NETWORK, network) if network is not None else _FALLBACK_NETWORK
                 value = max(_MIN_VALUE, value) if value is not None else _FALLBACK_VALUE
                 return (cost, ram, network, value, True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._fallback_count += 1
         return (_FALLBACK_COST, _FALLBACK_RAM, _FALLBACK_NETWORK, _FALLBACK_VALUE, False)
@@ -654,9 +655,8 @@ class HTNPlanner:
         Called from SprintSchedulerV2.aclean() via HTNPlanner.teardown().
         Releases ~400MB-1GB Metal memory held by the Qwen2.5-0.5B-4bit model.
         Idempotent — safe to call multiple times.
+
+        F320: Refactored to use async_cleanup helper for DRY pattern.
         """
-        if self.decomposer is not None and hasattr(self.decomposer, 'unload'):
-            try:
-                await self.decomposer.unload()
-            except Exception as e:
-                logger.debug(f'HTNPlanner.teardown: decomposer.unload error: {e}')
+        # F320: Use async_cleanup helper for consistent error handling
+        await async_cleanup(self.decomposer, logger=logger, context="HTNPlanner")

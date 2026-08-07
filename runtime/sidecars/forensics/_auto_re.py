@@ -285,7 +285,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
                 from pathlib import Path
                 audit_dir = Path.home() / ".cache" / "hledac" / "auto_re"
                 audit_path = str(audit_dir / f"{result.file_hash}.json")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         for ioc in result.iocs:
@@ -323,7 +323,7 @@ class AutoRESidecarAdapter(BaseSidecarAdapter):
             import asyncio
             loop = asyncio.get_running_loop()
             loop.create_task(self._upsert_graph_loop(findings))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # no event loop or upsert failed — non-critical
 
     async def _upsert_graph_loop(self, findings: list[dict[str, Any]]) -> None:

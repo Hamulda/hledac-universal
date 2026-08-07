@@ -170,7 +170,7 @@ class BGEM3Embedder:
             # Check for Metal GPU availability
             if hasattr(mx, 'metal'):
                 return mx.metal.is_available()
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         return False
     
@@ -497,7 +497,7 @@ class BGEM3Embedder:
         try:
             import mlx.core as mx
             mx.metal.clear_cache()
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError):  # noqa: BLE001
             pass
         
         logger.info('[BGE-M3] Model unloaded, memory freed')

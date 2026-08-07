@@ -615,7 +615,7 @@ def _probe_rust_quic() -> bool:
                 _rust_quic_available = True
                 logger.info("http3_lane: rust.quic.fetch() available (quinn + h3)")
                 return True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     _rust_quic_available = False
@@ -651,7 +651,7 @@ def _probe_quinn_rs() -> bool:
         _neqo_available = True
         logger.info("http3_lane: Quinn-Rs available (Mozilla Quinn via GitHub)")
         return True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     # Try neqo if Quinn-Rs is not available
@@ -661,7 +661,7 @@ def _probe_quinn_rs() -> bool:
         _neqo_available = True
         logger.info("http3_lane: neqo available (Mozilla neqo via PyPI/GitHub)")
         return True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     # Neither Quinn-Rs nor neqo available

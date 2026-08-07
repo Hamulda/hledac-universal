@@ -457,7 +457,7 @@ class UnifiedWebIntelligence:
                 async with asyncio.timeout(self._aging_interval_seconds):
                     await self._aging_shutdown.wait()
                 break
-            except TimeoutError:
+            except TimeoutError:  # noqa: BLE001
                 pass
             except asyncio.CancelledError:
                 break
@@ -797,14 +797,14 @@ class UnifiedWebIntelligence:
                                                 all_text_parts.append(page_text[:3000])
                                         finally:
                                             await resp.aclose()
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001
                                         pass
                         except Exception:
                             titles = re.findall('<title><!\\[CDATA\\[(.*?)\\]\\]></title>', raw)
                             descs = re.findall('<description><!\\[CDATA\\[(.*?)\\]\\]></description>', raw)
                             for t, d in zip(titles, descs, strict=False):
                                 all_text_parts.append(f'{t} {d}'[:3000])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         async def fetch_hn_jobs() -> None:
@@ -839,7 +839,7 @@ class UnifiedWebIntelligence:
                                             if text_resp.status_code == 200:
                                                 all_text_parts.append((await text_resp.text())[:5000])
                 await session.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         async def fetch_remoteok_jobs() -> None:
@@ -876,7 +876,7 @@ class UnifiedWebIntelligence:
                             if title or description:
                                 all_text_parts.append(f'{title} {description}'[:3000])
                 await session.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         await safe_gather_fire_and_forget(fetch_indeed_jobs(), fetch_hn_jobs(), fetch_remoteok_jobs(), label='web_intelligence:1289')
         combined_text = ' '.join(all_text_parts[:200])
@@ -899,7 +899,7 @@ class UnifiedWebIntelligence:
                 self._aging_task.cancel()
                 try:
                     await self._aging_task
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # noqa: BLE001
                     pass
                 self._aging_task = None
             for operation_id in list(self.active_operations.keys()):

@@ -24,6 +24,7 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.async_helpers import parallel
 
@@ -50,7 +51,7 @@ class OutputFormat(Enum):
     JSON = 'json'
     TEXT = 'text'
 
-class ValidationResult(msgspec.Struct, gc=False):
+class ValidationResult(Struct):
     """Result of validation operation."""
     valid: bool
     field: str
@@ -58,7 +59,7 @@ class ValidationResult(msgspec.Struct, gc=False):
     warnings: list[str] = field(default_factory=list)
     severity: ValidationSeverity = ValidationSeverity.INFO
 
-class CleaningResult(msgspec.Struct, frozen=True, gc=False):
+class CleaningResult(Struct, frozen=True):
     """Result of content cleaning."""
     success: bool
     content: str
@@ -295,7 +296,7 @@ class UniversalValidationCoordinator(UniversalCoordinator):
                 body = tree.body
                 content = body.text(separator=' ', strip=True) if body else ''
                 return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'selectolax'}, 'error': None}
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if output_format == 'text' and HTML_TEXT_FAST_AVAILABLE:
             try:

@@ -275,10 +275,10 @@ class SprintAdvisoryRunner:
                                     if val and deg > 0:
                                         domains.append(val)
                                         node_degrees[val] = deg
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     graph_stats = {'nodes': stats.get('nodes', 0), 'edges': stats.get('edges', 0), 'domains': domains, 'connected_iocs': set(), 'node_degrees': node_degrees}
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             feedback_summary: Any = None
             store = self._duckdb_store
@@ -301,7 +301,7 @@ class SprintAdvisoryRunner:
                             import orjson
                             payload = orjson.loads(row[0])
                             hermes_outputs.append(HermesInferenceOutput.from_dict(payload))
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 except Exception:
                     hermes_outputs = []
@@ -314,7 +314,7 @@ class SprintAdvisoryRunner:
             return AdvisoryRunOutcome(planned_pivots=len(pivots), executed_pivots=outcome.executed_pivots, governor_recorded=outcome.governor_recorded, brief_generated=outcome.brief_generated, local_search_attempted=outcome.local_search_attempted, local_search_hits=outcome.local_search_hits, local_search_source=outcome.local_search_source, local_search_indexed=outcome.local_search_indexed, local_search_elapsed_ms=outcome.local_search_elapsed_ms, local_search_top_results=outcome.local_search_top_results, local_search_error=outcome.local_search_error, error=None)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return outcome
 
@@ -344,7 +344,7 @@ class SprintAdvisoryRunner:
             return AdvisoryRunOutcome(planned_pivots=outcome.planned_pivots, executed_pivots=len(results), governor_recorded=outcome.governor_recorded, brief_generated=outcome.brief_generated, local_search_attempted=outcome.local_search_attempted, local_search_hits=outcome.local_search_hits, local_search_source=outcome.local_search_source, local_search_indexed=outcome.local_search_indexed, local_search_elapsed_ms=outcome.local_search_elapsed_ms, local_search_top_results=outcome.local_search_top_results, local_search_error=outcome.local_search_error, error=None)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return outcome
 
@@ -368,7 +368,7 @@ class SprintAdvisoryRunner:
             governor_recorded = True
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             from hledac.universal.core.resource_governor import sample_uma_status
@@ -383,7 +383,7 @@ class SprintAdvisoryRunner:
                     result = getattr(self._scheduler, '_result', None)
                     if result is not None:
                         result.budget_violations += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         orchestrator = getattr(self._scheduler, '_sidecar_orchestrator', None)
         if orchestrator is not None:
@@ -493,7 +493,7 @@ class SprintAdvisoryRunner:
             return AdvisoryRunOutcome(planned_pivots=outcome.planned_pivots, executed_pivots=outcome.executed_pivots, governor_recorded=outcome.governor_recorded, brief_generated=True, local_search_attempted=outcome.local_search_attempted, local_search_hits=outcome.local_search_hits, local_search_source=outcome.local_search_source, local_search_indexed=outcome.local_search_indexed, local_search_elapsed_ms=outcome.local_search_elapsed_ms, local_search_top_results=outcome.local_search_top_results, local_search_error=outcome.local_search_error, error=None)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return outcome
 
@@ -579,7 +579,7 @@ class SprintAdvisoryRunner:
             log.debug('[F350M-FED-P3-FOLLOWUP] advisory done: updates=%d persists=%d mode=%s dur=%.2fms', updates_emitted, persists_emitted, getattr(bridge, 'mode', 'none'), elapsed)
             try:
                 self._scheduler._federated_advisory_outcome = {'federated_attempted': True, 'federated_nodes': nodes, 'federated_findings': len(findings), 'federated_bridge_updates': updates_emitted, 'federated_bridge_persists': persists_emitted, 'federated_mode': str(getattr(bridge, 'mode', 'none')), 'federated_elapsed_ms': elapsed, 'federated_error': None}
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return _with_federated_outcome(outcome, attempted=True, nodes=nodes, findings=len(findings), updates=updates_emitted, persists=persists_emitted, mode=str(getattr(bridge, 'mode', 'none')), elapsed_ms=elapsed, error=None)
         except asyncio.CancelledError:

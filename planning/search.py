@@ -3,6 +3,7 @@ Anytime beam search s budget‑aware a heuristikou value / cost.
 """
 import logging
 
+from operator import attrgetter, itemgetter
 import time
 from collections.abc import Callable
 from typing import Any
@@ -36,7 +37,7 @@ def anytime_beam_search(initial_state: dict[str, Any], goal_check: Callable[[dic
     best_plan = None
     best_value = -float('inf')
     while beam and time.time() - start_time < time_budget:
-        beam.sort(key=lambda n: n.score, reverse=True)
+        beam.sort(key=attrgetter("score"), reverse=True)
         beam = beam[:beam_width]
         next_beam = []
         for node in beam:

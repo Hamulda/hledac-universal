@@ -237,7 +237,7 @@ def status_report() -> None:
                 else:
                     without_spec += 1
                 mock_counts.append((tf, total, specs, no_spec))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     print(f"\nFiles with mocks: {len(mock_counts)}")

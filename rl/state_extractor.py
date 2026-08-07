@@ -114,7 +114,7 @@ class StateExtractor:
                 try:
                     graph_emb = self.gnn_predictor.get_graph_embedding()
                     features.extend(graph_emb.tolist())
-                except AttributeError:
+                except AttributeError:  # noqa: BLE001
                     pass
             if len(features) < self.state_dim:
                 features += [0.0] * (self.state_dim - len(features))

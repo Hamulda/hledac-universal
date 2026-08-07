@@ -487,7 +487,7 @@ if __name__ == "__main__":
             # Clean up wrapper script
             try:
                 wrapper_path.unlink(missing_ok=True)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if not result_str:

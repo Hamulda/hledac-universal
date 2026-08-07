@@ -237,17 +237,17 @@ class MLXModelPool:
             return
         try:
             mx.eval([])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             if hasattr(mx, 'clear_cache'):
                 mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if self._config.force_gc:
             try:
                 gc.freeze()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _estimate_model_size(self, model: Any, tokenizer: Any | None) -> int:

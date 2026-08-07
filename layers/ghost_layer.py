@@ -473,7 +473,7 @@ class SystemContext:
                             logger.warning('Hypervisor detected on macOS')
                             self._stats['vm_detections'] += 1
                             return True
-                except (subprocess.TimeoutExpired, Exception):
+                except (subprocess.TimeoutExpired, Exception):  # noqa: BLE001
                     pass
             vm_indicators = ['/proc/xen', '/dev/kvm', '/dev/vmmon', '/sys/class/hypervisor']
             for indicator in vm_indicators:
@@ -542,7 +542,7 @@ class SystemContext:
                         gc.collect()
                         cleanup_results['mlx_cache_cleared'] = True
                         logger.info('MLX Metal cache cleared')
-                    except ImportError:
+                    except ImportError:  # noqa: BLE001
                         pass
                     except Exception as mlx_error:
                         cleanup_results['errors'].append(f'MLX cache clear failed: {mlx_error}')
@@ -581,7 +581,7 @@ class SystemContext:
             memory = psutil.virtual_memory()
             stats['current_memory_gb'] = round(memory.used / 1024 ** 3, 2)
             stats['memory_available_gb'] = round(memory.available / 1024 ** 3, 2)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return stats
 __all__ = ['GhostLayer', 'SystemContext', 'VMThreatLevel', 'ProcessType']

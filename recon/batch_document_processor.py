@@ -319,7 +319,7 @@ class BatchPDFProcessor:
             import psutil
             process = psutil.Process(os.getpid())
             self._stats.peak_memory_mb = process.memory_info().rss / (1024 * 1024)
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
 
         # Write final manifest

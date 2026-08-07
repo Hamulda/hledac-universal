@@ -328,7 +328,7 @@ def get_adaptive_batch_size() -> int:
                 if allow_large != '1':
                     return 32
             return env_batch
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
     return _DEFAULT_BATCH_SIZE
 
@@ -575,7 +575,7 @@ def generate_embeddings(texts: list[str], batch_size: int | None=None, keep_load
         level = get_current_degradation_level()
         if level in (QoSLevel.EMERGENCY, QoSLevel.BATTERY):
             return np.zeros((len(texts), _EMBEDDING_DIM), dtype=np.float32)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-open: governor unavailable → allow embeddings
 
     # SWARM-002: Language-based splitting for multilingual routing
@@ -698,7 +698,7 @@ def _embed_english_batch(texts: list[str], batch_size: int, keep_loaded: bool) -
             if _ps is not None:
                 _ram = _ps.virtual_memory().percent
                 logger.debug('EMBED_BACKEND: %s | texts=%d | dim=%s | ram=%.1f%%', backend_name, len(texts_to_embed), embeddings.shape, _ram)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if embeddings.dtype != np.float32:
             embeddings = embeddings.astype(np.float32)
@@ -750,7 +750,7 @@ def embed_query(text: str) -> np.ndarray:
             lang_result = lang_detector.detect(text)
             if not lang_result.is_english:
                 return _embed_query_multilingual(text)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to English embed
 
     # English path: ModernBERT
@@ -837,7 +837,7 @@ def embed_document(text: str) -> np.ndarray:
             lang_result = lang_detector.detect(text)
             if not lang_result.is_english:
                 return _embed_document_multilingual(text)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to English embed
 
     # English path: ModernBERT
@@ -1351,9 +1351,9 @@ def _clear_mlx_cache() -> None:
         except AttributeError:
             try:
                 mx.metal.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -1546,7 +1546,7 @@ def get_embedding_backend() -> str:
             from hledac.universal.brain.ane_inference import is_ane_available, get_ane_engine
             if is_ane_available() and get_ane_engine().is_ready:
                 return 'ane'
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if router._check_mlx_loaded():
             if router._modernbert is not None and router._modernbert.is_loaded:

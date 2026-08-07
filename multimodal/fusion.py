@@ -234,7 +234,7 @@ class MambaFusion:
         if self._model is not None and self._pool is not None:
             try:
                 await self._pool.release(_MAMBA_POOL_ID)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._model = None
 

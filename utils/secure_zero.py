@@ -195,7 +195,7 @@ def wipe_tor_identity(onion_address: str | None, _hidden_service_dir: str | None
             encoded = onion_address.encode("ascii")
             temp = bytearray(encoded)
             secure_zero(temp)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -211,7 +211,7 @@ def wipe_i2p_identity(i2p_address: str | None) -> None:
             encoded = i2p_address.encode("ascii")
             temp = bytearray(encoded)
             secure_zero(temp)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

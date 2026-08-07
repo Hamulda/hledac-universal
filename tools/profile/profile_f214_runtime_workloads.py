@@ -32,6 +32,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from operator import attrgetter, itemgetter
 class WorkloadResult:
     """Single workload benchmark result."""
     __slots__ = tuple(('cprofile_top', 'findings', 'main_bottleneck', 'median_ms', 'memory_delta_mib', 'name', 'p95_ms', 'samples_ms', 'skip_reason', 'status'))
@@ -75,7 +76,7 @@ def run_cprofile(func, *args, profile_top: int=15) -> tuple:
         cumtime = stats_tuple[2]
         tottime = stats_tuple[1]
         entries.append({'file': f'{filename}:{line}', 'function': str(func), 'cumulative_s': round(cumtime, 4), 'total_s': round(tottime, 4)})
-    entries.sort(key=lambda x: x['cumulative_s'], reverse=True)
+    entries.sort(key=itemgetter("'"), reverse=True)
     return (result, entries[:profile_top])
 
 def p95(values: list) -> float:
@@ -367,7 +368,7 @@ def measure_workload(func, runs: int) -> list:
         start = time.perf_counter()
         try:
             func()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         end = time.perf_counter()
         mem_after = get_memory_mib()
@@ -407,7 +408,7 @@ def format_json(results: list[WorkloadResult]) -> str:
     for r in results:
         if r.status == 'ok' and r.cprofile_top:
             all_bottlenecks.append({'workload': r.name, 'function': r.cprofile_top[0]['function'], 'cumulative_s': r.cprofile_top[0]['cumulative_s'], 'median_ms': r.median_ms})
-    all_bottlenecks.sort(key=lambda x: x['cumulative_s'], reverse=True)
+    all_bottlenecks.sort(key=itemgetter("'"), reverse=True)
     output['summary']['top_bottlenecks'] = all_bottlenecks[:5]
     return _stdlib_json.dumps(output, indent=2)
 

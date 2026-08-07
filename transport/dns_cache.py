@@ -36,7 +36,7 @@ _HAS_RUST_DNS: bool = False
 try:
     import rust
     _HAS_RUST_DNS = hasattr(rust, "dns") and hasattr(rust.dns, "resolve_async")
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 
 

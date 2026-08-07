@@ -31,6 +31,7 @@ import os as _os
 import msgspec
 from typing import TYPE_CHECKING, Any, Iterator
 
+from operator import attrgetter, itemgetter
 from hledac.universal.utils.async_helpers import _check_gathered
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
@@ -119,10 +120,10 @@ def _duckdb_fetch_bounded(con: Any, sql: str, params: list[Any] | None=None, bat
                             cols[j][i].as_py() if hasattr(cols[j][i], 'as_py') else cols[j][i]
                             for j in range(ncols)
                         ] for i in range(nrows)]
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # malformed batch — skip, keep streaming
             return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fetch_record_batch itself unavailable — fall through to fetchmany
     try:
         while True:
@@ -713,11 +714,11 @@ class QuantumInspiredPathFinder:
                     if self._mlx_available and mx_mod is not None:
                         try:
                             mx_mod.eval([])
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                         try:
                             mx_mod.clear_cache()
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
             paths = self._extract_paths(state, start_nodes, target_nodes)
             return paths
@@ -731,14 +732,14 @@ class QuantumInspiredPathFinder:
                 if mx_mod is not None:
                     try:
                         mx_mod.eval([])
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         if hasattr(mx_mod, 'clear_cache'):
                             mx_mod.clear_cache()
                         elif hasattr(mx_mod.metal, 'clear_cache'):
                             mx_mod.metal.clear_cache()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             gc.collect()
 
@@ -864,11 +865,11 @@ class QuantumInspiredPathFinder:
                 if mx_mod is not None:
                     try:
                         mx_mod.eval([])
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         mx_mod.clear_cache()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             gc.collect()
             self.initialized = False
@@ -990,7 +991,7 @@ class DuckPGQGraph:
                 import os as _os
                 if _os.path.exists(lock_path):
                     _os.unlink(lock_path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             logger.error(f'[GRAPH] DuckDB connection failed: {e}')
             raise
@@ -1038,7 +1039,7 @@ class DuckPGQGraph:
             logger.debug(f'[GRAPH] close: flush_buffers failed: {e}')
         try:
             self.con.execute('CHECKPOINT;')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             self.con.close()
@@ -1050,7 +1051,7 @@ class DuckPGQGraph:
             from hledac.universal.core.rust_backend import rust
             _rust_drop_connections = rust.raw.drop_connections
             _rust_drop_connections()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft: Rust layer unavailable
         # Release graph lock so other processes can acquire it
         if hasattr(self, '_lock_mgr') and self._lock_mgr is not None:
@@ -1140,7 +1141,7 @@ class DuckPGQGraph:
                     try:
                         self.add_relation(id_a, id_b, 'observed', 1.0, fid)
                         obs_flushed += 1
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
             logger.info(f'[GRAPH] Buffers flushed: {ioc_flushed} IOCs, {obs_flushed} observations')
         except Exception as e:
@@ -1503,7 +1504,7 @@ class DuckPGQGraph:
                                 'confidence': self._compute_confidence(e.adamic_adar, e.jaccard, e.preferential_attachment),
                             })
                         return edges
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
 
             # Fallback: Python DuckDB implementation
@@ -1587,7 +1588,7 @@ class DuckPGQGraph:
                     })
 
             # Sort by confidence
-            edges.sort(key=lambda x: x['confidence'], reverse=True)
+            edges.sort(key=itemgetter("'"), reverse=True)
             return edges
 
         except Exception as e:
@@ -1936,7 +1937,7 @@ class DuckPGQGraph:
             result = _rust_traverse(self.db_path, value, max_hops)
             if result is not None and len(result) > 0:
                 return list(result)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft: fall through to DuckPGQ
         if _DUCKPGQ_AVAILABLE:
             try:
@@ -2140,7 +2141,7 @@ def _graph_stats(db_path: str, con) -> dict:
             edges = result.get('total_edges', 0)
             if nodes > 0 or edges > 0:
                 return {'nodes': nodes, 'edges': edges, 'pgq_available': _DUCKPGQ_AVAILABLE}
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-soft: fall through to Python fallback
     # Python fallback: direct DuckDB queries
     try:

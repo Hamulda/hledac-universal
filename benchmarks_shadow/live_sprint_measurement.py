@@ -858,7 +858,7 @@ try:
         _derive_live_kpi,  # noqa: F401  # benchmarks.live_measurement_kpi._derive_live_kpi
         _derive_live_kpi_from_input,
     )
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 try:
@@ -866,7 +866,7 @@ try:
         _derive_next_action,  # noqa: F401  # benchmarks.live_measurement_next_action._derive_next_action
         _was_family_attempted,  # noqa: F401  # benchmarks.live_measurement_next_action._was_family_attempted
     )
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 try:
@@ -874,7 +874,7 @@ try:
         _check_profile_reality_preflight,  # noqa: F401  # benchmarks.live_measurement_quality._check_profile_reality_preflight
         get_acquisition_profile_reality,  # noqa: F401  # benchmarks.live_measurement_quality.get_acquisition_profile_reality
     )
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 

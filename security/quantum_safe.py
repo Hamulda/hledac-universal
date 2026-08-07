@@ -106,7 +106,7 @@ class QuantumSafeVault:
         """F350M-R G1: wipe keys at GC time as last-resort safety net."""
         try:
             self.wipe_keys()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # swallow during GC — prevent logging in destructor
 
     async def encrypt(self, plaintext: bytes, associated_data: bytes | None=None) -> EncryptedContainer:

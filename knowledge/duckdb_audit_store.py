@@ -33,6 +33,7 @@ M1 8GB: DuckDB in-process, WAL mode, 2 threads.
 
 from __future__ import annotations
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 import asyncio
 import hashlib
@@ -73,7 +74,7 @@ class AuditEventType(Enum):
     SYSTEM_EVENT = "system_event"
 
 
-class AuditEvent(msgspec.Struct, gc=False):
+class AuditEvent(Struct):
     """Audit event."""
     timestamp: datetime
     event_type: AuditEventType
@@ -92,7 +93,7 @@ class AuditEvent(msgspec.Struct, gc=False):
         return hashlib.sha256(data.encode()).hexdigest()
 
 
-class AuditConfig(msgspec.Struct, gc=False):
+class AuditConfig(Struct):
     """Audit configuration."""
     db_path: str = "data/audit.duckdb"
     min_level: AuditLevel = AuditLevel.INFO

@@ -162,7 +162,7 @@ try:
     from hledac.universal.runtime._telemetry_setup import configure
 
     configure()
-except Exception:
+except Exception:  # noqa: BLE001
     pass  # Never crash on tracing/logging init failure
 
 # Lazy dual-import for backward-compatible API consumers.
@@ -222,7 +222,7 @@ def _serialize_report(data: dict[str, Any]) -> bytes:
         import numpy
 
         options |= orjson.OPT_SERIALIZE_NUMPY
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass  # numpy not available — use default path
 
     return orjson.dumps(data, option=options)
@@ -2826,7 +2826,7 @@ async def run_sprint(
                                 cost=_ndata.get("cost", 0.0),
                                 uncertainty=_ndata.get("uncertainty", 0.0),
                             )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # skip corrupt nodes
                     if _nodes:
                         _resume_from = _nodes
@@ -2854,7 +2854,7 @@ async def run_sprint(
                     )
             # Don't clean up orphaned checkpoints — the coordinator may need them.
             # Cleanup happens in the finally block after successful completion.
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft: checkpoint probe must never block sprint start
 
     # Scheduler config
@@ -3054,7 +3054,7 @@ async def run_sprint(
             try:
                 from hledac.universal.utils.mlx_cache import start_memory_status_poller
                 await start_memory_status_poller(interval_s=0.5)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             _cancel_waiter = safe_create_task(_cancel_event.wait(), eager_start=True)
@@ -3126,7 +3126,7 @@ async def run_sprint(
             try:
                 from hledac.universal.utils.mlx_cache import stop_memory_status_poller
                 await stop_memory_status_poller()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # F266-LOCK: Always release sprint lock on exit — normal, exception, or SIGINT.
@@ -3300,7 +3300,7 @@ async def run_sprint(
                     phase_p50_ms=phase_p50_ms,
                     phase_p95_ms=phase_p95_ms,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe: metrics never block sprint
 
         # --- Timing truth (Sprint F160E) -------------------------------------------
@@ -4054,7 +4054,7 @@ async def run_sprint(
             )
             await _cleanup_ckpt.cleanup()
             logger.debug("[UNIFIED-007] ToT checkpoints cleaned up for sprint=%s (DuckDB+LMDB+FS)", sprint_id[:12])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft
         # F266-LOCK: Release sprint-level lock — must happen after all cleanup
         # so that concurrent sprints don't steal the lock before teardown completes.

@@ -70,7 +70,7 @@ def is_embedding_model_prewarmed(model_path: str | None=None) -> bool:
         import mlx.core as mx
         if hasattr(mx, '_cached_memory'):
             return mx._cached_memory > 100000000
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return False
 

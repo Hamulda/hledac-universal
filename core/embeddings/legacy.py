@@ -422,7 +422,7 @@ class MLXEmbeddingManager:
             try:
                 from hledac.universal.utils.metal_embedder_buffers import release_metal_embedder_buffers
                 release_metal_embedder_buffers()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def get_info(self) -> dict:

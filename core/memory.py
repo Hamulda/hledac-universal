@@ -119,7 +119,7 @@ def get_process_rss_gib() -> float:
     if _ensure_rust():
         try:
             return globals()["_rust_rss"]()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return 0.0
 
@@ -129,7 +129,7 @@ def get_available_memory_gib() -> float:
     if _ensure_rust():
         try:
             return globals()["_rust_avail"]()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return 0.0
 
@@ -139,7 +139,7 @@ def get_metal_active_memory_bytes() -> int:
     if _ensure_rust():
         try:
             return globals()["_rust_metal"]()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return 0
 
@@ -149,7 +149,7 @@ def get_metal_active_memory_gib() -> float:
     if _ensure_rust():
         try:
             return globals()["_rust_metal_gib"]()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return 0.0
 
@@ -166,7 +166,7 @@ def memory_pressure_level() -> int:
     if _ensure_rust():
         try:
             return globals()["_rust_pressure"]()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return 0
 
@@ -176,7 +176,7 @@ def peak_rss_bytes() -> int:
     if _ensure_rust():
         try:
             return globals()["_rust_peak"]()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return 0
 
@@ -219,7 +219,7 @@ def _get_metal_active_python() -> int:
             return mx.get_active_memory()
         if hasattr(mx.metal, "get_active_memory"):
             return mx.metal.get_active_memory()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0
 

@@ -43,7 +43,7 @@ def _ensure_rust_dict_bindings() -> None:
         _rust_compress_dict = compress_page_dict
         _rust_register_dict = register_zstd_dict
         _rust_unregister_dict = unregister_zstd_dict
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
 
@@ -157,5 +157,5 @@ class ZstdCompressor:
             samples = [s[0] for s in self._response_samples]
             if samples:
                 self._dictionary_data = zstd.train_dictionary(1024 * 1024, samples)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass

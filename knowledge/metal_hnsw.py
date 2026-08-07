@@ -349,7 +349,7 @@ class MetalHNSWBuilder:
                         f"{needed / 1024**2:.0f}MiB) — GPU disabled"
                     )
                     return False
-            except Exception:
+            except Exception:  # noqa: BLE001
                 # Can't probe — assume OK, let runtime handle OOM
                 pass
 
@@ -369,7 +369,7 @@ class MetalHNSWBuilder:
                 try:
                     mx.eval([])
                     mx.metal.clear_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 return False
 
@@ -397,7 +397,7 @@ class MetalHNSWBuilder:
                 cache_limit = get_dynamic_metal_cache_limit()
                 if cache_limit < self._device_memory_mb * 1024 * 1024 * 3:
                     return False
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 # mlx_cache not available — assume OK
                 pass
 
@@ -563,7 +563,7 @@ class MetalHNSWBuilder:
                 try:
                     mx.eval([])
                     mx.metal.clear_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 insert_order = list(range(batch_n))
 

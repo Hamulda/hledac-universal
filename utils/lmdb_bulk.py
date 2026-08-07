@@ -205,7 +205,7 @@ def putmulti_bounded_str(
             prefixed = f"{key_prefix}:{key_str}".encode("utf-8") if key_prefix else key_str.encode("utf-8")
             val_bytes = _msgspec_dumps_str(value_dict)
             encoded.append((prefixed, val_bytes))
-        except Exception:
+        except Exception:  # noqa: BLE001
             # Skip unencodable items; track them in results
             pass
 

@@ -60,6 +60,7 @@ import time as _time_module
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from typing import Any
 
@@ -377,7 +378,7 @@ class MemoryPressureBroadcaster:
             if cls._instance is not None:
                 try:
                     cls._instance._running = False
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             cls._instance = None
 
@@ -427,7 +428,7 @@ class MemoryPressureBroadcaster:
                 name=name,
             )
             self._listeners.append(entry)
-            self._listeners.sort(key=lambda e: e.priority)
+            self._listeners.sort(key=attrgetter("priority"))
             logger.info(
                 f"[MemoryPressure] registered listener: {name} "
                 f"(priority={listener.listener_priority})"
@@ -482,7 +483,7 @@ class MemoryPressureBroadcaster:
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
             self._monitor_task = None
         logger.info("[MemoryPressure] Broadcaster stopped (samples=%d, transitions=%d)",
@@ -634,7 +635,7 @@ class MemoryPressureBroadcaster:
             mx.eval([])
             if hasattr(mx.metal, "clear_cache"):
                 mx.metal.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # R6: Centralized Rust access via core.rust_backend
         from hledac.universal.core.rust_backend import rust
@@ -642,7 +643,7 @@ class MemoryPressureBroadcaster:
         if _madvise is not None:
             try:
                 _madvise(0, 0, 1)  # MADV_DONTNEED on Darwin
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 
@@ -672,7 +673,7 @@ def register_as_listener(priority: int = 2):
                 try:
                     broadcaster = MemoryPressureBroadcaster.get_instance()
                     broadcaster.register(self)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # Non-fatal — broadcaster may not be started yet
 
         cls.__init__ = new_init

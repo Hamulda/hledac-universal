@@ -87,6 +87,12 @@ def is_bogon(value: str) -> bool:
 
 
 def ip_to_int(value: str) -> int | None:
+    """Convert IP string to integer for efficient storage/comparison.
+
+    NOTE: Clone report (net/__init__.py:89 vs mlx_cache.py:520) — investigated 2026-08-07.
+    No actual ip_to_int found in mlx_cache.py at reported line. This is the canonical
+    implementation; no dedup needed.
+    """
     try:
         return int(ipaddress.ip_address(value))
     except ValueError:

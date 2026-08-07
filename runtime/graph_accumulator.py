@@ -124,9 +124,9 @@ class SprintGraphAccumulator:
                     try:
                         gs.upsert_relation(fid_a, fid_b, 'co_source', weight=0.5, evidence=f'sprint:{sprint_id}')
                         edges_created += 1
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def buffer_pivot_relation(self, ioc_value: str, ioc_type: str, confidence: float) -> None:
@@ -153,7 +153,7 @@ class SprintGraphAccumulator:
                 parsed = urlparse(ioc_value)
                 if parsed.netloc:
                     target = parsed.netloc
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             gs = self._get_graph_service()
             gs.upsert_relation(ioc_value, target, rel_type='pivot', weight=1.0, evidence='pivot')

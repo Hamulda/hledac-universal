@@ -308,11 +308,11 @@ def gc_cycle_maintain(*, force: bool=False) -> bool:
             _stats.gc_gen0_collected = int(gc_stats[0].get('collected', 0))
             _stats.gc_gen1_collected = int(gc_stats[1].get('collected', 0))
             _stats.gc_gen2_collected = int(gc_stats[2].get('collected', 0))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         _gc.collect(0)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     _mlx_cache_clear_if_available()
     since_freeze = now - _stats.last_re_freeze_monotonic
@@ -452,9 +452,9 @@ async def stop_pressure_relief_loop() -> None:
             _pressure_relief_task.cancel()
             try:
                 await _pressure_relief_task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     _pressure_relief_task = None
     _pressure_relief_stop = None
@@ -545,9 +545,9 @@ async def stop_gc_background_loop() -> None:
             _gc_background_task.cancel()
             try:
                 await _gc_background_task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     _gc_background_task = None
     _gc_background_stop = None

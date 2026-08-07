@@ -185,7 +185,7 @@ class SamplingSpanProcessor:
                 self._next.on_end(span)
                 with self._lock:
                     self._exported_count += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def shutdown(self, timeout_ms: float = 5_000) -> None:
@@ -297,7 +297,7 @@ class DuckDBSpanExporter(SpanExporter):
         self._batch.clear()
         try:
             self._write_batch(batch)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft: telemetry miss ≠ crash
 
     def _write_batch(self, batch: list[dict]) -> None:

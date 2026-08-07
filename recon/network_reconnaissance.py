@@ -259,7 +259,7 @@ class DNSEnumerator:
                     answers = await self.resolver.resolve(full_domain, 'A')
                     for rdata in answers:
                         found.append((full_domain, str(rdata)))
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         await parallel([check_perm(p) for p in list(permutations)[:100]], policy="log", ctx='permutation_scan')
         return found
@@ -473,7 +473,7 @@ class SSLAnalyzer:
                     result['host'] = hostname
                     result['port'] = port
                     return result
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             # Fallback: Python ssl analysis (slower, less accurate)
@@ -603,7 +603,7 @@ class NetworkReconnaissance:
                     else:
                         public_ips.append(ip_val)
                 return (public_ips, private_ips)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         public_ips = []
         private_ips = []
@@ -867,7 +867,7 @@ async def graph_add_domain_ip_relations(domain: str, ip_addresses: list[str], gr
     for ip in ip_addresses[:10]:
         try:
             graph.add_relation(domain, ip, 'resolves_to')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 async def graph_add_ip_asn_relations(ip: str, asn_info: ASNInfo | list[ASNInfo], graph: Any) -> None:
@@ -882,12 +882,12 @@ async def graph_add_ip_asn_relations(ip: str, asn_info: ASNInfo | list[ASNInfo],
         for a in asn_info[:3]:
             try:
                 graph.add_relation(ip, f'AS{a.asn}', 'belongs_to_asn')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     elif asn_info is not None:
         try:
             graph.add_relation(ip, f'AS{asn_info.asn}', 'belongs_to_asn')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 class DHTProbe:
@@ -910,7 +910,7 @@ class DHTProbe:
                     ans = await r.resolve(host, 'A')
                 ips = [str(a) for a in ans]
                 nodes.extend([(ip, port) for ip in ips[:2]])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return nodes
 

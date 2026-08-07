@@ -191,7 +191,7 @@ def _bind_telemetry_to_structlog(ctx: TelemetryContext) -> None:
             trace_id=ctx.trace_id,
             span_id=ctx.span_id,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # Fail-safe: logging still works without structlog binding
 
 

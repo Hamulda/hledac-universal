@@ -90,7 +90,7 @@ def _is_process_alive(pid: int) -> bool:
                     return False
             except psutil.NoSuchProcess:
                 return False
-            except psutil.AccessDenied:
+            except psutil.AccessDenied:  # noqa: BLE001
                 # Cannot inspect but pid_exists True → treat as alive
                 pass
             # F700D-FIX: Self-lock guard — if the lock file contains our own PID,
@@ -99,7 +99,7 @@ def _is_process_alive(pid: int) -> bool:
             if pid == os.getpid():
                 return False
             return True
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
     # Fallback: Unix liveness probe
@@ -232,19 +232,19 @@ def _is_lock_stale(lock_path: pathlib.Path, data_path: pathlib.Path | None = Non
                             # psutil.STATUS_DEAD = 'defunct' on some platforms
                             if status in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD):
                                 return True, f"zombie_process(pid={pid}, status={status})"
-                        except psutil.Error:
+                        except psutil.Error:  # noqa: BLE001
                             pass  # status() not supported on this platform
                     except psutil.NoSuchProcess:
                         # Process died between _is_process_alive and here → stale
                         return True, f"holder_process_died_during_check(pid={pid})"
-                    except psutil.AccessDenied:
+                    except psutil.AccessDenied:  # noqa: BLE001
                         # Cannot inspect but process exists → treat as alive
                         pass
             except psutil.NoSuchProcess:
                 return True, f"holder_process_died_during_check(pid={pid})"
-            except psutil.AccessDenied:
+            except psutil.AccessDenied:  # noqa: BLE001
                 pass
-            except psutil.Error:
+            except psutil.Error:  # noqa: BLE001
                 # Other psutil errors — be conservative, don't remove live-looking lock
                 pass
             return False, f"holder_process_alive(pid={pid})"
@@ -430,7 +430,7 @@ class GraphLockManager:
                 try:
                     fcntl.flock(self._fd, fcntl.LOCK_UN)
                     os.close(self._fd)
-                except OSError:
+                except OSError:  # noqa: BLE001
                     pass
                 finally:
                     self._fd = None
@@ -453,7 +453,7 @@ class GraphLockManager:
             try:
                 fcntl.flock(self._fd, fcntl.LOCK_UN)
                 os.close(self._fd)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
             finally:
                 self._fd = None

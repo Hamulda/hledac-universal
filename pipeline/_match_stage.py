@@ -78,7 +78,7 @@ class MatchStage:
                 # Put (page_result, hits) tuple do output
                 await output_queue.put((page_result, hits))
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
         except Exception:
             metrics.record_error()

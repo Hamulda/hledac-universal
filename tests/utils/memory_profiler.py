@@ -33,6 +33,7 @@ import tracemalloc
 from dataclasses import dataclass, field
 from typing import Any
 
+from operator import attrgetter, itemgetter
 import psutil
 
 __all__ = [
@@ -449,7 +450,7 @@ class TracemallocSnapshot:
             # Filter to positive growth AND domain match
             domains = _get_snapshot_domains()
             growth = [s for s in stats if s.size_diff > 0 and _domain_in_traceback(str(s.traceback), domains)]
-            return sorted(growth, key=lambda s: s.size_diff, reverse=True)[:n]
+            return sorted(growth, key=attrgetter("size_diff"), reverse=True)[:n]
         except Exception:
             return []
 

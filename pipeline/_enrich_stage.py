@@ -168,7 +168,7 @@ class EnrichStage:
                     self._sem = asyncio.Semaphore(new_workers)
                     metrics.update_aimd_window(new_window)
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
         except Exception:
             metrics.record_error()

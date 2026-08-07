@@ -412,7 +412,7 @@ class _DocumentMetadataExtractor:
                     if key and 'revision' in key.lower():
                         try:
                             return int(value)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError):  # noqa: BLE001
                             pass
             return 0
         except Exception:
@@ -635,7 +635,7 @@ class _DocumentMetadataExtractor:
             result['gps_coords'] = []
             result['page_count'] = 0
             return result
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         if not DOCX_AVAILABLE:
@@ -825,7 +825,7 @@ class _DocumentMetadataExtractor:
                 result['macro_analysis'] = self._analyze_macros_olevba(content, 'xlsm')
             result['gps_coords'] = []
             return result
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Fallback to openpyxl
@@ -942,7 +942,7 @@ class _DocumentMetadataExtractor:
             result['template'] = rust_meta.template
             result['manager'] = rust_meta.manager
             result['total_editing_time'] = rust_meta.total_editing_time
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         try:
@@ -1415,7 +1415,7 @@ class _DocumentMetadataExtractor:
                         text = match.group(1)
                         if text:
                             paths.extend(self._find_internal_paths(text))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return paths
 
@@ -1434,7 +1434,7 @@ class _DocumentMetadataExtractor:
                         text = match.group(1)
                         if text:
                             paths.extend(self._find_internal_paths(text))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return paths
 

@@ -68,7 +68,7 @@ def _simulate_sidecar_admission(governor: Any, names: list[str]) -> tuple[int, i
             checks += 1
             if not admission.allowed:
                 blocked += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return (checks, blocked)
 

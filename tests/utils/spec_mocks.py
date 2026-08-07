@@ -484,7 +484,7 @@ def count_mock_methods(mock: MagicMock | AsyncMock) -> dict[str, int]:
                     configured += 1
                 else:
                     auto_created += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     return {"configured": configured, "auto_created": auto_created}
@@ -534,7 +534,7 @@ def _cleanup_mocks(mocks: tuple[MagicMock | AsyncMock, ...]) -> None:
     for mock in mocks:
         try:
             _deep_cleanup_mock(mock)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -556,18 +556,18 @@ def _deep_cleanup_mock(mock: MagicMock | AsyncMock) -> None:
     # Clear direct _mock_children
     try:
         mock._mock_children.clear()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Clear call tracking
     try:
         mock.call_args_list.clear()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     try:
         mock.call_count = 0
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Recurse into child mocks (attribute access creates new ones, use __dict__ directly)
@@ -575,7 +575,7 @@ def _deep_cleanup_mock(mock: MagicMock | AsyncMock) -> None:
         for child in list(mock.__dict__.values()):
             if isinstance(child, (MagicMock, AsyncMock)):
                 _deep_cleanup_mock(child)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

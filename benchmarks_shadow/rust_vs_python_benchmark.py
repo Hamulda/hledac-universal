@@ -113,7 +113,7 @@ def bench_aho_corasick() -> dict[str, Any]:
             return total
         py_ms = _median_ms(py_scan)
         py_hits = py_scan()
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     return {
@@ -171,7 +171,7 @@ def bench_bloom_filter() -> dict[str, Any]:
 
         py_ms = _median_ms(py_full)
         py_hits = py_full()
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     return {
@@ -217,7 +217,7 @@ def bench_rolling_hash() -> dict[str, Any]:
             return total
         py_ms = _median_ms(py_hash)
         py_hits = py_hash()
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     return {

@@ -146,7 +146,7 @@ class _OrderTracker(Generic[K]):
             if idx < len(self._order) - 1:
                 self._order.pop(idx)
                 self._order.append(key)
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
 
     def append(self, key: K) -> None:

@@ -3,6 +3,7 @@ import asyncio
 from hledac.universal.utils.async_helpers import safe_create_task
 import logging
 
+from operator import attrgetter, itemgetter
 import os
 import sys
 import time
@@ -188,7 +189,7 @@ class DSPyOptimizer:
         evidence_files = []
         try:
             if EVIDENCE_ROOT.exists():
-                evidence_files = sorted(EVIDENCE_ROOT.glob('*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)[:10]
+                evidence_files = sorted(EVIDENCE_ROOT.glob('*.jsonl'), key=attrgetter("stat")().st_mtime, reverse=True)[:10]
         except Exception as e:
             logger.debug(f'[DSPy] Failed to list evidence files: {e}')
         for ev_file in evidence_files:
@@ -323,18 +324,18 @@ class DSPyOptimizer:
             instr = None
             try:
                 instr = str(optimized.predictors()[0].signature.instructions)
-            except (AttributeError, IndexError):
+            except (AttributeError, IndexError):  # noqa: BLE001
                 pass
             if instr is None:
                 try:
                     predictor = list(optimized.named_predictors())[0][1]
                     instr = str(predictor.signature.instructions)
-                except (AttributeError, IndexError, StopIteration):
+                except (AttributeError, IndexError, StopIteration):  # noqa: BLE001
                     pass
             if instr is None:
                 try:
                     instr = str(optimized.signature)
-                except AttributeError:
+                except AttributeError:  # noqa: BLE001
                     pass
             if instr is None:
                 logger.warning('DSPy optimizer: could not extract instructions from optimized module — using default fallback')
@@ -513,7 +514,7 @@ def _inject_demos(program: Any, demos: list[dict]) -> Any:
         target = getattr(program, 'program', program)
         try:
             target.demos = examples
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return program
     except Exception as e:

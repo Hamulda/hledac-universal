@@ -137,7 +137,7 @@ class BannerGrabber:
                     writer.close()
                     try:
                         await writer.wait_closed()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
         except TimeoutError:
             error = 'timeout'
@@ -181,7 +181,7 @@ class BannerGrabber:
                         writer.close()
                         try:
                             await writer.wait_closed()
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                 except AttributeError:
                     return await self._grab_tcp(ip, port, t0)
@@ -225,7 +225,7 @@ class BannerGrabber:
                 br.record_failure(failure_kind=f"banner_grab:{error or 'http_error'}")
             else:
                 br.record_success()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return BannerResult(ip=ip, port=port, banner=banner[:500], protocol='http', elapsed_ms=elapsed_ms, error=error)
 
@@ -291,7 +291,7 @@ def _is_ip(value: str) -> bool:
     if len(parts) == 4:
         try:
             return all((0 <= int(p) <= 255 for p in parts))
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
     return False
 __all__ = ['BannerGrabber', 'BannerGrabberAdapter', 'BannerResult', 'grab_batch_as_findings', 'MAX_BANNER_GRABS', 'PORT_TIMEOUTS']

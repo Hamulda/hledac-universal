@@ -456,7 +456,7 @@ class DeltaSyncEngine:
             if parsed.netloc:
                 host = parsed.netloc.split(":")[0]
                 return host.lower()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 

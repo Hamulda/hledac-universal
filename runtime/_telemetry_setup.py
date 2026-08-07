@@ -94,7 +94,7 @@ def _configure_logfire() -> bool:
             else:
                 logfire.configure(service=svc, dsn=dsn, token=token, remote=True,
                                   buffer_size=1000, buffer_interval=1.0)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return True
     except ImportError:

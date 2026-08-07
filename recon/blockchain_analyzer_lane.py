@@ -294,7 +294,7 @@ class BlockchainAnalyzerLane(BaseIntelligenceLane):
         if self._forensics is not None:
             try:
                 await self._forensics.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._forensics = None
 

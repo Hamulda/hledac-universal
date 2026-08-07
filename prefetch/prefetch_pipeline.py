@@ -217,7 +217,7 @@ class ContinuousPrefetchPipeline:
                 try:
                     await safe_wait_for(self._stop_event.wait(), timeout=self._poll_interval, label='prefetch_stop_event')
                     break
-                except TimeoutError:
+                except TimeoutError:  # noqa: BLE001
                     pass
                 if not self._running:
                     break
@@ -334,7 +334,7 @@ class ContinuousPrefetchPipeline:
         try:
             from hledac.universal.transport.prewarm_pool import acquire_session
             await acquire_session('ja3_fingerprint')
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         except Exception as e:
             logger.debug(f'[P3-3] Eager prewarm failed: {e}')
@@ -354,7 +354,7 @@ class ContinuousPrefetchPipeline:
                     try:
                         if hasattr(self._oracle, 'record_prefetch_outcome'):
                             await self._oracle.record_prefetch_outcome(item.ioc_value, True, 0)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return True
             except Exception as e:
@@ -380,7 +380,7 @@ class ContinuousPrefetchPipeline:
         try:
             if hasattr(self._oracle, 'record_prefetch_outcome'):
                 await self._oracle.record_prefetch_outcome(item.ioc_value, success, bytes_downloaded)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return success
 
@@ -410,9 +410,9 @@ class ContinuousPrefetchPipeline:
                     resp = await session.get(url, timeout=self._fetch_timeout)
                     if resp.status_code == 200:
                         return {'url': url, 'content': resp.text, 'status': resp.status_code, 'fetched_at': time.time()}
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         try:
             # F-01: session_pool.httpx() returns shared singleton
@@ -422,7 +422,7 @@ class ContinuousPrefetchPipeline:
             resp = await session.get(url, follow_redirects=True, timeout=httpx.Timeout(self._fetch_timeout))
             if resp.status_code == 200:
                 return {'url': url, 'content': resp.text, 'status': resp.status_code, 'fetched_at': time.time()}
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -432,5 +432,5 @@ class ContinuousPrefetchPipeline:
             exc = task.exception()
             if exc and (not isinstance(exc, asyncio.CancelledError)):
                 logger.warning(f'[P3-3] {name} task failed: {exc}')
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass

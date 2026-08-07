@@ -31,6 +31,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from operator import attrgetter, itemgetter
 import msgspec
 import numpy as np
 
@@ -502,7 +503,7 @@ class InsightEngine:
         # Pattern-based hypothesis
         patterns = self._recognize_patterns(data)
         if patterns:
-            top_pattern = max(patterns, key=lambda p: p.confidence)
+            top_pattern = max(patterns, key=attrgetter("confidence"))
             hypotheses.append(Hypothesis(
                 hypothesis=f"The observed pattern '{top_pattern.description}' will continue in future data",
                 confidence=top_pattern.confidence * 0.8,
@@ -688,7 +689,7 @@ class InsightEngine:
             )
 
         # Sort by importance
-        return sorted(insights, key=lambda i: i.importance_score, reverse=True)
+        return sorted(insights, key=attrgetter("importance_score"), reverse=True)
 
     def _next_insight_id(self) -> str:
         """Generate next insight ID."""
@@ -920,7 +921,7 @@ class InsightEngine:
 
         synthesis = f"Deep synthesis identified {len(patterns)} patterns."
         if patterns:
-            top_pattern = max(patterns, key=lambda p: p.confidence)
+            top_pattern = max(patterns, key=attrgetter("confidence"))
             synthesis += f" Strongest: {top_pattern.description}"
 
         return SynthesisLevel(

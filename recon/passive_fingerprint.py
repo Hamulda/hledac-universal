@@ -373,7 +373,7 @@ def _extract_tracking_ids(html: str) -> dict[str, list[str]]:
         aw_matches = _AW_PATTERN.findall(html)
         if aw_matches:
             result['aw_ids'] = list(dict.fromkeys(aw_matches))[:5]
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return result
 
@@ -451,9 +451,9 @@ async def _compute_favicon_mmh3(
             if h:
                 _favicon_mmh3_cache[favicon_url] = h
                 return h
-    except (httpx.TimeoutException, httpx.HTTPError, OSError, ValueError):
+    except (httpx.TimeoutException, httpx.HTTPError, OSError, ValueError):  # noqa: BLE001
         pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -920,7 +920,7 @@ async def _enrich_favicon_findings(
             try:
                 data = _msgspec_decode(payload) if isinstance(payload, str) else payload
                 page_url = data.get('url', '') or data.get('page_url', '') or ''
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         html_content = ''
         try:
@@ -1194,7 +1194,7 @@ def _trigger_cve_lookup_tasks(findings: list[CanonicalFinding], store: Any) -> N
                     safe_create_task(_store_cve_findings(cve_findings, store), name=f'cve_store:{tech}')
                     logger.info(f'[TechStack] {len(cve_findings)} local CVEs for {tech}')
                 continue  # Skip external lookup for cached tech
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to external lookup
 
         # Fallback: external API lookup (2-15s network latency)
@@ -1210,7 +1210,7 @@ async def _store_cve_findings(findings: list[CanonicalFinding], store: Any) -> N
         results = await store.async_ingest_findings_batch(findings)
         stored = sum((1 for r in results if isinstance(r, dict) and r.get('accepted')))
         logger.debug(f'[TechStack] Stored {stored} CVE findings')
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 async def _cve_lookup_background(tech: str, cve_id: str, store: Any) -> None:

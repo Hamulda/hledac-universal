@@ -60,7 +60,7 @@ try:
     if hasattr(rust, "url_set"):
         _RUST_URL_SET_AVAILABLE = True
         _UrlSet = rust.url_set.MmapUrlSet
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 try:
     from selectolax.parser import HTMLParser as _SelectolaxHTMLParser
@@ -576,7 +576,7 @@ class DarkWebCrawler:
             try:
                 if w and h and (int(w) < 20) and (int(h) < 20):
                     continue
-            except (ValueError, TypeError):
+            except (ValueError, TypeError):  # noqa: BLE001
                 pass
             candidates.append(urljoin(page_url, src))
             if len(candidates) >= 3:
@@ -617,7 +617,7 @@ class DarkWebCrawler:
                         finally:
                             try:
                                 tmp_path.unlink(missing_ok=True)
-                            except Exception:
+                            except Exception:  # noqa: BLE001
                                 pass
                 except Exception as exc:
                     logger.debug('Stego check failed for %s: %s', img_url, exc)
@@ -660,7 +660,7 @@ class DarkWebCrawler:
                         seen.add(parsed.netloc)
                         links.append(parsed.netloc)
                 return links
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(html, 'html.parser')

@@ -34,6 +34,7 @@ import msgspec
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from hledac.universal.utils._patterns import safe_close  # F320: DRY close helper
 logger = logging.getLogger(__name__)
 METRIC_NAMES = frozenset(['orchestrator_rss_mb', 'orchestrator_frontier_size', 'orchestrator_evidence_ring_len', 'orchestrator_tool_exec_events', 'orchestrator_budget_remaining_tokens', 'orchestrator_budget_remaining_time', 'orchestrator_budget_remaining_api_calls', 'cache_http_size', 'cache_snapshot_size', 'cache_frontier_size', 'memory_open_fds', 'memory_rss_mb', 'memory_vms_mb', 'mlx_cache_hits', 'mlx_cache_misses', 'mlx_cache_size_bytes', 'mlx_active_memory_bytes', 'mlx_peak_memory_bytes', 'mlx_cache_fragmentation_ratio', 'mlx_kernel_compilation_time_ms', 'mlx_kernel_cache_hit_rate', 'model_load_duration_ms', 'model_unload_count', 'model_load_failures', 'action_latency_ms', 'thermal_throttle_events', 'thermal_recovery_events', 'memory_zone_normal_seconds', 'memory_zone_high_seconds', 'circuit_breaker_state_transitions', 'circuit_breaker_open_count', 'circuit_breaker_half_open_count', 'circuit_breaker_closed_count', 'circuit_breaker_recovery_success', 'circuit_breaker_open_duration_s', 'circuit_breaker_closed_duration_s', 'memory_zone_critical_seconds', 'dark_surface_pivots_attempted', 'dark_surface_pivots_successful', 'cover_traffic_fired', 'alert_warning_circuit_breaker_open_over_30s', 'memory_pressure_vs_finding_yield', 'windup_entry_count', 'sprint_budget_elapsed_ms', 'sprint_budget_remaining_ms', 'sprint_budget_phase', 'sprint_phase_duration_avg_ms', 'sprint_phase_duration_p50_ms', 'sprint_phase_duration_p95_ms', 'duckdb_ingest_latency_ms', 'duckdb_query_latency_ms', 'bounded_gather_tasks_gathered', 'bounded_gather_tasks_errors', 'bounded_gather_errors_suppressed', 'memory_layer_pressure_pct', 'fetch_coordinator_active', 'fetch_coordinator_blocked_domains', 'fetch_coordinator_circuit_open'])
 
@@ -175,7 +176,7 @@ class MetricsRegistry:
             self.set_gauge('memory_rss_mb', mem_info.rss / (1024 * 1024))
             self.set_gauge('memory_vms_mb', mem_info.vms / (1024 * 1024))
             self.set_gauge('memory_open_fds', process.num_fds())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def flush(self, force: bool=False) -> None:
@@ -237,7 +238,7 @@ class MetricsRegistry:
             nym = NymTransport()
             nym_address = getattr(nym, 'nym_address', None)
             nym_circuit_open = getattr(nym, 'circuit_breaker_open', False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return {'run_id': self._run_id, 'closed': self._closed, 'persist_available': getattr(self, '_persist_available', None), 'degraded_ram_only': getattr(self, '_persist_available', True) is False, 'last_persist_failure': getattr(self, '_last_persist_failure', None), 'counter_count': len(self._counters), 'gauge_count': len(self._gauges), 'snapshot_count': len(self._snapshots), 'sprint_event_count': len(self._sprint_events), 'counters': dict(self._counters), 'gauges': dict(self._gauges), 'nym_address': nym_address, 'nym_circuit_open': nym_circuit_open}
 
@@ -258,7 +259,7 @@ class MetricsRegistry:
             if not required.issubset(event.keys()):
                 return
             self._sprint_events.append(event)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_bounded_gather(self, ctx: str, total_tasks: int, ok_count: int, error_count: int, suppressed_count: int) -> None:
@@ -283,7 +284,7 @@ class MetricsRegistry:
             self._counters['bounded_gather_errors_suppressed'] = self._counters.get('bounded_gather_errors_suppressed', 0) + suppressed_count
             self._event_count += 3
             self._maybe_flush()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_fetch_telemetry(self, blocked_domains: int, circuit_open: bool) -> None:
@@ -301,7 +302,7 @@ class MetricsRegistry:
             self._gauges['fetch_coordinator_circuit_open'] = 1.0 if circuit_open else 0.0
             self._event_count += 2
             self._maybe_flush()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_sprint_budget(self, elapsed_ms: float, remaining_ms: float, phase: str, phase_avg_ms: float | None=None, phase_p50_ms: float | None=None, phase_p95_ms: float | None=None) -> None:
@@ -330,22 +331,19 @@ class MetricsRegistry:
                 self._gauges['sprint_phase_duration_p95_ms'] = phase_p95_ms
             self._event_count += 1
             self._maybe_flush()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def close(self) -> None:
-        """Close and flush - force=True to prevent tail-loss of pending metrics."""
+        """Close and flush - force=True to prevent tail-loss of pending metrics.
+        F320: Refactored to use safe_close helper."""
         if self._closed:
             return
         self._closed = True
         self.flush(force=True)
-        if self._persist_file:
-            try:
-                self._persist_file.close()
-            except Exception as e:
-                logger.error(f'Error closing metrics: {e}')
-            finally:
-                self._persist_file = None
+        # F320: Use safe_close for DRY error handling
+        safe_close(self._persist_file, logger=logger, context="Metrics")
+        self._persist_file = None
 
     def __enter__(self) -> MetricsRegistry:
         return self

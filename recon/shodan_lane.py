@@ -26,14 +26,18 @@ from typing import Any
 import httpx
 
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-from hledac.universal.transport.circuit_breaker import (
-    domain_breaker_check,
-    domain_breaker_record_failure,
-    domain_breaker_record_success,
-)
 from hledac.universal.utils.rate_limiters import get_limiter
 
 from hledac.universal.security.secrets_scrubber import redact_shodan_key, safe_error_log
+
+# DRY: Shared search lane utilities (DRY-2026-08-07)
+from hledac.universal.recon.search_lane_utils import (
+    apply_jitter,
+    circuit_breaker_check,
+    http_status_to_failure_kind,
+    record_failure,
+    record_success,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,30 +50,6 @@ _SHODAN_JITTER_SIGMA_S: float = float(os.environ.get('HLEDAC_SHODAN_JITTER_SIGMA
 
 # F266: Circuit breaker — domain for Shodan API
 _CB_DOMAIN = "api.shodan.io"
-
-
-def _try_domain_breaker_check(domain: str) -> Any:
-    """Fail-soft domain circuit breaker check — returns None if CB unavailable."""
-    try:
-        return domain_breaker_check(domain)
-    except Exception:
-        return None
-
-
-def _record_shodan_success() -> None:
-    """Record Shodan API success to circuit breaker."""
-    try:
-        domain_breaker_record_success(_CB_DOMAIN)
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def _record_shodan_failure(is_timeout: bool = False, kind: str = "") -> None:
-    """Record Shodan API failure to circuit breaker."""
-    try:
-        domain_breaker_record_failure(_CB_DOMAIN, is_timeout=is_timeout, failure_kind=kind)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def _get_api_key() -> str | None:
@@ -133,8 +113,8 @@ async def search_shodan_lane(
     Returns:
         Tuple of (findings, raw_results) — raw_results preserved for pivot side effect.
     """
-    # F266: Circuit breaker preflight
-    decision = _try_domain_breaker_check(_CB_DOMAIN)
+    # F266: Circuit breaker preflight (DRY: search_lane_utils)
+    decision = circuit_breaker_check(_CB_DOMAIN)
     if decision is not None and not decision.allowed:
         logger.debug(f"[SHODAN] circuit breaker open for {_CB_DOMAIN}: {decision.reason}")
         return [], []
@@ -142,17 +122,8 @@ async def search_shodan_lane(
     bucket = get_limiter(RATE_LIMIT_KEY)
     await bucket.acquire()
 
-    # [FINAL]-019: Gaussian jitter — decorrelates request bursts.
-    # BLITZ mode (short sprint) skips jitter per is_blitz_mode().
-    _sigma = _SHODAN_JITTER_SIGMA_S
-    if _sigma > 0:
-        try:
-            from hledac.universal.core.telemetry.context_state import is_blitz_mode
-            if not is_blitz_mode():
-                import random as _rng
-                await asyncio.sleep(abs(_rng.gauss(0.0, _sigma)))
-        except Exception:
-            pass  # fail-soft: jitter is best-effort
+    # [FINAL]-019: Gaussian jitter (DRY: search_lane_utils)
+    await apply_jitter(_SHODAN_JITTER_SIGMA_S, "SHODAN")
 
     key = api_key or _get_api_key()
 
@@ -168,15 +139,15 @@ async def search_shodan_lane(
             async with session.get(SHODAN_SEARCH_API, params=params) as resp:
                 if resp.status_code == 401:
                     logger.warning("[SHODAN] API key required or invalid")
-                    _record_shodan_failure(kind="auth_error")
+                    record_failure(_CB_DOMAIN, kind="auth_error")
                     return [], []
                 if resp.status_code == 429:
                     logger.warning("[SHODAN] Rate limit hit")
-                    _record_shodan_failure(kind="rate_limit")
+                    record_failure(_CB_DOMAIN, kind="rate_limit")
                     return [], []
                 if resp.status_code != 200:
                     logger.warning(f"[SHODAN] API error: {resp.status}")
-                    _record_shodan_failure(kind="http_error")
+                    record_failure(_CB_DOMAIN, kind="http_error")
                     return [], []
 
                 data = await resp.json()
@@ -206,14 +177,14 @@ async def search_shodan_lane(
                         break
 
                 findings = _build_findings(query, raw_results, ts_now, api_key=key)
-                _record_shodan_success()
+                record_success(_CB_DOMAIN)
                 logger.debug(f"[SHODAN] query='{query}' → {len(findings)} findings")
                 return findings, raw_results
 
     except Exception as e:
         # [FINAL]-019-09: safe_error_log ensures API key doesn't leak in error message
         safe_error_log(logger, f"[SHODAN] search error: {e}")
-        _record_shodan_failure(kind="exception")
+        record_failure(_CB_DOMAIN, kind="exception")
         return [], []
 
 

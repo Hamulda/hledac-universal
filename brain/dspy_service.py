@@ -245,7 +245,7 @@ if dspy is not None:
                 worker = self._get_worker()
                 assert worker._loop is not None, 'mlx_worker loop not ready'
                 asyncio.run_coroutine_threadsafe(self._engine.unload(), worker._loop).result(timeout=60.0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             finally:
                 try:
@@ -256,12 +256,12 @@ if dspy is not None:
                         gc.collect()
                         if hasattr(_mx, 'clear_cache'):
                             _mx.clear_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 try:
                     from hledac.universal.brain.ane_embedder import get_ane_mlx_mutex
                     get_ane_mlx_mutex().release('llm')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._loaded = False
 def get_hermes_dspy_lm() -> Hermes3DSPyLM | None:
@@ -465,7 +465,7 @@ async def score_findings(findings: list, min_score: float=4.0) -> list | None:
                     score = float(parts[1].strip())
                     if 0 <= score <= 10 and idx < len(batch_findings):
                         batch_scored.append((batch_findings[idx], score))
-                except (ValueError, IndexError):
+                except (ValueError, IndexError):  # noqa: BLE001
                     pass
             return batch_scored
         except TimeoutError:
@@ -562,7 +562,7 @@ async def suggest_pivots(findings: list, context: dict | None=None) -> list | No
                         confidence = float(parts[2].strip())
                         if ioc_value and ioc_type in ('domain', 'ip', 'url', 'hash', 'email'):
                             pivots.append({'ioc_value': ioc_value, 'ioc_type': ioc_type, 'confidence': min(1.0, max(0.0, confidence))})
-                    except ValueError:
+                    except ValueError:  # noqa: BLE001
                         pass
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.info('dspy_service: suggest_pivots dspy_call=pivot_suggestion latency_ms=%.0f tokens_in=%d tokens_out=%d pivots=%d', elapsed_ms, len(findings_str), len(answer), len(pivots))

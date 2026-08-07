@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     try:
         parser.suggest_on_error = True
         parser.color = True
-    except AttributeError:
+    except AttributeError:  # noqa: BLE001
         pass
 
     _add_global_args(parser)

@@ -308,12 +308,12 @@ class ObservabilityHub(MetricsQuerier):
         try:
             if self._sprint_metrics is not None:
                 self._sprint_metrics.record_phase(phase, component)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             if self._telemetry_logger is not None:
                 self._telemetry_logger.log_phase_transition(from_phase=self._phase, to_phase=phase, component=component)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_transition(self, from_phase: str, to_phase: str, component: str | None=None, elapsed_ms: float=0.0) -> None:
@@ -323,12 +323,12 @@ class ObservabilityHub(MetricsQuerier):
         try:
             if self._sprint_metrics is not None:
                 self._sprint_metrics.record_transition(from_phase, to_phase, component)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             if self._telemetry_logger is not None:
                 self._telemetry_logger.log_event(phase=to_phase, component=component or 'sprint', event='transition', elapsed_ms=elapsed_ms)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_event(self, phase: str | None=None, component: str='sprint', event: str='custom', elapsed_ms: float=0.0) -> None:
@@ -338,12 +338,12 @@ class ObservabilityHub(MetricsQuerier):
         try:
             if self._sprint_metrics is not None:
                 self._sprint_metrics.record_event(phase or self._phase, component, event)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             if self._telemetry_logger is not None:
                 self._telemetry_logger.log_event(phase or self._phase, component, event, elapsed_ms)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def record_source_hit(self, source_type: str, findings_count: int, ioc_count: int, hit_rate: float) -> None:
@@ -380,7 +380,7 @@ class ObservabilityHub(MetricsQuerier):
                 duckdb_deadletter = stats.get('deadletter_count', 0)
                 duckdb_rejected = stats.get('quality_rejected', 0)
                 duckdb_accepted = stats.get('quality_accepted', 0)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         memory_pressure_pct = None
         if self._resource_governor is not None:
@@ -388,7 +388,7 @@ class ObservabilityHub(MetricsQuerier):
                 memory_pressure_pct = getattr(self._resource_governor, 'memory_pressure', None)
                 if memory_pressure_pct is not None:
                     memory_pressure_pct = float(memory_pressure_pct)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         avg_phase_ms, p50_phase_ms, p95_phase_ms = self._percentile_phase_ms()
         otel_traces = None
@@ -399,7 +399,7 @@ class ObservabilityHub(MetricsQuerier):
                 if provider is not None:
                     otel_traces = getattr(provider, 'active_trace_count', lambda: None)()
                     otel_spans = getattr(provider, 'active_span_count', lambda: None)()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return {'session_id': self._session_id, 'phase': self._phase, 'elapsed_ms': elapsed_ms, 'events_total': len(self._events), 'phases_recorded': len(self._phase_samples), 'transitions_recorded': len(self._transition_samples), 'sources_recorded': len(self._source_stats), 'memory_pressure_pct': memory_pressure_pct, 'memory_layer_pressure_pct': self._get_memory_layer_pressure(), 'duckdb_pending': duckdb_pending, 'duckdb_deadletter': duckdb_deadletter, 'duckdb_rejected': duckdb_rejected, 'duckdb_accepted': duckdb_accepted, 'duckdb_ingest_latency_ms': self._get_duckdb_ingest_latency(), 'duckdb_query_latency_ms': self._get_duckdb_query_latency(), 'avg_phase_ms': avg_phase_ms, 'p50_phase_ms': p50_phase_ms, 'p95_phase_ms': p95_phase_ms, 'cb_open_count': self._get_cb_open_count(), 'cb_half_open_count': self._get_cb_half_open_count(), 'cb_closed_count': self._get_cb_closed_count(), 'cb_open_duration_s': self._get_cb_open_duration(), 'fetch_blocked_domains': self._get_fetch_blocked_domains(), 'fetch_circuit_open': self._get_fetch_circuit_open(), 'gather_tasks_gathered': self._get_gather_tasks_gathered(), 'gather_tasks_errors': self._get_gather_tasks_errors(), 'gather_errors_suppressed': self._get_gather_errors_suppressed(), 'sprint_budget_elapsed_ms': elapsed_ms, 'sprint_budget_remaining_ms': self._get_sprint_budget_remaining(), 'otel_traces': otel_traces, 'otel_spans': otel_spans, 'ts': datetime.now(UTC).isoformat()}
 
@@ -485,5 +485,5 @@ class ObservabilityHub(MetricsQuerier):
             logger = logging.getLogger('hledac.observability.health')
             health = self.get_sprint_health()
             logger.info('sprint_health', extra={'session_id': health['session_id'], 'phase': health['phase'], 'elapsed_ms': round(health['elapsed_ms'], 1), 'events': health['events_total'], 'duckdb_pending': health['duckdb_pending'], 'memory_pressure_pct': health['memory_pressure_pct'], 'avg_phase_ms': health['avg_phase_ms']})
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass

@@ -67,7 +67,7 @@ def _dedup_manager_atexit_close() -> None:
     for finalizer in _DEDUP_MANAGER_FINALIZERS:
         try:
             finalizer()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     _DEDUP_MANAGER_FINALIZERS.clear()
 
@@ -88,12 +88,12 @@ def _dedup_manager_sigterm_handler(signum: int, _frame: Any) -> None:
     if signal_raise is not None:
         try:
             signal_raise(signum)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     try:
         import signal
         signal.raise_signal(signum)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 def _register_dedup_manager_finalizer(instance: DedupManager) -> weakref.finalize:
@@ -113,7 +113,7 @@ def _register_dedup_manager_finalizer(instance: DedupManager) -> weakref.finaliz
     def _close_instance() -> None:
         try:
             instance.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     finalizer = weakref.finalize(instance, _close_instance)
     _DEDUP_MANAGER_FINALIZERS.append(finalizer)
@@ -122,11 +122,11 @@ def _register_dedup_manager_finalizer(instance: DedupManager) -> weakref.finaliz
             import signal
             signal.signal(signal.SIGTERM, _dedup_manager_sigterm_handler)
             _SIGTERM_HANDLER_REGISTERED = True
-        except (AttributeError, OSError):
+        except (AttributeError, OSError):  # noqa: BLE001
             pass
         try:
             atexit.register(_dedup_manager_atexit_close)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return finalizer
 
@@ -307,7 +307,7 @@ class RotatingBloomFilter:
                 if len(f) >= self._capacity:
                     f.rotate()
                 f.add(item)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def contains(self, item: str) -> bool:
@@ -333,7 +333,7 @@ class RotatingBloomFilter:
         if self._filter is not None and hasattr(self._filter, 'sync'):
             try:
                 self._filter.sync()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def close(self) -> None:
@@ -425,7 +425,7 @@ class DedupManager:
                 sync = getattr(self._bloom_filter, 'sync', None)
                 if sync:
                     sync()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._bloom_filter = None
         self._bloom_previous = None
@@ -439,14 +439,14 @@ class DedupManager:
                     msync = getattr(self._ioc_dedup_store, 'msync', None)
                     if msync:
                         msync()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._ioc_dedup_store = None
         self._ioc_dedup_store_error = None
         if self._dedup_lmdb is not None:
             try:
                 self._dedup_lmdb.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._dedup_lmdb = None
         self._dedup_lmdb_last_error = None
@@ -603,7 +603,7 @@ class DedupManager:
                     in_previous = _prev_contains(fp) if _prev_contains else False
                 if not in_active and (not in_previous):
                     return None
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if self._use_unified and self._unified_store is not None:
             key = self._dedup_key_from_fingerprint(fp)
@@ -642,7 +642,7 @@ class DedupManager:
         if self._bloom_filter is not None:
             try:
                 self._bloom_filter.add(fp)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if self._use_unified and self._unified_store is not None:
             key = self._dedup_key_from_fingerprint(fp)
@@ -684,9 +684,9 @@ class DedupManager:
                     for fp in fps:
                         try:
                             self._bloom_filter.add(fp)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if self._use_unified and self._unified_store is not None:
             encoded = [(self._dedup_key_from_fingerprint(fp), finding_id.encode('utf-8')) for fp, finding_id in items]
@@ -785,7 +785,7 @@ class DedupManager:
             advance = getattr(self._ioc_dedup_store, 'advance_sprint', None)
             if advance is not None:
                 advance(sprint_id)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _hot_cache_max(self) -> int:
@@ -826,7 +826,7 @@ class DedupManager:
                 self._semantic_dedup_cache = None
                 self._semantic_dedup_boot_error = 'memory pressure — skipped'
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             if self._semantic_lmdb_path is None:

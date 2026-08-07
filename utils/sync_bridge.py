@@ -257,7 +257,7 @@ async def to_thread_rayon(
             from hledac.universal.core.rust_backend import rust
             rayon_abort_channel = rust.raw.rayon_abort_channel
             rayon_abort_channel(handle)
-        except BaseException:
+        except BaseException:  # noqa: BLE001
             pass  # Best-effort abort — don't mask the original exception
         raise
 

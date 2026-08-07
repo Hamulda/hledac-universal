@@ -412,7 +412,7 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
                     old_sess.aclose(),
                     name=f"prewarm:evict:{slot_idx}",
                 )
-            except RuntimeError:
+            except RuntimeError:  # noqa: BLE001
                 pass
     # Create new session (async but fast — curl_cffi init)
     sess = await _create_session(profile)
@@ -443,7 +443,7 @@ async def _fill_slot(slot_idx: int, profile: str) -> None:
 
     try:
         safe_create_task(_probe_and_mark(), name=f"prewarm:probe:{profile}")
-    except RuntimeError:
+    except RuntimeError:  # noqa: BLE001
         # No running loop (called from sync context in tests). Skip
         # the probe; the session is still created and will be used cold.
         pass
@@ -500,7 +500,7 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                                 sess.aclose(),
                                 name=f"prewarm:evict:stale:{slot_idx}",
                             )
-                        except RuntimeError:
+                        except RuntimeError:  # noqa: BLE001
                             pass
                     stats = _stats_var.get()
                     stats["fallback_lazy"] += 1
@@ -521,7 +521,7 @@ async def acquire_session(profile: str) -> tuple[bool, Any | None, str]:
                                 _fill_slot(other, profile),
                                 name=f"prewarm:fill:{profile}:{other}",
                             )
-                        except RuntimeError:
+                        except RuntimeError:  # noqa: BLE001
                             pass
                     stats = _stats_var.get()
                     stats["slots_used"] = max(stats["slots_used"], len(_pool_var.get()))

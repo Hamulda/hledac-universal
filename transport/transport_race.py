@@ -857,7 +857,7 @@ class TransportRaceManager:
                     host = _h3_extract_host(url)
                     if host and _h3_cache_get(host) is True:
                         eligible.append("nw_quic")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-soft: just skip nw_quic
 
             # ISSUE-15: Include stealth transport in the race (races against clearnet)
@@ -972,7 +972,7 @@ class TransportRaceManager:
                                     latency_ms=rr.elapsed_ms,
                                 )
                                 return (rr.result, t_name)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
 
                 return (None, "all_transports_failed")

@@ -66,7 +66,7 @@ def _strip_jpeg(content: bytes) -> bytes:
         if hasattr(img_without_exif, '_getexif'):
             try:
                 del img_without_exif._getexif
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         buf = io.BytesIO()
         img_without_exif.save(buf, format=img.format or 'JPEG', exif=b'')
@@ -245,7 +245,7 @@ class ZeroAttributionEngine:
                         dst.writestr(item, src.read(item.filename))
                 dst.close()
                 return out.getvalue()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return data
 

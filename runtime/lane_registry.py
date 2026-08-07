@@ -38,6 +38,7 @@ import os
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 __all__ = [
     "LaneRegistry",
@@ -49,7 +50,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-class LaneSpec(msgspec.Struct, frozen=True, gc=False):
+class LaneSpec(Struct, frozen=True):
     """
     Canonical specification for one lane / sidecar.
 

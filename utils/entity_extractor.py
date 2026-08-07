@@ -33,6 +33,7 @@ from dataclasses import dataclass
 import msgspec
 from enum import Enum
 from typing import Any
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 class PatternType(Enum):
@@ -110,7 +111,7 @@ class EntityExtractor:
                 self._stats['pattern_counts'] = pc
                 if pattern_type in [PatternType.PRIVATE_KEY, PatternType.PASSWORD]:
                     self._stats['critical_findings'] = int(self._stats.get('critical_findings', 0)) + 1
-        entities.sort(key=lambda x: x.start_pos or 0)
+        entities.sort(key=attrgetter("start_pos") or 0)
         return entities
 
     def extract_by_type(self, text: str, pattern_type: PatternType, context_chars: int=30) -> list[ExtractedEntity]:

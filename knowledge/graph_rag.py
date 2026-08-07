@@ -41,8 +41,10 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from functools import partial
 from typing import Any, Literal
+from operator import attrgetter, itemgetter
 try:
     import numpy as np
     NUMPY_AVAILABLE = True
@@ -69,7 +71,7 @@ def _check_ram_for_igraph() -> bool:
         if available_gb < 0.5:
             logger.debug(f'GraphRAGOrchestrator: RAM headroom {available_gb:.1f}GB < 0.5GB, skipping igraph')
             return False
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return True
 
@@ -101,7 +103,7 @@ def get_degradation_safe_max_hops(requested_hops: int = 2) -> int:
         return requested_hops  # fail-open: governor unavailable → use caller's value
 
 
-class CentralityScores(msgspec.Struct, gc=False):
+class CentralityScores(Struct):
     """Centrality analysis results for a node."""
     node_id: str
     degree: float = 0.0
@@ -111,7 +113,7 @@ class CentralityScores(msgspec.Struct, gc=False):
     pagerank: float = 0.0
     overall_influence: float = 0.0
 
-class Community(msgspec.Struct, gc=False):
+class Community(Struct):
     """Detected community in the graph."""
     community_id: int
     nodes: list[str] = field(default_factory=list)
@@ -119,7 +121,7 @@ class Community(msgspec.Struct, gc=False):
     dominant_type: str = 'mixed'
     key_characteristics: list[str] = field(default_factory=list)
 
-class GraphContradiction(msgspec.Struct, gc=False):
+class GraphContradiction(Struct):
     """Contradiction detected in the graph."""
     node_a_id: str
     node_b_id: str
@@ -229,7 +231,7 @@ class GraphRAGOrchestrator:
                         if node.metadata and 'confidence' in node.metadata:
                             conf = float(node.metadata['confidence'])
                         return (node_id, emb, conf)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 return (node_id, None, None)
         fetch_results: list[tuple[str, np.ndarray | None, float | None]] = await parallel_ok(*[fetch_node_with_semaphore(n) for n in nodes_to_score], label='graph_rag:score_node_embeddings')
@@ -725,7 +727,7 @@ class GraphRAGOrchestrator:
                 scores.pagerank = self._get_centrality_metric(node_id, 'pagerank', adjacency, node_ids, ig_centrality)
             scores.overall_influence = scores.degree * 0.15 + scores.betweenness * 0.25 + scores.closeness * 0.2 + scores.eigenvector * 0.2 + scores.pagerank * 0.2
             centrality_scores.append(scores)
-        centrality_scores.sort(key=lambda x: x.overall_influence, reverse=True)
+        centrality_scores.sort(key=attrgetter("overall_influence"), reverse=True)
         logger.info(f'Calculated centrality for {len(centrality_scores)} nodes (igraph={bool(ig_centrality)})')
         return centrality_scores[:top_k]
 
@@ -763,7 +765,7 @@ class GraphRAGOrchestrator:
                 community.dominant_type = max(type_counts, key=type_counts.get)
             community.key_characteristics = self._extract_community_characteristics(node_list)
             enriched_communities.append(community)
-        enriched_communities.sort(key=lambda x: x.cohesion_score, reverse=True)
+        enriched_communities.sort(key=attrgetter("cohesion_score"), reverse=True)
         logger.info(f'Detected {len(enriched_communities)} communities')
         return enriched_communities
 
@@ -798,7 +800,7 @@ class GraphRAGOrchestrator:
                 contradiction = self._analyze_contradiction(node, related_node)
                 if contradiction and contradiction.severity >= confidence_threshold:
                     contradictions.append(contradiction)
-        contradictions.sort(key=lambda x: x.severity, reverse=True)
+        contradictions.sort(key=attrgetter("severity"), reverse=True)
         logger.info(f'Found {len(contradictions)} contradictions')
         return contradictions
 
@@ -825,7 +827,7 @@ class GraphRAGOrchestrator:
             path_length = path.get('length', 0)
             path['confidence'] = max(0.3, 1.0 - path_length * 0.2)
             path['is_key_path'] = path_length <= 2
-        paths.sort(key=lambda x: x.get('confidence', 0), reverse=True)
+        paths.sort(key=attrgetter("get")('confidence', 0), reverse=True)
         return paths
 
     def calculate_network_metrics(self) -> dict[str, Any]:
@@ -901,7 +903,7 @@ class GraphRAGOrchestrator:
                 except Exception:
                     try:
                         g.add_edge(s_idx, d_idx)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
         return g
 
@@ -945,7 +947,7 @@ class GraphRAGOrchestrator:
             rust_result = _rust_ext.batch_centrality_all(adj_list)
             if rust_result:
                 return dict(rust_result)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if not _check_ram_for_igraph():
             return {}
@@ -1493,7 +1495,7 @@ class GraphRAGOrchestrator:
             fact_copy = fact.copy()
             fact_copy['similarity'] = fact.get('similarity', 0.5) * (1.0 + recency_boost)
             boosted.append(fact_copy)
-        boosted.sort(key=lambda x: x['similarity'], reverse=True)
+        boosted.sort(key=itemgetter("'"), reverse=True)
         return boosted
 
     def _generate_timeline(self, facts: list[dict[str, Any]], bucket: str, max_points: int) -> list[dict[str, Any]]:
@@ -1535,7 +1537,7 @@ class GraphRAGOrchestrator:
         timeline_points = []
         for bucket_key in sorted_buckets[:max_points]:
             facts_in_bucket = bucket_facts[bucket_key]
-            top_paths = sorted(facts_in_bucket, key=lambda x: x.get('similarity', 0), reverse=True)[:3]
+            top_paths = sorted(facts_in_bucket, key=attrgetter("get")('similarity', 0), reverse=True)[:3]
             key_claims = []
             for fact in facts_in_bucket[:5]:
                 content = fact.get('content', '')

@@ -19,6 +19,7 @@ import os
 import time
 from typing import TYPE_CHECKING, Any
 
+from operator import attrgetter, itemgetter
 # Lazy import only — no module-level heavy deps
 # Types imported under TYPE_CHECKING to satisfy static type checkers (mypy/pyright).
 # Runtime lazy import still used inside functions to avoid heavy deps in hot-path.
@@ -287,7 +288,7 @@ def build_temporal_priority_hints(k: int = 10) -> list[dict]:
             })
 
         # Stable sort by priority_hint descending (deterministic)
-        hints.sort(key=lambda h: h["priority_hint"], reverse=True)
+        hints.sort(key=itemgetter("priority_hint"), reverse=True)
         return hints[:k]
 
     except Exception:

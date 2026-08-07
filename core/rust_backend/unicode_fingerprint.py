@@ -370,7 +370,7 @@ def get_unicode_fingerprint_domain(
     if ext is not None and ENABLE_UNICODE_ATTRIBUTION:
         try:
             return _RustUnicodeFingerprintDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonUnicodeFingerprintDomain()
 

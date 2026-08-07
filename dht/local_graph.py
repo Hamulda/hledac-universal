@@ -120,7 +120,7 @@ def _evict_oldest_graph_node(graph: Any) -> None:
             if callable(method):
                 method(oldest)
                 return
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -215,7 +215,7 @@ class LocalGraphStore:
                     and len(current_nodes) >= MAX_DHT_GRAPH_NODES
                 ):
                     _evict_oldest_graph_node(self.graph)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self.graph.add_node(node_id, x=mx.array(features, dtype=mx.float32))
 
@@ -265,7 +265,7 @@ class LocalGraphStore:
                         "features": feat,
                         "neighbors": neighbors,
                     }
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         bucket_key, _ = await self.key_manager.get_bucket_key(self.bucket_id)
 
@@ -347,7 +347,7 @@ class LocalGraphStore:
                         txn.put(f"dht_node:{node_id}".encode(), encrypted)
 
                 await _get_lmdb_pool().run_lmdb(_put)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def get_dht_node(self, node_id: str) -> dict[str, Any] | None:
@@ -456,7 +456,7 @@ class LocalGraphStore:
                         txn.put(b"routing_table_v1", encrypted)
 
                 await _get_lmdb_pool().run_lmdb(_put)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def load_routing_snapshot(self) -> list[dict]:

@@ -30,6 +30,7 @@ from typing import Any
 from weakref import ref
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.async_helpers import safe_create_task
 from hledac.universal.utils.executor_decorator import offload_to
@@ -49,7 +50,7 @@ from hledac.universal.core.sys_metrics import get_memory_usage_mb
 from hledac.universal.utils.async_helpers import safe_wait_for
 
 
-class AgentMetrics(msgspec.Struct, gc=False):
+class AgentMetrics(Struct):
     """Performance metrics for individual agents."""
     name: str
     execution_count: int = 0
@@ -62,7 +63,7 @@ class AgentMetrics(msgspec.Struct, gc=False):
     rate_limited: bool = False
     cache_hit_rate: float = 0.0
 
-class LoadBalancingConfig(msgspec.Struct, frozen=True, gc=False):
+class LoadBalancingConfig(Struct, frozen=True):
     """Configuration for agent load balancing."""
     max_concurrent_agents: int = 8
     memory_threshold_mb: int = 512
@@ -72,7 +73,7 @@ class LoadBalancingConfig(msgspec.Struct, frozen=True, gc=False):
     agent_pool_size: int = 4
     load_balance_strategy: str = 'round_robin'
 
-class OptimizationReport(msgspec.Struct, frozen=True, gc=False):
+class OptimizationReport(Struct, frozen=True):
     """Report containing optimization results."""
     timestamp: float = field(default_factory=time.time)
     optimizations_applied: list[str] = field(default_factory=list)

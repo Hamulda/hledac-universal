@@ -31,6 +31,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from hledac.universal.utils.async_helpers import parallel_ok
 from ._types import AdversarialReport, Contradiction, CrossReferenceResult, Event, Evidence, HypothesisType, SourceCredibility
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from hledac.universal.brain.research_hypothesis_engine import Hypothesis, HypothesisEngine
 logger = logging.getLogger(__name__)
@@ -182,7 +183,7 @@ class AdversarialVerifier:
                 counter_evidence.append(evidence)
         external_evidence = await self._query_counter_evidence_databases(claim, context)
         counter_evidence.extend(external_evidence)
-        counter_evidence.sort(key=lambda e: e.reliability * e.relevance, reverse=True)
+        counter_evidence.sort(key=attrgetter("reliability") * e.relevance, reverse=True)
         return counter_evidence[:50]
 
     def assess_source_credibility(self, source: str) -> SourceCredibility:
@@ -238,7 +239,7 @@ class AdversarialVerifier:
         if len(events) < 2:
             return (True, [])
         contradictions: list[Contradiction] = []
-        sorted_events = sorted(events, key=lambda e: e.timestamp)
+        sorted_events = sorted(events, key=attrgetter("timestamp"))
         event_id_to_event = {e.event_id: e for e in sorted_events}
         for event_a in sorted_events:
             claims_after_id = event_a.metadata.get('claims_after')
@@ -431,7 +432,7 @@ class AdversarialVerifier:
         for evidence in self.hypothesis_engine._evidence.values():
             if self._evidence_supports_claim(evidence, claim):
                 supporting.append(evidence)
-        supporting.sort(key=lambda e: e.reliability * e.relevance, reverse=True)
+        supporting.sort(key=attrgetter("reliability") * e.relevance, reverse=True)
         return supporting[:50]
 
     def _evidence_supports_claim(self, evidence: Evidence, claim: str) -> bool:

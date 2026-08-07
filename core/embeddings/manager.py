@@ -216,7 +216,7 @@ def _get_mlx_memory_module() -> Any:
             from hledac.universal.utils import mlx_memory
 
             _mlx_memory_module = mlx_memory
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _mlx_memory_module
 
@@ -229,7 +229,7 @@ def _probe_gpu_fraction() -> float:
         if mod is not None:
             try:
                 limit = mod.get_dynamic_metal_cache_limit()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         if limit <= 0:
             return 0.0

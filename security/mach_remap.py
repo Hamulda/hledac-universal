@@ -496,5 +496,5 @@ async def run_with_zero_copy_sandbox(
         if temp_path.exists():
             try:
                 temp_path.unlink()
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass

@@ -39,10 +39,11 @@ import logging
 import socket
 import threading
 import time
-from dataclasses import field
+from dataclasses import dataclass, field
 
-import msgspec
 from typing import Any, Protocol, runtime_checkable
+
+from hledac.universal.compat.msgspec_gc_compat import Struct, field as msgspec_field
 
 from cachetools import TTLCache
 
@@ -70,7 +71,7 @@ class FetchTransport(Protocol):
         ...
 
 
-class FetchOptions(msgspec.Struct, frozen=True, gc=False):
+class FetchOptions(Struct, frozen=True):
     """Options for fetch operation. M1 8GB: msgspec.Struct for ~40B/instance, no GC tracking."""
     timeout: float = 30.0
     max_retries: int = 3
@@ -79,13 +80,13 @@ class FetchOptions(msgspec.Struct, frozen=True, gc=False):
     privacy_level: int = 0  # 0=clearnet, 1=TOR, 2=I2P
 
 
-class FetchResult(msgspec.Struct, frozen=True, gc=False):
+class FetchResult(Struct, frozen=True):
     """Result of fetch operation. M1 8GB: msgspec.Struct for built-in JSON serde + no GC."""
     success: bool
     status_code: int = 0
     content: bytes = b''
     content_type: str = ''
-    headers: dict[str, str] = msgspec.field(default_factory=dict)
+    headers: dict[str, str] = msgspec_field(default_factory=dict)
     error: str | None = None
     transport: str = 'unknown'
     fetch_time_ms: float = 0.0
@@ -156,7 +157,7 @@ class DNSCacheService:
             if not self._is_ip_public(str(ip)):
                 return (False, [str(ip)])
             return (True, [str(ip)])
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
 
         cache_key = host.lower()
@@ -244,7 +245,7 @@ class RateLimiterService:
     _max_hosts: int = field(default=512)
     _domain_limiter: Any = field(default=None)
     _retry_budget: dict[str, list[float]] = field(default_factory=dict)
-    _retry_budget_lock: threading.Lock = field(default_factory=threading.Lock)
+    _retry_budget_lock: asyncio.Lock | None = None
     _retry_budget_max: int = field(default=20)
     _retry_budget_window: float = field(default=60.0)
 
@@ -268,7 +269,9 @@ class RateLimiterService:
             return (True, "empty_domain")
 
         # Check retry budget
-        with self._retry_budget_lock:
+        if self._retry_budget_lock is None:
+            self._retry_budget_lock = asyncio.Lock()
+        async with self._retry_budget_lock:
             now = time.monotonic()
             if domain in self._retry_budget:
                 self._retry_budget[domain] = [
@@ -335,7 +338,7 @@ class CircuitBreakerService:
         try:
             from hledac.universal.transport import circuit_breaker as cb
             cb.domain_breaker_record_success(domain)
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError):  # noqa: BLE001
             pass
 
     def record_domain_failure(
@@ -348,7 +351,7 @@ class CircuitBreakerService:
                 domain, is_timeout=is_timeout,
                 failure_kind=failure_kind or 'fetch_error'
             )
-        except (ImportError, AttributeError, OSError):
+        except (ImportError, AttributeError, OSError):  # noqa: BLE001
             pass
 
     def check_transport(self, transport: str) -> tuple[bool, str, float]:
@@ -379,7 +382,7 @@ class CircuitBreakerService:
             breaker = cb.get_transport_breaker(transport)
             if breaker is not None:
                 breaker.record_success()
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError):  # noqa: BLE001
             pass
 
     def record_transport_failure(self, transport: str, is_timeout: bool = False) -> None:
@@ -391,7 +394,7 @@ class CircuitBreakerService:
             breaker = cb.get_transport_breaker(transport)
             if breaker is not None:
                 breaker.record_failure(is_timeout=is_timeout)
-        except (ImportError, AttributeError, OSError):
+        except (ImportError, AttributeError, OSError):  # noqa: BLE001
             pass
 
 
@@ -417,9 +420,9 @@ class RetryPolicyService:
     """
     config: RetryConfig = field(default_factory=RetryConfig)
     _budget: dict[str, list[float]] = field(default_factory=dict)
-    _budget_lock: threading.Lock = field(default_factory=threading.Lock)
+    _budget_lock: asyncio.Lock | None = None
 
-    def can_retry(self, domain: str, attempt: int) -> tuple[bool, str]:
+    async def can_retry(self, domain: str, attempt: int) -> tuple[bool, str]:
         """
         Check if retry is allowed.
 
@@ -428,8 +431,10 @@ class RetryPolicyService:
         if attempt >= self.config.max_retries:
             return (False, f"max_retries_exceeded:{attempt}")
 
-        now = time.monotonic()
-        with self._budget_lock:
+        if self._budget_lock is None:
+            self._budget_lock = asyncio.Lock()
+        async with self._budget_lock:
+            now = time.monotonic()
             if domain in self._budget:
                 self._budget[domain] = [
                     ts for ts in self._budget[domain]
@@ -544,7 +549,7 @@ class FetchServiceRegistry:
                 if tor.available:
                     self._transports['tor'] = tor
                     logger.info('TorTransport enabled')
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
 
         # I2P
@@ -555,7 +560,7 @@ class FetchServiceRegistry:
                 if i2p.available:
                     self._transports['i2p'] = i2p
                     logger.info('I2PTransport enabled')
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
 
         # Gopher
@@ -564,7 +569,7 @@ class FetchServiceRegistry:
                 from hledac.universal.transport.gopher_transport import GopherTransport
                 self._transports['gopher'] = GopherTransport()
                 logger.info('GopherTransport enabled')
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
 
     # -------------------------------------------------------------------------

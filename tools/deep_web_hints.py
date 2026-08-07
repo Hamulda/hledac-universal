@@ -16,7 +16,8 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-import msgspec
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 logger = logging.getLogger(__name__)
 # selectolax — fast CSS selectors, 5-10× faster than BeautifulSoup (M1 8GB friendly)
 try:
@@ -38,7 +39,7 @@ MAX_FIELDS_PER_FORM = 10
 MAX_API_CANDIDATES = 20
 MAX_HTML_PREVIEW_SIZE = 50 * 1024
 
-class DeepWebHints(msgspec.Struct, gc=False):
+class DeepWebHints(Struct):
     """Structured hints extracted from HTML preview."""
     url: str
     forms: list[dict] = field(default_factory=list)
@@ -226,7 +227,7 @@ class DeepWebHintsExtractor:
             try:
                 if re.search(pattern, html_text, re.IGNORECASE):
                     markers[name] = True
-            except re.error:
+            except re.error:  # noqa: BLE001
                 pass
         html_lower = html_text.lower()
         if '__NEXT_DATA__' in html_text or 'next' in html_lower:
@@ -340,7 +341,7 @@ class DeepWebHintsExtractor:
             try:
                 if re.search(pattern, html, re.IGNORECASE):
                     markers[name] = True
-            except re.error:
+            except re.error:  # noqa: BLE001
                 pass
         if '__NEXT_DATA__' in html or 'next' in html.lower():
             markers['next_data'] = True

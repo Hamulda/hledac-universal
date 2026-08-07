@@ -128,7 +128,7 @@ def _python_get_available_memory() -> int:
         import psutil
 
         return int(psutil.virtual_memory().available)
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     # Ultimate fallback: ctypes
     try:
@@ -164,7 +164,7 @@ def _python_get_total_memory() -> int:
         import psutil
 
         return int(psutil.virtual_memory().total)
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     try:
         import ctypes
@@ -191,7 +191,7 @@ def _python_get_total_memory() -> int:
             stat.dwLength = ctypes.sizeof(stat)
             ctypes.windll.kernel32.GlobalMemoryStatus(ctypes.byref(stat))
             return int(stat.dwTotalPhys)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return 0
 
@@ -201,6 +201,6 @@ def get_memory_domain(ext: object | None) -> _RustMemoryDomain | _PythonMemoryDo
     if ext is not None:
         try:
             return _RustMemoryDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonMemoryDomain()

@@ -196,7 +196,7 @@ async def adjust_fetch_workers(new_limit: int) -> None:
             swap_gib = 0.0
         if swap_gib > 2.0:
             new_limit = min(new_limit, 12)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     old_fetch = _FETCH_SEMAPHORE.max if _FETCH_SEMAPHORE else 0
     old_clearnet = _clearnet_semaphore.max if _clearnet_semaphore else 0

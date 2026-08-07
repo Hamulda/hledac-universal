@@ -234,7 +234,7 @@ class NymTransport(Transport):
             if task:
                 try:
                     await task
-                except asyncio.CancelledError:
+                except asyncio.CancelledError:  # noqa: BLE001
                     pass
         if self.websocket:
             await self.websocket.close()

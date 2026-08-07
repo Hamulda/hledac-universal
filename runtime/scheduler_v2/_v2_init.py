@@ -25,6 +25,7 @@ import logging as _logging
 import time as _t
 from typing import TYPE_CHECKING, Any, Callable
 
+from operator import attrgetter, itemgetter
 import msgspec
 
 from hledac.universal.runtime.scheduler_v2.protocol import InitResult
@@ -311,7 +312,7 @@ class V2Init:
             try:
                 rm = get_rayon_pool_manager()
                 rm.set_phase("DEGRADED")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         _lifecycle_mgr.add_phase_exit_callback(_on_degraded_enter)
@@ -398,7 +399,7 @@ class V2Init:
         if flags is None:
             flags = _FlagsEmpty()
 
-        sorted_injections = sorted(INJECTIONS, key=lambda i: i.order)
+        sorted_injections = sorted(INJECTIONS, key=attrgetter("order"))
 
         for inj in sorted_injections:
             if inj.gate_attr is not None and getattr(flags, inj.gate_attr, False):
@@ -464,7 +465,7 @@ class V2Init:
             if _elog is not None:
                 try:
                     _evidence_log_init(_elog, sprint_id, query, sprint_duration_s, windup_lead_s)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     # ── Acquisition plan ───────────────────────────────────────────────────────
@@ -563,7 +564,7 @@ class V2Init:
             if _engine is not None and hasattr(_engine, "prepare"):
                 await asyncio.sleep(0.1)
                 await _engine.prepare()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

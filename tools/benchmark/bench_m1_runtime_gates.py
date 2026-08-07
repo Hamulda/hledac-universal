@@ -65,21 +65,21 @@ _HAS_PSUTIL = False
 try:
     import psutil
     _HAS_PSUTIL = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 _HAS_SELECTOLAX = False
 try:
     from selectolax.parser import HTMLParser as _SelectoLaxParser  # noqa: F401
     _HAS_SELECTOLAX = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 _HAS_BS4 = False
 try:
     from bs4 import BeautifulSoup as _BS4Parser  # noqa: F401
     _HAS_BS4 = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 # ── platform / interpreter detection ─────────────────────────────────────────

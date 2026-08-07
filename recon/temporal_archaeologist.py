@@ -53,6 +53,7 @@ import numpy as np
 from hledac.universal.utils.async_helpers import parallel_ok
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.rate_limiter import RateLimitConfig, RateLimiter
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 class TemporalError(StrEnum):
@@ -148,7 +149,7 @@ class EntityTimeline(msgspec.Struct, frozen=True, gc=False):
 
     def __post_init__(self) -> None:
         if self.snapshots:
-            self.snapshots.sort(key=lambda x: x.timestamp)
+            self.snapshots.sort(key=attrgetter("timestamp"))
 
     @property
     def first_seen(self) -> datetime | None:
@@ -320,7 +321,7 @@ class TemporalArchaeologist:
                     recovered_versions.extend(versions)
                     if versions:
                         sources_succeeded += 1
-        recovered_versions.sort(key=lambda x: x.timestamp, reverse=True)
+        recovered_versions.sort(key=attrgetter("timestamp"), reverse=True)
         seen_hashes = set()
         unique_versions = []
         for version in recovered_versions:
@@ -359,7 +360,7 @@ class TemporalArchaeologist:
                 content_preview = version.content[:500] + '...' if len(version.content) > 500 else version.content
             snapshot = EntitySnapshot(timestamp=version.timestamp, identifier=version.url, content_hash=version.content_hash, content_preview=content_preview, metadata={'source': version.source, 'is_deleted': version.is_deleted, **version.metadata})
             snapshots.append(snapshot)
-        snapshots.sort(key=lambda x: x.timestamp)
+        snapshots.sort(key=attrgetter("timestamp"))
         identity_changes = self._detect_identity_changes(snapshots)
         temporal_gaps = self._detect_temporal_gaps(snapshots)
         confidence_score = self._calculate_timeline_confidence(snapshots, temporal_gaps)
@@ -385,7 +386,7 @@ class TemporalArchaeologist:
             except Exception as e:
                 logger.warning(f'Detector {_detector_name} failed: {e}')
         self._anomalies_detected += len(anomalies)
-        anomalies.sort(key=lambda x: x.severity, reverse=True)
+        anomalies.sort(key=attrgetter("severity"), reverse=True)
         logger.info(f'Detected {len(anomalies)} anomalies')
         return anomalies
 
@@ -474,7 +475,7 @@ class TemporalArchaeologist:
         for source, results in results_gathered:
             all_results.extend(results)
         filtered_results = [result for result in all_results if time_range[0] <= result.timestamp <= time_range[1]]
-        filtered_results.sort(key=lambda x: x.timestamp, reverse=True)
+        filtered_results.sort(key=attrgetter("timestamp"), reverse=True)
         logger.info(f'Deep search found {len(filtered_results)} results')
         return filtered_results
 

@@ -76,7 +76,7 @@ class SystemMonitor:
                                 if entry.current > self.thermal_threshold:
                                     new_state = SystemState.THERMAL_THROTTLING
                                     break
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             else:
                 new_state = SystemState.HEALTHY
@@ -114,7 +114,7 @@ class SystemMonitor:
                 temps = psutil.sensors_temperatures()
                 if temps:
                     stats['temperatures'] = {name: [e.current for e in entries] for name, entries in temps.items()}
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return stats
         except Exception as e:

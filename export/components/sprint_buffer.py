@@ -132,7 +132,7 @@ class SprintExportBuffer:
         try:
             if self._temp_file.exists():
                 self._temp_file.unlink()
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
         self._flush_task = asyncio.create_task(
@@ -194,7 +194,7 @@ class SprintExportBuffer:
                 async with asyncio.timeout(self._FLUSH_INTERVAL_S):
                     await self._shutdown.wait()
                     break
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError:  # noqa: BLE001
                 pass
 
             now = time.monotonic()
@@ -227,7 +227,7 @@ class SprintExportBuffer:
             try:
                 if self._temp_file.exists():
                     return self._temp_file.read_bytes()
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
             return None
 
@@ -241,7 +241,7 @@ class SprintExportBuffer:
                 await asyncio.wait_for(
                     asyncio.shield(self._flush_task), timeout=3.0
                 )
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                 pass
             self._flush_task = None
 
@@ -263,14 +263,14 @@ class SprintExportBuffer:
                         if flush_data:
                             with open(self._temp_file, 'ab') as f:
                                 f.write(flush_data)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # Read complete compressed data
         try:
             if self._temp_file.exists():
                 return self._temp_file.read_bytes()
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
         return None
 
@@ -309,7 +309,7 @@ class SprintExportBuffer:
                 await asyncio.wait_for(
                     asyncio.shield(self._flush_task), timeout=2.0
                 )
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                 pass
             self._flush_task = None
 
@@ -317,7 +317,7 @@ class SprintExportBuffer:
         try:
             if self._temp_file.exists():
                 self._temp_file.unlink()
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
 
         self._compressor = None

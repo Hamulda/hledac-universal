@@ -220,7 +220,7 @@ class TotIntegrationLayer:
                 mx.eval([])
                 mx.clear_cache()
                 logger.debug('MLX cache cleared')
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
 
     def _get_thresholds(self, lang: str) -> tuple[float, float]:
@@ -277,7 +277,7 @@ class TotIntegrationLayer:
                 if next_queries and next_queries:
                     score = min(1.0, score + 0.2)
                     self._pending_epistemic_branches = [q['query'] for q in next_queries[:3]]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return (should_use, confidence)
 

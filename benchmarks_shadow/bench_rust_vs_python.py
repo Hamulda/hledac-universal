@@ -218,7 +218,7 @@ def main() -> int:
     rust_ms_b: float | None = None
     try:
         rust_ms_b = _time_median_ms(lambda: _rust_bloom(add, check))
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     # 3. Rolling hash
@@ -228,7 +228,7 @@ def main() -> int:
     rust_ms_r: float | None = None
     try:
         rust_ms_r = _time_median_ms(lambda: _rust_rolling(data, ROLLING_WINDOW))
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     # ---- Output table ----

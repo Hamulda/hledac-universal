@@ -436,19 +436,19 @@ class MlxcelIpcClient:
                     try:
                         proc.kill()
                         await proc.wait()
-                    except (OSError, asyncio.CancelledError):
+                    except (OSError, asyncio.CancelledError):  # noqa: BLE001
                         pass
                 except asyncio.CancelledError:
                     try:
                         proc.kill()
                         await proc.wait()
-                    except (OSError, asyncio.CancelledError):
+                    except (OSError, asyncio.CancelledError):  # noqa: BLE001
                         pass
                 try:
                     if proc.stderr is not None:
                         async with asyncio.timeout(1.0):
                             await proc.stderr.read()
-                except (asyncio.TimeoutError, OSError, asyncio.CancelledError):
+                except (asyncio.TimeoutError, OSError, asyncio.CancelledError):  # noqa: BLE001
                     pass
             self._connected = False
             self._pid = None

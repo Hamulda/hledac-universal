@@ -45,6 +45,7 @@ from difflib import SequenceMatcher
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from operator import attrgetter, itemgetter
 try:
     import numpy as np
     _NUMPY_AVAILABLE = True
@@ -247,7 +248,7 @@ class SemanticDeduplicator(BaseDeduplicator):
                                 if it not in clusters[bucket]:
                                     clusters[bucket].append(it)
                 return clusters
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Fall through to Python path
 
         # Slow path: pure Python OrderedDict bucketing
@@ -846,7 +847,7 @@ class DeduplicationEngine:
             matched_items[key].append(match)
         unique_matches = []
         for matches_group in matched_items.values():
-            matches_group.sort(key=lambda m: m.similarity_score.score, reverse=True)
+            matches_group.sort(key=attrgetter("similarity_score").score, reverse=True)
             best_match = matches_group[0]
             if best_match.similarity_score.score >= 0.85:
                 best_match.decision = 'remove'

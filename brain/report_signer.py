@@ -178,7 +178,7 @@ class ReportSigner:
                     try:
                         priv_path.chmod(0o600)
                         pub_path.chmod(0o644)
-                    except (OSError, NotImplementedError):
+                    except (OSError, NotImplementedError):  # noqa: BLE001
                         pass  # Windows or restricted filesystem
 
                     logger.info("ReportSigner: generated new Ed25519 keypair")

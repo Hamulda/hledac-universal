@@ -35,6 +35,7 @@ import asyncio
 import concurrent.futures
 import sys
 
+from operator import attrgetter, itemgetter
 from hledac.universal.utils.locks import LazyAsyncioLock
 from hledac.universal.utils.domain_executors import get_parallel_executor
 from hledac.universal.security.artifact_verifier import (
@@ -199,7 +200,7 @@ def _check_mps_available():
         if torch.backends.mps.is_available():
             MPS_AVAILABLE = True
             return True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     return False
 MAX_IMAGE_SIZE = 2048
@@ -1445,7 +1446,7 @@ class OfficeDocumentAnalyzer:
             if 'docProps/core.xml' in z.namelist():
                 core_xml = z.read('docProps/core.xml').decode('utf-8', errors='ignore')
                 props = self._parse_core_xml(core_xml)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if 'word/document.xml' in z.namelist():
             doc_type = DocumentType.MICROSOFT_WORD
@@ -1472,7 +1473,7 @@ class OfficeDocumentAnalyzer:
                 if key in ['created', 'modified']:
                     try:
                         value = datetime.fromisoformat(value.replace('Z', '+00:00'))
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 props[key] = value
         return props
@@ -1605,7 +1606,7 @@ class ImageAnalyzer:
         if isinstance(value, str):
             try:
                 return datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass
         return None
 
@@ -1721,7 +1722,7 @@ class DeepForensicsAnalyzer:
                 if lon_ref == 'W':
                     lon_dec = -lon_dec
                 return {'lat': lat_dec, 'lon': lon_dec}
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -1747,7 +1748,7 @@ class DeepForensicsAnalyzer:
                     gps_coords = self._parse_gps(gps)
                     if gps_coords:
                         result['gps_coords'] = gps_coords
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         try:
             # CPU-bound: run ELA in ProcessPool to avoid blocking MLX workers
@@ -1763,7 +1764,7 @@ class DeepForensicsAnalyzer:
                             await rd.flag_manipulated_image(url=url, ela_score=ela_score)
                 except Exception as e:
                     logger.warning(f'ELA→Graph forward failed: {e}')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if len(content) > 10000:
             try:
@@ -1771,7 +1772,7 @@ class DeepForensicsAnalyzer:
                 result['stego_probability'] = stego_prob
                 if stego_prob > 0.1:
                     result['suspicious'] = True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return result
 
@@ -1820,7 +1821,7 @@ class DeepForensicsAnalyzer:
             if hasattr(torch.mps, 'empty_cache'):
                 try:
                     torch.mps.empty_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     async def _ela_analysis_cpu(self, content: bytes) -> float:
@@ -1958,7 +1959,7 @@ class StegdetectServer:
             finally:
                 try:
                     os.unlink(tmp.name)
-                except FileNotFoundError:
+                except FileNotFoundError:  # noqa: BLE001
                     pass
 
     async def restart(self):
@@ -1968,7 +1969,7 @@ class StegdetectServer:
                 try:
                     proc.kill()
                     await proc.wait()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             self._procs = []
             self._initialized = False
@@ -1997,7 +1998,7 @@ class StegdetectServer:
         """Fallback shutdown on garbage collection."""
         try:
             self.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 class DocumentIntelligenceEngine:
@@ -2108,7 +2109,7 @@ class DocumentIntelligenceEngine:
                 text_candidate = content.decode("utf-8", errors="ignore")
                 if len(text_candidate) >= 64:
                     auto_re_iocs = rust.extract_iocs_simd(text_candidate)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-soft
 
         raw_metadata: dict[str, Any] = {}
@@ -2173,7 +2174,7 @@ class DocumentIntelligenceEngine:
             if steg_server and hasattr(steg_server, 'restart'):
                 try:
                     self._run_async(steg_server.restart())
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     def probe(self, url: str, preview_bytes: bytes, query: str='') -> dict[str, Any]:
@@ -2532,7 +2533,7 @@ class MLXLongContextAnalyzer:
             if len(sources) > 1:
                 link = CrossDocumentLink(entity_type=entity_type, value=value, documents=sources[:10], confidence=min(1.0, len(mentions) / 10), first_seen='unknown', last_seen='unknown')
                 links.append(link)
-        links.sort(key=lambda x: x.confidence, reverse=True)
+        links.sort(key=attrgetter("confidence"), reverse=True)
         return links
 
     def reconstruct_timeline(self, entities: list[EntityMention], chunks: list[dict]) -> list[TimelineEvent]:
@@ -2557,7 +2558,7 @@ class MLXLongContextAnalyzer:
                 timeline.append(event)
             except Exception as e:
                 logger.debug(f'Failed to parse date {date_entity.text}: {e}')
-        timeline.sort(key=lambda x: x.confidence, reverse=True)
+        timeline.sort(key=attrgetter("confidence"), reverse=True)
         return timeline[:100]
 
     def analyze_massive_dump(self, text: str, source: str='unknown', extract_entities: bool=True, build_timeline: bool=True, cross_reference: bool=True) -> LongContextAnalysis:

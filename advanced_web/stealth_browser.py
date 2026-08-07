@@ -203,12 +203,12 @@ class StealthBrowser:
             if tab:
                 try:
                     await tab.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if browser:
                 try:
                     await release_browser(browser, tor_proxy=None)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
     async def _fetch_httpx(self, url: str, extract_structured: bool=True) -> dict[str, Any]:
@@ -329,7 +329,7 @@ class StealthBrowser:
                 await close_fn()
             else:
                 await asyncio.to_thread(close_fn)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             self._session = None

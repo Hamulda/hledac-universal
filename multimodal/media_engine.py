@@ -284,14 +284,14 @@ class MediaDecoder:
                         audio_codec = str(
                             _AVFoundation.CMFormatDescriptionGetMediaSubType(desc)
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     try:
                         asbd = _AVFoundation.CMAudioFormatDescriptionGetStreamBasicDescription(desc)
                         if asbd:
                             audio_channels = int(asbd.mChannelsPerFrame)
                             audio_sr = float(asbd.mSampleRate)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             # Video tracks
@@ -305,7 +305,7 @@ class MediaDecoder:
                         video_codec = str(
                             _AVFoundation.CMFormatDescriptionGetMediaSubType(desc)
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     dims = _AVFoundation.CMVideoFormatDescriptionGetDimensions(desc)
                     video_w = int(dims.width)
@@ -319,7 +319,7 @@ class MediaDecoder:
             file_size = 0
             try:
                 file_size = os.path.getsize(file_path)
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
             return MediaFormatInfo(
@@ -609,7 +609,7 @@ class MediaDecoder:
                 finally:
                     try:
                         os.unlink(tmp_path)
-                    except OSError:
+                    except OSError:  # noqa: BLE001
                         pass
 
             text, confidence, segments = await asyncio.to_thread(_transcribe_sync)

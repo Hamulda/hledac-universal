@@ -203,7 +203,7 @@ class ScorecardBuilder:
                             source_yield_val[src] = source_yield_val.get(src, 0) + 1
                             ioc_val += 1
                             accepted_val += 1
-                except (AttributeError, TypeError, RuntimeError):
+                except (AttributeError, TypeError, RuntimeError):  # noqa: BLE001
                     pass
             # Fallback: accepted_count + ioc_count z store
             store = self._store
@@ -213,7 +213,7 @@ class ScorecardBuilder:
                     if not source_yield_val:
                         accepted_val = dedup.get("accepted_count", 0)
                         ioc_val = dedup.get("ioc_count", 0)
-                except (AttributeError, RuntimeError):
+                except (AttributeError, RuntimeError):  # noqa: BLE001
                     pass
             return accepted_val, ioc_val, source_yield_val
 
@@ -234,7 +234,7 @@ class ScorecardBuilder:
             if store is not None and hasattr(store, "_arrow_metrics"):
                 try:
                     arrow_val = store._arrow_metrics  # type: ignore[union-attr]
-                except (AttributeError, TypeError):
+                except (AttributeError, TypeError):  # noqa: BLE001
                     pass
             elif store is not None and hasattr(store, "get_arrow_metrics"):
                 try:
@@ -242,7 +242,7 @@ class ScorecardBuilder:
                     from hledac.universal.knowledge.duckdb_store import get_arrow_metrics
 
                     arrow_val = get_arrow_metrics()
-                except (ImportError, AttributeError):
+                except (ImportError, AttributeError):  # noqa: BLE001
                     pass
             return arrow_val
 
@@ -258,7 +258,7 @@ class ScorecardBuilder:
                 from hledac.universal.transport.circuit_breaker import get_all_breaker_states
 
                 cb_states = get_all_breaker_states()
-            except (ImportError, AttributeError):
+            except (ImportError, AttributeError):  # noqa: BLE001
                 pass
             return cb_states
 
@@ -294,7 +294,7 @@ class ScorecardBuilder:
             if store is not None and hasattr(store, "get_top_entities_for_ghost_global"):
                 try:
                     entities = store.get_top_entities_for_ghost_global(n=100)
-                except (AttributeError, RuntimeError, OSError):
+                except (AttributeError, RuntimeError, OSError):  # noqa: BLE001
                     pass
             return entities
 
@@ -357,7 +357,7 @@ class ScorecardBuilder:
                 packet = None
             if packet is not None:
                 self._scorecard_data.investigation_packet = packet
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError):  # noqa: BLE001
             pass
 
     async def persist(
@@ -398,7 +398,7 @@ class ScorecardBuilder:
                     await store.upsert_scorecard(
                         self._scorecard_data_to_dict(data)
                     )
-                except (RuntimeError, OSError):
+                except (RuntimeError, OSError):  # noqa: BLE001
                     pass
 
             duckdb_write_tasks.append(safe_create_task_tracked(safe_upsert_scorecard(), name="scorecard:upsert_scorecard", scope=TaskScope.SCORECARD))
@@ -433,7 +433,7 @@ class ScorecardBuilder:
                             "ts": _t.time(),
                         }
                     )
-                except (RuntimeError, OSError):
+                except (RuntimeError, OSError):  # noqa: BLE001
                     pass
 
             duckdb_write_tasks.append(safe_create_task_tracked(safe_upsert_episode(), name="scorecard:upsert_episode", scope=TaskScope.SCORECARD))
@@ -451,7 +451,7 @@ class ScorecardBuilder:
             ):
                 try:
                     await store.upsert_global_entities(ghost_entities)
-                except (AttributeError, RuntimeError, OSError):
+                except (AttributeError, RuntimeError, OSError):  # noqa: BLE001
                     pass
 
             # Await DuckDB writes – parallel(policy="log") integrates _check_gathered
@@ -516,7 +516,7 @@ class ScorecardBuilder:
                 result = rust_fn(data)
                 if result:
                     return result.decode("utf-8")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # orjson fallback

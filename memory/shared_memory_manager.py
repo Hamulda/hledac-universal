@@ -31,7 +31,7 @@ def _json_loads(data) -> Any:
     if isinstance(data, (bytes, bytearray, memoryview, str)):
         try:
             return _msgspec_decode(data)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return {}
 ORJSON_AVAILABLE = _FACADE_ORJSON_AVAILABLE

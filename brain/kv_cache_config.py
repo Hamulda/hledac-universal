@@ -99,7 +99,7 @@ def get_metal_tier_thresholds() -> tuple[int, int, int]:
                 int(limit_bytes * 1.05),  # critical — at limit
                 int(limit_bytes * 0.70),  # warn — 70% of limit
             )
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: M1 8GB static values (CLAUDE.md invariant)
@@ -162,7 +162,7 @@ class MetalProbe:
                 active_bytes = int(mx.metal.get_active_memory())
             elif hasattr(mx, "get_active_memory"):
                 active_bytes = int(mx.get_active_memory())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         emergency_bytes, critical_bytes, warn_bytes = get_metal_tier_thresholds()

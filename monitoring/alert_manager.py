@@ -96,7 +96,7 @@ class AlertManager:
         if self._metrics:
             try:
                 self._metrics.inc(f'alert_{severity.value}_{alert_id}')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         for handler in self._handlers:
             try:

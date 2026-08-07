@@ -22,12 +22,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     pass
 
 
-class PageBatch(msgspec.Struct, frozen=True, gc=False):
+class PageBatch(Struct, frozen=True):
     """Structure of Arrays for batch page processing.
 
     Represents a batch of discovered pages awaiting fetch, extract, and match.
@@ -46,7 +47,7 @@ class PageBatch(msgspec.Struct, frozen=True, gc=False):
     errors: list[str | None]  # None = no error
 
 
-class FetchedBatch(msgspec.Struct, frozen=True, gc=False):
+class FetchedBatch(Struct, frozen=True):
     """Structure of Arrays for batch after fetch stage.
 
     index-aligned with PageBatch: fetched_batch.urls[i] == page_batch.urls[i]
@@ -62,7 +63,7 @@ class FetchedBatch(msgspec.Struct, frozen=True, gc=False):
     fetch_blocked_reasons: list[str | None]  # uma_memory | quality_skip
 
 
-class ScoredBatch(msgspec.Struct, frozen=True, gc=False):
+class ScoredBatch(Struct, frozen=True):
     """Structure of Arrays after quality scoring stage.
 
     index-aligned with FetchedBatch.
@@ -79,7 +80,7 @@ class ScoredBatch(msgspec.Struct, frozen=True, gc=False):
     skipped_reasons: list[str | None]  # why page was skipped (quality gate)
 
 
-class MatchedBatch(msgspec.Struct, frozen=True, gc=False):
+class MatchedBatch(Struct, frozen=True):
     """Structure of Arrays after pattern matching stage.
 
     index-aligned with ScoredBatch.
@@ -91,7 +92,7 @@ class MatchedBatch(msgspec.Struct, frozen=True, gc=False):
     match_errors: list[str | None]  # None = success
 
 
-class FindingBatch(msgspec.Struct, frozen=True, gc=False):
+class FindingBatch(Struct, frozen=True):
     """Structure of Arrays for CanonicalFinding-ready batch.
 
     This is the output of the build stage and input to FindingPipeline.
@@ -111,7 +112,7 @@ class FindingBatch(msgspec.Struct, frozen=True, gc=False):
     matched_pattern_labels: list[list[str]]
 
 
-class FeedEntryBatch(msgspec.Struct, frozen=True, gc=False):
+class FeedEntryBatch(Struct, frozen=True):
     """Structure of Arrays for feed pipeline entry batch.
 
     index-aligned arrays for RSS/Atom feed processing.
@@ -125,7 +126,7 @@ class FeedEntryBatch(msgspec.Struct, frozen=True, gc=False):
     entry_hashes: list[str]  # for dedup
 
 
-class FeedAssembledBatch(msgspec.Struct, frozen=True, gc=False):
+class FeedAssembledBatch(Struct, frozen=True):
     """Structure of Arrays after feed text assembly stage."""
 
     entry_urls: list[str]
@@ -134,7 +135,7 @@ class FeedAssembledBatch(msgspec.Struct, frozen=True, gc=False):
     quality_signals: list[dict]  # EntryQualitySignal as dict (msgspec compatible)
 
 
-class FeedMatchedBatch(msgspec.Struct, frozen=True, gc=False):
+class FeedMatchedBatch(Struct, frozen=True):
     """Structure of Arrays after feed pattern scan stage."""
 
     entry_urls: list[str]

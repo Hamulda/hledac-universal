@@ -23,6 +23,7 @@ from dataclasses import field
 from enum import Enum
 from typing import Any
 
+from operator import attrgetter, itemgetter
 import msgspec
 
 from hledac.universal.utils.async_helpers import parallel_ok
@@ -42,7 +43,7 @@ class CachePolicy(Enum):
     MEMORY_ONLY = 'memory_only'
     PERSISTENT = 'persistent'
 
-class OptimizationConfig(msgspec.Struct, gc=False):
+class OptimizationConfig(Struct):
     """Configuration for research optimization."""
     strategy: OptimizationStrategy = OptimizationStrategy.BALANCED
     cache_policy: CachePolicy = CachePolicy.MEMORY_ONLY
@@ -54,7 +55,7 @@ class OptimizationConfig(msgspec.Struct, gc=False):
     batch_size: int = 10
     memory_limit_mb: float = 500.0
 
-class QueryMetrics(msgspec.Struct, frozen=True, gc=False):
+class QueryMetrics(Struct, frozen=True):
     """Metrics for a query type."""
     query_hash: str
     count: int = 0
@@ -62,7 +63,7 @@ class QueryMetrics(msgspec.Struct, frozen=True, gc=False):
     success_rate: float = 1.0
     last_executed: float | None = None
 
-class OptimizedResult(msgspec.Struct, frozen=True, gc=False):
+class OptimizedResult(Struct, frozen=True):
     """Result with optimization metadata."""
     data: Any
     cache_hit: bool
@@ -126,7 +127,7 @@ class ResearchOptimizer:
             try:
                 data = await self._in_flight[query_hash]
                 return OptimizedResult(data=data, cache_hit=False, duration=time.time() - start_time, optimizations_applied=optimizations, metadata={'query_hash': query_hash, 'deduplicated': True})
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         future = asyncio.Future()
         if self.config.query_deduplication:
@@ -258,7 +259,7 @@ class ResearchOptimizer:
         else:
             avg_time = sum(self._execution_times) / len(self._execution_times)
             max_time = max(self._execution_times)
-        return {'config': {'strategy': self.config.strategy.value, 'cache_policy': self.config.cache_policy.value, 'max_concurrent': self.config.max_concurrent_requests}, 'cache': {'size': len(self._cache), 'active_in_flight': len(self._in_flight)}, 'performance': {'total_executions': len(self._execution_times), 'avg_duration': avg_time, 'max_duration': max_time, 'unique_queries': len(self._query_metrics)}, 'query_patterns': sorted([{'hash': m.query_hash[:8], 'count': m.count, 'avg_duration': m.avg_duration, 'success_rate': m.success_rate} for m in self._query_metrics.values()], key=lambda x: x['count'], reverse=True)[:10]}
+        return {'config': {'strategy': self.config.strategy.value, 'cache_policy': self.config.cache_policy.value, 'max_concurrent': self.config.max_concurrent_requests}, 'cache': {'size': len(self._cache), 'active_in_flight': len(self._in_flight)}, 'performance': {'total_executions': len(self._execution_times), 'avg_duration': avg_time, 'max_duration': max_time, 'unique_queries': len(self._query_metrics)}, 'query_patterns': sorted([{'hash': m.query_hash[:8], 'count': m.count, 'avg_duration': m.avg_duration, 'success_rate': m.success_rate} for m in self._query_metrics.values()], key=itemgetter("'"), reverse=True)[:10]}
 
     def clear_cache(self) -> int:
         """Clear all cached results. Returns count of cleared entries."""

@@ -243,7 +243,7 @@ class BetaBinomial:
         if evidence.source_id in self._source_index:
             try:
                 self._source_index[evidence.source_id].remove(evidence_id)
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass
 
         # Reverse the effect on alpha/beta

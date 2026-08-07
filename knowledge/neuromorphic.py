@@ -19,6 +19,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -93,7 +94,7 @@ class STDPParameters:
         self.tau = tau
 
 
-class MemoryPattern(msgspec.Struct, gc=False):
+class MemoryPattern(Struct):
     """
     A memory pattern stored in neuromorphic memory.
 
@@ -303,7 +304,7 @@ class NeuromorphicMemoryManager:
                     w = self.synaptic_weights[pre, post] + dw
                     self.synaptic_weights[pre, post] = max(0.0, min(1.0, w))
                     self.synaptic_weights[post, pre] = self.synaptic_weights[pre, post]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fail-safe
 
     def store_pattern(
@@ -391,7 +392,7 @@ class NeuromorphicMemoryManager:
                 new_activations = _np.array(row.sum(axis=0)).flatten() > 0.3
                 activations[new_activations] = 1.0
             pattern.neuron_activations = activations
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fail-safe
 
     def consolidate_memories(self, strength_threshold: float = 0.5) -> int:

@@ -377,7 +377,7 @@ async def run_in_cpu_pool_async(
     try:
         from hledac.universal.utils.rayon_channel import dispatch_cpu
         return await dispatch_cpu(fn, *args, **kwargs)
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     return await asyncio.to_thread(run_in_cpu_pool, fn, *args, **kwargs)
 
@@ -407,7 +407,7 @@ async def run_in_io_pool_async(
     try:
         from hledac.universal.utils.rayon_channel import dispatch_io
         return await dispatch_io(fn, *args, **kwargs)
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     return await asyncio.to_thread(run_in_io_pool, fn, *args, **kwargs)
 
@@ -438,7 +438,7 @@ async def run_in_mixed_pool_async(
     try:
         from hledac.universal.utils.rayon_channel import dispatch_mixed
         return await dispatch_mixed(n_items, fn, *args, **kwargs)
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     return await asyncio.to_thread(run_in_mixed_pool, n_items, fn, *args, **kwargs)
 

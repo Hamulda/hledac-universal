@@ -145,7 +145,7 @@ def _get_peak_coordinator():
             TaskPriority,
         )
         return get_co_scheduler(), ResourceClass, TaskPriority, Subsystem
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     try:
         from hledac.universal.core.peak_load_coordinator import (
@@ -553,7 +553,7 @@ class SidecarOrchestrator:
             level = get_current_degradation_level()
             if level in (QoSLevel.EMERGENCY, QoSLevel.BATTERY, QoSLevel.WINDUP):
                 return  # All sidecars suppressed by QoS policy
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-open: governor unavailable → allow sidecars
 
         # ISSUE #22: Parallel pre-warm of SidecarRegistry adapters (lazy imports + parallel init)
@@ -1136,7 +1136,7 @@ class SidecarOrchestrator:
             )
             adapter = create_bgp_advisor_adapter()
             _ = adapter.analyze(self._result)
-        except (ImportError, ModuleNotFoundError, AttributeError):
+        except (ImportError, ModuleNotFoundError, AttributeError):  # noqa: BLE001
             pass  # fail-safe: intelligence module unavailable
 
     async def _run_wayback_cdx_deep_sidecar(self) -> None:
@@ -1147,7 +1147,7 @@ class SidecarOrchestrator:
             )
             adapter = create_wayback_cdx_deep_adapter()
             _ = await adapter.analyze(self._result)
-        except (ImportError, ModuleNotFoundError, AttributeError):
+        except (ImportError, ModuleNotFoundError, AttributeError):  # noqa: BLE001
             pass  # fail-safe: intelligence module unavailable
 
     # ── F229: IPFS Discovery Sidecar ─────────────────────────────────────────

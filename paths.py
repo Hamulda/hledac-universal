@@ -143,7 +143,7 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
         _AUTO_CREATED_DEVICE = device
         try:
             _subprocess.run(['diskutil', 'erasevolume', 'HFS+', 'RAMDisk', device], capture_output=True, timeout=10)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # B2-FIX: This 500ms sleep waits for HFS+ volume to settle — macOS requires
         # this before the mount becomes visible. _try_create_ramdisk is ALWAYS called
@@ -151,7 +151,7 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
         # For truly sync callers (none currently exist), wrap with asyncio.to_thread().
         try:
             _time.sleep(0.5)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         actual_mount = None
         for line in _subprocess.run(['mount'], capture_output=True, text=True, timeout=5).stdout.splitlines():
@@ -167,7 +167,7 @@ def _try_create_ramdisk() -> tuple[Path | None, bool]:
             os.environ['HLEDAC_RAMDISK'] = actual_mount
             os.environ['HLEDAC_RAMDISK_AUTO_CREATED'] = '1'
             return (ramdisk_path, True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return (None, False)
 # Sprint F500I: Deferred RAM disk creation — do NOT call hdiutil on import.
@@ -269,14 +269,14 @@ def _bootstrap_tempfile() -> None:
         # Deferred creation: create directory on first use (F500I)
         try:
             _TMP_OPT_ROOT.mkdir(parents=True, exist_ok=True)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         target = str(_TMP_OPT_ROOT)
     else:
         target = str(RAMDISK_ROOT)
     try:
         _tempfile.tempdir = target
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 _bootstrap_tempfile()
 
@@ -337,7 +337,7 @@ def _chmod_lmdb_path(path: pathlib.Path) -> None:
     # Harden directory
     try:
         os.chmod(path, _stat.S_IRUSR | _stat.S_IWUSR | _stat.S_IXUSR)  # 0o700
-    except OSError:
+    except OSError:  # noqa: BLE001
         pass
 
     # Harden LMDB data files and lock file
@@ -345,7 +345,7 @@ def _chmod_lmdb_path(path: pathlib.Path) -> None:
         for file_path in path.glob(suffix):
             try:
                 os.chmod(file_path, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
 
@@ -388,7 +388,7 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
         try:
             from hledac.universal.knowledge.lmdb_boot_guard import cleanup_stale_lmdb_lock
             cleanup_stale_lmdb_lock(path)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         _effective_map_size: int = map_size
         # SEC-02: explicit mode=0o600 in defaults so lmdb respects our umask intent
@@ -397,7 +397,7 @@ def open_lmdb(path: pathlib.Path, *, map_size: int | None=None, **kw) -> Any:
         _instrument_lmdb_env = None
         try:
             from hledac.universal.runtime._telemetry_setup import instrument_lmdb_env as _instrument_lmdb_env
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         try:
             env = lmdb.open(str(path), map_size=map_size, **merged_kw)
@@ -526,8 +526,8 @@ try:
     import stat as _stat_chmod
     _os_chmod.chmod(IOC_DB_PATH, _stat_chmod.S_IRUSR | _stat_chmod.S_IWUSR)  # 0o600
     _os_chmod.chmod(IOC_DB_PATH.parent, _stat_chmod.S_IRUSR | _stat_chmod.S_IWUSR | _stat_chmod.S_IXUSR)  # 0o700
-except Exception:
-    pass
+except Exception as _e:  # noqa: BLE001
+    pass  # chmod may fail if user is not owner
 
 class _Paths(msgspec.Struct, frozen=True, gc=False):
     """Immutable bundle of canonical runtime paths.
@@ -696,7 +696,7 @@ def cleanup_fallback_artifacts() -> None:
     try:
         if not any(fallback.iterdir()):
             shutil.rmtree(fallback, ignore_errors=True)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 def cleanup_stale_lmdb_locks(lmdb_root: Path) -> int:
@@ -720,7 +720,7 @@ def cleanup_stale_lmdb_locks(lmdb_root: Path) -> int:
         try:
             direct_lock.unlink()
             removed += 1
-        except OSError:
+        except OSError:  # noqa: BLE001
             pass
     try:
         for entry in lmdb_root.iterdir():
@@ -730,9 +730,9 @@ def cleanup_stale_lmdb_locks(lmdb_root: Path) -> int:
                     try:
                         lock_file.unlink()
                         removed += 1
-                    except OSError:
+                    except OSError:  # noqa: BLE001
                         pass
-    except OSError:
+    except OSError:  # noqa: BLE001
         pass
     return removed
 
@@ -810,7 +810,7 @@ def _is_socket_orphaned(sock_path: Path) -> bool:
     finally:
         try:
             probe.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 def cleanup_stale_sockets(sockets_root: Path) -> int:
@@ -832,8 +832,8 @@ def cleanup_stale_sockets(sockets_root: Path) -> int:
                     try:
                         entry.unlink()
                         removed += 1
-                    except OSError:
+                    except OSError:  # noqa: BLE001
                         pass
-    except OSError:
+    except OSError:  # noqa: BLE001
         pass
     return removed

@@ -491,7 +491,7 @@ def _reset_webkit_transport_telemetry() -> None:
             _reset_webkit_transport_telemetry as _reset_wt,
         )
         _reset_wt()
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
 
@@ -2287,7 +2287,7 @@ class _DrainRegistry:
         """Remove a specific future from the registry."""
         try:
             self._registry.remove(fut)
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
 
     def clear(self) -> None:

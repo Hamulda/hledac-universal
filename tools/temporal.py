@@ -29,7 +29,7 @@ def _evict_oldest() -> None:
         # next(iter(...)) is the first-inserted key in O(1)
         oldest_url = next(iter(_previous_versions))
         del _previous_versions[oldest_url]
-    except (StopIteration, KeyError):
+    except (StopIteration, KeyError):  # noqa: BLE001
         # Empty dict — nothing to evict
         pass
     except Exception as e:

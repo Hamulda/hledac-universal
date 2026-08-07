@@ -49,7 +49,7 @@ def _get_hibernation_state() -> dict[str, bool]:
                     state["hibernatemode_unsafe"] = parts[1] in ("0", "3")
             elif "hibernatefile" in lower:
                 state["sleepimage_exists"] = True
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return state
 
@@ -80,7 +80,7 @@ def _setup_signal_handlers() -> None:
     signal.signal(signal.SIGINT, _sigterm_handler)
     try:
         signal.signal(signal.SIGHUP, _sigterm_handler)
-    except (OSError, AttributeError):
+    except (OSError, AttributeError):  # noqa: BLE001
         pass  # SIGHUP not available on Windows
     _signal_handler_registered = True
 
@@ -299,7 +299,7 @@ class RamDiskVault:
                 subprocess.run(['hdiutil', 'detach', self.device_path, '-force'], capture_output=True, timeout=10)
             except subprocess.TimeoutExpired:
                 logger.warning(f'_cleanup_device: timeout unmounting {self.device_path}')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self.device_path = None
             self.mount_point = None

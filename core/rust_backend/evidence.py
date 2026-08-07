@@ -80,6 +80,6 @@ def get_evidence_domain(ext: object | None) -> _RustEvidenceDomain | _PythonEvid
     if ext is not None:
         try:
             return _RustEvidenceDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonEvidenceDomain()

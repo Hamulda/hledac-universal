@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Protocol, TypeVar
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     from typing import AsyncIterator, Protocol
@@ -42,7 +43,7 @@ T_out = TypeVar("T_out")
 # ----------------------------------------------------------------------
 
 
-class StageMetrics(msgspec.Struct, gc=False):
+class StageMetrics(Struct):
     """Per-stage metrics for observability.
 
     Sbírá: počet zpracovaných itemů, dropnuté itemy, chyby,
@@ -98,7 +99,7 @@ class StageMetrics(msgspec.Struct, gc=False):
 # ----------------------------------------------------------------------
 
 
-class StageContext(msgspec.Struct, gc=False):
+class StageContext(Struct):
     """Sdílený kontext mezi všemi stages.
 
     Předává se při vytvoření pipeline. Obsahuje všechny externí
@@ -343,7 +344,7 @@ class Stage(Generic[T_in, T_out], Protocol):
 # ----------------------------------------------------------------------
 
 
-class StageResult(msgspec.Struct, gc=False):
+class StageResult(Struct):
     """Výsledek běhu jedné stage pro telemetry."""
 
     stage_name: str

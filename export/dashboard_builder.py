@@ -62,6 +62,7 @@ from pathlib import Path
 from string import Template
 from typing import TYPE_CHECKING, Any
 
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from hledac.universal.project_types import ExportHandoff
 
@@ -1350,7 +1351,7 @@ class WASMDashboardBuilder:
             })
 
         # Sort by timestamp ascending
-        normalized.sort(key=lambda e: e["timestamp_ns"])
+        normalized.sort(key=itemgetter("""))
 
         return {"events": normalized}
 

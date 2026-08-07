@@ -54,6 +54,7 @@ from enum import Enum
 from pathlib import Path
 from itertools import combinations
 from typing import TYPE_CHECKING, Any
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from scipy.sparse import csr_matrix, lil_matrix
 import numpy as np
@@ -1418,9 +1419,9 @@ class RelationshipDiscoveryEngine:
                 if path_rels:
                     connection_path = ConnectionPath(entities=list(path_nodes), relationships=path_rels, total_strength=total_strength, path_length=len(path_nodes) - 1, path_type=self._classify_path_type(path_rels))
                     paths.append(connection_path)
-        except nx.NetworkXNoPath:
+        except nx.NetworkXNoPath:  # noqa: BLE001
             pass
-        paths.sort(key=lambda p: p.total_strength, reverse=True)
+        paths.sort(key=attrgetter("total_strength"), reverse=True)
         # igraph enhancement — use igraph's get_all_simple_paths for richer path data
         if IGRAPH_AVAILABLE and paths:
             try:

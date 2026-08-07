@@ -65,6 +65,7 @@ from collections.abc import Callable, Sequence
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from collections.abc import ItemsView, KeysView, ValuesView
 
@@ -267,7 +268,7 @@ def acquire_in_order(
             seen.add(cat)
             unique.append(cat)
 
-    sorted_cats = sorted(unique, key=lambda x: x.value)
+    sorted_cats = sorted(unique, key=attrgetter("value"))
 
     # Collect ALL locks in ascending category order via ExitStack
     stack = contextlib.ExitStack()

@@ -412,7 +412,7 @@ class UnicodeAttackAnalyzer:
                     script = unicodedata.name(char, '').split()[0]
                     if script:
                         scripts.add(script)
-                except ValueError:
+                except ValueError:  # noqa: BLE001
                     pass
         return len(scripts) > 2
 

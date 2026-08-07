@@ -413,7 +413,7 @@ class AdaptiveCache(Generic[K, V]):
                     rust_stats = self._rust_cache.stats()
                     self._stats.current_bytes = rust_stats.get("bytes", 0)
                     self._stats.current_entries = rust_stats.get("entries", 0)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return self._stats
 
@@ -428,7 +428,7 @@ class AdaptiveCache(Generic[K, V]):
         if self._use_rust and self._rust_cache is not None:
             try:
                 return self._rust_cache.len()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Python fallback
         if hasattr(self, "_python_cache"):

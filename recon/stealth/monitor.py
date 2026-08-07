@@ -217,7 +217,7 @@ class StreamingMonitor:
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
             self._monitor_task = None
         self._session = None
@@ -511,7 +511,7 @@ class StreamingMonitor:
                         )
                     position += len(text)
                 return changes
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Fallback: simple line-by-line comparison
         old_lines = old_content.split("\n")

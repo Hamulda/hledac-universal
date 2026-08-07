@@ -151,7 +151,7 @@ class StateObserver:
         """Unsubscribe from state changes."""
         try:
             self._subscribers.remove(callback)
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
 
     def notify(self, state: ModelState) -> None:
@@ -164,7 +164,7 @@ class StateObserver:
         for cb in self._subscribers:
             try:
                 cb(state)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Fail-soft: one observer error doesn't affect others
 
     @property

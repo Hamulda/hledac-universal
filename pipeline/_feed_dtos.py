@@ -22,11 +22,11 @@ from __future__ import annotations
 
 from typing import Any
 
-import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct, field as msgspec_field
 
 # === Feed Quality Metrics ===
 
-class FeedQualityMetrics(msgspec.Struct, frozen=True, gc=False):
+class FeedQualityMetrics(Struct, frozen=True):
     """Kvalita + adapter bands — extracted from FeedIngestContext."""
 
     signal_stage: str = "unknown"
@@ -52,7 +52,7 @@ class FeedQualityMetrics(msgspec.Struct, frozen=True, gc=False):
 
 # === Feed Fallback Metrics ===
 
-class FeedFallbackMetrics(msgspec.Struct, frozen=True, gc=False):
+class FeedFallbackMetrics(Struct, frozen=True):
     """Fallback economics — extracted from FeedIngestContext.
 
     decision_reason: canonical reason tag for fallback decision.
@@ -94,7 +94,7 @@ class FeedFallbackMetrics(msgspec.Struct, frozen=True, gc=False):
 
 # === Feed Economics Verdict ===
 
-class FeedEconomicsVerdict(msgspec.Struct, frozen=True, gc=False):
+class FeedEconomicsVerdict(Struct, frozen=True):
     """Rich ratio + squandered_high_usefulness — extracted from FeedIngestContext."""
 
     verdict_tag: str = "no_signal"  # "feed_lean" | "fallback_lean" | "balanced" | "no_signal"
@@ -111,12 +111,12 @@ class FeedEconomicsVerdict(msgspec.Struct, frozen=True, gc=False):
     entries_with_hits: int = 0
     entries_seen: int = 0
     feed_economics_tuple: tuple[str, int, int, int, int] = ("", 0, 0, 0, 0)
-    winning_source_breakdown: dict[str, int] = msgspec.field(default_factory=dict)
+    winning_source_breakdown: dict[str, int] = msgspec_field(default_factory=dict)
 
 
 # === Feed Telemetry ===
 
-class FeedTelemetry(msgspec.Struct, frozen=True, gc=False):
+class FeedTelemetry(Struct, frozen=True):
     """Signal stage + samples + zero_signal_reason — extracted from FeedIngestContext."""
 
     signal_stage: str = "unknown"
@@ -133,7 +133,7 @@ class FeedTelemetry(msgspec.Struct, frozen=True, gc=False):
     root_zero_yield_reason: str | None = None
     had_substantive_content_but_no_hits: bool = False
     zero_hit_feed_fetch_count: int = 0
-    zero_hit_feed_fetch_reasons: dict[str, int] = msgspec.field(default_factory=dict)
+    zero_hit_feed_fetch_reasons: dict[str, int] = msgspec_field(default_factory=dict)
     zero_hit_feed_fetch_samples: tuple[tuple[str, str], ...] = ()
     feed_url: str = ""
     raw_count: int = 0
@@ -143,7 +143,7 @@ class FeedTelemetry(msgspec.Struct, frozen=True, gc=False):
     timeout_s: float = 35.0
     sprint_id: str = ""
     assembly_tier: str = "unknown"
-    feed_branch_verdict: dict[str, Any] = msgspec.field(default_factory=dict)
+    feed_branch_verdict: dict[str, Any] = msgspec_field(default_factory=dict)
 
 
 # === Pure decision functions (candidates for Rust migration) ===

@@ -24,8 +24,9 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-import msgspec
 from typing import Any, cast
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
 from hledac.universal.core.feature_flags import FeatureFlag, FeatureFlags
@@ -41,7 +42,7 @@ from .services import (
 logger = logging.getLogger(__name__)
 
 
-class FetchCoordinatorConfig(msgspec.Struct, frozen=True, gc=False):
+class FetchCoordinatorConfig(Struct, frozen=True):
     """Configuration for FetchCoordinatorFacade. M1 8GB: msgspec.Struct for fast init."""
     max_concurrent: int = 10
     max_retries: int = 3

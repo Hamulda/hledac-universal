@@ -39,7 +39,7 @@ _CanonicalFinding: "type[CanonicalFinding] | None" = None
 try:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding as _CF
     _CanonicalFinding = _CF
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 from hledac.universal.utils.async_helpers import parallel, ParallelResult
 logger = logging.getLogger(__name__)

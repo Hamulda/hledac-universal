@@ -70,7 +70,7 @@ def _build_jinja2_env() -> "jinja2.Environment | None":
                 auto_reload=False,  # No reload needed — compiled once
             )
             return env
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -414,7 +414,7 @@ def render_sprint_markdown(
                 phase_timings=phase,
                 phase_timings_min=phase_timings_min,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Fall through to Python-based rendering
 
     return "\n".join(parts)

@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from hledac.universal.utils.executor_decorator import offload_to
 
-import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 if TYPE_CHECKING:
     from .registry import Tool, ToolRegistry
@@ -429,7 +429,7 @@ async def _python_execute_handler(
             _prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
             signal.alarm(timeout_seconds)
             _alarm_registered = True
-        except (ValueError, OSError):
+        except (ValueError, OSError):  # noqa: BLE001
             pass
     safe_builtins = {
         "abs": builtins.abs,
@@ -534,13 +534,13 @@ async def _python_execute_handler(
     }
 
 
-class WebSearchArgs(msgspec.Struct, kw_only=True, gc=False):
+class WebSearchArgs(Struct, kw_only=True):
     query: str
     max_results: int = 10
     recency_days: int | None = None
 
 
-class WebSearchResult(msgspec.Struct, kw_only=True, gc=False):
+class WebSearchResult(Struct, kw_only=True):
     staged: bool = False
     backend_ready: bool = False
     query_ready: bool = True
@@ -552,17 +552,17 @@ class WebSearchResult(msgspec.Struct, kw_only=True, gc=False):
     query: str = ""
 
 
-class EntityExtractionArgs(msgspec.Struct, kw_only=True, gc=False):
+class EntityExtractionArgs(Struct, kw_only=True):
     text: str
     entity_types: list[str] = msgspec.field(default_factory=lambda: ["person", "organization", "location"])
 
 
-class EntityExtractionResult(msgspec.Struct, kw_only=True, gc=False):
+class EntityExtractionResult(Struct, kw_only=True):
     entities: list[dict[str, Any]]
     entity_count: int
 
 
-class AcademicSearchArgs(msgspec.Struct, kw_only=True, gc=False):
+class AcademicSearchArgs(Struct, kw_only=True):
     query: str
     sources: list[str] = msgspec.field(default_factory=lambda: ["arxiv", "semantic_scholar"])
     year_from: int | None = None
@@ -570,45 +570,45 @@ class AcademicSearchArgs(msgspec.Struct, kw_only=True, gc=False):
     max_results: int = 10
 
 
-class AcademicSearchResult(msgspec.Struct, kw_only=True, gc=False):
+class AcademicSearchResult(Struct, kw_only=True):
     papers: list[dict[str, Any]]
     total_found: int
     sources_searched: list[str]
 
 
-class FileReadArgs(msgspec.Struct, kw_only=True, gc=False):
+class FileReadArgs(Struct, kw_only=True):
     path: str
     encoding: str = "utf-8"
     max_bytes: int | None = None
 
 
-class FileReadResult(msgspec.Struct, kw_only=True, gc=False):
+class FileReadResult(Struct, kw_only=True):
     content: str
     path: str
     size_bytes: int
     encoding: str
 
 
-class FileWriteArgs(msgspec.Struct, kw_only=True, gc=False):
+class FileWriteArgs(Struct, kw_only=True):
     path: str
     content: str
     encoding: str = "utf-8"
     append: bool = False
 
 
-class FileWriteResult(msgspec.Struct, kw_only=True, gc=False):
+class FileWriteResult(Struct, kw_only=True):
     path: str
     bytes_written: int
     success: bool
 
 
-class PythonExecuteArgs(msgspec.Struct, kw_only=True, gc=False):
+class PythonExecuteArgs(Struct, kw_only=True):
     code: str
     timeout_seconds: int = 30
     allowed_modules: list[str] = msgspec.field(default_factory=list)
 
 
-class PythonExecuteResult(msgspec.Struct, kw_only=True, gc=False):
+class PythonExecuteResult(Struct, kw_only=True):
     stdout: str
     stderr: str
     result: Any
@@ -616,12 +616,12 @@ class PythonExecuteResult(msgspec.Struct, kw_only=True, gc=False):
     success: bool
 
 
-class DNSTunnelCheckArgs(msgspec.Struct, kw_only=True, gc=False):
+class DNSTunnelCheckArgs(Struct, kw_only=True):
     mode: str = "analyze_queries"
     queries: list[str] = msgspec.field(default_factory=list)
 
 
-class DNSTunnelCheckResult(msgspec.Struct, kw_only=True, gc=False):
+class DNSTunnelCheckResult(Struct, kw_only=True):
     findings: list[dict[str, Any]] = msgspec.field(default_factory=list)
     stats: dict[str, Any] = msgspec.field(default_factory=dict)
     error: str | None = None

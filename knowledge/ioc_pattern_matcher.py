@@ -38,8 +38,10 @@ import logging
 import re
 from dataclasses import dataclass
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import Final
 
+from operator import attrgetter, itemgetter
 __all__ = [
     "IOCPatternMatcher",
     "get_ioc_pattern_matcher",
@@ -71,7 +73,7 @@ HOT_PATTERNS: Final[list[tuple[str, re.Pattern[str]]]] = [
 ]
 
 
-class IOCMatch(msgspec.Struct, frozen=True, gc=False):
+class IOCMatch(Struct, frozen=True):
     """A single IOC pattern match."""
     pattern_name: str
     matched_value: str
@@ -126,7 +128,7 @@ class IOCPatternMatcher:
                         end=m.end(),
                     ))
 
-            matches.sort(key=lambda x: x.start)
+            matches.sort(key=attrgetter("start"))
             return matches
         except Exception as exc:
             logger.debug("IOCPatternMatcher: match error: %s", exc)

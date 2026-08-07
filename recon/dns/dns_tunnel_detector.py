@@ -360,7 +360,7 @@ class DNSTunnelDetector:
                 else:
                     features = features[:256]
                 return features
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         fft_features = np.abs(np.fft.fft(signal, n=128))
         phase_features = np.angle(np.fft.fft(signal, n=128))
@@ -639,7 +639,7 @@ class DNSTunnelDetector:
             try:
                 mx.eval([])
                 mx.clear_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._initialized = False
 

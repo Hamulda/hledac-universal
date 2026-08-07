@@ -146,7 +146,7 @@ try:
     from cryptography.hazmat.backends import default_backend
 
     _CRYPTO_AVAILABLE = True
-except ImportError:
+except ImportError:  # noqa: BLE001
     pass
 
 # PBKDF2 iterations — OWASP 2025 recommendation (was 310_000)
@@ -413,13 +413,13 @@ def _chmod_lmdb_path(path: Path) -> None:
 
     try:
         os.chmod(path, _stat.S_IRUSR | _stat.S_IWUSR | _stat.S_IXUSR)  # 0o700
-    except OSError:
+    except OSError:  # noqa: BLE001
         pass
     for suffix in ("*.mdb", "*.lock"):
         for file_path in path.glob(suffix):
             try:
                 os.chmod(file_path, _stat.S_IRUSR | _stat.S_IWUSR)  # 0o600
-            except OSError:
+            except OSError:  # noqa: BLE001
                 pass
 
     # ---- LMDB helpers ----
@@ -645,7 +645,7 @@ def _chmod_lmdb_path(path: Path) -> None:
                 try:
                     if self._lmdb_put(k, blob):
                         success += 1
-                except Exception:
+                except Exception:  # noqa: BLE001
                     # Fail-safe: one bad item doesnt abort the batch
                     pass
             return success

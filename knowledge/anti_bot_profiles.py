@@ -41,6 +41,7 @@ import time as _time
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.logging_config import get_logger
 
@@ -69,7 +70,7 @@ _CONFIDENCE_ALPHA: float = 0.3
 # AntiBotProfile DTO
 # ---------------------------------------------------------------------------
 
-class AntiBotProfile(msgspec.Struct, frozen=True, gc=False):
+class AntiBotProfile(Struct, frozen=True):
     """Immutable anti-bot fingerprint snapshot from DuckDB.
 
     gc=False for M1 8GB — avoids GC overhead on hot-path lookup.

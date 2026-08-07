@@ -138,7 +138,7 @@ class FetchStage:
                 if result is not None:
                     await output_queue.put(result)
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
         except Exception:
             metrics.record_error()

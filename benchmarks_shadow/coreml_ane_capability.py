@@ -44,7 +44,7 @@ def _check_vision_framework() -> dict:
     try:
         from Vision import VNCoreMLModel, VNCoreMLRequest, VNImageRequestHandler  # noqa: F401  # Vision.VNCoreMLRequest
         result["vision_imported"] = True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
 
     # Check ANE device name via Metal
@@ -72,7 +72,7 @@ def _check_naturallanguage_framework() -> dict:
         result["nl_available"] = True
         result["nl_tagger_available"] = True
         result["nl_tag_schemes"] = []
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     return result
 
@@ -95,7 +95,7 @@ def _check_coremltools() -> dict:
             result["version"] = 6.0
             result["version_major"] = 6
         result["apple_intelligence_capable"] = result["version_major"] >= 6 if result["version_major"] else False
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     return result
 

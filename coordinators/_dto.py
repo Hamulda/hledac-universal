@@ -20,6 +20,7 @@ from enum import Enum, auto
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 
 class OperationType(Enum):
@@ -32,7 +33,7 @@ class OperationType(Enum):
     OPTIMIZATION = auto()
 
 
-class DecisionResponse(msgspec.Struct, gc=False):
+class DecisionResponse(Struct):
     """Decision from orchestrator to be executed by coordinator."""
     decision_id: str
     chosen_option: str
@@ -43,7 +44,7 @@ class DecisionResponse(msgspec.Struct, gc=False):
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class OperationResult(msgspec.Struct, frozen=True, gc=False):
+class OperationResult(Struct, frozen=True):
     """Result of coordinator operation execution."""
     operation_id: str
     status: str
@@ -55,7 +56,7 @@ class OperationResult(msgspec.Struct, frozen=True, gc=False):
     timestamp: float = field(default_factory=time.time)
 
 
-class ExecutionResult(msgspec.Struct, gc=False):
+class ExecutionResult(Struct):
     """
     Intermediate result from _do_execute_decision().
 
@@ -69,7 +70,7 @@ class ExecutionResult(msgspec.Struct, gc=False):
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class CoordinatorCapabilities(msgspec.Struct, frozen=True, gc=False):
+class CoordinatorCapabilities(Struct, frozen=True):
     """Capabilities reported by a coordinator."""
     name: str
     supported_operations: list[OperationType]

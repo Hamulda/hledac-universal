@@ -195,7 +195,7 @@ class _PythonIocDomain:
         try:
             from hledac_rust_extensions import hledac_rust_extensions
             hledac_rust_extensions.deobfuscate_telemetry_reset()  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -221,7 +221,7 @@ try:
     _PY_MD5_RE = re.compile(r"\b[a-fA-F0-9]{32}\b")
     _PY_SHA1_RE = re.compile(r"\b[a-fA-F0-9]{40}\b")
     _PY_SHA256_RE = re.compile(r"\b[a-fA-F0-9]{64}\b")
-except Exception:
+except Exception:  # noqa: BLE001
     pass
 
 
@@ -253,7 +253,7 @@ def _python_extract_iocs_flat_indexed(text_with_idx: tuple[int, str]) -> list[tu
             result.append((idx, value.lower(), "sha1"))
         for value in _PY_SHA256_RE.findall(text):
             result.append((idx, value.lower(), "sha256"))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return result
 

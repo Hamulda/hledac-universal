@@ -40,6 +40,7 @@ import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, cast
 from hledac.universal.utils.executor_decorator import offload_to
 from hledac.universal.utils.async_helpers import parallel, parallel_ok
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 logger = logging.getLogger(__name__)
@@ -93,7 +94,7 @@ class ContinuousBatchEngine:
             self._worker_task.cancel()
             try:
                 await self._worker_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
 
     async def generate(self, prompt: str, *, max_tokens: int=512, temperature: float=0.1, system_msg: str | None=None, priority: float=NORMAL_PRIORITY) -> str:
@@ -306,7 +307,7 @@ class ContinuousBatchEngine:
                         break
                 if not batch:
                     continue
-                batch.sort(key=lambda r: r.priority)
+                batch.sort(key=attrgetter("priority"))
                 await self._execute_batch(batch)
             except asyncio.CancelledError:
                 break

@@ -549,7 +549,7 @@ def to_timestamp_ns(dt: datetime | int | float | str | None) -> int | None:
     if isinstance(dt, str):
         try:
             return int(float(dt) * _NS_PER_SECOND)
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
         try:
             return int(datetime.fromisoformat(dt.replace("Z", "+00:00")).timestamp() * _NS_PER_SECOND)

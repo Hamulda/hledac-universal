@@ -582,7 +582,7 @@ async def distil(findings: list[dict], _max_tokens: int = 2000) -> str:
                 best_chain = max(chains, key=lambda c: engine._heuristic_score(query, tuple(c)))
                 return best_chain[0] if best_chain else _findings_to_text(findings)
             await engine.cleanup()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         from hledac.universal.brain.ane_embedder import rerank_findings_cosine, semantic_dedup_findings

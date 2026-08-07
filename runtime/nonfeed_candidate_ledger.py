@@ -196,7 +196,7 @@ class NonfeedCandidateLedger(msgspec.Struct, gc=False):
         for tc in candidates[:max_candidates]:
             try:
                 self.add_feed_candidate(domain=tc.domain, source_field=tc.source_field, confidence=tc.confidence, reason=f'{tc.reason} (seen={tc.seen_count})', sample_context=tc.sample_context[:200] if tc.sample_context else '')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return candidates
 
@@ -237,7 +237,7 @@ class NonfeedCandidateLedger(msgspec.Struct, gc=False):
         for tc in ranked:
             try:
                 self.add_feed_candidate(domain=tc.domain, source_field=tc.source_field, confidence=tc.confidence, reason=f'{tc.reason} (seen={tc.seen_count})', sample_context=tc.sample_context[:200] if tc.sample_context else '')
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return ranked
 
@@ -536,7 +536,7 @@ def _extract_hostname(url: str) -> str:
         result = url_ops.extract_host(url)
         if result:
             return result
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         normalized = _normalize_defanged_text(url)

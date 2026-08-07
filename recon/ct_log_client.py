@@ -147,7 +147,7 @@ class CTLogClient:
                 try:
                     import compression.zstd as _zstd
                     return decode(_zstd.decompress(zst_path.read_bytes()))
-                except (ImportError, Exception):
+                except (ImportError, Exception):  # noqa: BLE001
                     pass
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
@@ -160,7 +160,7 @@ class CTLogClient:
                     try:
                         import compression.zstd as _zstd
                         return decode(_zstd.decompress(zst_path.read_bytes()))
-                    except (ImportError, Exception):
+                    except (ImportError, Exception):  # noqa: BLE001
                         pass
             if cache_path.exists():
                 age = time.time() - cache_path.stat().st_mtime
@@ -281,7 +281,7 @@ class CTLogClient:
                     try:
                         dt = datetime.datetime.fromisoformat(ts_str.replace('Z', '+00:00').replace(' ', 'T'))
                         timestamps.append(dt.timestamp())
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
         san_names = sorted(san_set - {domain.lower()})
         return {'domain': domain, 'san_names': san_names, 'issuers': sorted(issuer_set), 'first_cert': min(timestamps) if timestamps else 0.0, 'last_cert': max(timestamps) if timestamps else 0.0, 'cert_count': len(raw)}
@@ -303,7 +303,7 @@ class CTLogClient:
                 try:
                     import compression.zstd as _zstd
                     return decode(_zstd.decompress(zst_path.read_bytes()))
-                except (ImportError, Exception):
+                except (ImportError, Exception):  # noqa: BLE001
                     pass
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
@@ -409,7 +409,7 @@ class CTLogClient:
                     from datetime import datetime, timezone
                     dt = datetime.fromisoformat(valid_from.replace('Z', '+00:00'))
                     observed_at = dt.timestamp()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         for san in ct_result['san_names']:

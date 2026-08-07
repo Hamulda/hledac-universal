@@ -15,6 +15,7 @@ from __future__ import annotations
 
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import Any
 
 # ----------------------------------------------------------------------
@@ -22,7 +23,7 @@ from typing import Any
 # ----------------------------------------------------------------------
 
 
-class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
+class PipelinePageResult(Struct, frozen=True):
     """Result of processing a single discovered page."""
 
     url: str
@@ -52,7 +53,7 @@ class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     build_attempted: bool = False
 
 
-class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
+class PipelineRunResult(Struct, frozen=True):
     """Top-level result of a full pipeline run."""
 
     query: str

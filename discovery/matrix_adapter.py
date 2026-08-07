@@ -113,7 +113,7 @@ class MatrixPublicAdapter(msgspec.Struct, frozen=True, gc=False):
                     try:
                         from urllib.parse import urlparse as _urlparse
                         get_breaker(_urlparse(api_url).netloc).record_success()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                     return [MatrixRoom(room_id=r.get('room_id', ''), name=r.get('name'), topic=r.get('topic'), canonical_alias=r.get('canonical_alias'), num_joined_members=r.get('num_joined_members', 0), world_readable=r.get('world_readable', False), guest_can_join=r.get('guest_can_join', False)) for r in chunk]
                 elif resp.status == 429:
@@ -121,7 +121,7 @@ class MatrixPublicAdapter(msgspec.Struct, frozen=True, gc=False):
                     try:
                         from urllib.parse import urlparse as _urlparse
                         get_breaker(_urlparse(api_url).netloc).record_failure(failure_kind='matrix_search:429')
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return []
         except Exception as e:

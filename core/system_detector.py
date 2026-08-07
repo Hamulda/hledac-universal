@@ -181,7 +181,7 @@ class SystemDetector:
             try:
                 psutil = _psutil_mod()
                 cpu_physical = psutil.cpu_count(logical=False) or cpu_logical
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         except Exception:
             cpu_logical = 0
@@ -208,7 +208,7 @@ class SystemDetector:
                 ram_tier = '64gb'
             else:
                 ram_tier = 'other'
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         python_build_flags: tuple[str, ...] = ()
         try:
@@ -218,7 +218,7 @@ class SystemDetector:
                 if key.endswith('FLAGS') and value:
                     flags.append(str(value))
             python_build_flags = tuple(flags)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         has_metal = False
         has_ane = False
@@ -253,9 +253,9 @@ class SystemDetector:
                 has_ane = hasattr(mx.metal, 'get_ane_utilization')
                 is_m1_silicon = darwin_machine is not None and 'arm' in darwin_machine.lower()
                 is_m1_8gb = is_m1_silicon and ram_tier == '8gb'
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._capabilities = HardwareCapabilities(is_darwin=is_darwin, darwin_version=darwin_version, darwin_machine=darwin_machine, cpu_count_physical=cpu_physical, cpu_count_logical=cpu_logical, memory_total_bytes=memory_total_bytes, memory_available_bytes=memory_available_bytes, memory_total_gb=memory_total_gb, memory_available_gb=memory_available_gb, ram_tier=ram_tier, python_build_flags=python_build_flags, has_metal=has_metal, has_ane=has_ane, is_m1_silicon=is_m1_silicon, is_m1_8gb=is_m1_8gb, is_jit_available=is_jit_available, is_jit_active=is_jit_active, jit_reason=jit_reason)
 

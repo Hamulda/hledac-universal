@@ -364,10 +364,10 @@ def collect_graph_summary(ioc_graph: Any | None=None, scorecard: dict[str, Any] 
             top = []
             try:
                 top = ioc_graph.get_top_nodes_by_degree(n=10) or []
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return GraphSummaryBundle.from_ioc_graph_stats(stats, top)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     if scorecard is not None:
         top_nodes = scorecard.get('top_graph_nodes', [])
@@ -492,7 +492,7 @@ def collect_provider_runtime_facts(model_manager: Any=None, lifecycle_status: di
             initialized = lc_status.get('initialized', False)
             last_error = lc_status.get('last_error')
             return ProviderRuntimeFactsBundle(current_model=current, is_loaded=is_loaded, initialized=initialized, last_error=last_error, fact_stability='STABLE')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     if lifecycle_status is not None:
         try:
@@ -501,6 +501,6 @@ def collect_provider_runtime_facts(model_manager: Any=None, lifecycle_status: di
             initialized = lifecycle_status.get('initialized', False)
             last_error = lifecycle_status.get('last_error')
             return ProviderRuntimeFactsBundle(current_model=current, is_loaded=is_loaded, initialized=initialized, last_error=last_error, fact_stability='COMPAT', __compat_note__='model_manager not available, using model_lifecycle shadow-state only')
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return ProviderRuntimeFactsBundle(fact_stability='UNKNOWN', __compat_note__='no model_manager and no lifecycle_status provided')

@@ -25,6 +25,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 import msgspec
 from typing import Any
+from operator import attrgetter, itemgetter
 DEFAULT_MAX_KEYS = 4096
 DEFAULT_RING_SIZE = 32
 DEFAULT_HALF_LIFE_S = 900.0
@@ -296,7 +297,7 @@ class TemporalSignalLayer:
         return [score for _, score in heapq.nlargest(k, scored, key=lambda x: x[0])]
 
     def get_edge_candidates(self, k: int=50) -> list[TemporalEdgeCandidate]:
-        return heapq.nlargest(k, self._edge_candidates, key=lambda c: c.score)
+        return heapq.nlargest(k, self._edge_candidates, key=attrgetter("score"))
 
     def snapshot(self) -> dict[str, Any]:
         states_serializable = {}

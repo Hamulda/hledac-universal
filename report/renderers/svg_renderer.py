@@ -46,7 +46,7 @@ class SVGRenderer:
             result = subprocess.run(['dot', '-Tsvg'], input=dot_source.encode('utf-8'), capture_output=True, timeout=30)
             if result.returncode == 0:
                 return result.stdout.decode('utf-8')
-        except (subprocess.SubprocessError, OSError):
+        except (subprocess.SubprocessError, OSError):  # noqa: BLE001
             pass
         return self._render_mermaid_fallback(graph_data)
 
@@ -68,7 +68,7 @@ class SVGRenderer:
             _stdout, _stderr = proc.communicate(input=dot_source.encode('utf-8'), timeout=30)
             if proc.returncode == 0 and path.exists():
                 return path
-        except (subprocess.SubprocessError, OSError):
+        except (subprocess.SubprocessError, OSError):  # noqa: BLE001
             pass
         svg = self._render_mermaid_fallback(graph_data)
         with open(path, 'w', encoding='utf-8') as fh:

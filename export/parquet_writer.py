@@ -587,7 +587,7 @@ class ParquetExporter:
                 conn.execute("SET memory_limit = '1GB'")
                 conn.execute("PRAGMA threads = 2")
                 conn.execute("SET preserve_insertion_order = false")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-soft
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -615,7 +615,7 @@ class ParquetExporter:
         if self._duckdb_conn is not None:
             try:
                 self._duckdb_conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._duckdb_conn = None
 

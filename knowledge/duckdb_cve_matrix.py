@@ -364,7 +364,7 @@ class CveCorrelationMatrix:
         if self._duckdb_module is not None:
             try:
                 self._duckdb_module.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._duckdb_module = None
             self._initialized = False

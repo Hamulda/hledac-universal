@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Protocol
 
+from operator import attrgetter, itemgetter
 from msgspec import Struct
 
 if TYPE_CHECKING:
@@ -327,7 +328,7 @@ class LinkPredictor:
                     ))
 
             # Sort by Adamic-Adar
-            edges.sort(key=lambda e: e.adamic_adar, reverse=True)
+            edges.sort(key=attrgetter("adamic_adar"), reverse=True)
 
             return LinkPredictionResult(
                 edges=tuple(edges),

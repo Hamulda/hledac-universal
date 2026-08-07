@@ -67,7 +67,7 @@ def _init_uvloop() -> bool:
         if _is_darwin_arm and sys.version_info < (3, 15):
             _UVLOOP_AVAILABLE = True
             return True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     _UVLOOP_AVAILABLE = False
     return False
@@ -388,7 +388,7 @@ def run_runtime(
         # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
         try:
             gc.collect()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         logger.debug("[RUNTIME] Event loop closed")
 
@@ -419,7 +419,7 @@ def shutdown_runtime(
     # CRITICAL FIX F350M-R: reclaim event loop allocations on M1 8GB
     try:
         gc.collect()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     logger.debug("[RUNTIME] Event loop closed")
 

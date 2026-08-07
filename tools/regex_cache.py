@@ -32,6 +32,7 @@ from functools import lru_cache
 from re import Pattern
 from threading import Lock
 from typing import NamedTuple
+from operator import attrgetter, itemgetter
 _REGEX_CACHE: OrderedDict[str, Pattern] = OrderedDict()
 _REGEX_CACHE_LOCK = Lock()
 _REGEX_CACHE_MAXSIZE = 200
@@ -210,7 +211,7 @@ class MultiPatternCache:
                     continue
                 seen.add((start, end))
                 hits.append(PatternHit(pattern=name, start=start, end=end, value=value))
-        hits.sort(key=lambda h: h.start)
+        hits.sort(key=attrgetter("start"))
         return hits
 
     def scan_with_labels(self, text: str, labels: dict[str, str], flags: int=0) -> list[PatternHit]:

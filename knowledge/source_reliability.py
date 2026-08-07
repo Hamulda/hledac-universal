@@ -47,6 +47,7 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
 
@@ -340,7 +341,7 @@ class SourceReliabilityTracker:
                     ratio=round(ratio, 4),
                     last_updated=stats.last_updated,
                 ))
-        results.sort(key=lambda r: r.ratio, reverse=True)
+        results.sort(key=attrgetter("ratio"), reverse=True)
         return results
 
     async def mark_auto_retracted(

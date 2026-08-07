@@ -125,7 +125,7 @@ class CoreMLServiceManager:
                 if resp == 200:
                     logger.info('CoreML service started (pid=%d, log=%s)', self._proc.pid, _LOG_FILE)
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             time.sleep(0.5)
         self.stop()
@@ -153,7 +153,7 @@ class CoreMLServiceManager:
                 if resp == 200:
                     logger.info('CoreML service started (pid=%d, log=%s)', self._proc.pid, _LOG_FILE)
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             await asyncio.sleep(0.5)
         self.stop()

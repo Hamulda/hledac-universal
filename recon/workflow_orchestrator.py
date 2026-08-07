@@ -22,6 +22,7 @@ import msgspec
 from datetime import UTC, datetime
 from typing import Any
 from hledac.universal.utils.async_helpers import parallel_ok
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 MODULE_TIMEOUT = 60
 
@@ -398,13 +399,13 @@ class WorkflowOrchestrator:
                     result = get_module(module)
                     if result is not None:
                         return result
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             attr = getattr(self.orchestrator, module, None)
             if attr is not None:
                 return attr
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -532,7 +533,7 @@ class WorkflowOrchestrator:
                 try:
                     ts = datetime.fromisoformat(result['timestamp'])
                     timestamps.append((module, ts))
-                except (ValueError, TypeError):
+                except (ValueError, TypeError):  # noqa: BLE001
                     pass
         if len(timestamps) > 1:
             now = datetime.now(UTC)
@@ -751,7 +752,7 @@ def correlate_findings(findings: list[dict[str, Any]], *, risk_thresholds: dict[
         if tk not in source_themes[src]:
             source_themes[src].append(tk)
     all_entities, domain_counts, ioc_counts = _extract_entities(normalized)
-    top_entities = sorted(all_entities, key=lambda x: x.get('_weight', 0), reverse=True)[:20]
+    top_entities = sorted(all_entities, key=attrgetter("get")('_weight', 0), reverse=True)[:20]
     repeated_domains = [d for d, cnt in domain_counts.items() if cnt > 1]
     repeated_iocs = [{'value': v, 'type': t, 'count': c} for (v, t), c in ioc_counts.items() if c > 1]
     dominant_cluster = None

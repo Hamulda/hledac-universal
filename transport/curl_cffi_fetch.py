@@ -533,7 +533,7 @@ async def _stop_eviction() -> None:
         _eviction_task.cancel()
         try:
             await _eviction_task
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
     _eviction_task = None
     _eviction_started = False

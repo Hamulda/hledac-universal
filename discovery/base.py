@@ -130,7 +130,7 @@ class RateLimiter:
         if self._rust_limiter is not None:
             try:
                 return self._rust_limiter.try_acquire()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         # Python fallback: use threading.Lock for atomic check-and-decrement
         with self._python_sync_lock:
@@ -180,7 +180,7 @@ class RateLimiter:
         if self._rust_limiter is not None:
             try:
                 return float(self._rust_limiter.available_tokens())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return self._python_tokens
 

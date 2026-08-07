@@ -245,7 +245,7 @@ class TaskRegistry:
         # For true thread-safety (future-proofing), we use asyncio.Lock in async methods
         try:
             loop = asyncio.get_running_loop()
-        except RuntimeError:
+        except RuntimeError:  # noqa: BLE001
             # Not in async context - still safe due to GIL
             pass
 
@@ -262,7 +262,7 @@ class TaskRegistry:
         if self._stuck_detector is not None:
             try:
                 self._stuck_detector.track(task)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return task
@@ -290,7 +290,7 @@ class TaskRegistry:
         # Cancel the evicted task
         try:
             oldest_task.cancel()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def unregister(self, task: asyncio.Task[Any]) -> None:
@@ -319,7 +319,7 @@ class TaskRegistry:
         if self._stuck_detector is not None:
             try:
                 self._stuck_detector.forget(task)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     # ── Cancellation API ───────────────────────────────────────────────────
@@ -365,14 +365,14 @@ class TaskRegistry:
             try:
                 task.cancel()
                 cancelled += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Set cancel event
         if self._cancel_event is not None and not self._cancel_event.is_set():
             try:
                 self._cancel_event.set()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Await with timeout
@@ -415,14 +415,14 @@ class TaskRegistry:
             try:
                 task.cancel()
                 cancelled += 1
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Fire cancel event
         if self._cancel_event is not None and not self._cancel_event.is_set():
             try:
                 self._cancel_event.set()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Await all with timeout
@@ -481,7 +481,7 @@ class TaskRegistry:
                 if not t.done():
                     try:
                         t.cancel()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
         except Exception:
             # Some tasks may have completed successfully before this exception.
@@ -573,7 +573,7 @@ class TaskRegistry:
         # 2. gc.collect() — reclaim cancelled task frames
         try:
             gc.collect()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # 3. P7-006: Wait for stuck tasks detection
@@ -600,7 +600,7 @@ class TaskRegistry:
                             f"[P7-006] Stuck task id={tid} elapsed={elapsed:.1f}s "
                             f"(likely C-extension I/O hang)"
                         )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # 4. metal_reclaim() — M5: canonical gc+eval+clear+dynamic_limit (MEM-2 pattern)
@@ -609,7 +609,7 @@ class TaskRegistry:
         try:
             from hledac.universal.utils.mlx_memory import metal_reclaim
             metal_reclaim()
-        except Exception:
+        except Exception:  # noqa: BLE001
             # mlx may not be installed — skip Metal cache cleanup
             pass
 
@@ -690,6 +690,6 @@ def _make_unregister_callback(_task_id: int) -> Any:
         try:
             registry = get_task_registry()
             registry.unregister(task)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _cb

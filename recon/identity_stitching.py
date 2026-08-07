@@ -49,6 +49,7 @@ import asyncio
 import msgspec
 from datetime import datetime, timedelta, UTC
 from typing import Any, Generic, TypeVar
+from operator import attrgetter, itemgetter
 T = TypeVar('T', default=object)
 
 # --------------------------------------------------------------------------- #
@@ -207,7 +208,7 @@ class _IdentityCache[T]:
                     f'Cache pressure eviction: evicted {evict_count} entries '
                     f'(RSS={rss / 1024 / 1024:.1f}MB)'
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def clear(self) -> None:
@@ -625,7 +626,7 @@ class IdentityStitchingEngine:
             try:
                 from hledac.universal.recon.translinguistic_normalizer import normalize_translinguistic
                 username = normalize_translinguistic(username)
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
         return self._normalize_username(username)
 
@@ -654,7 +655,7 @@ class IdentityStitchingEngine:
             try:
                 from hledac.universal.recon.translinguistic_normalizer import normalize_translinguistic
                 return normalize_translinguistic(text)
-            except ImportError:
+            except ImportError:  # noqa: BLE001
                 pass
         return self._normalize_text(text)
 
@@ -737,7 +738,7 @@ class IdentityStitchingEngine:
                     profile_b = analyzer.extract_profile(combined2)
                     if profile_a is not None and profile_b is not None:
                         return analyzer.compare_profiles(profile_a, profile_b)
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
 
         # Fallback to TF-IDF cosine similarity
@@ -1077,7 +1078,7 @@ class IdentityStitchingEngine:
             match = self.compute_match(profile, candidate)
             if match.match_score >= threshold:
                 matches.append(match)
-        matches.sort(key=lambda m: m.match_score, reverse=True)
+        matches.sort(key=attrgetter("match_score"), reverse=True)
         return matches
 
     async def find_all_matches_async(self, min_score: float | None=None) -> list[IdentityMatch]:
@@ -1151,7 +1152,7 @@ class IdentityStitchingEngine:
                 concurrency=None,  # F1 FIX: dynamic UMA-aware limit
             )
 
-        matches.sort(key=lambda m: m.match_score, reverse=True)
+        matches.sort(key=attrgetter("match_score"), reverse=True)
         return matches
 
     def find_all_matches(self, min_score: float | None=None) -> list[IdentityMatch]:

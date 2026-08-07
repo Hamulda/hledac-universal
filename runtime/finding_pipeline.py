@@ -169,9 +169,9 @@ class FindingPipeline:
             self._consumer_task.cancel()
             try:
                 await self._consumer_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._consumer_task = None
 
@@ -335,7 +335,7 @@ class FindingPipeline:
         """Unregister wake fd reader, silently ignoring errors."""
         try:
             loop.remove_reader(wake_fd)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _on_wake_fd(self) -> None:
@@ -427,7 +427,7 @@ class FindingPipeline:
         try:
             loop = asyncio.new_event_loop()
             loop.run_until_complete(self._direct_ingest(findings))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         finally:
             loop.close()

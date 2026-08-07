@@ -41,8 +41,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-import msgspec
 from typing import Final
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_store import CanonicalFinding
 from hledac.universal.utils.async_helpers import safe_create_task, safe_wait_for, parallel
@@ -78,7 +79,7 @@ def _try_import_rust_engine() -> bool:
     except ImportError as exc:
         raise IOCooccurrenceEngineUnavailable(f"Rust co-occurrence engine unavailable. Build rust_extensions: cd rust_extensions && cargo build --release. Original error: {exc}") from exc
 
-class CoOccurrencePair(msgspec.Struct, gc=False):
+class CoOccurrencePair(Struct):
     """A co-occurrence relationship between two IOCs."""
 
     ioc_a: str
@@ -91,7 +92,7 @@ class CoOccurrencePair(msgspec.Struct, gc=False):
     last_seen: float = 0.0
     score: float = 0.0
 
-class SpeculativeEdge(msgspec.Struct, gc=False):
+class SpeculativeEdge(Struct):
     """A speculative IOC connection for prefetch."""
 
     source_ioc: str
@@ -103,7 +104,7 @@ class SpeculativeEdge(msgspec.Struct, gc=False):
     prefetch_priority: int
     speculative: bool = True
 
-class IOCounterStats(msgspec.Struct, gc=False):
+class IOCounterStats(Struct):
     """IOC co-occurrence mining statistics."""
 
     findings_analyzed: int = 0
@@ -147,7 +148,7 @@ class IOCooccurrenceMiner:
             from hledac.universal.core.rust_backend import rust
             _extract_iocs_rust = rust.raw.extract_iocs
             return _extract_iocs_rust(finding.payload_text or "")
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
         return _extract_iocs_python(finding.payload_text or "")
 
@@ -392,7 +393,7 @@ class SpeculativePrefetcher:
         for _ in self._workers:
             try:
                 self._prefetch_queue.put_nowait((None, None))
-            except asyncio.QueueFull:
+            except asyncio.QueueFull:  # noqa: BLE001
                 pass
         try:
             await safe_wait_for(parallel(list(self._workers), policy="log", ctx="ioc_cooccurrence_miner:prefetcher"), timeout=timeout, label="prefetcher_shutdown")

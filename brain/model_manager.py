@@ -422,7 +422,7 @@ class ModelManager:
                 raise RuntimeError(f'[MEMORY ADMISSION] CRITICAL state ({status.system_used_gib:.2f} GiB) — model load BLOCKED to prevent OOM. Free up memory before retrying.')
         except RuntimeError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _check_memory_pressure(self, threshold_gb: float=1.5) -> bool:
@@ -444,7 +444,7 @@ class ModelManager:
                         _sync_eval_and_clear_cache()
                 logger.warning(f'[MEMORY] Low RAM: {available:.2f}GB, MLX cache cleared')
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return False
 
@@ -573,7 +573,7 @@ class ModelManager:
             await offload_to('cpu_io_pool', mlx_lm.load, model_id)
             logger.info(f'[MODEL DOWNLOAD] Hermes-3 already cached at {model_id}')
             return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         logger.info(f'[MODEL DOWNLOAD] Hermes-3 not found, downloading {model_id}...')
         logger.info('[MODEL DOWNLOAD] Reducing HTTP worker pool to 3 during download')
@@ -628,7 +628,7 @@ class ModelManager:
         if MLX_AVAILABLE and mx is not None:
             try:
                 await asyncio.to_thread(_sync_maybe_eval)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return unload_task
 
@@ -769,7 +769,7 @@ class ModelManager:
                     context_len = self._estimate_context_length(engine._prompt_cache)
                     if context_len > 1024:
                         await engine._compress_kv_cache()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         mx = _get_mlx_safe()
         if MLX_AVAILABLE and mx is not None:
@@ -1078,7 +1078,7 @@ class ModelManager:
             # of async contextmanager), direct mx.eval([]) blocks the event loop.
             try:
                 await asyncio.to_thread(_sync_eval_and_clear_cache)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
 
@@ -1096,7 +1096,7 @@ def _sync_maybe_eval() -> None:
         if _now - _sync_maybe_eval._last_eval > _min_interval:
             _mx.eval([])
             _sync_maybe_eval._last_eval = _now
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 
@@ -1108,7 +1108,7 @@ def _sync_eval_and_clear_cache() -> None:
             _mx.eval([])
             if hasattr(_mx, 'clear_cache'):
                 _mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

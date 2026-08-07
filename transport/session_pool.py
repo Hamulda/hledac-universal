@@ -110,7 +110,7 @@ def _patch_existing_httpx_sockets(client: httpx.AsyncClient) -> None:
                     _patch_socket_keepalive(raw_conn)
             except Exception:
                 continue  # best-effort per-connection
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # fail-safe: don't crash client accessor
 
 
@@ -249,7 +249,7 @@ def _record_pool_metrics() -> None:
         registry.record_gauge("session_pool_httpx_max_connections", float(preset.max_connections))
         registry.record_gauge("session_pool_httpx_max_keepalive", float(preset.max_keepalive))
         registry.record_gauge("session_pool_uma_pressure", float(hash(preset) % 100))  # 0-99
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass  # Fail-soft: metrics are diagnostic only
 
 
@@ -307,7 +307,7 @@ async def _probe_http2_negotiation(client: httpx.AsyncClient) -> bool:
                     _http2_negotiated = True
                     logger.debug("[SessionPool] HTTP/2 negotiation confirmed via _protocol.protocol=%s", proto_name)
                     return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # No HTTP/2 indicator found — assume HTTP/1.1 fallback
@@ -391,7 +391,7 @@ async def httpx_client() -> httpx.AsyncClient:
             # socket options from the OS (SO_KEEPALIVE is set per-socket at creation).
             try:
                 _patch_existing_httpx_sockets(_httpx_client)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Fail-safe: socket patching is best-effort
 
             _record_pool_metrics()
@@ -403,7 +403,7 @@ async def httpx_client() -> httpx.AsyncClient:
                     _probe_http2_negotiation(_httpx_client),
                     name="session_pool:http2_probe",
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # Fail-safe: don't block client creation
 
         return _httpx_client
@@ -529,7 +529,7 @@ async def httpx_socks_client(
                 old_client = _httpx_socks_clients.pop(oldest)
                 try:
                     await old_client.aclose()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             # ISSUE-013: Adaptive limits from UMA state (50% of httpx preset)
@@ -566,7 +566,7 @@ async def httpx_socks_client(
             # connections are detected before TIME_WAIT exhausts the port pool.
             try:
                 _patch_existing_httpx_sockets(_httpx_socks_clients[cache_key])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe: best-effort
             logger.debug(
                 f"[SessionPool] httpx-socks client created for {proxy_url} "
@@ -590,7 +590,7 @@ async def close_httpx_socks() -> None:
         if client is not None:
             try:
                 await client.aclose()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
     logger.debug("[SessionPool] all httpx-socks clients closed")
 

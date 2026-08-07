@@ -43,6 +43,7 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 import yaml
 
 from hledac.universal.core.psutil_shim import psutil
@@ -53,7 +54,7 @@ SKLEARN_AVAILABLE = True
 logger = logging.getLogger(__name__)
 MAX_PENDING_RESOURCE_REQUESTS = 1000
 
-class CapacitySnapshot(msgspec.Struct, frozen=True, gc=False):
+class CapacitySnapshot(Struct, frozen=True):
     """Immutable snapshot of resource capacity with TTL tracking."""
     cpu_percent: float
     gpu_memory: float
@@ -152,7 +153,7 @@ class Priority(Enum):
     CRITICAL = 4
     EMERGENCY = 5
 
-class ResourceRequest(msgspec.Struct, gc=False):
+class ResourceRequest(Struct):
     """Resource request specification"""
     task_id: str
     task_name: str
@@ -168,7 +169,7 @@ class ResourceRequest(msgspec.Struct, gc=False):
     affinity: list[str] | None = None
     anti_affinity: list[str] | None = None
 
-class ResourceCapacity(msgspec.Struct, frozen=True, gc=False):
+class ResourceCapacity(Struct, frozen=True):
     """Available resource capacity"""
     cpu_cores: float
     memory_gb: float
@@ -179,7 +180,7 @@ class ResourceCapacity(msgspec.Struct, frozen=True, gc=False):
     memory_usage: float
     gpu_usage: float
 
-class ResourceAllocation(msgspec.Struct, frozen=True, gc=False):
+class ResourceAllocation(Struct, frozen=True):
     """Resource allocation record"""
     task_id: str
     allocated_resources: dict[str, float]
@@ -575,7 +576,7 @@ class ResourceAwareScheduler:
                     _, errors = _check_gathered(gathered)
                     for err in errors:
                         logger.warning('ResourceAllocator: task failed during shutdown: %s', err)
-            except TimeoutError:
+            except TimeoutError:  # noqa: BLE001
                 pass
         self._tasks.clear()
 

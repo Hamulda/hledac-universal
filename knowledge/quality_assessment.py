@@ -32,6 +32,7 @@ from collections import Counter, OrderedDict
 import collections.abc
 from dataclasses import dataclass
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from logging import Logger
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlparse
@@ -289,7 +290,7 @@ def _compute_url_fingerprint(url: str) -> str:
 
 
 # Sprint F216G: Quality Rejection Ledger
-class QualityRejectionRecord(msgspec.Struct, frozen=True, gc=False):
+class QualityRejectionRecord(Struct, frozen=True):
     """
     Sprint F216G: Bounded per-finding quality gate rejection record.
 
@@ -843,7 +844,7 @@ class QualityAssessor:
             return []
         try:
             return batch_fn(items)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             return [single_fn(item) for item in items]
@@ -862,7 +863,7 @@ class QualityAssessor:
             return []
         try:
             return batch_fn(items)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             return [single_fn(item) for item in items]

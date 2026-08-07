@@ -80,17 +80,17 @@ def try_decode(body: bytes) -> tuple[str, bool, int, str]:
     try:
         text = body.decode('utf-8', errors='strict')
         return (text, False, 0, 'utf-8')
-    except UnicodeDecodeError:
+    except UnicodeDecodeError:  # noqa: BLE001
         pass
     try:
         text = body.decode('windows-1252', errors='strict')
         return (text, False, 0, 'windows-1252')
-    except (UnicodeDecodeError, LookupError):
+    except (UnicodeDecodeError, LookupError):  # noqa: BLE001
         pass
     try:
         text = body.decode('latin-1', errors='strict')
         return (text, False, 0, 'latin-1')
-    except (UnicodeDecodeError, LookupError):
+    except (UnicodeDecodeError, LookupError):  # noqa: BLE001
         pass
     text = body.decode('utf-8', errors='replace')
     count = text.count('�')
@@ -368,7 +368,7 @@ class DrainRegistry:
         """Remove a specific future from the registry."""
         try:
             self._registry.remove(fut)
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
 
     def clear(self) -> None:

@@ -340,7 +340,7 @@ class SecureSession:
             try:
                 import os
                 os.remove(path)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._temp_files = []
         self._encrypted_data = []

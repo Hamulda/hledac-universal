@@ -203,7 +203,7 @@ def _read_findings_from_duckdb(
                 elif col_lower in ("confidence", "conf"):
                     try:
                         finding["confidence"] = float(val)
-                    except (TypeError, ValueError):
+                    except (TypeError, ValueError):  # noqa: BLE001
                         pass
                 elif col_lower in ("ts", "timestamp", "created_at", "added_at"):
                     finding["ts"] = str(val)

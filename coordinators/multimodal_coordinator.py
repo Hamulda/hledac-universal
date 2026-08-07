@@ -29,6 +29,7 @@ from enum import Enum
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 try:
     import numpy as np
@@ -61,14 +62,14 @@ class ModalityType(Enum):
     MOLECULAR = 'molecular'
     MIXED = 'mixed'
 
-class ModalityInput(msgspec.Struct, gc=False):
+class ModalityInput(Struct):
     """Input with modality information."""
     content: Any
     modality: ModalityType
     metadata: dict[str, Any] = field(default_factory=dict)
     source: str | None = None
 
-class ModalityOutput(msgspec.Struct, frozen=True, gc=False):
+class ModalityOutput(Struct, frozen=True):
     """Output from modality processing."""
     modality: ModalityType
     embedding: Any | None = None
@@ -76,14 +77,14 @@ class ModalityOutput(msgspec.Struct, frozen=True, gc=False):
     metadata: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
 
-class FusedRepresentation(msgspec.Struct, frozen=True, gc=False):
+class FusedRepresentation(Struct, frozen=True):
     """Fused multimodal representation."""
     fused_embedding: Any
     modalities: list[ModalityType]
     weights: dict[ModalityType, float]
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class ContrastiveExample(msgspec.Struct, frozen=True, gc=False):
+class ContrastiveExample(Struct, frozen=True):
     """Example for contrastive learning."""
     text_embedding: Any
     image_embedding: Any

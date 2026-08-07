@@ -442,7 +442,7 @@ class MoERouter:
         if MLX_AVAILABLE and mx is not None:
             try:
                 mx.eval([])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             gc.collect()
             if hasattr(mx, 'clear_cache'):
@@ -489,7 +489,7 @@ class MoERouter:
         if _MULTILINGUAL_AVAILABLE:
             try:
                 lang_result = detect_language(query)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # SWARM-002: Route to appropriate embedder based on language
@@ -580,7 +580,7 @@ class MoERouter:
                 peak = mx.get_active_memory()
                 total_bytes = 8 * 1024 ** 3
                 return max(0.5, (total_bytes - peak) / 1024 ** 3)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             import psutil
@@ -880,7 +880,7 @@ class MoERouter:
         if MLX_AVAILABLE and mx is not None:
             try:
                 mx.eval([])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             gc.collect()
             if hasattr(mx, 'clear_cache'):
@@ -1013,7 +1013,7 @@ def route(query: str, context: dict) -> str:
             if active_gb > 3.0:
                 logger.debug(f'[MoE] route -> hermes3 (memory pressure: {active_gb:.1f}GB)')
                 return 'hermes3'
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     logger.debug('[MoE] route -> hermes3 (default)')
     return 'hermes3'

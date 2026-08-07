@@ -30,8 +30,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from operator import attrgetter, itemgetter
 import httpx
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 import orjson
 from cachetools import TTLCache
 
@@ -69,6 +71,7 @@ from hledac.universal.utils.flow_trace import (
     trace_fetch_end,
     trace_fetch_start,
 )
+from hledac.universal.utils.locks import LazyAsyncioLock  # ISSUE-011: asyncio-safe lock
 
 from ..tools.url_dedup import DeduplicationStrategy, dedupe_url_list
 from ..knowledge.cross_sprint_gate import get_cross_sprint_gate
@@ -270,7 +273,7 @@ def _try_load_aimd_controller(initial_window: float) -> AIMDWindow | PyAIMDContr
     if PyAIMDController is not None:
         try:
             return PyAIMDController(initial_window=initial_window)
-        except (TypeError, OSError):
+        except (TypeError, OSError):  # noqa: BLE001
             pass  # Fall through to Python fallback
     return AIMDWindow(initial=initial_window)
 
@@ -426,7 +429,7 @@ def apply_fcntl_nocache(fd: int, content_length: int | None) -> None:
     """Wrapper for backward compatibility — delegates to tools/file_cache.py."""
     _apply_fcntl_nocache(fd, content_length)
 
-class FetchCoordinatorConfig(msgspec.Struct, frozen=True, gc=False):
+class FetchCoordinatorConfig(Struct, frozen=True):
     """Configuration for FetchCoordinator."""
     max_urls_per_step: int = 5
     max_evidence_per_step: int = 10
@@ -577,8 +580,10 @@ class FetchCoordinator(UniversalCoordinator):
         self._domain_rate_limiter = DomainRateLimiter(rate=_rate_limit_rps, max_hosts=512)
         self._telemetry: dict[str, Any] = {'aimd_concurrency': self._aimd.window, 'active_fetches': 0, 'total_successes': 0, 'total_failures': 0, 'circuit_breaker_blocks': 0, 'circuit_breaker_active': 0, 'uma_state': 'ok', 'decrease_factor_used': 1.0, 'backpressure_clamp_events': 0, 'io_only_skipped': 0, 'cross_sprint_skipped': 0, 'entity_confirmation_skipped': 0}
         # CB-04: Retry budget per domain — track total retries in last 60s to prevent amplification
+        # ISSUE-011 FIX: Use LazyAsyncioLock instead of threading.Lock
+        # threading.Lock blocks the event loop when called from async context
         self._retry_budget: dict[str, list[float]] = {}  # domain -> list of retry timestamps
-        self._retry_budget_lock = threading.Lock()
+        self._retry_budget_lock: LazyAsyncioLock = LazyAsyncioLock()
         self._retry_budget_max = 20  # max retries per domain per 60s window
         self._retry_budget_window = 60.0  # sliding window in seconds
         self._cover_count: int = 0
@@ -774,8 +779,11 @@ class FetchCoordinator(UniversalCoordinator):
         except (ImportError, AttributeError, OSError):  # noqa: BLE001 — best-effort; transport circuit breaker telemetry; non-critical
             pass
 
-    def _check_retry_budget(self, domain: str) -> tuple[bool, str]:
+    async def _check_retry_budget(self, domain: str) -> tuple[bool, str]:
         """CB-04: Check if domain has exceeded retry budget.
+
+        ISSUE-011 FIX: async method to avoid blocking event loop.
+        Uses asyncio.Lock instead of threading.Lock for async-safe operation.
 
         Returns (allowed, reason) where allowed=False means skip retries for this domain.
         Uses sliding window of 60s to count retries.
@@ -783,7 +791,7 @@ class FetchCoordinator(UniversalCoordinator):
         if not domain:
             return (True, "empty_domain")
         now = time.monotonic()
-        with self._retry_budget_lock:
+        async with self._retry_budget_lock.get():
             # Clean expired entries
             if domain in self._retry_budget:
                 self._retry_budget[domain] = [
@@ -794,12 +802,16 @@ class FetchCoordinator(UniversalCoordinator):
                     return (False, f"retry_budget_exceeded:{len(self._retry_budget[domain])}/{self._retry_budget_max}")
             return (True, "retry_budget_ok")
 
-    def _record_retry(self, domain: str) -> None:
-        """CB-04: Record a retry attempt for domain."""
+    async def _record_retry(self, domain: str) -> None:
+        """CB-04: Record a retry attempt for domain.
+
+        ISSUE-011 FIX: async method to avoid blocking event loop.
+        Uses asyncio.Lock instead of threading.Lock for async-safe operation.
+        """
         if not domain:
             return
         now = time.monotonic()
-        with self._retry_budget_lock:
+        async with self._retry_budget_lock.get():
             if domain not in self._retry_budget:
                 self._retry_budget[domain] = []
             self._retry_budget[domain].append(now)
@@ -966,7 +978,7 @@ class FetchCoordinator(UniversalCoordinator):
                 if not self._is_ip_public(str(ip)):
                     return (False, {'resolved_ips': [str(ip)], 'blocked_reason': 'private_ip_literal'})
                 return (True, {'resolved_ips': [str(ip)]})
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass
             cache_key = hostname.lower()
             cached_ips = self._host_ips_cache.get(cache_key)
@@ -2502,7 +2514,8 @@ class FetchCoordinator(UniversalCoordinator):
                 if result is None or result.get('error') == 'timeout' or result.get('status_code', 200) >= 500:
                     if attempt < max_retries:
                         # CB-04: Check retry budget BEFORE scheduling retry
-                        budget_allowed, budget_reason = self._check_retry_budget(_host_name)
+                        # ISSUE-011 FIX: await async method (was sync threading.Lock which blocked event loop)
+                        budget_allowed, budget_reason = await self._check_retry_budget(_host_name)
                         if not budget_allowed:
                             logger.debug('[RETRY-BUDGET] Skipping retry for %s: %s', _host_name, budget_reason)
                             self._telemetry['circuit_breaker_blocks'] = self._telemetry.get('circuit_breaker_blocks', 0) + 1
@@ -2515,7 +2528,8 @@ class FetchCoordinator(UniversalCoordinator):
                         logger.debug('[RETRY] Attempt %s/%s for %s after %ss', attempt + 1, max_retries, url, delay)
                         trace_fetch_end(url, 'none', 'retry', 0.0, {'attempt': attempt, 'delay': delay})
                         # CB-04: Record retry attempt for budget tracking
-                        self._record_retry(_host_name)
+                        # ISSUE-011 FIX: await async method (was sync threading.Lock which blocked event loop)
+                        await self._record_retry(_host_name)
                         await asyncio.sleep(delay)
                         attempt += 1
                         continue
@@ -2823,7 +2837,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         pivot_queue.put_nowait(task)
         if pivot_stats is not None:
             pivot_stats['total'] = pivot_stats.get('total', 0) + 1
-    except asyncio.QueueFull:
+    except asyncio.QueueFull:  # noqa: BLE001
         pass
 
 
@@ -2890,14 +2904,14 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                     _loop = asyncio.get_running_loop()
                     _loop.call_later(jitter_s, _put_task, task, pivot_queue, pivot_stats)
                     continue  # call_later handles placement; skip immediate put
-                except RuntimeError:
+                except RuntimeError:  # noqa: BLE001
                     pass  # no running loop → fall through to immediate put
             # Immediate put: last item, or fallback when no loop available
             try:
                 pivot_queue.put_nowait(task)
                 if pivot_stats is not None:
                     pivot_stats['total'] = pivot_stats.get('total', 0) + 1
-            except asyncio.QueueFull:
+            except asyncio.QueueFull:  # noqa: BLE001
                 pass
         """Enqueue a hypothesis-driven pivot task with bounded caps.
 
@@ -3325,7 +3339,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
             }
 
             # Find most severe source to blame
-            most_severe = max(contradictions, key=lambda c: c.get('severity', 0.0))
+            most_severe = max(contradictions, key=attrgetter("get")('severity', 0.0))
             contradiction_source = most_severe.get('original_source', None)
 
             # Create and emit alert with high severity
@@ -3957,7 +3971,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                                     entity_id,
                                 )
                                 _ms_abort = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # fail-soft — IGD abort is advisory, never blocks micro-sprint
 
                 if _ms_abort:
@@ -4015,7 +4029,7 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                                         f'ms:{entity_id}',
                                         [result.new_entropy],
                                     )
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass
                     # Success — remove from pending tracking
                     continue

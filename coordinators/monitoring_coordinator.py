@@ -36,6 +36,7 @@ from enum import StrEnum
 from typing import Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.core.system_metrics import get_system_snapshot
 from hledac.universal.utils.async_helpers import safe_create_task
@@ -92,7 +93,7 @@ class MetricType(StrEnum):
     LOAD = 'load'
     TEMPERATURE = 'temperature'
 
-class SystemMetrics(msgspec.Struct, gc=False):
+class SystemMetrics(Struct):
     """System metrics snapshot."""
     timestamp: float
     cpu_percent: float
@@ -107,7 +108,7 @@ class SystemMetrics(msgspec.Struct, gc=False):
     def to_dict(self) -> dict[str, Any]:
         return {'timestamp': self.timestamp, 'cpu_percent': self.cpu_percent, 'memory_percent': self.memory_percent, 'memory_used_mb': self.memory_used_mb, 'memory_available_mb': self.memory_available_mb, 'disk_percent': self.disk_percent, 'network_connections': self.network_connections, 'load_average': self.load_average, 'processes': self.processes}
 
-class MonitoringResult(msgspec.Struct, frozen=True, gc=False):
+class MonitoringResult(Struct, frozen=True):
     """Result of monitoring operation."""
     monitoring_type: str
     success: bool
@@ -117,7 +118,7 @@ class MonitoringResult(msgspec.Struct, frozen=True, gc=False):
     alert_triggered: bool = False
     alert_message: str | None = None
 
-class AlertThreshold(msgspec.Struct, frozen=True, gc=False):
+class AlertThreshold(Struct, frozen=True):
     """Threshold configuration for alerts."""
     metric: str
     warning: float
@@ -125,7 +126,7 @@ class AlertThreshold(msgspec.Struct, frozen=True, gc=False):
     enabled: bool = True
 
 
-class DriftResult(msgspec.Struct, frozen=True, gc=False):
+class DriftResult(Struct, frozen=True):
     """UNIFIED-010: Výsledek drift detection — detekce postupné degradace.
 
     Měří trend (derivaci) systémových metrik za poslední okno.
@@ -495,7 +496,7 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
                 try:
                     async with asyncio.timeout(interval):
                         await self._stop_collection.wait()
-                except TimeoutError:
+                except TimeoutError:  # noqa: BLE001
                     pass
             except Exception as e:
                 logger.error(f'Background collection error: {e}')

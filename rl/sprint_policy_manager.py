@@ -521,7 +521,7 @@ class SprintPolicyManager:
                 perf['quality'] = (perf['quality'] * perf['count'] + lane_quality) / (perf['count'] + 1)
                 perf['count'] += 1
                 perf['last_sprint'] = self._state.sprint_sequence_number
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def update(self, result: SprintSchedulerResult) -> None:
@@ -613,7 +613,7 @@ class SprintPolicyManager:
             if uma.is_critical():
                 log.debug('[SprintPolicyManager] Skipping QMIX train_step — M1 UMA critical')
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         if not _RAM_GATE_DISABLED:
             try:
@@ -621,7 +621,7 @@ class SprintPolicyManager:
                 if psutil.virtual_memory().percent > _RAM_TRAIN_SKIP_PCT:
                     log.warning('[SprintPolicyManager] QMIX train_step skipped — RAM >%d%%', _RAM_TRAIN_SKIP_PCT)
                     return
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         import time
         now = time.monotonic()
@@ -709,7 +709,7 @@ class SprintPolicyManager:
                 elif hasattr(mx.metal, 'clear_cache'):
                     mx.metal.clear_cache()
                 gc.collect()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             _step_dt = time.monotonic() - _step_t0
             log.info('[SprintPolicyManager] QMIX train_step %d: loss=%.4f mean_q=%.3f replay=%d cum_steps=%d step_dt=%.2fs', self._state.sprint_sequence_number, loss, mean_q, self._replay_buffer.size, self._state.cumulative_train_steps, _step_dt)
@@ -796,7 +796,7 @@ class SprintPolicyManager:
                             if 0 <= combo_idx < 6:
                                 return action_from_lane_combo(combo_idx)
                             return ACTION_CONTINUE
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         from rl.actions import ACTION_CONTINUE
         return ACTION_CONTINUE
@@ -859,7 +859,7 @@ class SprintPolicyManager:
                         self._scheduler._source_quality_feedback[_fk]['fetched'] += _fv['fetched']
                         self._scheduler._source_quality_feedback[_fk]['accepted'] += _fv['accepted']
                     self._pending_feedback.clear()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             log.debug('[SprintPolicyManager] quality feedback: src=%s total=%d accepted=%d', feed_url or 'unknown', total_count, accepted_count)
         except Exception as e:

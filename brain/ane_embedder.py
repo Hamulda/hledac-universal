@@ -29,6 +29,7 @@ import msgspec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 # [FINAL]-019-07: Capability cost registration for QoS ladder triage.
@@ -93,7 +94,7 @@ class _MLXFamilyMutex:
             try:
                 fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
                 fd.close()
-            except (OSError, AttributeError):
+            except (OSError, AttributeError):  # noqa: BLE001
                 pass
             _MLXFamilyMutex._cross_lock_fd = None
 
@@ -341,7 +342,7 @@ def _get_libc() -> ctypes.CDLL | None:
         if lib_c:
             _LIBC = ctypes.CDLL(lib_c, use_errno=True)
             return _LIBC
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return None
 
@@ -357,7 +358,7 @@ def _is_apfs_volume(path: str | Path) -> bool:
         if libc.statfs(path_bytes, ctypes.byref(stfs)) == 0:
             fstype = stfs.f_fstypename.decode("utf-8", errors="replace")
             return fstype == "apfs"
-    except OSError:
+    except OSError:  # noqa: BLE001
         pass
     return False
 
@@ -646,7 +647,7 @@ class ANEEmbedder:
             if avail < 1.5:
                 logger.warning(f'[ANE] initialize skipped: only {avail:.1f}GB < 1.5GB required')
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         await self.load()
 
@@ -695,7 +696,7 @@ class ANEEmbedder:
             if _MLXFamilyMutex().is_llm_active():
                 next(_ANE_COUNTER_FALLBACK)
                 return self._hash_embed(texts if isinstance(texts, list) else [texts])
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Mutex unavailable — proceed with normal path
 
         if isinstance(texts, str):
@@ -790,7 +791,7 @@ def unload_ane_embedder() -> None:
     """Release ANE mutex (no-op since ANE path is disabled)."""
     try:
         get_ane_mlx_mutex().release('embed_ane')
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 async def semantic_dedup_findings(findings: list[dict], threshold: float=0.92) -> list[dict]:
@@ -853,7 +854,7 @@ def rerank_findings_cosine(findings: list[dict], query: str, top_k: int=20) -> l
         if mgr is None or not mgr.is_loaded:
             raise RuntimeError('MLXEmbeddingManager unavailable')
     except Exception:
-        return sorted(findings, key=lambda x: x.get('confidence', 0.5), reverse=True)[:top_k]
+        return sorted(findings, key=attrgetter("get")('confidence', 0.5), reverse=True)[:top_k]
     try:
         from embeddings.reranker import batch_rerank_topk
         # ISSUE-BIRD-EYE: cap corpus to 200, store original length for index mapping
@@ -871,7 +872,7 @@ def rerank_findings_cosine(findings: list[dict], query: str, top_k: int=20) -> l
         # Guard: idx < len(corpus) ensures we never index into uncapped range.
         return [capped_findings[idx] for idx in top_indices_list if idx < len(corpus)]
     except Exception:
-        return sorted(findings, key=lambda x: x.get('confidence', 0.5), reverse=True)[:top_k]
+        return sorted(findings, key=attrgetter("get")('confidence', 0.5), reverse=True)[:top_k]
 _flashrank_reranker = None
 _FLASHRANK_MODEL = 'ms-marco-MiniLM-L-12-v2'
 

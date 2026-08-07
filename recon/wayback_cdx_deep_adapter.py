@@ -83,6 +83,6 @@ class WaybackCDXDeepAdapter:
                 )
             finally:
                 await adapter.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             # fail-soft: overall failure doesn't crash the sprint
             pass

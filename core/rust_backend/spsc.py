@@ -88,6 +88,6 @@ def get_spsc_domain(ext: object | None) -> _RustSPSCDomain | _PythonSPSCDomain:
     if ext is not None:
         try:
             return _RustSPSCDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonSPSCDomain()

@@ -220,7 +220,7 @@ class EnrichmentServices:
                                             # NOTE: async_ingest_findings_batch is a native async coroutine.
                                             # asyncio.shield guards the awaitable directly — no to_thread wrapper.
                                             await asyncio.shield(store.async_ingest_findings_batch(all_to_ingest))
-                                    except Exception:
+                                    except Exception:  # noqa: BLE001
                                         pass
                                 # Evidence log attach (forensics only)
                                 # attach_forensic_analysis is pure-Python sync (orjson + in-memory list + Rust MPSC).
@@ -237,7 +237,7 @@ class EnrichmentServices:
                                             confidence=0.95,
                                         )
                                     )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
             await bounded_parallel_map(findings, enrich_one, concurrency=3, ordered=False, ctx=ctx, logger_instance=log)
@@ -247,7 +247,7 @@ class EnrichmentServices:
                     log.debug('%s LMDB bulk-write: %d/%d', lmdb_label, written, len(enriched_pairs))
                 except Exception as exc:
                     log.warning('%s LMDB bulk-write failed: %s', lmdb_label, exc)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _init_forensics(self) -> None:

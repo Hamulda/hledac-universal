@@ -92,6 +92,7 @@ from .utils.query_expansion import ExpansionConfig as WordlistConfig
 from .utils.query_expansion import QueryExpander as IntelligentWordlistGenerator
 from .utils.ranking import RankedResult as SearchResult
 from .utils.ranking import ReciprocalRankFusion, RRFConfig
+from operator import attrgetter, itemgetter
 try:
     from .intelligence import AcademicSearchEngine, ArchiveDiscovery, ArchiveResurrector, DataLeakHunter, StealthCrawler, StealthWebScraper, TemporalAnalyzer, UnifiedWebIntelligence, quick_scrape, search_academic, search_archives
     INTELLIGENCE_AVAILABLE = True
@@ -749,11 +750,11 @@ class UnifiedResearchEngine:
                 fused = []
                 for source, results in source_results.items():
                     fused.extend(results)
-                fused.sort(key=lambda x: x.score, reverse=True)
+                fused.sort(key=attrgetter("score"), reverse=True)
             return [{'id': r.id, 'title': r.title, 'content': r.content[:500] if r.content else '', 'url': r.url, 'source': r.source, 'score': r.score, 'rank': r.rank, 'metadata': r.metadata} for r in fused[:50]]
         except Exception as e:
             logger.warning(f'Synthesis task failed: {e}')
-            return [{'id': f.id, 'title': f.title, 'content': f.content[:500] if f.content else '', 'url': f.url, 'source': f.source_type, 'score': f.relevance_score} for f in sorted(findings, key=lambda x: x.relevance_score, reverse=True)[:50]]
+            return [{'id': f.id, 'title': f.title, 'content': f.content[:500] if f.content else '', 'url': f.url, 'source': f.source_type, 'score': f.relevance_score} for f in sorted(findings, key=attrgetter("relevance_score"), reverse=True)[:50]]
 
     async def _task_cross_reference(self, query: str, existing_findings: list[ResearchFinding]) -> list[ResearchFinding]:
         """
@@ -1086,7 +1087,7 @@ class UnifiedResearchEngine:
             title_matches = len(query_terms & title_terms)
             content_matches = len(query_terms & content_terms)
             f.relevance_score = f.relevance_score * 0.3 + title_matches / len(query_terms) * 0.4 + content_matches / len(query_terms) * 0.2 + f.credibility_score * 0.1
-        return sorted(findings, key=lambda x: x.relevance_score, reverse=True)
+        return sorted(findings, key=attrgetter("relevance_score"), reverse=True)
 
     def _calculate_confidence(self, result: UnifiedResearchResult) -> float:
         """Calculate overall confidence score."""
@@ -2138,7 +2139,7 @@ def _detect_transport_capabilities() -> set[str]:
             caps.add('tor')
         if getattr(resolver, '_nym_class', None) is not None:
             caps.add('nym')
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     return caps
 

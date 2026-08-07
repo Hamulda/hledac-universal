@@ -80,7 +80,7 @@ class TemporalSignalStore:
             logger.warning('[TemporalSignalStore] save_snapshot() failed: %s', exc)
             try:
                 self._conn.rollback()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def load_snapshot(self) -> dict[str, Any] | None:

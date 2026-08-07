@@ -17,8 +17,70 @@ Issue 6.1: Layer Protocol + LayerStack for IoC cross-cutting concerns.
 """
 
 import functools
+from typing import TypeVar, Callable
 
 from .communication_layer import CommunicationLayer
+
+# ── Generic Layer Cached Factory ──────────────────────────────────────────────
+# Refactored from 4x identical patterns (lines 241-299) — deduplicated 2026-08-07
+_T = TypeVar("_T")
+
+
+def _make_cached_layer_getter(
+    layer_name: str,
+    import_path: str,
+    factory_call: str,
+    singleton_args: tuple[()] = (),
+) -> Callable[[], _T | None]:
+    """
+    Factory: create a @lru_cache'd layer getter with fail-soft import.
+
+    DRY pattern replacing 4x identical _*_layer_cached() functions.
+
+    Args:
+        layer_name: Human-readable name for logging (e.g. "StealthLayer")
+        import_path: Dot-path to import (e.g. "hledac.universal.layers.stealth_layer")
+        factory_call: Constructor expression (e.g. "StealthLayer()")
+        singleton_args: Tuple of args passed to the constructor
+
+    Returns:
+        Cached getter function returning Layer instance or None on failure.
+    """
+
+    @functools.lru_cache(maxsize=1)
+    def _cached_getter() -> _T | None:
+        try:
+            # Dynamic import of the layer class
+            module_path, class_name = import_path.rsplit(".", 1)
+            module = __import__(module_path, fromlist=[class_name])
+            layer_cls = getattr(module, class_name)
+            return layer_cls(*singleton_args)
+        except Exception:
+            return None
+
+    return _cached_getter
+
+
+# ── Pre-built cached getters (DRY — replaced 4x copy-paste patterns) ──────────
+
+_stealth_layer_getter = _make_cached_layer_getter(
+    layer_name="StealthLayer",
+    import_path="hledac.universal.layers.stealth_layer.StealthLayer",
+    factory_call="StealthLayer()",
+)
+
+_content_layer_getter = _make_cached_layer_getter(
+    layer_name="ContentCleaner",
+    import_path="hledac.universal.layers.content_layer.ContentCleaner",
+    factory_call="ContentCleaner()",
+)
+
+_ghost_layer_getter = _make_cached_layer_getter(
+    layer_name="GhostLayer",
+    import_path="hledac.universal.layers.ghost_layer.GhostLayer",
+    factory_call="GhostLayer(config=None)",
+    singleton_args=(None,),
+)
 from .content_layer import (
     CleaningResult,
     ContentCleaner,
@@ -238,36 +300,22 @@ __all__ = [
 # Layer factory getters — lazy singletons for fetch pipeline injection
 
 
-@functools.lru_cache(maxsize=1)
-def _stealth_layer_cached() -> StealthLayer | None:
-    """Cached StealthLayer instance — called only once, reused forever."""
-    try:
-        from hledac.universal.layers.stealth_layer import StealthLayer
-        return StealthLayer()
-    except Exception:
-        return None
-
-
 def get_stealth_layer() -> StealthLayer | None:
     """Lazy singleton StealthLayer accessor — module-level cached, init-once reuse."""
-    return _stealth_layer_cached()
-
-
-@functools.lru_cache(maxsize=1)
-def _content_layer_cached() -> ContentCleaner | None:
-    """Cached ContentCleaner instance — called only once, reused forever."""
-    try:
-        from hledac.universal.layers.content_layer import ContentCleaner
-        return ContentCleaner()
-    except Exception:
-        return None
+    return _stealth_layer_getter()
 
 
 def get_content_layer() -> ContentCleaner | None:
     """Lazy singleton ContentCleaner accessor — module-level cached, init-once reuse."""
-    return _content_layer_cached()
+    return _content_layer_getter()
 
 
+def get_ghost_layer() -> GhostLayer | None:
+    """Lazy singleton GhostLayer accessor — module-level cached, init-once reuse."""
+    return _ghost_layer_getter()
+
+
+# CommunicationLayer has non-default constructor args — keep inline for clarity
 @functools.lru_cache(maxsize=1)
 def _communication_layer_cached() -> CommunicationLayer | None:
     """Cached CommunicationLayer instance — called only once, reused forever."""
@@ -282,18 +330,3 @@ def _communication_layer_cached() -> CommunicationLayer | None:
 def get_communication_layer() -> CommunicationLayer | None:
     """Lazy singleton CommunicationLayer accessor — module-level cached, init-once reuse."""
     return _communication_layer_cached()
-
-
-@functools.lru_cache(maxsize=1)
-def _ghost_layer_cached() -> GhostLayer | None:
-    """Cached GhostLayer instance — called only once, reused forever."""
-    try:
-        from hledac.universal.layers.ghost_layer import GhostLayer as _GL  # noqa: N814
-        return _GL(config=None)
-    except Exception:
-        return None
-
-
-def get_ghost_layer() -> GhostLayer | None:
-    """Lazy singleton GhostLayer accessor — module-level cached, init-once reuse."""
-    return _ghost_layer_cached()

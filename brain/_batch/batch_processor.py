@@ -29,7 +29,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable
 from hledac.universal.utils.async_helpers import safe_wait_for
+from hledac.universal.utils._patterns import collect_results_async  # F320: DRY batch processing
 
+from operator import attrgetter, itemgetter
 if TYPE_CHECKING:
     from collections.abc import Awaitable
 
@@ -226,7 +228,7 @@ class BatchProcessor:
         async with self._lock:
             self._queue.append(item)
             # Keep queue sorted by priority (heapq max-heap)
-            self._queue.sort(key=lambda x: x.priority, reverse=True)
+            self._queue.sort(key=attrgetter("priority"), reverse=True)
 
         # Trigger worker if not running
         if self._worker_task is None or self._worker_task.done():
@@ -353,12 +355,11 @@ class BatchProcessor:
 
         Returns:
             List of results in same order as items
+
+        F320: Refactored to use collect_results_async helper.
         """
-        results = []
-        for item in items:
-            result = await self._process_single(item)
-            results.append(result)
-        return results
+        # F320: Use DRY helper for sequential batch processing
+        return await collect_results_async(items, self._process_single)
 
     async def _process_single(self, item: BatchItem) -> Any:
         """
@@ -402,7 +403,7 @@ class BatchProcessor:
             self._worker_task.cancel()
             try:
                 await safe_wait_for(self._worker_task, timeout=timeout)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (asyncio.CancelledError, asyncio.TimeoutError):  # noqa: BLE001
                 pass
 
         # Flush remaining items

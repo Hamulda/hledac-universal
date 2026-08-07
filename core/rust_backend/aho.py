@@ -98,6 +98,6 @@ def get_aho_domain(ext: object | None) -> _RustAhoDomain | _PythonAhoDomain:
     if ext is not None:
         try:
             return _RustAhoDomain(ext)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _PythonAhoDomain()

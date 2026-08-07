@@ -429,7 +429,7 @@ def _check_research_quality(q: QualitySurface, min_grade: str | None, allow_feed
             actual_idx = grade_order.index(q.grade)
             if actual_idx < min_idx:
                 return (False, f'Grade {q.grade} is below minimum required grade {min_grade}')
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
     if q.quality_gate.startswith('QUALITY_FAIL_'):
         if q.quality_gate == 'QUALITY_FAIL_FEED_ONLY' and allow_feed_only:

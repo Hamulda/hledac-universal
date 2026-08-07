@@ -42,6 +42,7 @@ from typing import cast
 
 from hledac.universal.utils.async_helpers import parallel
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final
 
 import numpy as np
@@ -80,7 +81,7 @@ MIN_TEXT_LEN: Final[int] = 50  # minimum text length for embedding dedup
 # ── Result Types ───────────────────────────────────────────────────────────────
 
 
-class DedupResult(msgspec.Struct, frozen=True, gc=False):
+class DedupResult(Struct, frozen=True):
     """Embedding-based dedup advisory result."""
     is_duplicate: bool
     similarity: float  # cosine similarity to nearest neighbor

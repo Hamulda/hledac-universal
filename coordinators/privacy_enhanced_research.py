@@ -37,7 +37,7 @@ class DataRetention(Enum):
     MEDIUM = 'medium'
     LONG = 'long'
 
-class PrivacyConfig(msgspec.Struct, gc=False):
+class PrivacyConfig(Struct):
     """Configuration for privacy-enhanced research."""
     level: PrivacyLevel = PrivacyLevel.ENHANCED
     retention: DataRetention = DataRetention.SESSION
@@ -49,7 +49,7 @@ class PrivacyConfig(msgspec.Struct, gc=False):
     allowed_domains: list[str] = field(default_factory=list)
     blocked_terms: list[str] = field(default_factory=list)
 
-class AuditRecord(msgspec.Struct, frozen=True, gc=False):
+class AuditRecord(Struct, frozen=True):
     """Audit record for research operation."""
     timestamp: float
     operation_id: str
@@ -60,7 +60,7 @@ class AuditRecord(msgspec.Struct, frozen=True, gc=False):
     retention_until: float
     metadata: dict[str, Any] = field(default_factory=dict)
 
-class AnonymizedRequest(msgspec.Struct, frozen=True, gc=False):
+class AnonymizedRequest(Struct, frozen=True):
     """Anonymized research request."""
     original_query: str
     anonymized_query: str
@@ -68,7 +68,7 @@ class AnonymizedRequest(msgspec.Struct, frozen=True, gc=False):
     privacy_level: PrivacyLevel
     context: dict[str, Any] = field(default_factory=dict)
 
-class SanitizedResult(msgspec.Struct, frozen=True, gc=False):
+class SanitizedResult(Struct, frozen=True):
     """Sanitized research result."""
     data: Any
     pii_detected: bool

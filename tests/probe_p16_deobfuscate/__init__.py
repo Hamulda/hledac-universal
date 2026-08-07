@@ -146,7 +146,7 @@ class TestModuleAvailability:
             domain = _PythonIocDomain.__new__(_PythonIocDomain)
             result = domain.decode_ioc_candidates("any text")
             assert result == [], "Python fallback should return empty list"
-        except ImportError:
+        except ImportError:  # noqa: BLE001
             pass
 
 

@@ -364,7 +364,7 @@ class WasmWasiLinker:
             for _fd, sock in list(self._sockets.items()):
                 try:
                     sock.close()
-                except OSError:
+                except OSError:  # noqa: BLE001
                     pass
             self._sockets.clear()
 
@@ -705,5 +705,5 @@ if _WASMTIME_AVAILABLE:
     try:
         from wasmtime import Instance as _WasmtimeInstance  # noqa: F811
         Instance = _WasmtimeInstance
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass

@@ -50,7 +50,7 @@ def _check_mps_available():
             MPS_AVAILABLE = True
             _MPS_CHECKED = True
             return True
-    except ImportError:
+    except ImportError:  # noqa: BLE001
         pass
     _MPS_CHECKED = True
     return False
@@ -249,7 +249,7 @@ class StatisticalStegoDetector:
             if hasattr(torch.mps, 'empty_cache'):
                 try:
                     torch.mps.empty_cache()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         return {'score': score, 'chi_square_flag': score > 0.3, 'method': 'mps_chi_square'}
 

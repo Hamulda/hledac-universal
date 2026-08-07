@@ -150,7 +150,7 @@ def get_thermal_state() -> tuple[int, str]:
                 level = int(result.stdout.strip())
                 if level in _THERMAL_LEVELS:
                     return level, _THERMAL_LEVELS[level]
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass
 
         # Fallback: platform.mac_ver() as last resort (macOS only signal)

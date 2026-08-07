@@ -57,6 +57,7 @@ import logging
 import math
 import os
 import pathlib
+import weakref
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -65,6 +66,9 @@ if TYPE_CHECKING:
     import lmdb
 
 logger = logging.getLogger(__name__)
+
+# F320: DRY LMDB cleanup helpers
+from hledac.universal.utils._patterns import safe_lmdb_close  # noqa: E402
 
 # --------------------------------------------------------------------------- #
 # Sub-DB index constants
@@ -187,6 +191,7 @@ class UnifiedLMDB:
         "_shrink_count",
         "_shrink_failures",
         "_reopen_in_progress",
+        "_finalizer",
         "_map_full_count",
     )
 
@@ -216,6 +221,9 @@ class UnifiedLMDB:
         self._reopen_in_progress: bool = False  # guards against concurrent reopens
         # MEM-UMA-001: MDB_MAP_FULL event counter
         self._map_full_count: int = 0
+
+        # F264: Use weakref.finalize instead of __del__ for deterministic cleanup
+        self._finalizer = weakref.finalize(self, self._cleanup)
 
         if not lazy:
             self._ensure_init()
@@ -708,6 +716,9 @@ class UnifiedLMDB:
     # ------------------------------------------------------------------ #
     def close(self) -> None:
         """Close the LMDB environment."""
+        # F264: Detach finalizer when explicitly closed
+        if hasattr(self, '_finalizer'):
+            self._finalizer.detach()
         with self._lock:
             if self._closed:
                 return
@@ -726,11 +737,19 @@ class UnifiedLMDB:
     def __exit__(self, *_: Any) -> None:
         self.close()
 
-    def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception:
-            pass
+    def _cleanup(self) -> None:
+        """Called by weakref.finalize when UnifiedLMDB is garbage collected.
+
+        This is a last-resort safety net. Proper cleanup should use close() explicitly.
+        F320: Refactored to use safe_lmdb_close helper.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        # F320: Use safe_lmdb_close for DRY error handling
+        safe_lmdb_close(self._env, logger=logger, name="LMDB-UNIFIED")
+        self._initialized = False
+        logger.info("[LMDB-UNIFIED] closed via finalizer")
 
     # ------------------------------------------------------------------ #
     # Compaction
@@ -830,7 +849,7 @@ class UnifiedLMDB:
                 if new_env is not None:
                     try:
                         new_env.close()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return False
 
@@ -841,7 +860,7 @@ class UnifiedLMDB:
                 if temp_dir is not None:
                     try:
                         temp_dir.cleanup()
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
 
     def _compact_atomic_swap(
@@ -935,7 +954,7 @@ class UnifiedLMDB:
             if idx != sub_idx:
                 try:
                     self._sub_dbs[idx] = self._env.open_db(str(SubDB.name(idx)).encode())
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # Non-fatal if a rarely-used sub-DB fails to reopen
 
     def compact_all_subdbs(self) -> dict[int, bool]:

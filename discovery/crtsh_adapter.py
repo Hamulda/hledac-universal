@@ -400,7 +400,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
                     _cs_outcome = CTOutcome(attempted=True, query=query_stripped, raw_count=_cs_raw_count, built_count=len(_cs_hits), error=None, timeout=False, duration_s=_cs_elapsed, provider_status=CTProviderStatus.OK)
                     _cs_result = DiscoveryBatchResult(hits=tuple(_cs_hits)[:_MAX_HITS], error=None, error_type='ok', provider_name='certspotter', provider_chain=('certspotter', 'crtsh_circuit_open'), source_family='ct', elapsed_s=_cs_elapsed)
                     return (_cs_result, _cs_outcome)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         elapsed = time.monotonic() - start
         outcome = CTOutcome(attempted=True, query=query_stripped, raw_count=0, built_count=0, error='circuit_breaker_open', skip_reason=f'circuit_open:{_crtsh_decision.reason}', duration_s=elapsed, provider_status=CTProviderStatus.PROVIDER_FAILURE)
@@ -487,7 +487,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
                         _ft_outcome = CTOutcome(attempted=True, query=_freetext_query, raw_count=_ft_raw, built_count=len(_ft_hits), error=None, timeout=False, duration_s=_ft_elapsed, provider_status=CTProviderStatus.OK)
                         _ft_result = DiscoveryBatchResult(hits=tuple(_ft_hits)[:_MAX_HITS], error=None, error_type='ok', provider_name='crtsh', provider_chain=('crtsh',), source_family='ct', elapsed_s=_ft_elapsed)
                         return (_ft_result, _ft_outcome)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         elapsed = time.monotonic() - start
         outcome = CTOutcome(attempted=True, query=query_stripped, raw_count=0, built_count=0, error='no_domain_like_token', skip_reason='no_domain_like_token', duration_s=elapsed)
@@ -513,7 +513,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
                     _cs_outcome = CTOutcome(attempted=True, query=domain_candidate, raw_count=_cs_raw_count, built_count=len(_cs_hits), error=None, timeout=False, duration_s=_cs_elapsed, provider_status=CTProviderStatus.OK)
                     _cs_result = DiscoveryBatchResult(hits=tuple(_cs_hits)[:_MAX_HITS], error=None, error_type='ok', provider_name='certspotter', provider_chain=('certspotter', 'crtsh_circuit_open'), source_family='ct', elapsed_s=_cs_elapsed)
                     return (_cs_result, _cs_outcome)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         elapsed = time.monotonic() - start
         outcome = CTOutcome(attempted=True, query=domain_candidate, raw_count=0, built_count=0, error='circuit_breaker_open', skip_reason=f'circuit_open:{_dc_decision.reason}', duration_s=elapsed, provider_status=CTProviderStatus.PROVIDER_FAILURE)
@@ -651,7 +651,7 @@ async def call_crtsh(query: str, max_results: int=20, timeout_s: float=8.0, cach
                     _cs_outcome = CTOutcome(attempted=True, query=_dc_for_cache, raw_count=_cs_raw_count, built_count=len(_cs_hits), error=None, timeout=True, duration_s=_cs_elapsed, provider_status=CTProviderStatus.OK)
                     _cs_result = DiscoveryBatchResult(hits=tuple(_cs_hits)[:_MAX_HITS], error=None, error_type='ok', provider_name='certspotter', provider_chain=('certspotter', 'crtsh_timeout'), source_family='ct', elapsed_s=_cs_elapsed)
                     return (_cs_result, _cs_outcome)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         _stale_d, _stale_a = _read_stale_cache(_dc_for_cache, cache_dir, _STALE_THRESHOLD_S)
         if _stale_d is not None:

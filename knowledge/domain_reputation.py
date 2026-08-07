@@ -31,6 +31,7 @@ import time as _time
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.logging_config import get_logger
 
@@ -56,7 +57,7 @@ _DOMAIN_REPUTATION_MEMORY_MAX: int = 512
 # DTO
 # ---------------------------------------------------------------------------
 
-class DomainReputation(msgspec.Struct, frozen=True, gc=False):
+class DomainReputation(Struct, frozen=True):
     """Immutable domain reputation snapshot from DuckDB.
 
     gc=False for M1 8GB — avoids GC overhead on hot-path lookup.

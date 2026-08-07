@@ -180,7 +180,7 @@ async def _lookup_ip_batch_http(ips: list[str]) -> dict[str, dict[str, Any]]:
                                 ip = entry.get('query', '')
                                 if ip:
                                     results[ip] = {'asn': entry.get('as', ''), 'org': entry.get('org', ''), 'country': entry.get('countryCode', ''), 'netblock': _infer_netblock(entry.get('as', '')), 'query': ip}
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return results
 
@@ -274,7 +274,7 @@ async def correlate_rir_signals(findings: list, _query: str='') -> RIRCorrelatio
                     cached = _cache_get(f'whois:{domain}')
                     if cached is not None:
                         cache_hits += 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     ips_to_query = list(dict.fromkeys(ips_to_query))[:MAX_RIR_LOOKUPS]
     ip_results: dict[str, dict[str, Any]] = {}

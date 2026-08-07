@@ -15,8 +15,9 @@ import logging
 import re
 import time
 from dataclasses import asdict, dataclass, is_dataclass
-import msgspec
 from enum import Enum
+
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from pathlib import Path
 from typing import Any
 from hledac.universal.utils.msgspec_json import encode as _msgspec_encode
@@ -68,7 +69,7 @@ class CompressionLevel(Enum):
     IMPORTANT = IMPORTANT
     ABSTRACT = ABSTRACT
 
-class CompressedContext(msgspec.Struct, gc=False):
+class CompressedContext(Struct):
     """Compressed context container."""
     context_id: str
     original_size: int
@@ -84,7 +85,7 @@ class CompressedContext(msgspec.Struct, gc=False):
     sentence_scores: list[float] | None = None
     cluster_info: dict[str, Any] | None = None
 
-class DecompressionResult(msgspec.Struct, gc=False):
+class DecompressionResult(Struct):
     """Result of context decompression."""
     content: str
     detail_level: str

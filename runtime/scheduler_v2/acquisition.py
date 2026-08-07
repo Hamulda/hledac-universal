@@ -135,7 +135,7 @@ class AcquisitionOrchestrator:
                     self._finalize_result_truth(ctx, reason, message, phase),
                     name="finalize:truth",
                 )
-        except ExceptionGroup:
+        except ExceptionGroup:  # noqa: BLE001
             pass  # graceful degradation: at least one finalization path ran
         ctx.result.scheduler_exit_elapsed_s = _time.monotonic() - wall_clock_start
         if request_windup:
@@ -161,7 +161,7 @@ class AcquisitionOrchestrator:
         if rayon_manager is not None:
             try:
                 rayon_manager.set_phase("SYNTHESIS")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # fail-safe
 
         # Fire-and-forget IOC co-occurrence
@@ -186,7 +186,7 @@ class AcquisitionOrchestrator:
         except asyncio.TimeoutError:
             _synth_task.cancel()
             log.debug("[F259] synthesis task timed out after 15s, cancelled")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-safe: synthesis errors are non-critical
 
         await self._run_epistemic_gap_advisory(ctx, duckdb_store)
@@ -727,7 +727,7 @@ class AcquisitionOrchestrator:
                             await aimd_controller.on_success()
                         else:
                             await aimd_controller.on_failure("branch_empty")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass  # fail-safe: AIMD errors never propagate
                 return (_ok, _count, False)
         except TimeoutError:
@@ -735,14 +735,14 @@ class AcquisitionOrchestrator:
             if aimd_controller is not None:
                 try:
                     await aimd_controller.on_failure("timeout")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return (False, 0, True)
         except Exception:
             if aimd_controller is not None:
                 try:
                     await aimd_controller.on_failure("exception")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return (False, 0, False)
 
@@ -767,21 +767,21 @@ class AcquisitionOrchestrator:
                             await aimd_controller.on_success()
                         else:
                             await aimd_controller.on_failure("branch_empty")
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
                 return (_ok, _count)
         except TimeoutError:
             if aimd_controller is not None:
                 try:
                     await aimd_controller.on_failure("timeout")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return (False, 0)
         except Exception:
             if aimd_controller is not None:
                 try:
                     await aimd_controller.on_failure("exception")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             return (False, 0)
 
@@ -796,7 +796,7 @@ class AcquisitionOrchestrator:
         if _ds and hasattr(_ds, "_dedup_loader"):
             try:
                 await _ds._dedup_loader.ensure_loaded()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _check_hard_deadline(self, ctx: Any) -> bool:
@@ -911,7 +911,7 @@ class AcquisitionOrchestrator:
         if _ds and hasattr(_ds, "flush"):
             try:
                 await _ds.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _maybe_export_partial(
@@ -1272,7 +1272,7 @@ class AcquisitionOrchestrator:
         if fn is not None:
             try:
                 return fn()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         return 5
 
@@ -1354,7 +1354,7 @@ class AcquisitionOrchestrator:
                         if not hasattr(ctx.result, "nonfeed_probe_lanes_run"):
                             ctx.result.nonfeed_probe_lanes_run = []
                         ctx.result.nonfeed_probe_lanes_run.append({"lane": _name, "count": _count})
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-soft: probe lanes are best-effort
 
     async def _check_zero_findings_alert(self, ctx: Any) -> None:
@@ -1368,7 +1368,7 @@ class AcquisitionOrchestrator:
                 consecutive_empty_cycles=ctx.result.consecutive_empty_cycles,
                 total_findings=ctx.result.accepted_findings,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
 

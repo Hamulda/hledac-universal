@@ -32,6 +32,7 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from operator import attrgetter, itemgetter
 import numpy as np
 
 if TYPE_CHECKING:
@@ -370,7 +371,7 @@ class SemanticStore:
         if self._multilingual_enabled and self._lang_detector is not None:
             try:
                 lang_result = self._lang_detector.detect(text)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         self._pending_meta.append(
@@ -665,7 +666,7 @@ class SemanticStore:
         if self._multilingual_enabled and self._lang_detector is not None:
             try:
                 query_lang = self._lang_detector.detect(query)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         is_english_query = query_lang is not None and query_lang.is_english
@@ -689,7 +690,7 @@ class SemanticStore:
             all_results.extend(multilingual_results)
 
         # Sort by score and return top-k
-        all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        all_results.sort(key=attrgetter("get")("score", 0), reverse=True)
         return all_results[:top_k]
 
     async def _embed_query_english(self, query: str) -> np.ndarray:
@@ -706,7 +707,7 @@ class SemanticStore:
                     None, lambda: single_encode(mlx_mgr, query)
                 )
                 return self._ensure_dim(result, self._embed_dim)[0]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if self._coreml_embedder is not None and self._coreml_embedder.is_loaded:
@@ -715,7 +716,7 @@ class SemanticStore:
                     None, lambda: self._coreml_embedder.embed([query], batch_size=1)  # type: ignore[union-attr]
                 )
                 return self._ensure_dim(emb, self._embed_dim)[0]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # Hash fallback
@@ -859,7 +860,7 @@ class SemanticStore:
         if self._multilingual_enabled and self._lang_detector is not None:
             try:
                 query_lang = self._lang_detector.detect(query)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         if query_lang is not None and query_lang.is_english:
@@ -882,7 +883,7 @@ class SemanticStore:
         if self._bge_m3_embedder is not None:
             try:
                 self._bge_m3_embedder.unload()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
         self._table = None
         self._table_multilingual = None
@@ -905,7 +906,7 @@ class SemanticStore:
         if self._vec_db_multilingual is not None:
             try:
                 self._vec_db_multilingual.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._vec_db_multilingual = None
         self._initialized = False

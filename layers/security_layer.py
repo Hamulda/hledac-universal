@@ -303,7 +303,7 @@ class SecurityLayer:
                     host = parsed.netloc.lower()
                     if any((bad in host for bad in self.BLOCKLISTED_DOMAINS)):
                         return (False, 'blocklisted_domain')
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             has_pii = any((p.search(payload) for p in self._PII_PATTERNS))
             if has_pii:

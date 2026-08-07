@@ -18,6 +18,7 @@ Seed type → lane mapping:
 from collections.abc import Sequence
 from dataclasses import dataclass
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import Any
 
 # ----------------------------------------------------------------------
@@ -25,7 +26,7 @@ from typing import Any
 # ----------------------------------------------------------------------
 
 
-class LanePlanItem(msgspec.Struct, frozen=True, gc=False):
+class LanePlanItem(Struct, frozen=True):
     """A single planned lane invocation for a pivot seed."""
 
     lane: str  # e.g. "DOH", "CT", "WAYBACK"
@@ -35,7 +36,7 @@ class LanePlanItem(msgspec.Struct, frozen=True, gc=False):
     reason: str
 
 
-class PivotLanePlan(msgspec.Struct, frozen=True, gc=False):
+class PivotLanePlan(Struct, frozen=True):
     """Complete lane plan for a set of pivot seeds."""
 
     items: tuple[LanePlanItem, ...]

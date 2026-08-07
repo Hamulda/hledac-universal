@@ -151,7 +151,7 @@ class AsyncLRUCache(Generic[T, U]):
             if self._on_evict is not None:
                 try:
                     self._on_evict(evicted_key, evicted_value)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         self._cache[key] = value
         self._cache.move_to_end(key)

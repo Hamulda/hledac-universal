@@ -52,7 +52,7 @@ async def _aclose_stream(stream):
     """P15: Close aiohttp AsyncBufferedReader on early break."""
     try:
         await stream.aclose()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 EXPOSURE_CACHE_ROOT = Path.home() / '.hledac' / 'lmdb' / 'exposure_cache.lmdb'
 _EXPOSURE_CACHE_TTL = 7 * 24 * 60 * 60
@@ -149,7 +149,7 @@ class ExposureCache:
         if self._env is not None:
             try:
                 self._env.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             self._env = None
 
@@ -361,7 +361,7 @@ class GitHubCodeSearchClient:
             try:
                 import compression.zstd as _zstd
                 return decode(_zstd.decompress(zst_path.read_bytes()))
-            except (ImportError, Exception):
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             return decode(json_path.read_bytes())
@@ -424,7 +424,7 @@ class MalwareBazaarClient:
             try:
                 import compression.zstd as _zstd
                 return decode(_zstd.decompress(zst_path.read_bytes()))
-            except (ImportError, Exception):
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             return decode(json_path.read_bytes())
@@ -496,7 +496,7 @@ class GreyNoiseClient:
             try:
                 import compression.zstd as _zstd
                 return decode(_zstd.decompress(zst_path.read_bytes()))
-            except (ImportError, Exception):
+            except (ImportError, Exception):  # noqa: BLE001
                 pass
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             return decode(json_path.read_bytes())

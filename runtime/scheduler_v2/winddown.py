@@ -49,7 +49,7 @@ def _maybe_call_pressure_relief(ctx: Any) -> None:
         _gov = getattr(ctx, '_resource_governor', None)
         if _gov and hasattr(_gov, 'maybe_pressure_relief'):
             _gov.maybe_pressure_relief()
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 class WinddownPhaseResult(msgspec.Struct, gc=False):
@@ -118,7 +118,7 @@ class WinddownOrchestrator:
                 _store.set_thread_count(4)
                 _logger = __import__("logging").getLogger(__name__)
                 _logger.info("[ISSUE-022-05] DuckDB threads boosted: 2 → 4 (teardown)")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     def _restore_duckdb_threads_after_teardown(self, ctx: Any) -> None:
@@ -139,7 +139,7 @@ class WinddownOrchestrator:
                 _store.set_thread_count(2)
                 _logger = __import__("logging").getLogger(__name__)
                 _logger.info("[ISSUE-022-05] DuckDB threads restored: 4 → 2 (baseline)")
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def run(self, ctx: Any, lifecycle: Any, query: str) -> WinddownPhaseResult:
@@ -167,7 +167,7 @@ class WinddownOrchestrator:
                 _blitz_teardown_result.get("gen0_ticks_total", 0),
                 _blitz_teardown_result.get("freeze_method"),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # fail-safe — winddown continues even if GC teardown fails
 
         _maybe_call_pressure_relief(ctx)
@@ -211,7 +211,7 @@ class WinddownOrchestrator:
             _registry = get_task_registry()
             await _registry.cancel_all(timeout=2.0)
             await _registry.cleanup_after_cancel()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         # Extract export results (set by _run_export_as_task via ctx.cycle)
@@ -338,7 +338,7 @@ class WinddownOrchestrator:
             cti_inputs = collect_cti_inputs()
             path = rend_cti_stix(cti_inputs, report, export_dir or None)
             ctx.result.export_paths.append(str(path))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _run_hypothesis_export(self, ctx: Any, report: dict[str, Any], export_dir: str | None) -> None:
@@ -369,7 +369,7 @@ class WinddownOrchestrator:
                     with open(path, "w") as f:
                         _stdlib_json.dump(data, f)
                 return path
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return None
 
@@ -379,7 +379,7 @@ class WinddownOrchestrator:
             from hledac.universal.intel.entity_signal_extractor import reset_extractor_stats, shutdown_executor
             shutdown_executor()
             reset_extractor_stats()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _teardown_browser_pool(self, ctx: Any) -> None:
@@ -389,7 +389,7 @@ class WinddownOrchestrator:
             if ENV.get_bool('HLEDAC_ENABLE_NODRIVER'):
                 from hledac.universal.fetching.public_fetcher import _teardown_browser_pool
                 await _teardown_browser_pool()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _await_synthesis(self, ctx: Any) -> bool:
@@ -411,7 +411,7 @@ class WinddownOrchestrator:
         if _store is not None:
             try:
                 await _store.async_vacuum_if_needed(threshold_bytes=2 * 1024 ** 3)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _close_dedup(self, ctx: Any) -> None:
@@ -421,7 +421,7 @@ class WinddownOrchestrator:
             _ds = ctx.duckdb_store
             if _ds and hasattr(_ds, 'close_dedup'):
                 await _ds.close_dedup()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _close_graph(self, ctx: Any) -> None:
@@ -432,7 +432,7 @@ class WinddownOrchestrator:
                 from hledac.universal.paths import LMDB_ROOT
                 _engine.save_graph(LMDB_ROOT / 'rel_discovery_graph.pkl')
                 await self._sync_latent_relationships_to_graph(ctx)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _sync_latent_relationships_to_graph(self, ctx: Any) -> None:
@@ -453,7 +453,7 @@ class WinddownOrchestrator:
                             name="winddown:upsert_relationship_batch",
                             scope=TaskScope.WINDUP,
                         )
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _close_enrichment(self, ctx: Any) -> None:
@@ -461,7 +461,7 @@ class WinddownOrchestrator:
         if ctx.enrichment_services:
             try:
                 await ctx.enrichment_services.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _close_privacy_layer(self, ctx: Any) -> None:
@@ -474,7 +474,7 @@ class WinddownOrchestrator:
                     _privacy = getattr(ctx.layer_manager, 'privacy', None)
                 if _privacy and hasattr(ctx.cycle, 'privacy_context_id') and ctx.cycle.privacy_context_id:
                     await _privacy.close_privacy_context(ctx.cycle.privacy_context_id)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _run_sidecars(self, ctx: Any) -> None:
@@ -494,7 +494,7 @@ class WinddownOrchestrator:
                     name="winddown:advisory_runner",
                     scope=TaskScope.WINDUP_SIDECAR,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _run_ane_semantic_dedup_advisory(self, ctx: Any) -> None:
@@ -505,7 +505,7 @@ class WinddownOrchestrator:
             _store = ctx.duckdb_store
             if _store:
                 await run_ane_semantic_dedup(_store)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     # ── META-007: Contradiction Feedback Audit ──────────────────────────────
@@ -541,7 +541,7 @@ class WinddownOrchestrator:
                 findings = await _duckdb.get_top_findings(limit=200)
             elif hasattr(_duckdb, "get_recent_findings"):
                 findings = await _duckdb.get_recent_findings(limit=200)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
         if not findings:
@@ -557,7 +557,7 @@ class WinddownOrchestrator:
                 ctx.result.contradiction_quality_gate = result.quality_gate_passed
                 ctx.result.contradiction_count = result.total_contradictions
                 ctx.result.contradiction_re_fetch_candidates = len(result.re_fetch_candidates)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return result
@@ -567,7 +567,7 @@ class WinddownOrchestrator:
         try:
             from hledac.universal.brain.research_advisor import maybe_launch_research
             maybe_launch_research(ctx.result, ctx.query)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _unload_hermes_at_teardown(self, ctx: Any) -> None:
@@ -575,7 +575,7 @@ class WinddownOrchestrator:
         try:
             if ctx.hermes_engine and hasattr(ctx.hermes_engine, 'unload'):
                 await ctx.hermes_engine.unload()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _unload_lazy_models(self, _ctx: Any) -> None:
@@ -583,7 +583,7 @@ class WinddownOrchestrator:
         try:
             from hledac.universal.brain import _lazy as lazy_module
             lazy_module.unload_all()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     def _clear_global_state(self, _ctx: Any) -> None:
@@ -602,18 +602,18 @@ class WinddownOrchestrator:
         try:
             from hledac.universal import clear_cache
             clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # ADVERSARY-003: Reset deobfuscation telemetry counters at sprint boundary
         try:
             from hledac.universal.core.rust_backend.ioc import get_domain
             get_domain(None).deobfuscate_telemetry_reset()  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         try:
             from hledac.universal.core.isolated_executors import clear_isolated_function_registry
             clear_isolated_function_registry()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # Issue #16: GlobalCacheRegistry — clear all registered caches
         try:
@@ -623,13 +623,13 @@ class WinddownOrchestrator:
             import logging
             _logger = logging.getLogger(__name__)
             _logger.debug(f"[G7] GlobalCacheRegistry cleared: {_sizes}")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # R8: Clear AdaptiveCache local registry (separate from GlobalCacheRegistry)
         try:
             from hledac.universal.cache.adaptive_cache import clear_all_caches as _clear_adaptive
             _clear_adaptive()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         # R8: Graceful shutdown of MemoryPressureBroadcaster monitor loop
         try:
@@ -638,7 +638,7 @@ class WinddownOrchestrator:
             # Use asyncio.ensure_future to stop asynchronously (non-blocking)
             import asyncio
             asyncio.ensure_future(bc.stop())
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def _cancel_bg_tasks(self, ctx: Any) -> None:
@@ -661,7 +661,7 @@ class WinddownOrchestrator:
                 for t in _bg_tasks:
                     if not t.done():
                         t.cancel()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             _bg_tasks.clear()
 
@@ -717,7 +717,7 @@ class WinddownOrchestrator:
         if _store and hasattr(_store, 'async_close'):
             try:
                 await _store.async_close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
     async def _build_diagnostic_report(self, ctx: Any, lifecycle: Any) -> dict[str, Any]:

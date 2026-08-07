@@ -213,7 +213,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         """Remove a previously registered phase-exit callback (idempotent)."""
         try:
             self._on_phase_exit_callbacks.remove(cb)
-        except ValueError:
+        except ValueError:  # noqa: BLE001
             pass
 
     # ── start ────────────────────────────────────────────────────────────────
@@ -277,9 +277,9 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                     try:
                         from hledac.universal.core.resource_governor import get_governor
                         get_governor().set_degraded_mode(True, self._degraded_reason)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         # [FINAL]-019-08: Governor recovered to OK → ACTIVE transition.
@@ -291,7 +291,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                     _is_governor_critical_or_emergency,
                 )
                 recovered = not _is_governor_critical_or_emergency()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             if recovered:
@@ -301,7 +301,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                 try:
                     from hledac.universal.core.resource_governor import get_governor
                     get_governor().set_degraded_mode(False, "governor_recovered")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         # [ULTIMATE]-002: Track elapsed time in ACTIVE phase (excludes DEGRADED).
@@ -338,7 +338,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                             self._cognitive_saturation_detector._unique_reports,
                             self._cognitive_saturation_detector._count_unique_in_window(now),
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
             remaining = self._remaining_time_unlocked(now)
@@ -353,7 +353,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                     if not self._governor_degraded_lowered:
                         gov.set_degraded_mode(False, "windup_entered")
                         self._governor_degraded_lowered = True
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 self._degraded = False
                 self._degraded_reason = ""
@@ -365,7 +365,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
                 from hledac.universal.core.resource_governor import get_governor
                 get_governor().set_windup_mode(False)
                 self._governor_windup_lowered = True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
         return self._current_phase
@@ -942,7 +942,7 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         for cb in self._on_phase_exit_callbacks:
             try:
                 cb(from_phase, phase)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass  # noqa: BLE001 — fail-safe: never let callback block transition
 
     def _is_valid_transition(self, from_phase: SprintPhase, to_phase: SprintPhase) -> bool:

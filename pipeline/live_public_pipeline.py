@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 import msgspec.json as _json
+from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.tools.url_dedup import get_default_bloom_filter
 from hledac.universal.utils.locks import LazyAsyncioLock
@@ -792,7 +793,7 @@ def _extract_domain_from_query(query: str) -> str | None:
 # Sprint F193B: Explicit fetch policy — policy-driven JS/DoH/stealth, not dormant defaults
 
 
-class FetchPolicy(msgspec.Struct, frozen=True, gc=False):
+class FetchPolicy(Struct, frozen=True):
     """Bounded fetch policy for canonical public sprint."""
 
     use_js: bool = False
@@ -997,7 +998,7 @@ def hits_from_result(discovery_result) -> tuple:
     return ()
 
 
-class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
+class PipelinePageResult(Struct, frozen=True):
     """Result of processing a single discovered page."""
 
     url: str
@@ -1039,7 +1040,7 @@ class PipelinePageResult(msgspec.Struct, frozen=True, gc=False):
     build_attempted: bool = False
 
 
-class PipelineRunResult(msgspec.Struct, frozen=True, gc=False):
+class PipelineRunResult(Struct, frozen=True):
     """Top-level result of a full pipeline run."""
 
     query: str
@@ -2076,7 +2077,7 @@ async def _generate_and_store_report(
                         ioc_data = _json.decode(ioc_json_block.group(1))
                         key_iocs = list(ioc_data.get("iocs", [])[:20])
                         key_entities = list(ioc_data.get("entities", [])[:20])
-                    except (ValueError, KeyError) as _:
+                    except (ValueError, KeyError) as _:  # noqa: BLE001
                         pass  # Fall back to NER extraction
 
                 if not key_iocs and not key_entities:
@@ -2660,7 +2661,7 @@ async def async_run_live_public_pipeline(
     # Each engine is a dataclass with async run() method that encapsulates a
     # logical phase of the pipeline. Backward compatible — same inputs/outputs.
 
-    class _DiscoveryEngine(msgspec.Struct, gc=False):
+    class _DiscoveryEngine(Struct):
         """Engine 1: Handles all discovery-related logic.
 
         Input state: query, store, max_results, public_bootstrap_enabled, seed_context

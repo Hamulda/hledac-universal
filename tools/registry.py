@@ -27,7 +27,8 @@ import asyncio
 from collections.abc import Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
-import msgspec
+
+from hledac.universal.compat.msgspec_gc_compat import Struct, field as msgspec_field
 if TYPE_CHECKING:
     pass
 
@@ -44,7 +45,7 @@ class RiskLevel(StrEnum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
-class CostModel(msgspec.Struct, kw_only=True, gc=False):
+class CostModel(Struct, kw_only=True):
     """Cost model for tool execution planning and resource management."""
     ram_mb_est: int = 100
     time_ms_est: int = 1000
@@ -56,7 +57,7 @@ class CostModel(msgspec.Struct, kw_only=True, gc=False):
         """Convert to compact hint for Hermes LLM."""
         return {'ram_mb': self.ram_mb_est, 'time_ms': self.time_ms_est, 'network': self.network, 'network_cost': self.network_cost, 'risk': self.risk_level.value}
 
-class CostSummary(msgspec.Struct, gc=False):
+class CostSummary(Struct):
     """Summary of estimated costs for a plan."""
     total_ram_mb: int = 0
     total_time_ms: int = 0
@@ -74,14 +75,14 @@ class CostSummary(msgspec.Struct, gc=False):
             return False
         return True
 
-class BudgetLimits(msgspec.Struct, gc=False):
+class BudgetLimits(Struct):
     """Budget limits for execution."""
     max_ram_mb: int = 2048
     max_time_ms: int = 300000
     max_network_calls: int = 50
     max_snapshot_writes: int = 20
 
-class SourceReputation(msgspec.Struct, gc=False):
+class SourceReputation(Struct):
     """Source reliability scoring from own data."""
     domain: str
     path_prefix: str | None = None
@@ -121,7 +122,7 @@ class SourceReputation(msgspec.Struct, gc=False):
         """Return dict for serialization."""
         return {'domain': self.domain, 'path_prefix': self.path_prefix, 'corroboration_rate': round(self.corroboration_rate, 3), 'contested_rate': round(self.contested_rate, 3), 'drift_rate': round(self.drift_rate, 3), 'blocked_rate': round(self.blocked_rate, 3), 'overall_score': round(self.overall_score, 3), 'total_claims': self.total_claims, 'last_updated': self.last_updated}
 
-class RateLimits(msgspec.Struct, kw_only=True, gc=False):
+class RateLimits(Struct, kw_only=True):
     """Rate limiting configuration for tools."""
     max_calls_per_run: int = 100
     max_parallel: int = 1
@@ -130,7 +131,7 @@ class RateLimits(msgspec.Struct, kw_only=True, gc=False):
         """Convert to compact hint for Hermes LLM."""
         return {'max_calls': self.max_calls_per_run, 'parallel': self.max_parallel}
 
-class Tool(msgspec.Struct, kw_only=True, gc=False):
+class Tool(Struct, kw_only=True):
     """
     Tool definition with schemas, cost model, and handler.
 
@@ -143,10 +144,10 @@ class Tool(msgspec.Struct, kw_only=True, gc=False):
     description: str
     args_schema: type
     returns_schema: type
-    cost_model: CostModel = msgspec.field(default_factory=CostModel)
-    rate_limits: RateLimits = msgspec.field(default_factory=RateLimits)
+    cost_model: CostModel = msgspec_field(default_factory=CostModel)
+    rate_limits: RateLimits = msgspec_field(default_factory=RateLimits)
     handler: Callable[..., Any]
-    required_capabilities: set[str] = msgspec.field(default_factory=set)
+    required_capabilities: set[str] = msgspec_field(default_factory=set)
 
     def to_tool_card(self) -> dict[str, Any]:
         """Generate tool card for Hermes LLM consumption."""

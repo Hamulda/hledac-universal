@@ -162,7 +162,7 @@ def _html_to_text(
         extract_html_text = rust.raw.extract_html_text
 
         return extract_html_text(html_content)
-    except (ImportError, Exception):
+    except (ImportError, Exception):  # noqa: BLE001
         pass
     # Fallback: Python stdlib HTMLParser
     try:
@@ -204,7 +204,7 @@ def _batch_html_to_text(html_contents: list[str]) -> list[str]:
         batch_extract_html_text = rust.raw.batch_extract_html_text
 
         return batch_extract_html_text(truncated)
-    except (ImportError, Exception):
+    except (ImportError, Exception):  # noqa: BLE001
         pass
     # Fallback: sequential Python HTMLParser
     return [_html_to_text(html) for html in truncated]

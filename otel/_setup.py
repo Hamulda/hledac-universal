@@ -233,12 +233,12 @@ def _reset_otel_globals() -> None:
     try:
         from opentelemetry.trace import _TRACER_PROVIDER_SET_ONCE
         _TRACER_PROVIDER_SET_ONCE._done = False
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError):  # noqa: BLE001
         pass
     try:
         from opentelemetry import trace
         trace._TRACER_PROVIDER = None
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError):  # noqa: BLE001
         pass
 
 def init_telemetry(cfg: TelemetryConfig | None=None) -> bool:
@@ -302,7 +302,7 @@ def init_telemetry(cfg: TelemetryConfig | None=None) -> bool:
             try:
                 from otel._instrumentation import get_tracer
                 get_tracer()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return True
         except Exception as e:
@@ -318,27 +318,27 @@ def shutdown_telemetry(timeout_ms: int=5000) -> None:
         try:
             from otel._instrumentation import _reset_tracer_cache
             _reset_tracer_cache()
-        except (ImportError, Exception):
+        except (ImportError, Exception):  # noqa: BLE001
             pass
         try:
             if _PROCESSOR is not None:
                 try:
                     _PROCESSOR.force_flush(timeout_millis=timeout_ms)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 try:
                     _PROCESSOR.shutdown()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if _EXPORTER is not None and hasattr(_EXPORTER, 'shutdown'):
                 try:
                     _EXPORTER.shutdown()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
             if _PROVIDER is not None and hasattr(_PROVIDER, 'shutdown'):
                 try:
                     _PROVIDER.shutdown()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
         finally:
             _INITIALIZED = False
@@ -351,6 +351,6 @@ def shutdown_telemetry(timeout_ms: int=5000) -> None:
             if _DUCKDB_CONN is not None:
                 try:
                     _DUCKDB_CONN.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
                 _DUCKDB_CONN = None

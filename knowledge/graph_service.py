@@ -188,7 +188,7 @@ class GraphService:
                 # event loop crash (RuntimeError: loop is already running) in Python 3.10+.
                 try:
                     running_loop = asyncio.get_running_loop()
-                except RuntimeError:
+                except RuntimeError:  # noqa: BLE001
                     # No running loop — we're in a sync context, skip LanceDB upsert.
                     # Sprint continues without the LanceDB entity (fire-and-forget).
                     pass
@@ -377,7 +377,7 @@ class GraphService:
                     if asyncio.iscoroutine(result):
                         try:
                             running_loop = asyncio.get_running_loop()
-                        except RuntimeError:
+                        except RuntimeError:  # noqa: BLE001
                             # Sync context — skip async callback (fire-and-forget)
                             pass
                         else:
@@ -874,7 +874,7 @@ def reset_session() -> None:
     if _DUCKPGQ_GRAPH is not None:
         try:
             _DUCKPGQ_GRAPH.close()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     _DUCKPGQ_GRAPH = None
 

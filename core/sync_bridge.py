@@ -162,7 +162,7 @@ async def stream_via_queue(
                 try:
                     while not q.empty():
                         yield q.get_nowait()  # type: ignore[assignment]
-                except asyncio.QueueEmpty:
+                except asyncio.QueueEmpty:  # noqa: BLE001
                     pass
                 break
     except asyncio.CancelledError:

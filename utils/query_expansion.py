@@ -22,6 +22,7 @@ import logging
 from dataclasses import dataclass
 import msgspec
 from typing import Any
+from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 
 class ExpansionConfig(msgspec.Struct, gc=False):
@@ -421,7 +422,7 @@ class MultiStrategyExpander:
                 all_variations.extend(variations)
             except Exception as e:
                 logger.warning(f'Expansion strategy {strategy.strategy_type} failed: {e}')
-        all_variations.sort(key=lambda v: v.weight * v.confidence, reverse=True)
+        all_variations.sort(key=attrgetter("weight") * v.confidence, reverse=True)
         seen = {query.lower()}
         unique_variations = []
         for var in all_variations:

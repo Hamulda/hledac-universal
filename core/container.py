@@ -298,9 +298,9 @@ def _seed_global_container(container: ServiceContainer) -> None:
                         return _caps.require(c)
 
                     container.register(f"cap.{cap_name}", factory=_factory, scope="singleton")
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
 

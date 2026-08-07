@@ -213,7 +213,7 @@ class ModelLifecycleManager:
             if mx is not None:
                 mx.eval([])
                 mx.clear_cache()
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     async def release_current(self) -> None:

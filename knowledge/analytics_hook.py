@@ -248,7 +248,7 @@ class _ShadowRecorder:
             try:
                 async with asyncio.timeout(timeout):
                     await asyncio.shield(self._store.aclose())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 _shadow_recorder: _ShadowRecorder | None = None
 
@@ -332,17 +332,17 @@ def _emit_shadow_telemetry(failure_count: int | None=None) -> None:
         from otel._instrumentation import set_attribute
         set_attribute('shadow.ingest_failures', failure_count)
         set_attribute('shadow.queue_full_warned', _QUEUE_FULL_WARNED)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         from hledac.universal.metrics_registry import get_metrics_registry
         get_metrics_registry().set_gauge('shadow_ingest_failures', float(failure_count))
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     try:
         global _SHADOW_FAILURES_AT_LAST_FLUSH
         _new_failures = failure_count - _SHADOW_FAILURES_AT_LAST_FLUSH
         if _new_failures > _SHADOW_ALERT_THRESHOLD:
             logger.warning(f'[SHADOW ALERT] Queue saturating: {_new_failures} new failures since last flush (threshold={_SHADOW_ALERT_THRESHOLD}). Findings may be disappearing.')
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass

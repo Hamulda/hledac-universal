@@ -42,6 +42,7 @@ import struct
 from collections.abc import Sequence
 from dataclasses import dataclass
 import msgspec
+from hledac.universal.compat.msgspec_gc_compat import Struct
 from typing import TYPE_CHECKING, Any, Final
 
 from datasketch import MinHash, MinHashLSH
@@ -72,13 +73,13 @@ MINHASH_NUM_PERM: Final[int] = 128  # permutations for MinHash (M1 8GB balance)
 # ── Result Types ───────────────────────────────────────────────────────────────
 
 
-class SimHashResult(msgspec.Struct, frozen=True, gc=False):
+class SimHashResult(Struct, frozen=True):
     """SimHash fingerprint result."""
     fingerprint: int  # 64-bit integer
     bits: int  # actual bits used
 
 
-class DedupDecision(msgspec.Struct, frozen=True, gc=False):
+class DedupDecision(Struct, frozen=True):
     """Dedup advisory decision."""
     is_duplicate: bool
     reason: str  # e.g. "simhash_distance_2", "minhash_similarity_0.92"
@@ -111,7 +112,7 @@ def _get_rust_simhash() -> Any:
             accel = get_accel()
             if accel.is_available:
                 _rust_simhash = accel.simhash
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return _rust_simhash
 
@@ -127,7 +128,7 @@ def _compute_simhash(text: str) -> int:
     if rust is not None:
         try:
             return rust.compute_simhash(text)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass  # Rust failed — fall through to pure-Python
 
     # Pure-Python fallback: tokenize → hash tokens → accumulate bit counts → threshold.
@@ -397,7 +398,7 @@ class SemanticDeduplicator:
                         # E-27 FIX: remove from LSH index to prevent false positives
                         try:
                             self._minhash_lsh.remove(k)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             pass  # datasketch remove is best-effort
                         del self._minhash_store[k]
 

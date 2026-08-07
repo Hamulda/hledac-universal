@@ -113,7 +113,7 @@ class StreamHandler:
                 self._stats.stream_errors += 1
                 try:
                     self._queue.put_nowait(None)  # type: ignore
-                except asyncio.QueueFull:
+                except asyncio.QueueFull:  # noqa: BLE001
                     pass
 
         # Start producer
@@ -137,7 +137,7 @@ class StreamHandler:
             producer_task.cancel()
             try:
                 await producer_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
 
     async def cancel(self) -> None:

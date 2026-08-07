@@ -93,7 +93,7 @@ class DiscoveryStage:
                 # Yield to event loop — allows downstream stages to start processing
                 await asyncio.sleep(0)
 
-        except asyncio.CancelledError:
+        except asyncio.CancelledError:  # noqa: BLE001
             pass
         except Exception:
             metrics.record_error()
@@ -116,7 +116,7 @@ class DiscoveryStage:
                 try:
                     rescue_hits = generate_rescue_urls(ctx.query, max_urls=5)
                     hits.extend(rescue_hits)
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
                 if self._public_bootstrap_enabled:
@@ -125,9 +125,9 @@ class DiscoveryStage:
                             ctx.query, max_urls=self._max_results
                         )
                         hits.extend(bootstrap_hits)
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             return hits
 

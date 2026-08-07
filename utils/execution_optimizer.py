@@ -123,7 +123,7 @@ class _ConcurrencyController:
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: BLE001
                 pass
 
     async def acquire(self):
@@ -204,7 +204,7 @@ class ParallelExecutionOptimizer:
             if raw:
                 val = int(raw)
                 return max(1, min(val, 16))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # noqa: BLE001
             pass
         return 4
 
@@ -1218,7 +1218,7 @@ class MemoryAwareScheduler:
             if snap.memory_percent > self.max_memory_percent:
                 logger.warning(f'Memory high ({snap.memory_percent:.1f}%), throttling task {task_id}')
                 await asyncio.sleep(1)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         async with self._semaphore:
             self.active_tasks[task_id] = {'start_time': time.time(), 'estimated_memory': estimated_memory_mb}

@@ -242,12 +242,12 @@ class ThreatIntelligenceAutomation:
                         endpoint_ip = ipaddress.ip_address(endpoint.split(':')[0])
                         if indicator_ip == endpoint_ip:
                             return True
-            except ValueError:
+            except ValueError:  # noqa: BLE001
                 pass
             for endpoint in endpoints:
                 if endpoint in indicator or indicator in endpoint:
                     return True
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         return False
 
