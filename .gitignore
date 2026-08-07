@@ -152,3 +152,5 @@ benchmark_results/
 .agentsroom/handoff-transcript-*.txt
 .agentsroom/handoff-summary-*.md
 .aider*
+# Kilo workspace (tooling)
+.kilo/
