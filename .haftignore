@@ -3,7 +3,7 @@
 .venv-test/
 .kilo/
 
-# Editor/IDE
+# Agent/IDE tools (untracked external configs)
 .aider-desk/
 .kilo/
 .claude/
