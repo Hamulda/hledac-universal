@@ -17,6 +17,9 @@ import asyncio
 import logging
 import os
 from typing import Any
+
+from utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
+
 logger = logging.getLogger(__name__)
 _MOBILECLIP_ENV_GATE = 'HLEDAC_ENABLE_MOBILECLIP'
 _mlx_core_mod = None
@@ -95,7 +98,7 @@ class MambaFusionLazy:
     def __init__(self, vision_dim: int=1280, text_dim: int=768, graph_dim: int=64,
                  hidden: int=256, output_dim: int=128, num_heads: int=8):
         self._initialized = False
-        self._lock = None
+        self._lock: asyncio.Lock | None = None
         self._vision_dim = vision_dim
         self._text_dim = text_dim
         self._graph_dim = graph_dim
@@ -112,11 +115,8 @@ class MambaFusionLazy:
         self._out_proj = None
         self._has_mamba = False
 
-    def _get_lock(self) -> asyncio.Lock:
-        """ISSUE-014 compliant: lazy lock bez asyncio.Lock v __init__."""
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        return self._lock
+    # F320-REFACTOR-2: lazy lock descriptor (ISSUE-014 compliant)
+    _get_lock = LazyLockDescriptor("_lock")
 
     def _ensure_initialized(self):
         """Lazy inicializace vrstev — voláno při prvním forward pass. Thread-safe.
@@ -207,11 +207,8 @@ class MambaFusion:
         self._model = None
         self._lock: asyncio.Lock | None = None
 
-    def _get_lock(self) -> asyncio.Lock:
-        """ISSUE-014 compliant: lazy lock bez asyncio.Lock v __init__."""
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        return self._lock
+    # F320-REFACTOR-2: lazy lock descriptor (ISSUE-014 compliant)
+    _get_lock = LazyLockDescriptor("_lock")
 
     async def initialize(self):
         """Acquire model from pool or create inline. Thread-safe with double-checked locking."""
@@ -258,29 +255,19 @@ class MobileCLIPFusion:
     CI-safe: pokud mobileclip není, ImportError při load.
     Lazy init + lazy lock (ISSUE-014 compliant).
     """
-    __slots__ = ('__lock', '_model', '_tokenizer', '_vision_encoder', 'embed_dim', '_pool', '_initialized')
+    __slots__ = ('_lock', '_model', '_tokenizer', '_vision_encoder', 'embed_dim', '_pool', '_initialized')
 
     def __init__(self, pool=None):
         self._model = None
         self._tokenizer = None
         self.embed_dim = 512
-        self.__lock = None
+        self._lock: asyncio.Lock | None = None
         self._vision_encoder: Any | None = None
         self._pool = pool
         self._initialized = False
 
-    def _lock(self) -> asyncio.Lock:
-        """Thread-safe lazy init pro asyncio.Lock (double-checked locking).
-
-        Bezpečné i při souběžném volání z více async contextů. asyncio.Lock()
-        je immutable po vytvoření, single assignment je atomický.
-        ISSUE-014 compliant: žádný asyncio.Lock v __init__.
-        """
-        lock = self.__lock
-        if lock is None:
-            lock = asyncio.Lock()
-            self.__lock = lock
-        return lock
+    # F320-REFACTOR-2: lazy lock descriptor (ISSUE-014 compliant)
+    _get_lock = LazyLockDescriptor("_lock")
 
     def _get_vision_encoder(self, governor: Any=None):
         """Lazy-load VisionEncoder singleton (P0 canonical)."""
@@ -294,7 +281,7 @@ class MobileCLIPFusion:
         """Lazy load mobileclip model s pool integration."""
         if self._initialized and self._model is not None:
             return
-        async with self._lock():
+        async with self._get_lock():
             if self._initialized and self._model is not None:
                 return
             if os.environ.get(_MOBILECLIP_ENV_GATE, '').lower() not in ('1', 'true', 'yes'):

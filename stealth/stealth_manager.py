@@ -480,6 +480,93 @@ class StealthSession:
             return True
         return False
 
+    async def _apply_jitter(self, url: str, is_blitz: bool) -> None:
+        """Apply jitter delay based on URL type. Skip in blitz mode."""
+        if is_blitz:
+            return
+        if self._is_onion_url(url):
+            await asyncio.sleep(_JITTER_RNG.uniform(0.3, 1.8))
+        else:
+            await asyncio.sleep(_JITTER_RNG.uniform(0.05, 0.15))
+
+    async def _rotate_circuit_if_needed(self, is_blitz: bool) -> None:
+        """Rotate Tor circuit every 10 requests. Skip in blitz mode."""
+        if is_blitz:
+            return
+        if self._request_count >= 10:
+            self._request_count = 0
+            await self._rotate_tor_identity()
+
+    async def _handle_rate_limit(self, domain: str) -> None:
+        """Handle rate limiting. Raises on limit exceeded."""
+        if self.manager.rate_limiter:
+            await self.manager.rate_limiter.acquire()
+
+    def _truncate_body(self, response: Any, max_bytes: int) -> tuple[bytes, bool]:
+        """Truncate response body to max_bytes. Returns (body_bytes, truncated)."""
+        body_chunks: list[bytes] = []
+        truncated = False
+        remaining = max_bytes
+        for chunk in response.iter_bytes(chunk_size=min(8192, max_bytes)):
+            if len(chunk) > remaining:
+                body_chunks.append(chunk[:remaining])
+                truncated = True
+                break
+            body_chunks.append(chunk)
+            remaining -= len(chunk)
+            if remaining <= 0:
+                truncated = True
+                break
+        return b''.join(body_chunks), truncated
+
+    def _update_stats(self, result: StealthResponse) -> None:
+        """Update manager statistics based on request result."""
+        self.manager._request_count += 1
+        if result.success:
+            self.manager._success_count += 1
+        else:
+            self.manager._failure_count += 1
+
+    async def _execute_request_attempt(
+        self,
+        session: Any,
+        method: str,
+        url: str,
+        stealth_headers: dict[str, str],
+        data: Any,
+        **kwargs
+    ) -> tuple[Any, StealthResponse | None, bool]:
+        """
+        Execute single request attempt.
+        Returns (response, None, False) on success, (None, error_result, True) on should-retry.
+        """
+        try:
+            response = await session.request(
+                method=method.upper(),
+                url=url,
+                headers=stealth_headers,
+                data=data,
+                **kwargs
+            )
+
+            # Check for transient error
+            if self._is_transient_error(response.status_code):
+                retry_after = response.headers.get('Retry-After')
+                delay = self._calculate_retry_delay(None, retry_after)
+                logger.warning(f'Transient error {response.status_code}, retrying in {delay:.2f}s')
+                await asyncio.sleep(delay)
+                return None, None, True  # Should retry
+
+            return response, None, False
+        except httpx.TimeoutException as e:
+            if self._should_retry_transient(0, e, 'Timeout'):
+                return None, None, True
+            raise
+        except Exception as e:
+            if self._should_retry_transient(0, e, f'Transient error {e}'):
+                return None, None, True
+            raise
+
     @staticmethod
     def _is_onion_url(url: str) -> bool:
         """Check if URL is a Tor/.onion darknet destination."""
@@ -495,8 +582,7 @@ class StealthSession:
             return False
 
     async def request(self, method: str, url: str, max_bytes: int=DEFAULT_MAX_BYTES, allow_redirects: bool=True, headers: dict[str, str] | None=None, data: Any=None, **kwargs) -> StealthResponse:
-        """
-        Make real stealth HTTP request with M1 8GB constraints and retry policy.
+        """Make real stealth HTTP request with M1 8GB constraints and retry policy.
 
         Args:
             method: HTTP method (GET, POST, etc.)
@@ -511,102 +597,97 @@ class StealthSession:
         """
         if self._closed:
             raise RuntimeError('Session is closed')
+
         domain = urlparse(url).netloc or 'default'
         last_exception: Exception | None = None
+
+        # HTTP/3 fast path for GET
         if method.upper() == 'GET':
             if await self._supports_http3(url):
                 http3_body = await self._http3_request(method, url, headers)
                 if http3_body is not None:
                     body_bytes = http3_body[:max_bytes]
                     truncated = len(http3_body) > max_bytes
-                    return StealthResponse(status=200, final_url=url, headers={'X-Protocol': 'HTTP/3'}, body_bytes=body_bytes, content_type='application/octet-stream', truncated=truncated)
+                    return StealthResponse(
+                        status=200, final_url=url,
+                        headers={'X-Protocol': 'HTTP/3'},
+                        body_bytes=body_bytes,
+                        content_type='application/octet-stream',
+                        truncated=truncated
+                    )
+
+        # Circuit breaker check
         allowed, reason = self.manager._stealth_domain_allowed(url)
         if not allowed:
             raise SkipFetch(f'circuit_breaker_open:{reason}')
-        # PHYSICS-13 / BLITZ-12+14: Resolve blitz mode once before the retry
-        # loop — used by both per-request jitter and Tor circuit rotation gates.
-        # Blitz mode is set at sprint start via contextvars and never changes
-        # mid-sprint, so caching at function entry is safe.
+
+        # Blitz mode check (cached at function entry)
         from hledac.universal.core.telemetry.context_state import is_blitz_mode as _is_blitz
+        is_blitz = _is_blitz()
+
         for attempt in range(MAX_RETRY_ATTEMPTS):
-            # D-9: Per-request jitter — Tor anti-correlation (0.3-1.8s) on attempt 0
-            # only; retry attempts use _calculate_retry_delay() which already has
-            # exponential-backoff jitter built in. Applying full jitter on every
-            # attempt was burning 3× to 9× the intended latency budget.
-            # BLITZ-12: When blitz mode is active (duration ≤ 30 min), skip
-            # stealth jitter entirely — the sprint is a one-shot burst where
-            # anti-correlation timing provides no real value.
-            if attempt == 0 and not _is_blitz():
-                if self._is_onion_url(url):
-                    await asyncio.sleep(_JITTER_RNG.uniform(0.3, 1.8))
-                else:
-                    await asyncio.sleep(_JITTER_RNG.uniform(0.05, 0.15))
+            # Apply jitter on first attempt (not in blitz)
+            if attempt == 0:
+                await self._apply_jitter(url, is_blitz)
+
             self._request_count += 1
-            # PHYSICS-13: In blitz mode, skip Tor circuit rotation (NEWNYM)
-            # entirely — saves 1-5s per 10 Tor requests. The sprint is a
-            # one-shot burst where circuit rotation provides no stealth value.
-            if self._request_count >= 10:
-                self._request_count = 0
-                if not _is_blitz():
-                    await self._rotate_tor_identity()
-            if attempt == 0 and self.manager.rate_limiter:
+            await self._rotate_circuit_if_needed(is_blitz)
+
+            # Rate limiting (first attempt only)
+            if attempt == 0:
                 try:
-                    await self.manager.rate_limiter.acquire()
+                    await self._handle_rate_limit(domain)
                 except RateLimitExceeded:
                     logger.warning(f'Rate limit exceeded for {domain}')
                     raise
+
+            # Build headers
             stealth_headers = self.get_headers(domain)
             if headers:
                 stealth_headers.update(headers)
-            logger.debug(f'Stealth {method} request to {url} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS}, max_bytes={max_bytes})')
+
+            logger.debug(f'Stealth {method} request to {url} (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})')
+
             try:
                 session = await self._get_session()
-                response = await session.request(method=method.upper(), url=url, headers=stealth_headers, data=data, **kwargs)
-                if self._is_transient_error(response.status_code) and attempt < MAX_RETRY_ATTEMPTS - 1:
-                    retry_after = response.headers.get('Retry-After')
-                    delay = self._calculate_retry_delay(attempt, retry_after)
-                    logger.warning(f'Transient error {response.status_code}, retrying in {delay:.2f}s (attempt {attempt + 1}/{MAX_RETRY_ATTEMPTS})')
-                    await asyncio.sleep(delay)
+                response, _, should_retry = await self._execute_request_attempt(
+                    session, method, url, stealth_headers, data, **kwargs
+                )
+
+                if should_retry:
                     continue
-                body_chunks: list[bytes] = []
-                truncated = False
-                remaining = max_bytes
-                for chunk in response.iter_bytes(chunk_size=min(8192, max_bytes)):
-                    if len(chunk) > remaining:
-                        body_chunks.append(chunk[:remaining])
-                        truncated = True
-                        logger.debug(f'Response truncated at {max_bytes} bytes')
-                        break
-                    body_chunks.append(chunk)
-                    remaining -= len(chunk)
-                    if remaining <= 0:
-                        truncated = True
-                        break
-                body_bytes = b''.join(body_chunks)
+
+                # Process successful response
+                body_bytes, truncated = self._truncate_body(response, max_bytes)
+
+                # Store cookies
                 for name, value in dict(response.cookies).items():
                     self._cookies[name] = value
-                result = StealthResponse(status=response.status_code, final_url=str(response.url), headers=dict(response.headers), body_bytes=body_bytes, content_type=response.headers.get('Content-Type'), truncated=truncated)
-                self.manager._request_count += 1
-                if result.success:
-                    self.manager._success_count += 1
-                else:
-                    self.manager._failure_count += 1
+
+                result = StealthResponse(
+                    status=response.status_code,
+                    final_url=str(response.url),
+                    headers=dict(response.headers),
+                    body_bytes=body_bytes,
+                    content_type=response.headers.get('Content-Type'),
+                    truncated=truncated
+                )
+
+                self._update_stats(result)
                 logger.debug(f'Request completed: {response.status_code} ({len(body_bytes)} bytes)')
                 return result
+
             except httpx.TimeoutException as e:
                 last_exception = e
-                if self._should_retry_transient(attempt, e, 'Timeout'):
-                    continue
                 logger.warning(f'Request timeout: {url}')
                 self.manager._failure_count += 1
                 raise
             except Exception as e:
                 last_exception = e
-                if self._should_retry_transient(attempt, e, f'Transient error {e}'):
-                    continue
                 logger.warning(f'Request failed: {e}')
                 self.manager._failure_count += 1
                 raise
+
         if last_exception:
             raise last_exception
         raise RuntimeError(f'Request failed after {MAX_RETRY_ATTEMPTS} attempts')

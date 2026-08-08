@@ -461,6 +461,99 @@ class WALManager:
         except Exception:
             return False
 
+    @staticmethod
+    def _decode_key(key_bytes: bytes) -> str:
+        """Decode key bytes to string, handling both bytes and bytearray."""
+        if isinstance(key_bytes, bytes):
+            return key_bytes.decode('utf-8')
+        return bytes(key_bytes).decode('utf-8')
+
+
+    @staticmethod
+    def _evict_unified_path(
+        unified_store: Any,
+        keep_count: int,
+    ) -> int:
+        """
+        Evict pending markers from unified store.
+        Returns number of markers evicted.
+        """
+        try:
+            all_entries = unified_store.scan_prefix('wal')
+            pending = [(k, v) for k, v in all_entries if k.startswith('pending_duckdb_sync:')]
+            if len(pending) <= keep_count:
+                return 0
+            pending.sort(key=lambda x: x[1].get('ts', 0))
+            to_evict = pending[:len(pending) - keep_count]
+            for key, _ in to_evict:
+                unified_store.delete('wal', key)
+            return len(to_evict)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _evict_lmdb_path(
+        env: Any,
+        prefix: bytes,
+        keep_count: int,
+    ) -> int:
+        """
+        Evict pending markers from LMDB store.
+        Uses bounded heap for M1-safe memory usage.
+        Returns number of markers evicted.
+        """
+        import heapq
+
+        # Count total entries
+        total_count = 0
+        with env.begin(write=False, buffers=True) as txn:
+            cursor = txn.cursor()
+            if not cursor.set_range(prefix):
+                return 0
+            for key_bytes, _ in cursor.iternext():
+                key = WALManager._decode_key(key_bytes)
+                if not key.startswith(prefix.decode('utf-8')):
+                    break
+                total_count += 1
+
+        if total_count <= keep_count:
+            return 0
+
+        evict_count = total_count - keep_count
+
+        # Bounded heap to find oldest entries
+        oldest_keys: list[tuple[float, str]] = []
+        prefix_str = prefix.decode('utf-8')
+
+        with env.begin(write=False, buffers=True) as txn:
+            cursor = txn.cursor()
+            if cursor.set_range(prefix):
+                for key_bytes, value_bytes in cursor.iternext():
+                    key = WALManager._decode_key(key_bytes)
+                    if not key.startswith(prefix_str):
+                        break
+                    try:
+                        value = orjson.loads(value_bytes)
+                        ts = value.get('ts', 0.0)
+                        if len(oldest_keys) < evict_count:
+                            heapq.heappush(oldest_keys, (ts, key))
+                        elif ts < oldest_keys[0][0]:
+                            heapq.heapreplace(oldest_keys, (ts, key))
+                    except Exception:
+                        continue
+
+        if not oldest_keys:
+            return 0
+
+        # Delete in single write transaction
+        keys_to_evict = [key for _, key in oldest_keys]
+        deleted = 0
+        with env.begin(write=True) as txn:
+            for key in keys_to_evict:
+                if txn.delete(key.encode('utf-8')):
+                    deleted += 1
+        return deleted
+
     def _evict_oldest_pending_markers(self, keep_count: int) -> int:
         """
         Evict oldest pending sync markers to enforce MAX_PENDING_SYNC_MARKERS bound.
@@ -472,18 +565,9 @@ class WALManager:
         for all deletions, and processes in chunks to limit memory pressure.
         """
         if self._use_unified and self._unified_store is not None:
-            try:
-                all_entries = self._unified_store.scan_prefix('wal')
-                pending = [(k, v) for k, v in all_entries if k.startswith('pending_duckdb_sync:')]
-                if len(pending) <= keep_count:
-                    return 0
-                pending.sort(key=lambda x: x[1].get('ts', 0))
-                to_evict = pending[:len(pending) - keep_count]
-                for key, _ in to_evict:
-                    self._unified_store.delete('wal', key)
-                return len(to_evict)
-            except Exception:
-                return 0
+            return WALManager._evict_unified_path(self._unified_store, keep_count)
+
+        # LMDB path
         if self._wal_lmdb is None:
             return 0
         try:
@@ -492,47 +576,7 @@ class WALManager:
                 return 0
             prefix = self._key_pending_sync('')
             prefix_bytes = prefix.encode('utf-8')
-            with env.begin(write=False, buffers=True) as txn:
-                cursor = txn.cursor()
-                if not cursor.set_range(prefix_bytes):
-                    return 0
-                total_count = 0
-                for key_bytes, _ in cursor.iternext():
-                    key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
-                    if not key.startswith(prefix):
-                        break
-                    total_count += 1
-            if total_count <= keep_count:
-                return 0
-            evict_count = total_count - keep_count
-            import heapq
-            oldest_keys: list[tuple[float, str]] = []
-            with env.begin(write=False, buffers=True) as txn:
-                cursor = txn.cursor()
-                if cursor.set_range(prefix_bytes):
-                    for key_bytes, value_bytes in cursor.iternext():
-                        key = key_bytes.decode('utf-8') if isinstance(key_bytes, bytes) else bytes(key_bytes).decode('utf-8')
-                        if not key.startswith(prefix):
-                            break
-                        try:
-                            # S-02: orjson.loads accepts bytes/bytearray/memoryview directly — zero-copy
-                            value = orjson.loads(value_bytes)
-                            ts = value.get('ts', 0.0)
-                            if len(oldest_keys) < evict_count:
-                                heapq.heappush(oldest_keys, (ts, key))
-                            elif ts < oldest_keys[0][0]:
-                                heapq.heapreplace(oldest_keys, (ts, key))
-                        except Exception:
-                            continue
-            if not oldest_keys:
-                return 0
-            keys_to_evict = [key for _, key in oldest_keys]
-            deleted = 0
-            with env.begin(write=True) as txn:
-                for key in keys_to_evict:
-                    if txn.delete(key.encode('utf-8')):
-                        deleted += 1
-            return deleted
+            return WALManager._evict_lmdb_path(env, prefix_bytes, keep_count)
         except Exception:
             return 0
 

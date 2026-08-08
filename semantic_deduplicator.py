@@ -59,6 +59,11 @@ class _SemanticDedupLMDB:
     """
     __slots__ = tuple(('_boot_error', '_env'))
 
+    # F320-REFACTOR: Use canonical close() from _patterns
+    from hledac.universal.utils._patterns import make_close_method
+
+    close = make_close_method("_env")
+
     def __init__(self, path_str: str | None=None):
         self._env = None
         self._boot_error: str | None = None
@@ -108,14 +113,6 @@ class _SemanticDedupLMDB:
         except Exception:
             return None
 
-    def close(self) -> None:
-        """Close LMDB environment."""
-        if self._env is not None:
-            try:
-                self._env.close()
-            except Exception:  # noqa: BLE001
-                pass
-            self._env = None
 
 class SemanticDedupCache:
     """

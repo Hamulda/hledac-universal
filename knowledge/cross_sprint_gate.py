@@ -178,7 +178,19 @@ class CrossSprintGate:
         self._stats["queries"] += 1
         self._stats["entities_checked"] += len(entities)
 
-        # Check cache first (under lock)
+        skip_set, uncached, now = await self._check_cache(entities)
+        if not uncached:
+            return (skip_set, [])
+
+        delta_index_results = await self._query_delta_index(uncached)
+        freshness_map = await self._query_duckdb(uncached)
+        all_freshness = await self._evaluate_entities(skip_set, uncached, freshness_map, delta_index_results, now)
+        await self._evict_stale_cache(now)
+
+        return (skip_set, all_freshness)
+
+    async def _check_cache(self, entities: list[dict[str, str]]) -> tuple[set[str], list[dict[str, str]], float]:
+        """Check cache for entities, return (skip_set, uncached, now)."""
         skip_set: set[str] = set()
         uncached: list[dict[str, str]] = []
         now = _time.time()
@@ -195,99 +207,101 @@ class CrossSprintGate:
                         continue
                 self._stats["cache_misses"] += 1
                 uncached.append(ent)
+        return skip_set, uncached, now
 
-        if not uncached:
-            return (skip_set, [])
-
-        # [DETA]-001: SprintDeltaIndex fast path (DuckDB O(1) lookups)
-        delta_index_results: dict[str, tuple[bool, Any]] = {}
-        if self._delta_index is not None and self._delta_index.enabled:
-            try:
-                entity_tuples = [
-                    (ent["entity_value"], ent.get("entity_type", "domain"))
-                    for ent in uncached
-                ]
-                delta_index_results = await self._delta_index.is_known_good_batch(
-                    entity_tuples, current_sprint_id="current"
-                )
-            except Exception as e:
-                logger.debug("[CrossSprintGate] DeltaIndex batch lookup failed: %s", e)
-
-        # Query DuckDB for uncached entities (deep path)
-        freshness_map: dict[str, EntityFreshness] = {}
+    async def _query_delta_index(self, uncached: list[dict[str, str]]) -> dict[str, tuple[bool, Any]]:
+        """Query DeltaIndex fast path for entities."""
+        if self._delta_index is None or not self._delta_index.enabled:
+            return {}
         try:
-            freshness_map = await self._query_entity_batch(uncached)
+            entity_tuples = [
+                (ent["entity_value"], ent.get("entity_type", "domain"))
+                for ent in uncached
+            ]
+            return await self._delta_index.is_known_good_batch(entity_tuples, current_sprint_id="current")
         except Exception as e:
-            logger.debug(
-                "[CrossSprintGate] Batch query failed (fail-soft -> allow all): %s", e
-            )
-            return (skip_set, [])
+            logger.debug("[CrossSprintGate] DeltaIndex batch lookup failed: %s", e)
+            return {}
 
-        # Single evaluation loop — merge DeltaIndex + DuckDB results
+    async def _query_duckdb(self, uncached: list[dict[str, str]]) -> dict[str, EntityFreshness]:
+        """Query DuckDB for entity freshness."""
+        try:
+            return await self._query_entity_batch(uncached)
+        except Exception as e:
+            logger.debug("[CrossSprintGate] Batch query failed (fail-soft -> allow all): %s", e)
+            return {}
+
+    async def _evaluate_entities(
+        self,
+        skip_set: set[str],
+        uncached: list[dict[str, str]],
+        freshness_map: dict[str, EntityFreshness],
+        delta_index_results: dict[str, tuple[bool, Any]],
+        now: float,
+    ) -> list[EntityFreshness]:
+        """Evaluate entities and build freshness list."""
         all_freshness: list[EntityFreshness] = []
         for ent in uncached:
             ev = ent["entity_value"]
             ioc_type = ent.get("entity_type", "domain")
             delta_key = f"{ioc_type}:{ev}"
 
-            # Start with DuckDB freshness (may be None for novel entities)
-            freshness = freshness_map.get(ev)
-            if freshness is None:
-                freshness = EntityFreshness(entity_value=ev, entity_type=ioc_type)
-
-            # [DETA]-001: Boost with SprintDeltaIndex if available
-            if delta_key in delta_index_results:
-                is_good, ref = delta_index_results[delta_key]
-                if is_good and ref is not None:
-                    freshness.freshness = "confirmed"
-                    freshness.distinct_sources = max(
-                        freshness.distinct_sources,
-                        getattr(ref, "source_count", 1),
-                    )
-                    freshness.avg_confidence = max(freshness.avg_confidence, 0.75)
-                    freshness.last_confirmed_ts = getattr(ref, "last_confirmed_ts", 0.0)
-                    last_sprint = getattr(ref, "last_confirmed_sprint", "")
-                    if last_sprint and last_sprint not in freshness.sprint_ids:
-                        freshness.sprint_ids.append(last_sprint)
-                    confirmed_sources = getattr(ref, "confirmed_sources", None)
-                    if confirmed_sources:
-                        for src in confirmed_sources:
-                            if src not in freshness.source_types:
-                                freshness.source_types.append(src)
-                    self._stats["delta_index_skips"] += 1
-
-            # Decision logic
-            if (
-                freshness.distinct_sources >= MIN_SOURCES_FOR_CONFIRMED
-                and freshness.distinct_sprints >= MIN_SPRINTS_FOR_CONFIRMED
-                and freshness.avg_confidence >= MAX_CONFIDENCE_FOR_SKIP
-            ):
-                freshness.should_skip = True
-                freshness.skip_reason = (
-                    f"confirmed by {freshness.distinct_sources} sources "
-                    f"across {freshness.distinct_sprints} sprints "
-                    f"(avg confidence={freshness.avg_confidence:.2f})"
-                )
-                skip_set.add(ev)
-                self._stats["skipped"] += 1
-            else:
-                self._stats["allowed"] += 1
-
+            freshness = freshness_map.get(ev) or EntityFreshness(entity_value=ev, entity_type=ioc_type)
+            self._boost_with_delta_index(freshness, delta_key, delta_index_results)
+            self._decide_skip(skip_set, ev, freshness)
             async with self._lock:
                 self._skip_cache[ev] = (freshness.should_skip, now)
             all_freshness.append(freshness)
+        return all_freshness
 
-        # Evict old cache entries if too large
+    def _boost_with_delta_index(self, freshness: EntityFreshness, delta_key: str, delta_results: dict) -> None:
+        """Apply DeltaIndex boost to freshness if available."""
+        if delta_key not in delta_results:
+            return
+        is_good, ref = delta_results[delta_key]
+        if not is_good or ref is None:
+            return
+
+        freshness.freshness = "confirmed"
+        freshness.distinct_sources = max(freshness.distinct_sources, getattr(ref, "source_count", 1))
+        freshness.avg_confidence = max(freshness.avg_confidence, 0.75)
+        freshness.last_confirmed_ts = getattr(ref, "last_confirmed_ts", 0.0)
+        last_sprint = getattr(ref, "last_confirmed_sprint", "")
+        if last_sprint and last_sprint not in freshness.sprint_ids:
+            freshness.sprint_ids.append(last_sprint)
+        confirmed_sources = getattr(ref, "confirmed_sources", None)
+        if confirmed_sources:
+            for src in confirmed_sources:
+                if src not in freshness.source_types:
+                    freshness.source_types.append(src)
+        self._stats["delta_index_skips"] += 1
+
+    def _decide_skip(self, skip_set: set[str], ev: str, freshness: EntityFreshness) -> None:
+        """Decide whether entity should be skipped and update stats."""
+        if (
+            freshness.distinct_sources >= MIN_SOURCES_FOR_CONFIRMED
+            and freshness.distinct_sprints >= MIN_SPRINTS_FOR_CONFIRMED
+            and freshness.avg_confidence >= MAX_CONFIDENCE_FOR_SKIP
+        ):
+            freshness.should_skip = True
+            freshness.skip_reason = (
+                f"confirmed by {freshness.distinct_sources} sources "
+                f"across {freshness.distinct_sprints} sprints "
+                f"(avg confidence={freshness.avg_confidence:.2f})"
+            )
+            skip_set.add(ev)
+            self._stats["skipped"] += 1
+        else:
+            self._stats["allowed"] += 1
+
+    async def _evict_stale_cache(self, now: float) -> None:
+        """Evict stale cache entries if cache is too large."""
         async with self._lock:
             if len(self._skip_cache) > 1000:
                 cutoff = now - self._skip_cache_ttl
-                stale_keys = [
-                    k for k, (_, ts) in self._skip_cache.items() if ts < cutoff
-                ]
+                stale_keys = [k for k, (_, ts) in self._skip_cache.items() if ts < cutoff]
                 for k in stale_keys:
                     del self._skip_cache[k]
-
-        return (skip_set, all_freshness)
 
     async def get_contradiction_flags(
         self,

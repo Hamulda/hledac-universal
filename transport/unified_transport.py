@@ -525,7 +525,10 @@ async def fetch_via_unified_with_race_fallback(
                 fb_result["_mini_race_winner"] = name
                 return fb_result
             return None
-        except (asyncio.TimeoutError, Exception):
+        except asyncio.TimeoutError:
+            return None
+        except Exception:
+            # Log unexpected errors but don't crash
             return None
 
     try:

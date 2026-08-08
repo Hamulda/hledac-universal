@@ -357,6 +357,82 @@ class _ParseMode:
     FINAL_FAIL = 'final_fail'
 _BENIGN_HTML_ENTITIES: tuple[tuple[str, str], ...] = (('nbsp', '\xa0'), ('ndash', '–'), ('mdash', '—'), ('ldquo', '“'), ('rdquo', '”'), ('lsquo', '‘'), ('rsquo', '’'), ('hellip', '…'))
 
+# Module-level constants for XML sanitization (computed once, reduces memory churn)
+_SANITIZE_PREDEFINED: frozenset[str] = frozenset({'amp', 'lt', 'gt', 'quot', 'apos'})
+_SANITIZE_BENIGN_NAMES: frozenset[str] = frozenset((name for name, _ in _BENIGN_HTML_ENTITIES))
+_SANITIZE_BENIGN_PATTERNS: tuple[tuple[str, str], ...] = tuple(_BENIGN_HTML_ENTITIES)
+
+
+def _skip_doctype(raw: str, i: int) -> int:
+    """Skip DOCTYPE declaration including nested brackets."""
+    i += 9  # skip '<!doctype'
+    depth = 0
+    in_quote = False
+    quote_char: str | None = None
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if not in_quote:
+            if ch in ('"', "'"):
+                in_quote = True
+                quote_char = ch
+            elif ch == '[':
+                depth += 1
+            elif ch == ']':
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and i + 1 < n and (raw[i + 1] == '>'):
+                        i += 2
+                        return i
+            elif ch == '>' and depth == 0:
+                i += 1
+                return i
+        elif ch == quote_char:
+            in_quote = False
+            quote_char = None
+        i += 1
+    return i
+
+
+def _skip_entity_decl(raw: str, i: int) -> int:
+    """Skip ENTITY declaration."""
+    i += 9  # skip '<!entity'
+    in_quote = False
+    quote_char: str | None = None
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if not in_quote:
+            if ch in ('"', "'"):
+                in_quote = True
+                quote_char = ch
+            elif ch == '>' and not in_quote:
+                i += 1
+                return i
+        elif ch == quote_char:
+            in_quote = False
+            quote_char = None
+        i += 1
+    return i
+
+
+def _handle_entity_ref(raw: str, i: int, result: list[str]) -> int:
+    """Handle entity reference &name; and return new position."""
+    sem_idx = raw.find(';', i + 1)
+    if sem_idx != -1 and sem_idx - i < 20:
+        name = raw[i + 1:sem_idx]
+        name_is_valid = name and name.isidentifier() and (name.lower() not in _SANITIZE_PREDEFINED)
+        if name_is_valid:
+            if name.lower() in _SANITIZE_BENIGN_NAMES:
+                replacement = next((repl for n_, repl in _SANITIZE_BENIGN_PATTERNS if n_.lower() == name.lower()))
+                result.append(replacement)
+                return sem_idx + 1
+            result.append(' ')
+            return sem_idx + 1
+    result.append(raw[i])
+    return i + 1
+
+
 def _safe_sanitize_xml(raw: str) -> str:
     """
     Produce a sanitized copy of XML text safe for re-parsing.
@@ -378,76 +454,17 @@ def _safe_sanitize_xml(raw: str) -> str:
     """
     if '<!doctype' not in raw.lower() and '<!entity' not in raw.lower() and ('&' not in raw):
         return raw
-    _predefined: frozenset[str] = frozenset({'amp', 'lt', 'gt', 'quot', 'apos'})
-    _benign_names: frozenset[str] = frozenset((name for name, _ in _BENIGN_HTML_ENTITIES))
-    _benign_patterns: tuple[tuple[str, str], ...] = tuple(_BENIGN_HTML_ENTITIES)
     result: list[str] = []
     i = 0
     n = len(raw)
     while i < n:
         c = raw[i]
         if c == '<' and raw[i:i + 9].lower() == '<!doctype':
-            i += 9
-            depth = 0
-            in_quote = False
-            quote_char: str | None = None
-            while i < n:
-                ch = raw[i]
-                if not in_quote:
-                    if ch in ('"', "'"):
-                        in_quote = True
-                        quote_char = ch
-                    elif ch == '[':
-                        depth += 1
-                    elif ch == ']':
-                        if depth > 0:
-                            depth -= 1
-                            if depth == 0 and i + 1 < n and (raw[i + 1] == '>'):
-                                i += 2
-                                break
-                    elif ch == '>' and depth == 0:
-                        i += 1
-                        break
-                elif ch == quote_char:
-                    in_quote = False
-                    quote_char = None
-                i += 1
+            i = _skip_doctype(raw, i)
         elif c == '<' and raw[i:i + 9].lower() == '<!entity':
-            i += 9
-            in_quote = False
-            quote_char: str | None = None
-            while i < n:
-                ch = raw[i]
-                if not in_quote:
-                    if ch in ('"', "'"):
-                        in_quote = True
-                        quote_char = ch
-                    elif ch == '>' and (not in_quote):
-                        i += 1
-                        break
-                elif ch == quote_char:
-                    in_quote = False
-                    quote_char = None
-                i += 1
+            i = _skip_entity_decl(raw, i)
         elif c == '&' and i + 1 < n and (raw[i + 1] != '#'):
-            sem_idx = raw.find(';', i + 1)
-            if sem_idx != -1 and sem_idx - i < 20:
-                name = raw[i + 1:sem_idx]
-                name_is_valid = name and name.isidentifier() and (name.lower() not in _predefined)
-                if name_is_valid:
-                    if name.lower() in _benign_names:
-                        replacement = next((repl for n_, repl in _benign_patterns if n_.lower() == name.lower()))
-                        result.append(replacement)
-                        i = sem_idx + 1
-                        continue
-                    result.append(' ')
-                    i = sem_idx + 1
-                    continue
-                result.append(c)
-                i += 1
-            else:
-                result.append(c)
-                i += 1
+            i = _handle_entity_ref(raw, i, result)
         else:
             result.append(c)
             i += 1

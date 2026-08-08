@@ -553,20 +553,38 @@ class DarkWebCrawler:
         if not PIL_AVAILABLE or not NP_AVAILABLE:
             logger.warning('PIL or numpy not available, skipping image extraction')
             return []
+
+        img_tags = self._parse_html_images(html, page_url)
+        candidates = self._filter_image_candidates(img_tags, page_url)
+        if not candidates:
+            return []
+
+        results = []
+        for img_url in candidates:
+            result = await self._process_single_image(img_url, sprint_id, fetch_coordinator, vision_encoder, vector_store)
+            if result:
+                results.append(result)
+        logger.debug('Image extraction: %d/%d images processed for %s', len(results), len(candidates), page_url)
+        return results
+
+    def _parse_html_images(self, html: str, page_url: str) -> list:
+        """Parse HTML and extract raw image tags."""
         try:
             if SELECTOLAX_AVAILABLE:
                 tree = _SelectolaxHTMLParser(html)
-                img_tags_raw = tree.css('img[src]')
-            else:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(html, 'html.parser')
-                img_tags_raw = soup.find_all('img', src=True)
+                return tree.css('img[src]')
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html, 'html.parser')
+            return soup.find_all('img', src=True)
         except Exception as exc:
             logger.warning('HTML parse failed for %s: %s', page_url, exc)
             return []
+
+    def _filter_image_candidates(self, img_tags: list, page_url: str) -> list[str]:
+        """Filter image tags to valid candidates (bounded to 3)."""
         candidates: list[str] = []
         seen_srcs: set[str] = set()
-        for img in img_tags_raw[:10]:
+        for img in img_tags[:10]:
             src = (img.attributes.get('src') if hasattr(img, 'attributes') else img.get('src', '')).strip()
             if not src or src.startswith('data:') or src.startswith('#') or (src in seen_srcs):
                 continue
@@ -576,72 +594,104 @@ class DarkWebCrawler:
             try:
                 if w and h and (int(w) < 20) and (int(h) < 20):
                     continue
-            except (ValueError, TypeError):  # noqa: BLE001
+            except (ValueError, TypeError):
                 pass
             candidates.append(urljoin(page_url, src))
             if len(candidates) >= 3:
                 break
-        if not candidates:
-            return []
-        results: list[dict] = []
-        for img_url in candidates:
-            try:
-                resp = await fetch_coordinator.fetch(img_url, timeout=8.0)
-                if resp is None:
-                    continue
-                body = resp.get('body') if isinstance(resp, dict) else None
-                if body is None:
-                    continue
-                if isinstance(body, str):
-                    body = body.encode()
-                if len(body) > 512 * 1024:
-                    logger.debug('Image exceeds 512KB limit: %s', img_url)
-                    continue
+        return candidates
+
+    async def _process_single_image(self, img_url: str, sprint_id: str, fetch_coordinator, vision_encoder, vector_store) -> dict | None:
+        """Process a single image: fetch, validate, encode, store."""
+        try:
+            body = await self._fetch_image_bytes(img_url, fetch_coordinator)
+            if body is None:
+                return None
+
+            pil_img = self._open_pil_image(body, img_url)
+            if pil_img is None:
+                return None
+
+            stego_result = await self._check_steganography(pil_img, img_url)
+            emb = await self._encode_image(body, vision_encoder, img_url)
+            if emb is None:
+                return None
+
+            stored = self._store_embedding(vec_id := f'img_{sprint_id}_{hashlib.md5(img_url.encode()).hexdigest()[:12]}', emb, vector_store)
+            return {'img_url': img_url, 'embedding_dim': len(emb), 'stored': stored,
+                    'stego_detected': stego_result.get('stego_detected', False),
+                    'stego_confidence': stego_result.get('confidence', 0.0),
+                    'stego_signals': stego_result.get('signals', [])}
+        except Exception as exc:
+            logger.warning('Image extract/encode failed for %s: %s', img_url, exc)
+            return None
+
+    async def _fetch_image_bytes(self, img_url: str, fetch_coordinator) -> bytes | None:
+        """Fetch image bytes from URL."""
+        resp = await fetch_coordinator.fetch(img_url, timeout=8.0)
+        if resp is None:
+            return None
+        body = resp.get('body') if isinstance(resp, dict) else None
+        if body is None:
+            return None
+        if isinstance(body, str):
+            body = body.encode()
+        if len(body) > 512 * 1024:
+            logger.debug('Image exceeds 512KB limit: %s', img_url)
+            return None
+        return body
+
+    def _open_pil_image(self, body: bytes, img_url: str):
+        """Open PIL image from bytes."""
+        try:
+            pil_img = Image.open(io.BytesIO(body))
+            return pil_img.convert('RGB')
+        except Exception:
+            logger.debug('Not a valid image: %s', img_url)
+            return None
+
+    async def _check_steganography(self, pil_img, img_url: str) -> dict:
+        """Check image for steganography signals."""
+        stego_result = {'stego_detected': False, 'confidence': 0.0}
+        try:
+            import tempfile
+            from pathlib import Path
+            from hledac.universal.security.stego_detector import quick_stego_check
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                tmp_path = Path(tmp.name)
                 try:
-                    pil_img = Image.open(io.BytesIO(body))
-                    pil_img = pil_img.convert('RGB')
-                except Exception:
-                    logger.debug('Not a valid image: %s', img_url)
-                    continue
-                stego_result: dict = {'stego_detected': False, 'confidence': 0.0}
-                try:
-                    import tempfile
-                    from pathlib import Path
-                    from hledac.universal.security.stego_detector import quick_stego_check
-                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                        tmp_path = Path(tmp.name)
-                        try:
-                            pil_img.save(tmp_path, format='JPEG', quality=85)
-                            raw_result = await quick_stego_check(tmp_path)
-                            stego_result = {'stego_detected': raw_result.get('is_suspicious', False), 'confidence': raw_result.get('confidence', 0.0)}
-                        finally:
-                            try:
-                                tmp_path.unlink(missing_ok=True)
-                            except Exception:  # noqa: BLE001
-                                pass
-                except Exception as exc:
-                    logger.debug('Stego check failed for %s: %s', img_url, exc)
-                    stego_result = {'stego_detected': False, 'confidence': 0.0}
-                embeddings = vision_encoder.encode_batch([body])
-                if not embeddings or embeddings[0] is None:
-                    logger.warning('VisionEncoder returned None for: %s', img_url)
-                    continue
-                emb = embeddings[0]
-                if hasattr(emb, 'tolist'):
-                    emb = emb.tolist()
-                try:
-                    vec_id = f'img_{sprint_id}_{hashlib.md5(img_url.encode()).hexdigest()[:12]}'
-                    vector_store.add_vectors(ids=[vec_id], vectors=np.array([emb], dtype=np.float32), index_type='image')
-                    stored = True
-                except Exception as exc:
-                    logger.warning('Vector store write failed for %s: %s', img_url, exc)
-                    stored = False
-                results.append({'img_url': img_url, 'embedding_dim': len(emb), 'stored': stored, 'stego_detected': stego_result.get('stego_detected', False), 'stego_confidence': stego_result.get('confidence', 0.0), 'stego_signals': stego_result.get('signals', [])})
-            except Exception as exc:
-                logger.warning('Image extract/encode failed for %s: %s', img_url, exc)
-                continue
-        logger.debug('Image extraction: %d/%d images processed for %s', len(results), len(candidates), page_url)
-        return results
+                    pil_img.save(tmp_path, format='JPEG', quality=85)
+                    raw_result = await quick_stego_check(tmp_path)
+                    stego_result = {'stego_detected': raw_result.get('is_suspicious', False),
+                                    'confidence': raw_result.get('confidence', 0.0)}
+                finally:
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.debug('Stego check failed for %s: %s', img_url, exc)
+        return stego_result
+
+    async def _encode_image(self, body: bytes, vision_encoder, img_url: str) -> list | None:
+        """Encode image bytes with vision encoder."""
+        embeddings = vision_encoder.encode_batch([body])
+        if not embeddings or embeddings[0] is None:
+            logger.warning('VisionEncoder returned None for: %s', img_url)
+            return None
+        emb = embeddings[0]
+        if hasattr(emb, 'tolist'):
+            return emb.tolist()
+        return emb
+
+    def _store_embedding(self, vec_id: str, emb: list, vector_store) -> bool:
+        """Store embedding in vector store."""
+        try:
+            vector_store.add_vectors(ids=[vec_id], vectors=np.array([emb], dtype=np.float32), index_type='image')
+            return True
+        except Exception as exc:
+            logger.warning('Vector store write failed for %s: %s', vec_id, exc)
+            return False
 
     def _extract_links(self, html: str, base_domain: str) -> list[str]:
         """Extract .onion links from content."""

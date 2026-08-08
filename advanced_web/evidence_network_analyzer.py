@@ -1,4 +1,5 @@
 """
+
 EvidenceNetworkAnalyzer — network-based evidence analysis
 ==========================================================
 
@@ -273,71 +274,32 @@ def _centrality_impl(ig_mod: Any, network: Any) -> dict[str, float]:
         return {}
     nodes = network.get('entities') or network.get('nodes') or []
     edges = network.get('edges') or []
-    if not nodes and (not edges):
+    if not nodes and not edges:
         return {}
-    g = ig_mod.Graph()
-    node_map: dict[str, int] = {}
-    for n in nodes:
-        if isinstance(n, dict):
-            label = n.get('key') or n.get('id') or n.get('value')
-        else:
-            label = str(n)
-        if not label:
-            continue
-        label = str(label)[:MAX_VALUE_LEN]
-        if label not in node_map:
-            idx = g.add_vertex(label)
-            node_map[label] = idx
-    for e in edges:
-        if not isinstance(e, dict):
-            continue
-        src = e.get('src')
-        dst = e.get('dst')
-        if not src or not dst:
-            continue
-        w = float(e.get('weight', 1.0) or 1.0)
-        s_idx = node_map.get(src)
-        d_idx = node_map.get(dst)
-        if s_idx is None or d_idx is None:
-            continue
-        edge_id = g.get_eid(s_idx, d_idx, error=False)
-        if edge_id >= 0:
-            g.es[edge_id]['weight'] = max(g.es[edge_id].get('weight', w), w)
-        else:
-            g.add_edge(s_idx, d_idx, weight=w)
+
+    node_map = _build_node_map(nodes)
+    if not node_map:
+        return {}
+
+    g = _build_graph(ig_mod, nodes, edges, node_map)
     if g.vcount() == 0:
         return {}
+
     n = g.vcount()
-    try:
-        strength_list = list(g.strength(vertices=list(range(n)), weights='weight'))
-        max_deg = max(strength_list) if strength_list else 1.0
-        if max_deg > 0:
-            strength_list = [s / max_deg for s in strength_list]
-    except Exception:
-        deg_list = list(g.degree())
-        max_deg = max(deg_list) if deg_list else 1.0
-        strength_list = [d / max_deg for d in deg_list]
+    strength_list = _compute_strength_normalized(g)
     k = min(MAX_CENTRALITY_NODES, n)
-    try:
-        between_list = list(g.betweenness(vertices=None, directed=False, weights='weight', cutoff=k))
-    except Exception:
-        try:
-            between_list = list(g.betweenness(vertices=None, directed=False, cutoff=k))
-        except Exception:
-            between_list = [0.0] * n
-    max_bet = max(between_list) if between_list else 1.0
-    if max_bet > 0:
-        between_list = [b / max_bet for b in between_list]
-    between_dict = {g.vs[i]['name']: between_list[i] for i in range(n)}
+    between_list = _compute_betweenness_normalized(g, k)
+
     out: dict[str, float] = {}
-    for i, node_name in enumerate(g.vs['name']):
+    node_names = g.vs['name']
+    for i, node_name in enumerate(node_names):
         d = strength_list[i]
-        b = between_dict.get(node_name, 0.0)
+        b = between_list[i]
         score = round(0.6 * d + 0.4 * b, 6)
         out[str(node_name)] = float(score)
     return out
 
-def _dedupe_edges(edges: list[EvidenceGraphEdge]) -> list[EvidenceGraphEdge]:
+def _dedupe_edges(edges: list['EvidenceGraphEdge']) -> list['EvidenceGraphEdge']:
     """Dedupe EvidenceGraphEdge list by (src, dst, rel_type), summing evidence_count.
 
     Preserves order of first occurrence. Bounded by MAX_GRAPH_EDGES on output.
@@ -352,6 +314,75 @@ def _dedupe_edges(edges: list[EvidenceGraphEdge]) -> list[EvidenceGraphEdge]:
         else:
             seen[key] = e
     return list(seen.values())
+
+def _build_node_map(nodes: list) -> dict[str, int]:
+    """Build mapping from node labels to vertex indices."""
+    node_map: dict[str, int] = {}
+    for n in nodes:
+        if isinstance(n, dict):
+            label = n.get('key') or n.get('id') or n.get('value')
+        else:
+            label = str(n)
+        if not label:
+            continue
+        label = str(label)[:MAX_VALUE_LEN]
+        if label not in node_map:
+            node_map[label] = len(node_map)
+    return node_map
+
+def _build_graph(ig_mod: Any, nodes: list, edges: list, node_map: dict[str, int]) -> Any:
+    """Build igraph from nodes and edges."""
+    g = ig_mod.Graph()
+    for label, idx in node_map.items():
+        g.add_vertex(label)
+
+    for e in edges:
+        if not isinstance(e, dict):
+            continue
+        src = e.get('src')
+        dst = e.get('dst')
+        if not src or not dst:
+            continue
+        s_idx = node_map.get(src)
+        d_idx = node_map.get(dst)
+        if s_idx is None or d_idx is None:
+            continue
+        w = float(e.get('weight', 1.0) or 1.0)
+        edge_id = g.get_eid(s_idx, d_idx, error=False)
+        if edge_id >= 0:
+            g.es[edge_id]['weight'] = max(g.es[edge_id].get('weight', w), w)
+        else:
+            g.add_edge(s_idx, d_idx, weight=w)
+    return g
+
+def _compute_strength_normalized(g: Any) -> list[float]:
+    """Compute normalized strength (weighted degree) for all vertices."""
+    try:
+        strength_list = list(g.strength(vertices=None, weights='weight'))
+        max_deg = max(strength_list) if strength_list else 1.0
+        if max_deg > 0:
+            return [s / max_deg for s in strength_list]
+        return strength_list
+    except Exception:
+        deg_list = list(g.degree())
+        max_deg = max(deg_list) if deg_list else 1.0
+        return [d / max_deg for d in deg_list]
+
+def _compute_betweenness_normalized(g: Any, k: int) -> list[float]:
+    """Compute normalized betweenness centrality for all vertices."""
+    n = g.vcount()
+    try:
+        between_list = list(g.betweenness(vertices=None, directed=False, weights='weight', cutoff=k))
+    except Exception:
+        try:
+            between_list = list(g.betweenness(vertices=None, directed=False, cutoff=k))
+        except Exception:
+            return [0.0] * n
+
+    max_bet = max(between_list) if between_list else 1.0
+    if max_bet > 0:
+        return [b / max_bet for b in between_list]
+    return between_list
 
 class EvidenceNetworkAnalyzer:
     """
@@ -380,41 +411,41 @@ class EvidenceNetworkAnalyzer:
         self._graph: Any = _kwargs.get('graph', None)
         logger.debug('EvidenceNetworkAnalyzer: initialized (impl, %d args, graph=%s)', self._last_args_count, 'yes' if self._graph is not None else 'no')
 
-    async def analyze_network(self, entities: list[dict[str, Any]] | None, **_kwargs: Any) -> dict[str, Any]:
-        """
-        Analyze entity network relationships.
-
-        Returns a dict with:
-            entities, edges, clusters, centrality, contradictions, confidence,
-            analysis_type, not_implemented (always False), todo_ref, call_count.
-
-        On empty / malformed input returns a valid empty result. On any
-        internal failure returns the same shape with empty lists — never
-        raises.
-        """
-        self._call_count += 1
+    def _check_memory_availability(self) -> bool:
+        """Check if there's enough RAM available for analysis. Returns True if safe to proceed."""
         try:
             import psutil as _psutil
             available_gb = _psutil.virtual_memory().available / 1024 ** 3
             if available_gb < 0.5:
                 logger.debug('EvidenceNetworkAnalyzer: RAM headroom %.1fGB < 0.5GB, skipping igraph analysis', available_gb)
-                return self._empty_result()
+                return False
         except Exception:  # noqa: BLE001
             pass
+        return True
+
+    def _build_network_graph(self, ig_mod: Any, coerced: list[dict[str, Any]]) -> tuple[Any, dict[str, int]]:
+        """Build igraph from coerced entities. Returns (graph, node_map) or (None, {}) on failure."""
         try:
-            coerced = self._coerce_entities(entities)
-            if not coerced:
-                return self._empty_result()
-            ig_mod = _lazy_ig()
-            if ig_mod is None:
-                logger.debug('EvidenceNetworkAnalyzer: igraph missing, returning empty')
-                return self._empty_result()
             g = _build_ig_graph(ig_mod, coerced)
-            self._last_graph_size = g.vcount()
             node_map = {name: g.vs[i].index for i, name in enumerate(g.vs['name'])}
-            threshold = float(_kwargs.get('similarity_threshold', DEFAULT_SIMILARITY_THRESHOLD))
-            edges = _compute_relationships(coerced, threshold)
-            for e in edges:
+            self._last_graph_size = g.vcount()
+            return g, node_map
+        except Exception as e:
+            logger.debug(f'EvidenceNetworkAnalyzer: graph build failed: {e}')
+            return None, {}
+
+    def _compute_edge_relationships(
+        self,
+        coerced: list[dict[str, Any]],
+        node_map: dict[str, int],
+        threshold: float,
+        g: Any,
+    ) -> list[dict[str, Any]]:
+        """Compute relationships and add edges to graph. Returns bounded edge list."""
+        edges: list[dict[str, Any]] = []
+        try:
+            computed_edges = _compute_relationships(coerced, threshold)
+            for e in computed_edges:
                 src, dst = (e['src'], e['dst'])
                 s_idx = node_map.get(src)
                 d_idx = node_map.get(dst)
@@ -428,52 +459,165 @@ class EvidenceNetworkAnalyzer:
                         g.add_edge(s_idx, d_idx, weight=e['weight'], rel_type=e['type'])
                 except Exception:
                     g.add_edge(s_idx, d_idx, weight=e['weight'], rel_type=e['type'])
-            edges_out = edges[:MAX_EDGES]
-            clusters: list[list[str]] = []
-            try:
-                if g.vcount() > 0:
-                    try:
-                        comm_membership = g.community_label_propagation(weights='weight')
-                    except Exception:
-                        comm_membership = g.community_label_propagation()
-                    for comm in comm_membership:
-                        if isinstance(comm, (set, list, tuple)):
-                            cluster = [str(g.vs[idx]['name']) for idx in comm][:MAX_CLUSTER_SIZE]
-                        else:
-                            cluster = [str(g.vs[comm]['name'])]
-                        clusters.append(cluster)
-                        if len(clusters) >= MAX_CLUSTERS:
-                            break
-            except Exception as e:
-                logger.debug(f'EvidenceNetworkAnalyzer: community detection failed: {e}')
-            centrality: dict[str, float] = {}
+                edges.append(e)
+                if len(edges) >= MAX_EDGES:
+                    break
+        except Exception as e:
+            logger.debug(f'EvidenceNetworkAnalyzer: edge computation failed: {e}')
+        return edges[:MAX_EDGES]
+
+    def _detect_communities(self, g: Any) -> list[list[str]]:
+        """Detect communities using label propagation. Returns bounded cluster list."""
+        clusters: list[list[str]] = []
+        try:
             if g.vcount() > 0:
                 try:
-                    centrality = _centrality_impl(ig_mod, {'entities': [{'key': n} for n in g.vs['name']], 'edges': [{'src': g.vs[u['source']]['name'], 'dst': g.vs[u['target']]['name'], 'weight': u.get('weight', 1.0)} for u in g.es]})
-                except Exception as e:
-                    logger.debug(f'EvidenceNetworkAnalyzer: centrality failed: {e}')
-            contradictions: list[dict[str, Any]] = []
-            if len(coerced) >= 2:
-                try:
-                    strengths = list(g.strength(weights='weight'))
-                    degree_map = {g.vs[i]['name']: strengths[i] for i in range(g.vcount())}
+                    comm_membership = g.community_label_propagation(weights='weight')
                 except Exception:
-                    degrees = list(g.degree())
-                    degree_map = {g.vs[i]['name']: degrees[i] for i in range(g.vcount())}
-                ranked = sorted(coerced, key=lambda e: degree_map.get(f"{e['type']}:{e['value']}", 0), reverse=True)[:min(20, len(coerced))]
+                    comm_membership = g.community_label_propagation()
+                for comm in comm_membership:
+                    if isinstance(comm, (set, list, tuple)):
+                        cluster = [str(g.vs[idx]['name']) for idx in comm][:MAX_CLUSTER_SIZE]
+                    else:
+                        cluster = [str(g.vs[comm]['name'])]
+                    clusters.append(cluster)
+                    if len(clusters) >= MAX_CLUSTERS:
+                        break
+        except Exception as e:
+            logger.debug(f'EvidenceNetworkAnalyzer: community detection failed: {e}')
+        return clusters
+
+    def _compute_centrality(
+        self,
+        ig_mod: Any,
+        entities: list[str],
+        edges: list[dict[str, Any]],
+    ) -> dict[str, float]:
+        """Compute centrality scores from entities and edges."""
+        centrality: dict[str, float] = {}
+        try:
+            if len(entities) > 0:
+                centrality = _centrality_impl(
+                    ig_mod,
+                    {
+                        'entities': [{'key': n} for n in entities],
+                        'edges': [
+                            {
+                                'src': e['src'],
+                                'dst': e['dst'],
+                                'weight': e.get('weight', 1.0),
+                            }
+                            for e in edges
+                        ],
+                    },
+                )
+        except Exception as e:
+            logger.debug(f'EvidenceNetworkAnalyzer: centrality failed: {e}')
+        return centrality
+
+    def _detect_contradictions(
+        self,
+        coerced: list[dict[str, Any]],
+        degree_map: dict[str, float],
+    ) -> list[dict[str, Any]]:
+        """Detect contradictions between high-degree entities. Returns bounded list."""
+        contradictions: list[dict[str, Any]] = []
+        try:
+            if len(coerced) >= 2:
+                ranked = sorted(
+                    coerced,
+                    key=lambda e: degree_map.get(f"{e['type']}:{e['value']}", 0),
+                    reverse=True,
+                )[:min(20, len(coerced))]
                 for ranked_a, ranked_b in combinations(ranked, 2):
                     c = _detect_contradiction_impl(ranked_a, ranked_b)
                     if c is not None:
-                        contradictions.append({'a': f"{ranked_a['type']}:{ranked_a['value']}", 'b': f"{ranked_b['type']}:{ranked_b['value']}", **c})
+                        contradictions.append(
+                            {
+                                'a': f"{ranked_a['type']}:{ranked_a['value']}",
+                                'b': f"{ranked_b['type']}:{ranked_b['value']}",
+                                **c,
+                            }  # noqa: BLE001
+                        )
                         if len(contradictions) >= MAX_CONTRADICTIONS:
                             break
-            if edges_out:
-                conf = sum((e['weight'] for e in edges_out)) / len(edges_out)
-            else:
-                conf = 0.0
-            return {'entities': [{'key': f"{e['type']}:{e['value']}", 'type': e['type'], 'value': e['value'], 'sources': e.get('sources', [])} for e in coerced[:MAX_ENTITIES]], 'edges': edges_out, 'clusters': clusters, 'centrality': centrality, 'contradictions': contradictions, 'confidence': round(float(conf), 4), 'analysis_type': 'evidence_network', 'not_implemented': False, 'todo_ref': self._TODO_REF, 'call_count': self._call_count}
         except Exception as e:
-            logger.warning(f'EvidenceNetworkAnalyzer.analyze_network failed: {e}')
+            logger.debug(f'EvidenceNetworkAnalyzer: contradiction detection failed: {e}')
+        return contradictions
+
+    def _calculate_confidence(self, edges_out: list[dict[str, Any]]) -> float:
+        """Calculate average confidence from edges. Returns 0.0 for empty edges."""
+        if edges_out:
+            return round(float(sum((e['weight'] for e in edges_out)) / len(edges_out)), 4)
+        return 0.0
+
+    async def analyze_network(self, entities: list[dict[str, Any]] | None, **_kwargs: Any) -> dict[str, Any]:
+        """
+        Analyze entity network relationships.
+
+        Returns a dict with:
+            entities, edges, clusters, centrality, contradictions, confidence,
+            analysis_type, not_implemented (always False), todo_ref, call_count.
+
+        On empty / malformed input returns a valid empty result. On any
+        internal failure returns the same shape with empty lists — never
+        raises.
+        """
+        self._call_count += 1  # noqa: BLE001
+        try:
+            if not self._check_memory_availability():
+                return self._empty_result()
+            coerced = self._coerce_entities(entities)
+            if not coerced:
+                return self._empty_result()
+            ig_mod = _lazy_ig()
+            if ig_mod is None:
+                logger.debug('EvidenceNetworkAnalyzer: igraph missing, returning empty')
+                return self._empty_result()
+            g, node_map = self._build_network_graph(ig_mod, coerced)
+            if g is None:
+                return self._empty_result()
+            threshold = float(_kwargs.get('similarity_threshold', DEFAULT_SIMILARITY_THRESHOLD))
+            edges_out = self._compute_edge_relationships(coerced, node_map, threshold, g)
+
+            # Detect communities
+            clusters = self._detect_communities(g)
+
+            # Compute degree map for contradiction detection
+            degree_map: dict[str, float] = {}
+            try:
+                strengths = list(g.strength(weights='weight'))
+                degree_map = {g.vs[i]['name']: strengths[i] for i in range(g.vcount())}
+            except Exception:
+                degrees = list(g.degree())
+                degree_map = {g.vs[i]['name']: degrees[i] for i in range(g.vcount())}
+
+            centrality = self._compute_centrality(ig_mod, list(g.vs['name']), edges_out)
+            contradictions = self._detect_contradictions(coerced, degree_map)
+            confidence = self._calculate_confidence(edges_out)
+
+            return {
+                'entities': [
+                    {
+                        'key': f"{e['type']}:{e['value']}",
+                        'type': e['type'],
+                        'value': e['value'],
+                        'sources': e.get('sources', []),
+                    }
+                    for e in coerced[:MAX_ENTITIES]
+                ],
+                'edges': edges_out,
+                'clusters': clusters,
+                'centrality': centrality,
+                'contradictions': contradictions,
+                'confidence': confidence,
+                'analysis_type': 'evidence_network',
+                'not_implemented': False,
+                'todo_ref': self._TODO_REF,
+                'call_count': self._call_count,
+            }
+        except Exception as e:
+            logger.warning(f'EvidenceNetworkAnalyzer.analyze_network failed: {e}')  # noqa: BLE001
             return self._empty_result()
 
     async def extract_relationships(self, entities: list[dict[str, Any]] | None, threshold: float=DEFAULT_SIMILARITY_THRESHOLD) -> list[dict[str, Any]]:
@@ -556,7 +700,7 @@ class EvidenceNetworkAnalyzer:
             logger.warning(f'EvidenceNetworkAnalyzer.analyze_evidence_network failed: {e}')
             return {'networks': [], 'confidence': 0.0, 'priority': int(priority), 'not_implemented': False, 'call_count': self._call_count}
 
-    async def analyze(self, findings: list[Any], max_hops: int=MAX_GRAPH_HOPS) -> EvidenceGraph:
+    async def analyze(self, findings: list[Any], max_hops: int=MAX_GRAPH_HOPS) -> 'EvidenceGraph':
         """
         Convert a batch of CanonicalFinding objects into a bounded
         read-only EvidenceGraph.
@@ -637,7 +781,7 @@ class EvidenceNetworkAnalyzer:
             logger.warning(f'EvidenceNetworkAnalyzer.analyze failed: {e}')
             return self._empty_graph(finding_count)
 
-    async def _query_connected_async(self, nodes: list[EvidenceGraphNode], max_hops: int) -> list[EvidenceGraphEdge]:
+    async def _query_connected_async(self, nodes: list['EvidenceGraphNode'], max_hops: int) -> list['EvidenceGraphEdge']:
         """
         Run DuckPGQGraph.find_connected_batch via run_in_executor.
 
@@ -716,7 +860,7 @@ class EvidenceNetworkAnalyzer:
             logger.debug(f'EvidenceNetworkAnalyzer: _extract_iocs_from_finding failed: {e}')
         return out
 
-    def _empty_graph(self, finding_count: int) -> EvidenceGraph:
+    def _empty_graph(self, finding_count: int) -> 'EvidenceGraph':
         """Bounded empty result — same shape as analyze()'s success path."""
         return EvidenceGraph(nodes=(), edges=(), confidence=0.0, finding_count=finding_count)
 

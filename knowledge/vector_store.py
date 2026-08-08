@@ -20,6 +20,9 @@ import asyncio
 import logging
 from pathlib import Path
 import numpy as np
+
+from utils._patterns import CloseMethodDescriptor  # F320-REFACTOR-2
+
 logger = logging.getLogger(__name__)
 _LANCEDB_ROOT = Path.home() / '.hledac' / 'lancedb'
 _TEXT_INDEX_PATH = _LANCEDB_ROOT / 'text_index.lance'
@@ -176,18 +179,14 @@ class VectorStore:
             logger.error(f'[VECTOR] Query failed: {e}')
             return []
 
-    def close(self) -> None:
-        """Close database connection."""
-        if self._db is not None:
-            try:
-                self._db.close()
-                logger.info('[VECTOR] LanceDB connection closed')
-            except Exception:  # noqa: BLE001
-                pass
-            self._db = None
-            self._text_table = None
-            self._image_table = None
-            self._initialized = False
+    # F320-REFACTOR-2: close method descriptor (resets db, tables, and initialized)
+    close = CloseMethodDescriptor(
+        "_db",
+        "_text_table",
+        "_image_table",
+        initialized_attr="_initialized",
+        initialized_value=False,
+    )
 _vector_store: VectorStore | None = None
 
 def get_vector_store() -> VectorStore:

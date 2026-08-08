@@ -117,6 +117,115 @@ def derive_failure_stage_and_network_kind(error: str | None) -> tuple[str | None
     return ('body', None)
 
 
+def _classify_by_status_code(status_code: int) -> str | None:
+    """Classify HTTP status code into taxonomy string."""
+    match status_code:
+        case 403:
+            return 'http_403'
+        case 404:
+            return 'http_404'
+        case 429:
+            return 'http_429'
+        case s if 500 <= s < 600:
+            return 'http_5xx'
+    return None
+
+
+def _classify_by_network_kind(network_kind: str) -> str | None:
+    """Classify network error kind into taxonomy string."""
+    match network_kind:
+        case 'tls_error':
+            return 'tls_error'
+        case 'dns_error':
+            return 'dns_error'
+        case 'connect_error':
+            return 'connect_error'
+        case 'timeout':
+            return 'read_timeout'
+    return None
+
+
+def _classify_by_failure_stage(failure_stage: str, error_str: str) -> str | None:
+    """Classify failure stage into taxonomy string."""
+    match failure_stage:
+        case 'validation':
+            return 'unknown_fetch_error'
+        case 'tls':
+            return 'tls_error'
+        case 'http':
+            if 'content_type_rejected' in error_str:
+                return 'content_type_rejected'
+            return 'unknown_fetch_error'
+        case 'size':
+            return 'max_bytes_exceeded'
+        case 'tarpit':
+            return 'tarpit_detected'
+    return None
+
+
+def _classify_error_prefixes(error_str: str) -> str | None:
+    """Check circuit_breaker, resource_governor, and prefix map."""
+    if 'circuit_breaker' in error_str:
+        return 'circuit_breaker_blocked'
+    if 'resource_governor' in error_str:
+        return 'resource_governor_blocked'
+    return _lookup_prefix_fast(error_str)
+
+
+def _check_success_case(error_str: str, status_code: int, text: str | None) -> str | None:
+    """Check if this is a success case (no error, 200, and non-empty body)."""
+    if error_str or status_code != 200:
+        return None
+    if text and not text.strip():
+        return 'body_empty'
+    return 'none'
+
+
+def _try_classification_chain(
+    error_str: str, status_code: int,
+    failure_stage: str, network_kind: str
+) -> str | None:
+    """Try all classification methods in order. Returns None if no match."""
+    if status_result := _classify_by_status_code(status_code):
+        return status_result
+    if stage_result := _classify_by_failure_stage(failure_stage, error_str):
+        return stage_result
+    if network_result := _classify_by_network_kind(network_kind):
+        return network_result
+    if prefix_result := _classify_error_prefixes(error_str):
+        return prefix_result
+    return None
+
+
+def _classify_result_object(result) -> str:
+    """Classify a FetchResult object."""
+    error_str = result.error or ''
+    status_code = result.status_code or 0
+    # Success case
+    if success_result := _check_success_case(error_str, status_code, getattr(result, 'text', None)):
+        return success_result
+    # CancelledError must be re-raised
+    if 'CancelledError' in error_str:
+        raise asyncio.CancelledError('fetch cancelled')
+    # Try classification chain
+    failure_stage = getattr(result, 'failure_stage', '') or ''
+    network_kind = getattr(result, 'network_error_kind', '') or ''
+    if chain_result := _try_classification_chain(error_str, status_code, failure_stage, network_kind):
+        return chain_result
+    return 'unknown_fetch_error' if error_str else 'none'
+
+
+def _classify_error_string(error_str: str) -> str:
+    """Classify a raw error string."""
+    if 'CancelledError' in error_str:
+        raise asyncio.CancelledError('fetch cancelled')
+    if not error_str:
+        return 'none'
+    if prefix_result := _classify_error_prefixes(error_str):
+        return prefix_result
+    return 'unknown_fetch_error'
+
+
 def classify_fetch_error(result_or_error) -> str:
     """Classify a fetch outcome into a flat error type string for verdict telemetry.
 
@@ -131,72 +240,9 @@ def classify_fetch_error(result_or_error) -> str:
     HARD RULE: CancelledError is re-raised, never classified and swallowed.
     """
     if hasattr(result_or_error, 'status_code'):
-        result = result_or_error
-        if result.error is None and result.status_code == 200 and result.text:
-            if not result.text.strip():
-                return 'body_empty'
-            return 'none'
-        error_str = result.error or ''
-        status_code = result.status_code or 0
-        try:
-            failure_stage = result.failure_stage or ''
-        except AttributeError:
-            failure_stage = ''
-        try:
-            network_kind = result.network_error_kind or ''
-        except AttributeError:
-            network_kind = ''
-        if 'CancelledError' in error_str:
-            raise asyncio.CancelledError('fetch cancelled')
-        if status_code == 403:
-            return 'http_403'
-        if status_code == 404:
-            return 'http_404'
-        if status_code == 429:
-            return 'http_429'
-        if 500 <= status_code < 600:
-            return 'http_5xx'
-        if failure_stage == 'validation':
-            return 'unknown_fetch_error'
-        if failure_stage == 'tls' or network_kind == 'tls_error':
-            return 'tls_error'
-        if network_kind == 'dns_error':
-            return 'dns_error'
-        if network_kind == 'connect_error':
-            return 'connect_error'
-        if network_kind == 'timeout':
-            return 'read_timeout'
-        if failure_stage == 'http':
-            if 'content_type_rejected' in error_str:
-                return 'content_type_rejected'
-            return 'unknown_fetch_error'
-        if failure_stage == 'size':
-            return 'max_bytes_exceeded'
-        if failure_stage == 'tarpit' or error_str.startswith('tarpit_detected:'):
-            return 'tarpit_detected'
-        if 'circuit_breaker' in error_str:
-            return 'circuit_breaker_blocked'
-        if 'resource_governor' in error_str:
-            return 'resource_governor_blocked'
-        _prefix_result = _lookup_prefix_fast(error_str)
-        if _prefix_result is not None:
-            return _prefix_result
-        if error_str:
-            return 'unknown_fetch_error'
-        return 'none'
+        return _classify_result_object(result_or_error)
     error_str = str(result_or_error) if result_or_error is not None else ''
-    if 'CancelledError' in error_str:
-        raise asyncio.CancelledError('fetch cancelled')
-    if not error_str:
-        return 'none'
-    if 'circuit_breaker' in error_str:
-        return 'circuit_breaker_blocked'
-    if 'resource_governor' in error_str:
-        return 'resource_governor_blocked'
-    _prefix_result = _lookup_prefix_fast(error_str)
-    if _prefix_result is not None:
-        return _prefix_result
-    return 'unknown_fetch_error'
+    return _classify_error_string(error_str)
 
 
 def derive_redirect_fields(url: str, final_url: str) -> tuple[bool, str | None]:

@@ -11,11 +11,18 @@ Output: FeedAssembledBatch (entry_urls, assembled_texts, assembled_text_lens, qu
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from hledac.universal.pipeline._soa_types import FeedAssembledBatch, FeedEntryBatch
 
 logger = logging.getLogger(__name__)
+
+# Compiled once at module level for O(1) reuse
+_SCRIPT_TAG_RE = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
+_STYLE_TAG_RE = re.compile(r"<style[^>]*>.*?</style>", re.DOTALL | re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 class AssembleStage:
@@ -112,14 +119,12 @@ def _assemble_clean_feed_text(title: str, summary: str) -> str:
 
 def _strip_html_tags(text: str) -> str:
     """Strip HTML tags from text."""
-    import re
-
     if not text:
         return ""
 
     # Remove script and style elements
-    text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = _SCRIPT_TAG_RE.sub("", text)
+    text = _STYLE_TAG_RE.sub("", text)
 
     # Replace common HTML entities
     text = text.replace("&nbsp;", " ")
@@ -129,10 +134,10 @@ def _strip_html_tags(text: str) -> str:
     text = text.replace("&quot;", '"')
 
     # Replace tags with spaces
-    text = re.sub(r"<[^>]+>", " ", text)
+    text = _HTML_TAG_RE.sub(" ", text)
 
     # Normalize whitespace
-    text = re.sub(r"\s+", " ", text).strip()
+    text = _WHITESPACE_RE.sub(" ", text).strip()
 
     return text
 

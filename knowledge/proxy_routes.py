@@ -790,10 +790,21 @@ class RouteGraphService:
 
 
 # ---------------------------------------------------------------------------
-# Singleton factory
+# Singleton factory (F320: Refactored to use centralized pattern)
 # ---------------------------------------------------------------------------
+from hledac.universal.utils._patterns import module_singleton_getter
 
-_route_graph_singleton: RouteGraphService | None = None
+
+def _make_route_graph_service(store: DuckDBShadowStore | None) -> RouteGraphService:
+    """Factory for RouteGraphService singleton."""
+    return RouteGraphService(store=store)
+
+
+# Module-level singleton getter with thread-safe double-checked locking
+_get_route_graph_service = module_singleton_getter(
+    singleton_name="_route_graph_singleton",
+    factory=lambda: _make_route_graph_service(None),
+)
 
 
 def get_route_graph_service(
@@ -804,17 +815,12 @@ def get_route_graph_service(
     Args:
         store: DuckDBShadowStore for persistence. Only used on first call.
     """
-    global _route_graph_singleton
-    if _route_graph_singleton is None:
-        _route_graph_singleton = RouteGraphService(store=store)
-    return _route_graph_singleton
+    return _get_route_graph_service()
 
 
 def reset_route_graph_service() -> None:
     """Reset singleton — test seam only."""
     global _route_graph_singleton
-    if _route_graph_singleton is not None:
-        _route_graph_singleton._cache.clear()  # noqa: SLF001
     _route_graph_singleton = None
 
 

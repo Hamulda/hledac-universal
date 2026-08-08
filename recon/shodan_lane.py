@@ -139,15 +139,15 @@ async def search_shodan_lane(
             async with session.get(SHODAN_SEARCH_API, params=params) as resp:
                 if resp.status_code == 401:
                     logger.warning("[SHODAN] API key required or invalid")
-                    record_failure(_CB_DOMAIN, kind="auth_error")
+                    record_failure(_CB_DOMAIN, failure_kind="auth_error")
                     return [], []
                 if resp.status_code == 429:
                     logger.warning("[SHODAN] Rate limit hit")
-                    record_failure(_CB_DOMAIN, kind="rate_limit")
+                    record_failure(_CB_DOMAIN, failure_kind="rate_limit")
                     return [], []
                 if resp.status_code != 200:
                     logger.warning(f"[SHODAN] API error: {resp.status}")
-                    record_failure(_CB_DOMAIN, kind="http_error")
+                    record_failure(_CB_DOMAIN, failure_kind="http_error")
                     return [], []
 
                 data = await resp.json()
@@ -184,7 +184,7 @@ async def search_shodan_lane(
     except Exception as e:
         # [FINAL]-019-09: safe_error_log ensures API key doesn't leak in error message
         safe_error_log(logger, f"[SHODAN] search error: {e}")
-        record_failure(_CB_DOMAIN, kind="exception")
+        record_failure(_CB_DOMAIN, failure_kind="exception")
         return [], []
 
 

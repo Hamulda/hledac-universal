@@ -1,0 +1,39 @@
+# Generated from the canonical SQLite profile-admission ledger.
+# Human-readable projection only: not authority and not admission proof.
+schema: haft.project-profile-projection/v1
+semantic_role: human_readable_projection
+canonical_source: sqlite_profile_admission_ledger
+project_root: /Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal
+profile_kind: Declared
+ledger_revision: 1
+ledger_recorded_at: "2026-08-07T22:39:00.283407Z"
+profile_payload_digest: sha256:85d81936a761160a02810fcc71755a7aebd8264a029d2db57fcfc23ddcd9c4a2
+admission_record_ref: profile-admission.b00bb923d600952af26e23278d44134e6d36c0bb5cd11f461ac4b1f609a8ec82
+admission_record_digest: sha256:fed2bc579cac523d7fbc8ece9272e1b1774687674a658f29eec3e7a0dabc8d15
+receipt_digest: sha256:940c051c841638ec213e27c1b7e692f12ee2a9207bb7851356cd792153758eb7
+receipt_canonical_json: '{"schema":"haft.project-profile.declaration-receipt/v1","authority_resolution_record_ref":"profile-authority-resolution:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a","authority_resolution_record_digest":"sha256:35e847796468a6037b08551ce576996adfe1d9514e3be9a64d4dff7b3b4ffa6c","authority_basis_ref":"profile-authority-basis:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a","work_record_ref":"work-record:profile-onboarding:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a","candidate_provenance_digest":"sha256:6ff669e7d7b3ac71aa01269415a14888a6c2152c5742b9301cc7509ef997b9fa","payload_digest":"sha256:85d81936a761160a02810fcc71755a7aebd8264a029d2db57fcfc23ddcd9c4a2","observed_basis_digest":"sha256:ad9055f500c7928bf58c7eeae7e8f9814367bc72147b2b05a4a9f9543d56cc4b","ledger_revision":1,"recorded_at":"2026-08-07T22:39:00.283407Z"}'
+provenance:
+  candidate_provenance_digest: sha256:6ff669e7d7b3ac71aa01269415a14888a6c2152c5742b9301cc7509ef997b9fa
+  work_record_ref: work-record:profile-onboarding:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a
+  work_record_digest: sha256:90084d2eef6a2a408f94d8126115b6ec6c1d90ebcd86b250391ec0658a6e02af
+  authority_basis_ref: profile-authority-basis:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a
+  authority_basis_digest: sha256:9646ee8046099c3f56738ad3bae9a321f786df2661a44e4a4fb57d3fcfebed92
+  authority_resolution_ref: profile-authority-resolution:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a
+  authority_resolution_digest: sha256:35e847796468a6037b08551ce576996adfe1d9514e3be9a64d4dff7b3b4ffa6c
+  profile_author_assignment_ref: role-assignment:profile-author:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a
+  profile_author_assignment_digest: sha256:9d178c2ebdef45509aada144f7fbfea65655d034f7c4c2f0c697eece014a82a3
+  observed_project_basis_ref: observed-basis:explicit-profile-request:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a
+  observed_project_basis_digest: sha256:ad9055f500c7928bf58c7eeae7e8f9814367bc72147b2b05a4a9f9543d56cc4b
+  outcome_assessment_ref: assessment:profile-candidate:dcadc87a056779fd6d333963e60a7c4404113da20bfe2f2ee70820b43538110a
+  outcome_assessment_digest: sha256:aeec9f5c3da5251c5a2baf7082c8cc2b2eb9384ca25294022a26ae80fe20e6e7
+scopes:
+  - kind: non_software
+    scope_id: models
+    entity_reference:
+      kind: none
+    kind_admission:
+      kind: none
+  - kind: software
+    scope_id: software
+    entity_reference:
+      kind: none

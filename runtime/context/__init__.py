@@ -18,15 +18,12 @@ from hledac.universal.runtime.context.bounded_dicts import (
 )
 
 
-def __getattr__(name: str):
-    # SprintRunContext and context helpers live in sprint_scheduler_v1_archived.
-    # Import from the archived module directly to avoid circular import:
-    # sprint_scheduler (stub) → sprint_scheduler_v1_archived → runtime.context → sprint_scheduler (stub)
-    if name in ("SprintRunContext", "get_sprint_ctx", "reset_sprint_ctx"):
-        from hledac.universal.runtime import sprint_scheduler_v1_archived as _v1
-
-        return getattr(_v1, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# F330-DUP: Refactored to use lazy_module_getter from utils/_patterns.py
+# Lazy import of SprintRunContext and context helpers to avoid circular import
+__getattr__ = __import__("hledac.universal.utils._patterns", fromlist=["lazy_module_getter"]).lazy_module_getter(
+    "hledac.universal.runtime.sprint_scheduler_v1_archived",
+    {"SprintRunContext": "SprintRunContext", "get_sprint_ctx": "get_sprint_ctx", "reset_sprint_ctx": "reset_sprint_ctx"},
+)
 
 
 __all__ = [

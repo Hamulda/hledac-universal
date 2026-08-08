@@ -379,7 +379,7 @@ class DuckDBRAGStore:
 
     # ── SemanticStore compatibility (Phase 3 migration) ─────────────────────
 
-    def add_text(
+    async def add_text(
         self,
         text: str,
         source_type: str,

@@ -381,7 +381,7 @@ class DuckDBWriteCoordinator:
             if self._duckdb.truth_write_graph_supports_buffered_writes():
                 await self._graph_ingest_findings(findings)
             if self._semantic_buffer is not None:
-                self._semantic_buffer.buffer_findings(findings)
+                await self._semantic_buffer.buffer_findings(findings)
 
         # Quality state update
         if self._quality_state is not None:
@@ -446,7 +446,7 @@ class DuckDBWriteCoordinator:
             if self._duckdb.truth_write_graph_supports_buffered_writes():
                 await self._graph_ingest_findings(findings)
             if self._semantic_buffer is not None:
-                self._semantic_buffer.buffer_findings(findings)
+                await self._semantic_buffer.buffer_findings(findings)
 
         # Quality state
         if self._quality_state is not None:

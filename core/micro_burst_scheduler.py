@@ -43,6 +43,7 @@ import time
 from enum import Enum, auto
 from typing import Final
 
+from hledac.universal.utils._patterns import module_singleton_creator
 from hledac.universal.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -210,24 +211,18 @@ class MicroBurstScheduler:
 
 
 # Module-level singleton — one scheduler per process.
-# Lazy-init on first access via get_scheduler().
-_scheduler_singleton: MicroBurstScheduler | None = None
-_scheduler_lock: threading.Lock = threading.Lock()
+# F330-DUP: Refactored to use module_singleton_creator from utils/_patterns.py
 
 
-def get_scheduler() -> MicroBurstScheduler:
-    """Return the process-wide MicroBurstScheduler singleton.
+def _create_scheduler() -> MicroBurstScheduler:
+    """Factory for MicroBurstScheduler singleton with lifecycle start."""
+    scheduler = MicroBurstScheduler()
+    scheduler.start()
+    return scheduler
 
-    Lazy-initialized on first call. Thread-safe double-checked locking.
-    """
-    global _scheduler_singleton
-    if _scheduler_singleton is not None:
-        return _scheduler_singleton
-    with _scheduler_lock:
-        if _scheduler_singleton is None:
-            _scheduler_singleton = MicroBurstScheduler()
-            _scheduler_singleton.start()
-        return _scheduler_singleton
+
+# DRY: Double-checked locking singleton via module_singleton_creator
+get_scheduler = module_singleton_creator(factory=_create_scheduler)
 
 
 # Convenience exports for callers that don't want to hold a reference.

@@ -261,114 +261,119 @@ class SprintLifecycleManager(msgspec.Struct, gc=False):
         Returns the current phase after ticking.
         """
         now = _now(now_monotonic)
+        self._check_governor_degraded_transition(now)
+        self._track_active_phase_time(now)
+        self._check_windup_transition(now)
+        self._lower_governor_windup_if_export()
+        return self._current_phase
 
-        # [FINAL]-019-08: Governor CRITICAL/EMERGENCY → DEGRADED transition.
-        # Only fire when in ACTIVE phase (not WARMUP, WINDUP, etc.).
-        # Uses fast synchronous _is_governor_critical_or_emergency() probe.
+    def _check_governor_degraded_transition(self, now: float) -> None:
+        """Handle governor CRITICAL/EMERGENCY → DEGRADED and recovery transitions."""
         if self._current_phase == SprintPhase.ACTIVE and not self._degraded:
-            try:
-                from hledac.universal.core.resource_governor import (
-                    _is_governor_critical_or_emergency,
-                )
-                if _is_governor_critical_or_emergency():
-                    self._degraded = True
-                    self._degraded_reason = "governor_critical_or_emergency"
-                    self._transition_to_unlocked(SprintPhase.DEGRADED, now)
-                    try:
-                        from hledac.universal.core.resource_governor import get_governor
-                        get_governor().set_degraded_mode(True, self._degraded_reason)
-                    except Exception:  # noqa: BLE001
-                        pass
-            except Exception:  # noqa: BLE001
-                pass
+            self._transition_to_degraded_if_critical(now)
+        elif self._current_phase == SprintPhase.DEGRADED:
+            self._check_governor_recovery(now)
 
-        # [FINAL]-019-08: Governor recovered to OK → ACTIVE transition.
-        # Only fire when in DEGRADED phase.
-        if self._current_phase == SprintPhase.DEGRADED:
-            recovered = False
-            try:
-                from hledac.universal.core.resource_governor import (
-                    _is_governor_critical_or_emergency,
-                )
-                recovered = not _is_governor_critical_or_emergency()
-            except Exception:  # noqa: BLE001
-                pass
+    def _transition_to_degraded_if_critical(self, now: float) -> None:
+        """Transition to DEGRADED if governor is critical/emergency."""
+        try:
+            from hledac.universal.core.resource_governor import _is_governor_critical_or_emergency
+            if _is_governor_critical_or_emergency():
+                self._degraded = True
+                self._degraded_reason = "governor_critical_or_emergency"
+                self._transition_to_unlocked(SprintPhase.DEGRADED, now)
+                self._notify_governor_degraded(True)
+        except Exception:
+            pass
 
-            if recovered:
-                self._degraded = False
-                self._degraded_reason = ""
-                self._transition_to_unlocked(SprintPhase.ACTIVE, now)
-                try:
-                    from hledac.universal.core.resource_governor import get_governor
-                    get_governor().set_degraded_mode(False, "governor_recovered")
-                except Exception:  # noqa: BLE001
-                    pass
+    def _check_governor_recovery(self, now: float) -> None:
+        """Check and handle governor recovery to OK."""
+        recovered = False
+        try:
+            from hledac.universal.core.resource_governor import _is_governor_critical_or_emergency
+            recovered = not _is_governor_critical_or_emergency()
+        except Exception:
+            pass
 
-        # [ULTIMATE]-002: Track elapsed time in ACTIVE phase (excludes DEGRADED).
-        # This is used by cognitive saturation detector to enforce minimum active time.
+        if recovered:
+            self._degraded = False
+            self._degraded_reason = ""
+            self._transition_to_unlocked(SprintPhase.ACTIVE, now)
+            self._notify_governor_degraded(False)
+
+    def _notify_governor_degraded(self, degraded: bool) -> None:
+        """Notify governor of degraded state change."""
+        try:
+            from hledac.universal.core.resource_governor import get_governor
+            reason = self._degraded_reason if degraded else "governor_recovered"
+            get_governor().set_degraded_mode(degraded, reason)
+        except Exception:
+            pass
+
+    def _track_active_phase_time(self, now: float) -> None:
+        """Track elapsed time in ACTIVE phase for cognitive saturation detector."""
         if self._current_phase == SprintPhase.ACTIVE:
             if self._entered_phase_at is not None:
                 self._active_phase_elapsed_s = now - self._entered_phase_at
-        elif self._current_phase == SprintPhase.DEGRADED:
-            # DEGRADED time doesn't count toward active elapsed time
-            pass
         elif self._current_phase in (SprintPhase.WARMUP, SprintPhase.BOOT):
             self._active_phase_elapsed_s = 0.0
 
-        # Auto WINDUP guard — fire from ACTIVE or DEGRADED when time runs down.
-        # Also check cognitive saturation detector [ULTIMATE]-002.
-        if self._current_phase in (SprintPhase.ACTIVE, SprintPhase.DEGRADED):
-            # [ULTIMATE]-002: Cognitive saturation check — triggers WINDUP when
-            # entity discovery stops for persistence period (after minimum active time).
-            _cs_triggered = False
-            if self._cognitive_saturation_detector is not None:
-                try:
-                    if self._cognitive_saturation_detector.should_enter_windup(
-                        self._active_phase_elapsed_s, now
-                    ):
-                        _cs_triggered = True
-                        # Log the cognitive saturation event
-                        import logging as _cs_logger
-                        _cs_logger.warning(
-                            "[ULTIMATE]-002] COGNITIVE_SATURATION: Sprint entering WINDUP "
-                            "due to cognitive saturation. active_elapsed=%.1fs, "
-                            "total_entities=%d, window_unique=%d. "
-                            "This saves ~10-15 minutes of zero-value work.",
-                            self._active_phase_elapsed_s,
-                            self._cognitive_saturation_detector._unique_reports,
-                            self._cognitive_saturation_detector._count_unique_in_window(now),
-                        )
-                except Exception:  # noqa: BLE001
-                    pass
+    def _check_windup_transition(self, now: float) -> None:
+        """Check and handle WINDUP transition from ACTIVE or DEGRADED."""
+        if self._current_phase not in (SprintPhase.ACTIVE, SprintPhase.DEGRADED):
+            return
 
-            remaining = self._remaining_time_unlocked(now)
-            if remaining <= self.windup_lead_s or _cs_triggered:
-                self._transition_to_unlocked(SprintPhase.WINDUP, now)
-                # [FINAL]-019: Raise governor to WINDUP QoS level
-                try:
-                    from hledac.universal.core.resource_governor import get_governor
-                    gov = get_governor()
-                    gov.set_windup_mode(True)
-                    # [FINAL]-019-08: Also clear degraded mode on windup.
-                    if not self._governor_degraded_lowered:
-                        gov.set_degraded_mode(False, "windup_entered")
-                        self._governor_degraded_lowered = True
-                except Exception:  # noqa: BLE001
-                    pass
-                self._degraded = False
-                self._degraded_reason = ""
+        cs_triggered = self._check_cognitive_saturation(now)
+        remaining = self._remaining_time_unlocked(now)
 
-        # [FINAL]-019: Lower governor from WINDUP when sprint ends.
-        # Gated by flag to prevent repeated calls every tick() cycle during EXPORT.
+        if remaining <= self.windup_lead_s or cs_triggered:
+            self._execute_windup_transition(now)
+
+    def _check_cognitive_saturation(self, now: float) -> bool:
+        """Check if cognitive saturation detector triggers windup."""
+        if self._cognitive_saturation_detector is None:
+            return False
+        try:
+            if self._cognitive_saturation_detector.should_enter_windup(self._active_phase_elapsed_s, now):
+                import logging as _cs_logger
+                _cs_logger.warning(
+                    "[ULTIMATE]-002] COGNITIVE_SATURATION: Sprint entering WINDUP "
+                    "due to cognitive saturation. active_elapsed=%.1fs, "
+                    "total_entities=%d, window_unique=%d. "
+                    "This saves ~10-15 minutes of zero-value work.",
+                    self._active_phase_elapsed_s,
+                    self._cognitive_saturation_detector._unique_reports,
+                    self._cognitive_saturation_detector._count_unique_in_window(now),
+                )
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _execute_windup_transition(self, now: float) -> None:
+        """Execute transition to WINDUP phase."""
+        self._transition_to_unlocked(SprintPhase.WINDUP, now)
+        try:
+            from hledac.universal.core.resource_governor import get_governor
+            gov = get_governor()
+            gov.set_windup_mode(True)
+            if not self._governor_degraded_lowered:
+                gov.set_degraded_mode(False, "windup_entered")
+                self._governor_degraded_lowered = True
+        except Exception:
+            pass
+        self._degraded = False
+        self._degraded_reason = ""
+
+    def _lower_governor_windup_if_export(self) -> None:
+        """Lower governor from WINDUP when sprint ends (EXPORT phase)."""
         if self._current_phase == SprintPhase.EXPORT and not self._governor_windup_lowered:
             try:
                 from hledac.universal.core.resource_governor import get_governor
                 get_governor().set_windup_mode(False)
                 self._governor_windup_lowered = True
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
-
-        return self._current_phase
 
     # ── remaining_time ───────────────────────────────────────────────────────
 

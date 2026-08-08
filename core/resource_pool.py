@@ -35,6 +35,7 @@ import asyncio
 import atexit
 import contextlib
 import functools
+import sys
 import threading
 import time
 import weakref
@@ -455,8 +456,61 @@ _mlx_pool = _MLXPool()
 _ane_pool = _ANEPool()
 _coreml_pool = _CoreMLPool()
 
+_POOL_CONFIG = {
+    PoolKind.DUCKDB_RO: ('duckdb_ro', True),
+    PoolKind.DUCKDB_RW: ('duckdb_rw', False),
+    PoolKind.MLX: ('mlx', None),
+    PoolKind.ANE: ('ane', None),
+    PoolKind.COREML: ('coreml', None),
+}
+
+def _acquire_pool_resource(kind: PoolKind, db_path: str | None) -> tuple[Any, str | None]:
+    """Acquire resource from the appropriate pool based on kind."""
+    if kind in _POOL_CONFIG:
+        pool_name, read_only_flag = _POOL_CONFIG[kind]
+        if 'duckdb' in pool_name:
+            if db_path is None:
+                raise ValueError(f'db_path required for {kind.name} pool')
+            pool = _duckdb_ro_pool if pool_name == 'duckdb_ro' else _duckdb_rw_pool
+            resource, acquired_path = pool.acquire(db_path, read_only=read_only_flag)
+            if resource is None:
+                raise RuntimeError(f'DuckDB pool exhausted for {db_path}')
+            return resource, acquired_path
+        else:
+            pool = getattr(sys.modules[__name__], f'_{pool_name}_pool')
+            resource = pool.acquire()
+            if resource is None and (not pool.is_available):
+                raise RuntimeError(f'{kind.name} not available')
+            return resource, None
+    elif kind == PoolKind.CPU_IO:
+        return _cpu_io_pool.get_executor(), None
+    elif kind == PoolKind.CPU_BLOCKING:
+        return _cpu_blocking_pool.get_executor(), None
+    else:
+        raise ValueError(f'Unknown pool kind: {kind}')
+
+
+def _release_pool_resource(kind: PoolKind, resource: Any, acquired_db_path: str | None) -> None:
+    """Release resource back to the appropriate pool."""
+    if resource is None:
+        return
+    match kind:
+        case PoolKind.DUCKDB_RO:
+            _duckdb_ro_pool.release(resource, acquired_db_path)
+        case PoolKind.DUCKDB_RW:
+            _duckdb_rw_pool.release(resource, acquired_db_path)
+        case PoolKind.MLX:
+            _mlx_pool.release(resource)
+        case PoolKind.ANE:
+            _ane_pool.release(resource)
+        case PoolKind.COREML:
+            _coreml_pool.release(resource)
+        case _:
+            pass  # CPU pools don't need release
+
+
 @contextlib.contextmanager
-def with_resource(kind: PoolKind, db_path: str | None=None, read_only: bool=True) -> Generator[Any, None, None]:
+def with_resource(kind: PoolKind, db_path: str | None=None, read_only: bool=True) -> Generator[Any, None, None]:  # noqa: ARG001
     """
     Context manager for acquiring/releasing pooled resources.
 
@@ -484,57 +538,11 @@ def with_resource(kind: PoolKind, db_path: str | None=None, read_only: bool=True
     Raises:
         RuntimeError: If pool is unavailable or exhausted
     """
-    resource: Any = None
-    acquired_db_path: str | None = None
+    resource, acquired_db_path = _acquire_pool_resource(kind, db_path)
     try:
-        match kind:
-            case PoolKind.DUCKDB_RO:
-                if db_path is None:
-                    raise ValueError('db_path required for DUCKDB_RO pool')
-                resource, acquired_db_path = _duckdb_ro_pool.acquire(db_path, read_only=True)
-                if resource is None:
-                    raise RuntimeError(f'DuckDB pool exhausted for {db_path}')
-            case PoolKind.DUCKDB_RW:
-                if db_path is None:
-                    raise ValueError('db_path required for DUCKDB_RW pool')
-                resource, acquired_db_path = _duckdb_rw_pool.acquire(db_path, read_only=False)
-                if resource is None:
-                    raise RuntimeError(f'DuckDB pool exhausted for {db_path}')
-            case PoolKind.MLX:
-                resource = _mlx_pool.acquire()
-                if resource is None and (not _mlx_pool.is_available):
-                    raise RuntimeError('MLX not available')
-            case PoolKind.ANE:
-                resource = _ane_pool.acquire()
-                if resource is None and (not _ane_pool.is_available):
-                    raise RuntimeError('ANE not available')
-            case PoolKind.COREML:
-                resource = _coreml_pool.acquire()
-                if resource is None and (not _coreml_pool.is_available):
-                    raise RuntimeError('CoreML not available')
-            case PoolKind.CPU_IO | PoolKind.CPU_BLOCKING:
-                pool = _cpu_io_pool if kind == PoolKind.CPU_IO else _cpu_blocking_pool
-                resource = pool.get_executor()
-            case _:
-                raise ValueError(f'Unknown pool kind: {kind}')
         yield resource
     finally:
-        match kind:
-            case PoolKind.DUCKDB_RO:
-                if resource is not None:
-                    _duckdb_ro_pool.release(resource, acquired_db_path)
-            case PoolKind.DUCKDB_RW:
-                if resource is not None:
-                    _duckdb_rw_pool.release(resource, acquired_db_path)
-            case PoolKind.MLX:
-                if resource is not None:
-                    _mlx_pool.release(resource)
-            case PoolKind.ANE:
-                if resource is not None:
-                    _ane_pool.release(resource)
-            case PoolKind.COREML:
-                if resource is not None:
-                    _coreml_pool.release(resource)
+        _release_pool_resource(kind, resource, acquired_db_path)
 
 class _AsyncPoolContextManager:
     """Async context manager for CPU pools with semaphore."""

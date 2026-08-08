@@ -38,6 +38,111 @@ except ImportError:
     HTML_TEXT_FAST_AVAILABLE = False
     html_to_text_fast = None
 
+def _format_markdown_lines(elems: list) -> str:
+    """Format HTML elements as markdown lines."""
+    lines_out: list[str] = []
+    for elem in elems:
+        text = elem.text(strip=True) if hasattr(elem, 'text') else elem.get_text(strip=True)
+        if not text:
+            continue
+        tag = elem.tag if hasattr(elem, 'tag') else elem.name
+        match tag:
+            case 'h1':
+                lines_out.append(f'# {text}')
+            case 'h2':
+                lines_out.append(f'## {text}')
+            case 'h3':
+                lines_out.append(f'### {text}')
+            case 'li':
+                lines_out.append(f'- {text}')
+            case _:
+                lines_out.append(text)
+    return '\n\n'.join(lines_out)
+
+def _extract_selectolax(html: str, output_format: str) -> dict[str, Any] | None:
+    """Tier 1: selectolax extraction. Returns result dict or None on failure."""
+    try:
+        from selectolax.parser import HTMLParser as _SelectolaxParser
+        tree = _SelectolaxParser(html)
+        for tag in tree.css('script, style, nav, footer, header, aside'):
+            tag.decompose()
+
+        body = tree.body
+        if body is None:
+            return None
+
+        if output_format == 'text':
+            content = body.text(separator=' ', strip=True)
+        elif output_format == 'markdown':
+            content = _format_markdown_lines(tree.css('h1, h2, h3, p, li'))
+        else:
+            content = body.text(separator=' ', strip=True)
+
+        return {
+            'success': True,
+            'content': content,
+            'format': output_format,
+            'metadata': {'method': 'selectolax'},
+            'error': None,
+        }
+    except Exception:
+        return None
+
+def _extract_html_text_fast(html: str) -> dict[str, Any] | None:
+    """Tier 2: html_text_fast extraction. Returns result dict or None on failure."""
+    if not HTML_TEXT_FAST_AVAILABLE:
+        return None
+    try:
+        content = html_to_text_fast(html)
+        return {
+            'success': True,
+            'content': content,
+            'format': 'text',
+            'metadata': {'method': 'html_text_fast'},
+            'error': None,
+        }
+    except Exception as e:
+        logger.warning('html_text_fast failed, falling back to bs4: %s', e)
+        return None
+
+def _extract_bs4(html: str, output_format: str) -> dict[str, Any] | None:
+    """Tier 3: BeautifulSoup extraction. Returns result dict or None on failure."""
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, 'html.parser')
+        for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
+            tag.decompose()
+
+        if output_format == 'text':
+            content = soup.get_text(separator=' ', strip=True)
+        elif output_format == 'markdown':
+            content = _format_markdown_lines(soup.find_all(['h1', 'h2', 'h3', 'p', 'li']))
+        else:
+            content = soup.get_text(separator=' ', strip=True)
+
+        return {
+            'success': True,
+            'content': content,
+            'format': output_format,
+            'metadata': {'method': 'bs4_html_parser_fallback'},
+            'error': None,
+        }
+    except Exception:
+        return None
+
+def _extract_regex_fallback(html: str, output_format: str) -> dict[str, Any]:
+    """Tier 4: Regex fallback extraction. Always succeeds."""
+    import re
+    text = re.sub('<[^>]+>', ' ', html)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return {
+        'success': True,
+        'content': text,
+        'format': output_format,
+        'metadata': {'method': 'regex_fallback'},
+        'error': None,
+    }
+
 class ValidationSeverity(Enum):
     """Validation severity levels."""
     INFO = 'info'
@@ -257,85 +362,31 @@ class UniversalValidationCoordinator(UniversalCoordinator):
 
     async def _simple_html_extract(self, html: str, output_format: str) -> dict[str, Any]:
         """
-        Simple HTML extraction fallback.
+        Simple HTML extraction fallback with tier-based approach.
 
-        Tier 1: selectolax (fastest, Rust C backend) — all output formats
-        Tier 2: html_text_fast (selectolax wrapper) for 'text' output
+        Tier 1: selectolax (fastest, Rust C backend)
+        Tier 2: html_text_fast for 'text' output
         Tier 3: bs4 html.parser fallback
         Tier 4: regex ultimate fallback
         """
-        try:
-            from selectolax.parser import HTMLParser as _SelectolaxParser
-            tree = _SelectolaxParser(html)
-            for tag in tree.css('script, style, nav, footer, header, aside'):
-                tag.decompose()
-            if output_format == 'text':
-                body = tree.body
-                content = body.text(separator=' ', strip=True) if body else ''
-                return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'selectolax'}, 'error': None}
-            elif output_format == 'markdown':
-                lines_out: list[str] = []
-                for elem in tree.css('h1, h2, h3, p, li'):
-                    text = elem.text(strip=True)
-                    if not text:
-                        continue
-                    tag = elem.tag
-                    if tag == 'h1':
-                        lines_out.append(f'# {text}')
-                    elif tag == 'h2':
-                        lines_out.append(f'## {text}')
-                    elif tag == 'h3':
-                        lines_out.append(f'### {text}')
-                    elif tag == 'li':
-                        lines_out.append(f'- {text}')
-                    else:
-                        lines_out.append(text)
-                content = '\n\n'.join(lines_out)
-                return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'selectolax'}, 'error': None}
-            else:
-                body = tree.body
-                content = body.text(separator=' ', strip=True) if body else ''
-                return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'selectolax'}, 'error': None}
-        except Exception:  # noqa: BLE001
-            pass
-        if output_format == 'text' and HTML_TEXT_FAST_AVAILABLE:
-            try:
-                content = html_to_text_fast(html)
-                return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'html_text_fast'}, 'error': None}
-            except Exception as e:
-                logger.warning('html_to_text_fast failed, falling back to bs4: %s', e)
-        try:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, 'html.parser')
-            for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside']):
-                tag.decompose()
-            if output_format == 'text':
-                content = soup.get_text(separator=' ', strip=True)
-            elif output_format == 'markdown':
-                lines_out: list[str] = []
-                for elem in soup.find_all(['h1', 'h2', 'h3', 'p', 'li']):
-                    text = elem.get_text(strip=True)
-                    if not text:
-                        continue
-                    if elem.name == 'h1':
-                        lines_out.append(f'# {text}')
-                    elif elem.name == 'h2':
-                        lines_out.append(f'## {text}')
-                    elif elem.name == 'h3':
-                        lines_out.append(f'### {text}')
-                    elif elem.name == 'li':
-                        lines_out.append(f'- {text}')
-                    else:
-                        lines_out.append(text)
-                content = '\n\n'.join(lines_out)
-            else:
-                content = soup.get_text(separator=' ', strip=True)
-            return {'success': True, 'content': content, 'format': output_format, 'metadata': {'method': 'bs4_html_parser_fallback'}, 'error': None}
-        except ImportError:
-            import re
-            text = re.sub('<[^>]+>', ' ', html)
-            text = re.sub('\\s+', ' ', text).strip()
-            return {'success': True, 'content': text, 'format': output_format, 'metadata': {'method': 'regex_fallback'}, 'error': None}
+        # Tier 1: selectolax
+        result = _extract_selectolax(html, output_format)
+        if result is not None:
+            return result
+
+        # Tier 2: html_text_fast (text only)
+        if output_format == 'text':
+            result = _extract_html_text_fast(html)
+            if result is not None:
+                return result
+
+        # Tier 3: bs4
+        result = _extract_bs4(html, output_format)
+        if result is not None:
+            return result
+
+        # Tier 4: regex fallback
+        return _extract_regex_fallback(html, output_format)
 
     async def batch_clean_html(self, html_list: list[str], output_format: str='markdown') -> list[dict[str, Any]]:
         """

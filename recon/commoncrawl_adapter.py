@@ -245,27 +245,30 @@ class WARCContentAdapter:
             logger.debug(f'[commoncrawl] WARC Range fetch failed: {e}')
             return None
 
-    async def _stream_warc_records(
+    async def _decompress_gzip_chunked(
         self,
         warc_bytes: bytes,
-    ) -> AsyncIterator[dict]:
+        byte_limit: int,
+    ) -> bytes:
         """
-        Parse WARC records from raw gzipped bytes.
+        Bounded gzip decompression with chunked reading.
 
-        Uses Python's gzip module for bounded decompression, then
-        extracts HTTP response records using fastwarc if available
-        (lazy import), falling back to naive WARC/1.1 parsing.
+        Reads gzip in 64KB chunks to stay within M1 8GB memory budget.
+        Stops early if byte_limit is exceeded.
 
-        Lazy import: fastwarc loaded only when this method is called.
+        Args:
+            warc_bytes: Raw gzipped WARC bytes
+            byte_limit: Maximum bytes to decompress
+
+        Returns:
+            Decompressed bytes, or empty bytes on error
         """
         import gzip as _gzip
 
-        # Step 1: bounded decompression (M1 8GB safe, no fastwarc needed)
         try:
             bio = io.BytesIO(warc_bytes)
             with _gzip.GzipFile(fileobj=bio, mode='rb') as gf:
                 decompressed = b''
-                byte_limit = self._get_warc_bytes_limit()
                 while True:
                     chunk = gf.read(65536)
                     if not chunk:
@@ -273,18 +276,31 @@ class WARCContentAdapter:
                     decompressed += chunk
                     if len(decompressed) > byte_limit:
                         break
+                return decompressed
         except Exception as e:
             logger.debug(f'[commoncrawl] gzip decompress failed: {e}')
-            decompressed = b''
+            return b''
 
-        if not decompressed:
-            return
+    async def _parse_fastwarc_records(
+        self,
+        decompressed: bytes,
+        byte_limit: int,
+    ) -> AsyncIterator[dict]:
+        """
+        Try fastwarc parsing and yield record dicts.
 
-        # Step 2: try fastwarc first, then naive fallback
-        parsed_via_fastwarc = False
+        Uses fastwarc native extension for efficient WARC parsing.
+        Falls back gracefully if fastwarc is unavailable.
+
+        Args:
+            decompressed: Uncompressed WARC bytes
+            byte_limit: Maximum content length per record
+
+        Yields:
+            Record dicts with 'body', 'content_type', 'status' keys
+        """
         try:
             from fastwarc import warc as _warc_module
-            from fastwarc import stream_io as _stream_io
 
             bio_warc = io.BytesIO(decompressed)
             bio_warc.seek(0)
@@ -301,7 +317,7 @@ class WARCContentAdapter:
                     if record_type != 'response':
                         continue
                     content_length = getattr(record, 'content_length', 0) or 0
-                    if content_length > self._get_warc_bytes_limit():
+                    if content_length > byte_limit:
                         continue
                     http_response = record.http_response
                     if http_response is None:
@@ -315,70 +331,126 @@ class WARCContentAdapter:
                             'content_type': content_type,
                             'status': status,
                         }
-                        parsed_via_fastwarc = True
                 except Exception:
                     continue
         except Exception:  # noqa: BLE001
             pass
 
+    async def _parse_warc11_response(
+        self,
+        text: str,
+        decompressed: bytes,
+        offset: int,
+        byte_limit: int,
+    ) -> tuple[int, list[dict]]:
+        """
+        Parse WARC/1.1 response records (fallback when fastwarc unavailable).
+
+        Naive WARC/1.1 parsing that extracts HTTP response bodies from
+        WARC response records. Used as fallback when fastwarc is unavailable
+        or fails to parse.
+
+        Args:
+            text: Decompressed WARC text (latin-1 encoded)
+            offset: Starting offset for parsing
+            byte_limit: Maximum bytes to parse
+
+        Returns:
+            Tuple of (new_offset, list of record dicts)
+        """
+        records: list[dict] = []
+        local_offset = offset
+
+        while local_offset < len(text) and local_offset < byte_limit:
+            warc_header_pos = text.find('WARC/1.1', local_offset)
+            if warc_header_pos < 0:
+                break
+
+            # Find Content-Length header in WARC record
+            header_end = text.find('\r\n\r\n', warc_header_pos)
+            if header_end < 0:
+                break
+
+            header_block = text[warc_header_pos:header_end]
+            content_length = 0
+            for line in header_block.split('\r\n'):
+                if line.lower().startswith('content-length:'):
+                    try:
+                        content_length = int(line.split(':', 1)[1].strip())
+                    except Exception:  # noqa: BLE001
+                        pass
+                    break
+
+            if content_length <= 0 or content_length > byte_limit:
+                local_offset = warc_header_pos + 1
+                continue
+
+            body_start = header_end + 4
+            body_bytes = decompressed[body_start:body_start + content_length]
+            if body_bytes:
+                # Parse HTTP status line from body
+                body_text = body_bytes.decode('latin-1', errors='replace')
+                status_code = ''
+                content_type = ''
+                nl_pos = body_text.find('\r\n')
+                if nl_pos >= 0:
+                    status_line = body_text[:nl_pos]
+                    if status_line.startswith('HTTP/'):
+                        parts = status_line.split(' ', 2)
+                        if len(parts) >= 2:
+                            status_code = parts[1]
+                    # Find Content-Type
+                    rest = body_text[nl_pos + 2:]
+                    header_end_in_body = rest.find('\r\n\r\n')
+                    if header_end_in_body >= 0:
+                        http_headers = rest[:header_end_in_body]
+                        for hline in http_headers.split('\r\n'):
+                            if hline.lower().startswith('content-type:'):
+                                content_type = hline.split(':', 1)[1].strip()
+                                break
+
+                records.append({
+                    'body': body_bytes,
+                    'content_type': content_type,
+                    'status': status_code,
+                })
+
+            local_offset = warc_header_pos + 1
+
+        return local_offset, records
+
+    async def _stream_warc_records(
+        self,
+        warc_bytes: bytes,
+    ) -> AsyncIterator[dict]:
+        """
+        Parse WARC records from raw gzipped bytes.
+
+        Uses Python's gzip module for bounded decompression, then
+        extracts HTTP response records using fastwarc if available,
+        falling back to naive WARC/1.1 parsing.
+
+        Lazy import: fastwarc loaded only when this method is called.
+        """
+        byte_limit = self._get_warc_bytes_limit()
+        decompressed = await self._decompress_gzip_chunked(warc_bytes, byte_limit)
+        if not decompressed:
+            return
+            return
+
+        # Step 2: try fastwarc first, then naive fallback
+        async for record in self._parse_fastwarc_records(decompressed, byte_limit):
+            yield record
+            return  # fastwarc succeeded, skip fallback
+
         # Step 3: naive WARC/1.1 parsing (fallback when fastwarc unavailable/failed)
-        if not parsed_via_fastwarc:
-            try:
-                text = decompressed.decode('latin-1')
-                # WARC/1.1 response record: 'WARC/1.1' header, then HTTP response block
-                offset = 0
-                byte_limit = self._get_warc_bytes_limit()
-                while offset < len(text) and offset < byte_limit:
-                    warc_header_pos = text.find('WARC/1.1', offset)
-                    if warc_header_pos < 0:
-                        break
-                    # Find Content-Length header in WARC record
-                    header_end = text.find('\r\n\r\n', warc_header_pos)
-                    if header_end < 0:
-                        break
-                    header_block = text[warc_header_pos:header_end]
-                    content_length = 0
-                    for line in header_block.split('\r\n'):
-                        if line.lower().startswith('content-length:'):
-                            try:
-                                content_length = int(line.split(':', 1)[1].strip())
-                            except Exception:  # noqa: BLE001
-                                pass
-                            break
-                    if content_length <= 0 or content_length > byte_limit:
-                        offset = warc_header_pos + 1
-                        continue
-                    body_start = header_end + 4
-                    body_bytes = decompressed[body_start:body_start + content_length]
-                    if body_bytes:
-                        # Parse HTTP status line from body
-                        body_text = body_bytes.decode('latin-1', errors='replace')
-                        status_code = ''
-                        content_type = ''
-                        nl_pos = body_text.find('\r\n')
-                        if nl_pos >= 0:
-                            status_line = body_text[:nl_pos]
-                            if status_line.startswith('HTTP/'):
-                                parts = status_line.split(' ', 2)
-                                if len(parts) >= 2:
-                                    status_code = parts[1]
-                            # Find Content-Type
-                            rest = body_text[nl_pos + 2:]
-                            header_end_in_body = rest.find('\r\n\r\n')
-                            if header_end_in_body >= 0:
-                                http_headers = rest[:header_end_in_body]
-                                for hline in http_headers.split('\r\n'):
-                                    if hline.lower().startswith('content-type:'):
-                                        content_type = hline.split(':', 1)[1].strip()
-                                        break
-                        yield {
-                            'body': body_bytes,
-                            'content_type': content_type,
-                            'status': status_code,
-                        }
-                    offset = warc_header_pos + 1
-            except Exception as e:
-                logger.debug(f'[commoncrawl] naive WARC parse error: {e}')
+        try:
+            text = decompressed.decode('latin-1')
+            _, records = await self._parse_warc11_response(text, decompressed, 0, byte_limit)
+            for rec in records:
+                yield rec
+        except Exception as e:
+            logger.debug(f'[commoncrawl] naive WARC parse error: {e}')
 
     async def _extract_http_body(self, warc_bytes: bytes) -> tuple[bytes, str, str]:
         """

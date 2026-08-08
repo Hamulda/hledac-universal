@@ -326,139 +326,51 @@ def _filter_public_noise(
     return filtered, rejected
 
 
-def _is_threat_query(query: str) -> bool:
-    """Detect if query is a non-domain threat/malware/ransomware/entity query.
-
-    Returns True for queries that look like OSINT entity searches where
-    bootstrap would return no URLs but a rescue search URL may help.
-
-    Covers: ransomware names, malware family names, threat actor names,
-    CVE-like patterns, IP addresses (which domain bootstrap can't handle).
-    """
-    if not query or not query.strip():
-        return False
-
-    q = query.strip()
-
-    # Strip prefix operators
+def _strip_query_prefix(q: str) -> str:
+    """Strip site:, domain:, url:, asn:, ip:, vpn:, tor: prefixes."""
     for prefix in ("site:", "domain:", "url:", "asn:", "ip:", "vpn:", "tor:"):
         if q.lower().startswith(prefix):
-            q = q[len(prefix):].strip()
-            break
+            return q[len(prefix):].strip()
+    return q
 
-    # IP address check — domain bootstrap can't help
+def _check_ip_cve(q: str) -> bool:
+    """Check if query is IP address or CVE pattern."""
     import re as _re
-    IP_PAT = _re.compile(  # noqa: N806
-        r"^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$|^"
-        r"[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}(?::\d{1,3})?(?:\/\d{1,2})?$"
-    )
-    if IP_PAT.match(q):
-        return True
-
-    # CVE pattern
-    CVE_PAT = _re.compile(r"^CVE-\d{4}-\d{4,}$", _re.IGNORECASE)  # noqa: N806
-    if CVE_PAT.match(q):
-        return True
-
-    # Ransomware/malware/threat actor name patterns
-    THREAT_PAT = _re.compile(  # noqa: N806
-        r"^(?:"
-        r"lockbit|conti|revil|clop|darkside|blackcat|alphv|ransomware|"
-        r"apt[_\s]?\d+|apt[_-]\w+|sidecopy|callback|triangle|temp"
-        r"|wanna[_\s]?cry|wannacry|petya|notpetya|badrabbit|"
-        r"emotet|trickbot|cobalt[_\s]?strike|koadic|metasploit|"
-        r"fin7|carbanak|finacrypt|prodaft|labyrinth|zCrypt|"
-        r"poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic"
-        r")$",
-        _re.IGNORECASE,
-    )
-    if THREAT_PAT.match(q):
-        return True
-
-    # Also check first token (for multi-word queries like "LockBit ransomware")
-    first_token = q.split()[0] if q else ""
-    if first_token and THREAT_PAT.match(first_token):
-        return True
-
-    # Check any token in the query (for multi-word threat references, split on -, _, space)
-    for token in re.split(r"[\s\-_]+", q):
-        if len(token) >= 4 and THREAT_PAT.match(token):
-            return True
-
-    # Extended patterns: check bare tokens that are known threat names
-    _EXTENDED_PAT = _re.compile(  # noqa: N806
-        r"^(?:"
-        r"meterpreter|sandworm|lazarus|log4shell|finacrypt|prodaft|labyrinth|"
-        r"zcrypt|poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic|"
-        r"sidecopy|callback|triangle|temp|sofacy|平原"
-        r")$",
-        _re.IGNORECASE,
-    )
-    for token in re.split(r"[\s\-_]+", q):
-        if len(token) >= 3 and _EXTENDED_PAT.match(token):
-            return True
-
-    # Generic keywords (must be stand-alone, not part of a sentence)
-    THREAT_KW_PAT = _re.compile(  # noqa: N806
-        r"^(?:"
-        r"ransomware|malware|threat[_-]?actor|cobalt[_\s]?strike|"
-        r"breach|exploit|0day|zero[_\s]?day|vulnerability|"
-        r"phishing|spam|botnet|trojan|rootkit|keylogger|"
-        r"Ransomware|Malware|ThreatActor|CVE|APT"
-        r")$",
-        _re.IGNORECASE,
-    )
-    if THREAT_KW_PAT.match(q):
-        return True
-
-    # P0-2: OSINT-related keywords — broad threat/discovery context queries
-    # that lack a domain but have rich search-term seeds for rescue URLs.
-    OSINT_KW_PAT = _re.compile(  # noqa: N806
-        r"^(?:"
-        r"osint|osint infrstructure|infrastructure|telemetry|leak|"
-        r"dark[_\s]?web|exposure|credential|breach|"
-        r"darkweb|onion|leakdb|intel|threat|hunting|"
-        r"recon|scanning|fingerprint|iot|ics|scada"
-        r")$",
-        _re.IGNORECASE,
-    )
-    if OSINT_KW_PAT.match(q):
-        return True
-    # Also check first token for OSINT keywords
-    if first_token and OSINT_KW_PAT.match(first_token):
-        return True
-
-    # F273: Multi-word OSINT/threat compound patterns
-    # These detect complex queries like "ransomware threat intelligence leak"
-    _OSINT_MULTI_PAT = _re.compile(  # noqa: N816
-        r"(?:"
-        r"ransomware\s+(?:threat|intelligence|leak|attack|group|operation)|"
-        r"threat\s+(?:intelligence|actor|actor\s+group|intel)|"
-        r"malware\s+(?:analysis|sample|family|variant)|"
-        r"data\s+(?:breach|leak|exposure|dump)|"
-        r"dark\s+web|deep\s+web|surface\s+web|"
-        r"credential\s+(?:dump|leak|breach|stuffing)|"
-        r"osint\s+(?:reconnaissance|recon|reconnaissance|automation)|"
-        r"vulnerability\s+(?:scan|scanner|assessment|intelligence)|"
-        r"threat\s+hunting|incident\s+response|digital\s+forensics|"
-        r"infosec|cybersecurity\s+intelligence|"
-        r"iosint|geoint|fintech\s+threat|"
-        r"bloc\s+threat|apts|advanced\s+persistent|"
-        r"supply\s+chain\s+(?:attack|threat)|"
-        r"zero\s+day|zero-day|exploit\s+kit|"
-        r"phishing\s+(?:campaign|kit|template)|"
-        r"botnet\s+(?:infection|command|控|controller)|"
-        r"ransomware\s+as\s+a\s+service|raas|ransomware\s+gang|"
-        r"cyber\s+(?:attack|threat|crime|criminal|espionage)|"
-        r"nation[\s_-]state\s+(?:threat|apt|actor|hacker)|"
-        r"state[\s_-]sponsored|apt[\s_-]\w+"
-        r")",
-        _re.IGNORECASE,
-    )
-    if _OSINT_MULTI_PAT.search(q):
-        return True
-
+    if _re.match(r"^\d{1,3}(?:\.\d{1,3}){3}(?:\/\d{1,2})?$|^[0-9a-fA-F]{1,4}(?::[0-9a-fA-F]{0,4}){2,7}(?::\d{1,3})?(?:\/\d{1,2})?$", q): return True
+    if _re.match(r"^CVE-\d{4}-\d{4,}$", q, _re.IGNORECASE): return True
     return False
+
+def _check_threat_patterns(q: str, first_token: str) -> bool:
+    """Check ransomware/malware/threat actor patterns."""
+    import re as _re
+    THREAT_PAT = _re.compile(r"^(?:lockbit|conti|revil|clop|darkside|blackcat|alphv|ransomware|apt[_\s]?\d+|apt[_-]\w+|sidecopy|callback|triangle|temp|wanna[_\s]?cry|wannacry|petya|notpetya|badrabbit|emotet|trickbot|cobalt[_\s]?strike|koadic|metasploit|fin7|carbanak|finacrypt|prodaft|labyrinth|zCrypt|poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic)$", _re.IGNORECASE)
+    if THREAT_PAT.match(q): return True
+    EXTENDED_PAT = _re.compile(r"^(?:meterpreter|sandworm|lazarus|log4shell|finacrypt|prodaft|labyrinth|zcrypt|poisonivy|plugx|gh0st|gain|wellmess|whispergate|hermetic|sidecopy|callback|triangle|temp|sofacy|平原)$", _re.IGNORECASE)
+    for token in _re.split(r"[\s\-_]+", q):
+        if len(token) >= 4 and THREAT_PAT.match(token): return True
+        if len(token) >= 3 and EXTENDED_PAT.match(token): return True
+    if first_token and (THREAT_PAT.match(first_token)): return True
+    return False
+
+def _check_generic_keywords(q: str, first_token: str) -> bool:
+    """Check generic threat/OSINT keywords."""
+    import re as _re
+    THREAT_KW = _re.compile(r"^(?:ransomware|malware|threat[_-]?actor|cobalt[_\s]?strike|breach|exploit|0day|zero[_\s]?day|vulnerability|phishing|spam|botnet|trojan|rootkit|keylogger|Ransomware|Malware|ThreatActor|CVE|APT)$", _re.IGNORECASE)
+    OSINT_KW = _re.compile(r"^(?:osint|osint infrstructure|infrastructure|telemetry|leak|dark[_\s]?web|exposure|credential|breach|darkweb|onion|leakdb|intel|threat|hunting|recon|scanning|fingerprint|iot|ics|scada)$", _re.IGNORECASE)
+    if THREAT_KW.match(q) or OSINT_KW.match(q) or (first_token and OSINT_KW.match(first_token)): return True
+    return False
+
+def _check_multi_word_patterns(q: str) -> bool:
+    """Check multi-word OSINT/threat compound patterns."""
+    import re as _re
+    MULTI_PAT = _re.compile(r"(?:ransomware\s+(?:threat|intelligence|leak|attack|group|operation)|threat\s+(?:intelligence|actor|actor\s+group|intel)|malware\s+(?:analysis|sample|family|variant)|data\s+(?:breach|leak|exposure|dump)|dark\s+web|deep\s+web|surface\s+web|credential\s+(?:dump|leak|breach|stuffing)|osint\s+(?:reconnaissance|recon|reconnaissance|automation)|vulnerability\s+(?:scan|scanner|assessment|intelligence)|threat\s+hunting|incident\s+response|digital\s+forensics|infosec|cybersecurity\s+intelligence|iosint|geoint|fintech\s+threat|bloc\s+threat|apts|advanced\s+persistent|supply\s+chain\s+(?:attack|threat)|zero\s+day|zero-day|exploit\s+kit|phishing\s+(?:campaign|kit|template)|botnet\s+(?:infection|command|控|controller)|ransomware\s+as\s+a\s+service|raas|ransomware\s+gang|cyber\s+(?:attack|threat|crime|criminal|espionage)|nation[\s_-]state\s+(?:threat|apt|actor|hacker)|state[\s_-]sponsored|apt[\s_-]\w+)", _re.IGNORECASE)
+    return bool(MULTI_PAT.search(q))
+
+def _is_threat_query(query: str) -> bool:
+    """Detect if query is a non-domain threat/malware/ransomware/entity query."""
+    if not query or not query.strip(): return False
+    q, first_token = _strip_query_prefix(query.strip()), query.split()[0] if query else ""
+    return _check_ip_cve(q) or _check_threat_patterns(q, first_token) or _check_generic_keywords(q, first_token) or _check_multi_word_patterns(q)
 
 
 def generate_rescue_urls(query: str, max_urls: int = 8) -> list[DiscoveryHit]:
@@ -708,80 +620,50 @@ async def generate_keyword_bootstrap_urls(
     return []
 
 
-def _extract_domain_from_query(query: str) -> str | None:
-    """Extract domain from OSINT query string.
+def _strip_prefix(q: str) -> str:
+    """Strip site:, domain:, url: prefixes."""
+    for prefix in ("site:", "domain:", "url:"):
+        if q.lower().startswith(prefix):
+            return q[len(prefix):]
+    return q
 
-    Handles plain domains, URLs, IP addresses (ignored), and mixed queries.
-    Returns lower-case domain string or None if no domain found.
-    """
-    if not query:
+def _extract_host_from_url(q: str) -> str | None:
+    """Extract host from URL using urllib."""
+    try:
+        import urllib.parse
+        parsed = urllib.parse.urlparse(q)
+        return parsed.netloc or parsed.path.split("/")[0]
+    except Exception:
         return None
 
-    # Sprint F233E: Try to extract domain from mixed OSINT query.
-    # Strategy: try the query as-is first (pure domain or URL), then try
-    # the first whitespace-delimited token (for "mozilla.org certificate..." cases).
+def _normalize_domain(q: str) -> str | None:
+    """Normalize domain string: strip ports, www, wildcards."""
+    q = q.rstrip("/")
+    if "/" in q and "://" in q:
+        if host := _extract_host_from_url(q): q = host
+    if ":" in q: q = q.rsplit(":", 1)[0]
+    if q.lower().startswith("www."): q = q[4:]
+    if q.startswith("*."): q = q[2:]
+    return q
+
+def _is_valid_domain(q: str) -> bool:
+    """Validate domain format."""
+    import re as _re
+    if not q or "." not in q: return False
+    if _re.match(r"^\d{1,3}(\.\d{1,3}){3}$", q): return False
+    if not _re.match(r"^[a-zA-Z0-9.\-]+$", q): return False
+    if len(q.rsplit(".", 1)[-1]) < 2: return False
+    return True
+
+def _extract_domain_from_query(query: str) -> str | None:
+    """Extract domain from OSINT query string."""
+    if not query: return None
     candidates = [query]
-    # Also add first token if query has whitespace
-    if " " in query or "\t" in query:
-        first_token = query.strip().split()[0]
-        if first_token and first_token != query:
-            candidates.append(first_token)
-
+    if (" " in query or "\t" in query) and (first := query.strip().split()[0]) and first != query:
+        candidates.append(first)
     for candidate in candidates:
-        q = candidate
-        # Strip common prefix operators used in OSINT queries
-        for prefix in ("site:", "domain:", "url:"):
-            if q.lower().startswith(prefix):
-                q = q[len(prefix):]
-                break
-
-        # Strip trailing slashes and path components from URL
-        q = q.rstrip("/")
-        if "/" in q and "://" in q:
-            # It's a full URL — extract just the host part
-            try:
-                import urllib.parse
-                parsed = urllib.parse.urlparse(q)
-                host = parsed.netloc or parsed.path.split("/")[0]
-            except Exception:
-                host = None
-            if host:
-                q = host
-
-        # Remove common port suffix
-        if ":" in q:
-            q = q.rsplit(":", 1)[0]
-
-        # Strip www. prefix for base domain
-        if q.lower().startswith("www."):
-            q = q[4:]
-
-        # Remove wildcard prefix
-        if q.startswith("*."):
-            q = q[2:]
-
-        # Validate: must look like a domain (has TLD with 2+ chars)
-        # Must have at least one dot and a plausible TLD
-        if not q or "." not in q:
-            continue
-
-        # Reject if it looks like an IP address
-        import re as _re
-        if _re.match(r"^\d{1,3}(\.\d{1,3}){3}$", q):
-            continue
-
-        # Reject if contains path-like characters (more than one / or unusual chars)
-        # Domain should only contain letters, digits, hyphens, dots
-        if not _re.match(r"^[a-zA-Z0-9.\-]+$", q):
-            continue
-
-        # Reject single-char TLDs or obviously invalid
-        tld = q.rsplit(".", 1)[-1] if "." in q else ""
-        if len(tld) < 2:
-            continue
-
-        return q.lower()
-
+        q = _normalize_domain(_strip_prefix(candidate))
+        if q and _is_valid_domain(q): return q.lower()
     return None
 
 
@@ -854,139 +736,72 @@ def _compute_fetch_policy(
 # ---------------------------------------------------------------------------
 
 
-def _extract_provider_surface(
-    discovery_result,
-    selected_out: list,
-    skipped_out: list,
-    stub_out: list,
-    errors_out: list,
-    timeout_count_out: list,
-    import_error_count_out: list,
-    empty_reason_out: list,
-) -> None:
-    """Extract provider surface telemetry from a DiscoveryBatchResult (or mock).
-
-    Writes into the provided mutable list arguments to avoid nonlocal issues
-    in the enclosing pipeline function.
-    Populates:
-      - selected_out: providers with selected=True
-      - skipped_out: [{provider, reason}] with selected=False
-      - stub_out: providers in ADVISORY_STUB state
-      - errors_out: [{provider, error, error_type}] provider-level errors
-      - timeout_count_out[0]: incremented on timeout errors
-      - import_error_count_out[0]: incremented on import/availability errors
-      - empty_reason_out[0]: set to refined discovery_empty subtype
-    """
-    # discovery_result may be a real DiscoveryBatchResult or a mock with .hits/.error
-    result_error = getattr(discovery_result, "error", None) or (discovery_result.get("error") if isinstance(discovery_result, dict) else None)  # noqa: E501
-    error_str = str(result_error) if result_error else ""
-
-    # F265C+P0-C: Handle both single DiscoveryBatchResult and list (cascade returns list)
-    # Also handle CascadeResult wrapper that has .result attribute
-    results_to_process: list = []
-    if isinstance(discovery_result, list):
-        # Cascade returns [ddg_result, hf_result, wb_result] — process each
-        results_to_process = discovery_result
-    else:
-        # Single result — may be CascadeResult with .result wrapper
-        _result = getattr(discovery_result, "result", discovery_result)
-        results_to_process = [_result] if _result is not None else []
-
-    psd: list | None = None
+def _get_provider_status_debug(discovery_result, results_to_process):
+    """Extract provider_status_debug from results."""
     for _res in results_to_process:
-        _psd = getattr(_res, "provider_status_debug", None)
-        if _psd is None and isinstance(_res, dict):
-            _psd = _res.get("provider_status_debug")
+        _psd = getattr(_res, "provider_status_debug", None) or (_res.get("provider_status_debug") if isinstance(_res, dict) else None)
         if _psd and isinstance(_psd, list):
-            psd = _psd
-            break
+            return _psd
+    return None
 
-    if psd and isinstance(psd, list):
-        for entry in psd:
-            p = entry.get("provider", "") if isinstance(entry, dict) else getattr(entry, "provider", "")
-            state = entry.get("state") if isinstance(entry, dict) else getattr(entry, "state", None)
-            if hasattr(state, "value"):
-                state = state.value
-            state_str = str(state) if state is not None else ""
-
-            if entry.get("selected"):
-                selected_out.append(p)
-            else:
-                reason = entry.get("reason", "") if isinstance(entry, dict) else ""
-                skipped_out.append({"provider": p, "reason": reason})
-
-            if state_str == "advisory_stub":
-                stub_out.append(p)
-
-        # Extract query variants if present
-        variants = []
-        if isinstance(psd, list) and psd:
-            first = psd[0] if psd else {}
-            if isinstance(first, dict):
-                variants = first.get("query_variants", [])
-            elif hasattr(psd[0], "query_variants"):
-                variants = psd[0].query_variants
-        # variants populated via duckduckgo_adapter._build_query_variants
-        # For DDG single-call path, record via hits query if available
-        _hits_target = getattr(discovery_result, "hits", None) or (discovery_result.get("hits") if isinstance(discovery_result, dict) else None)
-        if _hits_target and _hits_target:
-            # derive from first hit query
-            first_hit = _hits_target[0]
-            q = getattr(first_hit, "query", "") or ""
-            if q:
-                variants.append(q)
-
-    # Provider-level errors from DiscoveryBatchResult fields
-    # P0-C: For list (cascade), use first result's error_type; for single result, use it directly
-    error_type = ""
-    provider_name_for_error = ""
-    if isinstance(discovery_result, list) and results_to_process:
-        # Cascade path: use first result that has an error
-        for _res in results_to_process:
-            _et = getattr(_res, "error_type", None) or ""
-            _pn = getattr(_res, "provider_name", None) or ""
-            _err = getattr(_res, "error", None)
-            if _err:
-                error_type = _et
-                provider_name_for_error = _pn
-                break
+def _process_provider_status_entry(entry, selected_out, skipped_out, stub_out):
+    """Process a single provider status entry."""
+    p = entry.get("provider", "") if isinstance(entry, dict) else getattr(entry, "provider", "")
+    state = entry.get("state") if isinstance(entry, dict) else getattr(entry, "state", None)
+    if hasattr(state, "value"):
+        state = state.value
+    state_str = str(state) if state is not None else ""
+    if entry.get("selected"):
+        selected_out.append(p)
     else:
-        # Single result path (original behavior)
-        error_type = getattr(discovery_result, "error_type", None) or ""
-        provider_name_for_error = getattr(discovery_result, "provider_name", None) or ""
+        skipped_out.append({"provider": p, "reason": entry.get("reason", "") if isinstance(entry, dict) else ""})
+    if state_str == "advisory_stub":
+        stub_out.append(p)
 
+def _classify_error(error_str, error_type, discovery_result):
+    """Classify error and return (empty_reason, timeout_inc, import_inc)."""
+    if error_type == "timeout" or "timeout" in error_str.lower():
+        return "provider_timeout", 1, 0
+    elif error_type == "provider_exception" or "exception" in error_str.lower():
+        return "provider_unavailable", 0, 1
+    elif error_str == "empty_query":
+        return "query_builder_empty", 0, 0
+    elif not hits_from_result(discovery_result):
+        return "provider_returned_zero", 0, 0
+    return None, 0, 0
+
+def _get_results_to_process(discovery_result):
+    """Get list of results to process."""
+    if isinstance(discovery_result, list): return discovery_result
+    return [getattr(discovery_result, "result", discovery_result)]
+
+def _extract_provider_errors(results_to_process):
+    """Extract error type and provider name from results."""
+    for res in results_to_process:
+        if getattr(res, "error", None):
+            return getattr(res, "error_type", None) or "", getattr(res, "provider_name", None) or ""
+    return "", ""
+
+def _extract_provider_surface(discovery_result, selected_out, skipped_out, stub_out, errors_out, timeout_count_out, import_error_count_out, empty_reason_out) -> None:
+    """Extract provider surface telemetry from a DiscoveryBatchResult."""
+    result_error = getattr(discovery_result, "error", None) or (discovery_result.get("error") if isinstance(discovery_result, dict) else None)
+    error_str = str(result_error) if result_error else ""
+    results_to_process = [r for r in _get_results_to_process(discovery_result) if r is not None]
+    psd = _get_provider_status_debug(discovery_result, results_to_process)
+    if psd and isinstance(psd, list):
+        for entry in psd: _process_provider_status_entry(entry, selected_out, skipped_out, stub_out)
+        first = psd[0] if psd else {}
+        variants = first.get("query_variants", []) if isinstance(first, dict) else getattr(first, "query_variants", [])
+        if hits := hits_from_result(discovery_result):
+            if q := getattr(hits[0], "query", "") or "": variants.append(q)
+    error_type, provider_name = _extract_provider_errors(results_to_process) if isinstance(discovery_result, list) else (getattr(discovery_result, "error_type", None) or "", getattr(discovery_result, "provider_name", None) or "")
     if error_str:
-        errors_out.append({"provider": provider_name_for_error or "", "error": error_str, "error_type": error_type})
-        if error_type == "timeout" or "timeout" in error_str.lower():
-            timeout_count_out[0] += 1
-            if not empty_reason_out:
-                empty_reason_out.append("provider_timeout")
-        elif error_type == "provider_exception" or "exception" in error_str.lower():
-            import_error_count_out[0] += 1
-            if not empty_reason_out:
-                empty_reason_out.append("provider_unavailable")
-        elif error_str == "empty_query":
-            if not empty_reason_out:
-                empty_reason_out.append("query_builder_empty")
-        elif not hits_from_result(discovery_result):
-            if not empty_reason_out:
-                empty_reason_out.append("provider_returned_zero")
-
-    # If no providers selected at all — F234-FIX: preserve specific reason if already set
-    # Previously this would overwrite "provider_returned_zero" / "provider_timeout" etc.
-    if not selected_out and not psd:
-        if not empty_reason_out:
-            empty_reason_out.append("no_provider_selected")
-        else:
-            # A specific reason (provider_timeout, provider_returned_zero, etc.) was
-            # already set by the error-handling above. Preserve it instead of overwriting
-            # with the generic "no_provider_selected". This provides better diagnostics.
-            pass
-
-    # F232: When hits are empty and no specific reason set yet, set provider_returned_zero
-    # This handles the case where provider returned zero without an error string
-    if not hits_from_result(discovery_result) and not empty_reason_out:
-        empty_reason_out.append("provider_returned_zero")
+        errors_out.append({"provider": provider_name, "error": error_str, "error_type": error_type})
+        empty_reason, t_inc, i_inc = _classify_error(error_str, error_type, discovery_result)
+        timeout_count_out[0] += t_inc; import_error_count_out[0] += i_inc
+        if empty_reason and not empty_reason_out: empty_reason_out.append(empty_reason)
+    if not selected_out and not psd and not empty_reason_out: empty_reason_out.append("no_provider_selected")
+    if not hits_from_result(discovery_result) and not empty_reason_out: empty_reason_out.append("provider_returned_zero")
 
 
 def hits_from_result(discovery_result) -> tuple:
@@ -1857,290 +1672,150 @@ async def _generate_and_store_report(
     hermes_engine: Any | None,
     vector_store: Any | None = None,
 ) -> str:
-    """P6: Generate OSINT report from top findings and store in DuckDB. P13: Integrate vector search, MMR reranking, and RRF fusion for RAG context.
-
-    Collects top 5 pages by matched_patterns count, generates report via Hermes
-    (if available), and stores with source_type='report'.
+    """P6: Generate OSINT report from top findings and store in DuckDB.
 
     Fail-soft: returns empty string on any error. Pipeline continues regardless.
-
-    Args:
-        query: Research query
-        pages: Tuple of PipelinePageResult
-        store: Optional DuckDBShadowStore instance
-        hermes_engine: Optional Hermes3Engine instance (if None, report generation skipped)
-        vector_store: Optional VectorStore instance for semantic search
-
-    Returns:
-        Generated report text, or empty string if skipped/failed
-
     """
     if hermes_engine is None:
-        return ""  # No Hermes, skip report generation
-
-    # P13: Vector search for RAG context with MMR reranking
-    vector_candidates: list[tuple[str, float]] = []
-    if vector_store is not None:
-        try:
-            from hledac.universal.brain.model_manager import get_model_manager
-            from hledac.universal.embedding_pipeline import embed_query_async
-            from hledac.universal.utils.ranking import rrf_fuse
-
-            # Generate query embedding with proper lifecycle management
-            model_manager = get_model_manager()
-            async with model_manager.embedding_lifecycle():
-                query_vec = await embed_query_async(query)
-
-                # Query vector store for similar documents
-                raw_similar = vector_store.query(query_vec, k=10, index_type="text")
-                if raw_similar:
-                    logger.info(f"[P13] Vector search found {len(raw_similar)} similar docs")
-                    vector_candidates = raw_similar
-
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"[P13] Vector search failed: {e}")
-            vector_candidates = []
-
-    # Collect top N pages by matched_patterns (proxy for IOC density)
-    sorted_pages = sorted(
-        pages,
-        key=lambda p: (p.matched_patterns or 0, p.accepted_findings or 0),
-        reverse=True
-    )
-    top_pages = sorted_pages[:_REPORT_TOP_N]
-
-    if not top_pages:
-        return ""  # No findings to report on
-
-    # P13: Build pattern_matcher ranked list for RRF fusion
-    pattern_ranked: list[tuple[str, float]] = []
-    for p in top_pages:
-        url = getattr(p, "url", "") or ""
-        score = (p.matched_patterns or 0) + (p.accepted_findings or 0) * 0.5
-        if url:
-            pattern_ranked.append((url, score))
-
-    # P13: Fuse vector search results with pattern matcher results using RRF
-    if vector_candidates and pattern_ranked:
-        try:
-            fused_ids = rrf_fuse([vector_candidates, pattern_ranked], k=60)
-            logger.info(f"[P13] RRF fused {len(fused_ids)} results")
-            # Use fused order for context building
-            fused_url_order = fused_ids[:_REPORT_TOP_N]
-        except Exception:
-            # Fallback to pattern matcher order if RRF fails
-            fused_url_order = [url for url, _ in pattern_ranked[:_REPORT_TOP_N]]
-    else:
-        fused_url_order = [url for url, _ in pattern_ranked[:_REPORT_TOP_N]]
-
-    # Build context from fused/ranked pages
-    context_items: list[str] = []
-    url_to_page = {getattr(p, "url", ""): p for p in pages}
-
-    for url in fused_url_order:
-        page = url_to_page.get(url)
-        if page is None:
-            continue
-        # Format page info as context item
-        ioc_count = page.matched_patterns or 0
-        accepted = page.accepted_findings or 0
-        title = getattr(page, "discovery_reason", "") or getattr(page, "quality_reason", "") or url
-
-        context_items.append(
-            f"URL: {url}\n"
-            f"Title/Reason: {title}\n"
-            f"IOC count: {ioc_count}, Accepted findings: {accepted}"
-        )
-
-    # If no context from fusion, fall back to top_pages
-    if not context_items:
-        for p in top_pages:
-            ioc_count = p.matched_patterns or 0
-            accepted = p.accepted_findings or 0
-            url = getattr(p, "url", "") or ""
-            title = getattr(p, "discovery_reason", "") or getattr(p, "quality_reason", "") or url
-
-            context_items.append(
-                f"URL: {url}\n"
-                f"Title/Reason: {title}\n"
-                f"IOC count: {ioc_count}, Accepted findings: {accepted}"
-            )
-
-    # FÁZE P14: Build routing context and determine best model
-    route_context: dict = {
-        "urls": [safe_attr_get(p, "url", "") for p in top_pages],
-        "content_type": "html",  # Default content type
-    }
-
-    # Check for images in page data (vision routing)
-    has_images = any(
-        getattr(p, "redirected", False) and "image" in (getattr(p, "redirect_target", "") or "").lower()
-        for p in top_pages
-    )
-    if has_images:
-        route_context["has_images"] = True
-
-    # P16: Route via MoERouter.route() to get expert IDs for generator selection
-    _expert_ids: list[str] = []  # noqa: F841  # P16: reserved for future MoE expert routing
-    try:
-        from hledac.universal.brain.moe_router import create_moe_router
-        router = await create_moe_router()
-        if router is not None:
-            _expert_ids = await router.route(query, context_items)
-            logger.info(f"[P16] MoE experts: {_expert_ids} for query: {query[:50]}")
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"[P16] MoE routing failed: {e}")
-        _expert_ids = []
-
-    # FÁZE P14: Route to appropriate model (legacy fallback)
-    from hledac.universal.brain.moe_router import route as moe_route
-    model_choice = moe_route(query, route_context)
-    logger.info(f"[P14] MoE route: {model_choice} for query: {query[:50]}")
-
-    # Generate report based on routed model
-    report_text = ""
-    try:
-        match model_choice:
-            case "vision":
-                report_text = "[image description] " + "\n".join(context_items[:3])
-                logger.info("[P14] Using vision encoder placeholder")
-            case "modernbert":
-                try:
-                    from hledac.universal.brain.modernbert_engine import ModernBertEngine
-                    modernbert = ModernBertEngine()
-                    report_text = await modernbert.summarize(context_items)
-                    logger.info("[P14] Using ModernBERT summarizer")
-                except Exception as e:
-                    logger.warning(f"[P14] ModernBERT failed, falling back to Hermes: {e}")
-                    report_text = await hermes_engine.generate_report(query, context_items)
-            case _:
-                report_text = await hermes_engine.generate_report(query, context_items)
-
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"[REPORT] Generation failed: {e}")
         return ""
-
+    vector_candidates = await _vector_search_context(query, vector_store)
+    sorted_pages = sorted(pages, key=lambda p: (p.matched_patterns or 0, p.accepted_findings or 0), reverse=True)
+    top_pages = sorted_pages[:_REPORT_TOP_N]
+    if not top_pages:
+        return ""
+    context_items = _build_report_context(pages, top_pages, vector_candidates)
+    report_text = await _generate_routed_report(query, context_items, hermes_engine)
     if not report_text:
-        return ""  # Report generation returned empty
-
-    # Store report as CanonicalFinding with source_type='report'
+        return ""
     if store is not None:
-        try:
-            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-
-            report_id = _make_finding_id(
-                query=query,
-                url="synthetic://report",
-                label="osint_report",
-                pattern="synthetic",
-                value=report_text[:200]  # Use first 200 chars as value for ID
-            )
-
-            report_finding = CanonicalFinding(
-                finding_id=report_id,
-                query=query,
-                source_type=_REPORT_SOURCE_TYPE,
-                confidence=0.7,  # Moderate confidence for generated content
-                ts=time.time(),
-                provenance=("source_family:public", "report_generation", hermes_engine.__class__.__name__),
-                payload_text=report_text,
-            )
-
-            # Store using existing async API (coalescer path — fire-and-forget)
-            await store.submit_findings([report_finding])
-            import logging
-            logging.getLogger(__name__).info(f"[REPORT] Stored report {report_id[:8]} for query: {query[:50]}")
-
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"[REPORT] Storage failed: {e}")
-            # Fail-soft: report was generated but not stored - still return it
-
-        # F256: Also produce HermesInferenceOutput for pivot planning
-        # (stored alongside report finding for query at advisory time)
-        # Guard: need store (for CanonicalFinding) + hermes_engine + non-empty report_text
-        if store is not None and hermes_engine is not None and report_text:
-            try:
-                from hledac.universal.brain.ner_engine import extract_iocs_from_text
-                from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
-
-                # F256K: Try structured IOC_JSON block first, fall back to NER extraction
-                key_iocs: list[str] = []
-                key_entities: list[str] = []
-
-                ioc_json_block = re.search(r"<IOC_JSON>\s*(\{.*?\})\s*</IOC_JSON>", report_text, re.DOTALL)
-                if ioc_json_block:
-                    try:
-                        ioc_data = _json.decode(ioc_json_block.group(1))
-                        key_iocs = list(ioc_data.get("iocs", [])[:20])
-                        key_entities = list(ioc_data.get("entities", [])[:20])
-                    except (ValueError, KeyError) as _:  # noqa: BLE001
-                        pass  # Fall back to NER extraction
-
-                if not key_iocs and not key_entities:
-                    # R7: Use zero-copy batch_ioc_extract_unified_python via rayon channel
-                    try:
-                        from hledac.universal.utils.ioc_extract import extract_iocs_single
-                        ioc_tuples = await extract_iocs_single(report_text)
-                        key_iocs = [v for _, v in ioc_tuples if len(v) > 3][:20]
-                        key_entities = [v for t, v in ioc_tuples if t in ("org", "person", "gpe", "product")][:20]
-                    except ImportError:
-                        # Fallback to NER extraction
-                        ioc_results = extract_iocs_from_text(report_text)
-                        key_iocs = list(
-                            r["value"] for r in ioc_results
-                            if r.get("value") and len(r["value"]) > 3
-                        )[:20]
-                        key_entities = list(
-                            r["value"] for r in ioc_results
-                            if r.get("ioc_type") in ("org", "person", "gpe", "product")
-                        )[:20]
-
-                pivot_suggestions = key_iocs[:10]
-
-                hermes_output = HermesInferenceOutput(
-                    output_id=report_id,
-                    source_finding_id=report_id,
-                    inference_type="report_synthesis",
-                    timestamp=time.time(),
-                    primary_text=report_text,
-                    confidence=0.7,
-                    key_iocs=key_iocs,
-                    key_entities=key_entities,
-                    pivot_suggestions=pivot_suggestions,
-                    bounded=False,
-                    tokens_used=0,
-                    model_name=hermes_engine.__class__.__name__,
-                    source_hints=("public",),
-                )
-
-                # Store hermes_inference as CanonicalFinding for advisory retrieval
-                hermes_finding = CanonicalFinding(
-                    finding_id=hermes_output.output_id,
-                    query=query,
-                    source_type="hermes_inference",
-                    confidence=hermes_output.confidence,
-                    ts=hermes_output.timestamp,
-                    provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
-                    payload_text=_json.encode(hermes_output.to_dict()).decode("utf-8")[:4096],
-                )
-                await store.submit_findings([hermes_finding])
-                import logging as _log
-                _log.getLogger(__name__).info(f"[F256] Stored hermes_inference {hermes_output.output_id[:8]}")
-            except Exception as _e:
-                import logging as _log
-                _log.getLogger(__name__).warning(f"[F256] HermesInferenceOutput failed: {_e}")
-                # fail-soft: report still returned
-
+        report_id = _make_finding_id(query=query, url="synthetic://report", label="osint_report", pattern="synthetic", value=report_text[:200])
+        await _store_report_and_inference(store, query, report_text, report_id, hermes_engine)
     return report_text
 
 
-# -----------------------------------------------------------------------------
-# Main pipeline
-# -----------------------------------------------------------------------------
+async def _vector_search_context(query: str, vector_store) -> list:
+    """P13: Perform vector search for RAG context."""
+    if vector_store is None:
+        return []
+    try:
+        from hledac.universal.brain.model_manager import get_model_manager
+        from hledac.universal.embedding_pipeline import embed_query_async
+        model_manager = get_model_manager()
+        async with model_manager.embedding_lifecycle():
+            query_vec = await embed_query_async(query)
+            raw_similar = vector_store.query(query_vec, k=10, index_type="text")
+            if raw_similar:
+                logger.info(f"[P13] Vector search found {len(raw_similar)} similar docs")
+            return raw_similar or []
+    except Exception as e:
+        logger.warning(f"[P13] Vector search failed: {e}")
+        return []
+
+
+def _build_report_context(pages: tuple, top_pages: list, vector_candidates: list) -> list[str]:
+    """Build context items from pages with RRF fusion."""
+    pattern_ranked = [(getattr(p, "url", "") or "", (p.matched_patterns or 0) + (p.accepted_findings or 0) * 0.5) for p in top_pages if getattr(p, "url", "")]
+    if vector_candidates and pattern_ranked:
+        try:
+            from hledac.universal.utils.ranking import rrf_fuse
+            fused_ids = rrf_fuse([vector_candidates, pattern_ranked], k=60)
+            url_order = fused_ids[:_REPORT_TOP_N]
+        except Exception:
+            url_order = [u for u, _ in pattern_ranked[:_REPORT_TOP_N]]
+    else:
+        url_order = [u for u, _ in pattern_ranked[:_REPORT_TOP_N]]
+    url_to_page = {getattr(p, "url", ""): p for p in pages}
+    context_items = []
+    for url in url_order:
+        page = url_to_page.get(url)
+        if page:
+            context_items.append(f"URL: {url}\nTitle/Reason: {getattr(page, 'discovery_reason', '') or getattr(page, 'quality_reason', '') or url}\nIOC count: {page.matched_patterns or 0}, Accepted findings: {page.accepted_findings or 0}")
+    return context_items
+
+
+async def _generate_routed_report(query: str, context_items: list, hermes_engine) -> str:
+    """Route model and generate report."""
+    try:
+        from hledac.universal.brain.moe_router import route as moe_route
+        model_choice = moe_route(query, {"urls": []})
+    except Exception:
+        model_choice = "hermes"
+    try:
+        match model_choice:
+            case "vision":
+                return "[image description] " + "\n".join(context_items[:3])
+            case "modernbert":
+                try:
+                    from hledac.universal.brain.modernbert_engine import ModernBertEngine
+                    return await ModernBertEngine().summarize(context_items)
+                except Exception as e:
+                    logger.warning(f"[P14] ModernBERT failed: {e}")
+                    return await hermes_engine.generate_report(query, context_items)
+            case _:
+                return await hermes_engine.generate_report(query, context_items)
+    except Exception as e:
+        logger.warning(f"[REPORT] Generation failed: {e}")
+        return ""
+
+
+async def _store_report_and_inference(store, query: str, report_text: str, report_id: str, hermes_engine) -> None:
+    """Store report and Hermes inference findings."""
+    from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+    try:
+        report_finding = CanonicalFinding(
+            finding_id=report_id, query=query, source_type=_REPORT_SOURCE_TYPE,
+            confidence=0.7, ts=time.time(),
+            provenance=("source_family:public", "report_generation", hermes_engine.__class__.__name__),
+            payload_text=report_text,
+        )
+        await store.submit_findings([report_finding])
+        logger.info(f"[REPORT] Stored report {report_id[:8]}")
+    except Exception as e:
+        logger.warning(f"[REPORT] Storage failed: {e}")
+    try:
+        from hledac.universal.runtime.hermes_pivot_contract import HermesInferenceOutput
+        key_iocs, key_entities = await _extract_iocs_from_report(report_text)
+        hermes_output = HermesInferenceOutput(
+            output_id=report_id, source_finding_id=report_id, inference_type="report_synthesis",
+            timestamp=time.time(), primary_text=report_text, confidence=0.7,
+            key_iocs=key_iocs, key_entities=key_entities, pivot_suggestions=key_iocs[:10],
+            bounded=False, tokens_used=0, model_name=hermes_engine.__class__.__name__, source_hints=("public",),
+        )
+        hermes_finding = CanonicalFinding(
+            finding_id=hermes_output.output_id, query=query, source_type="hermes_inference",
+            confidence=hermes_output.confidence, ts=hermes_output.timestamp,
+            provenance=("source_family:public", "hermes_inference", hermes_engine.__class__.__name__),
+            payload_text=_json.encode(hermes_output.to_dict()).decode("utf-8")[:4096],
+        )
+        await store.submit_findings([hermes_finding])
+        logger.info(f"[F256] Stored hermes_inference {hermes_output.output_id[:8]}")
+    except Exception as e:
+        logger.warning(f"[F256] HermesInferenceOutput failed: {e}")
+
+
+async def _extract_iocs_from_report(report_text: str) -> tuple[list[str], list[str]]:
+    """Extract IOCs and entities from report text."""
+    key_iocs, key_entities = [], []
+    ioc_json = re.search(r"<IOC_JSON>\s*(\{.*?\})\s*</IOC_JSON>", report_text, re.DOTALL)
+    if ioc_json:
+        try:
+            ioc_data = _json.decode(ioc_json.group(1))
+            return list(ioc_data.get("iocs", [])[:20]), list(ioc_data.get("entities", [])[:20])
+        except (ValueError, KeyError):
+            pass
+    try:
+        from hledac.universal.utils.ioc_extract import extract_iocs_single
+        ioc_tuples = await extract_iocs_single(report_text)
+        return [v for _, v in ioc_tuples if len(v) > 3][:20], [v for t, v in ioc_tuples if t in ("org", "person", "gpe", "product")][:20]
+    except ImportError:
+        try:
+            from hledac.universal.brain.ner_engine import extract_iocs_from_text
+            ioc_results = extract_iocs_from_text(report_text)
+            return [r["value"] for r in ioc_results if r.get("value") and len(r["value"]) > 3][:20], [r["value"] for r in ioc_results if r.get("ioc_type") in ("org", "person", "gpe", "product")][:20]
+        except Exception:
+            pass
+    return [], []
+
 
 
 def _query_looks_like_domain(query: str) -> bool:

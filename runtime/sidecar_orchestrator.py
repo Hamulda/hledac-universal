@@ -916,56 +916,36 @@ class SidecarOrchestrator:
             log.debug("[F350M-FED] build context failed: %s", e)
             return None
 
-    async def run_target_memory_update(
-        self,
-        findings: list[Any],
-        store: Any,
-        query: str,  # noqa: ARG002 — reserved for future enrichment use
-    ) -> None:
-        """
-        F204D: Update cross-sprint target memory after findings are accepted.
 
-        Extracts entity/exposure/pivot facets from findings and merges into
-        target memory via duckdb_store.async_upsert_target_memory().
-
-        RAM guard: skip if RSS > high_water (85% threshold).
-        Fail-soft: errors never crash the sprint.
-
-        Issue #15 fix: single-pass aggregation with orjson (5-10× faster
-        than json.loads) and early-bound finding_count (avoids N re-reads).
-        """
+    def _check_memory_ok(self) -> bool:
+        """Check if memory pressure is acceptable. Returns True to proceed, False to skip."""
         try:
             import psutil
-
             process = psutil.Process()
             mem_info = process.memory_info()
             rss_mb = mem_info.rss / 1024**2
             vm = psutil.virtual_memory()
             high_water = vm.percent * 0.85
-            if rss_mb > high_water:
-                return
+            return rss_mb <= high_water
         except Exception:  # noqa: BLE001
-            pass
+            return True
 
-        # Issue #15: orjson 5-10× faster than stdlib json
+    def _aggregate_finding_facets(self, findings: list[Any]) -> tuple[dict[str, dict], dict[str, dict], dict[str, dict], dict[str, int]]:
+        """Aggregate findings into entity, exposure, and pivot facets.
+        
+        Returns: (entity_data, exposure_data, pivot_data, finding_counts)
+        """
         import orjson
-
-        # Local aggregation dicts — keyed once per target_id, not per finding
         entity_data: dict[str, dict[str, Any]] = {}
         exposure_data: dict[str, dict[str, Any]] = {}
         pivot_data: dict[str, dict[str, Any]] = {}
-        finding_counts: dict[str, int] = {}  # per-target finding count (Issue #15 review fix)
-
-        # Early binding: capture once instead of N getattr calls
-        sprint_id = getattr(self._result, "sprint_id", "") or ""
-        now = _time.time()
+        finding_counts: dict[str, int] = {}
 
         for finding in findings:
             target_id = getattr(finding, "target_id", None) or getattr(finding, "entity_id", None)
             if not target_id:
                 continue
 
-            # Issue #15 review fix: count each finding once per target (not per facet type)
             if target_id not in finding_counts:
                 finding_counts[target_id] = 0
             finding_counts[target_id] += 1
@@ -978,33 +958,8 @@ class SidecarOrchestrator:
                 entity_data[target_id]["types"].add(entity_type)
                 entity_data[target_id]["count"] += 1
 
-            # Exposure facets: signals + optional rir_correlation payload
-            src_type = getattr(finding, "src_type", None)
-            if src_type == "exposure":
-                if target_id not in exposure_data:
-                    exposure_data[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
-                exposure_data[target_id]["signals"].append(getattr(finding, "signal_type", "unknown"))
-                exposure_data[target_id]["count"] += 1
-            elif src_type == "rir_correlation":
-                if target_id not in exposure_data:
-                    exposure_data[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
-                payload_text = getattr(finding, "payload_text", None) or ""
-                rir_data: dict[str, Any] = {}
-                if isinstance(payload_text, str) and payload_text:
-                    try:
-                        rir_data = orjson.loads(payload_text)
-                    except Exception:  # noqa: BLE001
-                        rir_data = {}
-                asn = rir_data.get("asn", "") or ""
-                if asn:
-                    exposure_data[target_id]["rir_asns"][asn] = {
-                        "org": rir_data.get("org", "") or "",
-                        "netblock": rir_data.get("netblock", "") or "",
-                        "country": rir_data.get("country", "") or "",
-                        "ioc_type": rir_data.get("ioc_type", "") or "",
-                        "ioc_val": rir_data.get("ioc_val", "") or getattr(finding, "ioc_val", "") or "",
-                    }
-                exposure_data[target_id]["count"] += 1
+            # Exposure facets
+            self._process_exposure_facet(finding, target_id, exposure_data, orjson)
 
             # Pivot facets
             suggested_pivots = getattr(finding, "suggested_pivots", None)
@@ -1015,8 +970,39 @@ class SidecarOrchestrator:
                     pivot_data[target_id]["pivots"].append(pivot)
                     pivot_data[target_id]["count"] += 1
 
-        # Bounds: mirror target_memory.py constants (enforced there in merge_update)
-        # Issue #15 review: use identical bounds to avoid dead-code truncation here
+        return entity_data, exposure_data, pivot_data, finding_counts
+
+    def _process_exposure_facet(self, finding: Any, target_id: str, exposure_data: dict, orjson: Any) -> None:
+        """Process a single finding's exposure facets."""
+        src_type = getattr(finding, "src_type", None)
+        if src_type == "exposure":
+            if target_id not in exposure_data:
+                exposure_data[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
+            exposure_data[target_id]["signals"].append(getattr(finding, "signal_type", "unknown"))
+            exposure_data[target_id]["count"] += 1
+        elif src_type == "rir_correlation":
+            if target_id not in exposure_data:
+                exposure_data[target_id] = {"signals": [], "rir_asns": {}, "count": 0}
+            payload_text = getattr(finding, "payload_text", None) or ""
+            rir_data: dict[str, Any] = {}
+            if isinstance(payload_text, str) and payload_text:
+                try:
+                    rir_data = orjson.loads(payload_text)
+                except Exception:  # noqa: BLE001
+                    pass
+            asn = rir_data.get("asn", "") or ""
+            if asn:
+                exposure_data[target_id]["rir_asns"][asn] = {
+                    "org": rir_data.get("org", "") or "",
+                    "netblock": rir_data.get("netblock", "") or "",
+                    "country": rir_data.get("country", "") or "",
+                    "ioc_type": rir_data.get("ioc_type", "") or "",
+                    "ioc_val": rir_data.get("ioc_val", "") or getattr(finding, "ioc_val", "") or "",
+                }
+            exposure_data[target_id]["count"] += 1
+
+    def _build_memory_payloads(self, entity_data: dict, exposure_data: dict, pivot_data: dict) -> tuple[dict, dict, dict]:
+        """Build bounded memory payloads from aggregated data."""
         from hledac.universal.knowledge.target_memory import (
             MAX_MEMORY_ENTITIES,
             MAX_MEMORY_EXPOSURES,
@@ -1049,6 +1035,32 @@ class SidecarOrchestrator:
                 "count": data["count"],
             }
 
+        return entity_facets, exposure_facets, pivot_facets
+
+    async def run_target_memory_update(
+        self,
+        findings: list[Any],
+        store: Any,
+        query: str,  # noqa: ARG002 — reserved for future enrichment use
+    ) -> None:
+        """
+        F204D: Update cross-sprint target memory after findings are accepted.
+
+        Extracts entity/exposure/pivot facets from findings and merges into
+        target memory via duckdb_store.async_upsert_target_memory().
+
+        RAM guard: skip if RSS > high_water (85% threshold).
+        Fail-soft: errors never crash the sprint.
+
+        Issue #15 fix: single-pass aggregation with orjson (5-10× faster
+        than json.loads) and early-bound finding_count (avoids N re-reads).
+        """
+        if not self._check_memory_ok():
+            return
+
+        entity_data, exposure_data, pivot_data, finding_counts = self._aggregate_finding_facets(findings)
+        entity_facets, exposure_facets, pivot_facets = self._build_memory_payloads(entity_data, exposure_data, pivot_data)
+
         # Bulk upsert: single pass over all target_ids
         all_target_ids = (
             set(entity_facets.keys())
@@ -1056,54 +1068,32 @@ class SidecarOrchestrator:
             | set(pivot_facets.keys())
         )
 
-        # Issue #15 review: init service once before loop (was N× getattr inside loop)
         try:
             from hledac.universal.intel.target_memory_service import (
                 TargetMemoryService,
                 TargetMemoryUpdate,
             )
             if not hasattr(self, "_target_memory_service") or self._target_memory_service is None:
-                self._target_memory_service = TargetMemoryService()
+                self._target_memory_service = TargetMemoryService(store)
             service = self._target_memory_service
-        except (ImportError, ModuleNotFoundError):
-            service = None
 
-        # Issue #A1: parallel upsert via asyncio.gather — N×T ms → ~T ms
-        # DuckDB writes are I/O-bound; gather with semaphore caps concurrency
-        # to avoid M1 8GB RSS spikes.
-        _MAX_CONCURRENT_UPSERTS = 8
+            for target_id in all_target_ids:
+                try:
+                    update = TargetMemoryUpdate(
+                        target_id=target_id,
+                        sprint_id=getattr(self._result, "sprint_id", "") or "",
+                        timestamp=_time.time(),
+                        entity_facets=entity_facets.get(target_id),
+                        exposure_facets=exposure_facets.get(target_id),
+                        pivot_facets=pivot_facets.get(target_id),
+                        finding_count=finding_counts.get(target_id, 0),
+                    )
+                    await service.update_target_memory(update)
+                except Exception as e:
+                    log.debug("[F350M-FED] target memory update failed for %s: %s", target_id, e)
+        except Exception as e:
+            log.debug("[F350M-FED] target memory service unavailable: %s", e)
 
-        async def _upsert_one(target_id: str) -> None:
-            if service is None:
-                return
-            try:
-                update = TargetMemoryUpdate(
-                    target_id=target_id,
-                    sprint_id=sprint_id,
-                    finding_count=finding_counts.get(target_id, 0),
-                    entity_facets=entity_facets.get(target_id, {}),
-                    exposure_facets=exposure_facets.get(target_id, {}),
-                    pivot_facets=pivot_facets.get(target_id, {}),
-                    observed_ts=now,
-                )
-                merged = service.merge_update(update)
-                await store.async_upsert_target_memory(merged)
-            except Exception:  # noqa: BLE001
-                pass  # noqa: BLE001  # Fail-soft
-
-        sem = _asyncio.Semaphore(_MAX_CONCURRENT_UPSERTS)
-
-        async def _upsert_one_bounded(target_id: str) -> None:
-            async with sem:
-                await _upsert_one(target_id)
-
-        tasks = [safe_create_task_tracked(_upsert_one_bounded(tid), name=f"sidecar:upsert_target_memory:{tid}", scope=TaskScope.WINDUP_SIDECAR) for tid in all_target_ids]
-        gathered = await _asyncio.gather(*tasks, return_exceptions=True)
-        _, errors = _check_gathered(gathered)
-        for err in errors:
-            log.warning('[SIDECAR_ORCH] upsert_target_memory: task failed: %s', err)
-        # NOTE: each _upsert_one catches exceptions internally (pass).
-        # The _check_gathered above provides telemetry for monitoring.
 
     def teardown(self) -> None:
         """Clear in-memory state. Called on sprint teardown."""

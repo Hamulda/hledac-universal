@@ -200,80 +200,138 @@ class WaybackDiffMiner:
         """
         start = time.monotonic()
         if not domains_or_urls:
-            elapsed = time.monotonic() - start
-            return WaybackDiffResult(input_count=0, change_events=[], stats=self._stats.copy(), transport_policy=self._transport_policy_label(), injected_fetch_used=self._fetch_provider is not None, archive_domain=_extract_archive_domain(), attempted=True, raw_count=0, built_count=0, error=None, timeout=False, duration_s=elapsed, skip_reason='empty_input')
+            return self._make_empty_result(start)
+
         targets = domains_or_urls[:MAX_DOMAINS_PER_SPRINT]
         await self._ensure_session()
-        if self._semaphore is None:
-            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
-            self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
-        all_events: list[CDXDiffEvent] = []
-        gathered_errors: list[BaseException] = []
+        await self._ensure_semaphore()
 
-        async def _rate_limited_fetch(target: str) -> tuple[str, list[dict[str, str]]]:
-            """Stage 1: fetch CDX (semaphore-bounded, rate-limited)."""
-            archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
-            if not self._check_circuit_breaker(archive_domain):
-                self._stats['circuit_open'] += 1
-                return (target, [])
-            elapsed = time.monotonic() - self._last_request_at
-            if elapsed < REQUEST_RATE_LIMIT:
-                await asyncio.sleep(REQUEST_RATE_LIMIT - elapsed)
-            self._last_request_at = time.monotonic()
-            assert self._semaphore is not None, 'semaphore must be initialized before fetch'
-            async with self._semaphore:
-                return await self._fetch_cdx(target)
-        try:
-            fetch_tasks = [safe_create_task(_rate_limited_fetch(t)) for t in targets]
-            fetch_gathered = await parallel(fetch_tasks, taskgroup=True, policy='collect', ctx='wayback_fetch', logger_instance=logger)
-            snapshots_map: dict[str, list[dict[str, str]]] = {}
-            for res in fetch_gathered.ok:
-                if isinstance(res, tuple) and len(res) == 2:
-                    t, snaps = res
-                    snapshots_map[t] = snaps
-            for exc in fetch_gathered.errors:
-                gathered_errors.append(exc)
-            if fetch_gathered.re_raised is not None:
-                _reraise = fetch_gathered.re_raised
-                if isinstance(_reraise, asyncio.CancelledError):
-                    raise _reraise
-                if isinstance(_reraise, BaseException) and (not isinstance(_reraise, Exception)):
-                    raise _reraise
-            diff_tasks = [safe_create_task(asyncio.to_thread(self._diff_snapshots, t, snaps)) for t, snaps in snapshots_map.items() if snaps]
-            if diff_tasks:
-                diff_gathered = await parallel(diff_tasks, taskgroup=True, policy='collect', ctx='wayback_diff', logger_instance=logger)
-                for res in diff_gathered.ok:
-                    if isinstance(res, list):
-                        all_events.extend(res)
-                for exc in diff_gathered.errors:
-                    gathered_errors.append(exc)
-                if diff_gathered.re_raised is not None:
-                    _reraise = diff_gathered.re_raised
-                    if isinstance(_reraise, asyncio.CancelledError):
-                        raise _reraise
-                    if isinstance(_reraise, BaseException) and (not isinstance(_reraise, Exception)):
-                        raise _reraise
-        except BaseException as e:
-            error_msg = str(e) if not isinstance(e, BaseExceptionGroup) else f'BaseExceptionGroup({len(e.exceptions)} sub-exceptions): {e}'
-            logger.error(f'WaybackDiffMiner pipeline error: {error_msg}')
-            self._stats['errors'] += 1
+        all_events, gathered_errors = await self._execute_pipeline(targets)
+
         if gathered_errors:
             logger.warning(f'WaybackDiffMiner: {len(gathered_errors)} gather errors')
             self._stats['errors'] += len(gathered_errors)
-        all_events = all_events[:MAX_CHANGE_EVENTS]
+
+        self._update_stats(targets, all_events)
+        return self._build_result(start, targets, all_events, gathered_errors)
+
+    def _make_empty_result(self, start: float) -> WaybackDiffResult:
+        """Build empty result for no input."""
+        elapsed = time.monotonic() - start
+        return WaybackDiffResult(input_count=0, change_events=[], stats=self._stats.copy(),
+                               transport_policy=self._transport_policy_label(), injected_fetch_used=self._fetch_provider is not None,
+                               archive_domain=_extract_archive_domain(), attempted=True, raw_count=0, built_count=0,
+                               error=None, timeout=False, duration_s=elapsed, skip_reason='empty_input')
+
+    async def _ensure_semaphore(self) -> None:
+        """Ensure semaphore is initialized."""
+        if self._semaphore is None:
+            from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
+            self._semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
+
+    async def _execute_pipeline(self, targets: list[str]) -> tuple[list[CDXDiffEvent], list[BaseException]]:
+        """Execute fetch and diff pipeline."""
+        all_events: list[CDXDiffEvent] = []
+        gathered_errors: list[BaseException] = []
+
+        try:
+            snapshots_map = await self._fetch_snapshots(targets)
+            gathered_errors.extend(self._extract_fetch_errors(snapshots_map))
+
+            diff_tasks = [safe_create_task(asyncio.to_thread(self._diff_snapshots, t, snaps))
+                         for t, snaps in snapshots_map.items() if snaps]
+            if diff_tasks:
+                diff_events, diff_errors = await self._run_diff_tasks(diff_tasks)
+                all_events.extend(diff_events)
+                gathered_errors.extend(diff_errors)
+        except BaseException as e:
+            self._handle_pipeline_error(e, gathered_errors)
+
+        return all_events[:MAX_CHANGE_EVENTS], gathered_errors
+
+    async def _fetch_snapshots(self, targets: list[str]) -> dict[str, list[dict[str, str]]]:
+        """Fetch CDX snapshots for all targets."""
+        fetch_tasks = [safe_create_task(self._rate_limited_fetch(t)) for t in targets]
+        gathered = await parallel(fetch_tasks, taskgroup=True, policy='collect', ctx='wayback_fetch', logger_instance=logger)
+
+        snapshots_map: dict[str, list[dict[str, str]]] = {}
+        for res in gathered.ok:
+            if isinstance(res, tuple) and len(res) == 2:
+                t, snaps = res
+                snapshots_map[t] = snaps
+
+        if gathered.re_raised is not None:
+            self._reraise_if_critical(gathered.re_raised)
+
+        return snapshots_map
+
+    async def _rate_limited_fetch(self, target: str) -> tuple[str, list[dict[str, str]]]:
+        """Fetch CDX with circuit breaker and rate limiting."""
+        archive_domain = _extract_archive_domain(WAYBACK_CDX_API)
+        if not self._check_circuit_breaker(archive_domain):
+            self._stats['circuit_open'] += 1
+            return (target, [])
+        elapsed = time.monotonic() - self._last_request_at
+        if elapsed < REQUEST_RATE_LIMIT:
+            await asyncio.sleep(REQUEST_RATE_LIMIT - elapsed)
+        self._last_request_at = time.monotonic()
+        assert self._semaphore is not None, 'semaphore must be initialized before fetch'
+        async with self._semaphore:
+            return await self._fetch_cdx(target)
+
+    def _extract_fetch_errors(self, snapshots_map: dict) -> list[BaseException]:
+        """Extract errors from fetch phase."""
+        return []  # Errors handled via gathered.errors
+
+    async def _run_diff_tasks(self, diff_tasks: list) -> tuple[list, list[BaseException]]:
+        """Run diff tasks and collect results."""
+        gathered = await parallel(diff_tasks, taskgroup=True, policy='collect', ctx='wayback_diff', logger_instance=logger)
+        all_events = [res for res in gathered.ok if isinstance(res, list)]
+
+        if gathered.re_raised is not None:
+            self._reraise_if_critical(gathered.re_raised)
+
+        return all_events, list(gathered.errors)
+
+    def _reraise_if_critical(self, exc: BaseException) -> None:
+        """Re-raise if critical exception."""
+        if isinstance(exc, asyncio.CancelledError):
+            raise exc
+        if isinstance(exc, BaseException) and not isinstance(exc, Exception):
+            raise exc
+
+    def _handle_pipeline_error(self, e: BaseException, gathered_errors: list) -> None:
+        """Handle pipeline-level errors."""
+        error_msg = str(e) if not isinstance(e, BaseExceptionGroup) else f'BaseExceptionGroup({len(e.exceptions)} sub-exceptions): {e}'
+        logger.error(f'WaybackDiffMiner pipeline error: {error_msg}')
+        self._stats['errors'] += 1
+
+    def _update_stats(self, targets: list, all_events: list) -> None:
+        """Update statistics after processing."""
         self._stats['domains_processed'] = len(targets)
         self._stats['changes_detected'] = len(all_events)
+
+    def _build_result(self, start: float, targets: list, all_events: list, gathered_errors: list) -> WaybackDiffResult:
+        """Build final WaybackDiffResult."""
         elapsed = time.monotonic() - start
-        error: str | None = None
-        timeout = False
-        if gathered_errors:
-            first = gathered_errors[0]
-            if isinstance(first, (asyncio.TimeoutError, asyncio.CancelledError, TimeoutError)):
-                error = 'timeout'
-                timeout = True
-            else:
-                error = f'gather_error:{type(first).__name__}'
-        return WaybackDiffResult(input_count=len(targets), change_events=all_events, stats=self._stats.copy(), transport_policy=self._transport_policy_label(), circuit_breaker_used=True, injected_fetch_used=self._fetch_provider is not None, fallback_reason=self._fallback_reason(), archive_domain=_extract_archive_domain(WAYBACK_CDX_API), attempted=True, raw_count=self._stats.get('cdx_snapshots_collected', 0), built_count=len(all_events), accepted_count=None, error=error, timeout=timeout, duration_s=elapsed)
+        error, timeout = self._extract_error_info(gathered_errors)
+        return WaybackDiffResult(
+            input_count=len(targets), change_events=all_events, stats=self._stats.copy(),
+            transport_policy=self._transport_policy_label(), circuit_breaker_used=True,
+            injected_fetch_used=self._fetch_provider is not None, fallback_reason=self._fallback_reason(),
+            archive_domain=_extract_archive_domain(WAYBACK_CDX_API), attempted=True,
+            raw_count=self._stats.get('cdx_snapshots_collected', 0), built_count=len(all_events),
+            accepted_count=None, error=error, timeout=timeout, duration_s=elapsed
+        )
+
+    def _extract_error_info(self, gathered_errors: list) -> tuple[str | None, bool]:
+        """Extract error and timeout info from gathered errors."""
+        if not gathered_errors:
+            return None, False
+        first = gathered_errors[0]
+        if isinstance(first, (asyncio.TimeoutError, asyncio.CancelledError, TimeoutError)):
+            return 'timeout', True
+        return f'gather_error:{type(first).__name__}', False
 
     async def close(self) -> None:
         """Close the httpx session."""

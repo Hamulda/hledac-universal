@@ -17,6 +17,7 @@ import asyncio
 import logging
 from collections import deque
 from typing import Any
+from typing import Callable
 from urllib.parse import urlparse
 
 import msgspec
@@ -28,6 +29,103 @@ logger = logging.getLogger(__name__)
 MAX_RETURNED_PATHS = 20
 MAX_PENDING_QUERIES = 1000
 FINGERPRINT_EDGE_TYPES = {'ct_subdomain_of', 'same_infra_as', 'source_map_of', 'open_storage_bucket', 'onion_mirror_of'}
+
+
+# ---------------------------------------------------------------------------
+# Helper functions for consume_fingerprint_metadata - reduce complexity
+# ---------------------------------------------------------------------------
+
+def _process_ct_subdomains(
+    metadata: dict,
+    domain: str,
+    max_edges: int,
+    add_edge_fn: Callable,
+) -> int:
+    """Process ct_subdomains list, add edges for unique subdomains."""
+    edge_count = 0
+    for subdomain in metadata.get('ct_subdomains', []):
+        if edge_count >= max_edges:
+            break
+        if isinstance(subdomain, str) and subdomain != domain:
+            add_edge_fn(subdomain, 'ct_subdomain_of', domain)
+            edge_count += 1
+    return edge_count
+
+
+def _process_open_storage(
+    metadata: dict,
+    domain: str,
+    max_edges: int,
+    add_edge_fn: Callable,
+) -> int:
+    """Process open_storage buckets, add edges for bucket URLs."""
+    edge_count = 0
+    for bucket in metadata.get('open_storage', []):
+        if edge_count >= max_edges:
+            break
+        bucket_url = bucket.get('url') if isinstance(bucket, dict) else str(bucket)
+        if bucket_url:
+            add_edge_fn(bucket_url, 'open_storage_bucket', domain)
+            edge_count += 1
+    return edge_count
+
+
+def _process_source_map_paths(
+    metadata: dict,
+    url: str,
+    max_edges: int,
+    add_edge_fn: Callable,
+) -> int:
+    """Process source_map_paths, add edges for source map URLs."""
+    edge_count = 0
+    for path in metadata.get('source_map_paths', []):
+        if edge_count >= max_edges:
+            break
+        if isinstance(path, str):
+            add_edge_fn(path, 'source_map_of', url)
+            edge_count += 1
+    return edge_count
+
+
+def _process_onion_links(
+    metadata: dict,
+    domain: str,
+    max_edges: int,
+    add_edge_fn: Callable,
+) -> int:
+    """Process onion_links, add edges for onion mirrors."""
+    edge_count = 0
+    for onion in metadata.get('onion_links', []):
+        if edge_count >= max_edges:
+            break
+        if isinstance(onion, str):
+            add_edge_fn(onion, 'onion_mirror_of', domain)
+            edge_count += 1
+    return edge_count
+
+
+def _process_fingerprint_hash(
+    fingerprint_hash: str,
+    domain: str,
+    max_edges: int,
+    fingerprint_index: dict[str, list[str]],
+    add_edge_fn: Callable,
+) -> int:
+    """Unified processing for favicon_hash and jarm_hash fingerprint matching."""
+    if not fingerprint_hash:
+        return 0
+    existing = fingerprint_index.get(fingerprint_hash, [])
+    edge_count = 0
+    for existing_domain in existing:
+        if edge_count >= max_edges:
+            break
+        add_edge_fn(domain, 'same_infra_as', existing_domain)
+        edge_count += 1
+    if domain not in existing:
+        existing.append(domain)
+    fingerprint_index[fingerprint_hash] = existing
+    return edge_count
+
 
 class GraphCoordinatorConfig(Struct):
     """Configuration for GraphCoordinator."""
@@ -178,57 +276,39 @@ class GraphCoordinator(UniversalCoordinator):
         try:
             parsed = urlparse(url)
             domain = parsed.netloc
-            edge_count = 0
             MAX_EDGES = 20
-            for subdomain in metadata.get('ct_subdomains', []):
-                if edge_count >= MAX_EDGES:
-                    break
-                if isinstance(subdomain, str) and subdomain != domain:
-                    self._add_edge_if_new(subdomain, 'ct_subdomain_of', domain)
-                    edge_count += 1
-            for bucket in metadata.get('open_storage', []):
-                if edge_count >= MAX_EDGES:
-                    break
-                bucket_url = bucket.get('url') if isinstance(bucket, dict) else str(bucket)
-                if bucket_url:
-                    self._add_edge_if_new(bucket_url, 'open_storage_bucket', domain)
-                    edge_count += 1
-            for path in metadata.get('source_map_paths', []):
-                if edge_count >= MAX_EDGES:
-                    break
-                if isinstance(path, str):
-                    self._add_edge_if_new(path, 'source_map_of', url)
-                    edge_count += 1
-            for onion in metadata.get('onion_links', []):
-                if edge_count >= MAX_EDGES:
-                    break
-                if isinstance(onion, str):
-                    self._add_edge_if_new(onion, 'onion_mirror_of', domain)
-                    edge_count += 1
+            edge_count = 0
+            add_edge = self._add_edge_if_new
+
+            # Initialize fingerprint index if needed
+            if not hasattr(self, '_favicon_index'):
+                self._favicon_index: dict[str, list[str]] = {}
+
+            # Process each metadata type using helper functions
+            edge_count += _process_ct_subdomains(metadata, domain, MAX_EDGES - edge_count, add_edge)
+            if edge_count < MAX_EDGES:
+                edge_count += _process_open_storage(metadata, domain, MAX_EDGES - edge_count, add_edge)
+            if edge_count < MAX_EDGES:
+                edge_count += _process_source_map_paths(metadata, url, MAX_EDGES - edge_count, add_edge)
+            if edge_count < MAX_EDGES:
+                edge_count += _process_onion_links(metadata, domain, MAX_EDGES - edge_count, add_edge)
+
+            # Process favicon hash
             favicon_hash = metadata.get('favicon_hash')
-            if favicon_hash and hasattr(self, '_favicon_index'):
-                existing = self._favicon_index.get(favicon_hash, [])
-                for existing_domain in existing:
-                    if edge_count >= MAX_EDGES:
-                        break
-                    self._add_edge_if_new(domain, 'same_infra_as', existing_domain)
-                existing.append(domain)
-            elif favicon_hash:
-                if not hasattr(self, '_favicon_index'):
-                    self._favicon_index: dict[str, list[str]] = {}
-                self._favicon_index.setdefault(favicon_hash, []).append(domain)
+            if favicon_hash and edge_count < MAX_EDGES:
+                edge_count += _process_fingerprint_hash(
+                    favicon_hash, domain, MAX_EDGES - edge_count,
+                    self._favicon_index, add_edge
+                )
+
+            # Process JARM hash (uses same index for unified infra matching)
             jarm_hash = metadata.get('jarm_hash')
-            if jarm_hash:
-                if not hasattr(self, '_favicon_index'):
-                    self._favicon_index: dict[str, list[str]] = {}
-                existing = self._favicon_index.get(jarm_hash, [])
-                for existing_domain in existing:
-                    if edge_count >= MAX_EDGES:
-                        break
-                    self._add_edge_if_new(domain, 'same_infra_as', existing_domain)
-                if domain not in existing:
-                    existing.append(domain)
-                self._favicon_index[jarm_hash] = existing
+            if jarm_hash and edge_count < MAX_EDGES:
+                edge_count += _process_fingerprint_hash(
+                    jarm_hash, domain, MAX_EDGES - edge_count,
+                    self._favicon_index, add_edge
+                )
+
             logger.debug(f'[GRAPH] consume_fingerprint_metadata: {edge_count} edges added for {url}')
         except Exception as e:
             logger.warning(f'[GRAPH] consume_fingerprint_metadata failed for {url}: {e}')

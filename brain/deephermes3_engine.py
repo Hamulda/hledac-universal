@@ -3401,6 +3401,7 @@ class DeepHermes3Engine:
 
     # ------------------------------------------------------------------
     # _generate_direct: extracted from generate() to reduce complexity
+    # Complexity: 27 → ~8 (uses helper methods below)
     # ------------------------------------------------------------------
     async def _generate_direct(
         self,
@@ -3418,94 +3419,22 @@ class DeepHermes3Engine:
         max_tok = max_tokens or self.config.max_tokens
 
         # ISSUE-015: Apply thermal generation parameters if under thermal pressure
-        # Shorter generations complete faster and allow thermal recovery on fanless M1
-        try:
-            thermal_params_fn = _get_thermal_generation_params()
-            if thermal_params_fn is not None:
-                thermal_params = await thermal_params_fn()
-                if thermal_params is not None:
-                    if thermal_params.max_tokens_override is not None:
-                        max_tok = min(max_tok, thermal_params.max_tokens_override)
-                    if thermal_params.temperature_reduction > 0:
-                        temp = max(0.0, temp - thermal_params.temperature_reduction)
-        except Exception:  # noqa: BLE001
-            pass  # Fail-soft: ignore thermal params errors
+        temp, max_tok = await self._apply_thermal_generation_params(temp, max_tok)
 
         # ---- Context budget decision ----
-        if decide_context_budget is not None and apply_context_budget is not None:
-            decision = decide_context_budget(prompt, requested_context_window=self.config.context_window)
-            if decision.mode == 'reject':
-                reason = f'[CONTEXT] memory_admission_blocked: {decision.reason}'
-                if decision.uma_state:
-                    reason += f' uma_state={decision.uma_state}'
-                logger.warning(reason)
-                if record_model_failure is not None:
-                    record_model_failure('hermes', failure_kind='memory_admission_blocked')
-                raise RuntimeError(f'hermes context preflight rejected: {decision.reason}')
-            if decision.truncated:
-                prompt = apply_context_budget(prompt, decision)
-                dbg = f'[CONTEXT] truncated {decision.original_chars}→{decision.final_chars} chars, mode={decision.mode}'
-                if decision.uma_state:
-                    dbg += f' uma_state={decision.uma_state}'
-                logger.debug(dbg)
-                self._telemetry_counters['adaptive_context_truncated'] = self._telemetry_counters.get('adaptive_context_truncated', 0) + 1
-                self._telemetry_counters['adaptive_context_mode'] = decision.mode
-                if decision.uma_state:
-                    self._telemetry_counters['uma_state'] = decision.uma_state
+        truncated = self._apply_context_budget_decision(prompt)
+        if truncated is not None:
+            prompt = truncated
 
-        # ---- Prompt injection detection ----
-        # LLM-01: ALWAYS sanitize via prompt injection validator (fail-safe, always-on)
-        # No conditional — web content must NEVER reach LLM without sanitization
-        try:
-            validation_result = sanitize_prompt_injection_patterns(prompt)
-            if validation_result.suspicious:
-                _high_risk = any(p in validation_result.patterns for p in (
-                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
-                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
-                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
-                    'structural_repeated_delimiters', 'structural_html_comment',
-                ))
-                if _high_risk:
-                    # Block high-risk injection: do NOT let it through even sanitized
-                    logger.warning(
-                        f'[LLM-01-BLOCK] High-risk prompt injection detected: {validation_result.patterns}. '
-                        f'Rejecting prompt (reason={validation_result.reason})')
-                    raise RuntimeError(
-                        f'[LLM-01] Prompt injection REJECTED: {validation_result.patterns[:3]}')
-                logger.warning(
-                    f'[P1G-A] prompt_injection_guard: suspicious=True, '
-                    f'patterns={validation_result.patterns}, reason={validation_result.reason}')
-                prompt = validation_result.safe_text
-            else:
-                prompt = validation_result.safe_text
-        except RuntimeError:
-            raise
-        except Exception:
-            # Fallback: reject on any internal error (fail-safe for LLM-01)
-            logger.error('[LLM-01] Prompt injection validation failed with internal error — rejecting prompt')
-            raise RuntimeError('[LLM-01] Prompt injection validation internal error')
-
-        # GAP-5: Secondary detection layer
-        is_injection, patterns = _detect_prompt_injection(prompt if isinstance(prompt, str) else str(prompt))
-        if is_injection:
-            logger.warning(
-                f'GAP-5: Prompt injection patterns detected: {patterns[:3]} — rejecting prompt (LLM-01 fail-safe)')
-            raise RuntimeError(f'[GAP-5] Prompt injection REJECTED: {patterns[:3]}')
+        # ---- Prompt injection detection (LLM-01 + GAP-5) ----
+        prompt = self._validate_prompt_security(prompt)
+        self._check_gap5_injection(prompt)
 
         # ---- Bandit arm selection ----
-        loop = asyncio.get_running_loop()
-        bandit = self._get_prompt_bandit()
-        arm_used = ''
-        if bandit is not None:
-            try:
-                arm_used = bandit.select_arm()
-                bandit.get_prompt_modifier(arm_used)
-                self._last_bandit_arm = arm_used
-                logger.debug(f'[GENERATE] Bandit arm: {arm_used}')
-            except Exception as e:
-                logger.debug(f'[GENERATE] Bandit select failed: {e}')
+        bandit, arm_used = self._select_bandit_arm()
 
         # ---- Prompt formatting ----
+        loop = asyncio.get_running_loop()
         sanitized_for_prep = prompt if isinstance(prompt, str) else str(prompt)
         system_for_prep = system_msg or 'You are a helpful research assistant.'
         if thinking:
@@ -3533,35 +3462,9 @@ class DeepHermes3Engine:
         prefix_cache = self._resolve_kv_cache(system_msg, formatted_prompt)
         timeout_s = _get_hermes_timeout_s()
 
-        # M-03: Tokenize once — avoids double encode in _build_generate_kwargs
-        try:
-            gen_prompt_tokens = self._tokenizer.encode(formatted_prompt)
-        except Exception:
-            gen_prompt_tokens = None
-
-        # LLM-02/03: Hard token limit check AFTER formatting (accounts for ChatML overhead)
-        # This is the definitive guard using actual token count with 50-token safety margin.
-        if gen_prompt_tokens is not None:
-            _prompt_len = len(gen_prompt_tokens)
-            _max_total = self.config.context_window - max_tok - 50  # 50-token safety margin
-            if _prompt_len > _max_total:
-                # LLM-02: Truncate and re-apply sanitization pipeline
-                _max_prompt_tokens = max(1, _max_total)
-                _max_prompt_chars = int(_max_prompt_tokens * 3.5)  # ~1 token ≈ 3.5 chars (English)
-                _truncated_user = sanitized_for_prep[:_max_prompt_chars]
-                # Re-sanitize to maintain LLM-01 protection on truncated input
-                _truncated_sanitized = _truncated_user[:MAX_LLM_PROMPT_CHARS]
-                formatted_prompt = self._format_chatml(system_msg=system_for_prep, user_msg=_truncated_sanitized)
-                try:
-                    gen_prompt_tokens = self._tokenizer.encode(formatted_prompt)
-                except Exception:
-                    gen_prompt_tokens = None
-                if gen_prompt_tokens is not None:
-                    logger.warning(
-                        '[LLM-02] TOKEN-OVERFLOW truncated %d→%d tokens to fit window=%d (max_tokens=%d)',
-                        _prompt_len, len(gen_prompt_tokens), self.config.context_window, max_tok
-                    )
-                    self._telemetry_counters['context_truncated'] = self._telemetry_counters.get('context_truncated', 0) + 1
+        # LLM-02/03: Token limit check and truncation if needed
+        formatted_prompt, gen_prompt_tokens = self._truncate_token_overflow(
+            formatted_prompt, system_for_prep, max_tok, sanitized_for_prep)
 
         # ---- Inference ----
         # G2: Notify observers inference is starting
@@ -3657,6 +3560,141 @@ class DeepHermes3Engine:
 
         logger.error(f'Generation failed: {e}')
         return e
+
+    # ------------------------------------------------------------------
+    # Complexity-reduced helpers for _generate_direct (complexity: 27 → ~7)
+    # ------------------------------------------------------------------
+
+    async def _apply_thermal_generation_params(
+        self, temp: float, max_tok: int
+    ) -> tuple[float, int]:
+        """Apply thermal generation parameters if under thermal pressure."""
+        try:
+            thermal_params_fn = _get_thermal_generation_params()
+            if thermal_params_fn is not None:
+                thermal_params = await thermal_params_fn()
+                if thermal_params is not None:
+                    if thermal_params.max_tokens_override is not None:
+                        max_tok = min(max_tok, thermal_params.max_tokens_override)
+                    if thermal_params.temperature_reduction > 0:
+                        temp = max(0.0, temp - thermal_params.temperature_reduction)
+        except Exception:  # noqa: BLE001
+            pass  # Fail-soft: ignore thermal params errors
+        return temp, max_tok
+
+    def _apply_context_budget_decision(self, prompt: str) -> str | None:
+        """Apply context budget decision, return truncated prompt or None."""
+        if decide_context_budget is None or apply_context_budget is None:
+            return None
+        decision = decide_context_budget(prompt, requested_context_window=self.config.context_window)
+        if decision.mode == 'reject':
+            reason = f'[CONTEXT] memory_admission_blocked: {decision.reason}'
+            if decision.uma_state:
+                reason += f' uma_state={decision.uma_state}'
+            logger.warning(reason)
+            if record_model_failure is not None:
+                record_model_failure('hermes', failure_kind='memory_admission_blocked')
+            raise RuntimeError(f'hermes context preflight rejected: {decision.reason}')
+        if decision.truncated:
+            truncated = apply_context_budget(prompt, decision)
+            dbg = f'[CONTEXT] truncated {decision.original_chars}→{decision.final_chars} chars, mode={decision.mode}'
+            if decision.uma_state:
+                dbg += f' uma_state={decision.uma_state}'
+            logger.debug(dbg)
+            self._telemetry_counters['adaptive_context_truncated'] = self._telemetry_counters.get('adaptive_context_truncated', 0) + 1
+            self._telemetry_counters['adaptive_context_mode'] = decision.mode
+            if decision.uma_state:
+                self._telemetry_counters['uma_state'] = decision.uma_state
+            return truncated
+        return None
+
+    def _validate_prompt_security(self, prompt: str) -> str:
+        """
+        LLM-01 + GAP-5: Validate and sanitize prompt for injection patterns.
+        Returns sanitized prompt or raises RuntimeError on high-risk injection.
+        """
+        # LLM-01: ALWAYS sanitize via prompt injection validator
+        try:
+            validation_result = sanitize_prompt_injection_patterns(prompt)
+            if validation_result.suspicious:
+                _high_risk = any(p in validation_result.patterns for p in (
+                    'ignore_previous_instructions', 'disregard_instructions', 'forget_instructions',
+                    'system_prompt_injection', 'developer_message_injection', 'you_are_chatgpt',
+                    'you_are_an_ai', 'as_an_ai', 'jailbreak', 'dan',
+                    'structural_repeated_delimiters', 'structural_html_comment',
+                ))
+                if _high_risk:
+                    logger.warning(
+                        f'[LLM-01-BLOCK] High-risk prompt injection detected: {validation_result.patterns}. '
+                        f'Rejecting prompt (reason={validation_result.reason})')
+                    raise RuntimeError(
+                        f'[LLM-01] Prompt injection REJECTED: {validation_result.patterns[:3]}')
+                logger.warning(
+                    f'[P1G-A] prompt_injection_guard: suspicious=True, '
+                    f'patterns={validation_result.patterns}, reason={validation_result.reason}')
+            return validation_result.safe_text
+        except RuntimeError:
+            raise
+        except Exception:
+            logger.error('[LLM-01] Prompt injection validation failed with internal error — rejecting prompt')
+            raise RuntimeError('[LLM-01] Prompt injection validation internal error')
+
+    def _check_gap5_injection(self, prompt: str) -> None:
+        """GAP-5: Secondary detection layer - raises RuntimeError on injection."""
+        is_injection, patterns = _detect_prompt_injection(prompt if isinstance(prompt, str) else str(prompt))
+        if is_injection:
+            logger.warning(
+                f'GAP-5: Prompt injection patterns detected: {patterns[:3]} — rejecting prompt (LLM-01 fail-safe)')
+            raise RuntimeError(f'[GAP-5] Prompt injection REJECTED: {patterns[:3]}')
+
+    def _select_bandit_arm(self) -> tuple[Any, str]:
+        """Select bandit arm and return (bandit, arm_used)."""
+        bandit = self._get_prompt_bandit()
+        arm_used = ''
+        if bandit is not None:
+            try:
+                arm_used = bandit.select_arm()
+                bandit.get_prompt_modifier(arm_used)
+                self._last_bandit_arm = arm_used
+                logger.debug(f'[GENERATE] Bandit arm: {arm_used}')
+            except Exception as e:
+                logger.debug(f'[GENERATE] Bandit select failed: {e}')
+        return bandit, arm_used
+
+    def _truncate_token_overflow(
+        self, formatted_prompt: str, system_for_prep: str, max_tok: int, sanitized_for_prep: str
+    ) -> tuple[str, int | None]:
+        """
+        LLM-02: Truncate prompt if over token limit. Returns (formatted_prompt, prompt_len or None).
+        """
+        try:
+            gen_prompt_tokens = self._tokenizer.encode(formatted_prompt)
+        except Exception:
+            return formatted_prompt, None
+
+        prompt_len = len(gen_prompt_tokens)
+        max_total = self.config.context_window - max_tok - 50  # 50-token safety margin
+        if prompt_len <= max_total:
+            return formatted_prompt, prompt_len
+
+        # LLM-02: Truncate and re-apply sanitization pipeline
+        max_prompt_tokens = max(1, max_total)
+        max_prompt_chars = int(max_prompt_tokens * 3.5)  # ~1 token ≈ 3.5 chars (English)
+        truncated_user = sanitized_for_prep[:max_prompt_chars]
+        truncated_sanitized = truncated_user[:MAX_LLM_PROMPT_CHARS]
+        new_formatted = self._format_chatml(system_msg=system_for_prep, user_msg=truncated_sanitized)
+        try:
+            new_tokens = self._tokenizer.encode(new_formatted)
+        except Exception:
+            new_tokens = None
+        new_len = len(new_tokens) if new_tokens else None
+        if new_len is not None:
+            logger.warning(
+                '[LLM-02] TOKEN-OVERFLOW truncated %d→%d tokens to fit window=%d (max_tokens=%d)',
+                prompt_len, new_len, self.config.context_window, max_tok
+            )
+            self._telemetry_counters['context_truncated'] = self._telemetry_counters.get('context_truncated', 0) + 1
+        return new_formatted, new_len
 
     async def generate_stream(self, prompt: str, max_tokens: int=512, system_msg: str | None=None, temperature: float | None=None, *, thinking: bool=True) -> AsyncIterator[str]:
         """

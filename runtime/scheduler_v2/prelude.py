@@ -214,163 +214,282 @@ async def run_pdns_prelude_lane(query: str, result: Any, duckdb_store: Any, time
         return LaneResult(lane='PASSIVE_DNS', attempted=True, skipped=False, built_count=len(_pdns_cands), accepted_count=_pdns_acc)
     return LaneResult(lane='PASSIVE_DNS', attempted=False, skipped=True, skip_reason='empty_shaped_query' if not _pdns_query else 'lane_disabled')
 
+def _collect_doh_domains(
+    pivot_doh_items: Any,
+    query: str,
+    seed_context: Any,
+) -> tuple[list[str], str]:
+    """Collect DOH domains from pivot items or build from query.
+
+    Returns (domains, seed_source).
+    """
+    from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
+
+    domains: list[str] = []
+    seed_source = 'no_domain_seed'
+
+    if pivot_doh_items:
+        for item in pivot_doh_items:
+            if getattr(item, 'lane', None) == 'DOH' and getattr(item, 'seed_type', None) == 'domain':
+                domain = getattr(item, 'seed_value', None)
+                if domain:
+                    domains.append(str(domain))
+        if domains:
+            seed_source = 'pivot_items'
+
+    if not domains:
+        shaped = _build_lane_query(query, AcquisitionLane.DOH, seed_context=seed_context)
+        if shaped and not isinstance(shaped, dict):
+            domains = [str(shaped)]
+            seed_source = 'seed_context' if seed_context and seed_context.domains else 'raw_query'
+
+    return domains[:3], seed_source  # Max 3 for M1 8GB RAM safety
+
+
+async def _init_doh_adapter(result: Any) -> tuple[Any, Any] | tuple[None, None]:
+    """Initialize DOH adapter and session.
+
+    Returns (adapter, session) or (None, None) on failure.
+    """
+    adapter = None
+    try:
+        from hledac.universal.intel.doh_lane import DOHAdapter
+        adapter = DOHAdapter()
+    except Exception as init_exc:
+        result.doh_terminal_stage = 'dependency_missing'
+        result.doh_provider_errors = (f'doh_adapter_init_failed:{type(init_exc).__name__}:{init_exc}',)
+        return None, None
+
+    session = None
+    try:
+        import httpx
+        session = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        result.doh_request_attempted = True
+    except Exception as session_exc:
+        result.doh_terminal_stage = f'session_init_failed:{type(session_exc).__name__}'
+        if adapter:
+            await adapter.close()
+        return None, None
+
+    return adapter, session
+
+
+async def _create_domain_fetch_task(
+    domain: str,
+    semaphore: asyncio.Semaphore,
+    adapter: Any,
+    session: Any,
+    query: str,
+    sprint_id: str,
+) -> tuple[str, list, list, dict]:
+    """Fetch DOH results for one domain with semaphore limit.
+
+    Returns (domain, candidates, rejections, telemetry).
+    """
+    from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
+
+    async with semaphore:
+        findings = await adapter.run(domain=domain, session=session)
+        if findings:
+            cands, rejs, tel = doh_results_to_findings(findings, None, query, sprint_id)
+            return (domain, cands, rejs, tel)
+        return (domain, [], [], {})
+
+
+async def _cancel_pending_tasks(
+    pending: set,
+) -> int:
+    """Cancel all pending tasks and return the count of cancelled tasks.
+
+    Returns the number of tasks that were cancelled.
+    """
+    cancelled_count = 0
+    for t in pending:
+        if not t.done():
+            t.cancel()
+            cancelled_count += 1
+    return cancelled_count
+
+
+def _process_winner_result(
+    winner_task: Any,
+    cache: dict | None,
+    all_cands: list,
+    all_rejs: list,
+    all_tel: dict,
+    total_raw: int,
+) -> tuple[int, bool, str | None, bool, int]:
+    """Process a completed task result.
+
+    Returns (new_total_raw, cache_used, first_done_domain, has_result, cancelled).
+    """
+    if winner_task.cancelled():
+        return total_raw, False, None, False, True
+
+    try:
+        domain, cands, rejs, tel = winner_task.result()
+        all_cands.extend(cands)
+        all_rejs.extend(rejs)
+        if tel:
+            all_tel.update(tel)
+        new_total_raw = total_raw + len(cands)
+        cache_used = cache is not None and domain in cache
+        first_done_domain = domain
+        return new_total_raw, cache_used, first_done_domain, True, False
+    except BaseException:  # noqa: BLE001
+        return total_raw, False, None, False, False
+
+
+async def _aggregate_doh_results(
+    tasks: set,
+    fail_fast_threshold: int,
+    adapter: Any,
+) -> tuple[list, list, dict, int, int, bool, str | None]:
+    """Aggregate DOH results with fail-fast logic.
+
+    Returns (all_candidates, all_rejections, merged_telemetry, total_raw,
+             cancelled_count, cache_used, first_done_domain).
+    """
+    pending = set(tasks)
+    all_cands = []
+    all_rejs = []
+    all_tel: dict = {}
+    total_raw = 0
+    cancelled_count = 0
+    cache_used = False
+    first_done_domain: str | None = None
+    cache: dict = getattr(adapter, '_cache', None) if adapter else None
+
+    while pending and total_raw < fail_fast_threshold:
+        try:
+            _res, winner_task = await first_completed(*pending)
+        except asyncio.TimeoutError:
+            break
+
+        pending.discard(winner_task)
+        total_raw, cache_used, first_done_domain, has_result, was_cancelled = _process_winner_result(
+            winner_task, cache, all_cands, all_rejs, all_tel, total_raw
+        )
+        if was_cancelled:
+            cancelled_count += 1
+        elif has_result and first_done_domain is not None:
+            break  # Early exit after first successful result
+
+    # Cancel any remaining tasks
+    if pending:
+        cancelled_count += await _cancel_pending_tasks(pending)
+
+    return (all_cands, all_rejs, all_tel, total_raw, cancelled_count, cache_used, first_done_domain)
+
+
+async def _ingest_doh_findings(
+    candidates: list,
+    duckdb_store: Any,
+    result: Any,
+) -> int:
+    """Ingest DOH findings asynchronously (fire-and-forget).
+
+    Returns accepted count (optimistic).
+    """
+    if not candidates or not duckdb_store or not hasattr(duckdb_store, 'async_ingest_findings_batch'):
+        return 0
+
+    try:
+        from hledac.universal.runtime.scheduler_v2._task_registry import (
+            TaskScope,
+            safe_create_task_tracked,
+        )
+
+        async def _ingest_bg():
+            try:
+                ing = await duckdb_store.async_ingest_findings_batch(list(candidates))
+                return sum(1 for r in ing if isinstance(r, dict) and r.get('accepted'))
+            except Exception:
+                return 0
+
+        safe_create_task_tracked(_ingest_bg(), name='prelude:doh_ingest', scope=TaskScope.PRELUDE)
+        return len(candidates)  # Optimistic: all built candidates accepted
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 async def run_doh_prelude_lane(query: str, result: Any, duckdb_store: Any, time_module: Any, pivot_doh_items: Any=None, seed_context: Any=None) -> LaneResult:
     """Run DOH prelude lane.
 
-    ISSUE-2.1 FIX: Přidána vnitřní paralelizace pro více domén.
-    - Pokud pivot_doh_items obsahuje více DOH domén, zpracuj je paralelně (max 3).
-    - Fail-fast: při 80% úspěšnosti ukonči early.
-    - Concurrency=3 pro M1 8GB RAM bezpečnost.
+    Orchestrator: collects domains → initializes adapter → fetches in parallel
+    with fail-fast → ingests results.
     """
     from hledac.universal.runtime.acquisition_strategy import AcquisitionLane
-    from hledac.universal.runtime.source_finding_bridge import doh_results_to_findings
-    # Prelude lanes nemají přístup k AcquisitionStrategySnapshot,
-    # proto je doh_planned vždy True (lane se vždy pokusí spustit)
+    from hledac.universal.utils.async_helpers import safe_create_task
+
     result.doh_planned = True
     result.doh_scheduled = True
 
-    # ISSUE-2.1: Sbíráme všechny DOH domény z pivot_plan, ne jen první
-    _doh_domains: list[str] = []
-    if pivot_doh_items:
-        for _item in pivot_doh_items:
-            if getattr(_item, 'lane', None) == 'DOH' and getattr(_item, 'seed_type', None) == 'domain':
-                _domain = getattr(_item, 'seed_value', None)
-                if _domain:
-                    _doh_domains.append(str(_domain))
+    # Phase 1: Collect domains
+    domains, seed_source = _collect_doh_domains(pivot_doh_items, query, seed_context)
+    result.doh_seed_source = seed_source
 
-    # Pokud nemáme domény z pivot_plan, použij standardní query building
-    if not _doh_domains:
-        _doh_query = _build_lane_query(query, AcquisitionLane.DOH, seed_context=seed_context)
-        result.doh_seed_source = 'seed_context' if seed_context and seed_context.domains else 'raw_query'
-        if _doh_query is None or (isinstance(_doh_query, dict) and _doh_query.get('_disabled')):
-            result.doh_terminal_stage = 'no_candidates'
-            result.doh_seed_source = 'no_domain_seed'
-            return LaneResult(lane='DOH', attempted=False, skipped=True)
-        _doh_domains = [str(_doh_query)]
-
-    # ISSUE-2.1: Omezíme na max 3 domény pro M1 8GB RAM bezpečnost
-    _doh_domains = _doh_domains[:3]
-    result.doh_domains_attempted = len(_doh_domains)
-
-    _doh_adapter = None
-    try:
-        from hledac.universal.intel.doh_lane import DOHAdapter
-        _doh_adapter = DOHAdapter()
-    except Exception as _init_exc:
-        result.doh_terminal_stage = 'dependency_missing'
-        result.doh_provider_errors = (f'doh_adapter_init_failed:{type(_init_exc).__name__}:{_init_exc}',)
+    if not domains:
+        result.doh_terminal_stage = 'no_candidates'
         return LaneResult(lane='DOH', attempted=False, skipped=True)
 
-    import httpx
-    _doh_session = None
+    result.doh_domains_attempted = len(domains)
+
+    # Phase 2: Initialize adapter
+    adapter, session = await _init_doh_adapter(result)
+    if adapter is None or session is None:
+        return LaneResult(lane='DOH', attempted=False, skipped=True)
+
     try:
-        _doh_session = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-        result.doh_request_attempted = True
+        # Phase 3: Create and schedule fetch tasks
+        semaphore = asyncio.Semaphore(3)  # Concurrency=3 for M1 8GB RAM safety
+        sprint_id = f'prelude-doh-{int(time_module.time())}'
+        success_target = 10  # Typical DOH results per domain
+        fail_fast_threshold = int(success_target * 0.8)  # 8 = 80% fail-fast
 
-        # ISSUE-2.1: Parallelizace více domén pomocí asyncio.Semaphore
-        # Concurrency=3 pro M1 8GB RAM bezpečnost (3 × 12 DOH requests max)
-        _sem = asyncio.Semaphore(3)
-        _sprint_id = f'prelude-doh-{int(time_module.time())}'
+        tasks = set()
+        for domain in domains:
+            task = safe_create_task(
+                _create_domain_fetch_task(domain, semaphore, adapter, session, query, sprint_id),
+                name=f'prelude:doh:{domain}',
+            )
+            tasks.add(task)
 
-        async def _fetch_one_domain(domain: str) -> tuple[str, list, list, dict]:
-            """Fetch DOH pro jednu doménu — vrací (domain, cands, rejs, tel)."""
-            async with _sem:
-                _findings = await _doh_adapter.run(domain=domain, session=_doh_session)
-                if _findings:
-                    _cands, _rejs, _tel = doh_results_to_findings(_findings, None, query, _sprint_id)
-                    return (domain, _cands, _rejs, _tel)
-                return (domain, [], [], {})
+        # Phase 4: Aggregate results with fail-fast
+        all_cands, all_rejs, all_tel, total_raw, cancelled_count, cache_used, first_domain = \
+            await _aggregate_doh_results(tasks, fail_fast_threshold, adapter)
 
-        # ISSUE-2.1: Paralelní fetch pro všechny domény s true fail-fast
-        # Použijeme asyncio.wait s FIRST_COMPLETED — jakmile první doména vrátí
-        # ≥8 výsledků (80% z 10), okamžitě cancelujeme zbývající tasky.
-        from hledac.universal.utils.async_helpers import safe_create_task
-        _success_target = 10  # typický počet DOH výsledků na doménu
-        _fail_fast_threshold = int(_success_target * 0.8)  # 8
-        _cancelled_count = 0
+        result.doh_cache_used = cache_used
+        result.doh_raw_count = all_tel.get('doh_total', total_raw)
+        result.doh_cancelled_count = cancelled_count
 
-        _tasks = [safe_create_task(_fetch_one_domain(d), name=f'prelude:doh:{d}') for d in _doh_domains]
-        _pending = set(_tasks)
-
-        # Agregační proměnné (chráněno GIL — single-threaded async)
-        _all_cands = []
-        _all_rejs = []
-        _all_tel: dict = {}
-        _total_raw = 0
-        _cache_used = False
-        _first_done_domain: str | None = None
-
-        while _pending:
-            if _total_raw >= _fail_fast_threshold:
-                # ISSUE-2.1 FAIL-FAST: máme dost výsledků — cancelujeme zbývající
-                for t in _pending:
-                    if not t.done():
-                        t.cancel()
-                        _cancelled_count += 1
-                break
-
-            # ISSUE-15: Čekáme na první dokončený task (migrace z asyncio.wait)
-            try:
-                _res, _winner_task = await first_completed(*_pending)
-            except asyncio.TimeoutError:
-                # Timeout — cancel all and break
-                for t in _pending:
-                    if not t.done():
-                        t.cancel()
-                break
-
-            _pending.discard(_winner_task)
-
-            if _winner_task.cancelled():
-                _cancelled_count += 1
-            else:
-                try:
-                    _domain, _cands, _rejs, _tel = _winner_task.result()
-                    _all_cands.extend(_cands)
-                    _all_rejs.extend(_rejs)
-                    if _tel:
-                        _all_tel = _tel
-                    _total_raw += len(_cands)
-                    if getattr(_doh_adapter, '_cache', None) and _domain in _doh_adapter._cache:
-                        _cache_used = True
-                    if _first_done_domain is None:
-                        _first_done_domain = _domain
-                except BaseException:  # noqa: BLE001
-                    pass
-
-        result.doh_cache_used = _cache_used
-        result.doh_raw_count = _all_tel.get('doh_total', _total_raw)
-        result.doh_cancelled_count = _cancelled_count
-
-        if _all_cands:
-            # Fire-and-forget ingest — ISSUE P2 FIX: TaskRegistry tracks this task.
-            _doh_acc = 0
-            if _all_cands and duckdb_store and hasattr(duckdb_store, 'async_ingest_findings_batch'):
-                try:
-                    from hledac.universal.runtime.scheduler_v2._task_registry import (
-                        TaskScope,
-                        safe_create_task_tracked,
-                    )
-                    async def _doh_ingest_bg():
-                        try:
-                            _ing = await duckdb_store.async_ingest_findings_batch(list(_all_cands))
-                            return sum((1 for r in _ing if isinstance(r, dict) and r.get('accepted')))
-                        except Exception:
-                            return 0
-                    safe_create_task_tracked(_doh_ingest_bg(), name='prelude:doh_ingest', scope=TaskScope.PRELUDE)
-                    _doh_acc = len(_all_cands)
-                except Exception:  # noqa: BLE001
-                    pass
-            result.doh_advisory_findings_produced = _doh_acc
-            return LaneResult(lane='DOH', attempted=True, skipped=False, built_count=len(_all_cands), accepted_count=_doh_acc)
+        # Phase 5: Ingest findings
+        if all_cands:
+            accepted_count = await _ingest_doh_findings(all_cands, duckdb_store, result)
+            result.doh_advisory_findings_produced = accepted_count
+            return LaneResult(
+                lane='DOH',
+                attempted=True,
+                skipped=False,
+                built_count=len(all_cands),
+                accepted_count=accepted_count,
+            )
 
         return LaneResult(lane='DOH', attempted=True, skipped=False)
+
     except Exception as exc:
         result.doh_terminal_stage = f'error:{type(exc).__name__}'
-        return LaneResult(lane='DOH', attempted=True, skipped=False, error=f'{type(exc).__name__}:{exc}')
+        return LaneResult(
+            lane='DOH',
+            attempted=True,
+            skipped=False,
+            error=f'{type(exc).__name__}:{exc}',
+        )
     finally:
-        if _doh_session:
-            await _doh_session.aclose()
+        if session:
+            await session.aclose()
+        if adapter:
+            await adapter.close()
 
 async def gather_taskgroup(coros: list, concurrency: int, ctx: str) -> tuple[list, list]:
     """Wrapper around utils.async_helpers.gather_taskgroup for prelude lanes."""

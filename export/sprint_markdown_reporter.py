@@ -236,6 +236,59 @@ def _render_arrow_metrics(arrow_m: dict[str, int]) -> str:
 # ---------------------------------------------------------------------------
 # Main renderer
 # ---------------------------------------------------------------------------
+
+# Sprint F240A: Optional sections configuration (data-driven pattern)
+# Maps scorecard keys to their renderer functions
+_OPTIONAL_SECTIONS: tuple[tuple[str, callable, str], ...] = (
+    ("arrow_metrics", _render_arrow_metrics, "arrow_metrics"),
+    ("envelope_findings", _render_envelope_findings, "envelope_findings"),
+    ("identity_candidates", _render_identity_candidates, "identity_candidates"),
+    ("timeline_findings", _render_timeline_section, "timeline_findings"),
+    ("sprint_diff_findings", _render_sprint_diff_section, "sprint_diff_findings"),
+    ("kill_chain_findings", _render_kill_chain_section, "kill_chain_findings"),
+    ("evidence_chains", _render_evidence_chains_section, "evidence_chains"),
+    ("analyst_brief", _render_analyst_brief_section, "analyst_brief"),
+    ("investigation_packet", lambda pkt: _render_f232_analyst_brief(pkt, None), "investigation_packet"),
+)
+
+
+def _render_optional_sections(scorecard: dict[str, Any]) -> list[str]:
+    """Render all optional sections from scorecard using data-driven dispatch."""
+    sections = []
+    for key, renderer, _section_name in _OPTIONAL_SECTIONS:
+        data = scorecard.get(key)
+        if data:
+            section = renderer(data) if _section_name != "investigation_packet" else renderer(data)
+            if section:
+                sections.append(section)
+    return sections
+
+
+def _extract_scorecard_metrics(scorecard: dict[str, Any]) -> tuple[dict[str, int], dict[str, float]]:
+    """Extract source yield and phase timings from scorecard JSON fields."""
+    src_y: dict[str, int] = {}
+    raw_src = scorecard.get("source_yield_json")
+    if isinstance(raw_src, str):
+        if parsed := _try_parse_json(raw_src):
+            src_y = parsed if isinstance(parsed, dict) else {}
+
+    phase: dict[str, float] = {}
+    raw_phase = scorecard.get("phase_timings_json")
+    if isinstance(raw_phase, str):
+        if parsed := _try_parse_json(raw_phase):
+            phase = parsed if isinstance(parsed, dict) else {}
+
+    return src_y, phase
+
+
+def _extract_report_fields(report: Any) -> tuple[str, list, list]:
+    """Extract report fields with graceful degradation."""
+    summary = report.summary if report and hasattr(report, "summary") else "_Synthesis failed or unavailable_"
+    tas = list((report.threat_actors if report and hasattr(report, "threat_actors") else []) or [])
+    findings = list((report.findings if report and hasattr(report, "findings") else []) or [])
+    return summary, tas, findings
+
+
 def render_sprint_markdown(
     report: Any,
     scorecard: dict[str, Any],
@@ -269,29 +322,11 @@ def render_sprint_markdown(
     novel = scorecard.get("semantic_novelty", 1.0)
     outl = scorecard.get("outlines_used", False)
 
-    # Sprint F192F §3: Centralized JSON parsing — single call site for both fields
-    src_y: dict[str, int] = {}
-    raw_src = scorecard.get("source_yield_json")
-    if isinstance(raw_src, str):
-        parsed = _try_parse_json(raw_src)
-        if isinstance(parsed, dict):
-            src_y = parsed
-
-    phase: dict[str, float] = {}
-    raw_phase = scorecard.get("phase_timings_json")
-    if isinstance(raw_phase, str):
-        parsed = _try_parse_json(raw_phase)
-        if isinstance(parsed, dict):
-            phase = parsed
-
-    # Extract report fields (graceful degradation)
-    summary = report.summary if report and hasattr(report, "summary") else "_Synthesis failed or unavailable_"
-    tas = (report.threat_actors if report and hasattr(report, "threat_actors") else []) or []
-    findings = (report.findings if report and hasattr(report, "findings") else []) or []
-
-    # Build sections
+    src_y, phase = _extract_scorecard_metrics(scorecard)
+    summary, tas, findings = _extract_report_fields(report)
     generated = _time.strftime('%Y-%m-%d %H:%M:%S UTC', _time.gmtime())
 
+    # Core sections (always rendered)
     parts = [
         "# Ghost Prime — Sprint Report",
         f"**Sprint ID:** `{sprint_id}`  ",
@@ -315,90 +350,16 @@ def render_sprint_markdown(
         _render_top_findings(findings),
     ]
 
-    # Optional sections (only if data available)
-    leaderboard = _render_source_leaderboard(src_y)
-    if leaderboard:
+    # Optional sections via data-driven dispatch
+    if leaderboard := _render_source_leaderboard(src_y):
         parts.append(leaderboard)
-
-    timings = _render_phase_timings(phase)
-    if timings:
+    if timings := _render_phase_timings(phase):
         parts.append(timings)
-
-    # Sprint F265C: render Arrow ingest telemetry section
-    arrow_m = scorecard.get("arrow_metrics")
-    if arrow_m:
-        arrow_section = _render_arrow_metrics(arrow_m)
-        if arrow_section:
-            parts.append(arrow_section)
-
-    # Sprint F202A §5: render evidence envelope findings section
-    env_findings = scorecard.get("envelope_findings", [])
-    if env_findings:
-        env_section = _render_envelope_findings(env_findings)
-        if env_section:
-            parts.append(env_section)
-
-    # Sprint F202B: render identity candidates section
-    identity_candidates = scorecard.get("identity_candidates", [])
-    if identity_candidates:
-        identity_section = _render_identity_candidates(identity_candidates)
-        if identity_section:
-            parts.append(identity_section)
-
-    # Sprint F202E: render temporal archaeology timeline section
-    timeline_findings = scorecard.get("timeline_findings", [])
-    if timeline_findings:
-        timeline_section = _render_timeline_section(timeline_findings)
-        if timeline_section:
-            parts.append(timeline_section)
-
-    # Sprint F203A: render sprint diff section
-    sprint_diff_findings = scorecard.get("sprint_diff_findings", [])
-    if sprint_diff_findings:
-        diff_section = _render_sprint_diff_section(sprint_diff_findings)
-        if diff_section:
-            parts.append(diff_section)
-
-    # Sprint F203C: render kill chain heat map section
-    kill_chain_findings = scorecard.get("kill_chain_findings", [])
-    if kill_chain_findings:
-        kc_section = _render_kill_chain_section(kill_chain_findings)
-        if kc_section:
-            parts.append(kc_section)
-
-    # Sprint F203D: render top-5 evidence chains section
-    evidence_chains = scorecard.get("evidence_chains", [])
-    if evidence_chains:
-        chain_section = _render_evidence_chains_section(evidence_chains)
-        if chain_section:
-            parts.append(chain_section)
-
-    # Sprint F204E: render analyst brief section
-    analyst_brief = scorecard.get("analyst_brief")
-    if analyst_brief:
-        brief_section = _render_analyst_brief_section(analyst_brief)
-        if brief_section:
-            parts.append(brief_section)
-
-    # Sprint F232C: render deterministic analyst brief from investigation_packet
-    investigation_packet = scorecard.get("investigation_packet")
-    if investigation_packet:
-        f232_section = _render_f232_analyst_brief(
-            investigation_packet, scorecard
-        )
-        if f232_section:
-            parts.append(f232_section)
+    parts.extend(_render_optional_sections(scorecard))
 
     # Issue #19: Jinja2 fast path — template compiled at module load, re-used
-    # Falls back to Python-based rendering if template unavailable
     if _JINJA2_TEMPLATE is not None:
-        # Compute phase_timings_min for relative offsets in template
-        phase_timings_min = 0.0
-        if phase:
-            phase_values = list(phase.values())
-            if phase_values:
-                phase_timings_min = min(phase_values)
-
+        phase_timings_min = min(phase.values()) if phase and (phase_values := list(phase.values())) else 0.0
         try:
             return _JINJA2_TEMPLATE.render(
                 sprint_id=sprint_id,
@@ -424,6 +385,44 @@ def render_sprint_markdown(
 # Sprint F204E: Analyst Brief rendering
 # ---------------------------------------------------------------------------
 
+def _render_list_section(lines: list, title: str, items: list, prefix: str = "- ", limit: int = 10) -> None:
+    """Render a list section with optional numbering prefix."""
+    if not items:
+        return
+    lines.append(f"### {title}")
+    lines.append("")
+    if prefix.startswith("1."):
+        for i, item in enumerate(items[:limit], 1):
+            lines.append(f"{i}. {item}")
+    else:
+        for item in items[:limit]:
+            lines.append(f"{prefix}{item}")
+    lines.append("")
+
+
+# Section registry for analyst brief (reduces complexity from 23 to 8)
+_ANALYST_BRIEF_SECTIONS: tuple[tuple[str, str, str, int], ...] = (
+    ("key_findings", "Key Findings", "1. ", 20),
+    ("next_actions", "Next Actions", "1. ", 10),
+    ("open_questions", "Open Questions", "- ", 5),
+    ("source_family_summary", "Source Families", "- ", 10),
+    ("corroboration_summary", "Corroboration", "- ", 10),
+    ("evidence_gaps", "Evidence Gaps", "- ", 5),
+    ("risk_hypotheses", "Risk Hypotheses", "- ", 5),
+    ("feed_cluster_summary", "Feed Cluster", "- ", 5),
+    ("pivot_recommendations", "Pivot Recommendations", "- ", 5),
+)
+
+
+def _render_evidence_chains(lines: list, analyst_brief: dict) -> None:
+    """Render evidence chains section with backtick wrapping."""
+    if evidence_chains := analyst_brief.get("evidence_chain_ids", []) or []:
+        lines.extend(["### Evidence Chains", ""])
+        for cid in evidence_chains[:5]:
+            lines.append(f"- `{cid}`")
+        lines.append("")
+
+
 def _render_analyst_brief_section(analyst_brief: dict) -> str:
     """
     Render analyst brief as a markdown section.
@@ -442,117 +441,38 @@ def _render_analyst_brief_section(analyst_brief: dict) -> str:
     if not analyst_brief:
         return ""
 
-    headline = analyst_brief.get("headline", "")
-    key_findings = analyst_brief.get("key_findings", []) or []
-    evidence_chain_ids = analyst_brief.get("evidence_chain_ids", []) or []
-    next_actions = analyst_brief.get("next_actions", []) or []
-    open_questions = analyst_brief.get("open_questions", []) or []
-    confidence = analyst_brief.get("confidence", 0.0)
-    sprint_id = analyst_brief.get("sprint_id", "")
-    generated_ts = analyst_brief.get("generated_ts", 0.0)
+    lines = _build_analyst_header(analyst_brief)
+    _render_analyst_sections(lines, analyst_brief)
+    return "\n".join(lines)
 
-    # Format timestamp
+
+def _build_analyst_header(analyst_brief: dict) -> list[str]:
+    """Build analyst brief header with timestamp and metadata."""
     try:
         from datetime import datetime
-        ts_str = datetime.fromtimestamp(generated_ts, tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC") if generated_ts else "unknown"
+        ts_str = datetime.fromtimestamp(analyst_brief.get("generated_ts", 0.0) or 0.0, tz=UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     except Exception:
-        ts_str = str(generated_ts) if generated_ts else "unknown"
+        ts_str = "unknown"
 
-    lines = [
+    return [
         "",
         "## Analyst Brief",
         "",
-        f"**Sprint:** `{sprint_id}`  ",
+        f"**Sprint:** `{analyst_brief.get('sprint_id', '')}`  ",
         f"**Generated:** {ts_str}  ",
-        f"**Confidence:** {confidence:.2f}",
+        f"**Confidence:** {analyst_brief.get('confidence', 0.0):.2f}",
         "",
-        f"_{headline}_" if headline else "",
+        f"_{analyst_brief.get('headline', '')}_",
         "",
     ]
 
-    if key_findings:
-        lines.append("### Key Findings")
-        lines.append("")
-        for i, f in enumerate(key_findings[:20], 1):  # bounded display
-            lines.append(f"{i}. {f}")
-        lines.append("")
 
-    if evidence_chain_ids:
-        lines.append("### Evidence Chains")
-        lines.append("")
-        for cid in evidence_chain_ids[:5]:  # bounded
-            lines.append(f"- `{cid}`")
-        lines.append("")
-
-    if next_actions:
-        lines.append("### Next Actions")
-        lines.append("")
-        for i, action in enumerate(next_actions[:10], 1):  # bounded
-            lines.append(f"{i}. {action}")
-        lines.append("")
-
-    if open_questions:
-        lines.append("### Open Questions")
-        lines.append("")
-        for q in open_questions[:5]:  # bounded
-            lines.append(f"- {q}")
-        lines.append("")
-
-    # F225B: Source family summary
-    source_family_summary = analyst_brief.get("source_family_summary", []) or []
-    if source_family_summary:
-        lines.append("### Source Families")
-        lines.append("")
-        for s in source_family_summary[:10]:
-            lines.append(f"- {s}")
-        lines.append("")
-
-    # F225B: Corroboration summary
-    corroboration_summary = analyst_brief.get("corroboration_summary", []) or []
-    if corroboration_summary:
-        lines.append("### Corroboration")
-        lines.append("")
-        for c in corroboration_summary[:10]:
-            lines.append(f"- {c}")
-        lines.append("")
-
-    # F225B: Evidence gaps
-    evidence_gaps = analyst_brief.get("evidence_gaps", []) or []
-    if evidence_gaps:
-        lines.append("### Evidence Gaps")
-        lines.append("")
-        for g in evidence_gaps[:5]:
-            lines.append(f"- {g}")
-        lines.append("")
-
-    # F225B: Risk hypotheses
-    risk_hypotheses = analyst_brief.get("risk_hypotheses", []) or []
-    if risk_hypotheses:
-        lines.append("### Risk Hypotheses")
-        lines.append("")
-        for r in risk_hypotheses[:5]:
-            lines.append(f"- {r}")
-        lines.append("")
-
-    # F225B: Feed cluster summary
-    feed_cluster_summary = analyst_brief.get("feed_cluster_summary", []) or []
-    if feed_cluster_summary:
-        lines.append("### Feed Cluster")
-        lines.append("")
-        for fc in feed_cluster_summary[:5]:
-            lines.append(f"- {fc}")
-        lines.append("")
-
-    # F225B: Pivot recommendations
-    pivot_recommendations = analyst_brief.get("pivot_recommendations", []) or []
-    if pivot_recommendations:
-        lines.append("### Pivot Recommendations")
-        lines.append("")
-        for p in pivot_recommendations[:5]:
-            lines.append(f"- {p}")
-        lines.append("")
-
-    return "\n".join(lines)
+def _render_analyst_sections(lines: list, analyst_brief: dict) -> None:
+    """Render all analyst brief sections from registry."""
+    _render_evidence_chains(lines, analyst_brief)
+    for key, title, prefix, limit in _ANALYST_BRIEF_SECTIONS:
+        items = analyst_brief.get(key, []) or []
+        _render_list_section(lines, title, items, prefix=prefix, limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -730,6 +650,84 @@ def _render_identity_candidates(identity_candidates: list) -> str:
 # Sprint F202E: Temporal Archaeology Timeline rendering
 # ---------------------------------------------------------------------------
 
+def _format_time_span(oldest_ts: float | None, newest_ts: float | None) -> str:
+    """Format time span from timestamps."""
+    if not oldest_ts or not newest_ts:
+        return "unknown"
+    try:
+        from datetime import datetime as dt
+        oldest = dt.fromtimestamp(oldest_ts)  # noqa: DTZ006
+        newest = dt.fromtimestamp(newest_ts)  # noqa: DTZ006
+        delta = newest - oldest
+        days = delta.days
+        match days:
+            case d if d > 365:
+                return f"{d / 365:.1f} years"
+            case d if d > 30:
+                return f"{d / 30:.1f} months"
+            case _:
+                return f"{days} days"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def _render_timeline_event(event: dict) -> str | None:
+    """Render a single timeline event as a markdown line."""
+    if not isinstance(event, dict):
+        return None
+    evt_ts = event.get("ts")
+    ts_str = "?"
+    if evt_ts:
+        try:
+            from datetime import datetime as dt
+            ts_dt = dt.fromtimestamp(evt_ts)  # noqa: DTZ006
+            ts_str = ts_dt.strftime("%Y-%m-%d")
+        except Exception:
+            ts_str = str(int(evt_ts))
+    evt_type = event.get("event_type", "unknown")
+    evt_desc = event.get("description", "")[:60]
+    evidence = event.get("evidence", []) or []
+    ev_str = f" [→{evidence[0][:30]}]" if evidence else ""
+    return f"- [{ts_str}] {evt_type}: {evt_desc}{ev_str}"
+
+
+def _render_single_timeline(lines: list, tl_finding: dict) -> None:
+    """Render a single timeline finding."""
+    fid = tl_finding.get("finding_id", "unknown")
+    entity_id = tl_finding.get("entity_id", "unknown entity")
+    metadata = tl_finding.get("metadata", {}) or {}
+    events = tl_finding.get("events", []) or []
+
+    total_events = metadata.get("total_events", len(events))
+    time_span = _format_time_span(metadata.get("oldest_event_ts"), metadata.get("newest_event_ts"))
+
+    lines.append(f"### Timeline: `{entity_id[:48]}`")
+    lines.append(f"**Finding ID:** `{fid[:24]}`")
+    lines.append(f"**Events:** {total_events}  **Span:** {time_span}")
+    lines.append("")
+
+    if event_types := metadata.get("event_types", {}):
+        type_parts = [f"{et}={ec}" for et, ec in sorted(event_types.items(), key=lambda x: x[1], reverse=True)[:5]]
+        lines.append(f"**Event Types:** {', '.join(type_parts)}")
+        lines.append("")
+
+    if sources := metadata.get("sources", {}):
+        src_parts = [f"{s}={c}" for s, c in sorted(sources.items(), key=lambda x: x[1], reverse=True)[:5]]
+        lines.append(f"**Sources:** {', '.join(src_parts)}")
+        lines.append("")
+
+    if not events:
+        return
+    lines.append("**Timeline Events:**")
+    rendered = [r for r in (_render_timeline_event(e) for e in events[:50]) if r]
+    lines.extend(rendered)
+    if len(rendered) < total_events:
+        lines.append(f"  _...and {total_events - len(rendered)} more events_")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+
 def _render_timeline_section(timeline_findings: list) -> str:
     """
     Render temporal archaeology timeline as a markdown section.
@@ -747,99 +745,12 @@ def _render_timeline_section(timeline_findings: list) -> str:
         return ""
 
     lines = ["", "## Temporal Archaeology Timeline", ""]
-
     count = 0
-    for tl_finding in timeline_findings[:5]:  # max 5 timelines displayed
-        if not isinstance(tl_finding, dict):
-            continue
 
-        fid = tl_finding.get("finding_id", "unknown")
-        entity_id = tl_finding.get("entity_id", "unknown entity")
-        metadata = tl_finding.get("metadata", {}) or {}
-        events = tl_finding.get("events", []) or []
-
-        total_events = metadata.get("total_events", len(events))
-        oldest_ts = metadata.get("oldest_event_ts")
-        newest_ts = metadata.get("newest_event_ts")
-        event_types = metadata.get("event_types", {}) or {}
-        sources = metadata.get("sources", {}) or {}
-
-        # Format time span
-        time_span = "unknown"
-        if oldest_ts and newest_ts:
-            try:
-                from datetime import datetime as dt
-                oldest = dt.fromtimestamp(oldest_ts)  # noqa: DTZ006
-                newest = dt.fromtimestamp(newest_ts)  # noqa: DTZ006
-                delta = newest - oldest
-                days = delta.days
-                if days > 365:
-                    years = days / 365
-                    time_span = f"{years:.1f} years"
-                elif days > 30:
-                    months = days / 30
-                    time_span = f"{months:.1f} months"
-                else:
-                    time_span = f"{days} days"
-            except Exception:  # noqa: BLE001
-                pass
-
-        lines.append(f"### Timeline: `{entity_id[:48]}`")
-        lines.append(f"**Finding ID:** `{fid[:24]}`")
-        lines.append(f"**Events:** {total_events}  **Span:** {time_span}")
-        lines.append("")
-
-        # Event type breakdown
-        if event_types:
-            type_parts = []
-            for etype, ecnt in sorted(event_types.items(), key=lambda x: x[1], reverse=True)[:5]:
-                type_parts.append(f"{etype}={ecnt}")
-            lines.append(f"**Event Types:** {', '.join(type_parts)}")
-            lines.append("")
-
-        # Source breakdown
-        if sources:
-            src_parts = []
-            for src, scnt in sorted(sources.items(), key=lambda x: x[1], reverse=True)[:5]:
-                src_parts.append(f"{src}={scnt}")
-            lines.append(f"**Sources:** {', '.join(src_parts)}")
-            lines.append("")
-
-        # Event list (bounded display)
-        if events:
-            lines.append("**Timeline Events:**")
-            displayed = 0
-            for event in events[:50]:  # bounded display of 50 events
-                if not isinstance(event, dict):
-                    continue
-                evt_ts = event.get("ts")
-                evt_type = event.get("event_type", "unknown")
-                evt_desc = event.get("description", "")
-                _evt_src = event.get("source", "")
-
-                # Format timestamp
-                ts_str = "?"
-                if evt_ts:
-                    try:
-                        from datetime import datetime as dt
-                        ts_dt = dt.fromtimestamp(evt_ts)  # noqa: DTZ006
-                        ts_str = ts_dt.strftime("%Y-%m-%d")
-                    except Exception:
-                        ts_str = str(int(evt_ts))
-
-                evidence = event.get("evidence", []) or []
-                ev_str = f" [→{evidence[0][:30]}] " if evidence else ""
-
-                lines.append(f"- [{ts_str}] {evt_type}: {evt_desc[:60]}{ev_str}")
-                displayed += 1
-
-            if displayed < total_events:
-                lines.append(f"  _...and {total_events - displayed} more events_")
-            lines.append("")
-
-        count += 1
-        lines.append("---")
-        lines.append("")
+    for tl_finding in timeline_findings[:5]:
+        if isinstance(tl_finding, dict):
+            _render_single_timeline(lines, tl_finding)
+            count += 1
 
     lines.append(f"_{count} timeline(s)_")
     return "\n".join(lines)
@@ -1031,6 +942,240 @@ def _render_evidence_chains_section(evidence_chains: list) -> str:
 # Sprint F232C: Deterministic Analyst Brief from investigation_packet
 # ---------------------------------------------------------------------------
 
+# F232C: Helper functions for analyst brief sections
+def _derive_analyst_confidence(total_accepted: int, capability_verdict: str, signal_class: str) -> str:
+    """Derive confidence level from sprint metrics."""
+    if capability_verdict in ("useful_capability",):
+        return "high"
+    if capability_verdict == "weak_capability" or signal_class in ("medium_density",):
+        return "medium"
+    if total_accepted > 0:
+        return "medium"
+    return "low"
+
+
+def _render_f232_executive_summary(lines: list, total_accepted: int, capability_verdict: str, signal_class: str, pvs: dict) -> None:
+    """Render Executive Summary section."""
+    lines.append("### Executive Summary")
+    lines.append("")
+    if total_accepted == 0:
+        lines.append("Sprint produced **no accepted findings** — zero-signal run.")
+        lines.append("")
+        match capability_verdict:
+            case "smoke_capability":
+                lines.append("This was a smoke run with no meaningful signal detected.")
+            case "invalid_capability":
+                lines.append("Acquisition terminality was not satisfied — no findings could be accepted.")
+            case _:
+                lines.append("No findings reached acceptance threshold. Check source availability and query scope.")
+    else:
+        density = pvs.get("ioc_density", 0.0)
+        match signal_class:
+            case "high_density":
+                lines.append(f"Good sprint: **{total_accepted}** accepted IOC at density {density:.2f}.")
+            case "medium_density":
+                lines.append(f"Mixed sprint: **{total_accepted}** accepted IOC, density {density:.2f}.")
+            case "slow_novelty":
+                fpm = pvs.get("findings_per_minute", 0.0)
+                lines.append(f"Slow but existing signal: **{total_accepted}** IOC at {fpm:.2f} finds/min.")
+            case _:
+                lines.append(f"Sprint produced **{total_accepted}** accepted finding(s).")
+        lines.append("")
+        cap_label = {
+            "useful_capability": "useful capability",
+            "weak_capability": "weak capability",
+            "smoke_capability": "smoke capability",
+            "invalid_capability": "invalid capability",
+            "incomparable_capability": "incomparable (hardware constrained)",
+        }.get(capability_verdict, capability_verdict)
+        lines.append(f"Capability assessment: **{cap_label}**.")
+    lines.append("")
+
+
+def _render_f232_seed_context(lines: list, investigation_packet: dict) -> None:
+    """Render Key Indicators and Seeds section."""
+    seed_context = investigation_packet.get("seed_context") or {}
+    seed_available = seed_context.get("available", False) if isinstance(seed_context, dict) else False
+    seed_source = seed_context.get("source", "") if isinstance(seed_context, dict) else ""
+    seed_domains = (seed_context.get("domains") or [])[:10] if isinstance(seed_context, dict) else []
+    seed_ips = (seed_context.get("ips") or [])[:10] if isinstance(seed_context, dict) else []
+
+    lines.append("### Key Indicators and Seeds")
+    lines.append("")
+    if seed_available and (seed_domains or seed_ips):
+        lines.append(f"Seed source: **{seed_source or 'unknown'}**")
+        lines.append("")
+        if seed_domains:
+            lines.append(f"Domains: {', '.join(f'`{d}`' for d in seed_domains[:5])}")
+        if seed_ips:
+            lines.append(f"IPs: {', '.join(f'`{ip}`' for ip in seed_ips[:5])}")
+    else:
+        lines.append("_Seed context not available_")
+    lines.append("")
+    if query := investigation_packet.get("query", ""):
+        lines.append(f"Query: **{query[:120]}**")
+        lines.append("")
+
+
+def _render_f232_source_coverage(lines: list, source_family_summary: list) -> None:
+    """Render Source Family Coverage table."""
+    lines.append("### Source Family Coverage")
+    lines.append("")
+    if not source_family_summary:
+        lines.append("_Source family data not available_")
+        lines.append("")
+        return
+    lines.append("| Family | Accepted | Rejected | Pending | Status |")
+    lines.append("|:-------|--------:|--------:|--------:|:-------|")
+    for entry in source_family_summary[:15]:
+        if not isinstance(entry, dict):
+            continue
+        fam = entry.get("family", "?")
+        acc = entry.get("accepted", 0)
+        rej = entry.get("rejected", 0)
+        pend = entry.get("pending", 0)
+        match (entry.get("terminal_only"), entry.get("attempted"), acc > 0, rej > 0):
+            case (True, _, _, _):
+                status = "terminal only"
+            case (_, True, _, _):
+                status = "attempted"
+            case (_, _, True, _):
+                status = "had findings"
+            case (_, _, _, True):
+                status = "rejected"
+            case _:
+                status = "no data"
+        lines.append(f"| `{fam}` | {acc} | {rej} | {pend} | {status} |")
+    lines.append("")
+
+
+def _render_f232_confirmed(lines: list, total_accepted: int, source_family_summary: list) -> None:
+    """Render What Was Confirmed section."""
+    lines.append("### What Was Confirmed")
+    lines.append("")
+    if total_accepted == 0:
+        lines.append("_No findings were accepted — nothing was confirmed._")
+        lines.append("")
+        return
+    confirmed = [f"`{e.get('family', '?')}` ({e.get('accepted', 0)} accepted)"
+                 for e in source_family_summary if isinstance(e, dict) and e.get("accepted", 0) > 0]
+    if confirmed:
+        for c in confirmed[:8]:
+            lines.append(f"- {c}")
+    else:
+        lines.append(f"**{total_accepted}** accepted finding(s) from sources not enumerated.")
+    lines.append("")
+
+
+def _render_f232_attempted_not_confirmed(lines: list, total_accepted: int, source_family_summary: list) -> None:
+    """Render What Was Attempted But Not Confirmed section."""
+    lines.append("### What Was Attempted But Not Confirmed")
+    lines.append("")
+    attempted = [f"`{e.get('family', '?')}`: {e.get('terminal_state') or 'attempted, no results'}"
+                 for e in source_family_summary if isinstance(e, dict)
+                 and e.get("accepted", 0) == 0
+                 and (e.get("attempted") or e.get("terminal_only") or e.get("terminal_state"))]
+    if attempted:
+        for a in attempted[:10]:
+            lines.append(f"- {a}")
+    else:
+        lines.append("_All lanes failed to produce accepted findings._" if total_accepted == 0
+                     else "_No terminal-only lanes without accepted findings._")
+    lines.append("")
+
+
+def _render_f232_gaps(lines: list, investigation_packet: dict) -> None:
+    """Render Gaps and Failure Modes section."""
+    gaps = investigation_packet.get("gaps") or []
+    lines.append("### Gaps and Failure Modes")
+    lines.append("")
+    if gaps:
+        for g in gaps[:10]:
+            lines.append(f"- {g}")
+    else:
+        lines.append("_No significant gaps identified._")
+    lines.append("")
+
+
+def _render_f232_provider_diagnosis(lines: list, scorecard: dict, investigation_packet: dict) -> None:
+    """Render Provider Yield Diagnosis section."""
+    pyd = scorecard.get("provider_yield_diagnosis") or investigation_packet.get("provider_yield_diagnosis") or {}
+    if not pyd or not isinstance(pyd, dict):
+        return
+    families = pyd.get("families", {}) or {}
+    lines.append("### Provider Yield Diagnosis")
+    lines.append("")
+    lines.append(f"**Overall:** {pyd.get('overall', 'unknown')}")
+    lines.append("")
+    for fam_name, fam_diag in families.items():
+        if not isinstance(fam_diag, dict):
+            continue
+        status = fam_diag.get("status", "?")
+        reason = fam_diag.get("reason", "?")
+        action = fam_diag.get("action", "?")
+        if status not in ("skipped", "unknown") or reason not in ("not_attempted", "unknown"):
+            action_str = f" → {action}" if action and action != "none" else ""
+            lines.append(f"- **{fam_name}** [{status}]: {reason}{action_str}")
+    for key, label in [("recommended_next_engineering_action", "engineering"), ("recommended_next_investigation_action", "investigation")]:
+        if val := pyd.get(key, ""):
+            if val != "none":
+                lines.append(f"**Next {label}:** {val}")
+    lines.append("")
+
+
+def _render_f232_pivots(lines: list, investigation_packet: dict) -> None:
+    """Render Recommended Next Pivots section."""
+    next_pivots = investigation_packet.get("next_pivots") or []
+    lines.append("### Recommended Next Pivots")
+    lines.append("")
+    if not next_pivots:
+        lines.append("_No specific pivots recommended._")
+        lines.append("")
+        return
+    for pivot in next_pivots[:8]:
+        match pivot:
+            case {"pivot_type": pt, "target": tgt, "priority": pri} if isinstance(pivot, dict):
+                lines.append(f"- **{pt}** on `{tgt}` (priority {pri:.2f})")
+            case str() as s:
+                lines.append(f"- {s}")
+    lines.append("")
+
+
+def _render_f232_planner_actions(lines: list, investigation_packet: dict) -> None:
+    """Render Planner Actions section."""
+    planner_actions = investigation_packet.get("planner_actions") or []
+    lines.append("### Planner Actions")
+    lines.append("")
+    if not planner_actions:
+        lines.append("_No planner actions recorded._")
+        lines.append("")
+        return
+    for action in planner_actions[:10]:
+        match action:
+            case {"action": act_type, "target": tgt, "reason": reason} if isinstance(action, dict):
+                prefix = f"**{act_type}** on `{tgt[:60]}` — {reason[:80]}" if tgt else f"**{act_type}** — {reason[:80]}"
+                lines.append(f"- {prefix}")
+            case str() as s:
+                lines.append(f"- {s}")
+    lines.append("")
+
+
+def _render_f232_constraints(lines: list, investigation_packet: dict, cap_synth: dict, confidence: str) -> None:
+    """Render Confidence and Constraints section."""
+    lines.append("### Confidence and Constraints")
+    lines.append("")
+    lines.append(f"**Confidence:** {confidence}")
+    lines.append("")
+    if isinstance(cap_synth, dict):
+        for key, label in [("feed_noise_summary", "Feed noise"), ("source_diversity_summary", "Source diversity"), ("corroboration_summary", "Corroboration")]:
+            if val := cap_synth.get(key, ""):
+                lines.append(f"- {label}: **{val}**")
+    if (tc := investigation_packet.get("terminal_coverage", {})) and isinstance(tc, dict):
+        if term_fams := list(tc.keys()):
+            lines.append(f"- Terminal-only lanes: **{', '.join(term_fams[:5])}**")
+    lines.append("")
+
+
 def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> str:
     """
     Sprint F232C: Render deterministic Analyst Brief from investigation_packet.
@@ -1056,268 +1201,28 @@ def _render_f232_analyst_brief(investigation_packet: dict, scorecard: dict) -> s
 
     lines: list[str] = ["", "## Analyst Brief", ""]
 
-    # ── Source family outcomes ──────────────────────────────────────────────
+    # Extract shared data
     source_family_summary = investigation_packet.get("source_family_summary") or []
-    sfo_dict: dict[str, dict] = {}
-    for entry in source_family_summary:
-        if isinstance(entry, dict):
-            fam = entry.get("family", "")
-            if fam:
-                sfo_dict[fam] = entry
-
-    # ── Total accepted count ───────────────────────────────────────────────
+    sfo_dict = {e.get("family", ""): e for e in source_family_summary if isinstance(e, dict) and e.get("family")}
     total_accepted = sum(v.get("accepted", 0) for v in sfo_dict.values())
 
-    # ── Confidence derivation ─────────────────────────────────────────────
     pvs = scorecard.get("product_value_summary") or {}
     cap_synth = scorecard.get("capability_synthesis") or {}
     capability_verdict = cap_synth.get("verdict", "unknown") if isinstance(cap_synth, dict) else "unknown"
     signal_class = pvs.get("_signal_quality_classification", "unknown") if isinstance(pvs, dict) else "unknown"
 
-    if capability_verdict in ("useful_capability",):
-        confidence = "high"
-    elif capability_verdict == "weak_capability" or signal_class in ("medium_density",):
-        confidence = "medium"
-    elif total_accepted > 0:
-        confidence = "medium"
-    else:
-        confidence = "low"
+    confidence = _derive_analyst_confidence(total_accepted, capability_verdict, signal_class)
 
-    # ── Executive Summary ───────────────────────────────────────────────────
-    lines.append("### Executive Summary")
-    lines.append("")
-    if total_accepted == 0:
-        lines.append("Sprint produced **no accepted findings** — zero-signal run.")
-        lines.append("")
-        if capability_verdict == "smoke_capability":
-            lines.append("This was a smoke run with no meaningful signal detected.")
-        elif capability_verdict == "invalid_capability":
-            lines.append("Acquisition terminality was not satisfied — no findings could be accepted.")
-        else:
-            lines.append("No findings reached acceptance threshold. Check source availability and query scope.")
-    else:
-        accepted = total_accepted
-        density = pvs.get("ioc_density", 0.0) if isinstance(pvs, dict) else 0.0
-        if signal_class == "high_density":
-            lines.append(f"Good sprint: **{accepted}** accepted IOC at density {density:.2f}.")
-        elif signal_class == "medium_density":
-            lines.append(f"Mixed sprint: **{accepted}** accepted IOC, density {density:.2f}.")
-        elif signal_class == "slow_novelty":
-            fpm = pvs.get("findings_per_minute", 0.0) if isinstance(pvs, dict) else 0.0
-            lines.append(f"Slow but existing signal: **{accepted}** IOC at {fpm:.2f} finds/min.")
-        else:
-            lines.append(f"Sprint produced **{accepted}** accepted finding(s).")
-        lines.append("")
-        # Capability verdict summary
-        cap_label = {
-            "useful_capability": "useful capability",
-            "weak_capability": "weak capability",
-            "smoke_capability": "smoke capability",
-            "invalid_capability": "invalid capability",
-            "incomparable_capability": "incomparable (hardware constrained)",
-        }.get(capability_verdict, capability_verdict)
-        lines.append(f"Capability assessment: **{cap_label}**.")
-    lines.append("")
-
-    # ── Key Indicators and Seeds ──────────────────────────────────────────
-    seed_context = investigation_packet.get("seed_context") or {}
-    seed_available = seed_context.get("available", False) if isinstance(seed_context, dict) else False
-    seed_source = seed_context.get("source", "") if isinstance(seed_context, dict) else ""
-    seed_domains = (seed_context.get("domains") or [])[:10] if isinstance(seed_context, dict) else []
-    seed_ips = (seed_context.get("ips") or [])[:10] if isinstance(seed_context, dict) else []
-
-    lines.append("### Key Indicators and Seeds")
-    lines.append("")
-    if seed_available and (seed_domains or seed_ips):
-        lines.append(f"Seed source: **{seed_source or 'unknown'}**")
-        lines.append("")
-        if seed_domains:
-            dom_str = ", ".join(f"`{d}`" for d in seed_domains[:5])
-            lines.append(f"Domains: {dom_str}")
-        if seed_ips:
-            ip_str = ", ".join(f"`{ip}`" for ip in seed_ips[:5])
-            lines.append(f"IPs: {ip_str}")
-    else:
-        lines.append("_Seed context not available_")
-    lines.append("")
-    # Query
-    query = investigation_packet.get("query", "")
-    if query:
-        lines.append(f"Query: **{query[:120]}**")
-        lines.append("")
-
-    # ── Source Family Coverage ─────────────────────────────────────────────
-    lines.append("### Source Family Coverage")
-    lines.append("")
-    if source_family_summary:
-        lines.append("| Family | Accepted | Rejected | Pending | Status |")
-        lines.append("|:-------|--------:|--------:|--------:|:-------|")
-        for entry in source_family_summary[:15]:
-            if isinstance(entry, dict):
-                fam = entry.get("family", "?")
-                acc = entry.get("accepted", 0)
-                rej = entry.get("rejected", 0)
-                pend = entry.get("pending", 0)
-                terminal_only = entry.get("terminal_only", False)
-                attempted = entry.get("attempted", False)
-                if terminal_only:
-                    status = "terminal only"
-                elif attempted:
-                    status = "attempted"
-                elif acc > 0:
-                    status = "had findings"
-                elif rej > 0:
-                    status = "rejected"
-                else:
-                    status = "no data"
-                lines.append(f"| `{fam}` | {acc} | {rej} | {pend} | {status} |")
-        lines.append("")
-    else:
-        lines.append("_Source family data not available_")
-        lines.append("")
-
-    # ── What Was Confirmed ─────────────────────────────────────────────────
-    lines.append("### What Was Confirmed")
-    lines.append("")
-    if total_accepted == 0:
-        lines.append("_No findings were accepted — nothing was confirmed._")
-    else:
-        # High-value families with accepted > 0
-        confirmed: list[str] = []
-        for entry in source_family_summary:
-            if isinstance(entry, dict) and entry.get("accepted", 0) > 0:
-                fam = entry.get("family", "?")
-                acc = entry.get("accepted", 0)
-                confirmed.append(f"`{fam}` ({acc} accepted)")
-        if confirmed:
-            for c in confirmed[:8]:
-                lines.append(f"- {c}")
-        else:
-            lines.append(f"**{total_accepted}** accepted finding(s) from sources not enumerated.")
-    lines.append("")
-
-    # ── What Was Attempted But Not Confirmed ───────────────────────────────
-    lines.append("### What Was Attempted But Not Confirmed")
-    lines.append("")
-    attempted_not_confirmed: list[str] = []
-    for entry in source_family_summary:
-        if isinstance(entry, dict):
-            acc = entry.get("accepted", 0)
-            attempted = entry.get("attempted", False)
-            terminal_only = entry.get("terminal_only", False)
-            terminal_state = entry.get("terminal_state", "")
-            fam = entry.get("family", "?")
-            if acc == 0 and (attempted or terminal_only or terminal_state):
-                state_str = terminal_state if terminal_state else "attempted, no results"
-                attempted_not_confirmed.append(f"`{fam}`: {state_str}")
-    if attempted_not_confirmed:
-        for a in attempted_not_confirmed[:10]:
-            lines.append(f"- {a}")
-    else:
-        if total_accepted == 0:
-            lines.append("_All lanes failed to produce accepted findings._")
-        else:
-            lines.append("_No terminal-only lanes without accepted findings._")
-    lines.append("")
-
-    # ── Gaps and Failure Modes ──────────────────────────────────────────────
-    gaps = investigation_packet.get("gaps") or []
-    lines.append("### Gaps and Failure Modes")
-    lines.append("")
-    if gaps:
-        for g in gaps[:10]:
-            lines.append(f"- {g}")
-    else:
-        lines.append("_No significant gaps identified._")
-    lines.append("")
-
-    # Sprint F250C: Provider Yield Diagnosis in analyst brief
-    pyd = scorecard.get("provider_yield_diagnosis") or investigation_packet.get("provider_yield_diagnosis") or {}
-    if pyd and isinstance(pyd, dict):
-        overall = pyd.get("overall", "unknown")
-        families = pyd.get("families", {}) or {}
-        lines.append("### Provider Yield Diagnosis")
-        lines.append("")
-        lines.append(f"**Overall:** {overall}")
-        lines.append("")
-        for fam_name, fam_diag in families.items():
-            if isinstance(fam_diag, dict):
-                status = fam_diag.get("status", "?")
-                reason = fam_diag.get("reason", "?")
-                action = fam_diag.get("action", "?")
-                if status not in ("skipped", "unknown") or reason not in ("not_attempted", "unknown"):
-                    action_str = f" → {action}" if action and action != "none" else ""
-                    lines.append(f"- **{fam_name}** [{status}]: {reason}{action_str}")
-        next_eng = pyd.get("recommended_next_engineering_action", "")
-        next_inv = pyd.get("recommended_next_investigation_action", "")
-        if next_eng and next_eng != "none":
-            lines.append(f"**Next engineering:** {next_eng}")
-        if next_inv and next_inv != "none":
-            lines.append(f"**Next investigation:** {next_inv}")
-        lines.append("")
-
-    # ── Recommended Next Pivots ────────────────────────────────────────────
-    next_pivots = investigation_packet.get("next_pivots") or []
-    lines.append("### Recommended Next Pivots")
-    lines.append("")
-    if next_pivots:
-        for pivot in next_pivots[:8]:
-            if isinstance(pivot, dict):
-                pt = pivot.get("pivot_type", "?")
-                tgt = pivot.get("target", "?")
-                pri = pivot.get("priority", 0.0)
-                lines.append(f"- **{pt}** on `{tgt}` (priority {pri:.2f})")
-            elif isinstance(pivot, str):
-                lines.append(f"- {pivot}")
-    else:
-        lines.append("_No specific pivots recommended._")
-    lines.append("")
-
-    # ── Planner Actions ─────────────────────────────────────────────────────
-    planner_actions = investigation_packet.get("planner_actions") or []
-    lines.append("### Planner Actions")
-    lines.append("")
-    if planner_actions:
-        for action in planner_actions[:10]:
-            if isinstance(action, dict):
-                act_type = action.get("action", "?")
-                tgt = action.get("target", "")
-                reason = action.get("reason", "")
-                if tgt:
-                    lines.append(f"- **{act_type}** on `{tgt[:60]}` — {reason[:80]}")
-                else:
-                    lines.append(f"- **{act_type}** — {reason[:80]}")
-            elif isinstance(action, str):
-                lines.append(f"- {action}")
-    else:
-        lines.append("_No planner actions recorded._")
-    lines.append("")
-
-    # ── Confidence and Constraints ─────────────────────────────────────────
-    lines.append("### Confidence and Constraints")
-    lines.append("")
-    lines.append(f"**Confidence:** {confidence}")
-    lines.append("")
-
-    # Constraints from capability_synthesis
-    if isinstance(cap_synth, dict):
-        feed_noise = cap_synth.get("feed_noise_summary", "")
-        source_div = cap_synth.get("source_diversity_summary", "")
-        corr = cap_synth.get("corroboration_summary", "")
-        if feed_noise:
-            lines.append(f"- Feed noise: **{feed_noise}**")
-        if source_div:
-            lines.append(f"- Source diversity: **{source_div}**")
-        if corr:
-            lines.append(f"- Corroboration: **{corr}**")
-
-    # Constraints from terminal coverage
-    terminal_coverage = investigation_packet.get("terminal_coverage") or {}
-    if terminal_coverage and isinstance(terminal_coverage, dict):
-        term_fams = list(terminal_coverage.keys())
-        if term_fams:
-            lines.append(f"- Terminal-only lanes: **{', '.join(term_fams[:5])}**")
-
-    lines.append("")
+    # Render sections via helpers
+    _render_f232_executive_summary(lines, total_accepted, capability_verdict, signal_class, pvs)
+    _render_f232_seed_context(lines, investigation_packet)
+    _render_f232_source_coverage(lines, source_family_summary)
+    _render_f232_confirmed(lines, total_accepted, source_family_summary)
+    _render_f232_attempted_not_confirmed(lines, total_accepted, source_family_summary)
+    _render_f232_gaps(lines, investigation_packet)
+    _render_f232_provider_diagnosis(lines, scorecard, investigation_packet)
+    _render_f232_pivots(lines, investigation_packet)
+    _render_f232_planner_actions(lines, investigation_packet)
+    _render_f232_constraints(lines, investigation_packet, cap_synth, confidence)
 
     return "\n".join(lines)

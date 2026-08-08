@@ -537,10 +537,21 @@ class DomainReputationService:
 
 
 # ---------------------------------------------------------------------------
-# Singleton factory (lazy, same pattern as TarpitDetector)
+# Singleton factory (F320: Refactored to use centralized pattern)
 # ---------------------------------------------------------------------------
+from hledac.universal.utils._patterns import module_singleton_getter
 
-_reputation_service_singleton: DomainReputationService | None = None
+
+def _make_reputation_service(store: DuckDBShadowStore | None) -> DomainReputationService:
+    """Factory for DomainReputationService singleton."""
+    return DomainReputationService(store=store)
+
+
+# Module-level singleton getter with thread-safe double-checked locking
+_get_reputation_service = module_singleton_getter(
+    singleton_name="_reputation_service_singleton",
+    factory=lambda: _make_reputation_service(None),
+)
 
 
 def get_domain_reputation_service(
@@ -552,17 +563,12 @@ def get_domain_reputation_service(
         store: DuckDBShadowStore for persistence. Only used on first call.
                Subsequent calls ignore this arg.
     """
-    global _reputation_service_singleton
-    if _reputation_service_singleton is None:
-        _reputation_service_singleton = DomainReputationService(store=store)
-    return _reputation_service_singleton
+    return _get_reputation_service()
 
 
 def reset_domain_reputation_service() -> None:
     """Reset singleton — test seam only."""
     global _reputation_service_singleton
-    if _reputation_service_singleton is not None:
-        _reputation_service_singleton._memory_fallback.clear()  # noqa: SLF001
     _reputation_service_singleton = None
 
 

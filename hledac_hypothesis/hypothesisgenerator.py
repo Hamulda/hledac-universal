@@ -68,66 +68,124 @@ def _extract_emails(payload: str) -> list[str]:
         return []
     return _EMAIL_RE.findall(payload)
 
-def _heuristic_generate(findings: list[Any], current_seeds: list[str], sprint_depth: int) -> list[ResearchHypothesis]:
-    """Generate hypotheses using simple rule-based heuristic (M1-safe fallback)."""
+def _extract_findings_by_type(findings: list[Any]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Extract findings organized by type (IP, domain, hash, email) with finding IDs."""
     by_type: dict[str, list[str]] = {'domain': [], 'ip': [], 'hash': [], 'email': []}
     finding_map: dict[str, list[str]] = {}
+    extractors = {
+        'ip': _extract_ips,
+        'domain': _extract_domains,
+        'hash': _extract_hashes,
+        'email': _extract_emails,
+    }
     for f in findings:
         fid = getattr(f, 'finding_id', None) or getattr(f, 'id', None) or ''
         payload = getattr(f, 'payload_text', '') or ''
-        for ip in _extract_ips(payload):
-            if len(by_type['ip']) >= MAX_EXTRACTS_PER_TYPE:
-                break
-            by_type['ip'].append(ip)
-            finding_map.setdefault(ip, []).append(fid)
-        for d in _extract_domains(payload):
-            if len(by_type['domain']) >= MAX_EXTRACTS_PER_TYPE:
-                break
-            by_type['domain'].append(d)
-            finding_map.setdefault(d, []).append(fid)
-        for h in _extract_hashes(payload):
-            if len(by_type['hash']) >= MAX_EXTRACTS_PER_TYPE:
-                break
-            by_type['hash'].append(h)
-            finding_map.setdefault(h, []).append(fid)
-        for e in _extract_emails(payload):
-            if len(by_type['email']) >= MAX_EXTRACTS_PER_TYPE:
-                break
-            by_type['email'].append(e)
-            finding_map.setdefault(e, []).append(fid)
+        for ioc_type, extractor in extractors.items():
+            for value in extractor(payload):
+                if len(by_type[ioc_type]) >= MAX_EXTRACTS_PER_TYPE:
+                    break
+                by_type[ioc_type].append(value)
+                finding_map.setdefault(value, []).append(fid)
+    return by_type, finding_map
+
+
+def _build_ip_hypotheses(ip_list: list[str], finding_map: dict[str, list[str]]) -> list[ResearchHypothesis]:
+    """Build hypotheses for IP addresses - explore adjacent subnets."""
     hypotheses: list[ResearchHypothesis] = []
-    for ip in by_type['ip'][:5]:
+    for ip in ip_list[:5]:
         if len(hypotheses) >= MAX_HYPOTHESES:
             break
         parts = ip.rsplit('.', 1)
         if len(parts) == 2:
             subnet = f'{parts[0]}.{parts[1]}.0.0/16'
-            hypotheses.append(ResearchHypothesis(hypothesis_text=f'IP {ip} is a known indicator - explore adjacent {subnet} for related infrastructure', confidence=0.65, pivot_seeds=(subnet,), supporting_findings=tuple(finding_map.get(ip, [])), hypothesis_type='entity_expansion'))
-    for domain in by_type['domain'][:5]:
+            hypotheses.append(ResearchHypothesis(
+                hypothesis_text=f'IP {ip} is a known indicator - explore adjacent {subnet} for related infrastructure',
+                confidence=0.65, pivot_seeds=(subnet,), supporting_findings=tuple(finding_map.get(ip, [])),
+                hypothesis_type='entity_expansion'))
+    return hypotheses
+
+
+def _build_domain_hypotheses(domain_list: list[str], finding_map: dict[str, list[str]]) -> list[ResearchHypothesis]:
+    """Build hypotheses for domains - check parent domains."""
+    hypotheses: list[ResearchHypothesis] = []
+    for domain in domain_list[:5]:
         if len(hypotheses) >= MAX_HYPOTHESES:
             break
         parts = domain.split('.')
         if len(parts) >= 2:
             parent = '.'.join(parts[1:])
-            hypotheses.append(ResearchHypothesis(hypothesis_text=f'Domain {domain} is under investigation - check related domains under {parent}', confidence=0.6, pivot_seeds=(parent,), supporting_findings=tuple(finding_map.get(domain, [])), hypothesis_type='entity_expansion'))
-    if sprint_depth > 1:
-        for domain in by_type['domain'][:3]:
-            if len(hypotheses) >= MAX_HYPOTHESES:
-                break
-            hypotheses.append(ResearchHypothesis(hypothesis_text=f'Domain {domain} found in current sprint - cross-reference WHOIS/registration timeline for age anomalies', confidence=0.55, pivot_seeds=(f'whois:{domain}',), supporting_findings=tuple(finding_map.get(domain, [])), hypothesis_type='temporal'))
-    for h in by_type['hash'][:3]:
-        if len(hypotheses) >= MAX_HYPOTHESES:
-            break
-        hypotheses.append(ResearchHypothesis(hypothesis_text=f'File hash {h[:16]}... appears in this sprint - find other artifacts sharing the same hash for infrastructure mapping', confidence=0.7, pivot_seeds=(f'hash:{h}',), supporting_findings=tuple(finding_map.get(h, [])), hypothesis_type='lateral'))
-    for email in by_type['email'][:3]:
-        if len(hypotheses) >= MAX_HYPOTHESES:
-            break
-        hypotheses.append(ResearchHypothesis(hypothesis_text=f'Email {email} appeared in a finding - search paste sites and breach feeds for associated credentials or PII', confidence=0.6, pivot_seeds=(f'leak:{email}',), supporting_findings=tuple(finding_map.get(email, [])), hypothesis_type='adversarial'))
-    for seed in current_seeds[:5]:
-        if len(hypotheses) >= MAX_HYPOTHESES:
-            break
-        hypotheses.append(ResearchHypothesis(hypothesis_text=f'Seed {seed} is the current anchor - derive related domain/IP patterns to expand the investigation scope', confidence=0.5, pivot_seeds=(seed,), supporting_findings=(), hypothesis_type='entity_expansion'))
+            hypotheses.append(ResearchHypothesis(
+                hypothesis_text=f'Domain {domain} is under investigation - check related domains under {parent}',
+                confidence=0.6, pivot_seeds=(parent,), supporting_findings=tuple(finding_map.get(domain, [])),
+                hypothesis_type='entity_expansion'))
     return hypotheses
+
+
+def _build_temporal_domain_hypotheses(domain_list: list[str], finding_map: dict[str, list[str]]) -> list[ResearchHypothesis]:
+    """Build temporal hypotheses for domains - WHOIS age anomalies."""
+    hypotheses: list[ResearchHypothesis] = []
+    for domain in domain_list[:3]:
+        if len(hypotheses) >= MAX_HYPOTHESES:
+            break
+        hypotheses.append(ResearchHypothesis(
+            hypothesis_text=f'Domain {domain} found in current sprint - cross-reference WHOIS/registration timeline for age anomalies',
+            confidence=0.55, pivot_seeds=(f'whois:{domain}',), supporting_findings=tuple(finding_map.get(domain, [])),
+            hypothesis_type='temporal'))
+    return hypotheses
+
+
+def _build_hash_hypotheses(hash_list: list[str], finding_map: dict[str, list[str]]) -> list[ResearchHypothesis]:
+    """Build hypotheses for file hashes - find related artifacts."""
+    hypotheses: list[ResearchHypothesis] = []
+    for h in hash_list[:3]:
+        if len(hypotheses) >= MAX_HYPOTHESES:
+            break
+        hypotheses.append(ResearchHypothesis(
+            hypothesis_text=f'File hash {h[:16]}... appears in this sprint - find other artifacts sharing the same hash for infrastructure mapping',
+            confidence=0.7, pivot_seeds=(f'hash:{h}',), supporting_findings=tuple(finding_map.get(h, [])),
+            hypothesis_type='lateral'))
+    return hypotheses
+
+
+def _build_email_hypotheses(email_list: list[str], finding_map: dict[str, list[str]]) -> list[ResearchHypothesis]:
+    """Build hypotheses for emails - search for credentials/PII leaks."""
+    hypotheses: list[ResearchHypothesis] = []
+    for email in email_list[:3]:
+        if len(hypotheses) >= MAX_HYPOTHESES:
+            break
+        hypotheses.append(ResearchHypothesis(
+            hypothesis_text=f'Email {email} appeared in a finding - search paste sites and breach feeds for associated credentials or PII',
+            confidence=0.6, pivot_seeds=(f'leak:{email}',), supporting_findings=tuple(finding_map.get(email, [])),
+            hypothesis_type='adversarial'))
+    return hypotheses
+
+
+def _build_seed_hypotheses(seeds: list[str]) -> list[ResearchHypothesis]:
+    """Build hypotheses from current seed anchors."""
+    hypotheses: list[ResearchHypothesis] = []
+    for seed in seeds[:5]:
+        if len(hypotheses) >= MAX_HYPOTHESES:
+            break
+        hypotheses.append(ResearchHypothesis(
+            hypothesis_text=f'Seed {seed} is the current anchor - derive related domain/IP patterns to expand the investigation scope',
+            confidence=0.5, pivot_seeds=(seed,), supporting_findings=(), hypothesis_type='entity_expansion'))
+    return hypotheses
+
+
+def _heuristic_generate(findings: list[Any], current_seeds: list[str], sprint_depth: int) -> list[ResearchHypothesis]:
+    """Generate hypotheses using simple rule-based heuristic (M1-safe fallback)."""
+    by_type, finding_map = _extract_findings_by_type(findings)
+    hypotheses: list[ResearchHypothesis] = []
+    hypotheses.extend(_build_ip_hypotheses(by_type['ip'], finding_map))
+    hypotheses.extend(_build_domain_hypotheses(by_type['domain'], finding_map))
+    if sprint_depth > 1:
+        hypotheses.extend(_build_temporal_domain_hypotheses(by_type['domain'], finding_map))
+    hypotheses.extend(_build_hash_hypotheses(by_type['hash'], finding_map))
+    hypotheses.extend(_build_email_hypotheses(by_type['email'], finding_map))
+    hypotheses.extend(_build_seed_hypotheses(current_seeds))
+    return hypotheses[:MAX_HYPOTHESES]
+
 
 def _dspy_generate(findings: list[Any], current_seeds: list[str], sprint_depth: int, graph: DuckPGQGraph | None) -> list[ResearchHypothesis]:
     """Generate hypotheses using DSPy HypothesisGeneratorProgram (falls back to heuristic)."""

@@ -588,224 +588,75 @@ class IOCGraph:
         """BLITZ-08: True if this graph operates in :memory: mode (no disk I/O)."""
         return self._is_memory_mode
 
+    def _create_schema(self, conn):
+        """Create IOC, OBSERVED, PREDICTED tables in target DB."""
+        try: conn.execute('CREATE NODE TABLE IOC(id STRING PRIMARY KEY, ioc_type STRING, value STRING, first_seen DOUBLE, last_seen DOUBLE, confidence DOUBLE, earliest_observed DOUBLE, latest_observed DOUBLE, observation_count INTEGER)')
+        except Exception: pass
+        try: conn.execute('CREATE REL TABLE OBSERVED(FROM IOC TO IOC, finding_id STRING, source_type STRING, first_seen DOUBLE, last_seen DOUBLE)')
+        except Exception: pass
+        try: conn.execute('CREATE REL TABLE PREDICTED(FROM IOC TO IOC, confidence DOUBLE, adamic_adar DOUBLE, jaccard DOUBLE, pref_attach DOUBLE, common_neighbors INTEGER, method STRING, created_at DOUBLE, verified BOOLEAN DEFAULT false)')
+        except Exception: pass
+
+    def _copy_nodes(self, target_conn):
+        """Copy IOC nodes to target DB."""
+        ioc_count = 0
+        if self._schema_has_temporal:
+            res = self._conn.execute('MATCH (n:IOC) RETURN n.id, n.ioc_type, n.value, n.first_seen, n.last_seen, n.confidence, n.earliest_observed, n.latest_observed, n.observation_count')
+            while res.has_next():
+                row = res.get_next()
+                target_conn.execute('CREATE (:IOC {id: $id, ioc_type: $t, value: $v, first_seen: $fs, last_seen: $ls, confidence: $c, earliest_observed: $eo, latest_observed: $lo, observation_count: $oc})', {'id': row[0], 't': row[1], 'v': row[2], 'fs': row[3], 'ls': row[4], 'c': row[5], 'eo': row[6], 'lo': row[7], 'oc': row[8]})
+                ioc_count += 1
+        else:
+            res = self._conn.execute('MATCH (n:IOC) RETURN n.id, n.ioc_type, n.value, n.first_seen, n.last_seen, n.confidence')
+            while res.has_next():
+                row = res.get_next()
+                target_conn.execute('CREATE (:IOC {id: $id, ioc_type: $t, value: $v, first_seen: $fs, last_seen: $ls, confidence: $c, earliest_observed: $fs, latest_observed: $ls, observation_count: 1})', {'id': row[0], 't': row[1], 'v': row[2], 'fs': row[3], 'ls': row[4], 'c': row[5]})
+                ioc_count += 1
+        logger.info('[IOCGraph] persist_to_disk: %d IOC nodes copied', ioc_count)
+        return ioc_count
+
+    def _copy_observed_edges(self, target_conn):
+        """Copy OBSERVED edges to target DB."""
+        obs_count = 0
+        res = self._conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) RETURN a.id, b.id, r.finding_id, r.source_type, r.first_seen, r.last_seen')
+        while res.has_next():
+            row = res.get_next()
+            target_conn.execute('MATCH (a:IOC {id: $aid}), (b:IOC {id: $bid}) CREATE (a)-[:OBSERVED {finding_id: $fid, source_type: $st, first_seen: $fs, last_seen: $ls}]->(b)', {'aid': row[0], 'bid': row[1], 'fid': row[2], 'st': row[3], 'fs': row[4], 'ls': row[5]})
+            obs_count += 1
+        logger.info('[IOCGraph] persist_to_disk: %d OBSERVED edges copied', obs_count)
+        return obs_count
+
+    def _copy_predicted_edges(self, target_conn):
+        """Copy PREDICTED edges to target DB."""
+        pred_count = 0
+        try:
+            res = self._conn.execute('MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) RETURN a.id, b.id, r.confidence, r.adamic_adar, r.jaccard, r.pref_attach, r.common_neighbors, r.method, r.created_at, r.verified')
+            while res.has_next():
+                row = res.get_next()
+                target_conn.execute('MATCH (a:IOC {id: $aid}), (b:IOC {id: $bid}) CREATE (a)-[:PREDICTED {confidence: $conf, adamic_adar: $aa, jaccard: $jac, pref_attach: $pa, common_neighbors: $cn, method: $method, created_at: $ts, verified: $ver}]->(b)', {'aid': row[0], 'bid': row[1], 'conf': row[2], 'aa': row[3], 'jac': row[4], 'pa': row[5], 'cn': row[6], 'method': row[7], 'ts': row[8], 'ver': row[9]})
+                pred_count += 1
+            logger.info('[IOCGraph] persist_to_disk: %d PREDICTED edges copied', pred_count)
+        except Exception: pass
+        return pred_count
+
     async def persist_to_disk(self, target_path: Path) -> int:
-        """BLITZ-08: Export in-memory graph to a file-backed Kuzu database.
-
-        Creates a new Kuzu database at target_path, copies the schema
-        (IOC node table + OBSERVED rel table), then bulk-copies all nodes
-        and edges from the in-memory graph.
-
-        Call this during sprint TEARDOWN to persist the in-memory graph
-        before the :memory: database is destroyed on close().
-
-        Args:
-            target_path: Directory path for the new file-backed Kuzu DB.
-                        Parent directories are created if needed.
-
-        Returns:
-            Total number of nodes + edges copied, or 0 on failure.
-
-        M1 8GB safe: uses sequential COPY via Kuzu Cypher — no buffered
-        bulk transfer, O(n) memory for the largest single row.
-        """
-        if self._closed or self._conn is None:
-            logger.warning('[IOCGraph] persist_to_disk: graph is closed, nothing to persist')
-            return 0
-        if not self._is_memory_mode:
-            logger.debug('[IOCGraph] persist_to_disk: already file-backed, no-op')
-            return 0
-
-        target_path = Path(target_path)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        if target_path.exists():
-            import shutil
-            logger.warning(
-                '[IOCGraph] persist_to_disk: target %s exists, removing',
-                target_path,
-            )
-            shutil.rmtree(str(target_path), ignore_errors=True)
-
-        total_copied = 0
-        target_db: Any = None
-        target_conn: Any = None
+        """BLITZ-08: Export in-memory graph to a file-backed Kuzu database."""
+        if self._closed or self._conn is None: logger.warning('[IOCGraph] persist_to_disk: graph is closed'); return 0
+        if not self._is_memory_mode: logger.debug('[IOCGraph] persist_to_disk: already file-backed, no-op'); return 0
+        target_path = Path(target_path); target_path.parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists(): import shutil; shutil.rmtree(str(target_path), ignore_errors=True)
+        target_db, target_conn = None, None
         try:
-            # Create file-backed Kuzu database with identical schema
-            target_db = _kuzu.Database(str(target_path))
-            target_conn = _kuzu.Connection(target_db)
-
-            # Create schema (idempotent — first time on a fresh DB)
-            # [META]-006 schema includes earliest_observed, latest_observed, observation_count
-            target_conn.execute(
-                'CREATE NODE TABLE IOC('
-                'id STRING PRIMARY KEY, '
-                'ioc_type STRING, '
-                'value STRING, '
-                'first_seen DOUBLE, '
-                'last_seen DOUBLE, '
-                'confidence DOUBLE, '
-                'earliest_observed DOUBLE, '
-                'latest_observed DOUBLE, '
-                'observation_count INTEGER'
-                ')'
-            )
-        except Exception:  # noqa: BLE001
-            # Schema already exists (Kuzu raises on duplicate CREATE)
-            pass
-
-        try:
-            target_conn.execute(
-                'CREATE REL TABLE OBSERVED('
-                'FROM IOC TO IOC, '
-                'finding_id STRING, '
-                'source_type STRING, '
-                'first_seen DOUBLE, '
-                'last_seen DOUBLE'
-                ')'
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
-        # SWARM-003: Create PREDICTED edge table
-        try:
-            target_conn.execute(
-                'CREATE REL TABLE PREDICTED('
-                'FROM IOC TO IOC, '
-                'confidence DOUBLE, '
-                'adamic_adar DOUBLE, '
-                'jaccard DOUBLE, '
-                'pref_attach DOUBLE, '
-                'common_neighbors INTEGER, '
-                'method STRING, '
-                'created_at DOUBLE, '
-                'verified BOOLEAN DEFAULT false'
-                ')'
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
-        try:
-            # Copy IOC nodes — MATCH all, CREATE in target
-            # [META]-006: include earliest_observed, latest_observed, observation_count
-            if self._schema_has_temporal:
-                ioc_res = self._conn.execute(
-                    'MATCH (n:IOC) RETURN n.id, n.ioc_type, n.value, '
-                    'n.first_seen, n.last_seen, n.confidence, '
-                    'n.earliest_observed, n.latest_observed, '
-                    'n.observation_count'
-                )
-                while ioc_res.has_next():
-                    row = ioc_res.get_next()
-                    target_conn.execute(
-                        'CREATE (:IOC {'
-                        'id: $id, ioc_type: $t, value: $v, '
-                        'first_seen: $fs, last_seen: $ls, confidence: $c, '
-                        'earliest_observed: $eo, latest_observed: $lo, observation_count: $oc'
-                        '})',
-                        {
-                            'id': row[0], 't': row[1], 'v': row[2],
-                            'fs': row[3], 'ls': row[4], 'c': row[5],
-                            'eo': row[6], 'lo': row[7], 'oc': row[8],
-                        },
-                    )
-                    ioc_count += 1
-            else:
-                # Legacy schema fallback — no temporal fields
-                ioc_res = self._conn.execute(
-                    'MATCH (n:IOC) RETURN n.id, n.ioc_type, n.value, '
-                    'n.first_seen, n.last_seen, n.confidence'
-                )
-                while ioc_res.has_next():
-                    row = ioc_res.get_next()
-                    target_conn.execute(
-                        'CREATE (:IOC {'
-                        'id: $id, ioc_type: $t, value: $v, '
-                        'first_seen: $fs, last_seen: $ls, confidence: $c, '
-                        'earliest_observed: $fs, latest_observed: $ls, observation_count: 1'
-                        '})',
-                        {
-                            'id': row[0], 't': row[1], 'v': row[2],
-                            'fs': row[3], 'ls': row[4], 'c': row[5],
-                        },
-                    )
-                    ioc_count += 1
-            total_copied += ioc_count
-            logger.info('[IOCGraph] persist_to_disk: %d IOC nodes copied', ioc_count)
-
-            # Copy OBSERVED edges — MATCH with endpoints, CREATE in target
-            obs_res = self._conn.execute(
-                'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) '
-                'RETURN a.id, b.id, r.finding_id, r.source_type, '
-                'r.first_seen, r.last_seen'
-            )
-            obs_count = 0
-            while obs_res.has_next():
-                row = obs_res.get_next()
-                target_conn.execute(
-                    'MATCH (a:IOC {id: $aid}), (b:IOC {id: $bid}) '
-                    'CREATE (a)-[:OBSERVED {'
-                    'finding_id: $fid, source_type: $st, '
-                    'first_seen: $fs, last_seen: $ls'
-                    '}]->(b)',
-                    {
-                        'aid': row[0], 'bid': row[1],
-                        'fid': row[2], 'st': row[3],
-                        'fs': row[4], 'ls': row[5],
-                    },
-                )
-                obs_count += 1
-            total_copied += obs_count
-            logger.info('[IOCGraph] persist_to_disk: %d OBSERVED edges copied', obs_count)
-
-            # SWARM-003: Copy PREDICTED edges
-            try:
-                pred_res = self._conn.execute(
-                    'MATCH (a:IOC)-[r:PREDICTED]->(b:IOC) '
-                    'RETURN a.id, b.id, r.confidence, r.adamic_adar, r.jaccard, '
-                    'r.pref_attach, r.common_neighbors, r.method, r.created_at, r.verified'
-                )
-                pred_count = 0
-                while pred_res.has_next():
-                    row = pred_res.get_next()
-                    target_conn.execute(
-                        'MATCH (a:IOC {id: $aid}), (b:IOC {id: $bid}) '
-                        'CREATE (a)-[:PREDICTED {'
-                        'confidence: $conf, adamic_adar: $aa, jaccard: $jac, '
-                        'pref_attach: $pa, common_neighbors: $cn, '
-                        'method: $method, created_at: $ts, verified: $ver'
-                        '}]->(b)',
-                        {
-                            'aid': row[0], 'bid': row[1],
-                            'conf': row[2], 'aa': row[3], 'jac': row[4],
-                            'pa': row[5], 'cn': row[6], 'method': row[7],
-                            'ts': row[8], 'ver': row[9],
-                        },
-                    )
-                    pred_count += 1
-                total_copied += pred_count
-                logger.info('[IOCGraph] persist_to_disk: %d PREDICTED edges copied', pred_count)
-            except Exception:  # noqa: BLE001
-                pass
-
+            target_db = _kuzu.Database(str(target_path)); target_conn = _kuzu.Connection(target_db)
+            self._create_schema(target_conn)
+            total = self._copy_nodes(target_conn) + self._copy_observed_edges(target_conn) + self._copy_predicted_edges(target_conn)
+            logger.info('[IOCGraph] persist_to_disk: %d total entities written to %s', total, target_path)
+            return total
         except Exception as exc:
-            logger.error('[IOCGraph] persist_to_disk failed: %s', exc)
-            return 0
+            logger.error('[IOCGraph] persist_to_disk failed: %s', exc); return 0
         finally:
-            if target_conn is not None:
-                try:
-                    target_conn.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            if target_db is not None:
-                try:
-                    target_db.close()
-                except Exception:  # noqa: BLE001
-                    pass
-
-        logger.info(
-            '[IOCGraph] persist_to_disk: %d total entities written to %s',
-            total_copied, target_path,
-        )
-        return total_copied
+            if target_conn: target_conn.close()
+            if target_db: target_db.close()
 
     async def upsert_ioc(
         self,
@@ -1169,6 +1020,103 @@ class IOCGraph:
             logging.warning(f'[IOCGraph] upsert_ioc_batch failed: {e}')
             return []
 
+    def _get_existing_ids(self, conn, node_ids: list[str]) -> set[str]:
+        """Get existing IOC IDs using UNWIND batch query."""
+        res = conn.execute(
+            'UNWIND $ids AS nid MATCH (n:IOC) WHERE n.id = nid RETURN n.id',
+            {'ids': node_ids}
+        )
+        existing_ids: set[str] = set()
+        try:
+            while res.has_next():
+                existing_ids.add(res.get_next()[0])
+        except Exception:
+            existing_ids = set()
+        return existing_ids
+
+    def _upsert_legacy(self, conn, node_ids: list[str], iocs: list[tuple], now: float) -> list[str]:
+        """Legacy schema upsert without temporal fields."""
+        existing_ids = self._get_existing_ids(conn, node_ids)
+        new_iocs = [(nid, t, v, c) for nid, (t, v, c, _) in zip(node_ids, iocs, strict=False) if nid not in existing_ids]
+        existing = [nid for nid in node_ids if nid in existing_ids]
+        created: list[str] = []
+
+        if new_iocs:
+            try:
+                data = [{'id': nid, 't': t, 'v': v, 'c': c, 'ts': now} for nid, t, v, c in new_iocs]
+                conn.execute(
+                    'UNWIND $data AS row CREATE (:IOC {id: row.id, ioc_type: row.t, value: row.v, first_seen: row.ts, last_seen: row.ts, confidence: row.c})',
+                    {'data': data}
+                )
+                created = [nid for nid, _, _, _ in new_iocs]
+            except Exception:
+                for nid, t, v, c in new_iocs:
+                    try:
+                        conn.execute('CREATE (:IOC {id: $id, ioc_type: $t, value: $v, first_seen: $ts, last_seen: $ts, confidence: $c})',
+                                   {'id': nid, 't': t, 'v': v, 'ts': now, 'c': c})
+                        created.append(nid)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+        if existing:
+            try:
+                conn.execute('UNWIND $ids AS nid MATCH (n:IOC) WHERE n.id = nid SET n.last_seen = $ts', {'ids': existing, 'ts': now})
+            except Exception:
+                for nid in existing:
+                    try:
+                        conn.execute('MATCH (n:IOC) WHERE n.id = $id SET n.last_seen = $ts', {'id': nid, 'ts': now})
+                    except Exception:  # noqa: BLE001
+                        pass
+        return created
+
+    def _load_existing_info(self, conn, node_ids) -> dict:
+        """Load existing node temporal info."""
+        try:
+            res = conn.execute('UNWIND $ids AS nid MATCH (n:IOC) WHERE n.id = nid RETURN n.id, n.earliest_observed, n.latest_observed', {'ids': node_ids})
+            info = {}
+            while res.has_next():
+                row = res.get_next(); info[row[0]] = (row[1], row[2])
+            return info
+        except Exception: return {}
+
+    def _create_new_nodes(self, conn, new_nodes) -> list:
+        """Create new nodes with UNWIND or fallback."""
+        if not new_nodes: return []
+        created = []
+        try:
+            data = [{'id': nid, 't': t, 'v': val, 'c': c, 'eo': ts, 'lo': ts} for nid, t, val, c, ts in new_nodes]
+            conn.execute('UNWIND $data AS row CREATE (:IOC {id: row.id, ioc_type: row.t, value: row.v, first_seen: row.eo, last_seen: row.lo, confidence: row.c, earliest_observed: row.eo, latest_observed: row.lo, observation_count: 1})', {'data': data})
+            return [nid for nid, _, _, _, _ in new_nodes]
+        except Exception:
+            for nid, (t, val, c, ts) in new_nodes:
+                try:
+                    conn.execute('CREATE (:IOC {id: $id, ioc_type: $t, value: $v, first_seen: $eo, last_seen: $lo, confidence: $c, earliest_observed: $eo, latest_observed: $lo, observation_count: 1})', {'id': nid, 't': t, 'v': val, 'c': c, 'eo': ts, 'lo': ts})
+                    created.append(nid)
+                except Exception: pass
+        return created
+
+    def _update_existing_nodes(self, conn, existing_to_update) -> None:
+        """Update existing nodes with UNWIND or fallback."""
+        if not existing_to_update: return
+        try:
+            data = [{'id': nid, 'ts': obs_at} for nid, obs_at, _ in existing_to_update]
+            conn.execute('UNWIND $data AS row MATCH (n:IOC) WHERE n.id = row.id SET n.last_seen = row.ts, n.latest_observed = CASE WHEN row.ts > n.latest_observed THEN row.ts ELSE n.latest_observed END, n.observation_count = n.observation_count + 1', {'data': data})
+        except Exception:
+            for nid, obs_at, _ in existing_to_update:
+                try: conn.execute('MATCH (n:IOC) WHERE n.id = $id SET n.last_seen = $ts, n.latest_observed = CASE WHEN $ts > n.latest_observed THEN $ts ELSE n.latest_observed END, n.observation_count = n.observation_count + 1', {'id': nid, 'ts': obs_at})
+                except Exception: pass
+
+    def _upsert_temporal(self, conn, node_ids: list[str], iocs: list[tuple], now: float) -> list[str]:
+        """Temporal schema upsert with provenance tracking."""
+        existing_info = self._load_existing_info(conn, node_ids)
+        new_nodes, existing_to_update = [], []
+        for nid, (ioc_type, value, confidence, obs_at) in zip(node_ids, iocs, strict=False):
+            if nid in existing_info:
+                existing_to_update.append((nid, obs_at, existing_info[nid][1] or obs_at))
+            else:
+                new_nodes.append((nid, ioc_type, value, confidence, obs_at))
+        return self._create_new_nodes(conn, new_nodes)
+
     def _upsert_ioc_batch_sync(
         self,
         node_ids: list[str],
@@ -1179,154 +1127,13 @@ class IOCGraph:
 
         [META]-006: Resolves earliest_observed / latest_observed per IOC.
         Falls back to legacy queries when schema lacks temporal fields.
-
         N+1 elimination via UNWIND batch queries.
         """
         conn = self._conn
         assert conn is not None
         if not node_ids:
             return []
-
-        # [META]-006: Legacy schema fallback — no temporal fields available
-        if not self._schema_has_temporal:
-            res = conn.execute(
-                'UNWIND $ids AS nid MATCH (n:IOC) WHERE n.id = nid RETURN n.id',
-                {'ids': node_ids}
-            )
-            existing_ids: set[str] = set()
-            try:
-                while res.has_next():
-                    existing_ids.add(res.get_next()[0])
-            except Exception:
-                existing_ids = set()
-            new_iocs = [(nid, t, v, c) for nid, (t, v, c, _) in zip(node_ids, iocs, strict=False) if nid not in existing_ids]
-            existing = [nid for nid in node_ids if nid in existing_ids]
-            created: list[str] = []
-            if new_iocs:
-                try:
-                    data = [{'id': nid, 't': t, 'v': v, 'c': c, 'ts': now} for nid, t, v, c in new_iocs]
-                    conn.execute(
-                        'UNWIND $data AS row '
-                        'CREATE (:IOC {id: row.id, ioc_type: row.t, value: row.v, '
-                        'first_seen: row.ts, last_seen: row.ts, confidence: row.c})',
-                        {'data': data}
-                    )
-                    created = [nid for nid, _, _, _ in new_iocs]
-                except Exception:
-                    for nid, t, v, c in new_iocs:
-                        try:
-                            conn.execute(
-                                'CREATE (:IOC {id: $id, ioc_type: $t, value: $v, '
-                                'first_seen: $ts, last_seen: $ts, confidence: $c})',
-                                {'id': nid, 't': t, 'v': v, 'ts': now, 'c': c}
-                            )
-                            created.append(nid)
-                        except Exception:  # noqa: BLE001
-                            pass
-            if existing:
-                try:
-                    conn.execute(
-                        'UNWIND $ids AS nid MATCH (n:IOC) WHERE n.id = nid '
-                        'SET n.last_seen = $ts',
-                        {'ids': existing, 'ts': now}
-                    )
-                except Exception:
-                    for nid in existing:
-                        try:
-                            conn.execute(
-                                'MATCH (n:IOC) WHERE n.id = $id SET n.last_seen = $ts',
-                                {'id': nid, 'ts': now}
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass
-            return created
-
-        # [META]-006: Temporal schema — full provenance tracking
-        # Fetch existing nodes with their current earliest_observed
-        res = conn.execute(
-            'UNWIND $ids AS nid '
-            'MATCH (n:IOC) WHERE n.id = nid '
-            'RETURN n.id, n.earliest_observed, n.latest_observed',
-            {'ids': node_ids}
-        )
-        existing_info: dict[str, tuple[float | None, float | None]] = {}
-        try:
-            while res.has_next():
-                row = res.get_next()
-                existing_info[row[0]] = (row[1], row[2])
-        except Exception:
-            existing_info = {}
-
-        # Separate new vs existing
-        new_nodes: list[tuple[str, str, str, float, float]] = []
-        existing_to_update: list[tuple[str, float, float]] = []
-        for node_id, (ioc_type, value, confidence, obs_at) in zip(node_ids, iocs, strict=False):
-            if node_id in existing_info:
-                # Update: bump last_seen, update latest_observed if newer
-                _, latest = existing_info[node_id]
-                existing_to_update.append((node_id, obs_at, latest or obs_at))
-            else:
-                # New: set earliest_observed = latest_observed = obs_at
-                new_nodes.append((node_id, ioc_type, value, confidence, obs_at))
-
-        created: list[str] = []
-        if new_nodes:
-            try:
-                data = [
-                    {'id': nid, 't': t, 'v': val, 'c': c, 'eo': ts, 'lo': ts}
-                    for nid, t, val, c, ts in new_nodes
-                ]
-                conn.execute(
-                    'UNWIND $data AS row '
-                    'CREATE (:IOC {id: row.id, ioc_type: row.t, value: row.v, '
-                    'first_seen: row.eo, last_seen: row.lo, confidence: row.c, '
-                    'earliest_observed: row.eo, latest_observed: row.lo, observation_count: 1})',
-                    {'data': data}
-                )
-                created = [nid for nid, _, _, _, _ in new_nodes]
-            except Exception:
-                for node_id, (ioc_type, value, confidence, obs_at) in new_nodes:
-                    try:
-                        conn.execute(
-                            'CREATE (:IOC {id: $id, ioc_type: $t, value: $v, '
-                            'first_seen: $eo, last_seen: $lo, confidence: $c, '
-                            'earliest_observed: $eo, latest_observed: $lo, observation_count: 1})',
-                            {'id': node_id, 't': ioc_type, 'v': value, 'c': confidence, 'eo': obs_at, 'lo': obs_at}
-                        )
-                        created.append(node_id)
-                    except Exception:  # noqa: BLE001
-                        pass
-
-        if existing_to_update:
-            # Update last_seen and latest_observed for existing nodes
-            # For each: if obs_at > latest_observed, update latest_observed
-            try:
-                update_data = [
-                    {'id': nid, 'ts': obs_at, 'prev_lo': prev_lo}
-                    for nid, obs_at, prev_lo in existing_to_update
-                ]
-                conn.execute(
-                    'UNWIND $data AS row '
-                    'MATCH (n:IOC) WHERE n.id = row.id '
-                    'SET n.last_seen = row.ts, '
-                    'n.latest_observed = CASE WHEN row.ts > n.latest_observed THEN row.ts ELSE n.latest_observed END, '
-                    'n.observation_count = n.observation_count + 1',
-                    {'data': update_data}
-                )
-            except Exception:
-                for node_id, obs_at, prev_lo in existing_to_update:
-                    try:
-                        conn.execute(
-                            'MATCH (n:IOC) WHERE n.id = $id '
-                            'SET n.last_seen = $ts, '
-                            'n.latest_observed = CASE WHEN $ts > n.latest_observed THEN $ts ELSE n.latest_observed END, '
-                            'n.observation_count = n.observation_count + 1',
-                            {'id': node_id, 'ts': obs_at}
-                        )
-                    except Exception:  # noqa: BLE001
-                        pass
-
-        return created
+        return self._upsert_legacy(conn, node_ids, iocs, now) if not self._schema_has_temporal else self._upsert_temporal(conn, node_ids, iocs, now)
 
     async def record_observation_batch(self, observations: list[tuple[str, str, str, float, str]]) -> None:
         """
@@ -1341,50 +1148,48 @@ class IOCGraph:
 
         await asyncio.to_thread(self._record_observation_batch_sync, observations)
 
-    def _record_observation_batch_sync(self, observations: list[tuple[str, str, str, float, str]]) -> None:
-        """Synchronous batch observation — runs on _executor thread.
-
-        N+1 elimination via UNWIND batch queries:
-          Phase 1: 1 query — UNWIND batch existence check for all edges
-          Phase 3: 1 query — UNWIND batch CREATE for missing edges
-          Phase 4: 1 query — UNWIND batch SET last_seen for existing edges
-        Total: 3 queries regardless of batch size (was 2N+1).
-        """
-        conn = self._conn
-        assert conn is not None
-        if not observations:
-            return
-        obs_pairs: list[list[str]] = [[ioc_id_a, ioc_id_b] for ioc_id_a, ioc_id_b, _, _, _ in observations]
-        res = conn.execute('UNWIND $obs AS pair MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = pair[0] AND b.id = pair[1] RETURN pair[0], pair[1]', {'obs': obs_pairs})
-        existing: set[tuple[str, str]] = set()
+    def _check_existing_edges(self, conn, obs_pairs) -> set:
+        """Check which edges already exist."""
         try:
-            while res.has_next():
-                row = res.get_next()
-                existing.add((row[0], row[1]))
-        except Exception:
+            res = conn.execute('UNWIND $obs AS pair MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = pair[0] AND b.id = pair[1] RETURN pair[0], pair[1]', {'obs': obs_pairs})
             existing = set()
-        missing: list[tuple[str, str, str, float, str]] = [(a, b, f, t, s) for a, b, f, t, s in observations if (a, b) not in existing]
-        existing_obs: list[tuple[str, str, float]] = [(a, b, t) for a, b, _, t, _ in observations if (a, b) in existing]
-        if missing:
-            try:
-                data = [{'ida': a, 'idb': b, 'fid': f, 'st': s, 'ts': t} for a, b, f, t, s in missing]
-                conn.execute('UNWIND $data AS row MATCH (a:IOC), (b:IOC) WHERE a.id = row.ida AND b.id = row.idb CREATE (a)-[r:OBSERVED {finding_id: row.fid, source_type: row.st, first_seen: row.ts, last_seen: row.ts}]->(b)', {'data': data})
-            except Exception:
-                for ioc_id_a, ioc_id_b, fid, ts, src in missing:
-                    try:
-                        conn.execute('MATCH (a:IOC), (b:IOC) WHERE a.id = $ida AND b.id = $idb CREATE (a)-[r:OBSERVED {finding_id: $fid, source_type: $st, first_seen: $ts, last_seen: $ts}]->(b)', {'ida': ioc_id_a, 'idb': ioc_id_b, 'fid': fid, 'st': src, 'ts': ts})
-                    except Exception:  # noqa: BLE001
-                        pass
-        if existing_obs:
-            try:
-                data = [{'ida': a, 'idb': b, 'ts': t} for a, b, t in existing_obs]
-                conn.execute('UNWIND $data AS row MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = row.ida AND b.id = row.idb SET r.last_seen = row.ts', {'data': data})
-            except Exception:
-                for ioc_id_a, ioc_id_b, ts in existing_obs:
-                    try:
-                        conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb SET r.last_seen = $ts', {'ida': ioc_id_a, 'idb': ioc_id_b, 'ts': ts})
-                    except Exception:  # noqa: BLE001
-                        pass
+            while res.has_next():
+                row = res.get_next(); existing.add((row[0], row[1]))
+            return existing
+        except Exception: return set()
+
+    def _create_missing_edges(self, conn, missing) -> None:
+        """Create missing edges with UNWIND or fallback."""
+        if not missing: return
+        try:
+            data = [{'ida': a, 'idb': b, 'fid': f, 'st': s, 'ts': t} for a, b, f, t, s in missing]
+            conn.execute('UNWIND $data AS row MATCH (a:IOC), (b:IOC) WHERE a.id = row.ida AND b.id = row.idb CREATE (a)-[r:OBSERVED {finding_id: row.fid, source_type: row.st, first_seen: row.ts, last_seen: row.ts}]->(b)', {'data': data})
+        except Exception:
+            for a, b, f, t, s in missing:
+                try: conn.execute('MATCH (a:IOC), (b:IOC) WHERE a.id = $ida AND b.id = $idb CREATE (a)-[r:OBSERVED {finding_id: $fid, source_type: $st, first_seen: $ts, last_seen: $ts}]->(b)', {'ida': a, 'idb': b, 'fid': f, 'st': s, 'ts': t})
+                except Exception: pass
+
+    def _update_existing_edges(self, conn, existing_obs) -> None:
+        """Update last_seen for existing edges."""
+        if not existing_obs: return
+        try:
+            data = [{'ida': a, 'idb': b, 'ts': t} for a, b, t in existing_obs]
+            conn.execute('UNWIND $data AS row MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = row.ida AND b.id = row.idb SET r.last_seen = row.ts', {'data': data})
+        except Exception:
+            for a, b, t in existing_obs:
+                try: conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = $ida AND b.id = $idb SET r.last_seen = $ts', {'ida': a, 'idb': b, 'ts': t})
+                except Exception: pass
+
+    def _record_observation_batch_sync(self, observations: list[tuple[str, str, str, float, str]]) -> None:
+        """Synchronous batch observation — runs on _executor thread. Uses UNWIND batch queries."""
+        conn = self._conn; assert conn is not None
+        if not observations: return
+        obs_pairs = [[a, b] for a, b, _, _, _ in observations]
+        existing = self._check_existing_edges(conn, obs_pairs)
+        missing = [(a, b, f, t, s) for a, b, f, t, s in observations if (a, b) not in existing]
+        existing_obs = [(a, b, t) for a, b, _, t, _ in observations if (a, b) in existing]
+        self._create_missing_edges(conn, missing)
+        self._update_existing_edges(conn, existing_obs)
 
     async def pivot(self, ioc_value: str, ioc_type: str, depth: int=2) -> list[dict[str, Any]]:
         """
@@ -1544,140 +1349,52 @@ class IOCGraph:
             'truncated': False,
         }
 
-    def _extract_k_hop_subgraph_arrow_sync(
-        self,
-        ioc_value: str,
-        ioc_type: str,
-        k: int,
-        max_nodes: int,
-        max_edges: int,
-    ) -> dict[str, Any]:
-        """Arrow-accelerated subgraph extraction — Kuzu getAsArrow() for both phases.
-
-        Phase 1 (node collection) and Phase 2 (edge collection) both use
-        Kuzu's native Arrow export via the C Data Interface.  Falls back to
-        _extract_k_hop_subgraph_sync() when pyarrow is not available or any
-        Arrow operation fails.
-        """
-        if not _PYARROW_AVAILABLE or _pa is None:
-            return self._extract_k_hop_subgraph_sync(
-                ioc_value, ioc_type, k, max_nodes, max_edges,
-            )
-
-        k = max(1, min(k, 5))
-        if max_nodes < 1:
-            max_nodes = 1
-        max_nodes = min(max_nodes, 500)
-        max_edges = max(0, min(max_edges, 2000))
-        neighbor_limit = max(0, max_nodes - 1)
-
-        conn = self._conn
-        assert conn is not None
-        seed_id = _make_ioc_id(ioc_type, ioc_value)
-        truncated = False
-        node_set: dict[str, dict[str, Any]] = {}
-
-        # --- Phase 1: Arrow-accelerated node collection ---
+    def _collect_nodes_arrow(self, conn, ioc_value, ioc_type, k, neighbor_limit):
+        """Collect nodes using Arrow export."""
+        node_set = {}
         try:
-            query = (
-                f'MATCH (n:IOC)-[r*1..{k}]-(m:IOC) '
-                'WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id '
-                'RETURN DISTINCT m.id AS id, m.ioc_type AS ioc_type, '
-                'm.value AS value, m.confidence AS confidence, '
-                'm.first_seen AS first_seen, m.last_seen AS last_seen '
-                f'LIMIT {neighbor_limit + 1}'
-            )
-            res = conn.execute(query, {'v': ioc_value, 't': ioc_type})
-            arrow_table = res.getAsArrow(0)  # zero-copy C Data Interface
-            records: list[dict[str, Any]] = arrow_table.to_pylist()
+            query = f'MATCH (n:IOC)-[r*1..{k}]-(m:IOC) WHERE n.value = $v AND n.ioc_type = $t AND n.id <> m.id RETURN DISTINCT m.id AS id, m.ioc_type AS ioc_type, m.value AS value, m.confidence AS confidence, m.first_seen AS first_seen, m.last_seen AS last_seen LIMIT {neighbor_limit + 1}'
+            arrow_table = conn.execute(query, {'v': ioc_value, 't': ioc_type}).getAsArrow(0)
+            for node_data in arrow_table.to_pylist():
+                if len(node_set) >= neighbor_limit: return node_set, True
+                if (nid := node_data.get('id', '')) and nid not in node_set:
+                    node_set[nid] = {'id': nid, 'ioc_type': node_data.get('ioc_type', 'unknown'), 'value': node_data.get('value', ''), 'confidence': float(node_data.get('confidence', 1.0)), 'first_seen': float(node_data.get('first_seen', 0.0)), 'last_seen': float(node_data.get('last_seen', 0.0))}
+        except Exception: pass
+        return node_set, False
 
-            for node_data in records:
-                if len(node_set) >= neighbor_limit:
-                    truncated = True
-                    break
-                nid = node_data.get('id', '')
-                if nid and nid not in node_set:
-                    node_set[nid] = {
-                        'id': nid,
-                        'ioc_type': node_data.get('ioc_type', 'unknown'),
-                        'value': node_data.get('value', ''),
-                        'confidence': float(node_data.get('confidence', 1.0)),
-                        'first_seen': float(node_data.get('first_seen', 0.0)),
-                        'last_seen': float(node_data.get('last_seen', 0.0)),
-                    }
-        except Exception:
-            return self._extract_k_hop_subgraph_sync(
-                ioc_value, ioc_type, k, max_nodes, max_edges,
-            )
-
-        # --- Seed node lookup (single row — keep as-is) ---
+    def _add_seed_node(self, conn, seed_id, ioc_type, ioc_value, node_set):
+        """Add seed node to node set."""
         try:
-            seed_res = conn.execute(
-                'MATCH (n:IOC) WHERE n.id = $id '
-                'RETURN n.ioc_type, n.value, n.confidence, '
-                'n.first_seen, n.last_seen',
-                {'id': seed_id},
-            )
-            if seed_res.has_next():
+            if (seed_res := conn.execute('MATCH (n:IOC) WHERE n.id = $id RETURN n.ioc_type, n.value, n.confidence, n.first_seen, n.last_seen', {'id': seed_id})).has_next():
                 row = seed_res.get_next()
                 if seed_id not in node_set:
-                    node_set[seed_id] = {
-                        'id': seed_id,
-                        'ioc_type': str(row[0]) if row[0] else ioc_type,
-                        'value': str(row[1]) if row[1] else ioc_value,
-                        'confidence': float(row[2]) if row[2] is not None else 1.0,
-                        'first_seen': float(row[3]) if row[3] is not None else 0.0,
-                        'last_seen': float(row[4]) if row[4] is not None else 0.0,
-                    }
-        except Exception:  # noqa: BLE001
-            pass
+                    node_set[seed_id] = {'id': seed_id, 'ioc_type': str(row[0]) if row[0] else ioc_type, 'value': str(row[1]) if row[1] else ioc_value, 'confidence': float(row[2]) if row[2] is not None else 1.0, 'first_seen': float(row[3]) if row[3] is not None else 0.0, 'last_seen': float(row[4]) if row[4] is not None else 0.0}
+        except Exception: pass
 
-        # --- Phase 2: Arrow-accelerated edge collection ---
-        node_ids = list(node_set.keys())
-        edges: list[dict[str, Any]] = []
-        degree_map: dict[str, int] = {nid: 0 for nid in node_ids}
+    def _collect_edges_arrow(self, conn, node_ids, node_set, max_edges):
+        """Collect edges using Arrow export."""
+        edges, truncated, degree_map = [], False, {nid: 0 for nid in node_ids}
+        if len(node_ids) < 2: return edges, truncated, degree_map
+        edge_set = set()
+        try:
+            arrow_table = conn.execute('UNWIND $ids AS nid MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) WHERE a.id = nid AND b.id IN $ids RETURN a.id AS src, b.id AS dst, r.finding_id AS finding_id, r.source_type AS source_type, r.last_seen AS last_seen LIMIT $limit', {'ids': node_ids, 'limit': max_edges * 2}).getAsArrow(0)
+            for rec in arrow_table.to_pylist():
+                if len(edge_set) >= max_edges: truncated = True; break
+                if (src := str(rec.get('src', ''))) in node_set and (dst := str(rec.get('dst', ''))) in node_set and (pair := (src, dst)) not in edge_set:
+                    edge_set.add(pair); edges.append({'source_id': src, 'target_id': dst, 'finding_id': str(rec.get('finding_id', '')), 'source_type': str(rec.get('source_type', 'unknown')), 'confidence': 1.0, 'last_seen': float(rec.get('last_seen', 0.0) or 0.0)}); degree_map[src] += 1; degree_map[dst] += 1
+        except Exception: pass
+        return edges, truncated, degree_map
 
-        if len(node_ids) >= 2:
-            edge_set: set[tuple[str, str]] = set()
-            try:
-                res = conn.execute(
-                    'UNWIND $ids AS nid '
-                    'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) '
-                    'WHERE a.id = nid AND b.id IN $ids '
-                    'RETURN a.id AS src, b.id AS dst, '
-                    'r.finding_id AS finding_id, '
-                    'r.source_type AS source_type, '
-                    'r.last_seen AS last_seen '
-                    'LIMIT $limit',
-                    {'ids': node_ids, 'limit': max_edges * 2},
-                )
-                arrow_table = res.getAsArrow(0)
-                edge_records: list[dict[str, Any]] = arrow_table.to_pylist()
-
-                for rec in edge_records:
-                    if len(edge_set) >= max_edges:
-                        truncated = True
-                        break
-                    src = str(rec.get('src', ''))
-                    dst = str(rec.get('dst', ''))
-                    if src in node_set and dst in node_set:
-                        pair = (src, dst)
-                        if pair not in edge_set:
-                            edge_set.add(pair)
-                            edges.append({
-                                'source_id': src,
-                                'target_id': dst,
-                                'finding_id': str(rec.get('finding_id', '')),
-                                'source_type': str(rec.get('source_type', 'unknown')),
-                                'confidence': 1.0,
-                                'last_seen': float(rec.get('last_seen', 0.0) or 0.0),
-                            })
-                            degree_map[src] = degree_map.get(src, 0) + 1
-                            degree_map[dst] = degree_map.get(dst, 0) + 1
-            except Exception:  # noqa: BLE001
-                pass
-
-        total_nodes = len(node_set)
+    def _extract_k_hop_subgraph_arrow_sync(self, ioc_value: str, ioc_type: str, k: int, max_nodes: int, max_edges: int) -> dict:
+        """Arrow-accelerated subgraph extraction using Kuzu getAsArrow()."""
+        if not _PYARROW_AVAILABLE or _pa is None: return self._extract_k_hop_subgraph_sync(ioc_value, ioc_type, k, max_nodes, max_edges)
+        k, max_nodes, max_edges = max(1, min(k, 5)), max(1, min(max_nodes, 500)), max(0, min(max_edges, 2000))
+        conn = self._conn; assert conn is not None
+        seed_id = _make_ioc_id(ioc_type, ioc_value)
+        node_set, truncated = self._collect_nodes_arrow(conn, ioc_value, ioc_type, k, max_nodes - 1)
+        self._add_seed_node(conn, seed_id, ioc_type, ioc_value, node_set)
+        edges, _, degree_map = self._collect_edges_arrow(conn, list(node_set.keys()), node_set, max_edges)
+        return {'nodes': list(node_set.values()), 'edges': edges, 'total_nodes': len(node_set), 'total_edges': len(edges), 'seed_id': seed_id, 'degree_map': degree_map, 'truncated': truncated}
         total_edges = len(edges)
         max_possible = total_nodes * (total_nodes - 1) // 2
         density = total_edges / max_possible if max_possible > 0 else 0.0
@@ -1982,94 +1699,72 @@ class IOCGraph:
             logging.warning(f'[IOCGraph] get_communities failed: {e}')
             return {}
 
-    def _get_communities_sync(self) -> dict[str, int]:
-        """Synchronous community detection — runs on _executor thread."""
-        conn = self._conn
-        assert conn is not None
-
-        # Extract nodes and edges from Kuzu
-        nodes: list[tuple[int, str, str]] = []
-        value_to_id: dict[str, int] = {}
-
+    def _load_nodes_for_communities(self, conn):
+        """Load nodes from Kuzu."""
+        nodes, value_to_id = [], {}
         try:
             res = conn.execute('MATCH (n:IOC) RETURN n.value, n.ioc_type')
-            node_id = 1
-            while res.has_next():
+            for node_id in range(1, float('inf')):
+                if not res.has_next(): break
                 row = res.get_next()
-                value = str(row[0]) if row[0] else ''
-                ioc_type = str(row[1]) if row[1] else 'unknown'
+                value, ioc_type = str(row[0]) if row[0] else '', str(row[1]) if row[1] else 'unknown'
                 if value and value not in value_to_id:
                     value_to_id[value] = node_id
                     nodes.append((node_id, value, ioc_type))
-                    node_id += 1
         except Exception as e:
-            import logging
-            logging.warning(f'[IOCGraph] Failed to load nodes for communities: {e}')
-            return {}
+            import logging; logging.warning(f'[IOCGraph] Failed to load nodes: {e}')
+        return nodes, value_to_id
 
-        if len(nodes) == 0:
-            return {}
-
-        # Extract edges (OBSERVED relationships)
-        edges: list[tuple[int, int, float]] = []
+    def _load_edges_for_communities(self, conn, value_to_id):
+        """Load edges from Kuzu."""
+        edges = []
         try:
             res = conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) RETURN a.value, b.value, r.confidence')
             while res.has_next():
                 row = res.get_next()
-                src_value = str(row[0]) if row[0] else ''
-                dst_value = str(row[1]) if row[1] else ''
-                confidence = float(row[2]) if row[2] is not None else 1.0
-                src_id = value_to_id.get(src_value)
-                dst_id = value_to_id.get(dst_value)
-                if src_id is not None and dst_id is not None:
-                    edges.append((src_id, dst_id, confidence))
+                if (src_id := value_to_id.get(str(row[0]) if row[0] else '')) is not None:
+                    if (dst_id := value_to_id.get(str(row[1]) if row[1] else '')) is not None:
+                        edges.append((src_id, dst_id, float(row[2]) if row[2] is not None else 1.0))
         except Exception as e:
-            import logging
-            logging.warning(f'[IOCGraph] Failed to load edges for communities: {e}')
-            return {}
+            import logging; logging.warning(f'[IOCGraph] Failed to load edges: {e}')
+        return edges
 
-        if not edges:
-            # No edges — every node is its own community
-            return {value: i for i, (_, value, _) in enumerate(nodes)}
-
-        # Try Rust Louvain first (petgraph, GRAPH-01 feature)
+    def _get_communities_rust(self, nodes, edges):
+        """Try Rust Louvain community detection."""
         try:
-            # R6: Centralized Rust access via core.rust_backend
             from hledac.universal.core.rust_backend import rust
-            _rust_ext = rust.raw.module
-            result = _rust_ext.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
+            result = rust.raw.module.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
             if result and isinstance(result, dict):
                 communities = result.get('communities')
                 if communities and isinstance(communities, dict):
                     return {str(k): int(v) for k, v in communities.items()}
         except Exception:  # noqa: BLE001
             pass
+        return None
 
-        # Fallback: igraph label propagation
+    def _get_communities_igraph(self, nodes, edges):
+        """Fallback: igraph label propagation."""
         try:
             import igraph as ig
-
-            id_to_idx: dict[int, int] = {}
-            idx_to_value: dict[int, str] = {}
-            for i, (nid, value, _) in enumerate(nodes):
-                id_to_idx[nid] = i
-                idx_to_value[i] = value
-
+            id_to_idx = {nid: i for i, (nid, _, _) in enumerate(nodes)}
             edge_list = [(id_to_idx[s], id_to_idx[d]) for s, d, _ in edges if s in id_to_idx and d in id_to_idx]
-            if not edge_list:
-                return {value: i for i, (_, value, _) in enumerate(nodes)}
-
+            if not edge_list: return {value: i for i, (_, value, _) in enumerate(nodes)}
             g = ig.Graph(n=len(nodes), edges=edge_list, directed=False)
             membership = g.community_label_propagation()
-            result: dict[str, int] = {}
-            for i, (_, value, _) in enumerate(nodes):
-                result[value] = membership.membership[i]
-            return result
+            return {value: membership.membership[i] for i, (_, value, _) in enumerate(nodes)}
         except Exception as e:
-            import logging
-            logging.debug(f'[IOCGraph] igraph community detection fallback failed: {e}')
+            import logging; logging.debug(f'igraph fallback failed: {e}')
+        return None
 
-        return {value: 0 for _, value, _ in nodes}
+    def _get_communities_sync(self) -> dict[str, int]:
+        """Synchronous community detection — runs on _executor thread."""
+        conn = self._conn; assert conn is not None
+        nodes, value_to_id = self._load_nodes_for_communities(conn)
+        if not nodes: return {}
+        edges = self._load_edges_for_communities(conn, value_to_id)
+        if not edges: return {value: i for i, (_, value, _) in enumerate(nodes)}
+        if rust_result := self._get_communities_rust(nodes, edges): return rust_result
+        return self._get_communities_igraph(nodes, edges) or {value: 0 for _, value, _ in nodes}
 
     async def get_centrality(self, ioc_value: str) -> float:
         """
@@ -2246,430 +1941,214 @@ class IOCGraph:
             },
         }
 
-    def _export_graph_topology_sync(
-        self,
-        *,
-        max_nodes: int,
-        max_community_size: int,
-        include_centrality: bool,
-    ) -> dict[str, Any]:
-        """Synchronous graph topology export — runs on _executor thread."""
-        conn = self._conn
-        assert conn is not None
-
-        # ── Phase 1: Extract all nodes ───────────────────────────────────
-        node_map: dict[str, dict[str, Any]] = {}
+    def _extract_nodes(self, conn, max_nodes: int) -> dict:
+        """Phase 1: Extract all nodes from graph."""
+        node_map = {}
         try:
             res = conn.execute(
-                'MATCH (n:IOC) '
-                'RETURN n.id, n.value, n.ioc_type, n.confidence, '
-                'n.first_seen, n.last_seen '
-                'ORDER BY n.confidence DESC NULLS LAST'
-            )
+                'MATCH (n:IOC) RETURN n.id, n.value, n.ioc_type, n.confidence, n.first_seen, n.last_seen '
+                'ORDER BY n.confidence DESC NULLS LAST')
             col_names = res.get_column_names()
             while res.has_next():
                 row = res.get_next()
                 data = dict(zip(col_names, row, strict=False))
                 nid = str(data.get('id', ''))
-                if not nid:
-                    continue
-                node_map[nid] = {
-                    'id': nid,
-                    'value': str(data.get('value', '')),
-                    'ioc_type': str(data.get('ioc_type', 'unknown')),
-                    'confidence': float(data.get('confidence', 1.0)),
-                    'first_seen': float(data.get('first_seen', 0.0) or 0.0),
-                    'last_seen': float(data.get('last_seen', 0.0) or 0.0),
-                }
+                if nid:
+                    node_map[nid] = {'id': nid, 'value': str(data.get('value', '')),
+                        'ioc_type': str(data.get('ioc_type', 'unknown')),
+                        'confidence': float(data.get('confidence', 1.0)),
+                        'first_seen': float(data.get('first_seen', 0.0) or 0.0),
+                        'last_seen': float(data.get('last_seen', 0.0) or 0.0)}
         except Exception as e:
             import logging
-            logging.warning(
-                f'[IOCGraph] topology: node extraction failed: {e}'
-            )
-            return self._empty_topology_result()
+            logging.warning(f'[IOCGraph] topology: node extraction failed: {e}')
+            return {}
+        if max_nodes > 0 and len(node_map) > max_nodes:
+            node_map = {nid: node_map[nid] for nid in list(node_map.keys())[:max_nodes]}
+        return node_map
 
-        if not node_map:
-            return self._empty_topology_result()
-
-        # Apply node cap (highest-confidence first — already sorted)
-        all_node_ids = list(node_map.keys())
-        if max_nodes > 0 and len(all_node_ids) > max_nodes:
-            kept_ids = set(all_node_ids[:max_nodes])
-            node_map = {nid: node_map[nid] for nid in kept_ids}
-
-        # ── Phase 2: Extract edges (both endpoints in node_map) ──────────
-        edges: list[dict[str, Any]] = []
-        degree_map: dict[str, int] = {nid: 0 for nid in node_map}
-        edge_set: set[tuple[str, str]] = set()
-
+    def _extract_edges(self, conn, node_map) -> tuple:
+        """Phase 2: Extract edges where both endpoints are in node_map."""
+        edges, degree_map, edge_set = [], {nid: 0 for nid in node_map}, set()
         try:
             res = conn.execute(
-                'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) '
-                'RETURN a.id, b.id, r.finding_id, r.source_type, '
-                'r.confidence, r.last_seen'
-            )
+                'MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) RETURN a.id, b.id, r.finding_id, r.source_type, r.confidence, r.last_seen')
             col_names = res.get_column_names()
             while res.has_next():
                 row = res.get_next()
                 data = dict(zip(col_names, row, strict=False))
-                src = str(data.get('a.id', ''))
-                dst = str(data.get('b.id', ''))
-                if src in node_map and dst in node_map:
-                    pair = (src, dst)
-                    if pair not in edge_set:
-                        edge_set.add(pair)
-                        edges.append({
-                            'source': src,
-                            'target': dst,
-                            'finding_id': str(
-                                data.get('finding_id', '') or ''
-                            ),
-                            'source_type': str(
-                                data.get('source_type', 'unknown') or 'unknown'
-                            ),
-                            'confidence': float(data.get('confidence', 1.0)),
-                            'last_seen': float(
-                                data.get('last_seen', 0.0) or 0.0
-                            ),
-                        })
-                        degree_map[src] = degree_map.get(src, 0) + 1
-                        degree_map[dst] = degree_map.get(dst, 0) + 1
+                src, dst = str(data.get('a.id', '')), str(data.get('b.id', ''))
+                if src in node_map and dst in node_map and (src, dst) not in edge_set:
+                    edge_set.add((src, dst))
+                    edges.append({'source': src, 'target': dst,
+                        'finding_id': str(data.get('finding_id', '') or ''),
+                        'source_type': str(data.get('source_type', 'unknown') or 'unknown'),
+                        'confidence': float(data.get('confidence', 1.0)),
+                        'last_seen': float(data.get('last_seen', 0.0) or 0.0)})
+                    degree_map[src] = degree_map.get(src, 0) + 1
+                    degree_map[dst] = degree_map.get(dst, 0) + 1
         except Exception as e:
             import logging
-            logging.warning(
-                f'[IOCGraph] topology: edge extraction failed: {e}'
-            )
+            logging.warning(f'[IOCGraph] topology: edge extraction failed: {e}')
+        return edges, degree_map
 
-        # Attach degree to nodes
+    def _compute_igraph_communities(self, node_map, edges) -> tuple:
+        """Compute communities using igraph."""
+        import igraph as ig
+        id_to_idx, idx_to_nid = {nid: i for i, nid in enumerate(node_map)}, {i: nid for i, nid in enumerate(node_map)}
+        edge_list = [(id_to_idx[e['source']], id_to_idx[e['target']]) for e in edges if e['source'] in id_to_idx and e['target'] in id_to_idx]
+        if edge_list:
+            g = ig.Graph(n=len(node_map), edges=edge_list, directed=False)
+            membership = g.community_label_propagation()
+            return {nid: int(membership.membership[i] if hasattr(membership, 'membership') else membership[i]) for i, nid in enumerate(node_map)}, id_to_idx, idx_to_nid
+        return {nid: i for i, nid in enumerate(node_map)}, id_to_idx, idx_to_nid
+
+    def _try_rust_communities(self, communities, node_map, edges, id_to_idx, idx_to_nid) -> bool:
+        """Try Rust enrichment for communities."""
+        if len(set(communities.values())) <= 1 and edges:
+            try:
+                from hledac.universal.core.rust_backend import rust
+                nodes_compact = [(i + 1, node_map[nid]['value'], node_map[nid]['ioc_type']) for i, nid in enumerate(node_map)]
+                edges_compact = [(id_to_idx[e['source']] + 1, id_to_idx[e['target']] + 1, e['confidence']) for e in edges
+                                if e['source'] in id_to_idx and e['target'] in id_to_idx]
+                if nodes_compact and edges_compact:
+                    rust_result = rust.raw.module.rust_graph_analytics_all(nodes_compact, edges_compact, 0.85, 1.0)
+                    if rust_result and (rust_comm := rust_result.get('communities', {})):
+                        communities.clear()
+                        communities.update({idx_to_nid[int(k) - 1]: int(v) for k, v in rust_comm.items() if int(k) - 1 in idx_to_nid})
+                        return True
+            except Exception:
+                pass
+        return False
+
+    def _build_community_info(self, communities, node_map, edges, max_community_size) -> dict:
+        """Build community info dict."""
+        community_groups, community_info = {}, {}
+        for nid, cid in communities.items():
+            community_groups.setdefault(cid, []).append(nid)
+        for cid, members in community_groups.items():
+            node_list = [node_map[nid] for nid in members if nid in node_map]
+            size, member_set = len(members), set(members)
+            internal = sum(1 for e in edges if e['source'] in member_set and e['target'] in member_set)
+            community_info[str(cid)] = {'size': size, 'truncated': size > max_community_size,
+                'ioc_types': list({n['ioc_type'] for n in node_list}),
+                'cohesion': round(internal / (size * (size - 1) / 2) if size > 1 else 1.0, 4),
+                'nodes': [nid for nid in members if nid in node_map][:max_community_size]}
+        return community_info
+
+    def _detect_communities(self, node_map, edges, max_community_size) -> tuple:
+        """Phase 3: Detect communities using igraph with Rust fallback."""
+        try:
+            communities, id_to_idx, idx_to_nid = self._compute_igraph_communities(node_map, edges)
+            self._try_rust_communities(communities, node_map, edges, id_to_idx, idx_to_nid)
+        except Exception as e:
+            import logging
+            logging.debug(f'[IOCGraph] topology: community detection failed: {e}')
+            communities = {nid: 0 for nid in node_map}
+        community_info = self._build_community_info(communities, node_map, edges, max_community_size)
+        return communities, {}, community_info
+
+    def _export_graph_topology_sync(self, *, max_nodes: int, max_community_size: int, include_centrality: bool) -> dict:
+        """Synchronous graph topology export — runs on _executor thread."""
+        conn = self._conn
+        assert conn is not None
+        node_map = self._extract_nodes(conn, max_nodes)
+        if not node_map:
+            return self._empty_topology_result()
+        for nid in node_map:
+            node_map[nid]['degree'] = 0
+        edges, degree_map = self._extract_edges(conn, node_map)
         for nid, deg in degree_map.items():
             if nid in node_map:
                 node_map[nid]['degree'] = deg
-
-        # ── Phase 3: Community detection (INLINED, no re-query) ────
-        # NOTE: We inline community detection using node_map/edges to avoid
-        # the re-extraction that _get_communities_sync() does (which ignores
-        # the already-capped node_map and re-queries all nodes from Kuzu).
-        communities: dict[str, int] = {}  # node_id → community_id
-        community_groups: dict[int, list[str]] = {}
-        community_info: dict[str, dict[str, Any]] = {}
-
-        try:
-            # Build igraph from already-extracted node_map + edges
-            import igraph as ig
-
-            id_to_idx: dict[str, int] = {}
-            idx_to_nid: dict[int, str] = {}
-            for i, nid in enumerate(node_map):
-                id_to_idx[nid] = i
-                idx_to_nid[i] = nid
-
-            edge_list = [
-                (id_to_idx[e['source']], id_to_idx[e['target']])
-                for e in edges
-                if e['source'] in id_to_idx and e['target'] in id_to_idx
-            ]
-
-            if edge_list:
-                g = ig.Graph(n=len(node_map), edges=edge_list, directed=False)
-                membership = g.community_label_propagation()
-                for i, nid in enumerate(node_map):
-                    # Handle both Clustering object (igraph ≥0.10) and raw list
-                    if hasattr(membership, 'membership'):
-                        communities[nid] = int(membership.membership[i])
-                    else:
-                        communities[nid] = int(membership[i])
-            else:
-                # No edges — each node is its own community
-                communities = {nid: i for i, nid in enumerate(node_map)}
-
-            # Try Rust petgraph enrichment if igraph gave singleton communities
-            if len(set(communities.values())) <= 1 and edges:
-                try:
-                    from hledac.universal.core.rust_backend import rust
-                    _rust_ext = rust.raw.module
-                    # Build compact representation for Rust
-                    nodes_compact: list[tuple[int, str, str]] = [
-                        (i + 1, node_map[nid]['value'], node_map[nid]['ioc_type'])
-                        for i, nid in enumerate(node_map)
-                    ]
-                    edges_compact: list[tuple[int, int, float]] = [
-                        (id_to_idx[e['source']] + 1, id_to_idx[e['target']] + 1, e['confidence'])
-                        for e in edges
-                        if e['source'] in id_to_idx and e['target'] in id_to_idx
-                    ]
-                    if nodes_compact and edges_compact:
-                        rust_result = _rust_ext.rust_graph_analytics_all(
-                            nodes_compact, edges_compact, 0.85, 1.0
-                        )
-                        if rust_result and isinstance(rust_result, dict):
-                            rust_comm = rust_result.get('communities', {})
-                            if rust_comm:
-                                communities = {
-                                    idx_to_nid[int(k) - 1]: int(v)
-                                    for k, v in rust_comm.items()
-                                    if int(k) - 1 in idx_to_nid
-                                }
-                except Exception:  # noqa: BLE001
-                    pass  # igraph result is sufficient
-        except Exception as e:
-            import logging
-            logging.debug(
-                f'[IOCGraph] topology: community detection failed: {e}, '
-                'using singleton communities'
-            )
-            communities = {nid: 0 for nid in node_map}
-
-        # Build community_groups and community_info
-        for nid, cid in communities.items():
-            if cid not in community_groups:
-                community_groups[cid] = []
-            community_groups[cid].append(nid)
-
-        for cid, members in community_groups.items():
-            node_list = [
-                node_map[nid] for nid in members if nid in node_map
-            ]
-            ioc_types = list({n['ioc_type'] for n in node_list})
-            size = len(members)
-            truncated = size > max_community_size
-
-            # Cohesion: internal_edges / possible_edges
-            member_set = set(members)
-            internal = sum(
-                1 for e in edges
-                if e['source'] in member_set and e['target'] in member_set
-            )
-            possible = size * (size - 1) / 2
-            cohesion = internal / possible if possible > 0 else 1.0
-
-            community_info[str(cid)] = {
-                'size': size,
-                'truncated': truncated,
-                'ioc_types': ioc_types,
-                'cohesion': round(cohesion, 4),
-                'nodes': [
-                    nid for nid in members if nid in node_map
-                ][:max_community_size],
-            }
-
-        # Attach community_id to nodes
+        communities, community_groups, community_info = self._detect_communities(node_map, edges, max_community_size)
         for nid in node_map:
             node_map[nid]['community_id'] = communities.get(nid, -1)
-
-        # ── Phase 4: Centrality metrics ────────────────────────────────
-        centrality: dict[str, dict[str, float]] = {}
+        centrality = {}
         if include_centrality:
             try:
-                centrality = self._compute_topology_centrality(
-                    node_map=node_map,
-                    edges=edges,
-                    degree_map=degree_map,
-                )
+                centrality = self._compute_topology_centrality(node_map=node_map, edges=edges, degree_map=degree_map)
             except Exception as e:
-                logger.warning(
-                    f'[IOCGraph] topology: centrality failed: {e}'
-                )
-
-        # ── Phase 5: Assemble result ────────────────────────────────────
-        total_nodes = len(node_map)
-        total_edges = len(edges)
-        max_possible = total_nodes * (total_nodes - 1) / 2
-        density = total_edges / max_possible if max_possible > 0 else 0.0
-        max_degree = max(degree_map.values()) if degree_map else 0
-
-        # Finalize node list with all fields
-        nodes_result: list[dict[str, Any]] = []
+                logger.warning(f'[IOCGraph] topology: centrality failed: {e}')
+        # Assemble result
+        nodes_result = []
         for nid, node in node_map.items():
-            node_entry: dict[str, Any] = {
-                'id': nid,
-                'value': node['value'],
-                'ioc_type': node['ioc_type'],
-                'confidence': node['confidence'],
-                'first_seen': node['first_seen'],
-                'last_seen': node['last_seen'],
-                'community_id': node.get('community_id', -1),
-                'degree': node.get('degree', 0),
-            }
+            node_entry = {**node, 'id': nid, 'community_id': node.get('community_id', -1)}
             if centrality and nid in centrality:
                 node_entry['centrality'] = centrality[nid]
             nodes_result.append(node_entry)
+        comm_size = {cid: len(members) for cid, members in community_groups.items()}
+        nodes_result.sort(key=lambda n: (-comm_size.get(n.get('community_id', -1), 0), -n.get('degree', 0)))
+        total_nodes, total_edges = len(node_map), len(edges)
+        return {'nodes': nodes_result, 'edges': edges, 'communities': community_info, 'centrality': centrality,
+            'stats': {'total_nodes': total_nodes, 'total_edges': total_edges, 'total_communities': len(community_groups),
+                'density': round(total_edges / (total_nodes * (total_nodes - 1) / 2) if total_nodes > 1 else 0.0, 4),
+                'max_degree': max(degree_map.values()) if degree_map else 0}}
 
-        # Sort nodes: community size desc, then degree desc
-        comm_size = {
-            cid: len(members)
-            for cid, members in community_groups.items()
-        }
-        nodes_result.sort(
-            key=lambda n: (
-                -comm_size.get(n.get('community_id', -1), 0),
-                -n.get('degree', 0),
-            )
-        )
+    def _init_centrality_map(self, node_ids, degree_map) -> dict:
+        """Initialize centrality map with degree scores."""
+        return {nid: {'degree': float(degree_map.get(nid, 0)), 'pagerank': 0.0,
+            'betweenness': 0.0, 'eigenvector': 0.0, 'closeness': 0.0} for nid in node_ids}
 
-        return {
-            'nodes': nodes_result,
-            'edges': edges,
-            'communities': community_info,
-            'centrality': centrality,
-            'stats': {
-                'total_nodes': total_nodes,
-                'total_edges': total_edges,
-                'total_communities': len(community_groups),
-                'density': round(density, 4),
-                'max_degree': max_degree,
-            },
-        }
-
-    def _compute_topology_centrality(
-        self,
-        node_map: dict[str, dict[str, Any]],
-        edges: list[dict[str, Any]],
-        degree_map: dict[str, int],
-    ) -> dict[str, dict[str, float]]:
-        """
-        Compute PageRank, betweenness, eigenvector, and closeness centrality.
-
-        Uses Rust petgraph (GRAPH-01) for batch analytics when available.
-        Falls back to igraph for all metrics. Bounded to 5000 nodes max.
-
-        Returns dict mapping node_id → {degree, pagerank, betweenness,
-        eigenvector, closeness}.
-        """
-        centrality: dict[str, dict[str, float]] = {}
-        node_ids = list(node_map.keys())
-        n = len(node_ids)
-        if n == 0:
-            return centrality
-
-        # Initialize with degree centrality (always available)
-        for nid in node_ids:
-            centrality[nid] = {
-                'degree': float(degree_map.get(nid, 0)),
-                'pagerank': 0.0,
-                'betweenness': 0.0,
-                'eigenvector': 0.0,
-                'closeness': 0.0,
-            }
-
-        # M1 8GB safety: cap at 5000 nodes for igraph
-        if n > 5000:
-            import logging
-            logging.debug(
-                f'[IOCGraph] topology centrality: {n} nodes > 5000 limit, '
-                'skipping advanced centrality'
-            )
-            return centrality
-
-        # Try Rust petgraph first (GRAPH-01)
+    def _try_rust_centrality(self, centrality, node_ids, node_map, edges, value_to_id):
+        """Try Rust petgraph for centrality (GRAPH-01)."""
         try:
             from hledac.universal.core.rust_backend import rust
-            _rust_ext = rust.raw.module
-            # Build compact node/edge lists for Rust
-            nodes_compact: list[tuple[int, str, str]] = []
-            value_to_id: dict[str, int] = {}
-            for i, nid in enumerate(node_ids):
-                nid_int = i + 1
-                value_to_id[nid] = nid_int
-                nodes_compact.append((
-                    nid_int,
-                    node_map[nid]['value'],
-                    node_map[nid]['ioc_type'],
-                ))
-            edges_compact: list[tuple[int, int, float]] = []
-            for e in edges:
-                src_i = value_to_id.get(e['source'])
-                dst_i = value_to_id.get(e['target'])
-                if src_i is not None and dst_i is not None:
-                    edges_compact.append((src_i, dst_i, e['confidence']))
+            nodes_compact = [(i + 1, node_map[nid]['value'], node_map[nid]['ioc_type']) for i, nid in enumerate(node_ids)]
+            edges_compact = [(value_to_id[e['source']], value_to_id[e['target']], e['confidence']) for e in edges
+                           if e['source'] in value_to_id and e['target'] in value_to_id]
             if nodes_compact and edges_compact:
-                result = _rust_ext.rust_graph_analytics_all(
-                    nodes_compact, edges_compact, 0.85, 1.0
-                )
-                if result and isinstance(result, dict):
-                    rust_centrality = result.get('centrality', {})
-                    if rust_centrality:
-                        for nid in node_ids:
-                            i = value_to_id[nid]
-                            if i in rust_centrality:
-                                cv = rust_centrality[i]
-                                if isinstance(cv, dict):
-                                    centrality[nid]['pagerank'] = float(
-                                        cv.get('pagerank', 0.0)
-                                    )
-                                    centrality[nid]['betweenness'] = float(
-                                        cv.get('betweenness', 0.0)
-                                    )
-                                    centrality[nid]['closeness'] = float(
-                                        cv.get('closeness', 0.0)
-                                    )
-                                    centrality[nid]['eigenvector'] = float(
-                                        cv.get('eigenvector', 0.0)
-                                    )
-                    return centrality
-        except Exception:  # noqa: BLE001
+                result = rust.raw.module.rust_graph_analytics_all(nodes_compact, edges_compact, 0.85, 1.0)
+                if result and (rust_c := result.get('centrality', {})):
+                    for nid in node_ids:
+                        if (cv := rust_c.get(value_to_id[nid])) and isinstance(cv, dict):
+                            for key in ['pagerank', 'betweenness', 'closeness', 'eigenvector']:
+                                centrality[nid][key] = float(cv.get(key, 0.0))
+                    return True
+        except Exception:
             pass
+        return False
 
-        # Fallback: igraph
+    def _try_igraph_centrality(self, centrality, node_ids, edges, node_map, n):
+        """Try igraph for centrality (fallback)."""
         try:
             import igraph as ig
-
-            id_to_idx: dict[int, int] = {}
-            for i, nid in enumerate(node_ids):
-                id_to_idx[i + 1] = i
-
-            edge_list = [
-                (id_to_idx[e['source']], id_to_idx[e['target']])
-                for e in edges
-                if e['source'] in node_map and e['target'] in node_map
-            ]
-
+            id_to_idx = {i + 1: i for i, nid in enumerate(node_ids)}
+            edge_list = [(id_to_idx[e['source']], id_to_idx[e['target']]) for e in edges
+                        if e['source'] in node_map and e['target'] in node_map]
             if not edge_list:
-                return centrality
-
+                return False
             g = ig.Graph(n=n, edges=edge_list, directed=False)
             g.vs['name'] = node_ids
-
-            # PageRank
-            try:
-                pr = g.pagerank(
-                    weights='weight' if g.is_weighted() else None
-                )
-                for i, nid in enumerate(node_ids):
-                    centrality[nid]['pagerank'] = float(pr[i])
-            except Exception:  # noqa: BLE001
-                pass
-
-            # Betweenness (capped at 2000 nodes to avoid O(n²) blowup)
-            if n <= 2000:
-                try:
-                    bet = g.betweenness(directed=False)
-                    for i, nid in enumerate(node_ids):
-                        centrality[nid]['betweenness'] = float(bet[i])
-                except Exception:  # noqa: BLE001
-                    pass
-
-            # Eigenvector
-            try:
-                ev = g.eigenvector_centrality(directed=False)
-                for i, nid in enumerate(node_ids):
-                    centrality[nid]['eigenvector'] = float(ev[i])
-            except Exception:  # noqa: BLE001
-                pass
-
-            # Closeness
-            try:
-                close = g.closeness()
-                for i, nid in enumerate(node_ids):
-                    centrality[nid]['closeness'] = float(close[i])
-            except Exception:  # noqa: BLE001
-                pass
-
+            for metric, func in [('pagerank', g.pagerank), ('betweenness', g.betweenness if n <= 2000 else None),
+                                 ('eigenvector', g.eigenvector_centrality), ('closeness', g.closeness)]:
+                if func:
+                    try:
+                        scores = func(directed=False) if metric != 'pagerank' else func(weights='weight' if g.is_weighted() else None)
+                        for i, nid in enumerate(node_ids):
+                            centrality[nid][metric] = float(scores[i])
+                    except Exception:
+                        pass
+            return True
         except Exception as e:
             import logging
-            logging.debug(
-                f'[IOCGraph] topology: igraph centrality failed: {e}'
-            )
+            logging.debug(f'[IOCGraph] topology: igraph centrality failed: {e}')
+            return False
 
+    def _compute_topology_centrality(self, node_map, edges, degree_map) -> dict:
+        """Compute PageRank, betweenness, eigenvector, and closeness centrality."""
+        centrality, node_ids, n = {}, list(node_map.keys()), len(node_ids)
+        if n == 0:
+            return centrality
+        centrality = self._init_centrality_map(node_ids, degree_map)
+        if n > 5000:
+            import logging
+            logging.debug(f'[IOCGraph] topology centrality: {n} nodes > 5000 limit')
+            return centrality
+        value_to_id = {nid: i + 1 for i, nid in enumerate(node_ids)}
+        if self._try_rust_centrality(centrality, node_ids, node_map, edges, value_to_id):
+            return centrality
+        self._try_igraph_centrality(centrality, node_ids, edges, node_map, n)
         return centrality
 
     async def get_centrality(self, ioc_value: str) -> float:
@@ -2691,83 +2170,57 @@ class IOCGraph:
             logging.warning(f'[IOCGraph] get_centrality({ioc_value}) failed: {e}')
             return 0.0
 
-    def _get_centrality_sync(self, ioc_value: str) -> float:
-        """Synchronous PageRank computation — runs on _executor thread."""
-        conn = self._conn
-        assert conn is not None
-
-        # Extract graph
-        nodes: list[tuple[int, str, str]] = []
-        value_to_id: dict[str, int] = {}
-
+    def _load_graph_for_centrality(self, conn) -> tuple:
+        """Load nodes and edges from Kuzu."""
+        nodes, value_to_id = [], {}
         try:
             res = conn.execute('MATCH (n:IOC) RETURN n.value, n.ioc_type')
-            node_id = 1
-            while res.has_next():
+            for nid in range(1, float('inf')):
+                if not res.has_next(): break
                 row = res.get_next()
-                value = str(row[0]) if row[0] else ''
-                ioc_type = str(row[1]) if row[1] else 'unknown'
-                if value and value not in value_to_id:
-                    value_to_id[value] = node_id
-                    nodes.append((node_id, value, ioc_type))
-                    node_id += 1
-        except Exception:
-            return 0.0
-
-        if not nodes:
-            return 0.0
-
-        edges: list[tuple[int, int, float]] = []
+                if (value := str(row[0]) if row[0] else '') and value not in value_to_id:
+                    value_to_id[value] = nid; nodes.append((nid, value, str(row[1]) if row[1] else 'unknown'))
+        except Exception: return [], {}
+        edges = []
         try:
             res = conn.execute('MATCH (a:IOC)-[r:OBSERVED]->(b:IOC) RETURN a.value, b.value, r.confidence')
             while res.has_next():
                 row = res.get_next()
-                src_value = str(row[0]) if row[0] else ''
-                dst_value = str(row[1]) if row[1] else ''
-                confidence = float(row[2]) if row[2] is not None else 1.0
-                src_id = value_to_id.get(src_value)
-                dst_id = value_to_id.get(dst_value)
-                if src_id is not None and dst_id is not None:
-                    edges.append((src_id, dst_id, confidence))
-        except Exception:
-            return 0.0
+                if (src_id := value_to_id.get(str(row[0]) if row[0] else '')) is not None:
+                    if (dst_id := value_to_id.get(str(row[1]) if row[1] else '')) is not None:
+                        edges.append((src_id, dst_id, float(row[2]) if row[2] is not None else 1.0))
+        except Exception: pass
+        return nodes, value_to_id, edges
 
-        target_id = value_to_id.get(ioc_value)
-        if target_id is None:
-            return 0.0
-
-        # Try Rust PageRank first
+    def _get_rust_pagerank(self, nodes, edges, target_id) -> float:
+        """Try Rust PageRank."""
         try:
-            # R6: Centralized Rust access via core.rust_backend
             from hledac.universal.core.rust_backend import rust
-            _rust_ext = rust.raw.module
-            result = _rust_ext.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
+            result = rust.raw.module.rust_graph_analytics_all(nodes, edges, 0.85, 1.0)
             if result and isinstance(result, dict):
                 pagerank = result.get('pagerank')
                 if pagerank and isinstance(pagerank, dict):
-                    score = pagerank.get(target_id, 0.0)
-                    return float(score)
-        except Exception:  # noqa: BLE001
-            pass
+                    return float(pagerank.get(target_id, 0.0))
+        except Exception: pass
+        return 0.0
 
-        # Fallback: igraph PageRank
+    def _get_igraph_pagerank(self, nodes, edges, value_to_id, target_id) -> float:
+        """Fallback: igraph PageRank."""
         try:
             import igraph as ig
-
-            id_to_idx: dict[int, int] = {}
-            for i, (nid, _, _) in enumerate(nodes):
-                id_to_idx[nid] = i
-
+            id_to_idx = {nid: i for i, (nid, _, _) in enumerate(nodes)}
             edge_list = [(id_to_idx[s], id_to_idx[d]) for s, d, _ in edges if s in id_to_idx and d in id_to_idx]
-            if not edge_list:
-                return 0.0
-
-            g = ig.Graph(n=len(nodes), edges=edge_list, directed=True)
-            pr_scores = g.pagerank(damping=0.85, directed=True)
+            if not edge_list: return 0.0
             target_idx = id_to_idx.get(target_id)
-            if target_idx is not None and target_idx < len(pr_scores):
-                return float(pr_scores[target_idx])
-        except Exception:  # noqa: BLE001
-            pass
+            if target_idx is None: return 0.0
+            return float(ig.Graph(n=len(nodes), edges=edge_list, directed=True).pagerank(damping=0.85, directed=True)[target_idx])
+        except Exception: return 0.0
 
-        return 0.0
+    def _get_centrality_sync(self, ioc_value: str) -> float:
+        """Synchronous PageRank computation — runs on _executor thread."""
+        conn = self._conn; assert conn is not None
+        nodes, value_to_id, edges = self._load_graph_for_centrality(conn)
+        if not nodes: return 0.0
+        if (target_id := value_to_id.get(ioc_value)) is None: return 0.0
+        if score := self._get_rust_pagerank(nodes, edges, target_id): return score
+        return self._get_igraph_pagerank(nodes, edges, value_to_id, target_id)

@@ -447,6 +447,49 @@ async def _parallel_taskgroup[T](
     return _apply_policy(ok_results, errors, policy, ctx, logger_instance, results, names)
 
 
+# _classify_gathered is defined earlier at line ~231 (optimized version with fast path)
+
+def _build_parallel_result(
+    ok: list[Any],
+    errors: list[BaseException],
+    re_raise: BaseException | None,
+    by_name: dict[str, Any],
+    policy: str,
+    ctx: str,
+) -> ParallelResult | list[Any]:
+    """
+    Build result based on exception policy.
+    Raises immediately if re_raise is set.
+    """
+    if re_raise is not None:
+        raise re_raise
+
+    match policy:
+        case "raise":
+            if errors:
+                if len(errors) == 1:
+                    raise errors[0]
+                raise BaseExceptionGroup(f"parallel{' ' + ctx if ctx else ''}", errors)
+            return ParallelResult(ok=ok, by_name=by_name, errors=[], re_raised=None)
+
+        case "first":
+            if errors:
+                raise errors[0]
+            return ParallelResult(ok=ok, by_name=by_name, errors=[], re_raised=None)
+
+        case "collect":
+            return ParallelResult(ok=ok, by_name=by_name, errors=errors, re_raised=None)
+
+        case "log":
+            if errors:
+                sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
+                suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
+                return ok
+
+        case _:
+            return ParallelResult(ok=ok, by_name=by_name, errors=errors, re_raised=None)
+
+
 # ---------------------------------------------------------------------------
 # parallel() — unified parallel runner
 # ---------------------------------------------------------------------------
@@ -571,73 +614,14 @@ async def parallel[T](
     else:
         raw = await asyncio.gather(*wrapped, return_exceptions=True)
 
-    _CE = asyncio.CancelledError
-    _BaseE = BaseException
-    _Ex = Exception
-
-    ok: list[Any] = []
-    errors: list[BaseException] = []
-    re_raise: BaseException | None = None
-
-    for i, item in enumerate(raw):
-        t = type(item)
-        if t is _CE:
-            _log.debug("[GHOST] parallel CancelledError[%d]%s", i, (" " + ctx) if ctx else "")
-            if re_raise is None:
-                re_raise = cast(BaseException, item)
-        elif isinstance(item, _Ex):
-            _log.debug(
-                "[GHOST] parallel exception[%d]%s: %s: %s",
-                i,
-                (" " + ctx) if ctx else "",
-                type(item).__name__,
-                item,
-            )
-            errors.append(item)
-        elif isinstance(item, _BaseE):
-            _log.debug(
-                "[GHOST] parallel BaseException[%d]%s: %s",
-                i,
-                (" " + ctx) if ctx else "",
-                type(item).__name__,
-            )
-            if re_raise is None:
-                re_raise = cast(BaseException, item)
-        else:
-            ok.append(item)
-
-    if re_raise is not None:
-        raise re_raise
-
+    # Classify results
     by_name = _build_by_name(raw, names)
+    ok, errors, re_raise = _classify_gathered(raw, ctx, _log)
 
-    match policy:
-        case "raise":
-            if errors:
-                if len(errors) == 1:
-                    raise errors[0]
-                raise BaseExceptionGroup(f"parallel{' ' + ctx if ctx else ''}", errors)
-            return ParallelResult(ok=ok, by_name=by_name, errors=[], re_raised=None)
+    return _build_parallel_result(ok, errors, re_raise, by_name, policy, ctx)
 
-        case "first":
-            if errors:
-                raise errors[0]
-            return ParallelResult(ok=ok, by_name=by_name, errors=[], re_raised=None)
 
-        case "collect":
-            return ParallelResult(ok=ok, by_name=by_name, errors=errors, re_raised=None)
 
-        case "log":
-            if errors:
-                sample_preview = ", ".join(type(e).__name__ for e in errors[:_SAFE_GATHER_SAMPLE_CAP])
-                suppressed = max(0, len(errors) - _SAFE_GATHER_SAMPLE_CAP)
-                _log.debug(
-                    f"[GHOST] parallel{' ' + ctx if ctx else ''} "
-                    f"dropped {len(errors)} exceptions "
-                    f"(sample: {sample_preview}"
-                    f"{' +' + str(suppressed) + ' more' if suppressed else ''})"
-                )
-            return ok
 
 
 # ---------------------------------------------------------------------------

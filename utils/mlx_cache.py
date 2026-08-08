@@ -13,6 +13,7 @@ import importlib.util
 import logging
 import threading
 from hledac.universal.utils.lru_cache import LRUCache
+from hledac.universal.utils.mlx_memory import mlx_cleanup_decorator
 from typing import Any
 
 from hledac.universal.core.psutil_shim import psutil
@@ -696,37 +697,8 @@ except ImportError:
     _release_slab_pool: None = None  # type: ignore[assignment]
 
 
-def mlx_cleanup_decorator(aggressive: bool = False):
-    """Dekorátor pro async i sync funkce – přidá cleanup po dokončení."""
-    import asyncio
-    import functools
-    import inspect
-
-    def decorator(func):
-        @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            try:
-                return await func(*args, **kwargs)
-            finally:
-                if aggressive:
-                    await asyncio.to_thread(mlx_cleanup_aggressive)
-                else:
-                    await asyncio.to_thread(mlx_cleanup_sync)
-
-        @functools.wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            finally:
-                if aggressive:
-                    mlx_cleanup_aggressive()
-                else:
-                    mlx_cleanup_sync()
-
-        if inspect.iscoroutinefunction(func):
-            return async_wrapper
-        return sync_wrapper
-    return decorator
+# mlx_cleanup_decorator is now imported from utils.mlx_memory (canonical source)
+# This line kept for backward compatibility with existing imports
 
 
 # =============================================================================

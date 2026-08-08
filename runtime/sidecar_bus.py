@@ -690,83 +690,142 @@ class FindingSidecarBus:
         if not findings:
             return []
 
-        async def _run_one(name: str, runner: SidecarRunner) -> SidecarRunResult:
-            t0 = _time.monotonic()
-            blocked, reason = self._is_heavy_blocked(name)
-            if blocked:
-                return SidecarRunResult(sidecar_name=name, attempted=False, produced_count=0, stored_count=0, skipped_reason=reason or 'ram_governor_critical', elapsed_ms=(_time.monotonic() - t0) * 1000)
-            blocked, reason = self._is_active_network_blocked(name)
-            if blocked:
-                return SidecarRunResult(sidecar_name=name, attempted=False, produced_count=0, stored_count=0, skipped_reason=reason or 'profile_disallows_active_network_sidecar', elapsed_ms=(_time.monotonic() - t0) * 1000)
-            try:
-                async with asyncio.timeout(SIDECAR_TIMEOUT_S):
-                    result = await runner(findings, store, batch.query)
-                elapsed_ms = (_time.monotonic() - t0) * 1000
-                produced_count = 0
-                stored_count = 0
-                if isinstance(result, int):
-                    produced_count = result
-                    stored_count = result
-                elif isinstance(result, dict):
-                    produced_count = result.get('produced_count', 0)
-                    stored_count = result.get('stored_count', 0)
-                elif result is None:
-                    produced_count = 0
-                    stored_count = 0
-                return SidecarRunResult(sidecar_name=name, attempted=True, produced_count=produced_count, stored_count=stored_count, skipped_reason='', elapsed_ms=elapsed_ms)
-            except asyncio.CancelledError:
-                raise
-            except BaseException as exc:
-                if _is_cancelled_tree(exc):
-                    raise asyncio.CancelledError() from exc
-                return SidecarRunResult(sidecar_name=name, attempted=True, produced_count=0, stored_count=0, skipped_reason=f'{type(exc).__name__}:{exc}', elapsed_ms=(_time.monotonic() - t0) * 1000)
         all_results: list[SidecarRunResult] = []
         runners_executed: set[str] = set()
+
+        # Stage-based execution
         for stage_names in SIDECAR_STAGES:
-            stage_tasks: list[asyncio.Task[SidecarRunResult]] = []
-            for name in stage_names:
-                if name in self._runners:
-                    stage_tasks.append(safe_create_task(_run_one(name, self._runners[name]), name=f'sidecar_bus:stage_runner:{name}'))
-                    runners_executed.add(name)
+            stage_tasks = self._collect_stage_tasks(stage_names, findings, store, batch.query, runners_executed)
             if not stage_tasks:
                 continue
             try:
                 gathered = await parallel(stage_tasks, policy="log", ctx='sidecar_bus:stage')
                 self._check_gathered(list(gathered.ok))
-                for item in gathered.ok:
-                    if isinstance(item, SidecarRunResult):
-                        all_results.append(item)
-                    elif isinstance(item, BaseException):
-                        if _is_cancelled_tree(item):
-                            raise item
+                _collect_sidecar_results(gathered.ok, all_results)
             except asyncio.CancelledError:
-                for t in stage_tasks:
-                    if not t.done():
-                        t.cancel()
-                await parallel(list(stage_tasks), policy="log", ctx='sidecar_bus:cancelled')
+                await self._cancel_stage_tasks(stage_tasks)
                 raise
-        remaining_tasks: list[asyncio.Task[SidecarRunResult]] = []
-        for name, runner in self._runners.items():
-            if name not in runners_executed:
-                remaining_tasks.append(safe_create_task(_run_one(name, runner), name=f'sidecar_bus:remaining_runner:{name}'))
-                runners_executed.add(name)
+
+        # Remaining runners not in any stage
+        remaining_tasks = self._collect_remaining_tasks(findings, store, batch.query, runners_executed)
         if remaining_tasks:
             try:
                 gathered = await parallel(list(remaining_tasks), policy="log", ctx='sidecar_bus:remaining')
                 self._check_gathered(list(gathered.ok))
-                for item in gathered.ok:
-                    if isinstance(item, SidecarRunResult):
-                        all_results.append(item)
+                _collect_sidecar_results(gathered.ok, all_results)
             except asyncio.CancelledError:
-                for t in remaining_tasks:
-                    if not t.done():
-                        t.cancel()
-                await safe_gather_fire_and_forget(*remaining_tasks, label='sidecar_bus:remaining_cancelled')
+                await self._cancel_stage_tasks(remaining_tasks)
                 raise
+
         if len(all_results) > MAX_SIDECAR_RESULT_RECORDS:
             all_results = all_results[:MAX_SIDECAR_RESULT_RECORDS]
         self._results = all_results
         return all_results
+
+    def _collect_stage_tasks(
+        self,
+        stage_names: tuple[str, ...],
+        findings: list,
+        store: DuckDBShadowStore,
+        query: str,
+        runners_executed: set[str],
+    ) -> list[asyncio.Task[SidecarRunResult]]:
+        """Collect tasks for a single stage."""
+        stage_tasks: list[asyncio.Task[SidecarRunResult]] = []
+        for name in stage_names:
+            if name in self._runners:
+                task = safe_create_task(
+                    self._run_single_sidecar(name, self._runners[name], findings, store, query),
+                    name=f'sidecar_bus:stage_runner:{name}'
+                )
+                stage_tasks.append(task)
+                runners_executed.add(name)
+        return stage_tasks
+
+    def _collect_remaining_tasks(
+        self,
+        findings: list,
+        store: DuckDBShadowStore,
+        query: str,
+        runners_executed: set[str],
+    ) -> list[asyncio.Task[SidecarRunResult]]:
+        """Collect tasks for runners not in any stage."""
+        remaining_tasks: list[asyncio.Task[SidecarRunResult]] = []
+        for name, runner in self._runners.items():
+            if name not in runners_executed:
+                task = safe_create_task(
+                    self._run_single_sidecar(name, runner, findings, store, query),
+                    name=f'sidecar_bus:remaining_runner:{name}'
+                )
+                remaining_tasks.append(task)
+                runners_executed.add(name)
+        return remaining_tasks
+
+    async def _run_single_sidecar(
+        self,
+        name: str,
+        runner: SidecarRunner,
+        findings: list,
+        store: DuckDBShadowStore,
+        query: str,
+    ) -> SidecarRunResult:
+        """Execute a single sidecar runner with blocking checks and error handling."""
+        t0 = _time.monotonic()
+        blocked, reason = self._is_heavy_blocked(name)
+        if blocked:
+            return SidecarRunResult(
+                sidecar_name=name, attempted=False, produced_count=0, stored_count=0,
+                skipped_reason=reason or 'ram_governor_critical', elapsed_ms=(_time.monotonic() - t0) * 1000
+            )
+        blocked, reason = self._is_active_network_blocked(name)
+        if blocked:
+            return SidecarRunResult(
+                sidecar_name=name, attempted=False, produced_count=0, stored_count=0,
+                skipped_reason=reason or 'profile_disallows_active_network_sidecar', elapsed_ms=(_time.monotonic() - t0) * 1000
+            )
+        try:
+            async with asyncio.timeout(SIDECAR_TIMEOUT_S):
+                result = await runner(findings, store, query)
+            return self._build_success_result(name, result, t0)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:
+            if _is_cancelled_tree(exc):
+                raise asyncio.CancelledError() from exc
+            return SidecarRunResult(
+                sidecar_name=name, attempted=True, produced_count=0, stored_count=0,
+                skipped_reason=f'{type(exc).__name__}:{exc}', elapsed_ms=(_time.monotonic() - t0) * 1000
+            )
+
+    def _build_success_result(self, name: str, result: Any, t0: float) -> SidecarRunResult:
+        """Build success SidecarRunResult from runner output."""
+        produced_count, stored_count = 0, 0
+        if isinstance(result, int):
+            produced_count = stored_count = result
+        elif isinstance(result, dict):
+            produced_count = result.get('produced_count', 0)
+            stored_count = result.get('stored_count', 0)
+        return SidecarRunResult(
+            sidecar_name=name, attempted=True, produced_count=produced_count,
+            stored_count=stored_count, skipped_reason='', elapsed_ms=(_time.monotonic() - t0) * 1000
+        )
+
+    async def _cancel_stage_tasks(self, tasks: list[asyncio.Task]) -> None:
+        """Cancel pending tasks and wait for completion."""
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await parallel(list(tasks), policy="log", ctx='sidecar_bus:cancelled')
+
+
+def _collect_sidecar_results(gathered_ok: list, all_results: list[SidecarRunResult]) -> None:
+    """Extract SidecarRunResults from gathered items."""
+    for item in gathered_ok:
+        if isinstance(item, SidecarRunResult):
+            all_results.append(item)
+        elif isinstance(item, BaseException):
+            if _is_cancelled_tree(item):
+                raise item
 
 def create_sidecar_bus(governor: Any=None, acquisition_profile: str | None=None) -> FindingSidecarBus:
     """Factory: create a pre-registered FindingSidecarBus."""

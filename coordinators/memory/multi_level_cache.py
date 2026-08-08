@@ -39,6 +39,7 @@ from hledac.universal.coordinators.memory._core import (
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.msgspec_json import decode_zstd as _decode_zstd
 from hledac.universal.utils.msgspec_json import encode_zstd as _encode_zstd
+from utils._patterns import AsyncLazyLockDescriptor  # F320-REFACTOR-2
 
 logger = logging.getLogger(__name__)
 
@@ -142,18 +143,14 @@ class MultiLevelContextCache:
         self._lock: asyncio.Lock | None = None
         # ISSUE-ZOOMOUT: per-instance embedding cache (was class-level = bug)
         self._embedding_cache = {}
-        self._embedding_cache_lock = None
+        self._embedding_cache_lock: asyncio.Lock | None = None
         self._load_l2_cache()
         self._rebuild_semantic_index()
 
-    # ISSUE-2984: lazy lock helper — NEVER asyncio.Lock() at import/__init__ time
-    async def _get_lock(self) -> asyncio.Lock:
-        """Lazily create asyncio.Lock inside an event loop."""
-        if self._lock is None:
-            self._lock = asyncio.Lock()
-        return self._lock
+    # F320-REFACTOR-2: async lazy lock descriptors (ISSUE-014 compliant)
+    _get_lock = AsyncLazyLockDescriptor("_lock")
 
-    # F320-Issue2: lazy lock for embedding cache — consistent pattern with _get_lock()
+    # F320-Issue2: lazy lock for embedding cache
     async def _get_embedding_lock(self) -> asyncio.Lock | None:
         """Lazily create asyncio.Lock for embedding cache operations."""
         if self._embedding_cache_lock is None:
@@ -276,7 +273,13 @@ class MultiLevelContextCache:
         normalized = unicodedata.normalize('NFC', text)
         
         # Check cache (protected by lock)
-        async with await self._get_embedding_lock():
+        _emb_lock = await self._get_embedding_lock()
+        if _emb_lock is not None:
+            async with _emb_lock:
+                cached = self._embedding_cache.get(normalized)
+                if cached is not None:
+                    return cached
+        else:
             cached = self._embedding_cache.get(normalized)
             if cached is not None:
                 return cached
@@ -298,7 +301,11 @@ class MultiLevelContextCache:
                 logger.debug(f'Embedding failed: {e}')
         
         # Store result (protected by lock)
-        async with await self._get_embedding_lock():
+        _emb_lock = await self._get_embedding_lock()
+        if _emb_lock is not None:
+            async with _emb_lock:
+                self._embedding_cache[normalized] = embedding
+        else:
             self._embedding_cache[normalized] = embedding
         
         return embedding

@@ -13,6 +13,8 @@ context optimization moved imports, and memory pressure polling.
 
 
 """
+from __future__ import annotations
+
 import asyncio
 import ctypes
 import gc

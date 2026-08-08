@@ -108,6 +108,31 @@ from hledac.universal.fetching._html_processor import (
     _FEED_URL_RE,
     _JS_SKIP_HOST_RE,
     _SERP_HOST_RE,
+    get_html_executor as _get_html_executor,
+    check_gathered as _check_gathered,
+)
+from hledac.universal.fetching._js_renderers import (
+    _get_js_renderer_semaphore,
+    _camoufox_locked,
+    _playwright_locked,
+)
+from hledac.universal.utils.asyncx._parallel import (
+    parallel,
+)
+from hledac.universal.utils.html_text_fast import (
+    strip_html_tags,
+)
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    RetryCallState as _TenacityRetryCallState,
+)
+from hledac.universal.fetching.curl_cffi_fetch import (
+    _CurlCffiResponseAdapter,
+    _CurlCffiGetContextManager,
+)
+from hledac.universal.fetching._retry_strategy import (
+    MAX_RETRIES,
 )
 
 # Tarpit detection — import function lazily to avoid circular import at module level
@@ -1759,6 +1784,50 @@ def _detect_anti_bot_type(result: Any) -> str:
         return "none"
 
 
+async def _fetch_one(url: str, idx: int, *, _timeout_s: float, _max_bytes: int, _ttfb_timeout_s: float | None) -> tuple[int, FetchResult]:
+    """Fail-safe fetch with index capture for order preservation."""
+    try:
+        # Check pre-fetch conditions (reputation tarpit, blitz dead, URL pattern)
+        _skip_result = await _check_prefetch_conditions(url, _timeout_s, _max_bytes, _ttfb_timeout_s)
+        if _skip_result is not None:
+            return idx, _skip_result
+        _domain = _extract_domain_from_url(url)
+        _rep_service = _lazy_get_reputation_service()
+        result = await _fetch_core_retryable(
+            url=url,
+            timeout_s=_timeout_s,
+            max_bytes=_max_bytes,
+            ttfb_timeout_s=_ttfb_timeout_s,
+        )
+        # Detect and handle HTML tarpits
+        _should_return, result = await _detect_and_handle_tarpits(
+            result, url, _domain, _rep_service
+        )
+        if _should_return:
+            return idx, result
+        # Detect cognitive (LLM-generated) tarpits
+        _is_cognitive, result = await _detect_cognitive_tarpit(
+            result, _domain, _rep_service
+        )
+        if _is_cognitive:
+            return idx, result
+        # Record fetch outcome in reputation, route, and anti-bot services
+        await _record_fetch_outcome(result, _domain, _rep_service)
+        return idx, result
+    except Exception as _e:  # noqa: BLE001 — fail-safe; never propagate
+        return idx, FetchResult(
+            url=url,
+            final_url=url,
+            status_code=0,
+            content_type='',
+            text=None,
+            fetched_bytes=0,
+            declared_length=-1,
+            elapsed_ms=0.0,
+            error=f'batch_exception:{type(_e).__name__}:{_e}',
+            failure_stage='batch_dispatch',
+        )
+
 async def async_fetch_public_text_batch(
     urls: list[str],
     timeout_s: float = 35.0,
@@ -1812,233 +1881,17 @@ async def async_fetch_public_text_batch(
     # F1 FIX: resolve dynamic concurrency before parallel() call.
     # concurrency=None → UMA-aware limit from ConcurrencyBudgetRegistry.
     # concurrency=int → explicit override (preserves legacy caller behavior).
-    if concurrency is None:
+    _concurrency = concurrency
+    if _concurrency is None:
         from hledac.universal.core.concurrency_registry import ConcurrencyCategory, concurrency_budget
 
-        concurrency = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
-
-    async def _fetch_one(url: str, idx: int) -> tuple[int, FetchResult]:
-        """Fail-safe fetch with index capture for order preservation."""
-        try:
-            # UNIFIED-007/008: Pre-fetch domain reputation check — skip known tarpits
-            _domain = _extract_domain_from_url(url)
-            _rep_service = _lazy_get_reputation_service()
-            if _rep_service is not None and _domain:
-                try:
-                    _rep = await _rep_service.get(_domain)
-                    if _rep.is_tarpit:
-                        logger.debug(
-                            '\n[DOMAIN_REPUTATION] Skipping known tarpit domain: %s (score=%.2f)',
-                            _domain, _rep.tarpit_score,
-                        )
-                        return idx, FetchResult(
-                            url=url,
-                            final_url=url,
-                            status_code=0,
-                            content_type='',
-                            text=None,
-                            fetched_bytes=0,
-                            declared_length=-1,
-                            elapsed_ms=0.0,
-                            error=f'tarpit_detected:reputation_score={_rep.tarpit_score:.2f}',
-                            failure_stage='tarpit',
-                        )
-                except Exception:  # noqa: BLE001 — fail-safe; reputation check non-critical
-                    pass
-            # BLITZ-15: Skip fetch if host is marked dead for sprint duration
-            if _domain and is_blitz_host_dead(_domain):
-                return idx, FetchResult(
-                    url=url,
-                    final_url=url,
-                    status_code=0,
-                    content_type='',
-                    text=None,
-                    fetched_bytes=0,
-                    declared_length=-1,
-                    elapsed_ms=0.0,
-                    error='blitz_host_dead',
-                    failure_stage='blitz_dead_host',
-                )
-            # Pre-scan URL for known tarpit/honeypot path patterns — no HTTP request needed
-            if _is_tarpit_url(url):
-                return idx, FetchResult(
-                    url=url,
-                    final_url=url,
-                    status_code=0,
-                    content_type='',
-                    text=None,
-                    fetched_bytes=0,
-                    declared_length=-1,
-                    elapsed_ms=0.0,
-                    error='tarpit_detected:url_pattern',
-                    failure_stage='tarpit',
-                )
-            result = await _fetch_core_retryable(
-                url=url,
-                timeout_s=timeout_s,
-                max_bytes=max_bytes,
-                ttfb_timeout_s=ttfb_timeout_s,
-            )
-            # ISSUE [UNINDEXED]-014: Tarpit detection — check HTML before downstream processing
-            if result.text and not result.error:
-                try:
-                    _tarpit_detect_fn = _get_tarpit_detect()
-                    tarpit_result = _tarpit_detect_fn(result.text, result.url, result.elapsed_ms)
-                    if tarpit_result.is_tarpit:
-                        reason = tarpit_result.reasons[0] if tarpit_result.reasons else f'score={tarpit_result.tarpit_score:.2f}'
-                        # UNIFIED-007: Record tarpit in domain reputation
-                        if _domain and _rep_service is not None:
-                            try:
-                                _anti_bot = _detect_anti_bot_type(result)
-                                await _rep_service.record_failure(
-                                    _domain,
-                                    tarpit_score=tarpit_result.tarpit_score,
-                                    anti_bot_type=_anti_bot,
-                                )
-                            except Exception:  # noqa: BLE001 — fail-safe; non-critical
-                                pass
-                        return idx, FetchResult(
-                            url=result.url,
-                            final_url=result.final_url,
-                            status_code=result.status_code,
-                            content_type=result.content_type,
-                            text=None,  # discard tarpit HTML to save memory
-                            fetched_bytes=result.fetched_bytes,
-                            declared_length=result.declared_length,
-                            elapsed_ms=result.elapsed_ms,
-                            error=f'tarpit_detected:{reason}',
-                            failure_stage='tarpit',
-                            selected_transport=result.selected_transport,
-                            http_version=result.http_version,
-                        )
-                except Exception:  # noqa: BLE001 — best-effort; tarpit detection failure is non-fatal
-                    pass
-            # ISSUE [ADVERSARY]-002: Cognitive tarpit detection — LLM-generated honeypot text
-            # Runs AFTER HTML tarpit check passes (i.e., only on non-tarpit HTML pages).
-            # Uses byte-entropy variance, burstiness deviation, POS trigram ratio,
-            # and optionally SmolLM pseudo-perplexity to detect LLM-fabricated IOCs.
-            # If cognitive tarpit detected: short-circuit fetch, record score=1.0, emit telemetry.
-            if result.text and not result.error and _domain and _rep_service is not None:
-                try:
-                    # Strip HTML tags before cognitive analysis — only plain text matters
-                    _plain_text = strip_html_tags(result.text)
-                    if len(_plain_text) >= 200:  # Guard in cognitive_tarpit module too, but fast check
-                        from hledac.universal.brain.adversarial.cognitive_tarpit import (
-                            cognitive_tarpit_score as _ct_score,
-                        )
-                        _ct_verdict = _ct_score(_plain_text)
-                        if _ct_verdict.is_cognitive_tarpit:
-                            _ct_score_val = _ct_verdict.cognitive_tarpit_score
-                            logger.warning(
-                                "[HONEYPOT-LLM] domain=%s url=%s "
-                                "cognitive_tarpit_score=%.3f "
-                                "entropy=%.3f burstiness=%.3f "
-                                "perplexity=%.3f reasons=%s analysis_ms=%.1f",
-                                _domain,
-                                result.url,
-                                _ct_score_val,
-                                _ct_verdict.entropy_score,
-                                _ct_verdict.burstiness_score,
-                                _ct_verdict.perplexity_score,
-                                _ct_verdict.reasons,
-                                _ct_verdict.analysis_ms,
-                            )
-                            # Record cognitive tarpit in domain reputation (score=1.0)
-                            try:
-                                _anti_bot = _detect_anti_bot_type(result)
-                                await _rep_service.record_failure(
-                                    _domain,
-                                    tarpit_score=1.0,
-                                    anti_bot_type=_anti_bot,
-                                )
-                            except Exception:  # noqa: BLE001 — fail-safe
-                                pass
-                            return idx, FetchResult(
-                                url=result.url,
-                                final_url=result.final_url,
-                                status_code=result.status_code,
-                                content_type=result.content_type,
-                                text=None,  # discard LLM honeypot content
-                                fetched_bytes=result.fetched_bytes,
-                                declared_length=result.declared_length,
-                                elapsed_ms=result.elapsed_ms,
-                                error=f'cognitive_tarpit_detected:score={_ct_score_val:.3f}',
-                                failure_stage='cognitive_tarpit',
-                                selected_transport=result.selected_transport,
-                                http_version=result.http_version,
-                            )
-                except Exception:  # noqa: BLE001 — fail-soft; cognitive detection is best-effort
-                    pass
-            # UNIFIED-007/008: Record successful fetch in domain reputation
-            if result.text and not result.error and _domain and _rep_service is not None:
-                try:
-                    _anti_bot = _detect_anti_bot_type(result)
-                    await _rep_service.record_success(
-                        _domain,
-                        anti_bot_type=_anti_bot,
-                    )
-                except Exception:  # noqa: BLE001 — fail-safe; non-critical
-                    pass
-            # UNIFIED-009: Record route performance in route graph
-            if _domain and not result.error:
-                _route_svc = _lazy_get_route_graph_service()
-                if _route_svc is not None:
-                    try:
-                        await _route_svc.record_route_success(
-                            _domain,
-                            transport=result.selected_transport or '',
-                            latency_ms=result.elapsed_ms,
-                            body_bytes=result.fetched_bytes,
-                        )
-                    except Exception:  # noqa: BLE001 — fail-safe; non-critical
-                        pass
-            elif _domain and result.error:
-                _route_svc = _lazy_get_route_graph_service()
-                if _route_svc is not None:
-                    try:
-                        await _route_svc.record_route_failure(
-                            _domain,
-                            transport=result.selected_transport or '',
-                            latency_ms=result.elapsed_ms,
-                        )
-                    except Exception:  # noqa: BLE001 — fail-safe; non-critical
-                        pass
-            # UNIFIED-010: Record anti-bot observations
-            if _domain:
-                _ab_svc = _lazy_get_anti_bot_profile_service()
-                if _ab_svc is not None:
-                    try:
-                        _anti_bot = _detect_anti_bot_type(result) if result else 'none'
-                        if result and result.error and _anti_bot != 'none':
-                            await _ab_svc.observe_challenge(
-                                _domain,
-                                waf_type=_anti_bot,
-                                challenge_type='403' if result.status_code == 403 else '429' if result.status_code == 429 else '',
-                            )
-                        elif result and not result.error:
-                            await _ab_svc.observe_bypass(_domain)
-                    except Exception:  # noqa: BLE001 — fail-safe; non-critical
-                        pass
-            return idx, result
-        except Exception as _e:  # noqa: BLE001 — fail-safe; never propagate
-            return idx, FetchResult(
-                url=url,
-                final_url=url,
-                status_code=0,
-                content_type='',
-                text=None,
-                fetched_bytes=0,
-                declared_length=-1,
-                elapsed_ms=0.0,
-                error=f'batch_exception:{type(_e).__name__}:{_e}',
-                failure_stage='batch_dispatch',
-            )
+        _concurrency = await concurrency_budget(ConcurrencyCategory.HTTP_LANE)
 
     # Canonical parallel runner: structured-concurrency cancellation on failure,
     # bounded concurrency, result order preserved via index capture.
     result = await parallel(
-        [asyncio.create_task(_fetch_one(url, idx)) for idx, url in enumerate(urls)],
-        concurrency=concurrency,
+        [asyncio.create_task(_fetch_one(url, idx, _timeout_s=timeout_s, _max_bytes=max_bytes, _ttfb_timeout_s=ttfb_timeout_s)) for idx, url in enumerate(urls)],
+        concurrency=_concurrency,
         taskgroup=True,
         policy="collect",
     )
@@ -2062,9 +1915,9 @@ async def async_fetch_public_text_batch(
         ):
             retryable_urls.append((idx, fr.url))
     if retryable_urls:
-        _retry_concurrency = max(1, min(concurrency, 8))  # cap retry concurrency
+        _retry_concurrency = max(1, min(_concurrency, 8))  # cap retry concurrency
 
-        async def _retry_one(idx_url: tuple[int, str]) -> tuple[int, FetchResult]:
+        async def _retry_one(idx_url: tuple[int, str], *, _timeout_s: float, _max_bytes: int, _ttfb_timeout_s: float | None) -> tuple[int, FetchResult]:
             _idx, _url = idx_url
             try:
                 # Pre-scan URL for known tarpit/honeypot path patterns
@@ -2083,9 +1936,9 @@ async def async_fetch_public_text_batch(
                     )
                 _result = await _fetch_core_retryable(
                     url=_url,
-                    timeout_s=timeout_s,
-                    max_bytes=max_bytes,
-                    ttfb_timeout_s=ttfb_timeout_s,
+                    timeout_s=_timeout_s,
+                    max_bytes=_max_bytes,
+                    ttfb_timeout_s=_ttfb_timeout_s,
                 )
                 return _idx, _result
             except Exception as _e:  # noqa: BLE001 — fail-safe
@@ -2103,7 +1956,7 @@ async def async_fetch_public_text_batch(
                 )
 
         _retry_result = await parallel(
-            [asyncio.create_task(_retry_one(x)) for x in retryable_urls],
+            [asyncio.create_task(_retry_one(x, _timeout_s=timeout_s, _max_bytes=max_bytes, _ttfb_timeout_s=ttfb_timeout_s)) for x in retryable_urls],
             concurrency=_retry_concurrency,
             taskgroup=True,
             policy="collect",
@@ -2128,8 +1981,258 @@ async def async_fetch_public_text_batch(
 
     return ordered
 
+async def _check_prefetch_conditions(url: str, timeout_s: float, max_bytes: int, ttfb_timeout_s: float | None) -> FetchResult | None:
+    """Check pre-fetch conditions that may skip the fetch early.
 
-__all__ = ['async_fetch_public_text', 'async_fetch_public_text_batch', 'process_html_payload', 'DEFAULT_UA', 'MAX_BYTES_DEFAULT', 'MAX_BYTES_HARD', 'MAX_RETRIES', 'FetchResult', '_is_retryable_status', '_extract_retry_after', '_compute_backoff_seconds', '_try_decode', '_looks_xmlish', '_is_onion_url', '_get_tor_session', '_renew_tor_circuit', '_jitter_delay', '_close_tor_session', 'TOR_SOCKS_PROXY', 'TOR_CIRCUIT_RENEWAL_REQUEST_COUNT', 'I2P_SOCKS_PROXY', '_is_i2p_url', '_is_freenet_url', '_get_i2p_session', '_close_i2p_session', '_needs_js_fetch', '_fetch_with_nodriver', '_fetch_with_camoufox', '_fetch_with_playwright', '_get_js_renderer_capability', '_all_js_renderers_unavailable', 'reset_js_renderer_capability_cache', 'refresh_js_renderer_capability', 'PUBLIC_FETCHER_POOL_AUTHORITY', 'inject_session_provider', 'get_session_source_telemetry', 'close_public_fetcher_sessions_async', 'get_public_fetcher_session_status', 'reset_blitz_dead_hosts', 'mark_blitz_host_dead', 'is_blitz_host_dead', 'get_webkit_transport_stats', '_reset_webkit_transport_telemetry']
+    Checks: reputation tarpit, blitz host dead, URL pattern tarpit.
+    Returns FetchResult if should skip, None to continue with fetch.
+    """
+    _domain = _extract_domain_from_url(url)
+    _rep_service = _lazy_get_reputation_service()
+    if _rep_service is not None and _domain:
+        try:
+            _rep = await _rep_service.get(_domain)
+            if _rep.is_tarpit:
+                logger.debug(
+                    '\n[DOMAIN_REPUTATION] Skipping known tarpit domain: %s (score=%.2f)',
+                    _domain, _rep.tarpit_score,
+                )
+                return FetchResult(
+                    url=url,
+                    final_url=url,
+                    status_code=0,
+                    content_type='',
+                    text=None,
+                    fetched_bytes=0,
+                    declared_length=-1,
+                    elapsed_ms=0.0,
+                    error=f'tarpit_detected:reputation_score={_rep.tarpit_score:.2f}',
+                    failure_stage='tarpit',
+                )
+        except Exception:  # noqa: BLE001 — fail-safe; reputation check non-critical
+            pass
+    # BLITZ-15: Skip fetch if host is marked dead for sprint duration
+    if _domain and is_blitz_host_dead(_domain):
+        return FetchResult(
+            url=url,
+            final_url=url,
+            status_code=0,
+            content_type='',
+            text=None,
+            fetched_bytes=0,
+            declared_length=-1,
+            elapsed_ms=0.0,
+            error='blitz_host_dead',
+            failure_stage='blitz_dead_host',
+        )
+    # Pre-scan URL for known tarpit/honeypot path patterns — no HTTP request needed
+    if _is_tarpit_url(url):
+        return FetchResult(
+            url=url,
+            final_url=url,
+            status_code=0,
+            content_type='',
+            text=None,
+            fetched_bytes=0,
+            declared_length=-1,
+            elapsed_ms=0.0,
+            error='tarpit_detected:url_pattern',
+            failure_stage='tarpit',
+        )
+    return None
+
+
+async def _detect_and_handle_tarpits(
+    result: FetchResult,
+    url: str,
+    domain: str,
+    rep_service: Any | None,
+) -> tuple[bool, FetchResult]:
+    """Detect and handle HTML tarpits.
+
+    Returns (should_return, result_or_modified_result).
+    If should_return=True, result_or_modified_result is the error FetchResult to return.
+    If should_return=False, result_or_modified_result is the original result (possibly modified).
+    """
+    if result.text and not result.error:
+        try:
+            _tarpit_detect_fn = _get_tarpit_detect()
+            tarpit_result = _tarpit_detect_fn(result.text, result.url, result.elapsed_ms)
+            if tarpit_result.is_tarpit:
+                reason = tarpit_result.reasons[0] if tarpit_result.reasons else f'score={tarpit_result.tarpit_score:.2f}'
+                # UNIFIED-007: Record tarpit in domain reputation
+                if domain and rep_service is not None:
+                    try:
+                        _anti_bot = _detect_anti_bot_type(result)
+                        await rep_service.record_failure(
+                            domain,
+                            tarpit_score=tarpit_result.tarpit_score,
+                            anti_bot_type=_anti_bot,
+                        )
+                    except Exception:  # noqa: BLE001 — fail-safe; non-critical
+                        pass
+                return True, FetchResult(
+                    url=result.url,
+                    final_url=result.final_url,
+                    status_code=result.status_code,
+                    content_type=result.content_type,
+                    text=None,  # discard tarpit HTML to save memory
+                    fetched_bytes=result.fetched_bytes,
+                    declared_length=result.declared_length,
+                    elapsed_ms=result.elapsed_ms,
+                    error=f'tarpit_detected:{reason}',
+                    failure_stage='tarpit',
+                    selected_transport=result.selected_transport,
+                    http_version=result.http_version,
+                )
+        except Exception:  # noqa: BLE001 — best-effort; tarpit detection failure is non-fatal
+            pass
+    return False, result
+
+
+async def _detect_cognitive_tarpit(
+    result: FetchResult,
+    domain: str,
+    rep_service: Any | None,
+) -> tuple[bool, FetchResult]:
+    """Detect cognitive (LLM-generated) tarpits.
+
+    Returns (is_cognitive_tarpit, result_or_modified_result).
+    """
+    if result.text and not result.error and domain and rep_service is not None:
+        try:
+            # Strip HTML tags before cognitive analysis — only plain text matters
+            _plain_text = strip_html_tags(result.text)
+            if len(_plain_text) >= 200:
+                from hledac.universal.brain.adversarial.cognitive_tarpit import (
+                    cognitive_tarpit_score as _ct_score,
+                )
+                _ct_verdict = _ct_score(_plain_text)
+                if _ct_verdict.is_cognitive_tarpit:
+                    _ct_score_val = _ct_verdict.cognitive_tarpit_score
+                    logger.warning(
+                        "[HONEYPOT-LLM] domain=%s url=%s "
+                        "cognitive_tarpit_score=%.3f "
+                        "entropy=%.3f burstiness=%.3f "
+                        "perplexity=%.3f reasons=%s analysis_ms=%.1f",
+                        domain,
+                        result.url,
+                        _ct_score_val,
+                        _ct_verdict.entropy_score,
+                        _ct_verdict.burstiness_score,
+                        _ct_verdict.perplexity_score,
+                        _ct_verdict.reasons,
+                        _ct_verdict.analysis_ms,
+                    )
+                    # Record cognitive tarpit in domain reputation (score=1.0)
+                    try:
+                        _anti_bot = _detect_anti_bot_type(result)
+                        await rep_service.record_failure(
+                            domain,
+                            tarpit_score=1.0,
+                            anti_bot_type=_anti_bot,
+                        )
+                    except Exception:  # noqa: BLE001 — fail-safe
+                        pass
+                    return True, FetchResult(
+                        url=result.url,
+                        final_url=result.final_url,
+                        status_code=result.status_code,
+                        content_type=result.content_type,
+                        text=None,  # discard LLM honeypot content
+                        fetched_bytes=result.fetched_bytes,
+                        declared_length=result.declared_length,
+                        elapsed_ms=result.elapsed_ms,
+                        error=f'cognitive_tarpit_detected:score={_ct_score_val:.3f}',
+                        failure_stage='cognitive_tarpit',
+                        selected_transport=result.selected_transport,
+                        http_version=result.http_version,
+                    )
+        except Exception:  # noqa: BLE001 — fail-soft; cognitive detection is best-effort
+            pass
+    return False, result
+
+
+async def _record_reputation_success(
+    result: FetchResult,
+    domain: str,
+    rep_service: Any | None,
+) -> None:
+    """Record successful fetch in domain reputation."""
+    if result.text and not result.error and domain and rep_service is not None:
+        try:
+            _anti_bot = _detect_anti_bot_type(result)
+            await rep_service.record_success(
+                domain,
+                anti_bot_type=_anti_bot,
+            )
+        except Exception:  # noqa: BLE001 — fail-safe; non-critical
+            pass
+
+
+async def _record_route_outcome(
+    result: FetchResult,
+    domain: str,
+) -> None:
+    """Record route success or failure in route graph service."""
+    if domain and not result.error:
+        _route_svc = _lazy_get_route_graph_service()
+        if _route_svc is not None:
+            try:
+                await _route_svc.record_route_success(
+                    domain,
+                    transport=result.selected_transport or '',
+                    latency_ms=result.elapsed_ms,
+                    body_bytes=result.fetched_bytes,
+                )
+            except Exception:  # noqa: BLE001 — fail-safe; non-critical
+                pass
+    elif domain and result.error:
+        _route_svc = _lazy_get_route_graph_service()
+        if _route_svc is not None:
+            try:
+                await _route_svc.record_route_failure(
+                    domain,
+                    transport=result.selected_transport or '',
+                    latency_ms=result.elapsed_ms,
+                )
+            except Exception:  # noqa: BLE001 — fail-safe; non-critical
+                pass
+
+
+async def _record_anti_bot_observations(
+    result: FetchResult,
+    domain: str,
+) -> None:
+    """Record anti-bot challenge observations."""
+    if domain:
+        _ab_svc = _lazy_get_anti_bot_profile_service()
+        if _ab_svc is not None:
+            try:
+                _anti_bot = _detect_anti_bot_type(result) if result else 'none'
+                if result and result.error and _anti_bot != 'none':
+                    await _ab_svc.observe_challenge(
+                        domain,
+                        waf_type=_anti_bot,
+                        challenge_type='403' if result.status_code == 403 else '429' if result.status_code == 429 else '',
+                    )
+                elif result and not result.error:
+                    await _ab_svc.observe_bypass(domain)
+            except Exception:  # noqa: BLE001 — fail-safe; non-critical
+                pass
+
+async def _record_fetch_outcome(
+    result: FetchResult,
+    domain: str,
+    rep_service: Any | None,
+) -> None:
+    """Record fetch outcome in reputation, route, and anti-bot services.
+
+    Records: reputation success/failure, route performance, anti-bot observations.
+    """
+    await _record_reputation_success(result, domain, rep_service)
+    await _record_route_outcome(result, domain)
+    await _record_anti_bot_observations(result, domain)
 from hledac.universal.utils.html_text_fast import extract_html_metadata, html_to_text_fast
 
 

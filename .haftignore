@@ -1,7 +1,7 @@
-# Virtual environments
-.venv/
-.venv-test/
-.kilo/
+# Virtual environments (glob patterns)
+.venv/**
+.venv-test/**
+.kilo/**
 
 # Agent/IDE tools (untracked external configs)
 .aider-desk/

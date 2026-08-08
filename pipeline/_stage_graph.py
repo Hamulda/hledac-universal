@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +38,9 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 
 from hledac.universal.utils.async_helpers import safe_create_task
+
+# Compiled once at module level for O(1) reuse in topological_sort
+_DEP_PATTERN = re.compile(r"^_?(\w+)_to_(\w+)$")
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -289,15 +293,12 @@ def topological_sort(stages: list[tuple[str, "StageLike"]]) -> list[tuple[str, "
     Convention: stage name ending with '_x_to_y' declares dependency on 'x'.
     Example: 'build' depends on 'match', 'match' depends on 'fetch'.
     """
-    import re
-
     name_to_stage = {name: stage for name, stage in stages}
     after: dict[str, set[str]] = {name: set() for name in name_to_stage}
 
     # Parse dependencies: 'x_to_y' means x must come before y
-    dep_pattern = re.compile(r"^_?(\w+)_to_(\w+)$")
     for name in name_to_stage:
-        m = dep_pattern.match(name)
+        m = _DEP_PATTERN.match(name)
         if m:
             before, after_stage = m.group(1), m.group(2)
             if before in after:

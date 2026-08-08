@@ -2524,7 +2524,16 @@ class DuckDBShadowStore:
         is caught and logged - semantic buffering failure never blocks storage.
         Delegated to SemanticStoreBuffer.
         """
-        self._semantic_buffer.buffer_findings(findings)
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            # Schedule async call as fire-and-forget task
+            asyncio.create_task(
+                self._semantic_buffer.buffer_findings(findings)
+            )
+        except RuntimeError:
+            # No running loop - skip buffering
+            pass
 
     async def _graph_ingest_findings(self, findings: list[CanonicalFinding]) -> None:
         """
@@ -12020,7 +12029,7 @@ class DuckDBShadowStore:
             cand["rrf_score"] = rrf
 
         sorted_candidates = sorted(
-            candidates.values(), key=itemgetter("""), reverse=True
+            candidates.values(), key=itemgetter(""), reverse=True
         )
 
         return sorted_candidates[:k_actual]

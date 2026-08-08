@@ -14,6 +14,7 @@ Rules:
 """
 
 import asyncio
+from typing import Any
 import time
 
 from hledac.universal.discovery.base import DiscoveryBatchResult, DiscoveryHit
@@ -25,216 +26,116 @@ from hledac.universal.transport.circuit_breaker import get_breaker
 
 _WAYBACK_CDX_URL = "https://web.archive.org/cdx/search/cdx"
 
+# Error type mapping for circuit breaker taxonomy
+_ERROR_TYPE_MAP: dict[str, tuple[str, str]] = {
+    'circuit_breaker_open:': ('circuit_breaker_open', 'wayback_cdx_fetch_error'),
+    'timeout': ('timeout', 'wayback_cdx_timeout'),
+    'client_error': ('network_error', 'wayback_cdx_network_error'),
+}
 
-async def async_search_wayback_cdx(
-    query: str,
-    max_results: int = 10,
-    timeout_s: float = 5.0,
+def _build_error_result(
+    error_type: str,
+    error: str,
+    elapsed: float,
+    status_code: int = 0,
 ) -> DiscoveryBatchResult:
-    """
-    Wayback CDX API — historical snapshots matching query.
+    """Build standardized error result from error type and message."""
+    # Map known error patterns
+    for prefix, (err_type, err_msg) in _ERROR_TYPE_MAP.items():
+        if error.startswith(prefix):
+            return DiscoveryBatchResult(
+                hits=(),
+                error_type=err_type,
+                elapsed_s=elapsed,
+                provider_name='wayback_cdx',
+                provider_chain=('wayback_cdx',),
+                source_family='archive',
+                error=f'{err_msg}:{error}',
+            )
 
-    Args:
-        query:       Search query string.
-        max_results: Max hits to return (default 10, hard cap 20).
-        timeout_s:   HTTP timeout in seconds (default 5.0).
+    # Default: generic network error
+    return DiscoveryBatchResult(
+        hits=(),
+        error_type='network_error',
+        elapsed_s=elapsed,
+        provider_name='wayback_cdx',
+        provider_chain=('wayback_cdx',),
+        source_family='archive',
+        error=f'wayback_cdx_fetch_error:{error}',
+    )
 
-    Returns:
-        DiscoveryBatchResult with archive.org snapshot URLs.
-
-    Fail-soft: returns empty hits on any error.
-    """
-    # Bounds
-    try:
-        max_results = max(1, min(int(max_results), 20))
-    except (TypeError, ValueError):
-        max_results = 10
-    query = query.strip() if query else ""
-    if not query:
-        return DiscoveryBatchResult(hits=(), error="empty_query")
-
-    start = time.monotonic()
-
-    # F-01: Canonical session pool
-    try:
-        from hledac.universal.transport.session_pool import session_pool
-    except Exception as exc:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(
-            hits=(),
-            error_type="import_error",
-            elapsed_s=elapsed,
-            error=f"session_pool_unavailable:{exc}",
-        )
-
-    params = {
-        "url": query,
-        "output": "json",
-        "limit": max_results,
-        "fl": "url,timestamp,original,mimetype,statuscode",
-        "filter": "statuscode:200",
-        "from": "1996",
-        "to": "2026",
+def _build_http_error_result(
+    status_code: int,
+    elapsed: float,
+) -> DiscoveryBatchResult:
+    """Build result for HTTP error status codes."""
+    error_map = {
+        403: ('http_403', 'wayback_cdx_forbidden'),
+        429: ('http_429', 'wayback_cdx_rate_limited'),
     }
+    err_type, err_msg = error_map.get(status_code, ('http_error', 'wayback_cdx_http_error'))
 
+    return DiscoveryBatchResult(
+        hits=(),
+        error_type=err_type,
+        elapsed_s=elapsed,
+        provider_name='wayback_cdx',
+        provider_chain=('wayback_cdx',),
+        source_family='archive',
+        error=err_msg,
+    )
+
+def _build_success_result(data: Any, elapsed: float) -> DiscoveryBatchResult:
+    """Build success result from CDX data."""
+    if not data or len(data) < 2:
+        return DiscoveryBatchResult(hits=(), elapsed_s=elapsed)
+
+    hits = []
+    for row in data[1:]:  # Skip header row
+        if len(row) >= 4:
+            hits.append({
+                'url': row[0],
+                'timestamp': row[1],
+                'original': row[2],
+                'mime': row[3],
+            })
+        if len(hits) >= 20:
+            break
+
+    return DiscoveryBatchResult(
+        hits=tuple(hits),
+        elapsed_s=elapsed,
+        provider_name='wayback_cdx',
+        provider_chain=('wayback_cdx',),
+        source_family='archive',
+    )
+
+async def _fetch_cdx_data(
+    session: Any,
+    params: dict[str, Any],
+    timeout_s: float,
+) -> tuple[Any, int | None, str | None]:
+    """Fetch CDX data, return (data, status, error)."""
     try:
         async with asyncio.timeout(timeout_s):
-            # F-01: session_pool.httpx() returns shared singleton AsyncClient
-            session = await session_pool.httpx()
-            try:
-                response = await session.get(
-                    _WAYBACK_CDX_URL,
-                    params=params,
-                    headers={"User-Agent": "Hledac/1.0 (research bot)"},
-                )
-                status = response.status_code
-                data = response.json() if status == 200 else None
-                err = None
-                from urllib.parse import urlparse as _urlparse
+            response = await session.get(
+                _WAYBACK_CDX_URL,
+                params=params,
+                headers={'User-Agent': 'Hledac/1.0 (research bot)'},
+            )
+            status = response.status_code
+            data = response.json() if status == 200 else None
+            err = None
+            return data, status, err
+    except asyncio.TimeoutError:
+        return None, 0, 'timeout'
+    except Exception as e:
+        return None, 0, str(e)
 
-                get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_success()
-            except Exception as e:
-                err = str(e)
-                data = None
-                status = 0
-                from urllib.parse import urlparse as _urlparse
-
-                try:
-                    get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc).record_failure(failure_kind="wayback_cdx")
-                except Exception:  # noqa: BLE001
-                    pass
-            if err:
-                elapsed = time.monotonic() - start
-                # Map circuit_breaker error strings to taxonomy
-                if err.startswith("circuit_breaker_open:"):
-                    return DiscoveryBatchResult(
-                        hits=(),
-                        error_type="circuit_breaker_open",
-                        elapsed_s=elapsed,
-                        provider_name="wayback_cdx",
-                        provider_chain=("wayback_cdx",),
-                        source_family="archive",
-                        error=err,
-                    )
-                if err == "timeout":
-                    return DiscoveryBatchResult(
-                        hits=(),
-                        error_type="timeout",
-                        elapsed_s=elapsed,
-                        provider_name="wayback_cdx",
-                        provider_chain=("wayback_cdx",),
-                        source_family="archive",
-                        error="wayback_cdx_timeout",
-                    )
-                if err == "client_error":
-                    return DiscoveryBatchResult(
-                        hits=(),
-                        error_type="network_error",
-                        elapsed_s=elapsed,
-                        provider_name="wayback_cdx",
-                        provider_chain=("wayback_cdx",),
-                        source_family="archive",
-                        error="wayback_cdx_network_error",
-                    )
-                # Any other err
-                return DiscoveryBatchResult(
-                    hits=(),
-                    error_type="network_error",
-                    elapsed_s=elapsed,
-                    provider_name="wayback_cdx",
-                    provider_chain=("wayback_cdx",),
-                    source_family="archive",
-                    error=f"wayback_cdx_fetch_error:{err}",
-                )
-
-            if status == 403:
-                elapsed = time.monotonic() - start
-                return DiscoveryBatchResult(
-                    hits=(),
-                    error_type="http_403",
-                    elapsed_s=elapsed,
-                    provider_name="wayback_cdx",
-                    provider_chain=("wayback_cdx",),
-                    source_family="archive",
-                    error="wayback_cdx_forbidden",
-                )
-            if status == 429:
-                elapsed = time.monotonic() - start
-                return DiscoveryBatchResult(
-                    hits=(),
-                    error_type="http_429",
-                    elapsed_s=elapsed,
-                    provider_name="wayback_cdx",
-                    provider_chain=("wayback_cdx",),
-                    source_family="archive",
-                    error="wayback_cdx_rate_limited",
-                )
-            if status >= 500:
-                elapsed = time.monotonic() - start
-                return DiscoveryBatchResult(
-                    hits=(),
-                    error_type="http_5xx",
-                    elapsed_s=elapsed,
-                    provider_name="wayback_cdx",
-                    provider_chain=("wayback_cdx",),
-                    source_family="archive",
-                    error=f"wayback_cdx_server_error_{status}",
-                )
-            if status != 200:
-                elapsed = time.monotonic() - start
-                return DiscoveryBatchResult(
-                    hits=(),
-                    error_type="server_error",
-                    elapsed_s=elapsed,
-                    provider_name="wayback_cdx",
-                    provider_chain=("wayback_cdx",),
-                    source_family="archive",
-                    error=f"wayback_cdx_http_{status}",
-                )
-
-    except TimeoutError:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(
-            hits=(),
-            error_type="timeout",
-            elapsed_s=elapsed,
-            provider_name="wayback_cdx",
-            provider_chain=("wayback_cdx",),
-            source_family="archive",
-            error="wayback_cdx_timeout",
-        )
-    except asyncio.CancelledError:
-        raise  # Re-raise CancelledError — do not swallow
-    except Exception:
-        elapsed = time.monotonic() - start
-        return DiscoveryBatchResult(
-            hits=(),
-            error_type="provider_exception",
-            elapsed_s=elapsed,
-            provider_name="wayback_cdx",
-            provider_chain=("wayback_cdx",),
-            source_family="archive",
-            error="wayback_cdx_error",
-        )
-
-    elapsed = time.monotonic() - start
-
-    if not data or not isinstance(data, list):
-        return DiscoveryBatchResult(
-            hits=(),
-            error_type="provider_empty",
-            elapsed_s=elapsed,
-            provider_name="wayback_cdx",
-            provider_chain=("wayback_cdx",),
-            source_family="archive",
-        )
-
-    # Skip header row if present
-    rows = data[1:] if data and data[0] == ["url", "timestamp", "original", "mimetype", "statuscode"] else data
-
-    seen_urls: set[str] = set()
+async def _parse_cdx_rows(rows: list, max_results: int, query: str, now_ts: float) -> list[DiscoveryHit]:
+    """Parse CDX rows into DiscoveryHit objects."""
     hits_list: list[DiscoveryHit] = []
-    now_ts = time.time()
+    seen_urls: set[str] = set()
 
     for row in rows:
         if len(row) < 3:
@@ -271,11 +172,108 @@ async def async_search_wayback_cdx(
         if len(hits_list) >= max_results:
             break
 
-    return DiscoveryBatchResult(
-        hits=tuple(hits_list),
-        provider_name="wayback_cdx",
-        provider_chain=("wayback_cdx",),
-        source_family="archive",
-        elapsed_s=elapsed,
-        error_type="none" if hits_list else "provider_empty",
-    )
+    return hits_list
+
+async def async_search_wayback_cdx(
+    query: str,
+    max_results: int = 10,
+    timeout_s: float = 5.0,
+) -> DiscoveryBatchResult:
+    """
+    Wayback CDX API — historical snapshots matching query.
+    Wayback CDX API — historical snapshots matching query.
+
+    Args:
+        query:       Search query string.
+        max_results: Max hits to return (default 10, hard cap 20).
+        timeout_s:   HTTP timeout in seconds (default 5.0).
+
+    Returns:
+        DiscoveryBatchResult with archive.org snapshot URLs.
+
+    Fail-soft: returns empty hits on any error.
+    """
+    # Bounds
+    try:
+        max_results = max(1, min(int(max_results), 20))
+    except (TypeError, ValueError):
+        max_results = 10
+    query = query.strip() if query else ""
+    if not query:
+        return DiscoveryBatchResult(hits=(), error="empty_query")
+
+    start = time.monotonic()
+
+    # Get session pool
+    try:
+        from hledac.universal.transport.session_pool import session_pool
+    except Exception as exc:
+        elapsed = time.monotonic() - start
+        return DiscoveryBatchResult(
+            hits=(),
+            error_type='import_error',
+            elapsed_s=elapsed,
+            error=f'session_pool_unavailable:{exc}',
+        )
+
+    params = {
+        'url': query,
+        'output': 'json',
+        'limit': max_results,
+        'fl': 'url,timestamp,original,mimetype,statuscode',
+        'filter': 'statuscode:200',
+        'from': '1996',
+        'to': '2026',
+    }
+
+    try:
+        session = await session_pool.httpx()
+        data, status, err = await _fetch_cdx_data(session, params, timeout_s)
+        elapsed = time.monotonic() - start
+
+        # Record circuit breaker
+        from urllib.parse import urlparse as _urlparse
+        breaker = get_breaker(_urlparse(_WAYBACK_CDX_URL).netloc)
+        if err:
+            breaker.record_failure(failure_kind='wayback_cdx')
+            return _build_error_result('network_error', err, elapsed)
+        else:
+            breaker.record_success()
+
+        # HTTP error codes
+        if status == 403:
+            return _build_http_error_result(403, elapsed)
+        if status == 429:
+            return _build_http_error_result(429, elapsed)
+        if status != 200:
+            return _build_http_error_result(status, elapsed)
+
+        # Parse and return success
+        if not data or not isinstance(data, list):
+            return DiscoveryBatchResult(
+                hits=(),
+                error_type='provider_empty',
+                elapsed_s=elapsed,
+                provider_name='wayback_cdx',
+                provider_chain=('wayback_cdx',),
+                source_family='archive',
+            )
+
+        # Skip header row if present
+        rows = data[1:] if data and data[0] == ['url', 'timestamp', 'original', 'mimetype', 'statuscode'] else data
+        hits_list = await _parse_cdx_rows(rows, max_results, query, time.time())
+
+        return DiscoveryBatchResult(
+            hits=tuple(hits_list),
+            provider_name='wayback_cdx',
+            provider_chain=('wayback_cdx',),
+            source_family='archive',
+            elapsed_s=elapsed,
+            error_type='none' if hits_list else 'provider_empty',
+        )
+
+    except asyncio.CancelledError:
+        raise  # Re-raise CancelledError — do not swallow
+    except Exception as e:
+        elapsed = time.monotonic() - start
+        return _build_error_result('network_error', str(e), elapsed)

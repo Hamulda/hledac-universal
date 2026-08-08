@@ -28,6 +28,7 @@ from datetime import UTC
 from typing import Any
 logger = logging.getLogger(__name__)
 from hledac.universal.runtime.lane_registry import LANE_REGISTRY
+from hledac.universal.utils._patterns import lazy_property
 RAM_THRESHOLD = 0.7
 
 class HypothesisResult(msgspec.Struct, gc=False):
@@ -52,23 +53,21 @@ class HypothesisBuilder:
     - Gate: HLEDAC_ENABLE_HYPOTHESIS=1 and RAM < 70%
 
     M1 8GB optimizations:
-    - Lazy import of HypothesisEngine
+    - Lazy import of HypothesisEngine (via lazy_property)
     - RAM check before execution
     - fail-soft throughout
     """
-    __slots__ = tuple(('_engine', 'output_dir'))
+    __slots__ = tuple(('output_dir', '_lazy_engine'))
 
     def __init__(self, output_dir: str | None=None) -> None:
         self.output_dir = output_dir
-        self._engine: Any | None = None
+        self._lazy_engine: Any | None = None
 
-    @property
+    @lazy_property
     def engine(self) -> Any:
         """Lazy load HypothesisEngine from brain."""
-        if self._engine is None:
-            from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
-            self._engine = HypothesisEngine(max_hypotheses=200, enable_adversarial_verification=False, use_dempster_shafer=False)
-        return self._engine
+        from hledac.universal.brain.research_hypothesis_engine import HypothesisEngine
+        return HypothesisEngine(max_hypotheses=200, enable_adversarial_verification=False, use_dempster_shafer=False)
 
     def _check_ram(self) -> bool:
         """Check if RAM usage is below threshold."""

@@ -15,6 +15,8 @@ import os
 import tempfile
 from typing import Any
 
+from utils._patterns import make_lazy_lock_classmethod  # F320-REFACTOR-2
+
 logger = logging.getLogger(__name__)
 
 # Lazy import guard — mlx-vlm is optional
@@ -48,12 +50,8 @@ class VLMAnalyzer:
     _processor: Any | None = None
     _lock: asyncio.Lock | None = None
 
-    @classmethod
-    def _get_lock(cls) -> asyncio.Lock:
-        """Get or create the class-level lock."""
-        if cls._lock is None:
-            cls._lock = asyncio.Lock()
-        return cls._lock
+    # F320-REFACTOR-2: lazy lock factory
+    _get_lock = classmethod(make_lazy_lock_classmethod("_lock"))
 
     @classmethod
     def _get_model_id(cls) -> str | None:

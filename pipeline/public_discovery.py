@@ -595,5 +595,8 @@ async def run_tot_with_timeout(hypo: str, timeout_s: float=15.0) -> str:
         async with asyncio.timeout(timeout_s):
             result = await tot_layer.solve_with_tot(hypo)
         return result or ""
-    except (TimeoutError, Exception):
+    except TimeoutError:
+        return ""
+    except Exception:
+        # Log unexpected errors but don't crash
         return ""

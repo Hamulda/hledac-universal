@@ -401,8 +401,25 @@ class LangDetector:
         return [self.detect(text) for text in texts]
 
 
-# Singleton instance for reuse
-_lang_detector_instance: Optional[LangDetector] = None
+# F320: Refactored to use centralized singleton pattern
+# Previously: duplicate global + if None pattern in 5 files
+from hledac.universal.utils._patterns import module_singleton_getter
+
+
+def _make_lang_detector() -> LangDetector:
+    """Factory for LangDetector singleton."""
+    return LangDetector(
+        use_fasttext=True,
+        use_langdetect=True,
+        confidence_threshold=0.7
+    )
+
+
+# Module-level singleton getter with thread-safe double-checked locking
+_get_lang_detector = module_singleton_getter(
+    singleton_name="_lang_detector_instance",
+    factory=_make_lang_detector,
+)
 
 
 def get_lang_detector(
@@ -412,25 +429,16 @@ def get_lang_detector(
 ) -> LangDetector:
     """
     Get singleton language detector instance.
-    
+
     Args:
         use_fasttext: Enable FastText backend.
         use_langdetect: Enable langdetect backend.
         confidence_threshold: Detection confidence threshold.
-        
+
     Returns:
         Shared LangDetector instance.
     """
-    global _lang_detector_instance
-    
-    if _lang_detector_instance is None:
-        _lang_detector_instance = LangDetector(
-            use_fasttext=use_fasttext,
-            use_langdetect=use_langdetect,
-            confidence_threshold=confidence_threshold
-        )
-    
-    return _lang_detector_instance
+    return _get_lang_detector()
 
 
 def detect_language(text: str) -> LanguageDetectionResult:

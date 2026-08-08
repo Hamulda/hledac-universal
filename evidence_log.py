@@ -1614,80 +1614,63 @@ class EvidenceLog:
         """Async context manager exit — cleanly shuts down all resources."""
         await self.aclose()
 
-    async def initialize(self) -> None:
-        """
-        Initialize async SQLite components.
-
-        Creates database, migrates from old JSONL file if exists,
-        and starts background flush worker.
-
-        Idempotent: safe to call multiple times. Previous flush worker
-        is cancelled before starting a new one.
-        """
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._loop = None
-        if self._flush_task is not None and (not self._flush_task.done()):
+    async def _cancel_existing_tasks(self) -> None:
+        """Cancel any existing flush and write tasks."""
+        if self._flush_task and not self._flush_task.done():
             self._flush_task.cancel()
-            try:
-                await safe_wait_for(self._flush_task, timeout=1.0, label='_flush_task')
-            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
-                pass
+            try: await safe_wait_for(self._flush_task, timeout=1.0, label='_flush_task')
+            except (TimeoutError, asyncio.CancelledError): pass
             self._flush_task = None
-        if self._async_write_task is not None and (not self._async_write_task.done()):
+        if self._async_write_task and not self._async_write_task.done():
             self._async_write_task.cancel()
-            try:
-                await safe_wait_for(self._async_write_task, timeout=1.0, label='_async_write_task')
-            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
-                pass
+            try: await safe_wait_for(self._async_write_task, timeout=1.0, label='_async_write_task')
+            except (TimeoutError, asyncio.CancelledError): pass
             self._async_write_task = None
-        if self._mpsc2_reader is not None:
-            try:
-                self._mpsc2_reader.close()
-            except Exception:  # noqa: BLE001
-                pass
+        if self._mpsc2_reader:
+            try: self._mpsc2_reader.close()
+            except Exception: pass
             self._mpsc2_reader = None
-        if self._initialized:
-            if self._flush_task is None or self._flush_task.done():
-                self._flush_task = safe_create_task(self._flush_worker())
-            if self._async_write_task is None or self._async_write_task.done():
-                self._async_write_task = safe_create_task(self._async_write_worker())
-            if self._loop is not None and (not self._mpsc2.fallback):
-                self._mpsc2_reader = self._loop.add_reader(self._mpsc2.wake_fd(), self._mpsc2_drain_callback)
-            self._flush_shutdown.clear()
-            self._async_write_shutdown.clear()
-            return
-        await self._init_db()
-        try:
-            await self._migrate_from_file()
-        except Exception as _mig_err:  # noqa: BLE001
-            logger.warning("f11c_migration_from_jsonl_failed_non_fatal", error=str(_mig_err))
-        try:
-            self._flush_task = safe_create_task(self._flush_worker())
-        except Exception as _task_err:  # noqa: BLE001
-            logger.warning("f11c_flush_worker_task_creation_failed_non_fatal", error=str(_task_err))
-            self._flush_task = None
-        try:
-            self._async_write_task = safe_create_task(self._async_write_worker())
-        except Exception as _write_task_err:  # noqa: BLE001
-            logger.warning("f290_async_write_worker_task_creation_failed_non_fatal", error=str(_write_task_err))
-            self._async_write_task = None
-        # E2: Start cancel watcher — triggers aclose() when lifecycle cancel_event is set.
-        # This ensures workers exit cleanly even when aclose() is not called explicitly.
-        self._start_cancel_watcher()
 
-        # DLQ-02: Lazy DLQ manager initialization
+    def _restart_workers(self) -> None:
+        """Restart flush and write workers."""
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_task = safe_create_task(self._flush_worker())
+        if self._async_write_task is None or self._async_write_task.done():
+            self._async_write_task = safe_create_task(self._async_write_worker())
+        if self._loop is not None and not self._mpsc2.fallback:
+            self._mpsc2_reader = self._loop.add_reader(self._mpsc2.wake_fd(), self._mpsc2_drain_callback)
+        self._flush_shutdown.clear()
+        self._async_write_shutdown.clear()
+
+    async def _init_post_migration(self) -> None:
+        """Initialize workers and resources after DB init."""
+        for task_name, worker in [('_flush_task', self._flush_worker), ('_async_write_task', self._async_write_worker)]:
+            try:
+                setattr(self, f'_{task_name}', safe_create_task(worker()))
+            except Exception as e:
+                logger.warning(f"f11c_{task_name}_creation_failed_non_fatal", error=str(e))
+                setattr(self, f'_{task_name}', None)
+        self._start_cancel_watcher()
         try:
             from hledac.universal.core.dlq_manager import get_dlq_manager
             self._dlq_manager = get_dlq_manager()
         except Exception:  # noqa: BLE001
             self._dlq_manager = None
-
-        # ISSUE-P8-001: WARC writer initialization for raw HTTP response archival
-        # Lazy init — WARC writer created on first use to avoid overhead when not needed
         if self._warc_enabled and self._warc_writer is None and self._persist_path is not None:
             self._warc_writer = WARCWriter(self._persist_path)
+
+    async def initialize(self) -> None:
+        """Initialize async SQLite components. Idempotent."""
+        try: self._loop = asyncio.get_running_loop()
+        except RuntimeError: self._loop = None
+        await self._cancel_existing_tasks()
+        if self._initialized:
+            self._restart_workers()
+            return
+        await self._init_db()
+        try: await self._migrate_from_file()
+        except Exception as e: logger.warning("f11c_migration_from_jsonl_failed_non_fatal", error=str(e))
+        await self._init_post_migration()
 
     def inject_cancel_event(self, cancel_event: asyncio.Event) -> None:
         """
@@ -1944,100 +1927,73 @@ class EvidenceLog:
         """
         pass
 
-    async def _async_write_worker(self) -> None:
-        """Background worker that writes JSONL entries asynchronously using aiofiles.
-
-        F320-ISSUE12b: Uses _RustMPSC2 (Rust MPSCPool) instead of asyncio.Queue.
-        F2F: write-to-buffer + flush at threshold OR shutdown.
-        - Writes accumulate in _write_buf (no syscall until flush)
-        - Flush every _WRITE_FLUSH_THRESHOLD events OR on shutdown
-        - At shutdown: drain queue + final flush + close
-        """
-        import aiofiles as _f290_aiofiles
-        _afile: object | None = None
+    async def _open_aiofile(self) -> object | None:
+        """Open aiofiles handle with fallback to sync."""
+        import aiofiles as _af
         try:
-            _afile = await _f290_aiofiles.open(self._persist_path_str, 'ab', buffering=8192)
-        except Exception as _open_err:  # noqa: BLE001
-            logger.warning("f290_aiofiles_open_failed_using_sync_fallback", error=str(_open_err))
-            _afile = None
-        _WRITE_FLUSH_THRESHOLD = (
-            self._BLITZ_FLUSH_THRESHOLD if self._blitz_mode
-            else self._NORMAL_FLUSH_THRESHOLD
-        )
-        _write_buf: list[bytes] = []
+            return await _af.open(self._persist_path_str, 'ab', buffering=8192)
+        except Exception as e:
+            logger.warning("f290_aiofiles_open_failed_using_sync_fallback", error=str(e))
+            return None
 
-        async def _flush_buf() -> None:
-            if not _write_buf:
-                return
-            if _afile is not None:
-                # Batch write: join all data and write in one syscall
-                _combined = b''.join(_write_buf)
-                try:
-                    await _afile.write(_combined)
-                    await _afile.flush()
-                except Exception:  # noqa: BLE001
-                    # Fallback: sync write each item individually
-                    try:
-                        with open(cast(str, self._persist_path_str), 'ab') as _sf:
-                            for _data in _write_buf:
-                                _sf.write(_data)
-                    except Exception:  # noqa: BLE001
-                        pass
-            else:
-                # Batch write: join all data and write in one syscall
-                try:
-                    with open(cast(str, self._persist_path_str), 'ab') as _sf:
-                        _sf.write(b''.join(_write_buf))
-                except Exception:  # noqa: BLE001
-                    pass
-            _write_buf.clear()
+    async def _flush_write_buf(self, buf: list[bytes], afile) -> None:
+        """Flush write buffer to file."""
+        if not buf: return
+        data = b''.join(buf)
+        if afile:
+            try:
+                await afile.write(data)
+                await afile.flush()
+            except Exception:  # noqa: BLE001
+                self._sync_write_buf(buf)
+        else:
+            self._sync_write_buf(buf)
+        buf.clear()
+
+    def _sync_write_buf(self, buf: list[bytes]) -> None:
+        """Sync fallback write."""
+        try:
+            with open(cast(str, self._persist_path_str), 'ab') as f:
+                f.write(b''.join(buf))
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _drain_and_flush(self, buf: list[bytes], afile) -> None:
+        """Drain remaining items and flush buffer."""
+        if remaining := self._mpsc2.recv_batch(max_items=None):
+            buf.extend(remaining)
+        if buf:
+            try: await asyncio.shield(self._flush_write_buf(buf, afile))
+            except asyncio.CancelledError:
+                logger.warning("async_write_worker_cancelled_during_final_flush", pending_bytes=sum(len(b) for b in buf))
+                buf.clear(); raise
+
+    async def _async_write_worker(self) -> None:
+        """Background worker that writes JSONL entries asynchronously using aiofiles."""
+        afile, threshold, buf = await self._open_aiofile(), self._BLITZ_FLUSH_THRESHOLD if self._blitz_mode else self._NORMAL_FLUSH_THRESHOLD, []
         while True:
-            if self._mpsc2.has_async_queue:
-                batch = self._mpsc2.recv_batch(max_items=1)
-                if not batch:
-                    if self._async_write_shutdown.is_set():
-                        break
+            batch = self._mpsc2.recv_batch(max_items=1 if self._mpsc2.has_async_queue else None)
+            if not batch:
+                if self._async_write_shutdown.is_set(): break
+                if self._mpsc2.has_async_queue:
                     await asyncio.sleep(0.05)
                     continue
-            else:
                 try:
                     async with asyncio.timeout(1.0):
-                        batch = self._mpsc2.recv_batch(max_items=None)
+                        pass
                 except TimeoutError:
-                    batch = []
-                if self._async_write_shutdown.is_set():
-                    break
-            if batch:
-                _write_buf.extend(batch)
-                if len(_write_buf) >= _WRITE_FLUSH_THRESHOLD:
-                    # A5-03 FIX: Shield flush to prevent cancellation from tearing write.
-                    # If CancelledError occurs, the batch is preserved in _write_buf
-                    # and will be retried on next iteration or final flush.
-                    try:
-                        await asyncio.shield(_flush_buf())
-                    except asyncio.CancelledError:
-                        # CancelledError after shielded flush — batch still in _write_buf.
-                        # Clear it to prevent duplicate flush on retry.
-                        _write_buf.clear()
-                        raise
-            if not self._mpsc2.has_async_queue and (not self._mpsc2.is_empty()):
+                    pass
+                if self._async_write_shutdown.is_set(): break
                 continue
-        remaining = self._mpsc2.recv_batch(max_items=None)
-        if remaining:
-            _write_buf.extend(remaining)
-        if _write_buf:
-            # A5-03 FIX: Shield final flush to prevent cancellation from tearing write.
-            try:
-                await asyncio.shield(_flush_buf())
-            except asyncio.CancelledError:
-                # CancelledError after shielded final flush — batch preserved.
-                # Log warning since this means some data may not be persisted.
-                logger.warning("async_write_worker_cancelled_during_final_flush", pending_bytes=sum(len(b) for b in _write_buf))
-                _write_buf.clear()
-                raise
-        if _afile is not None:
-            try:
-                await _afile.close()
+            if batch:
+                buf.extend(batch)
+                if len(buf) >= threshold:
+                    try: await asyncio.shield(self._flush_write_buf(buf, afile))
+                    except asyncio.CancelledError: buf.clear(); raise
+            if not self._mpsc2.has_async_queue and not self._mpsc2.is_empty(): continue
+        await self._drain_and_flush(buf, afile)
+        if afile:
+            try: await afile.close()
             except Exception:  # noqa: BLE001
                 pass
     _ARROW_SUB_BATCH = 256
@@ -2336,38 +2292,11 @@ class EvidenceLog:
         """Zda je log zmrazený (read-only)"""
         return self._frozen
 
-    def append(self, event: EvidenceEvent) -> None:
-        """
-        Přidá událost do logu - M1 8GB optimized s ring bufferem.
-
-        Args:
-            event: EvidenceEvent k přidání
-
-        Raises:
-            RuntimeError: Pokud je log zmrazený nebo uzavřený
-            ValueError: Pokud se neshoduje run_id nebo hash
-        """
-        if self._silent_failure:
-            return
-        if self._frozen:
-            raise RuntimeError('Cannot append to frozen EvidenceLog')
-        if self._closed:
-            raise RuntimeError('Cannot append to closed EvidenceLog')
-        if self._closing:
-            raise RuntimeError('Cannot append while EvidenceLog is closing')
-        if event.run_id != self._run_id:
-            raise ValueError(f"Event run_id '{event.run_id}' does not match log run_id '{self._run_id}'")
-        self._seq += 1
-        event.seq_no = self._seq
-        event.prev_chain_hash = self._chain_head
-        chain_input = f'{self._chain_head}:{event.content_hash}:{event.event_id}'
-        event.chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
-        self._chain_head = event.chain_hash
+    def _send_to_mpsc(self, event: EvidenceEvent) -> None:
+        """Send event to MPSC channels."""
         queue_size = self._mpsc.len()
         trace_evidence_append(event.event_type, queue_size, 'queued')
-        _worker_alive = self._initialized and self._flush_task is not None and (not self._flush_task.done())
-        if _worker_alive and (not self._closing):
-            # ISSUE-006: send bytes directly — zero-copy path
+        if self._initialized and self._flush_task and not self._flush_task.done() and not self._closing:
             _sent = self._mpsc.send(event.to_bytes())
             if not _sent:
                 logger.warning("mpsc_pool_full_fallback_to_sync_write")
@@ -2375,70 +2304,57 @@ class EvidenceLog:
         elif not self._initialized and self._db is not None:
             _event_dict = event.to_dict()
             try:
-
                 def _sync_insert():
                     import sqlite3
                     db_path = str(self._db_path)
                     conn = sqlite3.connect(db_path, timeout=30.0)
                     conn.executescript('''
-                        PRAGMA busy_timeout=30000;
-                        PRAGMA journal_mode=WAL;
-                        PRAGMA synchronous=NORMAL;
-                        PRAGMA wal_autocheckpoint=1000;
-                        PRAGMA cache_size=-8192;
+                        PRAGMA busy_timeout=30000; PRAGMA journal_mode=WAL;
+                        PRAGMA synchronous=NORMAL; PRAGMA wal_autocheckpoint=1000; PRAGMA cache_size=-8192;
                     ''')
-                    conn.execute('INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)', (_event_dict.get('timestamp', 0.0), _event_dict.get('event_type', 'unknown'), orjson.dumps(_event_dict).decode(), _event_dict.get('content_hash', ''), _event_dict.get('prev_chain_hash', ''), _event_dict.get('chain_hash', '')))
+                    conn.execute(
+                        'INSERT INTO events (timestamp, event_type, data, hash, prev_chain_hash, chain_hash) VALUES (?, ?, ?, ?, ?, ?)',
+                        (_event_dict.get('timestamp', 0.0), _event_dict.get('event_type', 'unknown'),
+                         orjson.dumps(_event_dict).decode(), _event_dict.get('content_hash', ''),
+                         _event_dict.get('prev_chain_hash', ''), _event_dict.get('chain_hash', '')))
                     conn.commit()
                     conn.close()
-                t = threading.Thread(target=_sync_insert, daemon=True)
-                t.start()
+                threading.Thread(target=_sync_insert, daemon=True).start()
                 trace_evidence_append(event.event_type, 0, 'sync_sqlite')
-            except Exception as _sync_err:  # noqa: BLE001
-                logger.debug("f11c_sync_sqlite_fallback_failed_non_fatal", error=str(_sync_err))
-        if self._enable_persist:
+            except Exception:
+                logger.debug("f11c_sync_sqlite_fallback_failed_non_fatal")
+
+    def _persist_event(self, event: EvidenceEvent) -> None:
+        """Persist event to JSONL with optional encryption."""
+        line = event.to_jsonl_line()
+        bytes_to_write = line.encode('utf-8') + b'\n'
+        if self._encrypt_at_rest and self._cipher and self._encryption_key:
             try:
-                line = event.to_jsonl_line()
-                bytes_to_write = line.encode('utf-8') + b'\n'
-                if self._encrypt_at_rest and self._cipher and self._encryption_key:
-                    try:
-                        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-                        nonce = secrets.token_bytes(12)
-                        cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
-                        encryptor = cipher.encryptor()
-                        encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
-                        bytes_to_write = nonce + encryptor.tag + encrypted
-                        logger.debug("encrypt_stored", bytes_in=len(line), bytes_out=len(bytes_to_write))
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("encrypt_operation_failed", error=str(e))
-                _sent = self._mpsc2.send(bytes_to_write)
-                if not _sent:
-                    self._sync_write_fallback(line, bytes_to_write)
+                from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+                nonce = secrets.token_bytes(12)
+                cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
+                encryptor = cipher.encryptor()
+                bytes_to_write = nonce + encryptor.tag + encryptor.update(bytes_to_write) + encryptor.finalize()
             except Exception as e:
-                logger.critical("f286_swal_write_failed_fatal", error=str(e))
-                # DLQ-02: Store corrupted payload for later inspection
+                logger.warning("encrypt_operation_failed", error=str(e))
+        try:
+            _sent = self._mpsc2.send(bytes_to_write)
+            if not _sent:
+                self._sync_write_fallback(line, bytes_to_write)
+        except Exception as e:
+            logger.critical("f286_swal_write_failed_fatal", error=str(e))
+            if self._dlq_manager:
                 try:
-                    if self._dlq_manager is not None:
-                        self._dlq_manager.store_payload(
-                            payload_data=event.to_bytes(),
-                            sprint_id=self._run_id,
-                            source="evidence_log.append",
-                            error=e,
-                            metadata={
-                                'event_id': event.event_id,
-                                'event_type': event.event_type,
-                                'timestamp': event.timestamp,
-                            },
-                        )
-                except Exception:  # noqa: BLE001
-                    pass  # Fail-silent for DLQ
-                raise RuntimeError(f'EvidenceLog SWAL write failed: {e}') from e
-        # ISSUE-002 FIX: Fast-path — skip deserialize/serialize when trim is no-op.
-        # 10K events/min × 2 orjson calls = 20K/min overhead eliminated.
-        event.payload = self._trim_payload_fast(event.payload)
-        event.content_hash = event.calculate_hash()
-        chain_input = f'{event.prev_chain_hash}:{event.content_hash}:{event.event_id}'
-        event.chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
-        self._chain_head = event.chain_hash
+                    self._dlq_manager.store_payload(
+                        payload_data=event.to_bytes(), sprint_id=self._run_id,
+                        source="evidence_log.append", error=e,
+                        metadata={'event_id': event.event_id, 'event_type': event.event_type, 'timestamp': event.timestamp})
+                except Exception:
+                    pass
+            raise RuntimeError(f'EvidenceLog SWAL write failed: {e}') from e
+
+    def _update_indexes(self, event: EvidenceEvent) -> None:
+        """Update in-memory indexes for an event."""
         was_full = len(self._log) == self.MAX_RAM_EVENTS
         self._log.append(event)
         self._total_count += 1
@@ -2446,7 +2362,7 @@ class EvidenceLog:
             self._dropped_count += 1
             try:
                 self._rebuild_indexes()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             return
         index = len(self._log) - 1
@@ -2455,14 +2371,52 @@ class EvidenceLog:
             if source_id not in self._index_by_source:
                 self._index_by_source[source_id] = deque(maxlen=self.MAX_RAM_EVENTS)
             self._index_by_source[source_id].append(index)
+
+    def _record_analytics(self, event: EvidenceEvent) -> None:
+        """Record event to analytics if applicable."""
         try:
             from hledac.universal.knowledge.analytics_hook import shadow_record_finding
             if event.event_type == 'evidence_packet':
                 payload = event.payload_dict if event.payload else {}
-                _corr: dict[str, Any] | None = payload.get('_correlation')
-                shadow_record_finding(finding_id=event.event_id, query=payload.get('query', ''), source_type='evidence_packet', confidence=event.confidence, run_id=event.run_id, url=payload.get('url'), title=payload.get('title'), source=payload.get('source'), relevance_score=payload.get('relevance_score'), branch_id=_corr.get('branch_id') if _corr else None, provider_id=_corr.get('provider_id') if _corr else None, action_id=_corr.get('action_id') if _corr else None)
-        except Exception:  # noqa: BLE001
+                _corr = payload.get('_correlation')
+                shadow_record_finding(
+                    finding_id=event.event_id, query=payload.get('query', ''),
+                    source_type='evidence_packet', confidence=event.confidence,
+                    run_id=event.run_id, url=payload.get('url'), title=payload.get('title'),
+                    source=payload.get('source'), relevance_score=payload.get('relevance_score'),
+                    branch_id=_corr.get('branch_id') if _corr else None,
+                    provider_id=_corr.get('provider_id') if _corr else None,
+                    action_id=_corr.get('action_id') if _corr else None)
+        except Exception:
             pass
+
+    def append(self, event: EvidenceEvent) -> None:
+        """Přidá událost do logu - M1 8GB optimized s ring bufferem."""
+        if self._silent_failure or self._frozen or self._closed or self._closing:
+            if self._frozen:
+                raise RuntimeError('Cannot append to frozen EvidenceLog')
+            if self._closed:
+                raise RuntimeError('Cannot append to closed EvidenceLog')
+            if self._closing:
+                raise RuntimeError('Cannot append while EvidenceLog is closing')
+            return
+        if event.run_id != self._run_id:
+            raise ValueError(f"Event run_id mismatch")
+        self._seq += 1
+        event.seq_no = self._seq
+        event.prev_chain_hash = self._chain_head
+        chain_input = f'{self._chain_head}:{event.content_hash}:{event.event_id}'
+        event.chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
+        self._chain_head = event.chain_hash
+        self._send_to_mpsc(event)
+        if self._enable_persist:
+            self._persist_event(event)
+        event.payload = self._trim_payload_fast(event.payload)
+        event.content_hash = event.calculate_hash()
+        event.chain_hash = hashlib.sha256(f'{event.prev_chain_hash}:{event.content_hash}:{event.event_id}'.encode()).hexdigest()
+        self._chain_head = event.chain_hash
+        self._update_indexes(event)
+        self._record_analytics(event)
 
     def _rebuild_indexes(self) -> None:
         """Přebuduj indexy po vyřazení z ring bufferu."""
@@ -2506,6 +2460,123 @@ class EvidenceLog:
         self.append(event)
         return event
 
+    def _create_single_event_batch(self, event_type, payload, source_ids, confidence, chain_head):
+        """Create a single event for batch processing."""
+        import random as _random
+        if event_type != "error" and self._sample_rate < 1.0:
+            if _random.random() > self._sample_rate:
+                return None, chain_head
+        event_id = f"{self._run_id}_{uuid.uuid4().hex[:12]}"
+        normalized_payload = _normalize_payload(payload)
+        _scrub_dict_recursive = None
+        try:
+            from hledac.universal.security.secrets_scrubber import scrub_dict_recursive
+        except Exception:
+            pass
+        if not _payload_needs_scrubbing(normalized_payload):
+            scrubbed_payload = normalized_payload
+        elif _scrub_dict_recursive:
+            scrubbed_payload = _scrub_dict_recursive(normalized_payload)
+        else:
+            scrubbed_payload = normalized_payload
+        event = EvidenceEvent(
+            event_id=event_id, event_type=event_type,
+            timestamp=datetime.now(UTC).timestamp(),
+            payload=orjson.dumps(scrubbed_payload),
+            source_ids=source_ids or [], confidence=confidence,
+            content_hash="", run_id=self._run_id,
+        )
+        event.prev_chain_hash = chain_head
+        event.content_hash = event.calculate_hash()
+        chain_input = f'{chain_head}:{event.content_hash}:{event.event_id}'
+        event.chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
+        return event, event.chain_hash
+
+    def _update_indexes_batch(self, event):
+        """Update in-memory indexes for a single event."""
+        was_full = len(self._log) == self.MAX_RAM_EVENTS
+        self._log.append(event)
+        self._total_count += 1
+        if was_full:
+            self._dropped_count += 1
+            try:
+                self._rebuild_indexes()
+            except Exception:
+                pass
+        else:
+            index = len(self._log) - 1
+            self._index_by_type[event.event_type].append(index)
+            for sid in event.source_ids:
+                if sid not in self._index_by_source:
+                    self._index_by_source[sid] = deque(maxlen=self.MAX_RAM_EVENTS)
+                self._index_by_source[sid].append(index)
+
+    def _send_to_mpsc_channels(self, created, _mpsc_cap=2048, _mpsc2_cap=2048, _MPSC_BACKPRESSURE_THRESHOLD=0.85):
+        """Send events to MPSC channels with backpressure coordination."""
+        if not (self._initialized and self._flush_task and not self._flush_task.done()) or self._closing:
+            return
+        _mpsc_payloads = [e.to_bytes() for e in created]
+        _mpsc_pressure_pct = self._mpsc.len() / max(_mpsc_cap, 1)
+        _mpsc2_pressure_pct = self._mpsc2.len() / max(_mpsc2_cap, 1)
+        _jsonl_payloads = []
+        if self._enable_persist:
+            if self._encrypt_at_rest and self._cipher and self._encryption_key:
+                from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            for e in created:
+                line = e.to_jsonl_line()
+                bytes_to_write = line.encode('utf-8') + b'\n'
+                if self._encrypt_at_rest and self._cipher and self._encryption_key:
+                    try:
+                        nonce = secrets.token_bytes(12)
+                        cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
+                        encryptor = cipher.encryptor()
+                        encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
+                        bytes_to_write = nonce + encryptor.tag + encrypted
+                    except Exception:
+                        logger.warning("encrypt_batch_failed")
+                _jsonl_payloads.append(bytes_to_write)
+        if _mpsc_pressure_pct >= _MPSC_BACKPRESSURE_THRESHOLD or \
+           (self._enable_persist and _mpsc2_pressure_pct >= _MPSC_BACKPRESSURE_THRESHOLD):
+            self._dropped_count += 1
+            logger.warning("m1_02_backpressure_dropped_batch", mpsc_pressure=f"{_mpsc_pressure_pct:.0%}")
+            trace_queue_drop('dual_channel_backpressure', len(created))
+            return
+        _sent = self._mpsc.send_batch(_mpsc_payloads)
+        for e in created:
+            trace_evidence_append(e.event_type, self._mpsc.len(), 'queued')
+        if _sent < len(created):
+            logger.warning("issue007_mpsc_pool_full", sent=_sent, total=len(created))
+        if self._enable_persist:
+            try:
+                _sent2 = self._mpsc2.send_batch(_jsonl_payloads)
+                if _sent2 < len(created):
+                    for e in created[_sent2:]:
+                        line = e.to_jsonl_line()
+                        bytes_to_write = line.encode('utf-8') + b'\n'
+                        self._sync_write_fallback(line, bytes_to_write)
+            except Exception:
+                logger.critical("f286_swal_batch_send_failed")
+
+    def _run_analytics_batch(self, created):
+        """Run analytics hook for evidence_packet events."""
+        try:
+            from hledac.universal.knowledge.analytics_hook import shadow_record_finding
+            for e in created:
+                if e.event_type == 'evidence_packet':
+                    _pl = orjson.loads(e.payload) if e.payload else {}
+                    _co = _pl.get('_correlation')
+                    shadow_record_finding(
+                        finding_id=e.event_id, query=_pl.get('query', ''),
+                        source_type='evidence_packet', confidence=e.confidence,
+                        run_id=e.run_id, url=_pl.get('url'), title=_pl.get('title'),
+                        source=_pl.get('source'), relevance_score=_pl.get('relevance_score'),
+                        branch_id=_co.get('branch_id') if _co else None,
+                        provider_id=_co.get('provider_id') if _co else None,
+                        action_id=_co.get('action_id') if _co else None,
+                    )
+        except Exception:
+            pass
+
     def create_events_batch(
         self,
         events: list[
@@ -2517,222 +2588,24 @@ class EvidenceLog:
             ]
         ],
     ) -> list[EvidenceEvent]:
-        """
-        ISSUE-007 FIX: Batch event submission — jeden acquire MPSC slot na celý batch.
-
-        Args:
-            events: List of (event_type, payload, source_ids, confidence) tuples.
-
-        Returns:
-            List of created EvidenceEvent objects (empty if silent_failure=True).
-
-        Performance:
-            - Rust MPSC: single Python→Rust call, N× native crossbeam send (no GIL in native).
-            - Fallback: asyncio.Queue.put_nowait() loop with reduced call overhead.
-            - ~1 µs/event vs 5 µs for N× individual create_event() calls.
-
-        Pořadí zachováno: seq_no assigned in order, chain_hash includes seq_no.
-        """
+        """Batch event submission with single MPSC call per batch."""
         if not events or self._silent_failure:
             return []
         if self._closed:
             raise RuntimeError("Cannot create events in closed EvidenceLog")
-
-        # ISSUE-007 FIX: true batching — single send_batch() for all events.
-        # Chain-hash computation stays sequential (depends on previous hash),
-        # but MPSC send is single Python→Rust call for the entire batch.
-        import random as _random
-
         created: list[EvidenceEvent] = []
         chain_head = self._chain_head
-
-        # SEC-01: Import once outside the loop — avoid per-event import overhead.
-        _scrub_dict_recursive: Any = None
-        try:
-            from hledac.universal.security.secrets_scrubber import scrub_dict_recursive
-            _scrub_dict_recursive = scrub_dict_recursive
-        except Exception:  # noqa: BLE001
-            pass
-
         for event_type, payload, source_ids, confidence in events:
-            if event_type != "error" and self._sample_rate < 1.0:
-                if _random.random() > self._sample_rate:
-                    continue
-
-            event_id = f"{self._run_id}_{uuid.uuid4().hex[:12]}"
-            # TEL-03: Normalize payload for consistent hashing (same as create_event path).
-            normalized_payload = _normalize_payload(payload)
-            # TEL-03: Fast-path guard — skip expensive scrubbing for primitive-only payloads.
-            if not _payload_needs_scrubbing(normalized_payload):
-                scrubbed_payload = normalized_payload
-            elif _scrub_dict_recursive is not None:
-                scrubbed_payload = _scrub_dict_recursive(normalized_payload)
-            else:
-                scrubbed_payload = normalized_payload
-            event = EvidenceEvent(
-                event_id=event_id,
-                event_type=event_type,
-                timestamp=datetime.now(UTC).timestamp(),
-                payload=orjson.dumps(scrubbed_payload),
-                source_ids=source_ids or [],
-                confidence=confidence,
-                content_hash="",
-                run_id=self._run_id,
-            )
-            # Sequential chain-hash (must be in order)
-            event.prev_chain_hash = chain_head
-            event.content_hash = event.calculate_hash()
-            chain_input = f'{chain_head}:{event.content_hash}:{event.event_id}'
-            event.chain_hash = hashlib.sha256(chain_input.encode()).hexdigest()
-            chain_head = event.chain_hash
-
-            # In-memory bookkeeping (fast, no I/O)
-            was_full = len(self._log) == self.MAX_RAM_EVENTS
-            self._log.append(event)
-            self._total_count += 1
-            if was_full:
-                self._dropped_count += 1
-                try:
-                    self._rebuild_indexes()
-                except Exception:  # noqa: BLE001
-                    pass
-            else:
-                index = len(self._log) - 1
-                self._index_by_type[event.event_type].append(index)
-                for sid in event.source_ids:
-                    if sid not in self._index_by_source:
-                        self._index_by_source[sid] = deque(maxlen=self.MAX_RAM_EVENTS)
-                    self._index_by_source[sid].append(index)
-
+            event, chain_head = self._create_single_event_batch(event_type, payload, source_ids, confidence, chain_head)
+            if event is None:
+                continue
+            self._update_indexes_batch(event)
             created.append(event)
-
-        # Update chain head once for the entire batch
         self._chain_head = chain_head
-
         if not created:
             return created
-
-        # M1-02 fix: coordinated dual-channel send with backpressure.
-        # Both channels are independent Rust MPSC pools (capacity 2048 each).
-        # Without coordination, partial sends can cause SQLite/JSONL inconsistency:
-        #   - _mpsc (SQLite path) succeeds with N items, _mpsc2 (JSONL path) fills partially
-        #   - A subsequent sync-write fallback on mpsc2 writes events out of SQLite order
-        #   - Result: SQLite has event #5 but JSONL doesn't, causing replay/desync bugs
-        #
-        # Fix: check remaining capacity of BOTH channels BEFORE sending. If either is
-        # too full to accept the full batch, apply backpressure (drop the batch) rather
-        # than partial sends. This guarantees atomicity across both channels.
-        _worker_alive = (
-            self._initialized
-            and self._flush_task is not None
-            and (not self._flush_task.done())
-        )
-        if _worker_alive and (not self._closing):
-            _mpsc_payloads = [e.to_bytes() for e in created]
-            # M1-02: Rust MPSC pool has fixed capacity 2048; no capacity() method exists
-            _mpsc_cap = 2048
-            _mpsc_free = _mpsc_cap - self._mpsc.len()
-            _mpsc_would_fit = _mpsc_free >= len(_mpsc_payloads)
-            _mpsc_pressure_pct = self._mpsc.len() / max(_mpsc_cap, 1)
-            # Backpressure threshold: 85% full = hard backpressure (drop batch)
-            _MPSC_BACKPRESSURE_THRESHOLD = 0.85
-
-            _jsonl_payloads: list[bytes] = []
-            if self._enable_persist:
-                # ISSUE-D FIX: crypto import outside the loop — avoid per-event IMPORT_NAME bytecode
-                if self._encrypt_at_rest and self._cipher and self._encryption_key:
-                    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-                for e in created:
-                    line = e.to_jsonl_line()
-                    bytes_to_write = line.encode('utf-8') + b'\n'
-                    if self._encrypt_at_rest and self._cipher and self._encryption_key:
-                        try:
-                            nonce = secrets.token_bytes(12)
-                            cipher = Cipher(algorithms.AES(self._encryption_key), modes.GCM(nonce))
-                            encryptor = cipher.encryptor()
-                            encrypted = encryptor.update(bytes_to_write) + encryptor.finalize()
-                            bytes_to_write = nonce + encryptor.tag + encrypted
-                        except Exception as _enc_err:  # noqa: BLE001
-                            logger.warning("encrypt_batch_failed", error=str(_enc_err))
-                    _jsonl_payloads.append(bytes_to_write)
-
-            # M1-02: Rust MPSC pool has fixed capacity 2048; no capacity() method exists
-            _mpsc2_cap = 2048
-            _mpsc2_free = _mpsc2_cap - self._mpsc2.len()
-            _mpsc2_would_fit = _mpsc2_free >= len(_jsonl_payloads) if self._enable_persist else True
-            _mpsc2_pressure_pct = self._mpsc2.len() / max(_mpsc2_cap, 1)
-
-            # Backpressure: if either channel is >85% full, drop the entire batch.
-            # This prevents partial-send inconsistency (SQLite succeeds, JSONL fails → reorder).
-            # SQLite and JSONL must be consistent — we drop rather than corrupt.
-            if (_mpsc_pressure_pct >= _MPSC_BACKPRESSURE_THRESHOLD or
-                (self._enable_persist and _mpsc2_pressure_pct >= _MPSC_BACKPRESSURE_THRESHOLD)):
-                # Backpressure applied — drop batch, count as dropped events
-                self._dropped_count += 1
-                logger.warning(
-                    "m1_02_backpressure_dropped_batch",
-                    mpsc_pressure=f"{_mpsc_pressure_pct:.0%}",
-                    mpsc2_pressure=f"{_mpsc2_pressure_pct:.0%}",
-                    batch_size=len(created),
-                )
-                trace_queue_drop('dual_channel_backpressure', len(created))
-                return created
-
-            # Both channels have capacity — send to both atomically (best-effort on each)
-            _sent = self._mpsc.send_batch(_mpsc_payloads)
-
-            for e in created:
-                trace_evidence_append(e.event_type, self._mpsc.len(), 'queued')
-            if _sent < len(created):
-                logger.warning("issue007_mpsc_pool_full", sent=_sent, total=len(created))
-                trace_queue_drop('mpsc_batch', len(created) - _sent)
-
-            # M1-02 fix: JSONL persist path uses same backpressure-gated send
-            if self._enable_persist:
-                _sent2 = 0
-                if _mpsc2_would_fit:
-                    try:
-                        _sent2 = self._mpsc2.send_batch(_jsonl_payloads)
-                        if _sent2 < len(created):
-                            for e in created[_sent2:]:
-                                line = e.to_jsonl_line()
-                                bytes_to_write = line.encode('utf-8') + b'\n'
-                                self._sync_write_fallback(line, bytes_to_write)
-                    except Exception as _swal_err:  # noqa: BLE001
-                        logger.critical("f286_swal_batch_send_failed", error=str(_swal_err))
-                else:
-                    # mpsc2 unexpectedly full despite pressure check — fallback all
-                    for e in created:
-                        line = e.to_jsonl_line()
-                        bytes_to_write = line.encode('utf-8') + b'\n'
-                        self._sync_write_fallback(line, bytes_to_write)
-                    logger.warning("m1_02_mpsc2_unexpectedly_full", free=_mpsc2_free, needed=len(_jsonl_payloads))
-
-        # analytics_hook per event (only evidence_packet type)
-        try:
-            from hledac.universal.knowledge.analytics_hook import shadow_record_finding
-
-            for e in created:
-                if e.event_type == 'evidence_packet':
-                    _pl: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
-                    _co: dict[str, Any] | None = _pl.get('_correlation')
-                    shadow_record_finding(
-                        finding_id=e.event_id,
-                        query=_pl.get('query', ''),
-                        source_type='evidence_packet',
-                        confidence=e.confidence,
-                        run_id=e.run_id,
-                        url=_pl.get('url'),
-                        title=_pl.get('title'),
-                        source=_pl.get('source'),
-                        relevance_score=_pl.get('relevance_score'),
-                        branch_id=_co.get('branch_id') if _co else None,
-                        provider_id=_co.get('provider_id') if _co else None,
-                        action_id=_co.get('action_id') if _co else None,
-                    )
-        except Exception:  # noqa: BLE001
-            pass
-
+        self._send_to_mpsc_channels(created)
+        self._run_analytics_batch(created)
         return created
 
     def create_evidence_packet_event(self, evidence_id: str, packet_path: str, summary: dict[str, Any], source_ids: list[str] | None=None, confidence: float=1.0) -> EvidenceEvent | None:
@@ -3477,79 +3350,59 @@ class EvidenceLog:
                 os.close(fd)
 
     @classmethod
-    def _iter_jsonl_tail(cls, path: Path, max_events: int) -> Iterator[EvidenceEvent]:
-        """
-        Iterate over last max_events from JSONL file using backward seek.
+    def _read_jsonl_tail_backward(cls, fd: int, file_size: int, max_events: int) -> list[EvidenceEvent]:
+        """Read last events from JSONL using backward seek."""
+        events, pos, buf_size, current_line = [], file_size, 8192, bytearray()
+        while pos > 0 and len(events) <= max_events:
+            read_size, pos = min(buf_size, pos), pos - min(buf_size, pos)
+            os.lseek(fd, pos, os.SEEK_SET)
+            for byte in reversed(os.read(fd, read_size)):
+                if byte == ord('\n'):
+                    if current_line:
+                        try:
+                            if line_str := current_line.decode('utf-8').strip():
+                                events.append(EvidenceEvent.from_dict(orjson.loads(line_str)))
+                        except Exception:  # noqa: BLE001
+                            pass
+                        current_line = bytearray()
+                        if len(events) > max_events:
+                            break
+                else:
+                    current_line.append(byte)
+            if pos == 0 and current_line:
+                try:
+                    if line_str := current_line.decode('utf-8').strip():
+                        events.append(EvidenceEvent.from_dict(orjson.loads(line_str)))
+                except Exception:  # noqa: BLE001
+                    pass
+        return events
 
-        For append-only files this reads only the bytes containing the
-        last max_events lines — zero bytes read beyond what's needed.
-        """
+    @classmethod
+    def _read_jsonl_tail_fallback(cls, path: Path, max_events: int) -> list[EvidenceEvent]:
+        """Fallback: stream forward with sliding window."""
+        events = []
+        with open(path, encoding='utf-8') as f:
+            for line in (l.strip() for l in f if l.strip()):
+                try:
+                    events.append(EvidenceEvent.from_dict(orjson.loads(line)))
+                    if len(events) > max_events:
+                        events = events[-max_events:]
+                except Exception:
+                    continue
+        return events
+
+    @classmethod
+    def _iter_jsonl_tail(cls, path: Path, max_events: int) -> Iterator[EvidenceEvent]:
+        """Iterate over last max_events from JSONL file using backward seek."""
         fd = None
         try:
             fd = os.open(str(path), os.O_RDONLY)
-            file_size = os.lseek(fd, 0, os.SEEK_END)
-            if file_size == 0:
+            if (file_size := os.lseek(fd, 0, os.SEEK_END)) == 0:
                 return
-
-            events = []
-            pos = file_size
-            buf_size = 8192
-            current_line = bytearray()
-
-            while pos > 0 and len(events) <= max_events:
-                read_size = min(buf_size, pos)
-                pos -= read_size
-                os.lseek(fd, pos, os.SEEK_SET)
-                chunk = os.read(fd, read_size)
-
-                # Process chunk in reverse
-                for byte in reversed(chunk):
-                    if byte == ord('\n'):
-                        if current_line:
-                            try:
-                                line_str = current_line.decode('utf-8').strip()
-                                if line_str:
-                                    data = orjson.loads(line_str)
-                                    events.append(EvidenceEvent.from_dict(data))
-                            except Exception:  # noqa: BLE001
-                                pass
-                            current_line = bytearray()
-                            if len(events) > max_events:
-                                break
-                    else:
-                        current_line.append(byte)
-
-                if pos == 0 and current_line:
-                    try:
-                        line_str = current_line.decode('utf-8').strip()
-                        if line_str:
-                            data = orjson.loads(line_str)
-                            events.append(EvidenceEvent.from_dict(data))
-                    except Exception:  # noqa: BLE001
-                        pass
-
-            # Yield in correct order (oldest to newest)
-            for event in reversed(events[-max_events:]):
-                yield event
-
+            events = cls._read_jsonl_tail_backward(fd, file_size, max_events)
+            yield from reversed(events[-max_events:])
         except Exception:
-            # Fallback: stream forward with sliding window (expensive but safe)
-            events = []
-            with open(path, encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        data = orjson.loads(line)
-                        event = EvidenceEvent.from_dict(data)
-                        events.append(event)
-                        if len(events) > max_events:
-                            events = events[-max_events:]
-                    except Exception:
-                        continue
-            for event in events:
-                yield event
+            yield from cls._read_jsonl_tail_fallback(path, max_events)
         finally:
             if fd is not None:
                 os.close(fd)
@@ -3809,130 +3662,108 @@ class EvidenceLog:
             timeout_s=timeout_s if timeout_s is not None else self.DEFAULT_TIMEOUT_S,
         )
 
-    async def _do_shutdown(self) -> None:
-        """Inner cleanup — called by aclose() via shutdown_aclose()."""
-        self._closing = True
-        # FLOW-03: WAL checkpoint — execute BEFORE any cleanup to ensure both paths
-        # are drained and committed. If this fails, we continue with normal shutdown
-        # (fail-safe — WAL is best-effort crash consistency).
-        _wal_ok = False
+    async def _cancel_task_with_timeout(self, task, label, timeout1=5.0, timeout2=2.0):
+        """Cancel a task with two-stage timeout."""
         try:
-            _wal_ok = self._wal_checkpoint()
-        except Exception:  # noqa: BLE001
-            pass
-        # E2: Cancel the lifecycle watcher — aclose() is now the owner of shutdown.
-        if self._cancel_watcher_task is not None and not self._cancel_watcher_task.done():
+            await safe_wait_for(task, timeout=timeout1, label=label)
+        except TimeoutError:
+            logger.warning(f"{label}_did_not_exit_cancelling")
+            task.cancel()
+            try:
+                await safe_wait_for(task, timeout=timeout2, label=label)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+        except asyncio.CancelledError:
+            task.cancel()
+            try:
+                await safe_wait_for(task, timeout=timeout2, label=label)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+        finally:
+            return None
+
+    async def _cancel_watcher(self) -> None:
+        """Cancel the lifecycle watcher task."""
+        if self._cancel_watcher_task and not self._cancel_watcher_task.done():
             self._cancel_watcher_task.cancel()
             try:
                 with contextlib.suppress(asyncio.CancelledError):
                     await safe_wait_for(self._cancel_watcher_task, timeout=2.0)
-            except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
-                pass
-            except Exception:  # noqa: BLE001
+            except (TimeoutError, asyncio.CancelledError, Exception):
                 pass
             self._cancel_watcher_task = None
-        if self._flush_shutdown:
-            self._flush_shutdown.set()
+
+    async def _shutdown_workers(self) -> None:
+        """Shutdown flush and write workers."""
+        if self._flush_shutdown: self._flush_shutdown.set()
         if self._flush_task:
-            try:
-                await safe_wait_for(self._flush_task, timeout=10.0, label='_flush_task')
-            except TimeoutError:
-                logger.warning("flush_worker_did_not_exit_cancelling")
-                self._flush_task.cancel()
-                try:
-                    await safe_wait_for(self._flush_task, timeout=5.0, label='_flush_task')
-                except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
-                    pass
-            except asyncio.CancelledError:
-                self._flush_task.cancel()
-                try:
-                    await safe_wait_for(self._flush_task, timeout=5.0, label='_flush_task')
-                except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
-                    pass
-            finally:
-                self._flush_task = None
-        self._async_write_shutdown.set()
+            await self._cancel_task_with_timeout(self._flush_task, '_flush_task', 10.0, 5.0)
+            self._flush_task = None
+        if self._async_write_shutdown: self._async_write_shutdown.set()
         if self._async_write_task:
-            try:
-                await safe_wait_for(self._async_write_task, timeout=5.0, label='_async_write_task')
-            except TimeoutError:
-                logger.warning("async_write_worker_did_not_exit_cancelling")
-                self._async_write_task.cancel()
-                try:
-                    await safe_wait_for(self._async_write_task, timeout=2.0, label='_async_write_task')
-                except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
-                    pass
-            except asyncio.CancelledError:
-                self._async_write_task.cancel()
-                try:
-                    await safe_wait_for(self._async_write_task, timeout=2.0, label='_async_write_task')
-                except (TimeoutError, asyncio.CancelledError):  # noqa: BLE001
-                    pass
-            finally:
-                self._async_write_task = None
-        drained = self._mpsc.recv_batch(max_items=None)
-        # ISSUE-FIX: Also drain mpsc2 in case _async_write_worker was cancelled before draining.
-        # This prevents data loss on premature shutdown. Safe to call even if worker already drained.
-        mpsc2_drained = self._mpsc2.recv_batch(max_items=None)
-        if self._arrow_writer is not None:
+            await self._cancel_task_with_timeout(self._async_write_task, '_async_write_task', 5.0, 2.0)
+            self._async_write_task = None
+
+    def _close_arrow_writer(self) -> None:
+        """Close arrow writer if open."""
+        if self._arrow_writer:
             try:
                 self._arrow_writer.close()
                 logger.info("arrow_ipc_writer_closed", arrow_path=str(self._arrow_path))
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning("arrow_failed_to_close_writer", error=str(e))
             finally:
                 self._arrow_writer = None
-        if drained and self._db is not None:
-            try:
-                await self._flush_batch_bytes(drained)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("failed_to_flush_remaining_items", error=str(e))
+
+    async def _flush_remaining(self, drained, mpsc2_drained) -> None:
+        """Flush remaining items from drained channels."""
+        if drained and self._db:
+            try: await self._flush_batch_bytes(drained)
+            except Exception as e: logger.warning("failed_to_flush_remaining_items", error=str(e))
         if mpsc2_drained and self._persist_file:
             try:
-                # Write remaining mpsc2 items (JSONL path) before closing
-                # _persist_file is text-mode (encoding='utf-8') when not encrypting,
-                # so decode bytes to str before writing
-                if self._encrypt_at_rest:
-                    _combined = b''.join(mpsc2_drained)
-                    self._persist_file.write(_combined)
-                else:
-                    for item in mpsc2_drained:
-                        self._persist_file.write(item.decode('utf-8', errors='replace'))
+                data = b''.join(mpsc2_drained) if self._encrypt_at_rest else b''.join(i.decode('utf-8', errors='replace') for i in mpsc2_drained)
+                self._persist_file.write(data)
                 self._persist_file.flush()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("failed_to_flush_mpsc2_remaining_items", error=str(e))
-        if self._db is not None:
+            except Exception as e: logger.warning("failed_to_flush_mpsc2_remaining_items", error=str(e))
+
+    async def _close_databases(self) -> None:
+        """Close SQLite and DuckDB connections."""
+        if self._db:
             try:
                 await self._db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
                 await self._db.close()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("failed_to_close_sqlite", error=str(e))
-            finally:
-                self._db = None
-        # ISSUE-11: Close DuckDB connection
-        if self._duckdb_conn is not None:
-            try:
-                self._duckdb_conn.close()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("failed_to_close_duckdb", error=str(e))
-            finally:
-                self._duckdb_conn = None
-        # ISSUE-P8-001: Close WARC writer — capture ALL rotation paths
-        if self._warc_writer is not None:
+            except Exception as e: logger.warning("failed_to_close_sqlite", error=str(e))
+            finally: self._db = None
+        if self._duckdb_conn:
+            try: self._duckdb_conn.close()
+            except Exception as e: logger.warning("failed_to_close_duckdb", error=str(e))
+            finally: self._duckdb_conn = None
+
+    def _close_warc_writer(self) -> None:
+        """Close WARC writer if open."""
+        if self._warc_writer:
             try:
                 self._warc_writer.close()
-                # path_history includes all rotated files + final file
                 for p in self._warc_writer.path_history:
-                    if str(p) not in self._warc_paths:
-                        self._warc_paths.append(str(p))
+                    if str(p) not in self._warc_paths: self._warc_paths.append(str(p))
                 logger.info("warc_writer_closed", warc_paths=self._warc_paths)
-                # ISSUE [FINAL]-019-05: Register paths in global singleton
-                # for consumers without direct EvidenceLog reference
                 self._register_warc_paths_global()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("failed_to_close_warc", error=str(e))
-            finally:
-                self._warc_writer = None
+            except Exception as e: logger.warning("failed_to_close_warc", error=str(e))
+            finally: self._warc_writer = None
+
+    async def _do_shutdown(self) -> None:
+        """Inner cleanup — called by aclose() via shutdown_aclose()."""
+        self._closing = True
+        try: self._wal_checkpoint()
+        except Exception: pass
+        await self._cancel_watcher()
+        await self._shutdown_workers()
+        drained, mpsc2_drained = self._mpsc.recv_batch(max_items=None), self._mpsc2.recv_batch(max_items=None)
+        self._close_arrow_writer()
+        await self._flush_remaining(drained, mpsc2_drained)
+        await self._close_databases()
+        self._close_warc_writer()
         self._close_persist_file()
         self._closed = True
         self._closing = False
@@ -4185,109 +4016,76 @@ class EvidenceLog:
             time_span = 0.0
         return {'total_events': self._total_count, 'ram_events': self.ram_size, 'dropped_events': self._dropped_count, 'event_types': type_counts, 'avg_confidence': round(avg_confidence, 4), 'time_span_seconds': round(time_span, 2), 'created_at': self._created_at.isoformat(), 'is_frozen': self._frozen, 'is_closed': self._closed, 'is_closing': self._closing, 'sqlite_open': self._db is not None, 'persist_file_open': self._persist_file is not None and (not self._persist_file.closed), 'persist_path': str(self._persist_path) if self._persist_path else None, 'persistence_enabled': self._enable_persist}
 
-    def get_sprint_health_summary(self) -> dict[str, Any]:
-        """
-        Compact retrospective seam for sprint health assessment.
-
-        Composes existing helpers to answer in one call:
-        - Sprint posture: observation-heavy vs decision-heavy vs error-heavy
-        - Quality signal integrity (where it broke)
-        - Decision confidence distribution
-        - Health status: healthy / degraded / noisy
-        - Top weak spots and error fragment patterns
-
-        Bounded, fail-soft, read-only. Uses existing helpers as primary
-        source; raw event iteration only when helpers don't suffice.
-
-        Returns:
-            Dict with health signals ready for export or local diagnostics
-        """
-        funnel = self.get_event_funnel()
-        decisions = self.get_decision_summary()
-        errors = self.get_error_rate()
-        total = sum((v['count'] for v in funnel.values())) if funnel else 0
+    def _derive_posture(self, funnel) -> tuple:
+        """Derive posture and dominant_pct from funnel."""
         if not funnel:
-            posture = 'empty'
-        else:
-            dominant = max(funnel.items(), key=lambda x: x[1]['count'])
-            dominant_pct = dominant[1]['pct']
-            if dominant_pct < 40:
-                posture = 'balanced'
-            else:
-                match dominant[0]:
-                    case 'observation':
-                        posture = 'observation_heavy'
-                    case 'decision':
-                        posture = 'decision_heavy'
-                    case 'tool_call':
-                        posture = 'tool_heavy'
-                    case 'error':
-                        posture = 'error_heavy'
-                    case 'synthesis':
-                        posture = 'synthesis_heavy'
-                    case _:
-                        posture = f'{dominant[0]}_heavy'
-        quality_breaks = []
-        for et, data in funnel.items():
-            if data['avg_conf'] < 0.7:
-                quality_breaks.append({'event_type': et, 'avg_conf': data['avg_conf'], 'count': data['count']})
-        quality_signal = 'intact' if not quality_breaks else 'degraded'
-        decision_conf = decisions.get('avg_confidence', 0.0)
-        decision_min = decisions.get('min_confidence', 0.0)
-        decision_max = decisions.get('max_confidence', 0.0)
-        decision_count = decisions.get('count', 0)
-        low_conf_decisions = 0
-        if decision_count > 0:
-            for e in self.query(event_type='decision', limit=500):
-                if e.confidence < 0.7:
-                    low_conf_decisions += 1
-        error_rate = errors.get('error_rate', 0.0)
-        low_conf_rate = errors.get('low_conf_rate', 0.0)
+            return 'empty', 0.0
+        dominant = max(funnel.items(), key=lambda x: x[1]['count'])
+        dominant_pct = dominant[1]['pct']
+        if dominant_pct < 40:
+            return 'balanced', 0.0
+        posture_map = {'observation': 'observation_heavy', 'decision': 'decision_heavy', 'tool_call': 'tool_heavy',
+                      'error': 'error_heavy', 'synthesis': 'synthesis_heavy'}
+        return posture_map.get(dominant[0], f'{dominant[0]}_heavy'), dominant_pct
+
+    def _derive_health_status(self, posture, total, error_rate, low_conf_rate) -> str:
+        """Derive health status from error and low_conf rates."""
         if posture == 'empty' or total == 0:
-            health = 'empty'
-        else:
-            match ():
-                case _ if error_rate >= 20 or low_conf_rate >= 30:
-                    health = 'noisy'
-                case _ if error_rate >= 10 or low_conf_rate >= 20:
-                    health = 'degraded'
-                case _ if error_rate >= 5 or low_conf_rate >= 10:
-                    health = 'warning'
-                case _:
-                    health = 'healthy'
-        if posture == 'error_heavy' and error_rate > 15:
-            health = 'degraded' if health == 'healthy' else health
-        weak_spots: dict[str, int] = {}
-        error_events = self.query(event_type='error', limit=100)
-        for e in error_events:
-            payload: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
-            kind = payload.get('kind', 'unknown')
-            msg = payload.get('message', '')[:50]
-            if msg:
-                key = f'[{kind}] {msg}'
-            else:
-                key = f'[{kind}]'
+            return 'empty'
+        if error_rate >= 20 or low_conf_rate >= 30:
+            return 'noisy'
+        if error_rate >= 10 or low_conf_rate >= 20:
+            return 'degraded'
+        if error_rate >= 5 or low_conf_rate >= 10:
+            return 'warning'
+        return 'healthy'
+
+    def _compute_weak_spots(self) -> dict:
+        """Compute weak spots from error events."""
+        weak_spots = {}
+        for e in self.query(event_type='error', limit=100):
+            payload = orjson.loads(e.payload) if e.payload else {}
+            kind, msg = payload.get('kind', 'unknown'), payload.get('message', '')[:50]
+            key = f'[{kind}] {msg}' if msg else f'[{kind}]'
             weak_spots[key] = weak_spots.get(key, 0) + 1
-        top_weak_spots = dict(sorted(weak_spots.items(), key=lambda x: -x[1])[:5])
-        recent_high_conf_decisions = []
+        return dict(sorted(weak_spots.items(), key=lambda x: -x[1])[:5])
+
+    def _compute_recent_high_conf_decisions(self) -> list:
+        """Compute recent high confidence decisions."""
+        result = []
         for e in reversed(self.query(event_type='decision', limit=50)):
             if e.confidence >= 0.9:
-                payload: dict[str, Any] = orjson.loads(e.payload) if e.payload else {}
-                recent_high_conf_decisions.append({'event_id': e.event_id[-12:], 'kind': payload.get('kind', ''), 'conf': e.confidence, 'timestamp': datetime.fromtimestamp(e.timestamp, UTC).isoformat()})
-                if len(recent_high_conf_decisions) >= 3:
+                payload = orjson.loads(e.payload) if e.payload else {}
+                result.append({'event_id': e.event_id[-12:], 'kind': payload.get('kind', ''),
+                             'conf': e.confidence, 'timestamp': datetime.fromtimestamp(e.timestamp, UTC).isoformat()})
+                if len(result) >= 3:
                     break
-        _low_conf_pressure = ''
-        if low_conf_decisions > 0 and decision_count > 0:
-            pressure_pct = low_conf_decisions / decision_count * 100
-            if pressure_pct > 30:
-                _low_conf_pressure = 'high'
-            elif pressure_pct > 15:
-                _low_conf_pressure = 'moderate'
-            else:
-                _low_conf_pressure = 'low'
-        else:
-            _low_conf_pressure = 'none'
-        return {'run_id': self._run_id, 'total_events': total, 'created_at': self._created_at.isoformat(), 'posture': posture, 'dominant_pct': dominant[1]['pct'] if posture not in ('empty', 'balanced') else 0.0, 'quality_signal': quality_signal, 'quality_breaks': quality_breaks[:5], 'decision_count': decision_count, 'decision_avg_conf': round(decision_conf, 4), 'decision_conf_range': [round(decision_min, 4), round(decision_max, 4)], 'low_conf_decisions': low_conf_decisions, 'low_conf_pressure': _low_conf_pressure, 'error_count': errors.get('error_count', 0), 'error_rate_pct': error_rate, 'low_conf_count': errors.get('low_conf_count', 0), 'low_conf_rate_pct': low_conf_rate, 'health': health, 'top_weak_spots': top_weak_spots, 'recent_high_conf_decisions': recent_high_conf_decisions}
+        return result
+
+    def get_sprint_health_summary(self) -> dict[str, Any]:
+        """Compact retrospective seam for sprint health assessment."""
+        funnel, decisions, errors = self.get_event_funnel(), self.get_decision_summary(), self.get_error_rate()
+        total = sum(v['count'] for v in funnel.values()) if funnel else 0
+        posture, dominant_pct = self._derive_posture(funnel)
+        quality_breaks = [{'event_type': et, 'avg_conf': d['avg_conf'], 'count': d['count']} for et, d in funnel.items() if d['avg_conf'] < 0.7]
+        quality_signal = 'intact' if not quality_breaks else 'degraded'
+        decision_count = decisions.get('count', 0)
+        low_conf_decisions = sum(1 for e in self.query(event_type='decision', limit=500) if e.confidence < 0.7) if decision_count > 0 else 0
+        error_rate, low_conf_rate = errors.get('error_rate', 0.0), errors.get('low_conf_rate', 0.0)
+        health = self._derive_health_status(posture, total, error_rate, low_conf_rate)
+        if posture == 'error_heavy' and error_rate > 15 and health == 'healthy':
+            health = 'degraded'
+        pressure_pct = low_conf_decisions / decision_count * 100 if decision_count > 0 else 0
+        low_conf_pressure = 'high' if pressure_pct > 30 else 'moderate' if pressure_pct > 15 else 'low' if low_conf_decisions > 0 else 'none'
+        return {'run_id': self._run_id, 'total_events': total, 'created_at': self._created_at.isoformat(), 'posture': posture,
+            'dominant_pct': dominant_pct, 'quality_signal': quality_signal, 'quality_breaks': quality_breaks[:5],
+            'decision_count': decision_count, 'decision_avg_conf': round(decisions.get('avg_confidence', 0.0), 4),
+            'decision_conf_range': [round(decisions.get('min_confidence', 0.0), 4), round(decisions.get('max_confidence', 0.0), 4)],
+            'low_conf_decisions': low_conf_decisions, 'low_conf_pressure': low_conf_pressure,
+            'error_count': errors.get('error_count', 0), 'error_rate_pct': error_rate,
+            'low_conf_count': errors.get('low_conf_count', 0), 'low_conf_rate_pct': low_conf_rate,
+            'health': health, 'top_weak_spots': self._compute_weak_spots(),
+            'recent_high_conf_decisions': self._compute_recent_high_conf_decisions()}
 
     @staticmethod
     def _derive_continue_reason(continue_or_pivot: str, health_status: str, decision_count: int, biggest_weakness: str) -> str:
@@ -4317,133 +4115,112 @@ class EvidenceLog:
             return 'moderate'
         return 'high'
 
-    def get_retrospective_bundle(self) -> dict[str, Any]:
-        """
-        Single-call retrospective seam for private sprint retro.
-
-        Composes get_sprint_health_summary() as primary source.
-        Bounded raw scan only for signals that helpers don't provide directly.
-
-        Answers in one call:
-        - jaký sprint byl (verdict)
-        - kde se lámal (breakdown)
-        - co fungovalo (what_worked)
-        - největší slabina (biggest_weakness)
-        - pokračovat / pivotnout / inspectnout (continue_or_pivot)
-
-        Operator-facing fields:
-        - operator_takeaway: one-line bottom line
-        - top_retro_actions: 2-3 condensed action items
-
-        Bounded, fail-soft, read-only. Works on empty log.
-
-        Returns:
-            Dict ready for export or local diagnostics
-        """
-        health = self.get_sprint_health_summary()
-        what_worked: list[str] = []
+    def _derive_what_worked(self, health) -> list:
+        """Derive what_worked list from health funnel."""
         funnel = health.get('funnel') or {}
-        for et, data in funnel.items():
-            if data.get('avg_conf', 0) >= 0.85 and data.get('count', 0) >= 2:
-                label = f"{et} (conf={data['avg_conf']:.2f}, n={data['count']})"
-                what_worked.append(label)
-        what_worked = what_worked[:4]
-        breakdown: list[str] = []
-        for break_item in health.get('quality_breaks', []):
-            breakdown.append(f"{break_item['event_type']} conf={break_item['avg_conf']:.2f}")
-        for spot in list(health.get('top_weak_spots', {}).keys())[:3]:
-            breakdown.append(f'error: {spot}')
-        breakdown = breakdown[:5]
-        biggest_weakness = ''
-        weak_spots = health.get('top_weak_spots', {})
-        if weak_spots:
-            biggest_weakness = next(iter(weak_spots.keys()), '')
-        elif breakdown:
-            biggest_weakness = breakdown[0]
-        else:
-            quality_breaks = health.get('quality_breaks', [])
-            if quality_breaks:
-                biggest_weakness = f"{quality_breaks[0]['event_type']} quality gap"
-        posture = health.get('posture', 'unknown')
-        total = health.get('total_events', 0)
-        health_status = health.get('health', 'unknown')
-        error_rate = health.get('error_rate_pct', 0.0)
-        decision_count = health.get('decision_count', 0)
+        return [f"{et} (conf={d['avg_conf']:.2f}, n={d['count']})" for et, d in funnel.items()
+               if d.get('avg_conf', 0) >= 0.85 and d.get('count', 0) >= 2][:4]
+
+    def _derive_breakdown(self, health) -> list:
+        """Derive breakdown list from quality_breaks and weak_spots."""
+        breakdown = [f"{b['event_type']} conf={b['avg_conf']:.2f}" for b in health.get('quality_breaks', [])]
+        breakdown.extend(f'error: {s}' for s in list(health.get('top_weak_spots', {}).keys())[:3])
+        return breakdown[:5]
+
+    def _derive_biggest_weakness(self, health, breakdown) -> str:
+        """Derive biggest weakness from health signals."""
+        if weak_spots := health.get('top_weak_spots', {}):
+            return next(iter(weak_spots.keys()), '')
+        if breakdown:
+            return breakdown[0]
+        if quality_breaks := health.get('quality_breaks', []):
+            return f"{quality_breaks[0]['event_type']} quality gap"
+        return ''
+
+    def _derive_verdict(self, total, health_status, posture, decision_count, error_rate) -> str:
+        """Derive verdict string from health signals."""
         if total == 0:
-            verdict = 'empty log — no events recorded'
-        else:
-            match health_status:
-                case 'healthy':
-                    verdict = f'clean sprint: {posture}, {total} events, {decision_count} decisions'
-                case 'warning':
-                    verdict = f'warning sprint: {posture}, {total} events, {error_rate:.1f}% errors'
-                case 'degraded':
-                    verdict = f'degraded sprint: {posture}, {total} events, {error_rate:.1f}% errors'
-                case 'noisy':
-                    verdict = f'noisy sprint: {posture}, {total} events, {error_rate:.1f}% errors — signal hard to trust'
-                case _:
-                    verdict = f'{posture} sprint: {total} events, health={health_status}'
-        continue_or_pivot = 'continue'
+            return 'empty log — no events recorded'
+        match health_status:
+            case 'healthy': return f'clean sprint: {posture}, {total} events, {decision_count} decisions'
+            case 'warning': return f'warning sprint: {posture}, {total} events, {error_rate:.1f}% errors'
+            case 'degraded': return f'degraded sprint: {posture}, {total} events, {error_rate:.1f}% errors'
+            case 'noisy': return f'noisy sprint: {posture}, {total} events, {error_rate:.1f}% errors — signal hard to trust'
+            case _: return f'{posture} sprint: {total} events, health={health_status}'
+
+    def _derive_continue_or_pivot(self, total, health_status, error_rate, low_conf_pressure) -> str:
+        """Derive continue/inspect/pivot decision."""
         match ():
-            case _ if health_status == 'noisy':
-                continue_or_pivot = 'pivot'
-            case _ if health_status == 'degraded' and error_rate > 15:
-                continue_or_pivot = 'pivot'
-            case _ if health_status == 'degraded':
-                continue_or_pivot = 'inspect'
-            case _ if health_status == 'warning':
-                continue_or_pivot = 'inspect'
-            case _ if health.get('low_conf_pressure') == 'high':
-                continue_or_pivot = 'inspect'
-            case _ if total < 10:
-                continue_or_pivot = 'inspect'
+            case _ if health_status == 'noisy': return 'pivot'
+            case _ if health_status == 'degraded' and error_rate > 15: return 'pivot'
+            case _ if health_status in ('degraded', 'warning'): return 'inspect'
+            case _ if low_conf_pressure == 'high' or total < 10: return 'inspect'
+            case _: return 'continue'
+
+    def _derive_operator_takeaway(self, total, health_status, biggest_weakness, verdict, decision_count) -> str:
+        """Derive operator takeaway string."""
         if total == 0:
-            operator_takeaway = 'no data — sprint not started or all events dropped'
-        else:
-            match health_status:
-                case 'healthy':
-                    operator_takeaway = f'sprint healthy, {decision_count} decisions made, continue'
-                case 'warning':
-                    operator_takeaway = f"sprint has warnings: {(biggest_weakness[:60] if biggest_weakness else 'see breakdown')}"
-                case 'degraded':
-                    operator_takeaway = f"sprint degraded: {(biggest_weakness[:60] if biggest_weakness else 'errors above threshold')}"
-                case 'noisy':
-                    operator_takeaway = f"sprint noisy: {(biggest_weakness[:60] if biggest_weakness else 'too many errors to trust')}"
-                case _:
-                    operator_takeaway = f'sprint status={health_status}, verdict={verdict[:80]}'
-        top_retro_actions: list[str] = []
+            return 'no data — sprint not started or all events dropped'
+        weakness = biggest_weakness[:60] if biggest_weakness else ''
+        match health_status:
+            case 'healthy': return f'sprint healthy, {decision_count} decisions made, continue'
+            case 'warning': return f"sprint has warnings: {weakness or 'see breakdown'}"
+            case 'degraded': return f"sprint degraded: {weakness or 'errors above threshold'}"
+            case 'noisy': return f"sprint noisy: {weakness or 'too many errors to trust'}"
+            case _: return f'sprint status={health_status}, verdict={verdict[:80]}'
+
+    def _derive_top_actions(self, continue_or_pivot, biggest_weakness, error_rate, health, what_worked) -> list:
+        """Derive top retro actions."""
+        actions = []
         if continue_or_pivot == 'pivot':
-            top_retro_actions.append('pivot: root-cause errors blocking progress — investigate before continuing')
+            actions.append('pivot: root-cause errors blocking progress — investigate before continuing')
         elif continue_or_pivot == 'inspect':
-            if biggest_weakness:
-                top_retro_actions.append(f'inspect: {biggest_weakness[:80]}')
-            if error_rate > 5:
-                top_retro_actions.append(f'review error_rate={error_rate:.1f}% — identify top failure modes')
+            if biggest_weakness: actions.append(f'inspect: {biggest_weakness[:80]}')
+            if error_rate > 5: actions.append(f'review error_rate={error_rate:.1f}% — identify top failure modes')
             if health.get('low_conf_pressure') != 'none':
-                top_retro_actions.append(f"review low-conf decisions ({health.get('low_conf_pressure')} pressure)")
+                actions.append(f"review low-conf decisions ({health.get('low_conf_pressure')} pressure)")
         if health.get('low_conf_pressure') == 'high' and continue_or_pivot != 'pivot':
-            top_retro_actions.append('address decision confidence — >30% decisions below 0.7 conf')
+            actions.append('address decision confidence — >30% decisions below 0.7 conf')
         if what_worked and continue_or_pivot == 'continue':
-            top_retro_actions.append(f'leverage what worked: {what_worked[0][:60]}')
-        seen = set()
-        deduped = []
-        for a in top_retro_actions:
-            normalized = a[:60]
-            if normalized not in seen:
-                seen.add(normalized)
+            actions.append(f'leverage what worked: {what_worked[0][:60]}')
+        seen, deduped = set(), []
+        for a in actions:
+            if (norm := a[:60]) not in seen:
+                seen.add(norm)
                 deduped.append(a)
-        top_retro_actions = deduped[:3]
+        return deduped[:3]
+
+    def _derive_health_confidence_note(self, total, health_status, low_conf_pressure) -> str:
+        """Derive health confidence note."""
         if total < 10:
-            _health_confidence_note = f'low confidence: only {total} events — treat verdict as indicative'
-        else:
-            match health_status:
-                case 'noisy':
-                    _health_confidence_note = 'low confidence: error_rate >20% — signal integrity compromised'
-                case _ if health.get('low_conf_pressure') == 'high':
-                    _health_confidence_note = 'moderate confidence: high low-conf decision pressure'
-                case _:
-                    _health_confidence_note = 'confident verdict: sufficient data and low noise'
-        return {'run_id': self._run_id, 'total_events': total, 'verdict': verdict, 'posture': posture, 'health': health_status, 'breakdown': breakdown, 'what_worked': what_worked, 'biggest_weakness': biggest_weakness, 'continue_or_pivot': continue_or_pivot, 'operator_takeaway': operator_takeaway, 'top_retro_actions': top_retro_actions, 'health_confidence_note': _health_confidence_note, 'operator_retro_brief': operator_takeaway, 'continue_reason': self._derive_continue_reason(continue_or_pivot, health_status, decision_count, biggest_weakness), 'trust_level': self._derive_trust_level(total, health_status, health.get('low_conf_pressure', 'none'), error_rate), 'biggest_win': what_worked[0] if what_worked else '', 'retro_priority': top_retro_actions[0] if top_retro_actions else '', '_health': health}
+            return f'low confidence: only {total} events — treat verdict as indicative'
+        match health_status:
+            case 'noisy': return 'low confidence: error_rate >20% — signal integrity compromised'
+            case _ if low_conf_pressure == 'high': return 'moderate confidence: high low-conf decision pressure'
+            case _: return 'confident verdict: sufficient data and low noise'
+
+    def get_retrospective_bundle(self) -> dict[str, Any]:
+        """Single-call retrospective seam for private sprint retro."""
+        health = self.get_sprint_health_summary()
+        total, health_status, posture = health.get('total_events', 0), health.get('health', 'unknown'), health.get('posture', 'unknown')
+        error_rate, decision_count = health.get('error_rate_pct', 0.0), health.get('decision_count', 0)
+        low_conf_pressure = health.get('low_conf_pressure', 'none')
+        what_worked, breakdown = self._derive_what_worked(health), self._derive_breakdown(health)
+        biggest_weakness = self._derive_biggest_weakness(health, breakdown)
+        verdict = self._derive_verdict(total, health_status, posture, decision_count, error_rate)
+        continue_or_pivot = self._derive_continue_or_pivot(total, health_status, error_rate, low_conf_pressure)
+        operator_takeaway = self._derive_operator_takeaway(total, health_status, biggest_weakness, verdict, decision_count)
+        top_retro_actions = self._derive_top_actions(continue_or_pivot, biggest_weakness, error_rate, health, what_worked)
+        health_confidence_note = self._derive_health_confidence_note(total, health_status, low_conf_pressure)
+        return {'run_id': self._run_id, 'total_events': total, 'verdict': verdict, 'posture': posture,
+            'health': health_status, 'breakdown': breakdown, 'what_worked': what_worked, 'biggest_weakness': biggest_weakness,
+            'continue_or_pivot': continue_or_pivot, 'operator_takeaway': operator_takeaway,
+            'top_retro_actions': top_retro_actions, 'health_confidence_note': health_confidence_note,
+            'operator_retro_brief': operator_takeaway,
+            'continue_reason': self._derive_continue_reason(continue_or_pivot, health_status, decision_count, biggest_weakness),
+            'trust_level': self._derive_trust_level(total, health_status, low_conf_pressure, error_rate),
+            'biggest_win': what_worked[0] if what_worked else '', 'retro_priority': top_retro_actions[0] if top_retro_actions else '',
+            '_health': health}
 
     def get_chain(self, event_id: str) -> list[EvidenceEvent]:
         """

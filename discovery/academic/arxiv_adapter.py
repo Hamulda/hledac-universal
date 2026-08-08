@@ -19,10 +19,11 @@ import logging
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
-from typing import TYPE_CHECKING, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 if TYPE_CHECKING:
     from xml.etree.ElementTree import Element
 from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+import httpx
 logger = logging.getLogger(__name__)
 OAI_PMH_ENDPOINT = 'http://export.arxiv.org/oai2'
 MAX_RESULTS = 20
@@ -51,81 +52,151 @@ class ArxivResult(NamedTuple):
     error: str | None
     total_harvested: int = 0
 
+
+# ---------------------------------------------------------------------------
+# Helper functions for _parse_oai_response - reduce complexity
+# ---------------------------------------------------------------------------
+
+# Namespace constants
+_OAI_NS = {'oai': 'http://www.openarchives.org/OAI/2.0/'}
+_ARXIV_NS = {'arxiv': 'http://arxiv.org/schemas/atom'}
+MSC_PATTERN = r'\b\d{2}[A-Z]\d{2}\b'
+
+
+def _find_element(parent: Any, xpaths: list[str], ns: dict[str, str]) -> Any:
+    """Generic element finder - tries multiple xpath variants."""
+    for xp in xpaths:
+        # Try with namespace prefix
+        el = parent.find(xp, ns)
+        if el is not None:
+            return el
+        # Try without namespace as fallback
+        for prefix in ns.values():
+            prefixed = xp.replace('oai:', f'{{{prefix}}}')
+            prefixed = prefixed.replace('arxiv:', f'{{{prefix}}}')
+            el = parent.find(prefixed)
+            if el is not None:
+                return el
+    return None
+
+
+def _extract_text(element: Any) -> str:
+    """Extract and normalize text from element."""
+    if element is None:
+        return ''
+    if element.text is None:
+        return ''
+    return ' '.join(element.text.split())
+
+
+def _parse_authors(metadata: Any) -> tuple[list[str], list[str]]:
+    """Parse authors and ORCIDs from metadata element."""
+    authors = []
+    orcids = []
+    for author_el in metadata.findall('.//author') + metadata.findall('.//{http://arxiv.org/schemas/atom}author'):
+        name_el = author_el.find('name') or author_el.find('.//keyname') or author_el
+        if name_el is not None and name_el.text:
+            authors.append(name_el.text.strip())
+        orcid_el = author_el.find('orcid') or author_el.find('.//{http://arxiv.org/OAI/ArXiv/}orcid')
+        if orcid_el is not None and orcid_el.text:
+            orcid_val = orcid_el.text.strip()
+            if 'orcid.org' in orcid_val or orcid_val.startswith('0000'):
+                orcids.append(orcid_val)
+    return authors, orcids
+
+
+def _parse_categories(metadata: Any) -> list[str]:
+    """Parse categories from metadata element."""
+    cats = []
+    for cat_el in metadata.findall('.//category') + metadata.findall('.//{http://arxiv.org/schemas/atom}category'):
+        term = cat_el.get('term') or cat_el.get('subject')
+        if term:
+            cats.append(term)
+    return cats
+
+
+def _parse_msc_class(metadata: Any) -> str | None:
+    """Parse MSC classification from comment element."""
+    import re
+    for comm in metadata.findall('.//comment') + metadata.findall('.//{http://arxiv.org/schemas/atom}comment'):
+        if comm.text:
+            match = re.search(MSC_PATTERN, comm.text)
+            if match:
+                return match.group(0)
+    return None
+
+
+def _parse_record(record: Any, ns: dict[str, str]) -> dict | None:
+    """Parse single OAI record into dict."""
+    header = record.find('oai:header', ns)
+    if header is None:
+        return None
+    identifier = header.find('oai:identifier', ns)
+    if identifier is None:
+        return None
+    metadata = record.find('oai:metadata', ns)
+    if metadata is None:
+        return None
+
+    data = {}
+    # Title
+    title_el = _find_element(metadata, ['.//arxiv:title', './/{http://arxiv.org/schemas/atom}title', './/title'], ns)
+    data['title'] = _extract_text(title_el)
+
+    # Authors + ORCIDs
+    authors, orcids = _parse_authors(metadata)
+    data['authors'] = authors
+    if orcids:
+        data['orcid'] = orcids
+
+    # Abstract
+    abstract_el = _find_element(metadata, ['.//abstract', './/{http://arxiv.org/schemas/atom}summary', './/summary'], ns)
+    data['abstract'] = _extract_text(abstract_el)
+
+    # Categories
+    data['categories'] = _parse_categories(metadata)
+
+    # MSC class
+    data['msc_class'] = _parse_msc_class(metadata)
+
+    # Journal ref
+    journal_el = _find_element(metadata, ['.//journal-ref', './/{http://arxiv.org/schemas/atom}journal_ref'], ns)
+    if journal_el is not None and journal_el.text:
+        data['journal_ref'] = journal_el.text.strip()
+
+    # DOI
+    doi_el = _find_element(metadata, ['.//doi', './/{http://arxiv.org/schemas/atom}doi'], ns)
+    if doi_el is not None and doi_el.text:
+        data['doi'] = doi_el.text.strip()
+
+    # Published date
+    date_el = _find_element(metadata, ['.//published', './/created'], ns)
+    if date_el is not None and date_el.text:
+        data['published'] = date_el.text[:10]
+
+    # Updated date
+    updated_el = _find_element(metadata, ['.//updated'], ns)
+    if updated_el is not None and updated_el.text:
+        data['updated'] = updated_el.text[:10]
+
+    data['id'] = identifier.text or ''
+    return data
+
+
 def _parse_oai_response(xml_content: bytes) -> list[dict]:
     """Parse OAI-PMH XML response into record dicts."""
     try:
         root = ET.fromstring(xml_content)
-        ns = {'oai': 'http://www.openarchives.org/OAI/2.0/'}
         records = []
-        for record in root.findall('.//oai:record', ns):
-            header = record.find('oai:header', ns)
-            if header is None:
-                continue
-            identifier = cast('Element', header.find('oai:identifier', ns))
-            if identifier is None:
-                continue
-            metadata = record.find('oai:metadata', ns)
-            if metadata is None:
-                continue
-            arxiv_ns = {'arxiv': 'http://arxiv.org/schemas/atom'}
-            data = {}
-            title_el = metadata.find('.//arxiv:title', arxiv_ns) or metadata.find('.//{http://arxiv.org/schemas/atom}title')
-            if title_el is None:
-                title_el = metadata.find('.//title')
-            if title_el is not None:
-                data['title'] = ' '.join(title_el.text.split()) if title_el.text else ''
-            authors = []
-            for author_el in metadata.findall('.//author') + metadata.findall('.//{http://arxiv.org/schemas/atom}author'):
-                name_el = author_el.find('name') or author_el.find('.//keyname') or author_el
-                if name_el is not None and name_el.text:
-                    authors.append(name_el.text.strip())
-                orcid_el = author_el.find('orcid')
-                if orcid_el is None:
-                    orcid_el = author_el.find('.//{http://arxiv.org/OAI/ArXiv/}orcid')
-                if orcid_el is not None and orcid_el.text:
-                    orcid_val = orcid_el.text.strip()
-                    if 'orcid.org' in orcid_val or orcid_val.startswith('0000'):
-                        orcid_list = cast(list[str], data.setdefault('orcid', []))
-                        orcid_list.append(orcid_val)
-            data['authors'] = authors
-            abstract_el = metadata.find('.//abstract') or metadata.find('.//{http://arxiv.org/schemas/atom}summary')
-            if abstract_el is None:
-                abstract_el = metadata.find('.//summary')
-            if abstract_el is not None:
-                data['abstract'] = ' '.join(abstract_el.text.split()) if abstract_el.text else ''
-            categories = []
-            for cat_el in metadata.findall('.//category') + metadata.findall('.//{http://arxiv.org/schemas/atom}category'):
-                term = cat_el.get('term') or cat_el.get('subject')
-                if term:
-                    categories.append(term)
-            data['categories'] = categories
-            msc = None
-            for comm in metadata.findall('.//comment') + metadata.findall('.//{http://arxiv.org/schemas/atom}comment'):
-                if comm.text:
-                    import re
-                    match = re.search(MSC_PATTERN, comm.text)
-                    if match:
-                        msc = match.group(0)
-                        break
-            data['msc_class'] = msc
-            journal_el = metadata.find('.//journal-ref') or metadata.find('.//{http://arxiv.org/schemas/atom}journal_ref')
-            if journal_el is not None and journal_el.text:
-                data['journal_ref'] = journal_el.text.strip()
-            doi_el = metadata.find('.//doi') or metadata.find('.//{http://arxiv.org/schemas/atom}doi')
-            if doi_el is not None and doi_el.text:
-                data['doi'] = doi_el.text.strip()
-            date_el = metadata.find('.//published') or metadata.find('.//created')
-            if date_el is not None and date_el.text:
-                data['published'] = date_el.text[:10]
-            updated_el = metadata.find('.//updated')
-            if updated_el is not None and updated_el.text:
-                data['updated'] = updated_el.text[:10]
-            data['id'] = cast('Element', identifier).text or ''
-            records.append(data)
+        for record in root.findall('.//oai:record', _OAI_NS):
+            parsed = _parse_record(record, _OAI_NS)
+            if parsed is not None:
+                records.append(parsed)
         return records
     except ET.ParseError as e:
         logger.error(f'OAI XML parse error: {e}')
         return []
+
 
 class ArxivAdapter:
     """arXiv OAI-PMH bulk access adapter."""
@@ -158,11 +229,11 @@ class ArxivAdapter:
                 elif query:
                     return await self._search_mode(query, max_results)
                 url = f'{OAI_PMH_ENDPOINT}?{urllib.parse.urlencode(params)}'
-                async with asyncio.timeout(REQUEST_TIMEOUT_S):
-                    async with session.get(url) as resp:
-                        if resp.status_code != 200:
-                            return ArxivResult([], f'HTTP {resp.status_code}')
-                        content = await resp.read()
+                async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT_S) as client:
+                    response = await client.get(url)
+                if response.status_code != 200:
+                    return ArxivResult([], f'HTTP {response.status_code}')
+                content = response.content
                 records = _parse_oai_response(content)
                 for rec in records[:max_results]:
                     papers.append(ArxivPaper(id=rec.get('id', ''), title=rec.get('title', ''), authors=rec.get('authors', []), abstract=rec.get('abstract', ''), categories=rec.get('categories', []), msc_class=rec.get('msc_class'), journal_ref=rec.get('journal_ref'), orcid=rec.get('orcid', []), published=rec.get('published', ''), updated=rec.get('updated', ''), doi=rec.get('doi'), pdf_url=f"https://arxiv.org/pdf/{rec.get('id', '')}.pdf"))

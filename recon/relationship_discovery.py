@@ -1138,17 +1138,19 @@ class RelationshipDiscoveryEngine:
         self._community_cache = None
         self._affinity_cache.clear()
 
+    def _compute_nx_centrality(self, graph, nx, metric: str) -> dict:
+        """Compute centrality using NetworkX."""
+        try:
+            return {'betweenness': nx.betweenness_centrality, 'closeness': nx.closeness_centrality,
+                    'degree': lambda g, **kw: dict(nx.degree_centrality(g)),
+                    'eigenvector': lambda g, **kw: nx.eigenvector_centrality(g, weight='weight', max_iter=100),
+                    'pagerank': lambda g, **kw: nx.pagerank(g, weight='weight'),
+                    'harmonic': nx.harmonic_centrality}.get(metric, lambda *a, **k: {})(graph, weight='weight')
+        except nx.PowerIterationFailedConvergence:
+            return dict.fromkeys(graph.nodes(), 0.0)
+
     def calculate_centrality(self, metric: str='betweenness', use_mlx: bool=False) -> dict[str, float]:
-        """
-        Calculate centrality metrics for all entities.
-
-        Args:
-            metric: Centrality metric (betweenness, closeness, degree, eigenvector, pagerank)
-            use_mlx: Use MLX acceleration if available
-
-        Returns:
-            Dictionary mapping entity IDs to centrality scores
-        """
+        """Calculate centrality metrics for all entities."""
         if metric in self._centrality_cache:
             return self._centrality_cache[metric]
         start_time = time.time()
@@ -1158,39 +1160,22 @@ class RelationshipDiscoveryEngine:
         graph = self._build_networkx_graph()
         if len(graph.nodes()) == 0:
             return {}
-        if metric == 'betweenness':
-            scores = nx.betweenness_centrality(graph, weight='weight')
-        elif metric == 'closeness':
-            scores = nx.closeness_centrality(graph)
-        elif metric == 'degree':
-            scores = dict(nx.degree_centrality(graph))
-        elif metric == 'eigenvector':
-            try:
-                scores = nx.eigenvector_centrality(graph, weight='weight', max_iter=100)
-            except nx.PowerIterationFailedConvergence:
-                scores = dict.fromkeys(graph.nodes(), 0.0)
-        elif metric == 'pagerank':
-            scores = nx.pagerank(graph, weight='weight')
-        elif metric == 'harmonic':
-            scores = nx.harmonic_centrality(graph)
-        else:
+        if metric not in ('betweenness', 'closeness', 'degree', 'eigenvector', 'pagerank', 'harmonic'):
             raise ValueError(f'Unknown centrality metric: {metric}')
+        scores = self._compute_nx_centrality(graph, nx, metric)
         if use_mlx and self.enable_mlx and MLX_AVAILABLE:
             scores = self._mlx_batch_centrality(scores)
         self._centrality_cache[metric] = scores
         self._stats['centrality_calculations'] += 1
         logger.debug(f'Calculated {metric} centrality (networkx) in {time.time() - start_time:.3f}s')
-        # igraph enhancement — only if NX primary succeeded and igraph is available
         if IGRAPH_AVAILABLE:
             try:
                 ig_scores = self._calculate_centrality_igraph(metric)
-                if ig_scores is not None:
-                    # Merge: prefer NX, add igraph-only keys
+                if ig_scores:
                     for k, v in ig_scores.items():
                         if k not in scores:
                             scores[k] = v
-                    logger.debug(f'igraph enhanced {metric} centrality with {len(ig_scores) - len([k for k in ig_scores if k in scores])} additional nodes')
-            except Exception:  # noqa: BLE001 — igraph enhancement is best-effort
+            except Exception:
                 pass
         return scores
 
@@ -1302,6 +1287,49 @@ class RelationshipDiscoveryEngine:
                 pass
         return stats
 
+    def _compute_partition(self, undirected, algorithm: str, resolution: float) -> dict:
+        """Compute partition using the specified algorithm."""
+        nx = _get_nx()
+        match algorithm:
+            case 'louvain' if LOUVAIN_AVAILABLE:
+                return community_louvain.best_partition(undirected, weight='weight', resolution=resolution)
+            case 'label_propagation':
+                communities = nx.community.label_propagation_communities(undirected)
+                return {node: i for i, comm in enumerate(communities) for node in comm}
+            case _:
+                communities = nx.connected_components(undirected)
+                return {node: i for i, comm in enumerate(communities) for node in comm}
+
+    def _build_community(self, comm_id: int, members: set, undirected) -> Community:
+        """Build a Community object from members."""
+        nx = _get_nx()
+        subgraph = undirected.subgraph(members)
+        density = nx.density(subgraph) if len(members) > 1 else 0.0
+        entity_types = defaultdict(int)
+        for member in members:
+            if entity := self._entities.get(member):
+                etype = entity.type.value if isinstance(entity.type, EntityType) else str(entity.type)
+                entity_types[etype] += 1
+        return Community(id=comm_id, members=members, density=density, entity_types=dict(entity_types))
+
+    def _validate_with_igraph(self, undirected, partition: dict, resolution: float) -> None:
+        """Validate NX partition with igraph's community_multilevel (best-effort)."""
+        if not IGRAPH_AVAILABLE:
+            return
+        try:
+            ig = self._build_igraph_graph()
+            ig_undirected = ig.as_undirected()
+            if ig.vcount() > 0:
+                ig_result = ig_undirected.community_multilevel(weights='weight', resolution=resolution)
+                ig_partition = {ig.vs[node]['id']: i for i, comm in enumerate(ig_result) for node in comm}
+                nx_node_ids = {n for members in defaultdict(set, {k: v for k, v in partition.items()}).values() for n in members}
+                for node_id in ig_partition:
+                    if node_id not in nx_node_ids:
+                        pass  # Handle gracefully
+                logger.debug('igraph community_multilevel validated against NX louvain')
+        except Exception:  # noqa: BLE001
+            pass
+
     def detect_communities(self, algorithm: str='louvain', resolution: float=1.0) -> list[Community]:
         """
         Detect communities in the relationship graph.
@@ -1316,126 +1344,82 @@ class RelationshipDiscoveryEngine:
         if self._community_cache is not None:
             return self._community_cache
         start_time = time.time()
+        communities = self._run_community_detection(algorithm, resolution)
+        if communities:
+            self._validate_with_igraph(self._build_networkx_graph().to_undirected(), {}, resolution)
+            self._community_cache = communities
+            self._stats['community_detections'] += 1
+            logger.debug(f'Detected {len(communities)} communities in {time.time() - start_time:.3f}s')
+        return communities
+
+    def _run_community_detection(self, algorithm: str, resolution: float) -> list[Community]:
+        """Run community detection algorithm and return sorted communities."""
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for community detection')
-        nx = _get_nx()
         graph = self._build_networkx_graph()
         if graph.number_of_nodes() == 0:
             return []
         undirected = graph.to_undirected()
-        if algorithm == 'louvain' and LOUVAIN_AVAILABLE:
-            partition = community_louvain.best_partition(undirected, weight='weight', resolution=resolution)
-        elif algorithm == 'label_propagation':
-            communities_nx = nx.community.label_propagation_communities(undirected)
-            partition = {}
-            for i, comm in enumerate(communities_nx):
-                for node in comm:
-                    partition[node] = i
-        else:
-            communities_nx = nx.connected_components(undirected)
-            partition = {}
-            for i, comm in enumerate(communities_nx):
-                for node in comm:
-                    partition[node] = i
+        partition = self._compute_partition(undirected, algorithm, resolution)
+        community_groups = self._group_nodes_by_community(partition)
+        communities = [self._build_community(comm_id, members, undirected) for comm_id, members in community_groups.items()]
+        communities.sort(key=lambda c: len(c.members), reverse=True)
+        return communities
+
+    def _group_nodes_by_community(self, partition: dict) -> dict[int, set[str]]:
+        """Group nodes by their community ID."""
         community_groups: dict[int, set[str]] = defaultdict(set)
         for node, comm_id in partition.items():
             community_groups[comm_id].add(node)
-        communities: list[Community] = []
-        for comm_id, members in community_groups.items():
-            subgraph = undirected.subgraph(members)
-            density = nx.density(subgraph) if len(members) > 1 else 0.0
-            entity_types: dict[str, int] = defaultdict(int)
-            for member in members:
-                entity = self._entities.get(member)
-                if entity:
-                    etype = entity.type.value if isinstance(entity.type, EntityType) else str(entity.type)
-                    entity_types[etype] += 1
-            community = Community(id=comm_id, members=members, density=density, entity_types=dict(entity_types))
-            communities.append(community)
-        communities.sort(key=lambda c: len(c.members), reverse=True)
-        # igraph enhancement — use igraph's community_multilevel if available (superior to python-louvain)
-        if IGRAPH_AVAILABLE and algorithm == 'louvain' and LOUVAIN_AVAILABLE:
-            try:
-                ig = self._build_igraph_graph()
-                ig_undirected = ig.as_undirected()
-                if ig.vcount() > 0:
-                    ig_partition_result = ig_undirected.community_multilevel(weights='weight', resolution=resolution)
-                    ig_partition = {}
-                    for i, comm in enumerate(ig_partition_result):
-                        for node in comm:
-                            ig_partition[ig.vs[node]['id']] = i
-                    # Merge: NX louvain is primary, igraph adds nodes NX missed
-                    nx_node_ids = {n for members in community_groups.values() for n in members}
-                    for node_id, ig_comm_id in ig_partition.items():
-                        if node_id not in nx_node_ids:
-                            # This should not happen, but handle gracefully
-                            pass
-                    logger.debug(f'igraph community_multilevel validated against NX louvain')
-            except Exception:  # noqa: BLE001 — igraph enhancement is best-effort
-                pass
-        self._community_cache = communities
-        self._stats['community_detections'] += 1
-        logger.debug(f'Detected {len(communities)} communities in {time.time() - start_time:.3f}s')
-        return communities
+        return community_groups
 
-    def find_hidden_paths(self, entity_a: str, entity_b: str, max_depth: int=6, min_strength: float=0.0, max_paths: int=10) -> list[ConnectionPath]:
-        """
-        Find hidden connection paths between two entities.
-
-        Args:
-            entity_a: Starting entity ID
-            entity_b: Target entity ID
-            max_depth: Maximum path length
-            min_strength: Minimum relationship strength threshold
-            max_paths: Maximum number of paths to return
-
-        Returns:
-            List of connection paths
-        """
-        if entity_a not in self._entities or entity_b not in self._entities:
-            logger.warning(f'Entities not found: {entity_a} or {entity_b}')
-            return []
-        start_time = time.time()
-        if not NETWORKX_AVAILABLE:
-            raise ImportError('NetworkX is required for path finding')
-        nx = _get_nx()
+    def _build_filtered_graph(self, min_strength: float):
+        """Build NetworkX graph with optional strength filtering."""
+        if not NETWORKX_AVAILABLE: raise ImportError('NetworkX is required for path finding')
         graph = self._build_networkx_graph()
         if min_strength > 0:
-            edges_to_remove = [(u, v) for u, v, d in graph.edges(data=True) if d.get('weight', 0) < min_strength]
+            edges = [(u, v) for u, v, d in graph.edges(data=True) if d.get('weight', 0) < min_strength]
             graph = graph.copy()
-            graph.remove_edges_from(edges_to_remove)
-        paths: list[ConnectionPath] = []
+            graph.remove_edges_from(edges)
+        return graph
+
+    def _extract_path_details(self, path_nodes) -> tuple:
+        """Extract relationships and total strength from path nodes."""
+        path_rels, total_strength = [], 1.0
+        for src, tgt in zip(path_nodes, path_nodes[1:]):
+            if rel := self._find_relationship(src, tgt):
+                path_rels.append(rel)
+                total_strength *= rel.strength
+        return path_rels, total_strength
+
+    def _enhance_paths_igraph(self, entity_a, entity_b, max_depth, current_count):
+        """Enhance with igraph if available and beneficial."""
+        if not IGRAPH_AVAILABLE or not current_count: return
         try:
-            for path_nodes in nx.all_simple_paths(graph.to_undirected(), entity_a, entity_b, cutoff=max_depth):
-                if len(paths) >= max_paths:
-                    break
-                path_rels: list[Relationship] = []
-                total_strength = 1.0
-                for source, target in zip(path_nodes, path_nodes[1:]):
-                    rel = self._find_relationship(source, target)
-                    if rel:
-                        path_rels.append(rel)
-                        total_strength *= rel.strength
-                if path_rels:
-                    connection_path = ConnectionPath(entities=list(path_nodes), relationships=path_rels, total_strength=total_strength, path_length=len(path_nodes) - 1, path_type=self._classify_path_type(path_rels))
-                    paths.append(connection_path)
+            ig = self._build_igraph_graph()
+            ig.vs['id'] = [self._idx_to_entity_id.get(i, str(i)) for i in range(ig.vcount())]
+            if (a_idx := next((i for i, n in enumerate(ig.vs['id']) if n == entity_a), None)) is not None:
+                if (b_idx := next((i for i, n in enumerate(ig.vs['id']) if n == entity_b), None)) is not None:
+                    ig_paths = list(ig.as_undirected().get_all_simple_paths(a_idx, to=b_idx, cutoff=max_depth))
+                    if len(ig_paths) > current_count:
+                        logger.debug(f'igraph found {len(ig_paths)} paths vs NX {current_count}')
+        except Exception:  # noqa: BLE001
+            pass
+
+    def find_hidden_paths(self, entity_a: str, entity_b: str, max_depth: int=6, min_strength: float=0.0, max_paths: int=10) -> list[ConnectionPath]:
+        """Find hidden connection paths between two entities."""
+        if entity_a not in self._entities or entity_b not in self._entities:
+            logger.warning(f'Entities not found: {entity_a} or {entity_b}'); return []
+        start_time, paths, nx = time.time(), [], _get_nx()
+        try:
+            for path_nodes in nx.all_simple_paths(self._build_filtered_graph(min_strength).to_undirected(), entity_a, entity_b, cutoff=max_depth):
+                if len(paths) >= max_paths: break
+                if path_rels := self._extract_path_details(path_nodes)[0]:
+                    paths.append(ConnectionPath(entities=list(path_nodes), relationships=path_rels, total_strength=self._extract_path_details(path_nodes)[1], path_length=len(path_nodes) - 1, path_type=self._classify_path_type(path_rels)))
         except nx.NetworkXNoPath:  # noqa: BLE001
             pass
         paths.sort(key=attrgetter("total_strength"), reverse=True)
-        # igraph enhancement — use igraph's get_all_simple_paths for richer path data
-        if IGRAPH_AVAILABLE and paths:
-            try:
-                ig = self._build_igraph_graph()
-                ig_undirected = ig.as_undirected()
-                ig.vs['id'] = [self._idx_to_entity_id.get(i, str(i)) for i in range(ig.vcount())]
-                a_idx = next((i for i, nid in enumerate(ig.vs['id']) if nid == entity_a), None)
-                b_idx = next((i for i, nid in enumerate(ig.vs['id']) if nid == entity_b), None)
-                if a_idx is not None and b_idx is not None:
-                    ig_paths = list(ig_undirected.get_all_simple_paths(a_idx, to=b_idx, cutoff=max_depth))
-                    if len(ig_paths) > len(paths):
-                        logger.debug(f'igraph found {len(ig_paths)} paths vs NX {len(paths)} — using igraph as enhancement')
-            except Exception:  # noqa: BLE001 — igraph enhancement is best-effort
-                pass
+        self._enhance_paths_igraph(entity_a, entity_b, max_depth, len(paths))
         self._stats['path_searches'] += 1
         logger.debug(f'Found {len(paths)} paths in {time.time() - start_time:.3f}s')
         return paths
@@ -1554,6 +1538,107 @@ class RelationshipDiscoveryEngine:
             logger.warning(f'MLX similarity computation failed: {e}, falling back to NumPy')
             return self._numpy_similarity_matrix(vectors, metric)
 
+    def _find_single_igraph_path(self, g, seed_idx: int, target: str, score: float) -> ConnectionPath | None:
+        """Find a single path from seed to target."""
+        try:
+            target_idx = g.vs.find(id=target).index
+            path_nodes = g.get_shortest_paths(seed_idx, to=target_idx, weights='weight', output='vpath')[0]
+            if path_nodes:
+                return ConnectionPath(
+                    entities=[g.vs[n]['id'] for n in path_nodes],
+                    relationships=[],
+                    total_strength=score,
+                    path_length=len(path_nodes) - 1,
+                    path_type='influence'
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    def _build_igraph_paths(
+        self, g, seed_entities: list[str],
+        influence_scores: dict[str, float], max_paths: int = 20
+    ) -> list[ConnectionPath]:
+        """Build propagation paths from igraph graph."""
+        propagation_paths: list[ConnectionPath] = []
+        sorted_scores = sorted(influence_scores.items(), key=itemgetter(1), reverse=True)
+        for seed in seed_entities:
+            if seed not in influence_scores:
+                continue
+            try:
+                seed_idx = g.vs.find(id=seed).index
+            except Exception:  # noqa: BLE001
+                continue
+            for target, score in sorted_scores[:5]:
+                if target == seed or score < 0.1:
+                    continue
+                if len(propagation_paths) >= max_paths:
+                    break
+                if path := self._find_single_igraph_path(g, seed_idx, target, score):
+                    propagation_paths.append(path)
+        return propagation_paths
+
+    def _compute_igraph_influence(self, seed_entities: list[str]) -> tuple[dict[str, float], list[ConnectionPath]]:
+        """Compute influence using igraph pagerank and path finding."""
+        g = self._build_igraph_graph()
+        if g.vcount() == 0:
+            return {}, []
+        pr = g.pagerank(weights='weight' if g.es else None)
+        influence_scores = {g.vs[i]['id']: pr[i] for i in range(g.vcount())}
+        propagation_paths = self._build_igraph_paths(g, seed_entities, influence_scores)
+        return influence_scores, propagation_paths
+
+    def _compute_networkx_influence(
+        self, seed_entities: list[str], iterations: int,
+        damping: float, convergence_threshold: float
+    ) -> tuple[dict[str, float], int, float, bool]:
+        """Compute influence using NetworkX iterative propagation with convergence."""
+        graph = self._build_networkx_graph()
+        if graph.number_of_nodes() == 0:
+            return {}, 0, 0.0, False
+        influence_scores: dict[str, float] = dict.fromkeys(graph.nodes(), 0.0)
+        for seed in seed_entities:
+            if seed in influence_scores:
+                influence_scores[seed] = 1.0
+        prev_scores = influence_scores.copy()
+        converged = False
+        actual_iterations = 0
+        delta = 0.0
+        for iteration in range(iterations):
+            new_scores = influence_scores.copy()
+            for node in graph.nodes():
+                if node in seed_entities:
+                    continue
+                incoming = 0.0
+                for predecessor in graph.predecessors(node):
+                    weight = graph[predecessor][node].get('weight', 1.0)
+                    out_degree = graph.out_degree(predecessor)
+                    if out_degree > 0:
+                        incoming += prev_scores[predecessor] * weight / out_degree
+                new_scores[node] = (1 - damping) * influence_scores[node] + damping * incoming
+            delta = sum(abs(new_scores[n] - prev_scores[n]) for n in graph.nodes())
+            prev_scores = new_scores
+            actual_iterations = iteration + 1
+            if delta < convergence_threshold:
+                converged = True
+                break
+        return prev_scores, actual_iterations, delta, converged
+
+    def _build_networkx_paths(self, seed_entities: list[str], influence_scores: dict[str, float]) -> list[ConnectionPath]:
+        """Build propagation paths from influence scores (NetworkX path)."""
+        propagation_paths: list[ConnectionPath] = []
+        sorted_scores = sorted(influence_scores.items(), key=itemgetter(1), reverse=True)
+        for seed in seed_entities:
+            for target, score in sorted_scores:
+                if target == seed or score <= 0.1:
+                    continue
+                if len(propagation_paths) >= 20:
+                    break
+                paths = self.find_hidden_paths(seed, target, max_depth=4, max_paths=1)
+                if paths:
+                    propagation_paths.append(paths[0])
+        return propagation_paths[:20]
+
     def model_influence_propagation(self, seed_entities: list[str], iterations: int=100, damping: float=0.85, convergence_threshold: float=1e-06) -> InfluenceModel:
         """
         Model influence propagation through the network.
@@ -1570,81 +1655,29 @@ class RelationshipDiscoveryEngine:
         start_time = time.time()
         if IGRAPH_AVAILABLE:
             try:
-                g = self._build_igraph_graph()
-                if g.vcount() == 0:
-                    return InfluenceModel(seed_entities=seed_entities, influence_scores={}, propagation_paths=[], iterations=0, convergence_delta=0.0)
-                pr = g.pagerank(weights='weight' if g.es else None)
-                influence_scores = {g.vs[i]['id']: pr[i] for i in range(g.vcount())}
-                propagation_paths: list[ConnectionPath] = []
-                max_paths = 20
-                for seed in seed_entities:
-                    if seed not in influence_scores:
-                        continue
-                    try:
-                        seed_idx = g.vs.find(id=seed).index
-                    except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                        continue
-                    sorted_targets = sorted(influence_scores.items(), key=lambda x: x[1], reverse=True)
-                    for target, score in sorted_targets[:5]:
-                        if target == seed or score < 0.1:
-                            continue
-                        try:
-                            target_idx = g.vs.find(id=target).index
-                            path_nodes = g.get_shortest_paths(seed_idx, to=target_idx, weights='weight', output='vpath')[0]
-                            if path_nodes:
-                                path_entities = [g.vs[n]['id'] for n in path_nodes]
-                                path = ConnectionPath(entities=path_entities, relationships=[], total_strength=score, path_length=len(path_nodes) - 1, path_type='influence')
-                                propagation_paths.append(path)
-                                if len(propagation_paths) >= max_paths:
-                                    break
-                        except Exception:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
-                            continue
-                    if len(propagation_paths) >= max_paths:
-                        break
+                influence_scores, propagation_paths = self._compute_igraph_influence(seed_entities)
                 logger.debug(f'Influence propagation (igraph) in {time.time() - start_time:.3f}s')
-                return InfluenceModel(seed_entities=seed_entities, influence_scores=influence_scores, propagation_paths=propagation_paths, iterations=0, convergence_delta=0.0)
-            except Exception as e:  # noqa: BLE001 — best-effort; best-effort fallback; non-critical
+                return InfluenceModel(
+                    seed_entities=seed_entities,
+                    influence_scores=influence_scores,
+                    propagation_paths=propagation_paths,
+                    iterations=0, convergence_delta=0.0
+                )
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f'igraph influence propagation failed: {e}, falling back to networkx')
         if not NETWORKX_AVAILABLE:
             raise ImportError('NetworkX is required for influence modeling')
-        graph = self._build_networkx_graph()
-        if graph.number_of_nodes() == 0:
-            return InfluenceModel(seed_entities=seed_entities, influence_scores={}, propagation_paths=[], iterations=0, convergence_delta=0.0)
-        influence_scores: dict[str, float] = dict.fromkeys(graph.nodes(), 0.0)
-        for seed in seed_entities:
-            if seed in influence_scores:
-                influence_scores[seed] = 1.0
-        prev_scores = influence_scores.copy()
-        converged = False
-        actual_iterations = 0
-        for iteration in range(iterations):
-            new_scores = influence_scores.copy()
-            for node in graph.nodes():
-                if node in seed_entities:
-                    continue
-                incoming = 0.0
-                for predecessor in graph.predecessors(node):
-                    weight = graph[predecessor][node].get('weight', 1.0)
-                    out_degree = graph.out_degree(predecessor)
-                    if out_degree > 0:
-                        incoming += prev_scores[predecessor] * weight / out_degree
-                new_scores[node] = (1 - damping) * influence_scores[node] + damping * incoming
-            delta = sum((abs(new_scores[n] - prev_scores[n]) for n in graph.nodes()))
-            prev_scores = new_scores
-            actual_iterations = iteration + 1
-            if delta < convergence_threshold:
-                converged = True
-                break
-        influence_scores = prev_scores
-        propagation_paths: list[ConnectionPath] = []
-        for seed in seed_entities:
-            for target, score in sorted(influence_scores.items(), key=lambda x: x[1], reverse=True):
-                if target != seed and score > 0.1:
-                    paths = self.find_hidden_paths(seed, target, max_depth=4, max_paths=1)
-                    if paths:
-                        propagation_paths.append(paths[0])
-        propagation_paths = propagation_paths[:20]
-        return InfluenceModel(seed_entities=seed_entities, influence_scores=influence_scores, propagation_paths=propagation_paths, iterations=actual_iterations, convergence_delta=delta if converged else float('inf'))
+        influence_scores, actual_iterations, delta, converged = self._compute_networkx_influence(
+            seed_entities, iterations, damping, convergence_threshold
+        )
+        propagation_paths = self._build_networkx_paths(seed_entities, influence_scores)
+        return InfluenceModel(
+            seed_entities=seed_entities,
+            influence_scores=influence_scores,
+            propagation_paths=propagation_paths,
+            iterations=actual_iterations,
+            convergence_delta=delta if converged else float('inf')
+        )
 
     def export_graph(self) -> Any:
         """Export the relationship graph as NetworkX graph."""

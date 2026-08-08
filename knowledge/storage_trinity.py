@@ -344,7 +344,7 @@ class StorageTrinity:
         t0 = _time.monotonic()
         try:
             # Buffer findings for async embedding + LanceDB upsert
-            self._semantic_store.add_text(
+            await self._semantic_store.add_text(
                 text=self._extract_payload_text(findings),
                 source_type=self._extract_source_type(findings),
                 finding_id=self._extract_finding_id(findings),

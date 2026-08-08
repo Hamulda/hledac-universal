@@ -333,87 +333,20 @@ class ForensicsEnricher:
         finding_id = getattr(finding, 'finding_id', 'unknown')
         enrichment: dict[str, Any] = {'finding_id': finding_id, 'file_path': file_path, 'metadata': None, 'steganography': None, 'ghosts': None, 'enrichment_available': False, '_payload_text': payload_text or ''}
         forensics_result = ForensicsResult(finding_id=finding_id, file_path=file_path, enrichment_available=False)
-        if file_path and self._extractor is not None:
-            if _file_has_forensics_support(file_path):
-                try:
-                    result = await self._extractor.extract(file_path)
-                    if result is not None:
-                        enrichment['metadata'] = result.to_dict()
-                except Exception as exc:
-                    log.debug('Forensics metadata extraction failed for %s: %s', finding_id, exc)
-        if file_path and _STEGANOGRAPHY_AVAILABLE:
-            ext = Path(file_path).suffix.lower()
-            if ext in {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp'}:
-                try:
-                    stego_data = await _run_stego_analysis(file_path)
-                    if stego_data:
-                        enrichment['steganography'] = stego_data
-                except Exception as exc:
-                    log.debug('Steganography analysis failed for %s: %s', finding_id, exc)
-        if file_path and _DIGITAL_GHOST_AVAILABLE:
-            try:
-                ghost_data = await self._run_ghost_analysis_async(file_path)
-                if ghost_data:
-                    enrichment['ghosts'] = ghost_data
-            except Exception as exc:
-                log.debug('Digital ghost detection failed for %s: %s', finding_id, exc)
+
+        # File-based enrichments
+        await self._enrich_file_metadata(file_path, finding_id, enrichment)
+        await self._enrich_steganography(file_path, finding_id, enrichment)
+        await self._enrich_digital_ghosts(file_path, finding_id, enrichment)
+
+        # Domain-based enrichments
         if domain:
-            try:
-                async with asyncio.TaskGroup() as tg:
-                    t_whois = tg.create_task(self._whois_lookup(domain), name='forensics:whois')
-                    t_ssl = tg.create_task(self._ssl_lookup(domain, 443), name='forensics:ssl')
-                    t_dns = tg.create_task(self._dns_lookup(domain), name='forensics:dns')
-                    t_rdns = tg.create_task(self._rdns_lookup(domain), name='forensics:rdns')
-                whois_data = t_whois.result()
-                ssl_data = t_ssl.result()
-                dns_data = t_dns.result()
-                rdns_data = t_rdns.result()
-            except* (asyncio.TimeoutError, OSError, socket.gaierror) as eg:
-                log.debug('[FORENSICS] parallel domain lookup timeout/DNS error: %s', eg)
-                whois_data = ssl_data = dns_data = rdns_data = None
-            except* Exception as eg:
-                first_exc = eg.exceptions[0] if eg.exceptions else eg
-                log.debug('[FORENSICS] parallel domain lookup unexpected error: %s', first_exc)
-                whois_data = ssl_data = dns_data = rdns_data = None
-            if whois_data:
-                forensics_result.whois = whois_data
-                forensics_result.enrichment_available = True
-            if ssl_data:
-                forensics_result.ssl = ssl_data
-                forensics_result.enrichment_available = True
-            if dns_data:
-                forensics_result.dns = dns_data
-                forensics_result.enrichment_available = True
-            if rdns_data:
-                forensics_result.rdns = rdns_data
-                forensics_result.enrichment_available = True
-        if hasattr(finding, 'payload'):
-            payload = finding.payload or {}
-            email_meta = payload.get('email_metadata', {}) or payload.get('email', {})
-            x_originating_ip = email_meta.get('originating_ip') or email_meta.get('x_originating_ip')
-            if x_originating_ip:
-                try:
-                    import ipaddress
-                    ip = ipaddress.ip_address(x_originating_ip)
-                    if not ip.is_private and (not ip.is_loopback) and (not ip.is_reserved):
-                        try:
-                            async with asyncio.TaskGroup() as tg:
-                                t_whois_ip = tg.create_task(self._whois_lookup(x_originating_ip), name='forensics:xip_whois')
-                                t_rdns_ip = tg.create_task(self._rdns_lookup(x_originating_ip), name='forensics:xip_rdns')
-                            whois_ip_data = t_whois_ip.result()
-                            rdns_ip_data = t_rdns_ip.result()
-                        except* (asyncio.TimeoutError, OSError, socket.gaierror) as eg:
-                            log.debug('[FORENSICS] x_originating_ip lookup timeout/DNS error: %s', eg)
-                            whois_ip_data = rdns_ip_data = None
-                        except* Exception as eg:
-                            first_exc = eg.exceptions[0] if eg.exceptions else eg
-                            log.debug('[FORENSICS] x_originating_ip lookup unexpected error: %s', first_exc)
-                            whois_ip_data = rdns_ip_data = None
-                        if whois_ip_data or rdns_ip_data:
-                            enrichment['x_originating_ip_enrichment'] = {'ip': x_originating_ip, 'whois': whois_ip_data, 'rdns': rdns_ip_data}
-                            forensics_result.enrichment_available = True
-                except Exception:  # noqa: BLE001
-                    pass
+            await self._enrich_domain_lookups(domain, forensics_result)
+
+        # IP-based enrichments from email
+        await self._enrich_ip_lookups(finding, forensics_result, enrichment)
+
+        # Check if any enrichment succeeded
         if any((v is not None for k, v in enrichment.items() if k not in ('finding_id', 'file_path', 'enrichment_available'))):
             enrichment['enrichment_available'] = True
             forensics_result.enrichment_available = True
@@ -425,6 +358,112 @@ class ForensicsEnricher:
         if hasattr(finding, 'metadata') and isinstance(finding.metadata, dict):
             finding.metadata['forensics'] = forensics_result.to_dict()
         return enrichment
+
+    # ------------------------------------------------------------------
+    # Complexity-reduced helpers for enrich (complexity: 27 → ~10)
+    # ------------------------------------------------------------------
+
+    async def _enrich_file_metadata(self, file_path: str | None, finding_id: str, enrichment: dict[str, Any]) -> None:
+        """Extract metadata from file if supported."""
+        if not file_path or not self._extractor or not _file_has_forensics_support(file_path):
+            return
+        try:
+            result = await self._extractor.extract(file_path)
+            if result is not None:
+                enrichment['metadata'] = result.to_dict()
+        except Exception as exc:
+            log.debug('Forensics metadata extraction failed for %s: %s', finding_id, exc)
+
+    async def _enrich_steganography(self, file_path: str | None, finding_id: str, enrichment: dict[str, Any]) -> None:
+        """Analyze steganography in image files if supported."""
+        if not file_path or not _STEGANOGRAPHY_AVAILABLE:
+            return
+        ext = Path(file_path).suffix.lower()
+        if ext not in {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp'}:
+            return
+        try:
+            stego_data = await _run_stego_analysis(file_path)
+            if stego_data:
+                enrichment['steganography'] = stego_data
+        except Exception as exc:
+            log.debug('Steganography analysis failed for %s: %s', finding_id, exc)
+
+    async def _enrich_digital_ghosts(self, file_path: str | None, finding_id: str, enrichment: dict[str, Any]) -> None:
+        """Run digital ghost detection on file if supported."""
+        if not file_path or not _DIGITAL_GHOST_AVAILABLE:
+            return
+        try:
+            ghost_data = await self._run_ghost_analysis_async(file_path)
+            if ghost_data:
+                enrichment['ghosts'] = ghost_data
+        except Exception as exc:
+            log.debug('Digital ghost detection failed for %s: %s', finding_id, exc)
+
+    async def _enrich_domain_lookups(self, domain: str, forensics_result: ForensicsResult) -> None:
+        """Run WHOIS/SSL/DNS/rDNS lookups in parallel."""
+        try:
+            async with asyncio.TaskGroup() as tg:
+                t_whois = tg.create_task(self._whois_lookup(domain), name='forensics:whois')
+                t_ssl = tg.create_task(self._ssl_lookup(domain, 443), name='forensics:ssl')
+                t_dns = tg.create_task(self._dns_lookup(domain), name='forensics:dns')
+                t_rdns = tg.create_task(self._rdns_lookup(domain), name='forensics:rdns')
+            whois_data = t_whois.result()
+            ssl_data = t_ssl.result()
+            dns_data = t_dns.result()
+            rdns_data = t_rdns.result()
+        except* (asyncio.TimeoutError, OSError, socket.gaierror) as eg:
+            log.debug('[FORENSICS] parallel domain lookup timeout/DNS error: %s', eg)
+            whois_data = ssl_data = dns_data = rdns_data = None
+        except* Exception as eg:
+            first_exc = eg.exceptions[0] if eg.exceptions else eg
+            log.debug('[FORENSICS] parallel domain lookup unexpected error: %s', first_exc)
+            whois_data = ssl_data = dns_data = rdns_data = None
+
+        if whois_data:
+            forensics_result.whois = whois_data
+            forensics_result.enrichment_available = True
+        if ssl_data:
+            forensics_result.ssl = ssl_data
+            forensics_result.enrichment_available = True
+        if dns_data:
+            forensics_result.dns = dns_data
+            forensics_result.enrichment_available = True
+        if rdns_data:
+            forensics_result.rdns = rdns_data
+            forensics_result.enrichment_available = True
+
+    async def _enrich_ip_lookups(self, finding: Any, forensics_result: ForensicsResult, enrichment: dict[str, Any]) -> None:
+        """Enrich x_originating_ip from email payload with WHOIS/rDNS lookups."""
+        if not hasattr(finding, 'payload'):
+            return
+        payload = finding.payload or {}
+        email_meta = payload.get('email_metadata', {}) or payload.get('email', {})
+        x_originating_ip = email_meta.get('originating_ip') or email_meta.get('x_originating_ip')
+        if not x_originating_ip:
+            return
+        try:
+            import ipaddress
+            ip = ipaddress.ip_address(x_originating_ip)
+            if ip.is_private or ip.is_loopback or ip.is_reserved:
+                return
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            async with asyncio.TaskGroup() as tg:
+                t_whois_ip = tg.create_task(self._whois_lookup(x_originating_ip), name='forensics:xip_whois')
+                t_rdns_ip = tg.create_task(self._rdns_lookup(x_originating_ip), name='forensics:xip_rdns')
+            whois_ip_data = t_whois_ip.result()
+            rdns_ip_data = t_rdns_ip.result()
+        except* (asyncio.TimeoutError, OSError, socket.gaierror) as eg:
+            log.debug('[FORENSICS] x_originating_ip lookup timeout/DNS error: %s', eg)
+            whois_ip_data = rdns_ip_data = None
+        except* Exception as eg:
+            first_exc = eg.exceptions[0] if eg.exceptions else eg
+            log.debug('[FORENSICS] x_originating_ip lookup unexpected error: %s', first_exc)
+            whois_ip_data = rdns_ip_data = None
+        if whois_ip_data or rdns_ip_data:
+            enrichment['x_originating_ip_enrichment'] = {'ip': x_originating_ip, 'whois': whois_ip_data, 'rdns': rdns_ip_data}
+            forensics_result.enrichment_available = True
 
     async def enrich_batch(self, findings: list[Any]) -> dict[str, dict[str, Any]]:
         """
@@ -465,101 +504,124 @@ class ForensicsEnricher:
             if enrich_data is not None:
                 out[fid] = enrich_data
 
-        # ISSUE-045-A4: bulk IOC extraction — parallel across all findings
-        # Runs AFTER enrichment so we have payload_text + x_originating_ip per finding.
-        # Uses ioc_extract_to_canonical_findings_bulk with Rust arrow path.
-        if _IOC_EXTRACTOR_AVAILABLE and _IOCExtractor is not None and out:
-            try:
-                # Build a finding_id → query lookup map once (O(n), not O(n²))
-                fid_to_query: dict[str, str] = {}
-                for f in findings:
-                    fid = getattr(f, 'finding_id', None)
-                    if fid:
-                        fid_to_query[fid] = getattr(f, 'query', '') or ''
-
-                # Build bulk inputs from successful enrichments
-                texts: list[str] = []
-                source_finding_ids: list[str] = []
-                queries: list[str] = []
-                finding_ids_ordered: list[str] = []
-                for fid, enrich_data in out.items():
-                    payload_text = enrich_data.get('_payload_text', '')
-                    x_originating_ip = (
-                        enrich_data.get('x_originating_ip_enrichment', {})
-                        .get('ip', '')
-                    )
-                    ioc_text_parts: list[str] = []
-                    if payload_text:
-                        ioc_text_parts.append(str(payload_text)[:8192])
-                    if x_originating_ip:
-                        ioc_text_parts.append(str(x_originating_ip))
-                    ioc_text = '\n'.join(ioc_text_parts) if ioc_text_parts else ''
-                    if ioc_text:
-                        orig_query = fid_to_query.get(fid, '')
-                        texts.append(ioc_text)
-                        source_finding_ids.append(str(fid)[:128])
-                        queries.append(str(orig_query)[:512])
-                        finding_ids_ordered.append(fid)
-
-                if texts:
-                    bulk_fn = _IOCExtractor.get('bulk')
-                    if bulk_fn is None:
-                        # Fallback: single function
-                        single_fn = _IOCExtractor.get('single')
-                        if single_fn is not None:
-
-                            async def ioc_one(text: str, sfid: str, q: str) -> tuple[str, list[Any]]:
-                                # ISSUE-045-A4: sync Rust fn must run off event loop
-                                iocs = await asyncio.to_thread(single_fn, text=text, source_finding_id=sfid, query=q)
-                                return (sfid, iocs)
-
-                            ioc_tasks = [
-                                ioc_one(texts[i], source_finding_ids[i], queries[i])
-                                for i in range(len(texts))
-                            ]
-                            ioc_results = await parallel(
-                                ioc_tasks, policy="log", concurrency=8, ctx="enrichment_service:ioc_bulk"
-                            )
-                            for item in ioc_results.ok:
-                                if isinstance(item, Exception):
-                                    continue
-                                sfid, ioc_list = item
-                                if sfid in out and ioc_list:
-                                    out[sfid]['_ioc_canonical_findings'] = ioc_list
-                                    out[sfid]['ioc_findings'] = [
-                                        {
-                                            'finding_id': getattr(cf, 'finding_id', ''),
-                                            'ioc_type': (getattr(cf, 'payload_text', '') or '').split(';', 1)[0].replace('ioc_type=', '').strip(),
-                                            'value': (getattr(cf, 'payload_text', '') or '').split(';', 1)[1].replace('value=', '').strip() if ';' in (getattr(cf, 'payload_text', '') or '') else ''
-                                        }
-                                        for cf in ioc_list
-                                    ]
-                                    out[sfid]['enrichment_available'] = True
-                    else:
-                        # Rust arrow_batch_builder path — single call for all texts
-                        # ISSUE-045-A4: sync Rust FFI must run off event loop
-                        all_ioc_lists = await asyncio.to_thread(
-                            bulk_fn,
-                            texts=texts,
-                            source_finding_ids=source_finding_ids,
-                            queries=queries,
-                        )
-                        for i, sfid in enumerate(finding_ids_ordered):
-                            if sfid in out and all_ioc_lists[i]:
-                                out[sfid]['_ioc_canonical_findings'] = all_ioc_lists[i]
-                                out[sfid]['ioc_findings'] = [
-                                    {
-                                        'finding_id': getattr(cf, 'finding_id', ''),
-                                        'ioc_type': (getattr(cf, 'payload_text', '') or '').split(';', 1)[0].replace('ioc_type=', '').strip(),
-                                        'value': (getattr(cf, 'payload_text', '') or '').split(';', 1)[1].replace('value=', '').strip() if ';' in (getattr(cf, 'payload_text', '') or '') else ''
-                                    }
-                                    for cf in all_ioc_lists[i]
-                                ]
-                                out[sfid]['enrichment_available'] = True
-            except Exception as exc:
-                log.debug('Batch IOC extraction failed: %s', exc)
+        # ISSUE-045-A4: bulk IOC extraction
+        await self._run_bulk_ioc_extraction(findings, out)
 
         return out
+
+    # ------------------------------------------------------------------
+    # Complexity-reduced helpers for enrich_batch (complexity: 25 → ~10)
+    # ------------------------------------------------------------------
+
+    def _prepare_ioc_extraction_inputs(
+        self, findings: list[Any], out: dict[str, dict[str, Any]]
+    ) -> tuple[list[str], list[str], list[str], list[str]] | None:
+        """
+        Prepare inputs for bulk IOC extraction from enriched findings.
+
+        Returns (texts, source_finding_ids, queries, finding_ids_ordered) or None if empty.
+        """
+        # Build a finding_id → query lookup map once (O(n), not O(n²))
+        fid_to_query: dict[str, str] = {}
+        for f in findings:
+            fid = getattr(f, 'finding_id', None)
+            if fid:
+                fid_to_query[fid] = getattr(f, 'query', '') or ''
+
+        # Build bulk inputs from successful enrichments
+        texts: list[str] = []
+        source_finding_ids: list[str] = []
+        queries: list[str] = []
+        finding_ids_ordered: list[str] = []
+        for fid, enrich_data in out.items():
+            payload_text = enrich_data.get('_payload_text', '')
+            x_originating_ip = (
+                enrich_data.get('x_originating_ip_enrichment', {})
+                .get('ip', '')
+            )
+            ioc_text_parts: list[str] = []
+            if payload_text:
+                ioc_text_parts.append(str(payload_text)[:8192])
+            if x_originating_ip:
+                ioc_text_parts.append(str(x_originating_ip))
+            ioc_text = '\n'.join(ioc_text_parts) if ioc_text_parts else ''
+            if ioc_text:
+                orig_query = fid_to_query.get(fid, '')
+                texts.append(ioc_text)
+                source_finding_ids.append(str(fid)[:128])
+                queries.append(str(orig_query)[:512])
+                finding_ids_ordered.append(fid)
+
+        if not texts:
+            return None
+        return texts, source_finding_ids, queries, finding_ids_ordered
+
+    def _format_ioc_findings(self, ioc_list: list[Any]) -> list[dict[str, str]]:
+        """Format IOC list into structured findings dict."""
+        return [
+            {
+                'finding_id': getattr(cf, 'finding_id', ''),
+                'ioc_type': (getattr(cf, 'payload_text', '') or '').split(';', 1)[0].replace('ioc_type=', '').strip(),
+                'value': (getattr(cf, 'payload_text', '') or '').split(';', 1)[1].replace('value=', '').strip() if ';' in (getattr(cf, 'payload_text', '') or '') else ''
+            }
+            for cf in ioc_list
+        ]
+
+    async def _run_bulk_ioc_extraction(
+        self, findings: list[Any], out: dict[str, dict[str, Any]]
+    ) -> None:
+        """Run bulk IOC extraction on enriched findings using Rust arrow path."""
+        if not _IOC_EXTRACTOR_AVAILABLE or _IOCExtractor is None or not out:
+            return
+        try:
+            inputs = self._prepare_ioc_extraction_inputs(findings, out)
+            if inputs is None:
+                return
+            texts, source_finding_ids, queries, finding_ids_ordered = inputs
+
+            bulk_fn = _IOCExtractor.get('bulk')
+            if bulk_fn is None:
+                # Fallback: single function
+                single_fn = _IOCExtractor.get('single')
+                if single_fn is None:
+                    return
+
+                async def ioc_one(text: str, sfid: str, q: str) -> tuple[str, list[Any]]:
+                    # ISSUE-045-A4: sync Rust fn must run off event loop
+                    iocs = await asyncio.to_thread(single_fn, text=text, source_finding_id=sfid, query=q)
+                    return (sfid, iocs)
+
+                ioc_tasks = [
+                    ioc_one(texts[i], source_finding_ids[i], queries[i])
+                    for i in range(len(texts))
+                ]
+                ioc_results = await parallel(
+                    ioc_tasks, policy="log", concurrency=8, ctx="enrichment_service:ioc_bulk"
+                )
+                for item in ioc_results.ok:
+                    if isinstance(item, Exception):
+                        continue
+                    sfid, ioc_list = item
+                    if sfid in out and ioc_list:
+                        out[sfid]['_ioc_canonical_findings'] = ioc_list
+                        out[sfid]['ioc_findings'] = self._format_ioc_findings(ioc_list)
+                        out[sfid]['enrichment_available'] = True
+            else:
+                # Rust arrow_batch_builder path — single call for all texts
+                # ISSUE-045-A4: sync Rust FFI must run off event loop
+                all_ioc_lists = await asyncio.to_thread(
+                    bulk_fn,
+                    texts=texts,
+                    source_finding_ids=source_finding_ids,
+                    queries=queries,
+                )
+                for i, sfid in enumerate(finding_ids_ordered):
+                    if sfid in out and all_ioc_lists[i]:
+                        out[sfid]['_ioc_canonical_findings'] = all_ioc_lists[i]
+                        out[sfid]['ioc_findings'] = self._format_ioc_findings(all_ioc_lists[i])
+                        out[sfid]['enrichment_available'] = True
+        except Exception as exc:
+            log.debug('Batch IOC extraction failed: %s', exc)
 
     def _score_foca_findings(self, enrichment: dict[str, Any] | None) -> float:
         """

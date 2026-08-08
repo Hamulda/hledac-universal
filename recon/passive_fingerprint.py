@@ -458,6 +458,96 @@ async def _compute_favicon_mmh3(
     return None
 
 
+# ─── Tech Stack Detection Helpers ───────────────────────────────────────────────
+
+def _detect_cloud_provider(headers: dict[str, str]) -> str | None:
+    """Detect cloud provider from HTTP headers."""
+    for header_key in headers:
+        if header_key.startswith('x-amz-'):
+            return 'AWS'
+        if header_key.startswith('x-goog-'):
+            return 'GCP'
+        if header_key.startswith('x-ms-'):
+            return 'Azure'
+    return None
+
+
+def _detect_cdn(headers: dict[str, str]) -> str | None:
+    """Detect CDN provider from HTTP headers."""
+    # Check CF-Ray first (Cloudflare)
+    if headers.get('cf-ray') or headers.get('cf-ray-legacy'):
+        return 'Cloudflare'
+    # Check Via/Server headers
+    via = headers.get('via', '').lower()
+    server = headers.get('server', '').lower()
+    if 'fastly' in via or 'fastly' in server:
+        return 'Fastly'
+    # Check for Akamai
+    for hk, hv in headers.items():
+        if 'akamai' in hk.lower() or 'akamai' in hv.lower():
+            return 'Akamai'
+    return None
+
+
+def _detect_waf(headers: dict[str, str], status: str = '', html_lower: str = '') -> tuple[str | None, float]:
+    """Detect WAF from HTTP response. Returns (waf_name, confidence)."""
+    # Cloudflare WAF: 403 + 1020 error page
+    if '403' in str(status) and html_lower:
+        if 'error 1020' in html_lower or ('cloudflare' in html_lower and 'access denied' in html_lower):
+            return 'Cloudflare WAF', 0.95
+    # Imperva from cookies
+    for cookie in headers.get('set-cookie', '').split(','):
+        if 'incap_ses' in cookie.lower() or 'visid_incap_' in cookie.lower():
+            return 'Imperva', 0.9
+    # AWS WAF from headers/cookies
+    if headers.get('aws-waf-request') or headers.get('aws-alb'):
+        return 'AWS WAF', 0.85
+    # F5 BIG-IP
+    for hk in headers:
+        if 'bigip' in hk.lower() or 'ftm' in hk.lower():
+            return 'F5 BIG-IP', 0.8
+    # Akamai WAF (Sucuri)
+    for hk in headers:
+        if 'sucuri' in hk.lower() or 'x-sucuri' in hk.lower():
+            return 'Akamai WAF', 0.75
+    return None, 0.0
+
+
+def _detect_cms(html_lower: str) -> tuple[str | None, str | None]:
+    """Detect CMS from HTML content. Returns (cms_name, version)."""
+    # Use ahocorasick for O(n) matching if available
+    try:
+        import ahocorasick
+        cms_patterns = [
+            ('wordpress', 'wordpress'), ('drupal', 'drupal'), ('joomla', 'joomla'),
+            ('typo3', 'typo3'), ('magento', 'magento'), ('prestashop', 'prestashop'),
+            ('shopify', 'shopify'), ('wix', 'wix'), ('squarespace', 'squarespace'),
+            ('ghost', 'ghost cms'), ('hubspot', 'hubspot'),
+        ]
+        automaton = ahocorasick.Automaton()
+        for pattern, name in cms_patterns:
+            automaton.add_word(pattern, name)
+        automaton.make_automaton()
+        found: set[str] = set()
+        for _, name in automaton.iter(html_lower[:5000]):
+            found.add(name)
+        if len(found) == 1:
+            cms = next(iter(found))
+        elif len(found) > 1:
+            priority = ['typo3', 'magento', 'prestashop', 'drupal', 'joomla',
+                       'wordpress', 'shopify', 'ghost cms', 'hubspot', 'wix', 'squarespace']
+            cms = next((p for p in priority if p in found), sorted(found)[0])
+        else:
+            cms = None
+    except ImportError:
+        cms_re = re.compile(
+            'wordpress|drupal|joomla|typo3|magento|prestashop|shopify|wix|squarespace|ghost|hubspot', re.I
+        )
+        matches = cms_re.findall(html_lower[:5000])
+        cms = matches[0].title() if matches else None
+    return cms, None
+
+
 def _extract_tech_stack(headers: dict[str, str], html_head: str, cookies: list[str]) -> TechStack:
     """
     R11: Extract tech stack signals from HTTP response data.
@@ -481,115 +571,40 @@ def _extract_tech_stack(headers: dict[str, str], html_head: str, cookies: list[s
         TechStack with detected signals and confidence scores.
     """
     raw_signals: dict[str, str] = {}
-    cloud_provider: str | None = None
-    cdn_provider: str | None = None
-    waf_detected: str | None = None
-    waf_confidence: float = 0.0
-    cms: str | None = None
-    cms_version: str | None = None
-    for header_key, header_value in headers.items():
-        if header_key.startswith('x-amz-'):
-            cloud_provider = 'AWS'
-            raw_signals['aws_header'] = f'{header_key}: {header_value[:50]}'
-            break
-        if header_key.startswith('x-goog-'):
-            cloud_provider = 'GCP'
-            raw_signals['gcp_header'] = f'{header_key}: {header_value[:50]}'
-            break
-        if header_key.startswith('x-ms-'):
-            cloud_provider = 'Azure'
-            raw_signals['azure_header'] = f'{header_key}: {header_value[:50]}'
-            break
-    cf_ray = headers.get('cf-ray') or headers.get('cf-ray-legacy', '')
-    if cf_ray:
-        cdn_provider = 'Cloudflare'
-        raw_signals['cf-ray'] = cf_ray[:32]
-        status_val = headers.get('status', '') or headers.get(':status', '')
-        if '403' in str(status_val):
-            error_page = html_head.lower()
-            if 'error 1020' in error_page or ('cloudflare' in error_page and 'access denied' in error_page):
-                waf_detected = 'Cloudflare WAF'
-                waf_confidence = 0.95
-                raw_signals['waf_signal'] = 'cf_403_1020'
-    if not cdn_provider:
-        via = headers.get('via', '')
-        server = headers.get('server', '')
-        if 'fastly' in via.lower() or 'fastly' in server.lower():
-            cdn_provider = 'Fastly'
-            raw_signals['fastly'] = f'via={via[:30]}, server={server[:30]}'
-    if not cdn_provider:
-        for hk, hv in headers.items():
-            if 'akamai' in hk.lower() or 'akamai' in hv.lower():
-                cdn_provider = 'Akamai'
-                raw_signals['akamai'] = f'{hk}: {hv[:30]}'
-                break
-    if not waf_detected:
-        for cookie in cookies:
-            if 'incap_ses' in cookie.lower() or 'visid_incap_' in cookie.lower():
-                waf_detected = 'Imperva'
-                waf_confidence = 0.9
-                raw_signals['waf_signal'] = f'imperva_cookie: {cookie[:60]}'
-                break
-    if not waf_detected:
-        awswaf_cookie = headers.get('aws-waf-request', '') or headers.get('aws-alb', '')
-        if awswaf_cookie or 'aws-waf' in str(cookies).lower():
-            waf_detected = 'AWS WAF'
-            waf_confidence = 0.85
-            raw_signals['waf_signal'] = 'aws_waf_detected'
-    if not waf_detected:
-        for hk, hv in headers.items():
-            if 'bigip' in hk.lower() or 'ftm' in hk.lower() or 'bigip' in hv.lower():
-                waf_detected = 'F5 BIG-IP'
-                waf_confidence = 0.8
-                raw_signals['waf_signal'] = f'f5_header: {hk}'
-                break
-    if not waf_detected:
-        for hk, hv in headers.items():
-            if 'sucuri' in hk.lower() or 'x-sucuri' in hk.lower():
-                waf_detected = 'Akamai WAF'
-                waf_confidence = 0.75
-                raw_signals['waf_signal'] = f'akamai_waf: {hk}'
-                break
+
+    # Detect cloud provider
+    cloud_provider = _detect_cloud_provider(headers)
+    if cloud_provider:
+        raw_signals[f'{cloud_provider.lower()}_header'] = 'detected'
+
+    # Detect CDN
+    cdn_provider = _detect_cdn(headers)
+    if cdn_provider:
+        raw_signals['cdn_provider'] = cdn_provider
+
+    # Detect WAF
+    status_val = headers.get('status', '') or headers.get(':status', '')
     html_lower = html_head.lower()[:5000]
-    try:
-        import ahocorasick
-        cms_patterns = [('wordpress', 'wordpress'), ('drupal', 'drupal'), ('joomla', 'joomla'), ('typo3', 'typo3'), ('magento', 'magento'), ('prestashop', 'prestashop'), ('shopify', 'shopify'), ('wix', 'wix'), ('squarespace', 'squarespace'), ('ghost', 'ghost cms'), ('hubspot', 'hubspot')]
-        automaton = ahocorasick.Automaton()
-        for pattern, name in cms_patterns:
-            automaton.add_word(pattern, name)
-        automaton.make_automaton()
-        found_cms: set[str] = set()
-        for _, name in automaton.iter(html_lower):
-            found_cms.add(name)
-        if len(found_cms) == 1:
-            cms = next(iter(found_cms))
-        elif len(found_cms) > 1:
-            priority = ['typo3', 'magento', 'prestashop', 'drupal', 'joomla', 'wordpress', 'shopify', 'ghost cms', 'hubspot', 'wix', 'squarespace']
-            for p in priority:
-                if p in found_cms:
-                    cms = p
-                    break
-            if not cms:
-                cms = sorted(found_cms)[0]
-        raw_signals['cms_ahocorasick'] = ','.join(sorted(found_cms)) if found_cms else ''
-    except ImportError:
-        cms_re = re.compile('wordpress|drupal|joomla|typo3|magento|prestashop|shopify|wix|squarespace|ghost|hubspot', re.I)
-        matches = cms_re.findall(html_lower[:5000])
-        if matches:
-            unique_matches = list(dict.fromkeys((m.lower() for m in matches)))
-            if unique_matches:
-                cms_map: dict[str, str] = {'wordpress': 'WordPress', 'drupal': 'Drupal', 'joomla': 'Joomla', 'typo3': 'Typo3', 'magento': 'Magento', 'prestashop': 'PrestaShop', 'shopify': 'Shopify', 'wix': 'Wix', 'squarespace': 'Squarespace', 'ghost': 'Ghost CMS', 'hubspot': 'HubSpot'}
-                cms = cms_map.get(unique_matches[0], unique_matches[0].title())
-                raw_signals['cms_regex'] = ','.join(unique_matches[:3])
+    waf_detected, waf_confidence = _detect_waf(headers, status_val, html_lower)
+    if waf_detected:
+        raw_signals['waf_signal'] = waf_detected.lower().replace(' ', '_')
+
+    # Detect CMS
+    cms, cms_version = _detect_cms(html_lower)
     if cms:
-        cms_lower = cms.lower()
-        pattern = _CMS_VERSION_PATTERNS.get(cms_lower)
-        if pattern:
-            version_matches = pattern.findall(html_lower[:10000])
-            if version_matches:
-                cms_version = version_matches[0]
-                raw_signals['cms_version'] = cms_version or ''
-    return TechStack(cloud_provider=cloud_provider, cdn_provider=cdn_provider, waf_detected=waf_detected, waf_confidence=waf_confidence, cms=cms, cms_version=cms_version, raw_signals=raw_signals)
+        raw_signals['cms_detected'] = cms
+        if cms_version:
+            raw_signals['cms_version'] = cms_version
+
+    return TechStack(
+        cloud_provider=cloud_provider,
+        cdn_provider=cdn_provider,
+        waf_detected=waf_detected,
+        waf_confidence=waf_confidence,
+        cms=cms,
+        cms_version=cms_version,
+        raw_signals=raw_signals,
+    )
 
 def _match_server_header(server_value: str) -> list[ServiceFingerprint]:
     """Match a Server header value against known patterns."""

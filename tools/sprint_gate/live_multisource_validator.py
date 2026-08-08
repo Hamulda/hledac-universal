@@ -429,12 +429,91 @@ def _extract_guard_fields(data: dict) -> tuple:
                 scheduler_exit = sc_exit.get('exit_path')
     return (windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit)
 
+# ─── Validation Helpers ─────────────────────────────────────────────────────────
+
+def _validate_prelude_checks(failures: list, prelude: dict, profile: str, query_type: str) -> None:
+    """Validate prelude checks for active300 domain profile."""
+    if profile != 'active300' or query_type != 'domain':
+        return
+    prelude_checked = prelude.get('prelude_checked')
+    prelude_missing_lanes = prelude.get('prelude_missing_lanes')
+    prelude_terminal_lanes = prelude.get('prelude_terminal_lanes')
+    if prelude_checked is None:
+        pass
+    elif prelude_checked is not True:
+        failures.append(ValidationFailure(Verdict.FAIL_ACQUISITION_PRELUDE_NOT_CHECKED,
+            f'acquisition_prelude.prelude_checked is {prelude_checked!r}, expected true', 'acquisition_prelude.prelude_checked'))
+    if prelude_checked is True and prelude_missing_lanes:
+        failures.append(ValidationFailure(Verdict.FAIL_ACQUISITION_PRELUDE_MISSING_LANES,
+            f'acquisition_prelude.prelude_missing_lanes = {prelude_missing_lanes}, expected []', 'acquisition_prelude.prelude_missing_lanes'))
+
+def _validate_terminality(failures: list, term_checked, term_satisfied, missing_lanes, run_status) -> None:
+    """Validate terminality fields."""
+    if run_status is not None and run_status not in ('completed', 'planned'):
+        failures.append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, f"run_status is '{run_status}', expected 'completed'", 'run_status'))
+    if term_checked is not True:
+        failures.append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, f'acquisition_terminality_checked is {term_checked!r}, expected true', 'acquisition_terminality_checked'))
+    if term_satisfied is not True:
+        failures.append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_SATISFIED, f'acquisition_terminality_satisfied is {term_satisfied!r}, expected true', 'acquisition_terminality_satisfied'))
+    if missing_lanes is None:
+        failures.append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, 'acquisition_terminality_missing_lanes is null', 'acquisition_terminality_missing_lanes'))
+    elif missing_lanes != []:
+        v = Verdict.FAIL_TERMINALITY_NOT_SATISFIED if term_checked is True else Verdict.FAIL_TERMINALITY_NOT_CHECKED
+        failures.append(ValidationFailure(v, f'acquisition_terminality_missing_lanes = {missing_lanes}, expected []', 'acquisition_terminality_missing_lanes'))
+
+def _validate_source_outcomes(failures: list, sf_outcomes, branch_mix, live_kpi) -> None:
+    """Validate source family outcomes."""
+    if not sf_outcomes or (isinstance(sf_outcomes, dict) and not sf_outcomes):
+        failures.append(ValidationFailure(Verdict.FAIL_MISSING_SOURCE_OUTCOMES, 'source_family_outcomes is empty', 'acquisition_report.source_family_outcomes'))
+    feed_count = _resolve_branch_count(branch_mix, live_kpi, 'feed')
+    feed_in_outcomes = 'feed' in (list(sf_outcomes.keys()) if isinstance(sf_outcomes, dict) else [])
+    if not (feed_count > 0 or feed_in_outcomes):
+        failures.append(ValidationFailure(Verdict.FAIL_MISSING_SOURCE_OUTCOMES, f'No feed findings attempted', 'branch_mix.feed'))
+
+def _validate_lane_terminality(failures: list, data: dict, live_kpi: dict, profile: str, query_type: str) -> None:
+    """Validate PUBLIC and CT lane terminality for active300 domain."""
+    if profile != 'active300' or query_type != 'domain':
+        return
+    for lane, field in [('PUBLIC', 'public_terminal_state'), ('CT', 'ct_terminal_state')]:
+        state = data.get(field, '') or live_kpi.get(field, '')
+        state = state.upper() if state else ''
+        if state == 'NEVER_ATTEMPTED':
+            failures.append(ValidationFailure(Verdict.FAIL_PUBLIC_NOT_TERMINAL if lane == 'PUBLIC' else Verdict.FAIL_CT_NOT_TERMINAL,
+                f'{lane} lane never attempted for domain query', field))
+        elif state and not is_terminal(state):
+            failures.append(ValidationFailure(Verdict.FAIL_PUBLIC_NOT_TERMINAL if lane == 'PUBLIC' else Verdict.FAIL_CT_NOT_TERMINAL,
+                f"{lane} terminal_state '{state}' is not terminal", field))
+
+def _validate_hardware_and_schema(failures: list, acq_report, data, live_kpi, allow_hardware_constrained) -> None:
+    """Validate hardware constraints and schema version."""
+    quality_verdict = (data.get('run_quality_verdict') or live_kpi.get('run_quality_verdict') or '').lower()
+    if 'hardware-constrained' in quality_verdict or 'hardware_constrained' in quality_verdict:
+        if not allow_hardware_constrained:
+            failures.append(ValidationFailure(Verdict.FAIL_HARDWARE_TAINTED, f"hardware constraint detected", 'run_quality_verdict'))
+    schema_version = acq_report.get('schema_version') if isinstance(acq_report, dict) else None
+    if not schema_version:
+        failures.append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, 'schema_version missing', 'acquisition_report.schema_version'))
+
+def _validate_guards(failures: list, windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit) -> None:
+    """Validate scheduler and windup guards."""
+    if not scheduler_exit or not str(scheduler_exit).strip():
+        failures.append(ValidationFailure(Verdict.FAIL_SCHEDULER_EXIT_MISSING, 'scheduler_exit empty', 'scheduler_exit_path'))
+    if return_guard_checked is not True:
+        failures.append(ValidationFailure(Verdict.FAIL_RETURN_GUARD_MISSING, f'return_guard_checked is {return_guard_checked!r}', 'return_guard_checked'))
+    if windup_count is None:
+        windup_count = 0
+    irrelevant = frozenset({'not_applicable', 'no_lanes_ran', 'disabled', 'skipped'})
+    has_reason = str(windup_reason or '').lower() in irrelevant or windup_not_applicable is True
+    if not (windup_count > 0 or has_reason):
+        failures.append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, 'windup_guard not called', 'windup_guard_call_count'))
+
+
 def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardware_constrained: bool) -> list[ValidationFailure]:
-    failures: list[ValidationFailure] = []
-    failures_append = failures.append
+    """Collect all validation failures from run data."""
     run_status = _extract_run_status(data)
     if run_status == 'planned':
         return []
+    failures: list[ValidationFailure] = []
     acq_report = _extract_acquisition_report(data)
     sf_outcomes = _extract_source_family_outcomes(acq_report, data)
     branch_mix = _extract_branch_mix(data)
@@ -442,91 +521,27 @@ def _failures_from_dict(data: dict, profile: str, query_type: str, allow_hardwar
     windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit = _extract_guard_fields(data)
     live_kpi = _extract_live_kpi(data)
     prelude = _extract_acquisition_prelude(data)
-    prelude_checked = prelude['prelude_checked']
-    prelude_missing_lanes = prelude['prelude_missing_lanes']
-    prelude_terminal_lanes = prelude['prelude_terminal_lanes']
-    if profile == 'active300' and query_type == 'domain':
-        if prelude_checked is None:
-            pass
-        elif prelude_checked is not True:
-            failures_append(ValidationFailure(Verdict.FAIL_ACQUISITION_PRELUDE_NOT_CHECKED, f'acquisition_prelude.prelude_checked is {prelude_checked!r}, expected true for active300 domain', 'acquisition_prelude.prelude_checked'))
-        if prelude_checked is True and prelude_missing_lanes and prelude_missing_lanes:
-            failures_append(ValidationFailure(Verdict.FAIL_ACQUISITION_PRELUDE_MISSING_LANES, f'acquisition_prelude.prelude_missing_lanes = {prelude_missing_lanes}, expected []', 'acquisition_prelude.prelude_missing_lanes'))
-        if prelude_checked is True and prelude_missing_lanes is not None and (not prelude_missing_lanes) and (prelude_terminal_lanes is not None) and (missing_lanes is not None):
-            MUST_TERMINAL = frozenset(['PUBLIC', 'CT'])
-            prelude_has_mandatory = MUST_TERMINAL.intersection((l.upper() for l in prelude_terminal_lanes if isinstance(l, str)))
-            final_has_mandatory = MUST_TERMINAL.intersection((l.upper() for l in missing_lanes if isinstance(l, str)))
-            if prelude_has_mandatory and final_has_mandatory:
-                failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_STALE_AFTER_PRELUDE, f'prelude terminal_lanes={prelude_terminal_lanes} but final missing_lanes={missing_lanes} — terminality regressed after prelude', 'acquisition_prelude.prelude_terminal_lanes'))
+
+    # Extract A records
     mismatched_lanes = _detect_terminality_source_outcome_mismatch(sf_outcomes, missing_lanes)
     if mismatched_lanes:
-        failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_STALE_SNAPSHOT, f'source_family_outcomes shows lanes {mismatched_lanes} terminal/attempted but missing_lanes still contains them: {missing_lanes}', 'acquisition_report.terminality.missing_lanes'))
-    if run_status is not None and run_status not in ('completed', 'planned'):
-        failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, f"run_status is '{run_status}', expected 'completed'", 'run_status'))
-    quality_verdict = (data.get('run_quality_verdict') or live_kpi.get('run_quality_verdict') or '').lower()
-    hardware_tainted = 'hardware-constrained' in quality_verdict or 'hardware_constrained' in quality_verdict
-    if hardware_tainted and (not allow_hardware_constrained):
-        failures_append(ValidationFailure(Verdict.FAIL_HARDWARE_TAINTED, f"run_quality_verdict '{quality_verdict}' indicates hardware constraint", 'run_quality_verdict'))
-    schema_version = acq_report.get('schema_version') if isinstance(acq_report, dict) else None
-    if not schema_version:
-        failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, 'acquisition_report.schema_version is missing', 'acquisition_report.schema_version'))
-    if term_checked is not True:
-        failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, f'acquisition_terminality_checked is {term_checked!r}, expected true', 'acquisition_terminality_checked'))
-    if term_satisfied is not True:
-        failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_SATISFIED, f'acquisition_terminality_satisfied is {term_satisfied!r}, expected true', 'acquisition_terminality_satisfied'))
-    if missing_lanes is None:
-        failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, 'acquisition_terminality_missing_lanes is null', 'acquisition_terminality_missing_lanes'))
-    elif missing_lanes != []:
-        if term_checked is True:
-            failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_SATISFIED, f'acquisition_terminality_missing_lanes = {missing_lanes}, expected []', 'acquisition_terminality_missing_lanes'))
-        else:
-            failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, f'acquisition_terminality_missing_lanes = {missing_lanes}, expected []', 'acquisition_terminality_missing_lanes'))
-    if not sf_outcomes:
-        failures_append(ValidationFailure(Verdict.FAIL_MISSING_SOURCE_OUTCOMES, f'source_family_outcomes is {sf_outcomes!r}, expected non-empty dict', 'acquisition_report.source_family_outcomes'))
-    elif isinstance(sf_outcomes, dict) and (not sf_outcomes):
-        failures_append(ValidationFailure(Verdict.FAIL_MISSING_SOURCE_OUTCOMES, 'source_family_outcomes is empty dict', 'acquisition_report.source_family_outcomes'))
-    feed_count = _resolve_branch_count(branch_mix, live_kpi, 'feed')
-    sf_outcomes_keys = list(sf_outcomes.keys()) if isinstance(sf_outcomes, dict) else []
-    feed_in_outcomes = 'feed' in sf_outcomes_keys
-    attempted_feed = feed_count > 0 or feed_in_outcomes
-    if not attempted_feed:
-        failures_append(ValidationFailure(Verdict.FAIL_MISSING_SOURCE_OUTCOMES, f'No feed findings attempted. feed_count={feed_count}, feed_in_outcomes={feed_in_outcomes}', 'branch_mix.feed'))
-    elif feed_count == 0 and feed_in_outcomes:
-        pass
-    if profile == 'active300' and query_type == 'domain':
-        public_state = data.get('public_terminal_state', '')
-        if not public_state:
-            public_state = live_kpi.get('public_terminal_state', '')
-        public_state = public_state.upper() if public_state else ''
-        if public_state == 'NEVER_ATTEMPTED':
-            failures_append(ValidationFailure(Verdict.FAIL_PUBLIC_NOT_TERMINAL, 'PUBLIC lane never attempted for domain query', 'public_terminal_state'))
-        elif public_state and (not is_terminal(public_state)):
-            failures_append(ValidationFailure(Verdict.FAIL_PUBLIC_NOT_TERMINAL, f"PUBLIC terminal_state '{public_state}' is not terminal", 'public_terminal_state'))
-    if profile == 'active300' and query_type == 'domain':
-        ct_state = data.get('ct_terminal_state', '')
-        if not ct_state:
-            ct_state = live_kpi.get('ct_terminal_state', '')
-        ct_state = ct_state.upper() if ct_state else ''
-        if ct_state == 'NEVER_ATTEMPTED':
-            failures_append(ValidationFailure(Verdict.FAIL_CT_NOT_TERMINAL, 'CT lane never attempted for domain query', 'ct_terminal_state'))
-        elif ct_state and (not is_terminal(ct_state)):
-            failures_append(ValidationFailure(Verdict.FAIL_CT_NOT_TERMINAL, f"CT terminal_state '{ct_state}' is not terminal", 'ct_terminal_state'))
-    if not scheduler_exit or len(str(scheduler_exit).strip()) == 0:
-        failures_append(ValidationFailure(Verdict.FAIL_SCHEDULER_EXIT_MISSING, 'scheduler_exit_path is empty', 'scheduler_exit_path'))
-    if return_guard_checked is not True:
-        failures_append(ValidationFailure(Verdict.FAIL_RETURN_GUARD_MISSING, f'return_guard_checked is {return_guard_checked!r}, expected true', 'return_guard_checked'))
-    if windup_count is None:
-        windup_count = 0
-    windup_irrelevant_reasons = frozenset({'not_applicable', 'no_lanes_ran', 'disabled', 'skipped'})
-    has_explicit_reason = str(windup_reason or '').lower() in windup_irrelevant_reasons or windup_not_applicable is True
-    if not (windup_count > 0 or has_explicit_reason):
-        failures_append(ValidationFailure(Verdict.FAIL_TERMINALITY_NOT_CHECKED, f'windup_guard_call_count={windup_count} with no explicit reason why not applicable', 'windup_guard_call_count'))
+        failures.append(ValidationFailure(Verdict.FAIL_TERMINALITY_STALE_SNAPSHOT, f'lanes mismatch: {missing_lanes}', 'acquisition_report.terminality.missing_lanes'))
+
+    # Run validation helpers
+    _validate_prelude_checks(failures, prelude, profile, query_type)
+    _validate_terminality(failures, term_checked, term_satisfied, missing_lanes, run_status)
+    _validate_source_outcomes(failures, sf_outcomes, branch_mix, live_kpi)
+    _validate_lane_terminality(failures, data, live_kpi, profile, query_type)
+    _validate_hardware_and_schema(failures, acq_report, data, live_kpi, allow_hardware_constrained)
+    _validate_guards(failures, windup_count, windup_reason, windup_not_applicable, return_guard_checked, scheduler_exit)
+
+    # KPI checks
     verdict_kpi, msg_kpi = _check_public_acceptance_kpi(data, _get_safe)
-    if verdict_kpi is not None and verdict_kpi in (Verdict.FAIL_PUBLIC_ACCEPTANCE_KPI, Verdict.WARN_PUBLIC_ACCEPTANCE_KPI):
-        failures_append(ValidationFailure(verdict_kpi, f'public_acceptance_kpi: {msg_kpi}', 'live_kpi.public_acceptance_*'))
+    if verdict_kpi in (Verdict.FAIL_PUBLIC_ACCEPTANCE_KPI, Verdict.WARN_PUBLIC_ACCEPTANCE_KPI):
+        failures.append(ValidationFailure(verdict_kpi, f'public_acceptance_kpi: {msg_kpi}', 'live_kpi.public_acceptance_*'))
     verdict_fetch, msg_fetch = _check_public_fetch_telemetry(data, _get_safe)
-    if verdict_fetch is not None and verdict_fetch == Verdict.WARN_PUBLIC_ACCEPTANCE_KPI:
-        failures_append(ValidationFailure(verdict_fetch, f'public_fetch_telemetry: {msg_fetch}', 'live_kpi.public_fetch_*'))
+    if verdict_fetch == Verdict.WARN_PUBLIC_ACCEPTANCE_KPI:
+        failures.append(ValidationFailure(verdict_fetch, f'public_fetch_telemetry: {msg_fetch}', 'live_kpi.public_fetch_*'))
     return failures
 
 def _get_safe(data: dict, *keys, default=None):

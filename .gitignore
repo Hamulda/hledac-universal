@@ -12,6 +12,7 @@ build/
 
 # Virtual Environment
 .venv/
+.venv-test/
 # node_modules
 node_modules/
 # macOS

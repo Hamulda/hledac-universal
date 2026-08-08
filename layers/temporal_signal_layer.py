@@ -120,6 +120,174 @@ _SYNCHRONY_WINDOW_S = DEFAULT_SYNCHRONY_WINDOW_S
 _MAX_SOURCES_PER_WINDOW = 64
 _MAX_KEYS_PER_SOURCE_SET = 128
 
+
+# ----------------------------------------------------------------------
+# Score computation helpers (extracted to reduce TemporalSignalLayer.observe complexity)
+# ----------------------------------------------------------------------
+
+
+def _compute_burst_score(
+    gap_s: float,
+    ewma_gap: float,
+    recent_count: int,
+) -> float:
+    """Compute burst score from gap timing and recent event count."""
+    burst_score = 0.0
+    if gap_s > 0 and ewma_gap > 0:
+        gap_ratio = ewma_gap / gap_s
+        burst_score = _clamp((gap_ratio - 1.0) / (gap_ratio + 1.0), 0.0, 1.0)
+    if recent_count >= 3:
+        burst_score = max(burst_score, _clamp(recent_count / 10.0, 0.0, 1.0))
+    return burst_score
+
+
+def _compute_periodicity_metrics(
+    ring_gaps: deque[float],
+) -> tuple[float, float, float]:
+    """Compute periodicity score, CV, autocorrelation, and mean gap from ring buffer."""
+    periodicity_score = 0.0
+    cv_isi = 0.0
+    autocorr_lag1 = 0.0
+    mean_gap_s = 0.0
+    if len(ring_gaps) >= 4:
+        gaps_list = list(ring_gaps)
+        cv_isi = _compute_cv(gaps_list)
+        autocorr_lag1 = _compute_autocorr_lag1(gaps_list)
+        if cv_isi < 0.01:
+            periodicity_score = 1.0
+        else:
+            cv_penalty = _clamp(cv_isi / 2.0, 0.0, 1.0)
+            periodicity_score = (1.0 - cv_penalty) * 0.5 + (0.5 + autocorr_lag1 * 0.5)
+            periodicity_score = _clamp(periodicity_score, 0.0, 1.0)
+        mean_gap_s = sum(gaps_list) / len(gaps_list)
+    return periodicity_score, cv_isi, autocorr_lag1, mean_gap_s
+
+
+def _compute_change_point_score(
+    state: _KeyState,
+    gap_s: float,
+    event_count: int,
+    bocpd_max_run: int,
+) -> float:
+    """Compute change point score using Page-Hinkley and BOCPD-lite."""
+    change_point_score = 0.0
+    if event_count >= 2 and gap_s > 0:
+        ph_alpha = 0.01
+        if state.ph_mean == 0.0:
+            state.ph_mean = gap_s
+        else:
+            delta = gap_s - state.ph_mean
+            state.ph_mean = 0.5 * delta + state.ph_mean
+            state.ph_cumsum = state.ph_cumsum + delta - ph_alpha
+            if state.ph_mean > 0:
+                state.ph_cumsum = max(0.0, state.ph_cumsum + delta - ph_alpha)
+            else:
+                state.ph_cumsum = min(0.0, state.ph_cumsum + delta + ph_alpha)
+        change_point_score = _clamp(abs(state.ph_cumsum) / 100.0, 0.0, 1.0)
+        if state.bocpd_run_length < bocpd_max_run:
+            state.bocpd_run_length += 1
+            state.bocpd_log_odds = math.log(state.bocpd_run_length + 1)
+        else:
+            state.bocpd_run_length = 0
+            state.bocpd_log_odds = 5.0
+        bocpd_score = _safe_div(state.bocpd_log_odds, 10.0)
+        change_point_score = max(change_point_score, _clamp(bocpd_score, 0.0, 1.0))
+    return change_point_score
+
+
+def _compute_source_synchrony_score(
+    sync_window: deque[tuple[float, str, frozenset[str]]],
+    ts: float,
+    synchrony_window_s: float,
+) -> float:
+    """Compute source synchrony score via Jaccard similarity in sliding window."""
+    source_synchrony_score = 0.0
+    if len(sync_window) >= 2:
+        window_start = ts - synchrony_window_s
+        active_sources: dict[str, set[str]] = {}
+        for w_ts, src, keys in sync_window:
+            if w_ts >= window_start:
+                if src not in active_sources:
+                    active_sources[src] = set()
+                active_sources[src].update(keys)
+                if len(active_sources[src]) > _MAX_KEYS_PER_SOURCE_SET:
+                    active_sources[src] = set(list(active_sources[src])[:_MAX_KEYS_PER_SOURCE_SET])
+        if len(active_sources) >= 2:
+            sources = list(active_sources.keys())
+            jaccard_scores = []
+            for idx_i, idx_j in itertools.combinations(range(min(len(sources), 8)), 2):
+                set_i = active_sources[sources[idx_i]]
+                set_j = active_sources[sources[idx_j]]
+                if set_i and set_j:
+                    inter = len(set_i & set_j)
+                    union = len(set_i | set_j)
+                    jaccard_scores.append(_safe_div(inter, union))
+            if jaccard_scores:
+                source_synchrony_score = sum(jaccard_scores) / len(jaccard_scores)
+    return source_synchrony_score
+
+
+def _compute_rate_score(
+    last_ts: float,
+    ewma_rate: float,
+    gap_s: float,
+) -> float:
+    """Compute rate score based on current vs expected rate."""
+    rate_score = 0.0
+    if last_ts > 0 and ewma_rate > 0:
+        current_rate = 1.0 / gap_s if gap_s > 0 else 0.0
+        rate_ratio = _safe_div(current_rate, ewma_rate)
+        rate_score = _clamp((rate_ratio - 0.5) / 2.0, 0.0, 1.0)
+    return rate_score
+
+
+def _aggregate_anomaly_score(
+    burst_score: float,
+    change_point_score: float,
+    periodicity_score: float,
+    rate_score: float,
+) -> float:
+    """Aggregate individual scores into anomaly score."""
+    anomaly_score = burst_score * 0.3 + _safe_div(change_point_score, 3.0) * 0.3 + (1.0 - periodicity_score) * 0.2 + rate_score * 0.2
+    return _clamp(anomaly_score, 0.0, 1.0)
+
+
+def _build_reason_string(
+    event_count: int,
+    burst_score: float,
+    periodicity_score: float,
+    change_point_score: float,
+    source_synchrony_score: float,
+    anomaly_score: float,
+) -> str:
+    """Build human-readable reason string from score components."""
+    if event_count < 2:
+        return 'insufficient_history'
+    reasons = []
+    if burst_score > 0.6:
+        reasons.append('burst')
+    if periodicity_score > 0.6:
+        reasons.append('periodic')
+    if change_point_score > 0.6:
+        reasons.append('change_point')
+    if source_synchrony_score > 0.5:
+        reasons.append('source_synchrony')
+    if anomaly_score > 0.7:
+        reasons.append('anomaly')
+    if not reasons:
+        reasons.append('normal')
+    return '|'.join(reasons)
+
+
+def _count_recent_events(
+    sync_window: deque[tuple[float, str, frozenset[str]]],
+    ts: float,
+    synchrony_window_s: float,
+) -> int:
+    """Count events in the synchrony window."""
+    return sum(1 for w_ts, _, _ in sync_window if ts - synchrony_window_s <= w_ts <= ts)
+
+
 class TemporalSignalLayer:
     """
     Bounded temporal signal scoring layer.
@@ -157,7 +325,6 @@ class TemporalSignalLayer:
         family = event.family
         event.weight * state.confirmation_weight
         event_count = state.event_count + 1
-        reason = ''
         gap_s = 0.0
         if event_count > 1:
             gap_s = ts - state.last_ts
@@ -173,99 +340,16 @@ class TemporalSignalLayer:
             if gap_s > 0:
                 state.ewma_gap = alpha * gap_s + (1 - alpha) * prev_gap
                 state.ewma_rate = 1.0 / state.ewma_gap if state.ewma_gap > 0 else 1.0
-        burst_score = 0.0
-        if gap_s > 0 and state.ewma_gap > 0:
-            gap_ratio = state.ewma_gap / gap_s
-            burst_score = _clamp((gap_ratio - 1.0) / (gap_ratio + 1.0), 0.0, 1.0)
-        synchrony_window = self._synchrony_window_s
-        recent_count = sum((1 for w_ts, _, _ in self._sync_window if ts - synchrony_window <= w_ts <= ts))
-        if recent_count >= 3:
-            burst_score = max(burst_score, _clamp(recent_count / 10.0, 0.0, 1.0))
-        periodicity_score = 0.0
-        cv_isi = 0.0
-        autocorr_lag1 = 0.0
-        mean_gap_s = state.ewma_gap
-        if len(state.ring_gaps) >= 4:
-            gaps_list = list(state.ring_gaps)
-            cv_isi = _compute_cv(gaps_list)
-            autocorr_lag1 = _compute_autocorr_lag1(gaps_list)
-            if cv_isi < 0.01:
-                periodicity_score = 1.0
-            else:
-                cv_penalty = _clamp(cv_isi / 2.0, 0.0, 1.0)
-                periodicity_score = (1.0 - cv_penalty) * 0.5 + (0.5 + autocorr_lag1 * 0.5)
-                periodicity_score = _clamp(periodicity_score, 0.0, 1.0)
-            mean_gap_s = sum(gaps_list) / len(gaps_list)
-        change_point_score = 0.0
-        if event_count >= 2 and gap_s > 0:
-            ph_alpha = 0.01
-            if state.ph_mean == 0.0:
-                state.ph_mean = gap_s
-            else:
-                delta = gap_s - state.ph_mean
-                state.ph_mean = 0.5 * delta + state.ph_mean
-                state.ph_cumsum = state.ph_cumsum + delta - ph_alpha
-                if state.ph_mean > 0:
-                    state.ph_cumsum = max(0.0, state.ph_cumsum + delta - ph_alpha)
-                else:
-                    state.ph_cumsum = min(0.0, state.ph_cumsum + delta + ph_alpha)
-            change_point_score = _clamp(abs(state.ph_cumsum) / 100.0, 0.0, 1.0)
-            if state.bocpd_run_length < self._bocpd_max_run:
-                state.bocpd_run_length += 1
-                state.bocpd_log_odds = math.log(state.bocpd_run_length + 1)
-            else:
-                state.bocpd_run_length = 0
-                state.bocpd_log_odds = 5.0
-            bocpd_score = _safe_div(state.bocpd_log_odds, 10.0)
-            change_point_score = max(change_point_score, _clamp(bocpd_score, 0.0, 1.0))
-        source_synchrony_score = 0.0
+        # Record in sync window and compute scores via extracted helpers
         self._sync_window.append((ts, event.source, frozenset([key])))
-        if len(self._sync_window) >= 2:
-            window_start = ts - self._synchrony_window_s
-            active_sources: dict[str, set[str]] = {}
-            for w_ts, src, keys in self._sync_window:
-                if w_ts >= window_start:
-                    if src not in active_sources:
-                        active_sources[src] = set()
-                    active_sources[src].update(keys)
-                    if len(active_sources[src]) > _MAX_KEYS_PER_SOURCE_SET:
-                        active_sources[src] = set(list(active_sources[src])[:_MAX_KEYS_PER_SOURCE_SET])
-            if len(active_sources) >= 2:
-                sources = list(active_sources.keys())
-                jaccard_scores = []
-                for idx_i, idx_j in itertools.combinations(range(min(len(sources), 8)), 2):
-                    set_i = active_sources[sources[idx_i]]
-                    set_j = active_sources[sources[idx_j]]
-                    if set_i and set_j:
-                        inter = len(set_i & set_j)
-                        union = len(set_i | set_j)
-                        jaccard_scores.append(_safe_div(inter, union))
-                if jaccard_scores:
-                    source_synchrony_score = sum(jaccard_scores) / len(jaccard_scores)
-        rate_score = 0.0
-        if state.last_ts > 0 and state.ewma_rate > 0:
-            current_rate = 1.0 / gap_s if gap_s > 0 else 0.0
-            rate_ratio = _safe_div(current_rate, state.ewma_rate)
-            rate_score = _clamp((rate_ratio - 0.5) / 2.0, 0.0, 1.0)
-        anomaly_score = burst_score * 0.3 + _safe_div(change_point_score, 3.0) * 0.3 + (1.0 - periodicity_score) * 0.2 + rate_score * 0.2
-        anomaly_score = _clamp(anomaly_score, 0.0, 1.0)
-        if event_count < 2:
-            reason = 'insufficient_history'
-        else:
-            reasons = []
-            if burst_score > 0.6:
-                reasons.append('burst')
-            if periodicity_score > 0.6:
-                reasons.append('periodic')
-            if change_point_score > 0.6:
-                reasons.append('change_point')
-            if source_synchrony_score > 0.5:
-                reasons.append('source_synchrony')
-            if anomaly_score > 0.7:
-                reasons.append('anomaly')
-            if not reasons:
-                reasons.append('normal')
-            reason = '|'.join(reasons)
+        recent_count = _count_recent_events(self._sync_window, ts, self._synchrony_window_s)
+        burst_score = _compute_burst_score(gap_s, state.ewma_gap, recent_count)
+        periodicity_score, cv_isi, autocorr_lag1, mean_gap_s = _compute_periodicity_metrics(state.ring_gaps)
+        change_point_score = _compute_change_point_score(state, gap_s, event_count, self._bocpd_max_run)
+        source_synchrony_score = _compute_source_synchrony_score(self._sync_window, ts, self._synchrony_window_s)
+        rate_score = _compute_rate_score(state.last_ts, state.ewma_rate, gap_s)
+        anomaly_score = _aggregate_anomaly_score(burst_score, change_point_score, periodicity_score, rate_score)
+        reason = _build_reason_string(event_count, burst_score, periodicity_score, change_point_score, source_synchrony_score, anomaly_score)
         state.last_ts = ts
         state.event_count = event_count
         state.last_score = TemporalScore(key=key, family=family, event_count=event_count, anomaly_score=anomaly_score, burst_score=burst_score, periodicity_score=periodicity_score, change_point_score=change_point_score, source_synchrony_score=source_synchrony_score, rate_score=rate_score, cv_isi=cv_isi, mean_gap_s=mean_gap_s, autocorr_lag1=autocorr_lag1, reason=reason)

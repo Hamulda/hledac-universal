@@ -79,6 +79,11 @@ class ExposureCache:
     """
     __slots__ = tuple(('_cache_path', '_env', '_lock', '_prefix'))
 
+    # F320-REFACTOR: Use canonical close() from _patterns
+    from hledac.universal.utils._patterns import make_close_method
+
+    close = make_close_method("_env")
+
     def __init__(self, cache_path: Path=EXPOSURE_CACHE_ROOT, prefix: str='exp') -> None:
         self._cache_path = cache_path
         self._prefix = prefix
@@ -145,13 +150,6 @@ class ExposureCache:
             logger.debug(f'ExposureCache set error for {key}: {e}')
             return False
 
-    def close(self) -> None:
-        if self._env is not None:
-            try:
-                self._env.close()
-            except Exception:  # noqa: BLE001
-                pass
-            self._env = None
 
 class ShodanClient:
     """

@@ -33,6 +33,17 @@ from hledac.universal.utils.mlx_memory import (
     get_dynamic_metal_cache_limit,
     mlx_cleanup_aggressive as _canonical_mlx_cleanup_aggressive,
     mlx_cleanup_sync as _canonical_mlx_cleanup_sync,
+    mlx_cleanup_decorator as _mlx_cleanup_decorator_canonical,
+)
+
+# === Metal memory management — DELEGATED to utils.mlx_cache (canonical) ===
+# All Metal limit management is handled by the canonical implementation in utils.mlx_cache.
+# These imports provide backward compatibility for code that imports from here.
+
+from hledac.universal.utils.mlx_cache import (
+    get_metal_limits_status as _canonical_get_metal_limits_status,
+    reconfigure_metal_cache_limit as _canonical_reconfigure_metal_cache_limit,
+    _ensure_metal_memory_limits as _canonical_ensure_metal_memory_limits,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,146 +105,23 @@ async def get_mlx_model(model_name: str) -> tuple[Any, Any]:
         return None, None
 
 
-# === Metal memory limits — DELEGATED to utils.mlx_cache (canonical) ===
-# All Metal limit management is handled by the canonical implementation in utils.mlx_cache.
-# These functions exist for backward compatibility with code that imports from here.
+# === Metal memory management — DELEGATED to utils.mlx_cache (canonical) ===
+# Re-exported for backward compatibility with code that imports from here.
 
-_METAL_CACHE_LIMIT_BYTES = int(1.5 * 1024 ** 3)
-_METAL_WIRED_LIMIT_BYTES = int(768 * 1024 ** 2)
-_METAL_CACHE_LIMIT = _METAL_CACHE_LIMIT_BYTES
-_METAL_WIRED_LIMIT = _METAL_WIRED_LIMIT_BYTES
-
-_METAL_LIMITS_CONFIGURED = False
-_METAL_LIMITS_LOCK = threading.Lock()
 _MLX_INITIALIZED = False
-
-_last_setter_error: str | None = None
-_cache_limit_actual: int | None = None
-_wired_limit_actual: int | None = None
 
 
 def _format_limit_mib(value: int | None) -> str:
+    """Format a memory limit in bytes to MiB string."""
     if value is None:
         return "unavailable"
     return f"{value // 1024 ** 2} MiB"
 
 
-def _ensure_metal_memory_limits() -> bool:
-    """Set Metal memory limits exactly once per process (thread-safe double-check)."""
-    global _METAL_LIMITS_CONFIGURED, _last_setter_error, _cache_limit_actual, _wired_limit_actual
-
-    if _METAL_LIMITS_CONFIGURED:
-        return True
-
-    with _METAL_LIMITS_LOCK:
-        if _METAL_LIMITS_CONFIGURED:
-            return True
-
-        try:
-            mx = get_mx()
-        except Exception as e:
-            _last_setter_error = f"mlx.core import failed: {e}"
-            logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
-            _METAL_LIMITS_CONFIGURED = True
-            return False
-
-        if not hasattr(mx, 'metal'):
-            _last_setter_error = "mx.metal namespace missing"
-            logger.warning(f"[Sprint 8T] _ensure_metal_memory_limits: {_last_setter_error}")
-            _METAL_LIMITS_CONFIGURED = True
-            return False
-
-        errors = []
-        dynamic_cache_limit = get_dynamic_metal_cache_limit()
-
-        setter_found = False
-        if hasattr(mx, 'set_cache_limit'):
-            try:
-                mx.set_cache_limit(dynamic_cache_limit)
-                _cache_limit_actual = dynamic_cache_limit
-                setter_found = True
-            except Exception as e:
-                _last_setter_error = f"set_cache_limit failed: {e}"
-                errors.append(_last_setter_error)
-        elif hasattr(mx.metal, 'set_cache_limit'):
-            try:
-                mx.metal.set_cache_limit(dynamic_cache_limit)
-                _cache_limit_actual = dynamic_cache_limit
-                setter_found = True
-            except Exception as e:
-                _last_setter_error = f"set_cache_limit failed: {e}"
-                errors.append(_last_setter_error)
-
-        if hasattr(mx, 'set_wired_limit'):
-            try:
-                mx.set_wired_limit(_METAL_WIRED_LIMIT_BYTES)
-                _wired_limit_actual = _METAL_WIRED_LIMIT_BYTES
-            except Exception as e:
-                err = f"set_wired_limit failed: {e}"
-                errors.append(err)
-        elif hasattr(mx.metal, 'set_wired_limit'):
-            try:
-                mx.metal.set_wired_limit(_METAL_WIRED_LIMIT_BYTES)
-                _wired_limit_actual = _METAL_WIRED_LIMIT_BYTES
-            except Exception as e:
-                err = f"set_wired_limit failed: {e}"
-                errors.append(err)
-
-        if errors and not setter_found:
-            _METAL_LIMITS_CONFIGURED = True
-            return False
-
-        _METAL_LIMITS_CONFIGURED = True
-        _last_setter_error = None
-        logger.info(
-            f"[Sprint 8T] Metal limits configured: "
-            f"cache={dynamic_cache_limit // 1024**2} MiB, "
-            f"wired={_METAL_WIRED_LIMIT_BYTES // 1024**2} MiB"
-        )
-        return True
-
-
-def get_metal_limits_status() -> dict:
-    return {
-        "mlx_available": MLX_AVAILABLE,
-        "configured": _METAL_LIMITS_CONFIGURED,
-        "cache_limit_bytes": _cache_limit_actual,
-        "wired_limit_bytes": _wired_limit_actual,
-        "last_error": _last_setter_error,
-    }
-
-
-def reconfigure_metal_cache_limit(uma_state: str | None = None) -> bool:
-    """Runtime reconfigure of Metal cache limit on UMA state transitions."""
-    global _cache_limit_actual, _last_setter_error
-
-    if not MLX_AVAILABLE:
-        return False
-
-    try:
-        mx = get_mx()
-    except Exception as e:
-        _last_setter_error = f"mlx.core import failed: {e}"
-        return False
-
-    if not hasattr(mx, 'metal') and not hasattr(mx, 'set_cache_limit'):
-        _last_setter_error = "mx.metal namespace or set_cache_limit missing"
-        return False
-
-    new_limit = get_dynamic_metal_cache_limit(uma_state)
-
-    try:
-        if hasattr(mx, 'set_cache_limit'):
-            mx.set_cache_limit(new_limit)
-        elif hasattr(mx.metal, 'set_cache_limit'):
-            mx.metal.set_cache_limit(new_limit)
-        _cache_limit_actual = new_limit
-        _last_setter_error = None
-        logger.info(f"[F265H] Metal cache reconfigured: {new_limit // 1024**2} MiB (state={uma_state})")
-        return True
-    except Exception as e:
-        _last_setter_error = f"set_cache_limit failed: {e}"
-        return False
+# Re-export canonical functions for backward compatibility
+get_metal_limits_status = _canonical_get_metal_limits_status
+reconfigure_metal_cache_limit = _canonical_reconfigure_metal_cache_limit
+_ensure_metal_memory_limits = _canonical_ensure_metal_memory_limits
 
 
 def init_mlx_buffers() -> bool:
@@ -253,7 +141,7 @@ def init_mlx_buffers() -> bool:
     if _MLX_INITIALIZED:
         return True
 
-    _ensure_metal_memory_limits()
+    _canonical_ensure_metal_memory_limits()
     _MLX_INITIALIZED = True
     status = get_metal_limits_status()
     logger.info(
@@ -264,115 +152,10 @@ def init_mlx_buffers() -> bool:
     return True
 
 
-# === Cleanup — DELEGATED to utils.mlx_cache (canonical) ===
+# === Cleanup — DELEGATED to utils.mlx_memory (canonical) ===
+# Re-export from canonical mlx_memory module to maintain API compatibility
+# while avoiding code duplication.
 
-def mlx_cleanup_sync() -> None:
-    """
-    Sync canonical cleanup — always call in thread executor.
-
-    Order:
-    1. gc.collect() — release Python refs to MLX objects FIRST
-    2. mx.eval([]) — barrier: drain GPU queue BEFORE clear_cache
-    3. clear_cache() — release Metal cache
-
-    Previous order (clear_cache → gc.collect) was wrong: Python objects
-    still held MLX tensors during clear_cache, causing brief over-budget on M1 8GB.
-    """
-    if not MLX_AVAILABLE:
-        return
-    try:
-        gc.collect()
-        mx = get_mx()
-        if mx is None:
-            return
-        try:
-            mx.eval([])
-        except Exception as _e:
-            logger.warning(f"[CRITICAL] mx.eval([]) barrier failed: {_e}")
-        if hasattr(mx, 'clear_cache'):
-            mx.clear_cache()
-        elif hasattr(mx.metal, 'clear_cache'):
-            mx.metal.clear_cache()
-
-        if _release_slab_pool is not None:
-            _release_slab_pool()
-    except Exception as e:
-        logger.debug(f"MLX cleanup non-critical: {e}")
-
-
-def mlx_cleanup_aggressive() -> None:
-    """Aggressive cleanup — temporarily lower cache limit to release fragmentation."""
-    if not MLX_AVAILABLE:
-        return
-    try:
-        mx = get_mx()
-        if mx is None:
-            return
-
-        old_limit = None
-        if hasattr(mx, 'get_cache_limit'):
-            old_limit = mx.get_cache_limit()
-        elif hasattr(mx.metal, 'get_cache_limit'):
-            old_limit = mx.metal.get_cache_limit()
-
-        if hasattr(mx, 'set_cache_limit'):
-            mx.set_cache_limit(64 * 1024 * 1024)
-        elif hasattr(mx.metal, 'set_cache_limit'):
-            mx.metal.set_cache_limit(64 * 1024 * 1024)
-
-        gc.collect()
-        try:
-            mx.eval([])
-        except Exception as e:
-            logger.debug(f"[MLX] mx.eval([]) barrier skipped: {e}")
-        if hasattr(mx, 'clear_cache'):
-            mx.clear_cache()
-        elif hasattr(mx.metal, 'clear_cache'):
-            mx.metal.clear_cache()
-
-        if old_limit is not None:
-            if hasattr(mx, 'set_cache_limit'):
-                mx.set_cache_limit(old_limit)
-            elif hasattr(mx.metal, 'set_cache_limit'):
-                mx.metal.set_cache_limit(old_limit)
-    except Exception:
-        mlx_cleanup_sync()
-
-
-# F269: Metal slab pool
-try:
-    from hledac.universal.utils.metal_slab_pool import release_slab_pool as _release_slab_pool
-except ImportError:
-    _release_slab_pool: None = None  # type: ignore
-
-
-def mlx_cleanup_decorator(aggressive: bool = False):
-    """Decorator for async/sync functions — adds cleanup after completion."""
-    import functools
-    import inspect
-
-    def decorator(func):
-        @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            try:
-                return await func(*args, **kwargs)
-            finally:
-                if aggressive:
-                    await asyncio.to_thread(mlx_cleanup_aggressive)
-                else:
-                    await asyncio.to_thread(mlx_cleanup_sync)
-
-        @functools.wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            try:
-                return func(*args, **kwargs)
-            finally:
-                if aggressive:
-                    mlx_cleanup_aggressive()
-                else:
-                    mlx_cleanup_sync()
-
-        if inspect.iscoroutinefunction(func):
-            return async_wrapper
-        return sync_wrapper
-    return decorator
+mlx_cleanup_sync = _canonical_cleanup_sync
+mlx_cleanup_aggressive = _canonical_cleanup_aggressive
+mlx_cleanup_decorator = _mlx_cleanup_decorator_canonical  # DEPRECATED: use utils.mlx_memory.mlx_cleanup_decorator instead

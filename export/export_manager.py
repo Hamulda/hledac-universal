@@ -86,36 +86,8 @@ class ExportManager:
         target.parent.mkdir(parents=True, exist_ok=True)
         return target
 
-    def export_markdown(self, report: str, findings: list[dict[str, Any]] | None=None, file_path: str | None=None, metadata: dict[str, Any] | None=None) -> Path | None:
-        """
-        FÁZE P18: Export report and findings to Obsidian-compatible Markdown.
-
-        Obsidian format:
-        - YAML front matter with title, date, sources, tags
-        - Report content
-        - Findings as bullet list with wikilinks
-
-        Args:
-            report: Report text (from Hermes 3 or other LLM)
-            findings: Optional list of finding dicts to include
-            file_path: Output file path (relative to output_dir). If None, uses timestamp.
-            metadata: Optional dict for YAML front matter (query, sources, tags, etc.)
-
-        Returns:
-            Path to written file, or None if export failed
-        """
-        if file_path is None:
-            timestamp = int(time.time())
-            file_path = f'{timestamp}_report.md'
-        try:
-            target = self._ensure_output_path(file_path)
-        except ValueError:
-            return None
-        timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S')
-        title = metadata.get('query', 'Hledac Report') if metadata else 'Hledac Report'
-        sources = metadata.get('sources', []) if metadata else []
-        tags = metadata.get('tags', ['hledac', 'osint']) if metadata else ['hledac', 'osint']
-        safe_metadata = _filter_sensitive(metadata) if metadata else {}
+    def _build_yaml_frontmatter(self, title, timestamp_str, sources, tags, safe_metadata) -> list:
+        """Build YAML front matter lines."""
         yaml_lines = ['---', f'title: "{title}"', f'date: {timestamp_str}']
         if sources:
             yaml_lines.append('sources:')
@@ -123,43 +95,47 @@ class ExportManager:
                 yaml_lines.append(f'  - {src}')
         else:
             yaml_lines.append('sources: []')
-        if tags:
-            yaml_lines.append(f"tags: [{', '.join(tags)}]")
-        else:
-            yaml_lines.append('tags: [hledac, osint]')
+        yaml_lines.append(f"tags: [{', '.join(tags)}]" if tags else 'tags: [hledac, osint]')
         for key, value in safe_metadata.items():
             if key in ('query', 'session_id', 'stored_findings', 'discovered', 'fetched'):
                 yaml_lines.append(f'{key}: "{value}"')
-        yaml_lines.append('---')
-        yaml_lines.append('')
-        content_parts = ['\n'.join(yaml_lines)]
+        yaml_lines.extend(['---', ''])
+        return yaml_lines
+
+    def _format_finding(self, finding, i) -> str:
+        """Format a single finding as markdown."""
+        fid = finding.get('finding_id', f'finding_{i}')
+        finding_lines = [f'### Finding {i}: {fid}']
+        for key, label in [('query', 'Query'), ('url', 'URL'), ('confidence', 'Confidence'), ('provenance', 'Provenance')]:
+            if val := finding.get(key):
+                if key == 'url':
+                    url_label = val.split('/')[-1] or val
+                    finding_lines.append(f'- **{label}**: {safe_markdown_link(url_label, val)}')
+                elif key == 'provenance':
+                    finding_lines.append(f'- **{label}**: {", ".join(str(p) for p in val) if val else ""}')
+                else:
+                    finding_lines.append(f'- **{label}**: {val}')
+        return '\n'.join(finding_lines) + '\n'
+
+    def export_markdown(self, report: str, findings: list[dict[str, Any]] | None=None, file_path: str | None=None, metadata: dict[str, Any] | None=None) -> Path | None:
+        """Export report and findings to Obsidian-compatible Markdown."""
+        if file_path is None:
+            file_path = f'{int(time.time())}_report.md'
+        try:
+            target = self._ensure_output_path(file_path)
+        except ValueError:
+            return None
+        title = metadata.get('query', 'Hledac Report') if metadata else 'Hledac Report'
+        sources, tags = (metadata.get('sources', []), metadata.get('tags', ['hledac', 'osint'])) if metadata else ([], ['hledac', 'osint'])
+        safe_metadata = _filter_sensitive(metadata) if metadata else {}
+        content_parts = ['\n'.join(self._build_yaml_frontmatter(title, time.strftime('%Y-%m-%d %H:%M:%S'), sources, tags, safe_metadata))]
         if report:
             content_parts.append(f'## Report\n\n{report}\n')
         if findings:
             content_parts.append('\n## Findings\n\n')
             for i, finding in enumerate(findings[:100], 1):
                 finding = _filter_sensitive(finding) if isinstance(finding, dict) else finding
-                if isinstance(finding, dict):
-                    fid = finding.get('finding_id', f'finding_{i}')
-                    query = finding.get('query', '')
-                    url = finding.get('url', '')
-                    confidence = finding.get('confidence', '')
-                    provenance = finding.get('provenance', [])
-                    provenance_str = ', '.join((str(p) for p in provenance)) if provenance else ''
-                    finding_lines = [f'### Finding {i}: {fid}']
-                    if query:
-                        finding_lines.append(f'- **Query**: {query}')
-                    if url:
-                        url_label = url.split('/')[-1] or url
-                        finding_lines.append(f'- **URL**: {safe_markdown_link(url_label, url)}')
-                    if confidence:
-                        finding_lines.append(f'- **Confidence**: {confidence}')
-                    if provenance_str:
-                        finding_lines.append(f'- **Provenance**: {provenance_str}')
-                    content_parts.append('\n'.join(finding_lines))
-                    content_parts.append('\n')
-                else:
-                    content_parts.append(f'- {finding}\n')
+                content_parts.append(self._format_finding(finding, i) if isinstance(finding, dict) else f'- {finding}\n')
         try:
             target.write_text('\n'.join(content_parts), encoding='utf-8')
             return target
@@ -316,6 +292,135 @@ class ExportManager:
         except Exception:
             return None
 
+    # F240B: Section renderers (Strategy Pattern)
+    def _render_yaml_header(self, title: str, timestamp_str: str, opsec_level: str, tags: list, safe_meta: dict) -> list[str]:
+        """Render YAML frontmatter header."""
+        lines = ['---', f'title: "{title}"', f'date: {timestamp_str}', f'opsec_level: {opsec_level}']
+        if tags:
+            lines.append(f"tags: [{', '.join(tags)}]")
+        if safe_meta.get('sprint_id'):
+            lines.append(f'''sprint_id: "{safe_meta['sprint_id']}"''')
+        lines.extend(['---', ''])
+        return lines
+
+    def _render_executive_summary(self, report: str, findings: list | None, is_clean: bool) -> list[str]:
+        """Render executive summary section."""
+        lines = ['# Executive Summary\n']
+        if report:
+            summary = report[:500].strip()
+            if len(report) > 500:
+                summary += '...'
+            lines.append(f'{summary}\n')
+        else:
+            finding_count = len(findings) if findings else 0
+            lines.append(f'OSINT research identified **{finding_count}** findings.\n')
+        return lines
+
+    def _render_findings_section(self, findings: list[dict[str, Any]] | None, is_clean: bool) -> list[str]:
+        """Render key findings section by IOC type."""
+        lines = ['\n## Key Findings\n']
+        if not findings:
+            return lines + ['No findings recorded.\n']
+        by_type: dict[str, list] = {}
+        for f in findings:
+            if isinstance(f, dict):
+                ioc_type = _safe_str(f.get('ioc_type', 'unknown'))
+                by_type.setdefault(ioc_type, []).append(f)
+        for ioc_type, iocs in sorted(by_type.items()):
+            lines.append(f'### {ioc_type.upper()} ({len(iocs)} findings)\n')
+            for f in iocs[:10]:
+                value = f.get('ioc_value', '')
+                confidence = f.get('confidence', '')
+                source_type = f.get('source_type', '')
+                if is_clean:
+                    lines.append(f'- **{value}** (confidence: {confidence}) — {source_type}')
+                else:
+                    url = f.get('url', '')
+                    found_at = f.get('found_at', '')
+                    lines.append(f'- **{value}** (confidence: {confidence}) — {source_type} @ {found_at}')
+                    if url:
+                        lines.append(f'  - Source: {url}')
+            if len(iocs) > 10:
+                lines.append(f'  - ... and {len(iocs) - 10} more\n')
+        return lines
+
+    def _render_evidence_section(self, evidence_chains: list[dict[str, Any]] | None) -> list[str]:
+        """Render evidence chain section."""
+        lines = ['\n## Evidence Chain\n']
+        if not evidence_chains:
+            return lines + ['No evidence chains recorded.\n']
+        for chain in evidence_chains[:5]:
+            root = _safe_str(chain.get('root_finding_id', ''))
+            steps = chain.get('steps', [])
+            conclusion = _safe_str(chain.get('conclusion', ''))
+            lines.append(f'### Chain: {root[:16]}...\n')
+            lines.append(f"**Conclusion**: {conclusion or 'N/A'}\n")
+            lines.append('**Steps**:\n')
+            for j, step in enumerate(steps[:10], 1):
+                step_type = _safe_str(step.get('step_type', ''))
+                step_reason = _safe_str(step.get('reason', ''))
+                step_conf = step.get('confidence', 0.0)
+                lines.append(f'{j}. [{step_type}] {step_reason} (conf={step_conf:.2f})')
+            lines.append('')
+        return lines
+
+    def _render_confidence_section(self, confidence_summary: dict | None, findings: list | None) -> list[str]:
+        """Render confidence assessment section."""
+        lines = ['\n## Confidence Assessment\n']
+        if confidence_summary:
+            total = confidence_summary.get('total', 0) or 1
+            high_conf = confidence_summary.get('high', 0)
+            med_conf = confidence_summary.get('medium', 0)
+            low_conf = confidence_summary.get('low', 0)
+            lines.extend([
+                '| Level | Count | Percentage |\n',
+                '|-------|-------|------------|\n',
+                f'| High (≥0.8) | {high_conf} | {high_conf / total * 100:.1f}% |\n',
+                f'| Medium (0.5-0.8) | {med_conf} | {med_conf / total * 100:.1f}% |\n',
+                f'| Low (<0.5) | {low_conf} | {low_conf / total * 100:.1f}% |\n',
+                f'| **Total** | **{total}** | 100% |\n',
+            ])
+        elif findings:
+            confs = [float(f.get('confidence', 0.5)) for f in findings if isinstance(f, dict)]
+            if confs:
+                avg = sum(confs) / len(confs)
+                high = sum((1 for c in confs if c >= 0.8))
+                med = sum((1 for c in confs if 0.5 <= c < 0.8))
+                low = sum((1 for c in confs if c < 0.5))
+                lines.extend([
+                    f'Overall confidence: **{avg:.2f}** (avg)\n',
+                    f'- High confidence: {high} findings\n',
+                    f'- Medium confidence: {med} findings\n',
+                    f'- Low confidence: {low} findings\n',
+                ])
+            else:
+                lines.append('No confidence data available.\n')
+        else:
+            lines.append('No confidence data available.\n')
+        return lines
+
+    def _render_intelligence_gaps(self, intelligence_gaps: list[str] | None) -> list[str]:
+        """Render intelligence gaps section."""
+        lines = ['\n## Intelligence Gaps\n']
+        if intelligence_gaps:
+            lines.extend(f'- {gap}\n' for gap in intelligence_gaps)
+        else:
+            lines.extend([
+                'No explicit intelligence gaps identified.\n',
+                'Consider expanding: coverage scope, temporal depth, attribution confidence.\n',
+            ])
+        return lines
+
+    def _render_technical_metadata(self, safe_meta: dict, is_clean: bool) -> list[str]:
+        """Render technical metadata section."""
+        if is_clean or not safe_meta:
+            return []
+        lines = ['\n## Technical Metadata\n']
+        for key, value in safe_meta.items():
+            if key not in ('query', 'sprint_id', 'tags', 'sources'):
+                lines.append(f'- **{key}**: {value}\n')
+        return lines
+
     def export_research_report(self, report: str, findings: list[dict[str, Any]] | None=None, evidence_chains: list[dict[str, Any]] | None=None, file_path: str | None=None, metadata: dict[str, Any] | None=None, confidence_summary: dict[str, Any] | None=None, intelligence_gaps: list[str] | None=None, opsec_level: str='full') -> Path | None:
         """
         F234: Export structured research report with full intelligence sections.
@@ -352,113 +457,25 @@ class ExportManager:
             target = self._ensure_output_path(file_path)
         except ValueError:
             return None
+
         is_clean = opsec_level == 'clean'
         timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S')
-        title = metadata.get('query', 'Hledac Research Report') if metadata else 'Hledac Research Report'
-        tags = metadata.get('tags', ['hledac', 'osint', 'research']) if metadata else ['hledac', 'osint', 'research']
+        title = (metadata.get('query', '') if metadata else '') or 'Hledac Research Report'
+        tags = (metadata.get('tags', []) if metadata else []) or ['hledac', 'osint', 'research']
         safe_meta = _filter_sensitive(metadata) if metadata else {}
-        yaml_lines = ['---', f'title: "{title}"', f'date: {timestamp_str}', f'opsec_level: {opsec_level}']
-        if tags:
-            yaml_lines.append(f"tags: [{', '.join(tags)}]")
-        if safe_meta.get('sprint_id'):
-            yaml_lines.append(f'''sprint_id: "{safe_meta['sprint_id']}"''')
-        yaml_lines.append('---')
-        yaml_lines.append('')
-        lines: list[str] = ['\n'.join(yaml_lines)]
-        lines.append('# Executive Summary\n')
-        if report:
-            summary = report[:500].strip()
-            if len(report) > 500:
-                summary += '...'
-            lines.append(f'{summary}\n')
-        else:
-            finding_count = len(findings) if findings else 0
-            lines.append(f'OSINT research identified **{finding_count}** findings.\n')
-        lines.append('\n## Key Findings\n')
-        if findings:
-            by_type: dict[str, list[dict[str, Any]]] = {}
-            for f in findings:
-                if isinstance(f, dict):
-                    ioc_type = _safe_str(f.get('ioc_type', 'unknown'))
-                    by_type.setdefault(ioc_type, []).append(f)
-            for ioc_type, iocs in sorted(by_type.items()):
-                lines.append(f'### {ioc_type.upper()} ({len(iocs)} findings)\n')
-                for f in iocs[:10]:
-                    f.get('finding_id', 'unknown')
-                    value = f.get('ioc_value', '')
-                    confidence = f.get('confidence', '')
-                    source_type = f.get('source_type', '')
-                    if is_clean:
-                        lines.append(f'- **{value}** (confidence: {confidence}) — {source_type}')
-                    else:
-                        url = f.get('url', '')
-                        found_at = f.get('found_at', '')
-                        lines.append(f'- **{value}** (confidence: {confidence}) — {source_type} @ {found_at}')
-                        if url:
-                            lines.append(f'  - Source: {url}')
-                if len(iocs) > 10:
-                    lines.append(f'  - ... and {len(iocs) - 10} more\n')
-        else:
-            lines.append('No findings recorded.\n')
-        lines.append('\n## Evidence Chain\n')
-        if evidence_chains:
-            for chain in evidence_chains[:5]:
-                root = _safe_str(chain.get('root_finding_id', ''))
-                steps = chain.get('steps', [])
-                conclusion = _safe_str(chain.get('conclusion', ''))
-                lines.append(f'### Chain: {root[:16]}...\n')
-                lines.append(f"**Conclusion**: {conclusion or 'N/A'}\n")
-                lines.append('**Steps**:\n')
-                for j, step in enumerate(steps[:10], 1):
-                    step_type = _safe_str(step.get('step_type', ''))
-                    step_reason = _safe_str(step.get('reason', ''))
-                    step_conf = step.get('confidence', 0.0)
-                    lines.append(f'{j}. [{step_type}] {step_reason} (conf={step_conf:.2f})')
-                lines.append('')
-        else:
-            lines.append('No evidence chains recorded.\n')
-        lines.append('\n## Confidence Assessment\n')
-        if confidence_summary:
-            total = confidence_summary.get('total', 0)
-            high_conf = confidence_summary.get('high', 0)
-            med_conf = confidence_summary.get('medium', 0)
-            low_conf = confidence_summary.get('low', 0)
-            lines.append('| Level | Count | Percentage |\n')
-            lines.append('|-------|-------|------------|\n')
-            lines.append(f'| High (≥0.8) | {high_conf} | {high_conf / total * 100:.1f}% |\n')
-            lines.append(f'| Medium (0.5-0.8) | {med_conf} | {med_conf / total * 100:.1f}% |\n')
-            lines.append(f'| Low (<0.5) | {low_conf} | {low_conf / total * 100:.1f}% |\n')
-            lines.append(f'| **Total** | **{total}** | 100% |\n')
-        elif findings:
-            confs = [float(f.get('confidence', 0.5)) for f in findings if isinstance(f, dict)]
-            if confs:
-                avg = sum(confs) / len(confs)
-                high = sum((1 for c in confs if c >= 0.8))
-                med = sum((1 for c in confs if 0.5 <= c < 0.8))
-                low = sum((1 for c in confs if c < 0.5))
-                lines.append(f'Overall confidence: **{avg:.2f}** (avg)\n')
-                lines.append(f'- High confidence: {high} findings\n')
-                lines.append(f'- Medium confidence: {med} findings\n')
-                lines.append(f'- Low confidence: {low} findings\n')
-        else:
-            lines.append('No confidence data available.\n')
-        lines.append('\n## Intelligence Gaps\n')
-        if intelligence_gaps:
-            for gap in intelligence_gaps:
-                lines.append(f'- {gap}\n')
-        else:
-            lines.append('No explicit intelligence gaps identified.\n')
-            lines.append('Consider expanding: coverage scope, temporal depth, attribution confidence.\n')
-        if not is_clean and safe_meta:
-            lines.append('\n## Technical Metadata\n')
-            for key, value in safe_meta.items():
-                if key not in ('query', 'sprint_id', 'tags', 'sources'):
-                    lines.append(f'- **{key}**: {value}\n')
+
+        # Build report sections
+        lines = ['\n'.join(self._render_yaml_header(title, timestamp_str, opsec_level, tags, safe_meta))]
+        lines.extend(self._render_executive_summary(report, findings, is_clean))
+        lines.extend(self._render_findings_section(findings, is_clean))
+        lines.extend(self._render_evidence_section(evidence_chains))
+        lines.extend(self._render_confidence_section(confidence_summary, findings))
+        lines.extend(self._render_intelligence_gaps(intelligence_gaps))
+        lines.extend(self._render_technical_metadata(safe_meta, is_clean))
+
         try:
-            # SOVEREIGN-009: Sign forensic report before writing
-            report_content = '\n'.join(lines)
             from hledac.universal.brain.report_signer import sign_forensic_report
-            signed_content = sign_forensic_report(report_content)
+            signed_content = sign_forensic_report('\n'.join(lines))
             target.write_text(signed_content, encoding='utf-8')
             return target
         except Exception:

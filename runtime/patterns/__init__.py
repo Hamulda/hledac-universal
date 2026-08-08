@@ -11,8 +11,8 @@ from __future__ import annotations
 
 __all__: list[str] = []
 
-def __getattr__(name: str):
-    if name == "discovery":
-        from hledac.universal.runtime.patterns import discovery
-        return discovery
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+# F330-DUP: Refactored to use lazy_module_getter from utils/_patterns.py
+__getattr__ = __import__("hledac.universal.utils._patterns", fromlist=["lazy_module_getter"]).lazy_module_getter(
+    "hledac.universal.runtime.patterns.discovery",
+    {"discovery": "discovery"},
+)

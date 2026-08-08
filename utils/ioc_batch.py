@@ -91,6 +91,141 @@ def _python_fallback_extract(texts: list[str]) -> list[list[tuple[str, str]]]:
     return results
 
 
+def _is_pyo3_nested_tuple(slot: object) -> bool:
+    """Check if slot is PyO3 nested tuple format: [(('v1','t1'), ('v2','t2'))]."""
+    return (
+        isinstance(slot, list)
+        and len(slot) == 1
+        and isinstance(slot[0], (tuple, list))
+        and len(slot[0]) == 2
+        and isinstance(slot[0][0], (tuple, list))
+    )
+
+
+def _flatten_pyo3_slot(
+    slot: object,
+    confidence: float,
+) -> list[tuple[str, str, float]]:
+    """Flatten PyO3 tuple output into normalized list of (value, type, confidence).
+
+    Handles multiple PyO3 output formats:
+    - Nested: [(('v1','t1'), ('v2','t2'))]
+    - Flat: [('v1','t1'), ('v2','t2')]
+    - Single: ('v1','t1')
+    """
+    result: list[tuple[str, str, float]] = []
+
+    # Nested format: [(('v1','t1'), ('v2','t2'))]
+    if _is_pyo3_nested_tuple(slot):
+        first = slot[0]  # type: ignore[index]
+        for entry in first:  # type: ignore[union-attr]
+            if isinstance(entry, (tuple, list)) and len(entry) == 2:
+                v, t = entry
+                result.append((v, t, confidence))
+        return result
+
+    # Flat format: [('v1','t1'), ('v2','t2')]
+    if isinstance(slot, (tuple, list)) and all(
+        isinstance(x, (tuple, list)) and len(x) == 2 for x in slot  # type: ignore[union-attr]
+    ):
+        for entry in slot:  # type: ignore[union-attr]
+            if isinstance(entry, (tuple, list)) and len(entry) == 2:
+                v, t = entry
+                result.append((v, t, confidence))
+        return result
+
+    # Single IOC: ('v1','t1')
+    if isinstance(slot, (tuple, list)) and len(slot) == 2:
+        v, t = slot
+        result.append((v, t, confidence))
+        return result
+
+    return result
+
+
+def _try_simd_indexed(
+    texts: list[str],
+    rust: object,
+) -> list[list[tuple[str, str, float]]] | None:
+    """Try SIMD indexed extraction path.
+
+    Returns extracted results or None if unavailable.
+    """
+    try:
+        ext = getattr(rust, "ioc", None)
+        if ext is not None:
+            batch_fn = getattr(ext, "batch_extract_iocs_simd_indexed", None)
+            if batch_fn is not None:
+                indexed: list[tuple[int, str, str]] = batch_fn(texts)
+                result: list[list[tuple[str, str, float]]] = [[] for _ in texts]
+                for text_idx, value, ioc_type in indexed:
+                    if text_idx < len(result):
+                        result[text_idx].append((value, ioc_type, 0.7))
+                return result
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _try_batch_simd(
+    texts: list[str],
+    rust: object,
+    confidence: float,
+) -> list[list[tuple[str, str, float]]] | None:
+    """Try batch SIMD extraction path with multiple function name fallbacks.
+
+    Returns extracted results or None if unavailable.
+    """
+    try:
+        ext = getattr(rust, "ioc", None)
+        if ext is None:
+            ext = getattr(rust, "ioc_fast", None)
+        if ext is not None:
+            # Try multiple function names in priority order
+            batch_fn = getattr(ext, "batch_extract_iocs_simd", None)
+            if batch_fn is None:
+                batch_fn = getattr(ext, "batch_ioc_extract_unified", None)
+            if batch_fn is not None:
+                fast_raw = batch_fn(texts)
+                normalized: list[list[tuple[str, str, float]]] = []
+                for slot in fast_raw:
+                    text_result = _flatten_pyo3_slot(slot, confidence)
+                    normalized.append(text_result)
+                return normalized
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _try_serial_extract(
+    texts: list[str],
+    rust: object,
+    confidence: float,
+) -> list[list[tuple[str, str, float]]] | None:
+    """Try serial per-text extraction fallback.
+
+    Returns extracted results or None if unavailable.
+    """
+    try:
+        ext = getattr(rust, "ioc", None)
+        if ext is not None:
+            extract_one = getattr(ext, "extract_iocs_flat", None)
+            if extract_one is None:
+                extract_one = getattr(ext, "extract", None)
+            if extract_one is not None:
+                results: list[list[tuple[str, str, float]]] = []
+                for text in texts:
+                    try:
+                        flat: list[tuple[str, str]] = extract_one(text)
+                        results.append([(v, t, confidence) for v, t in flat])
+                    except Exception:
+                        results.append([])
+                return results
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def extract_iocs_batch(
     texts: list[str],
     *,
@@ -117,94 +252,20 @@ def extract_iocs_batch(
         return [[(v, t, confidence) for v, t in text_iocs] for text_iocs in raw]
 
     # Try SIMD path first (R4.3: regex-automata Teddy/NEON)
-    try:
-        ext = getattr(rust, "ioc", None)
-        if ext is not None:
-            batch_fn = getattr(ext, "batch_extract_iocs_simd_indexed", None)
-            if batch_fn is not None:
-                indexed: list[tuple[int, str, str]] = batch_fn(texts)
-                # Regroup by text index
-                result: list[list[tuple[str, str, float]]] = [[] for _ in texts]
-                for text_idx, value, ioc_type in indexed:
-                    if text_idx < len(result):
-                        result[text_idx].append((value, ioc_type, confidence))
-                return result
-    except Exception:  # noqa: BLE001
-        pass
+    result = _try_simd_indexed(texts, rust)
+    if result is not None:
+        return result
 
     # Try batch SIMD (R4.3: regex-automata Teddy/NEON + rayon parallel)
     # Priority: batch_extract_iocs_simd > batch_extract_iocs (，后者有bug)
-    try:
-        ext = getattr(rust, "ioc", None)
-        if ext is None:
-            ext = getattr(rust, "ioc_fast", None)
-        if ext is not None:
-            # batch_extract_iocs_simd: rayon parallel, indexed
-            batch_fn = getattr(ext, "batch_extract_iocs_simd", None)
-            if batch_fn is None:
-                batch_fn = getattr(ext, "batch_ioc_extract_unified", None)
-            if batch_fn is not None:
-                fast_raw = batch_fn(texts)
-                # PyO3 flatten: Vec<Vec<(String,String)>> → list containing 2-tuple of 2-tuples.
-                # Format: [[(('192.168.1.1','ipv4'), ('example.com','domain'))]]
-                # slot is a sequence of (value, type) 2-tuples.
-                normalized: list[list[tuple[str, str, float]]] = []
-                for slot in fast_raw:
-                    text_result: list[tuple[str, str, float]] = []
-                    if not slot:
-                        normalized.append(text_result)
-                        continue
-                    # PyO3 flatten: Vec<Vec<(S,S)>> → list containing a 2-tuple of 2-tuples.
-                    # slot = [(('v1','t1'), ('v2','t2'))] — a list with one 2-tuple-of-tuples.
-                    first = slot[0]
-                    if (
-                        isinstance(slot, list)
-                        and len(slot) == 1
-                        and isinstance(first, (tuple, list))
-                        and len(first) == 2
-                        and isinstance(first[0], (tuple, list))
-                    ):
-                        # slot = [(ioc1, ioc2)] — PyO3 flattened container
-                        for entry in first:  # type: ignore[union-attr]
-                            if isinstance(entry, (tuple, list)) and len(entry) == 2:
-                                v, t = entry
-                                text_result.append((v, t, confidence))
-                    elif isinstance(slot, (tuple, list)) and all(
-                        isinstance(x, (tuple, list)) and len(x) == 2 for x in slot
-                    ):
-                        # slot is already a flat list of 2-tuples
-                        for entry in slot:
-                            if isinstance(entry, (tuple, list)) and len(entry) == 2:
-                                v, t = entry
-                                text_result.append((v, t, confidence))
-                    else:
-                        # Single IOC in a 2-tuple: slot = ('v','t')
-                        if isinstance(slot, (tuple, list)) and len(slot) == 2:
-                            v, t = slot
-                            text_result.append((v, t, confidence))
-                    normalized.append(text_result)
-                return normalized
-    except Exception:  # noqa: BLE001
-        pass
+    result = _try_batch_simd(texts, rust, confidence)
+    if result is not None:
+        return result
 
     # Serial fallback: per-text Rust extraction
-    try:
-        ext = getattr(rust, "ioc", None)
-        if ext is not None:
-            extract_one = getattr(ext, "extract_iocs_flat", None)
-            if extract_one is None:
-                extract_one = getattr(ext, "extract", None)
-            if extract_one is not None:
-                results: list[list[tuple[str, str, float]]] = []
-                for text in texts:
-                    try:
-                        flat: list[tuple[str, str]] = extract_one(text)
-                        results.append([(v, t, confidence) for v, t in flat])
-                    except Exception:
-                        results.append([])
-                return results
-    except Exception:  # noqa: BLE001
-        pass
+    result = _try_serial_extract(texts, rust, confidence)
+    if result is not None:
+        return result
 
     # Pure Python fallback — last resort
     raw = _python_fallback_extract(texts)

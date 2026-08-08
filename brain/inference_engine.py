@@ -51,6 +51,7 @@ from operator import attrgetter, itemgetter
 from hledac.universal.brain.deephermes3_engine import _get_xxh3_hex
 from hledac.universal.utils.lru_cache import LRUCache
 from hledac.universal.utils.exceptions import InferenceLoopExceeded
+from hledac.universal.utils._patterns import compound_confidence_from_objects  # F320: DRY compound confidence
 import numpy as np
 try:
     from hledac.universal.utils.eig import EIGCalculator
@@ -1670,6 +1671,8 @@ class MultiHopReasoner:
         """
         Calculate compounded confidence across hops.
 
+        F320: Uses DRY helper for consistent formula.
+
         Formula: product(hop_confidences) * (0.9 ^ (path_length - 1))
 
         Args:
@@ -1678,13 +1681,8 @@ class MultiHopReasoner:
         Returns:
             Compounded confidence score
         """
-        if not hops:
-            return 1.0
-        product_confidence = 1.0
-        for hop in hops:
-            product_confidence *= hop.confidence
-        length_penalty = 0.9 ** (len(hops) - 1)
-        return product_confidence * length_penalty
+        # F320: Use DRY helper for consistent compound confidence calculation
+        return compound_confidence_from_objects(hops, confidence_attr="confidence")
 
     def _detect_cycles(self, path: MultiHopPath) -> bool:
         """

@@ -1,18 +1,18 @@
 {
   "schema": "haft.profile-onboarding.work-input/v1",
   "project_root": "/Users/vojtechhamada/PycharmProjects/Hledac/hledac/universal",
-  "suggestion_ref": "profile-suggestion:sha256:121850b5486c34a21c1cb26a21f6bb2b78cab1ec10d9e412c99f2c0a18afaa2f",
+  "suggestion_ref": "profile-suggestion:sha256:a643eaf01ad064725fced85b4569e4a36a040bad960cd73849f184c2eab61b8b",
   "detector_version": "haft.project-profile-detector/file-metadata-v3",
   "policy_version": "haft.project-profile-detector-policy/supported-singleton-v3",
-  "observation_digest": "sha256:166cc18fd0104ab4c835107d42be9a9860e70619082ecf921ebdb0bf716214d2",
+  "observation_digest": "sha256:94d9fb384f4eeed5c6c3aa53b560d240907f31de41e8f64827484372b0b4e1eb",
   "scopes": [
     {
-      "component_candidate_ref": "profile-component-suggestion:sha256:b6d642dea4ce9793efdb3028ac02201457fd4a1f337c9b899de7b6634f532da3",
+      "component_candidate_ref": "profile-component-suggestion:sha256:0e26a809a76929d61b8d3f37e1d76d5f017351fba6c2793a0e19f1f523e7f885",
       "scope_id": "models",
       "realization_kind": "non_software"
     },
     {
-      "component_candidate_ref": "profile-component-suggestion:sha256:fff239261c3f920474b03abd1e51b552d1645360032ca3a294c367e6c2d54d5d",
+      "component_candidate_ref": "profile-component-suggestion:sha256:3fe2efa1a334f912499a33baef747ebea0c4e17730f81da5c31d1f382296a073",
       "scope_id": "software",
       "realization_kind": "software"
     }

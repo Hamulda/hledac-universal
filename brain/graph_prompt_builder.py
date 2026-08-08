@@ -102,83 +102,30 @@ def build_graph_chatml_context(
     used_tokens = 0
 
     # 1. Summary (highest priority, always include if exists)
-    if summary_text:
-        summary_section = f"## Graph Summary\n{summary_text}"
-        summary_tokens = count_tokens(summary_section)
-        if used_tokens + summary_tokens <= token_budget:
-            sections.append(summary_section)
-            used_tokens += summary_tokens
+    summary_section, summary_tokens = _build_summary_section(summary_text, used_tokens, token_budget)
+    if summary_section:
+        sections.append(summary_section)
+        used_tokens += summary_tokens
 
     # 2. Key insights (high priority, truncate if needed)
-    if insights:
-        insight_lines = []
-        for insight in insights:
-            # Extract content from insight dict or use as-is
-            content = insight.get("content", "") if isinstance(insight, dict) else str(insight)
-            if content:
-                insight_lines.append(f"- {content[:200]}")  # Cap each insight at 200 chars
-
-        if insight_lines:
-            insights_section = "## Key Findings\n" + "\n".join(insight_lines)
-            insights_tokens = count_tokens(insights_section)
-
-            # Progressive truncation: reduce insights if over budget
-            remaining_budget = token_budget - used_tokens
-            if insights_tokens > remaining_budget:
-                # Truncate insights to fit
-                max_insight_tokens = max(100, remaining_budget // 2)
-                insights_section = truncate_to_budget(insights_section, max_insight_tokens)
-                insights_tokens = count_tokens(insights_section)
-
-            if used_tokens + insights_tokens <= token_budget:
-                sections.append(insights_section)
-                used_tokens += insights_tokens
+    insights_section, insights_tokens = _build_insights_section(insights, used_tokens, token_budget)
+    if insights_section:
+        sections.append(insights_section)
+        used_tokens += insights_tokens
 
     # 3. Path evidence (medium priority)
     if paths and used_tokens < token_budget * 0.8:  # Only if we have 20% budget left
-        path_lines = []
-        for path in paths[:5]:  # Limit to top 5 paths
-            nodes = path.get("nodes", []) if isinstance(path, dict) else []
-            if nodes:
-                path_str = " -> ".join(str(n)[:30] for n in nodes[:5])  # Cap node names
-                path_lines.append(f"- {path_str}")
-
-        if path_lines:
-            paths_section = "## Evidence Paths\n" + "\n".join(path_lines)
-            paths_tokens = count_tokens(paths_section)
-
-            remaining_budget = token_budget - used_tokens
-            if paths_tokens <= remaining_budget:
-                sections.append(paths_section)
-                used_tokens += paths_tokens
-            else:
-                # Truncate paths to fit
-                paths_section = truncate_to_budget(paths_section, remaining_budget)
-                sections.append(paths_section)
-                used_tokens += count_tokens(paths_section)
+        paths_section, paths_tokens = _build_paths_section(paths, used_tokens, token_budget)
+        if paths_section:
+            sections.append(paths_section)
+            used_tokens += paths_tokens
 
     # 4. Contested information (low priority, only if budget allows)
     if contested and used_tokens < token_budget * 0.9:
-        contested_parts = ["## Contested Information"]
-        if counter_paths:
-            contested_parts.append("Alternative perspectives found:")
-            for cp in counter_paths[:3]:
-                content = cp.get("content", "") if isinstance(cp, dict) else str(cp)
-                if content:
-                    contested_parts.append(f"- {content[:150]}")
-
-        if narratives:
-            contested_parts.append("\nCompeting narratives:")
-            for narrative in narratives[:2]:
-                content = narrative.get("content", "") if isinstance(narrative, dict) else str(narrative)
-                if content:
-                    contested_parts.append(f"- {content[:150]}")
-
-        contested_section = "\n".join(contested_parts)
-        contested_tokens = count_tokens(contested_section)
-
-        remaining_budget = token_budget - used_tokens
-        if contested_tokens <= remaining_budget:
+        contested_section, contested_tokens = _build_contested_section(
+            counter_paths, narratives, used_tokens, token_budget
+        )
+        if contested_section:
             sections.append(contested_section)
             used_tokens += contested_tokens
 
@@ -199,6 +146,107 @@ def build_graph_chatml_context(
 
     logger.debug(f"Built graph ChatML context: {count_tokens(chatml_context)} tokens, {len(sections)} sections")
     return chatml_context
+
+
+# ------------------------------------------------------------------
+# Complexity-reduced section builders (complexity: 25 → ~10)
+# ------------------------------------------------------------------
+
+def _build_summary_section(
+    summary_text: str, used_tokens: int, token_budget: int
+) -> tuple[str, int]:
+    """Build summary section if within budget."""
+    if not summary_text:
+        return "", 0
+    summary_section = f"## Graph Summary\n{summary_text}"
+    summary_tokens = count_tokens(summary_section)
+    if used_tokens + summary_tokens <= token_budget:
+        return summary_section, summary_tokens
+    return "", 0
+
+
+def _build_insights_section(
+    insights: list[Any], used_tokens: int, token_budget: int
+) -> tuple[str, int]:
+    """Build key insights section with progressive truncation."""
+    if not insights:
+        return "", 0
+    insight_lines = []
+    for insight in insights:
+        content = insight.get("content", "") if isinstance(insight, dict) else str(insight)
+        if content:
+            insight_lines.append(f"- {content[:200]}")
+
+    if not insight_lines:
+        return "", 0
+
+    insights_section = "## Key Findings\n" + "\n".join(insight_lines)
+    insights_tokens = count_tokens(insights_section)
+
+    remaining_budget = token_budget - used_tokens
+    if insights_tokens > remaining_budget:
+        max_insight_tokens = max(100, remaining_budget // 2)
+        insights_section = truncate_to_budget(insights_section, max_insight_tokens)
+        insights_tokens = count_tokens(insights_section)
+
+    if used_tokens + insights_tokens <= token_budget:
+        return insights_section, insights_tokens
+    return "", 0
+
+
+def _build_paths_section(
+    paths: list[Any], used_tokens: int, token_budget: int
+) -> tuple[str, int]:
+    """Build evidence paths section."""
+    if not paths:
+        return "", 0
+    path_lines = []
+    for path in paths[:5]:
+        nodes = path.get("nodes", []) if isinstance(path, dict) else []
+        if nodes:
+            path_str = " -> ".join(str(n)[:30] for n in nodes[:5])
+            path_lines.append(f"- {path_str}")
+
+    if not path_lines:
+        return "", 0
+
+    paths_section = "## Evidence Paths\n" + "\n".join(path_lines)
+    paths_tokens = count_tokens(paths_section)
+
+    remaining_budget = token_budget - used_tokens
+    if paths_tokens <= remaining_budget:
+        return paths_section, paths_tokens
+    # Truncate paths to fit
+    paths_section = truncate_to_budget(paths_section, remaining_budget)
+    return paths_section, count_tokens(paths_section)
+
+
+def _build_contested_section(
+    counter_paths: list[Any], narratives: list[Any], used_tokens: int, token_budget: int
+) -> tuple[str, int]:
+    """Build contested information section with counter-paths and narratives."""
+    contested_parts = ["## Contested Information"]
+    if counter_paths:
+        contested_parts.append("Alternative perspectives found:")
+        for cp in counter_paths[:3]:
+            content = cp.get("content", "") if isinstance(cp, dict) else str(cp)
+            if content:
+                contested_parts.append(f"- {content[:150]}")
+
+    if narratives:
+        contested_parts.append("\nCompeting narratives:")
+        for narrative in narratives[:2]:
+            content = narrative.get("content", "") if isinstance(narrative, dict) else str(narrative)
+            if content:
+                contested_parts.append(f"- {content[:150]}")
+
+    contested_section = "\n".join(contested_parts)
+    contested_tokens = count_tokens(contested_section)
+
+    remaining_budget = token_budget - used_tokens
+    if contested_tokens <= remaining_budget:
+        return contested_section, contested_tokens
+    return "", 0
 
 
 def inject_graph_context(

@@ -51,6 +51,7 @@ Sprint F150P: Finish-layer truth fields — canonical surfaces from scheduler/co
 
 import asyncio
 import logging
+from pathlib import Path
 
 from operator import attrgetter, itemgetter
 from hledac.universal.utils.async_helpers import parallel
@@ -86,6 +87,8 @@ from hledac.universal.export.components.narrative_builder import (  # noqa: F401
     _enrich_follow_ups,
     _get_branch_value,
 )
+
+from hledac.universal.core.feature_flags import FeatureFlags, FeatureFlag  # noqa: E402
 
 
 def _json_dumps(obj: Any, *, indent: int | None = None, default: Any = None) -> str:
@@ -170,6 +173,7 @@ class JSONFormatter:
         sprint_id: str | None = None,
         enable_security_enrichment: bool = False,
         export_mode: str = "slim",
+        evidence_log: Any = None,
     ) -> dict:
         """
         Format sprint export as JSON artifact.
@@ -1673,6 +1677,74 @@ def _planner_actions_to_seeds(planner_actions: list[dict]) -> tuple[list[dict], 
     return deduped, "investigation_packet.planner_actions"
 
 
+def _derive_ioc_followup_seeds(top_nodes: list) -> list[dict[str, Any]]:
+    """
+    Sprint F150J §1: IOC follow-up seeds from top graph nodes.
+    Extracted from _generate_next_sprint_seeds to reduce cyclomatic complexity.
+    """
+    seeds: list[dict[str, Any]] = []
+    for node in top_nodes:
+        try:
+            if isinstance(node, dict):
+                ioc_value = str(node.get("value", "")) if node else ""
+                ioc_type = str(node.get("ioc_type", "unknown")) if node else "unknown"
+            elif isinstance(node, (list, tuple)) and len(node) >= 2:
+                ioc_value = str(node[0]) if node[0] else ""
+                ioc_type = str(node[1]) if node[1] else "unknown"
+            elif isinstance(node, (list, tuple)) and len(node) == 1:
+                ioc_value = str(node[0]) if node[0] else ""
+                ioc_type = "unknown"
+            elif isinstance(node, str):
+                ioc_value = node
+                ioc_type = "unknown"
+            elif isinstance(node, (int, float)):
+                ioc_value = str(node)
+                ioc_type = "unknown"
+            else:
+                continue
+        except Exception:
+            continue
+
+        if not ioc_value or len(ioc_value) < 3:
+            continue
+
+        node_seeds = _type_aware_seeds(ioc_value, ioc_type, reason="ioc_followup")
+        seeds.extend(node_seeds)
+
+    return seeds
+
+
+def _derive_hypothesis_seeds(
+    pvs: dict[str, Any] | None,
+    max_queries: int = 2,
+) -> list[dict[str, Any]]:
+    """
+    Sprint F207H: Hypothesis engine seeds (full mode only).
+    Extracted from _generate_next_sprint_seeds to reduce cyclomatic complexity.
+    """
+    if not pvs:
+        return []
+    try:
+        from hledac.universal.export.components.hypothesis_builder import _derive_hypothesis_queries
+        return _derive_hypothesis_queries(pvs, max_queries=max_queries)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _derive_focus_expand_seeds(pvs: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """
+    Sprint F150K: Focus/expand recommendations from product_value_summary.
+    Extracted from _generate_next_sprint_seeds to reduce cyclomatic complexity.
+    """
+    if not pvs:
+        return []
+    try:
+        from hledac.universal.export.components.pivot_builder import _derive_focus_expand
+        return _derive_focus_expand(pvs)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 async def _generate_next_sprint_seeds(
     top_nodes: list,
     sprint_id: str,
@@ -1739,79 +1811,44 @@ async def _generate_next_sprint_seeds(
             # Legacy fallback: gather from top_nodes and pvs heuristics
             next_seeds_source = "legacy_fallback"
 
-            # 1. IOC follow-up seeds from top_nodes (existing logic)
-            for node in top_nodes:
-                try:
-                    if isinstance(node, dict):
-                        ioc_value = str(node.get("value", "")) if node else ""
-                        ioc_type = str(node.get("ioc_type", "unknown")) if node else "unknown"
-                    elif isinstance(node, (list, tuple)) and len(node) >= 2:
-                        ioc_value = str(node[0]) if node[0] else ""
-                        ioc_type = str(node[1]) if node[1] else "unknown"
-                    elif isinstance(node, (list, tuple)) and len(node) == 1:
-                        ioc_value = str(node[0]) if node[0] else ""
-                        ioc_type = "unknown"
-                    elif isinstance(node, str):
-                        ioc_value = node
-                        ioc_type = "unknown"
-                    elif isinstance(node, (int, float)):
-                        ioc_value = str(node)
-                        ioc_type = "unknown"
-                    else:
-                        continue
-                except Exception:
-                    continue
+            # 1. IOC follow-up seeds from top_nodes
+            seeds.extend(_derive_ioc_followup_seeds(top_nodes))
 
-                if not ioc_value or len(ioc_value) < 3:
-                    continue
-
-                node_seeds = _type_aware_seeds(ioc_value, ioc_type, reason="ioc_followup")
-                seeds.extend(node_seeds)
-
-            # 2. Sprint F150J: query_suggestion — derive next queries from sprint signal
+            # 2. Query suggestion seeds
             if pvs:
-                query_seeds = _derive_query_seeds(pvs)
-                seeds.extend(query_seeds)
+                seeds.extend(_derive_query_seeds(pvs))
 
-            # 3. Sprint F150J: source_revisit — circuit breaker + depleted signal
+            # 3. Source revisit seeds
             if pvs:
-                revisit_seeds = _derive_source_revisit_seeds(pvs)
-                seeds.extend(revisit_seeds)
+                seeds.extend(_derive_source_revisit_seeds(pvs))
 
-            # 4. Sprint F150J: low_signal_recommendation — when sprint was nearly empty
+            # 4. Low signal recommendation seeds
             if pvs:
-                low_signal_seeds = _derive_low_signal_seeds(pvs)
-                seeds.extend(low_signal_seeds)
+                seeds.extend(_derive_low_signal_seeds(pvs))
 
-            # 5. Sprint F207H: hypothesis_engine.suggest_next_queries() seam
+            # 5. Hypothesis engine seeds (full mode only)
             if pvs and export_mode == "full":
-                hyp_queries = _derive_hypothesis_queries(pvs, max_queries=2)
-                seeds.extend(hyp_queries)
+                seeds.extend(_derive_hypothesis_seeds(pvs, max_queries=2))
 
-            # 6. Sprint F150K: focus/expand recommendations
+            # 6. Focus/expand recommendation seeds
             if pvs:
-                focus_expand = _derive_focus_expand(pvs)
-                seeds.extend(focus_expand)
+                seeds.extend(_derive_focus_expand_seeds(pvs))
 
-            # 7. Sprint F150L: branch_value-driven seeds
+            # 7. Branch value-driven seeds
             if branch_value:
-                branch_seeds = _derive_branch_seeds(branch_value)
-                seeds.extend(branch_seeds)
+                seeds.extend(_derive_branch_seeds(branch_value))
 
-            # 8. Sprint F150L: sprint_trend-driven seeds
+            # 8. Sprint trend-driven seeds
             if sprint_trend:
-                trend_seeds = _derive_trend_seeds(sprint_trend)
-                seeds.extend(trend_seeds)
+                seeds.extend(_derive_trend_seeds(sprint_trend))
 
-            # 9. Sprint F226D: capability_synthesis-driven seeds
+            # 9. Capability synthesis-driven seeds
             if capability_synthesis:
-                cap_seeds = _derive_capability_seeds(capability_synthesis)
-                seeds.extend(cap_seeds)
+                seeds.extend(_derive_capability_seeds(capability_synthesis))
 
-            # 10. Sprint F226D: analyst_brief-driven seeds
+            # 10. Analyst brief-driven seeds
             if analyst_brief:
-                brief_seeds = _derive_analyst_brief_seeds(analyst_brief)
-                seeds.extend(brief_seeds)
+                seeds.extend(_derive_analyst_brief_seeds(analyst_brief))
 
             # Sprint F226D: dedup before cap
             seeds = _dedup_seeds(seeds)
@@ -2859,6 +2896,116 @@ def _build_engineering_action_map(
 # ---------------------------------------------------------------------------
 
 
+def _handle_no_strict_expectation(intent: str) -> dict[str, Any]:
+    """Handle unknown intents with no strict expectation."""
+    return {
+        "intent": intent,
+        "expected_families": [],
+        "minimum_success": "no_strict_expectation",
+        "missing_critical": [],
+        "unexpected_skipped": [],
+        "contract_status": "no_strict_expectation",
+    }
+
+
+def _handle_domain_recon_contract(families: dict[str, Any]) -> dict[str, Any]:
+    """Handle 'domain_recon' intent contract."""
+    expected = ["public", "ct", "passive_dns", "wayback"]
+
+    def _family_status(name: str) -> str:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("status", "unknown") if isinstance(entry, dict) else "unknown"
+
+    success_families = [f for f in expected if _family_status(f) == "successful"]
+    minimum_met = len([f for f in ("ct", "passive_dns") if _family_status(f) == "successful"]) > 0
+    missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
+    unexpected_skipped = [f for f in expected if _family_status(f) == "skipped"]
+
+    if minimum_met:
+        contract_status = "met"
+    elif success_families:
+        contract_status = "partial"
+    else:
+        contract_status = "unmet"
+
+    return {
+        "intent": "domain_recon",
+        "expected_families": expected,
+        "minimum_success": "partial" if success_families else "fail",
+        "missing_critical": missing,
+        "unexpected_skipped": unexpected_skipped,
+        "contract_status": contract_status,
+    }
+
+
+def _handle_malware_wallet_contract(families: dict[str, Any], intent: str) -> dict[str, Any]:
+    """Handle 'malware_family' and 'wallet_recon' intent contracts."""
+    expected = ["public"] + (["ct"] if intent == "wallet_recon" else [])
+
+    def _family_status(name: str) -> str:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("status", "unknown") if isinstance(entry, dict) else "unknown"
+
+    def _family_attempted(name: str) -> bool:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("attempted", False) if isinstance(entry, dict) else False
+
+    def _family_accepted(name: str) -> int:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("accepted_count", 0) or 0 if isinstance(entry, dict) else 0
+
+    public_accepted = _family_accepted("public")
+    missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
+    unexpected_skipped = [f for f in expected if _family_status(f) == "skipped" and _family_attempted(f)]
+
+    if public_accepted > 0:
+        contract_status = "met"
+        minimum = "pass"
+    else:
+        contract_status = "unmet"
+        minimum = "fail"
+
+    return {
+        "intent": intent,
+        "expected_families": expected,
+        "minimum_success": minimum,
+        "missing_critical": missing,
+        "unexpected_skipped": unexpected_skipped,
+        "contract_status": contract_status,
+    }
+
+
+def _handle_vulnerability_contract(families: dict[str, Any], intent: str) -> dict[str, Any]:
+    """Handle 'cve_recon' and 'vulnerability' intent contracts."""
+    expected = ["public", "ct", "wayback"]
+
+    def _family_status(name: str) -> str:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("status", "unknown") if isinstance(entry, dict) else "unknown"
+
+    def _family_attempted(name: str) -> bool:
+        entry = families.get(name, {}) if isinstance(families, dict) else {}
+        return entry.get("attempted", False) if isinstance(entry, dict) else False
+
+    success_families = [f for f in expected if _family_status(f) == "successful"]
+    missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
+    unexpected_skipped = [f for f in expected if _family_status(f) == "skipped" and _family_attempted(f)]
+
+    if success_families:
+        contract_status = "met"
+    else:
+        contract_status = "unmet"
+
+    return {
+        "intent": intent,
+        "expected_families": expected,
+        "minimum_success": "pass" if success_families else "fail",
+        "missing_critical": missing,
+        "unexpected_skipped": unexpected_skipped,
+        "contract_status": contract_status,
+    }
+
+
 def _build_expected_evidence(
     intent: str,
     pyd: dict[str, Any] | None,
@@ -2908,118 +3055,25 @@ def _build_expected_evidence(
     """
     # Guard: fail-soft for None/non-dict pyd (empty families dict is valid — processes as unmet)
     if pyd is None or not isinstance(pyd, dict):
-        return {
-            "intent": intent,
-            "expected_families": [],
-            "minimum_success": "no_strict_expectation",
-            "missing_critical": [],
-            "unexpected_skipped": [],
-            "contract_status": "no_strict_expectation",
-        }
+        return _handle_no_strict_expectation(intent)
+
     families = pyd.get("families", {}) if isinstance(pyd.get("families"), dict) else {}
 
-    # Canonical family status helper
-    def _family_status(name: str) -> str:
-        entry = families.get(name, {}) if isinstance(families, dict) else {}
-        return entry.get("status", "unknown") if isinstance(entry, dict) else "unknown"
-
-    def _family_accepted(name: str) -> int:
-        entry = families.get(name, {}) if isinstance(families, dict) else {}
-        return entry.get("accepted_count", 0) or 0 if isinstance(entry, dict) else 0
-
-    def _family_attempted(name: str) -> bool:
-        entry = families.get(name, {}) if isinstance(families, dict) else {}
-        return entry.get("attempted", False) if isinstance(entry, dict) else False
-
-    # ----- domain_infrastructure -----
-    if intent == "domain_recon":
-        expected = ["public", "ct", "passive_dns", "wayback"]
-        success_families = [f for f in expected if _family_status(f) == "successful"]
-        attempted_families = [f for f in expected if _family_attempted(f)]
-
-        # minimum_success: any of ct/pdns succeed OR next_seeds > 0
-        # We only know seed_classes here; next_seeds is not available in this helper
-        # so we check for at least ct or pdns success
-        minimum_met = len([f for f in ("ct", "passive_dns") if _family_status(f) == "successful"]) > 0
-
-        missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
-        unexpected_skipped = [f for f in expected if _family_status(f) == "skipped" and f in attempted_families]
-
-        if minimum_met:
-            contract_status = "met"
-        elif success_families:
-            contract_status = "partial"
-        else:
-            contract_status = "unmet"
-
-        return {
-            "intent": intent,
-            "expected_families": expected,
-            "minimum_success": "partial" if success_families else "fail",
-            "missing_critical": missing,
-            "unexpected_skipped": unexpected_skipped,
-            "contract_status": contract_status,
-        }
-
-    # ----- malware_family / wallet_recon -----
-    if intent in ("malware_family", "wallet_recon"):
-        expected = ["public"] + (["ct"] if intent == "wallet_recon" else [])
-        _family_status("public")
-
-        # minimum: public yields candidate domains (accepted > 0)
-        public_accepted = _family_accepted("public")
-
-        missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
-        unexpected_skipped = [f for f in expected if _family_status(f) == "skipped" and _family_attempted(f)]
-
-        if public_accepted > 0:
-            contract_status = "met"
-            minimum = "pass"
-        else:
-            contract_status = "unmet"
-            minimum = "fail"
-
-        return {
-            "intent": intent,
-            "expected_families": expected,
-            "minimum_success": minimum,
-            "missing_critical": missing,
-            "unexpected_skipped": unexpected_skipped,
-            "contract_status": contract_status,
-        }
-
-    # ----- vulnerability / cve_recon -----
-    if intent in ("cve_recon", "vulnerability"):
-        expected = ["public", "ct", "wayback"]
-        success_families = [f for f in expected if _family_status(f) == "successful"]
-
-        missing = [f for f in expected if _family_status(f) in ("error_or_zero", "attempted_empty")]
-        unexpected_skipped = [f for f in expected if _family_status(f) == "skipped" and _family_attempted(f)]
-
-        if success_families:
-            contract_status = "met"
-        else:
-            contract_status = "unmet"
-
-        return {
-            "intent": intent,
-            "expected_families": expected,
-            "minimum_success": "pass" if success_families else "fail",
-            "missing_critical": missing,
-            "unexpected_skipped": unexpected_skipped,
-            "contract_status": contract_status,
-        }
-
-    # ----- org_recon / person_recon / unknown -----
-    # No strict expectation — defer to other signals
-    return {
-        "intent": intent,
-        "expected_families": [],
-        "minimum_success": "no_strict_expectation",
-        "missing_critical": [],
-        "unexpected_skipped": [],
-        "contract_status": "no_strict_expectation",
+    # Dispatcher mapping intents to handler functions
+    _INTENT_HANDLERS: dict[str, callable] = {
+        "domain_recon": _handle_domain_recon_contract,
+        "malware_family": lambda f: _handle_malware_wallet_contract(f, "malware_family"),
+        "wallet_recon": lambda f: _handle_malware_wallet_contract(f, "wallet_recon"),
+        "cve_recon": lambda f: _handle_vulnerability_contract(f, "cve_recon"),
+        "vulnerability": lambda f: _handle_vulnerability_contract(f, "vulnerability"),
     }
+
+    handler = _INTENT_HANDLERS.get(intent)
+    if handler is not None:
+        return handler(families)
+
+    # Unknown intent — no strict expectation
+    return _handle_no_strict_expectation(intent)
 
 
 # ---------------------------------------------------------------------------
@@ -3434,6 +3488,20 @@ async def _get_source_leaderboard(store: Any, days: int = 7) -> list[dict]:
     # [IMPORTED from components] def placeholder at L2956
 
 
+def _extract_field(
+    sources: tuple[dict[str, Any], ...],
+    field: str,
+) -> Any:
+    """Extract field from sources using priority chain (scorecard -> crs -> rt)."""
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        val = source.get(field)
+        if val is not None:
+            return val
+    return None
+
+
 def _get_acquisition_truth(eh: ExportHandoff) -> dict[str, Any]:
     """
     Sprint F208J-C: Acquisition truth pass-through — handoff-first truth order.
@@ -3465,97 +3533,20 @@ def _get_acquisition_truth(eh: ExportHandoff) -> dict[str, Any]:
     scorecard = eh.scorecard if eh.scorecard else {}
     crs = eh.canonical_run_summary if eh.canonical_run_summary else {}
     rt = eh.runtime_truth if eh.runtime_truth else {}
-
+    sources = (scorecard, crs, rt)
     result: dict[str, Any] = {}
 
-    # acquisition_report — scorecard first, then canonical_run_summary, then runtime_truth
-    ar = scorecard.get("acquisition_report")
-    if not ar and isinstance(crs, dict):
-        ar = crs.get("acquisition_report")
-    if not ar and isinstance(rt, dict):
-        ar = rt.get("acquisition_report")
-    if ar and isinstance(ar, dict):
-        result["acquisition_report"] = _make_serializable(ar)
-
-    # acquisition_terminality_checked
-    atc = scorecard.get("acquisition_terminality_checked")
-    if atc is None:
-        atc = crs.get("acquisition_terminality_checked") if isinstance(crs, dict) else None
-    if atc is None:
-        atc = rt.get("acquisition_terminality_checked") if isinstance(rt, dict) else None
-    if atc is not None:
-        result["acquisition_terminality_checked"] = atc
-
-    # acquisition_terminality_satisfied
-    ats = scorecard.get("acquisition_terminality_satisfied")
-    if ats is None:
-        ats = crs.get("acquisition_terminality_satisfied") if isinstance(crs, dict) else None
-    if ats is None:
-        ats = rt.get("acquisition_terminality_satisfied") if isinstance(rt, dict) else None
-    if ats is not None:
-        result["acquisition_terminality_satisfied"] = ats
-
-    # acquisition_terminality_missing_lanes
-    atm = scorecard.get("acquisition_terminality_missing_lanes")
-    if atm is None:
-        atm = crs.get("acquisition_terminality_missing_lanes") if isinstance(crs, dict) else None
-    if atm is None:
-        atm = rt.get("acquisition_terminality_missing_lanes") if isinstance(rt, dict) else None
-    if atm is not None:
-        result["acquisition_terminality_missing_lanes"] = atm
-
-    # source_family_outcomes
-    sfo = scorecard.get("source_family_outcomes")
-    if not sfo and isinstance(crs, dict):
-        sfo = crs.get("source_family_outcomes")
-    if not sfo and isinstance(rt, dict):
-        sfo = rt.get("source_family_outcomes")
-    if sfo:
-        result["source_family_outcomes"] = _make_serializable(sfo)
-
-    # scheduler_exit
-    se = scorecard.get("scheduler_exit")
-    if not se and isinstance(crs, dict):
-        se = crs.get("scheduler_exit")
-    if not se and isinstance(rt, dict):
-        se = rt.get("scheduler_exit")
-    if se:
-        result["scheduler_exit"] = _make_serializable(se)
-
-    # return_guard
-    rg = scorecard.get("return_guard")
-    if not rg and isinstance(crs, dict):
-        rg = crs.get("return_guard")
-    if not rg and isinstance(rt, dict):
-        rg = rt.get("return_guard")
-    if rg:
-        result["return_guard"] = _make_serializable(rg)
-
-    # windup_guard_observation
-    wg = scorecard.get("windup_guard_observation")
-    if not wg and isinstance(crs, dict):
-        wg = crs.get("windup_guard_observation")
-    if not wg and isinstance(rt, dict):
-        wg = rt.get("windup_guard_observation")
-    if wg:
-        result["windup_guard_observation"] = _make_serializable(wg)
-
-    # prewindup_barrier
-    pwb = scorecard.get("prewindup_barrier")
-    if not pwb and isinstance(crs, dict):
-        pwb = crs.get("prewindup_barrier")
-    if not pwb and isinstance(rt, dict):
-        pwb = rt.get("prewindup_barrier")
-    if pwb:
-        result["prewindup_barrier"] = _make_serializable(pwb)
-
-    # Sprint F209B: Acquisition prelude pass-through
-    # acquisition_prelude_checked / _ran / _required_lanes / _terminal_lanes /
-    # _missing_lanes / _skipped_lanes / _errors / _duration_s / _reason:
-    #   1. eh.scorecard (top-level keys)
-    #   2. eh.canonical_run_summary
-    #   3. eh.runtime_truth
-    _prelude_fields = [
+    # All fields to extract
+    _fields = [
+        "acquisition_report",
+        "acquisition_terminality_checked",
+        "acquisition_terminality_satisfied",
+        "acquisition_terminality_missing_lanes",
+        "source_family_outcomes",
+        "scheduler_exit",
+        "return_guard",
+        "windup_guard_observation",
+        "prewindup_barrier",
         "acquisition_prelude_checked",
         "acquisition_prelude_ran",
         "acquisition_prelude_required_lanes",
@@ -3566,17 +3557,11 @@ def _get_acquisition_truth(eh: ExportHandoff) -> dict[str, Any]:
         "acquisition_prelude_duration_s",
         "acquisition_prelude_reason",
     ]
-    for _field in _prelude_fields:
-        _val = scorecard.get(_field)
-        if _val is None and isinstance(crs, dict):
-            _val = crs.get(_field)
-        if _val is None and isinstance(rt, dict):
-            _val = rt.get(_field)
-        if _val is not None:
-            if isinstance(_val, (dict, list)):
-                result[_field] = _make_serializable(_val)
-            else:
-                result[_field] = _val
+
+    for field in _fields:
+        val = _extract_field(sources, field)
+        if val is not None:
+            result[field] = _make_serializable(val) if isinstance(val, (dict, list)) else val
 
     return result
 

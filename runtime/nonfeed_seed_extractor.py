@@ -134,42 +134,53 @@ def _is_publisher_domain(domain: str) -> bool:
     """Return True if domain is a known publisher/aggregator."""
     return domain.lower() in PUBLISHER_DOMAINS
 
-# ─── Per-IOC-type extractors (flattened from 6× nested blocks, depth=1) ────────
+# ─── Generic IOC extractor factory (DRY: replaces 4× identical patterns) ────────
 
-def _extract_urls(cleaned: str, seen: dict, max_seeds: int) -> None:
-    """Extract URLs. Early-return when max_seeds reached."""
-    if len(seen) >= max_seeds:
-        return
-    for m in _URL_RE.finditer(cleaned):
-        key = ('url', m.group(0))
-        if key not in seen:
-            seen[key] = NonfeedSeed(value=m.group(0), kind='url', source='body', confidence=0.9, reason='url_in_body')
+def _make_ioc_extractor(
+    pattern: re.Pattern[str],
+    kind: str,
+    confidence: float,
+    reason_prefix: str,
+    extract_value: callable = lambda m, _: m.group(0),
+) -> callable:
+    """Factory: creates an IOC extractor function from parameters.
+
+    Eliminates 4× identical extractor patterns (urls, emails, ips, cves).
+    """
+    def extractor(cleaned: str, seen: dict, max_seeds: int) -> None:
         if len(seen) >= max_seeds:
             return
+        for m in pattern.finditer(cleaned):
+            raw = extract_value(m, 0)
+            key = (kind, raw)
+            if key not in seen:
+                seen[key] = NonfeedSeed(
+                    value=raw,
+                    kind=kind,
+                    source='body',
+                    confidence=confidence,
+                    reason=f'{reason_prefix}_in_body',
+                )
+            if len(seen) >= max_seeds:
+                return
+    extractor.__doc__ = f"Extract {kind.upper()} IOCs. Early-return when max_seeds reached."
+    return extractor
 
-def _extract_emails(cleaned: str, seen: dict, max_seeds: int) -> None:
-    """Extract email addresses. Early-return when max_seeds reached."""
-    if len(seen) >= max_seeds:
-        return
-    for m in _EMAIL_RE.finditer(cleaned):
-        raw = m.group(1).lower()
-        key = ('email', raw)
-        if key not in seen:
-            seen[key] = NonfeedSeed(value=raw, kind='email', source='body', confidence=0.85, reason='email_in_body')
-        if len(seen) >= max_seeds:
-            return
-
-def _extract_ips(cleaned: str, seen: dict, max_seeds: int) -> None:
-    """Extract IP addresses (dotted quad). Early-return when max_seeds reached."""
-    if len(seen) >= max_seeds:
-        return
-    for m in _IP_RE.finditer(cleaned):
-        val = m.group(0)
-        key = ('ip', val)
-        if key not in seen:
-            seen[key] = NonfeedSeed(value=val, kind='ip', source='body', confidence=0.95, reason='ip_in_body')
-        if len(seen) >= max_seeds:
-            return
+# Concrete extractors (generated from factory)
+_extract_urls = _make_ioc_extractor(
+    pattern=_URL_RE, kind='url', confidence=0.9, reason_prefix='url',
+)
+_extract_emails = _make_ioc_extractor(
+    pattern=_EMAIL_RE, kind='email', confidence=0.85, reason_prefix='email',
+    extract_value=lambda m, _: m.group(1).lower(),
+)
+_extract_ips = _make_ioc_extractor(
+    pattern=_IP_RE, kind='ip', confidence=0.95, reason_prefix='ip',
+)
+_extract_cves = _make_ioc_extractor(
+    pattern=_CVE_RE, kind='cve', confidence=0.9, reason_prefix='cve',
+    extract_value=lambda m, _: m.group(1).upper(),
+)
 
 def _extract_hashes(cleaned: str, seen: dict, max_seeds: int) -> None:
     """Extract hashes (MD5/SHA1/SHA256). Early-return when max_seeds reached."""
@@ -188,18 +199,6 @@ def _extract_hashes(cleaned: str, seen: dict, max_seeds: int) -> None:
         key = ('hash', raw)
         if key not in seen:
             seen[key] = NonfeedSeed(value=raw, kind='hash', source='body', confidence=0.8, reason=f'hash_in_body_{kind_str}')
-        if len(seen) >= max_seeds:
-            return
-
-def _extract_cves(cleaned: str, seen: dict, max_seeds: int) -> None:
-    """Extract CVE identifiers. Early-return when max_seeds reached."""
-    if len(seen) >= max_seeds:
-        return
-    for m in _CVE_RE.finditer(cleaned):
-        raw = m.group(1).upper()
-        key = ('cve', raw)
-        if key not in seen:
-            seen[key] = NonfeedSeed(value=raw, kind='cve', source='body', confidence=0.9, reason='cve_in_body')
         if len(seen) >= max_seeds:
             return
 

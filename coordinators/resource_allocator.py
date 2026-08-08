@@ -18,6 +18,7 @@ and ResourceAwareScheduler — these are NOT deprecated.
 Import GC/backpressure/AIMD from:
     from hledac.universal.coordinators.resource import gc_collect, BackpressureMonitor, AIMDController
 """
+from __future__ import annotations
 
 import warnings
 

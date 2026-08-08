@@ -77,6 +77,9 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 if TYPE_CHECKING:
     from hledac.universal.brain.deephermes3_engine import DeepHermes3Engine
 
+from hledac.universal.utils.memory_tier import get_adaptive_cache_size
+from utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
+
 logger = logging.getLogger(__name__)
 
 # ─── Environment ────────────────────────────────────────────────────────────────
@@ -273,11 +276,8 @@ class MlxcelBackend(IInferenceBackend):
                     logger.info("[IC:mlxcel] MlxcelIpcClient connected")
         return self._client
 
-    def _get_lock(self) -> asyncio.Lock:
-        """Lazy asyncio.Lock (ISSUE-014 pattern)."""
-        if self._client_lock is None:
-            self._client_lock = asyncio.Lock()
-        return self._client_lock
+    # F320-REFACTOR-2: lazy lock descriptor (ISSUE-014 compliant)
+    _get_lock = LazyLockDescriptor("_client_lock")
 
     async def generate(self, request: InferenceRequest) -> InferenceResponse:
         import time
@@ -364,11 +364,8 @@ class CoreMLBackend(IInferenceBackend):
                     logger.info("[IC:coreml] CoreMLClient singleton created")
         return self._client
 
-    def _get_lock(self) -> asyncio.Lock:
-        """Lazy asyncio.Lock (ISSUE-014 pattern)."""
-        if self._client_lock is None:
-            self._client_lock = asyncio.Lock()
-        return self._client_lock
+    # F320-REFACTOR-2: lazy lock descriptor (ISSUE-014 compliant)
+    _get_lock = LazyLockDescriptor("_client_lock")
 
     async def generate(self, request: InferenceRequest) -> InferenceResponse:
         """
@@ -665,30 +662,7 @@ def get_inference_coordinator() -> InferenceCoordinator:
 
 # ─── Model Pool (M-11 canonical LRU) ──────────────────────────────────────────────
 
-
-def _adaptive_model_cache_max() -> int:
-    """
-    Adaptive model cache size based on available RAM.
-
-    M1 8GB:  1 model   (strict — Hermes + ModernBERT + GLiNER = 3-4 GB)
-    M1 16GB: 2 models
-    M2/M3:   3-4 models
-    """
-    try:
-        import psutil
-
-        total_gb = psutil.virtual_memory().total / (1024**3)
-        if total_gb <= 9:
-            return 1  # M1 Air 8GB — strict budget
-        elif total_gb <= 17:
-            return 2
-        elif total_gb <= 33:
-            return 3
-        else:
-            return 4
-    except Exception:
-        return 2  # safe default
-
+# Uses get_adaptive_cache_size from utils.memory_tier (canonical M1 memory tier detection)
 
 class ModelPool:
     """
@@ -717,7 +691,8 @@ class ModelPool:
         self._cache: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         # RLock: re-entrant — safe for async, sync, and recursive contexts
         self._lock = threading.RLock()
-        self._max_size = max_size if max_size is not None else _adaptive_model_cache_max()
+        # Uses canonical memory tier detection from utils.memory_tier
+        self._max_size = max_size if max_size is not None else get_adaptive_cache_size()
         self._eviction_count: int = 0
         self._hits: int = 0
         self._misses: int = 0

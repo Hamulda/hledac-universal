@@ -151,19 +151,19 @@ async def search_censys_lane(
             ) as resp:
                 if resp.status_code == 401:
                     logger.warning("[CENSYS] API credentials invalid or required")
-                    record_failure(_CB_DOMAIN, kind="auth_error")
+                    record_failure(_CB_DOMAIN, failure_kind="auth_error")
                     return [], []
                 if resp.status_code == 403:
                     logger.warning("[CENSYS] API forbidden — check quota")
-                    record_failure(_CB_DOMAIN, kind="forbidden")
+                    record_failure(_CB_DOMAIN, failure_kind="forbidden")
                     return [], []
                 if resp.status_code == 429:
                     logger.warning("[CENSYS] Rate limit hit")
-                    record_failure(_CB_DOMAIN, kind="rate_limit")
+                    record_failure(_CB_DOMAIN, failure_kind="rate_limit")
                     return [], []
                 if resp.status_code != 200:
                     logger.warning(f"[CENSYS] API error: {resp.status}")
-                    record_failure(_CB_DOMAIN, kind="http_error")
+                    record_failure(_CB_DOMAIN, failure_kind="http_error")
                     return [], []
 
                 data = await resp.json()
@@ -188,7 +188,7 @@ async def search_censys_lane(
     except Exception as e:
         # [FINAL]-019-09: safe_error_log ensures credentials don't leak in error message
         safe_error_log(logger, f"[CENSYS] search error: {e}")
-        record_failure(_CB_DOMAIN, kind="exception")
+        record_failure(_CB_DOMAIN, failure_kind="exception")
         return [], []
 
 

@@ -686,10 +686,22 @@ class AntiBotProfileService:
 
 
 # ---------------------------------------------------------------------------
-# Singleton factory
+# Singleton factory (F320: Refactored to use centralized pattern)
 # ---------------------------------------------------------------------------
+# F320: Refactored to use centralized singleton pattern
+from hledac.universal.utils._patterns import module_singleton_getter
 
-_anti_bot_profile_singleton: AntiBotProfileService | None = None
+
+def _make_anti_bot_service(store: DuckDBShadowStore | None) -> AntiBotProfileService:
+    """Factory for AntiBotProfileService singleton."""
+    return AntiBotProfileService(store=store)
+
+
+# Module-level singleton getter with thread-safe double-checked locking
+_get_anti_bot_service = module_singleton_getter(
+    singleton_name="_anti_bot_profile_singleton",
+    factory=lambda: _make_anti_bot_service(None),
+)
 
 
 def get_anti_bot_profile_service(
@@ -700,17 +712,12 @@ def get_anti_bot_profile_service(
     Args:
         store: DuckDBShadowStore for persistence. Only used on first call.
     """
-    global _anti_bot_profile_singleton
-    if _anti_bot_profile_singleton is None:
-        _anti_bot_profile_singleton = AntiBotProfileService(store=store)
-    return _anti_bot_profile_singleton
+    return _get_anti_bot_service()
 
 
 def reset_anti_bot_profile_service() -> None:
     """Reset singleton — test seam only."""
     global _anti_bot_profile_singleton
-    if _anti_bot_profile_singleton is not None:
-        _anti_bot_profile_singleton._cache.clear()  # noqa: SLF001
     _anti_bot_profile_singleton = None
 
 

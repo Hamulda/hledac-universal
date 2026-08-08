@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 import msgspec
 
 from hledac.universal.core.env_config import ENV
+from hledac.universal.utils._patterns import module_singleton_getter
 
 if TYPE_CHECKING:
     import duckdb
@@ -371,13 +372,14 @@ class CveCorrelationMatrix:
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
+# F320-FINAL-2: Use module_singleton_getter for thread-safe singleton
 
-_CVE_MATRIX_INSTANCE: CveCorrelationMatrix | None = None
+_get_cve_matrix = module_singleton_getter(
+    singleton_name="_CVE_MATRIX_INSTANCE",
+    factory=CveCorrelationMatrix,
+)
 
 
 def get_cve_matrix() -> CveCorrelationMatrix:
     """Get singleton CveCorrelationMatrix instance."""
-    global _CVE_MATRIX_INSTANCE
-    if _CVE_MATRIX_INSTANCE is None:
-        _CVE_MATRIX_INSTANCE = CveCorrelationMatrix()
-    return _CVE_MATRIX_INSTANCE
+    return _get_cve_matrix()

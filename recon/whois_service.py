@@ -45,6 +45,7 @@ import msgspec
 from enum import StrEnum
 from typing import Any
 logger = logging.getLogger(__name__)
+import httpx
 
 class WhoisError(StrEnum):
     """String-based error codes for WHOIS/RDAP operations."""
@@ -214,64 +215,99 @@ async def _rdap_lookup_domain(domain: str) -> dict[str, Any]:
             await session.close()
     return result
 
+def _parse_rdap_events(data: dict, result: WhoisResult) -> None:
+    """Parse events for dates."""
+    events = data.get('events', []) or []
+    for event in events:
+        action = event.get('eventAction', '')
+        date = event.get('eventDate', '')
+        if not date:
+            continue
+        if action in ('registration', 'created'):
+            result.creation_date = date
+        elif action in ('expiration', 'expires'):
+            result.expiration_date = date
+        elif action in ('last changed', 'updated'):
+            result.updated_date = date
+    for attr in ('creation_date', 'expiration_date', 'updated_date'):
+        val = getattr(result, attr)
+        if val and len(val) > 10:
+            setattr(result, attr, val[:10])
+
+
+def _parse_rdap_nameservers(data: dict, result: WhoisResult) -> None:
+    """Parse nameservers."""
+    name_servers = data.get('nameservers', []) or []
+    result.name_servers = [ns.get('ldhName', '') for ns in name_servers if ns.get('ldhName')]
+
+
+def _parse_rdap_status(data: dict, result: WhoisResult) -> None:
+    """Parse status."""
+    result.status = data.get('status', []) or []
+    if isinstance(result.status, str):
+        result.status = [result.status]
+
+
+def _parse_rdap_dnssec(data: dict, result: WhoisResult) -> None:
+    """Parse DNSSEC."""
+    dnssec = data.get('dnsSec', data.get('secureDNS', {}))
+    if isinstance(dnssec, dict):
+        result.dnssec = dnssec.get('delegationSigned', False)
+    else:
+        result.dnssec = bool(dnssec)
+
+
+def _parse_rdap_entities(data: dict, result: WhoisResult) -> None:
+    """Parse entities (vcard)."""
+    entities = data.get('entities', []) or []
+    for entity in entities:
+        vcard = entity.get('vcardArray', [])
+        if not vcard:
+            continue
+        for item in vcard[1:] if len(vcard) > 1 else []:
+            if not isinstance(item, list):
+                continue
+            item_type = item[0] if item else ''
+            item_value = item[3] if len(item) > 3 else item[1] if len(item) > 1 else ''
+            if item_type == 'registrar':
+                result.registrar = item_value
+            elif item_type == 'admin':
+                result.admin_email = item_value
+            elif item_type == 'tech':
+                result.tech_email = item_value
+
+
+def _parse_rdap_network(data: dict, result: WhoisResult) -> None:
+    """Parse network info."""
+    network = data.get('network', {}) or {}
+    if network:
+        result.netblock = network.get('cidr0', network.get('cidr'))
+        result.netname = network.get('name')
+        result.asn = str(network.get('handle', ''))
+        result.org = network.get('name')
+
+
+def _parse_rdap_autnum(data: dict, result: WhoisResult) -> None:
+    """Parse AS numbers."""
+    autnum = data.get('autnum', []) or []
+    if autnum and isinstance(autnum, list):
+        for a in autnum:
+            if isinstance(a, dict):
+                result.asn = str(a.get('handle', ''))
+                result.asn_name = a.get('name')
+
+
 def _parse_rdap_response(domain: str, data: dict) -> WhoisResult:
     """Parse RDAP JSON response into WhoisResult."""
     result = WhoisResult(domain=domain, source='rdap')
     try:
-        events = data.get('events', []) or []
-        for event in events:
-            action = event.get('eventAction', '')
-            date = event.get('eventDate', '')
-            if not date:
-                continue
-            if action in ('registration', 'created'):
-                result.creation_date = date
-            elif action in ('expiration', 'expires'):
-                result.expiration_date = date
-            elif action in ('last changed', 'updated'):
-                result.updated_date = date
-        for attr in ('creation_date', 'expiration_date', 'updated_date'):
-            val = getattr(result, attr)
-            if val and len(val) > 10:
-                setattr(result, attr, val[:10])
-        name_servers = data.get('nameservers', []) or []
-        result.name_servers = [ns.get('ldhName', '') for ns in name_servers if ns.get('ldhName')]
-        result.status = data.get('status', []) or []
-        if isinstance(result.status, str):
-            result.status = [result.status]
-        dnssec = data.get('dnsSec', data.get('secureDNS', {}))
-        if isinstance(dnssec, dict):
-            result.dnssec = dnssec.get('delegationSigned', False)
-        else:
-            result.dnssec = bool(dnssec)
-        entities = data.get('entities', []) or []
-        for entity in entities:
-            vcard = entity.get('vcardArray', [])
-            if not vcard:
-                continue
-            for item in vcard[1:] if len(vcard) > 1 else []:
-                if not isinstance(item, list):
-                    continue
-                item_type = item[0] if item else ''
-                item_value = item[3] if len(item) > 3 else item[1] if len(item) > 1 else ''
-                if item_type == 'registrar':
-                    result.registrar = item_value
-                elif item_type == 'admin':
-                    result.admin_email = item_value
-                elif item_type == 'tech':
-                    result.tech_email = item_value
-        network = data.get('network', {}) or {}
-        if network:
-            result.netblock = network.get('cidr0', network.get('cidr'))
-            result.netname = network.get('name')
-            result.asn = str(network.get('handle', ''))
-            result.org = network.get('name')
-        autnum = data.get('autnum', []) or []
-        if autnum and isinstance(autnum, list):
-            for a in autnum:
-                if isinstance(a, dict):
-                    result.asn = str(a.get('handle', ''))
-                    result.asn_name = a.get('name')
+        _parse_rdap_events(data, result)
+        _parse_rdap_nameservers(data, result)
+        _parse_rdap_status(data, result)
+        _parse_rdap_dnssec(data, result)
+        _parse_rdap_entities(data, result)
+        _parse_rdap_network(data, result)
+        _parse_rdap_autnum(data, result)
         public_ids = data.get('publicIds', []) or []
         for pid in public_ids:
             if pid.get('type') == 'IANA Registrar ID':

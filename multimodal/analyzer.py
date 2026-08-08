@@ -292,69 +292,94 @@ class MultimodalEnricher:
         """
         if not self._initialized:
             await self._ensure_initialized()
-        payload_text = getattr(finding, 'payload_text', None)
-        file_path = _extract_file_path_from_payload(payload_text)
+        file_path = self._extract_file_path(finding)
         if not file_path:
             return None
-        if not _file_has_multimodal_support(file_path):
-            return None
 
-        # [SILICON-02]: Audio/video dispatch — transcribe then scan for IoCs
         if _file_is_audio(file_path):
             return await self.enrich_audio(finding, file_path)
         if _file_is_video(file_path):
             return await self.enrich_video(finding, file_path)
 
+        return await self._enrich_image(finding, file_path)
+
+    def _extract_file_path(self, finding: Any) -> str | None:
+        """Extract and validate file path from finding."""
+        payload_text = getattr(finding, 'payload_text', None)
+        file_path = _extract_file_path_from_payload(payload_text)
+        if not file_path or not _file_has_multimodal_support(file_path):
+            return None
+        return file_path
+
+    async def _enrich_image(self, finding: Any, file_path: str) -> dict[str, Any] | None:
+        """Enrich image file with vision embeddings and fusion."""
         finding_id = getattr(finding, 'finding_id', 'unknown')
-        enrichment: dict[str, Any] = {'finding_id': finding_id, 'file_path': file_path, 'vision_embedding': None, 'fused_embedding': None, 'clip_score': None, 'enrichment_available': False}
+        enrichment: dict[str, Any] = {'finding_id': finding_id, 'file_path': file_path,
+                                      'vision_embedding': None, 'fused_embedding': None,
+                                      'clip_score': None, 'enrichment_available': False}
         if not self._can_run_heavy_vision():
             log.debug('MultimodalEnricher: RAM guard denied for %s', finding_id)
             return None
-        if self._vision_encoder is not None:
-            try:
-                image_bytes = await self._load_file_bytes(file_path)
-                if image_bytes:
-                    embeddings = await self._vision_encoder.encode_batch([image_bytes])
-                    if embeddings and len(embeddings) == 1:
-                        emb = embeddings[0]
-                        try:
-                            enrichment['vision_embedding'] = emb.tolist()
-                        except AttributeError:
-                            try:
-                                enrichment['vision_embedding'] = list(emb)
-                            except Exception:
-                                enrichment['vision_embedding'] = None
-            except Exception as exc:
-                log.debug('Multimodal vision encode failed for %s: %s', finding_id, exc)
-        if self._fusion_model is not None and enrichment['vision_embedding'] is not None:
-            try:
-                mx = _get_mx()
-                if mx is None:
-                    raise ImportError("mlx.core unavailable")
-                vision_emb = mx.array(enrichment['vision_embedding'])
-                text_emb = mx.zeros_like(vision_emb)
-                graph_emb = mx.zeros_like(vision_emb)
-                fused = self._fusion_model(vision_emb, text_emb, graph_emb)
-                try:
-                    enrichment['fused_embedding'] = fused.tolist()
-                except AttributeError:
-                    try:
-                        enrichment['fused_embedding'] = list(fused)
-                    except Exception:
-                        enrichment['fused_embedding'] = None
-            except Exception as exc:
-                log.debug('Multimodal fusion failed for %s: %s', finding_id, exc)
-        if _MOBILECLIP_AVAILABLE and enrichment['vision_embedding'] is not None:
-            try:
-                score = await self._clip_similarity_score(file_path, enrichment['vision_embedding'])
-                enrichment['clip_score'] = score
-            except Exception as exc:
-                log.debug('Multimodal clip similarity failed for %s: %s', finding_id, exc)
+
+        await self._run_vision_encode(enrichment, file_path, finding_id)
+        await self._run_fusion(enrichment, finding_id)
+        await self._run_clip_similarity(enrichment, file_path, finding_id)
+
         if enrichment['vision_embedding'] is not None or enrichment['fused_embedding'] is not None:
             enrichment['enrichment_available'] = True
-        if not enrichment['enrichment_available']:
-            return None
-        return enrichment
+
+        return enrichment if enrichment['enrichment_available'] else None
+
+    async def _run_vision_encode(self, enrichment: dict, file_path: str, finding_id: str) -> None:
+        """Run vision encoder and update enrichment."""
+        if self._vision_encoder is None:
+            return
+        try:
+            image_bytes = await self._load_file_bytes(file_path)
+            if not image_bytes:
+                return
+            embeddings = await self._vision_encoder.encode_batch([image_bytes])
+            if embeddings and len(embeddings) == 1:
+                emb = embeddings[0]
+                enrichment['vision_embedding'] = self._convert_embedding(emb)
+        except Exception as exc:
+            log.debug('Multimodal vision encode failed for %s: %s', finding_id, exc)
+
+    async def _run_fusion(self, enrichment: dict, finding_id: str) -> None:
+        """Run MambaFusion and update enrichment."""
+        if self._fusion_model is None or enrichment['vision_embedding'] is None:
+            return
+        try:
+            mx = _get_mx()
+            if mx is None:
+                raise ImportError("mlx.core unavailable")
+            vision_emb = mx.array(enrichment['vision_embedding'])
+            text_emb = mx.zeros_like(vision_emb)
+            graph_emb = mx.zeros_like(vision_emb)
+            fused = self._fusion_model(vision_emb, text_emb, graph_emb)
+            enrichment['fused_embedding'] = self._convert_embedding(fused)
+        except Exception as exc:
+            log.debug('Multimodal fusion failed for %s: %s', finding_id, exc)
+
+    async def _run_clip_similarity(self, enrichment: dict, file_path: str, finding_id: str) -> None:
+        """Run CLIP similarity if available."""
+        if not _MOBILECLIP_AVAILABLE or enrichment['vision_embedding'] is None:
+            return
+        try:
+            score = await self._clip_similarity_score(file_path, enrichment['vision_embedding'])
+            enrichment['clip_score'] = score
+        except Exception as exc:
+            log.debug('Multimodal clip similarity failed for %s: %s', finding_id, exc)
+
+    def _convert_embedding(self, emb: Any) -> list | None:
+        """Convert embedding to list format."""
+        try:
+            return emb.tolist()
+        except AttributeError:
+            try:
+                return list(emb)
+            except Exception:
+                return None
 
     def _can_run_heavy_vision(self) -> bool:
         """

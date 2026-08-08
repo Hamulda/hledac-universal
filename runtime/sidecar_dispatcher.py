@@ -105,70 +105,117 @@ class SidecarDispatcher:
         Returns:
             DispatchOutcome with sidecars_skipped tuple.
         """
+        outcome = self._dispatch_early_exit(source_branch, findings, store, sprint_id)
+        if outcome is not None:
+            return outcome
+
+        filtered_findings = self._filter_by_simhash(findings)
+        if not filtered_findings:
+            return self._make_empty_outcome(source_branch, sprint_id)
+
+        batch = SidecarBatch(sprint_id=sprint_id, query=query, source_branch=source_branch, findings=tuple(filtered_findings), created_ts=_time.time())
+        sidecar_results, outcomes = await self._execute_sidecars(batch, store)
+        return self._build_outcome(source_branch, sprint_id, sidecar_results, outcomes)
+
+    def _dispatch_early_exit(self, source_branch: str, findings: list, store: Any, sprint_id: str) -> DispatchOutcome | None:
+        """Return early exit outcome if conditions are not met."""
         if not findings or store is None:
             return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=())
         if self._bus is None:
             return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=())
-        filtered_findings: list[Any] = []
+        return None
+
+    def _filter_by_simhash(self, findings: list[Any]) -> list[Any]:
+        """Filter findings by simhash near-duplicate detection."""
+        filtered: list[Any] = []
         if self._simhash_store is None:
             self._simhash_store = SimHash(hashbits=64, simhash_threshold=self._simhash_threshold)
         for finding in findings:
             content = getattr(finding, 'payload_text', None) or ''
             if not content:
-                filtered_findings.append(finding)
+                filtered.append(finding)
                 continue
             fp = self._simhash_store.compute(content)
             if self._simhash_store._is_near_duplicate(fp):
                 continue
-            filtered_findings.append(finding)
-        if not filtered_findings:
-            return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=())
-        batch = SidecarBatch(sprint_id=sprint_id, query=query, source_branch=source_branch, findings=tuple(filtered_findings), created_ts=_time.time())
-        an_attempted = 0
-        an_skipped = 0
-        core_attempted = 0
-        dup_attempted = 0
-        at_attempted = 0
-        at_skipped = 0
-        tpp_attempted = 0
-        tpp_skipped = 0
-        cached_classifications: dict[str, tuple[str, str]] = {}
+            filtered.append(finding)
+        return filtered
+
+    async def _execute_sidecars(self, batch: SidecarBatch, store: Any) -> tuple[list, tuple]:
+        """Execute sidecar bus and collect statistics."""
         try:
             sidecar_results = await self._bus.run_all_sidecars(batch, store)
-            for sr in sidecar_results:
-                if not sr.attempted and ('uma_' in sr.skipped_reason or 'high_water' in sr.skipped_reason or 'rss_exceeds' in sr.skipped_reason):
-                    self._sidecars_skipped.add(sr.sidecar_name)
-                if sr.sidecar_name not in cached_classifications:
-                    cached_classifications[sr.sidecar_name] = (classify_sidecar_network(sr.sidecar_name), classify_sidecar_risk(sr.sidecar_name))
-                cls, risk = cached_classifications[sr.sidecar_name]
-                if cls == 'active_network':
-                    if sr.attempted:
-                        an_attempted += 1
-                    else:
-                        an_skipped += 1
-                elif cls == 'core':
-                    if sr.attempted:
-                        core_attempted += 1
-                elif cls == 'duplicate_compat':
-                    if sr.attempted:
-                        dup_attempted += 1
-                if risk == 'active_target':
-                    if sr.attempted:
-                        at_attempted += 1
-                    else:
-                        at_skipped += 1
-                elif risk == 'third_party_provider':
-                    if sr.attempted:
-                        tpp_attempted += 1
-                    else:
-                        tpp_skipped += 1
+            self._update_skip_tracking(sidecar_results)
+            stats = self._collect_statistics(sidecar_results)
             outcomes = sidecar_results_to_source_family_outcomes(sidecar_results)
+            return sidecar_results, outcomes
         except asyncio.CancelledError:
             raise
         except Exception:
-            pass
-            outcomes = ()
-        return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=tuple(sorted(self._sidecars_skipped)), source_family_outcomes=outcomes, active_network_sidecars_attempted=an_attempted, active_network_sidecars_skipped=an_skipped, core_sidecars_attempted=core_attempted, duplicate_compat_sidecars_attempted=dup_attempted, active_target_sidecars_attempted=at_attempted, active_target_sidecars_skipped=at_skipped, third_party_provider_sidecars_attempted=tpp_attempted, third_party_provider_sidecars_skipped=tpp_skipped)
+            return [], ()
+
+    def _update_skip_tracking(self, sidecar_results: list) -> None:
+        """Update skipped sidecar tracking."""
+        for sr in sidecar_results:
+            if not sr.attempted and ('uma_' in sr.skipped_reason or 'high_water' in sr.skipped_reason or 'rss_exceeds' in sr.skipped_reason):
+                self._sidecars_skipped.add(sr.sidecar_name)
+
+    def _collect_statistics(self, sidecar_results: list) -> dict:
+        """Collect statistics from sidecar results."""
+        stats = {'an_attempted': 0, 'an_skipped': 0, 'core_attempted': 0, 'dup_attempted': 0,
+                 'at_attempted': 0, 'at_skipped': 0, 'tpp_attempted': 0, 'tpp_skipped': 0}
+        cached: dict[str, tuple[str, str]] = {}
+        for sr in sidecar_results:
+            if sr.sidecar_name not in cached:
+                cached[sr.sidecar_name] = (classify_sidecar_network(sr.sidecar_name), classify_sidecar_risk(sr.sidecar_name))
+            cls, risk = cached[sr.sidecar_name]
+            self._update_stat(stats, cls, risk, sr.attempted)
+        return stats
+
+    def _update_stat(self, stats: dict, cls: str, risk: str, attempted: bool) -> None:
+        """Update a single statistic bucket."""
+        if cls == 'active_network':
+            if attempted:
+                stats['an_attempted'] += 1
+            else:
+                stats['an_skipped'] += 1
+        elif cls == 'core':
+            if attempted:
+                stats['core_attempted'] += 1
+        elif cls == 'duplicate_compat':
+            if attempted:
+                stats['dup_attempted'] += 1
+        if risk == 'active_target':
+            if attempted:
+                stats['at_attempted'] += 1
+            else:
+                stats['at_skipped'] += 1
+        elif risk == 'third_party_provider':
+            if attempted:
+                stats['tpp_attempted'] += 1
+            else:
+                stats['tpp_skipped'] += 1
+
+    def _build_outcome(self, source_branch: str, sprint_id: str, sidecar_results: list, outcomes: tuple) -> DispatchOutcome:
+        """Build final DispatchOutcome from statistics."""
+        stats = self._collect_statistics(sidecar_results) if sidecar_results else {}
+        return DispatchOutcome(
+            sprint_id=sprint_id, source_branch=source_branch,
+            sidecars_skipped=tuple(sorted(self._sidecars_skipped)),
+            source_family_outcomes=outcomes,
+            active_network_sidecars_attempted=stats.get('an_attempted', 0),
+            active_network_sidecars_skipped=stats.get('an_skipped', 0),
+            core_sidecars_attempted=stats.get('core_attempted', 0),
+            duplicate_compat_sidecars_attempted=stats.get('dup_attempted', 0),
+            active_target_sidecars_attempted=stats.get('at_attempted', 0),
+            active_target_sidecars_skipped=stats.get('at_skipped', 0),
+            third_party_provider_sidecars_attempted=stats.get('tpp_attempted', 0),
+            third_party_provider_sidecars_skipped=stats.get('tpp_skipped', 0),
+        )
+
+    def _make_empty_outcome(self, source_branch: str, sprint_id: str) -> DispatchOutcome:
+        """Create empty outcome for no findings."""
+        return DispatchOutcome(sprint_id=sprint_id, source_branch=source_branch, sidecars_skipped=())
 
     def reset(self) -> None:
         """Clear in-memory skipped-sidecar tracking. Called on sprint teardown."""

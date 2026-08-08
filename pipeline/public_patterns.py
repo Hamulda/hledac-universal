@@ -54,6 +54,15 @@ _LOW_ENTROPY_UNIQUE_WORD_RATIO: float = 0.25
 # ----------------------------------------------------------------------
 _NO_HIT_START = object()
 
+# ----------------------------------------------------------------------
+# Compiled regex patterns for O(1) reuse
+# ----------------------------------------------------------------------
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+# ----------------------------------------------------------------------
+# HTML extraction — OSINT-03: MAX_HTML_INPUT_SIZE bounds DOM node allocation
+
 
 # ----------------------------------------------------------------------
 # HTML extraction — OSINT-03: MAX_HTML_INPUT_SIZE bounds DOM node allocation
@@ -130,7 +139,7 @@ class _HTMLTextExtractor(html.parser.HTMLParser):
 
     def get_text(self) -> str:
         result = "".join(self._chunks)
-        result = re.sub(r"\s+", " ", result).strip()
+        result = _WHITESPACE_RE.sub(" ", result).strip()
         return result
 
 
@@ -621,6 +630,123 @@ def extract_iocs_from_text(text: str) -> list[Any]:
     return []
 
 
+def _is_batch_large_enough(texts: list[str]) -> bool:
+    """Check if batch is large enough to warrant Rust batch processing.
+
+    Uses SIMD batch path when:
+      - batch >= 4 texts OR total >= 16KB (SIMD efficiency threshold)
+    """
+    if len(texts) >= 4:
+        return True
+    total_bytes = sum(len(t) for t in texts)
+    return total_bytes >= 16 * 1024
+
+
+def _batch_decode_candidates(
+    texts: list[str],
+    ioc: Any,
+    enabled: bool,
+) -> list[list[str]]:
+    """Batch decode obfuscated candidates from texts.
+
+    Returns list of decoded candidate lists, one per text.
+    Fail-safe: returns empty list per text on any error.
+    """
+    if not enabled or not hasattr(ioc, "batch_decode_ioc_candidates"):
+        return [[] for _ in texts]
+
+    try:
+        decoded_results = ioc.batch_decode_ioc_candidates(texts, max_depth=3)
+        result: list[list[str]] = []
+        for r in decoded_results:
+            if hasattr(r, "candidates"):
+                result.append(r.candidates)
+            elif isinstance(r, list):
+                result.append(r)
+            else:
+                result.append([])
+        return result
+    except Exception:  # noqa: BLE001
+        return [[] for _ in texts]
+
+
+def _sanitize_ioc_value(ioc_type: str, value: str) -> tuple[str, str] | None:
+    """Sanitize IOC value based on type.
+
+    - URLs: strip trailing punctuation
+    - Domains: reject numeric TLDs
+
+    Returns sanitized (ioc_type, value) tuple, or None to reject the IOC.
+    """
+    if ioc_type == "url":
+        return (ioc_type, value.rstrip(".,;:!?)"))
+    if ioc_type == "domain":
+        tld = value.rsplit(".", 1)[-1].lower()
+        if not tld.isalpha():
+            return None
+    return (ioc_type, value)
+
+
+def _sanitize_rust_ioc_value(ioc_type: str, value: str) -> tuple[str, bool]:
+    """Sanitize IOC value from Rust backend.
+
+    Returns (sanitized_value, should_skip).
+    should_skip=True means reject this IOC.
+    """
+    if ioc_type == "url":
+        return (value.rstrip(".,;:!?)"), False)
+    elif ioc_type == "domain":
+        tld = value.rsplit(".", 1)[-1].lower()
+        if not tld.isalpha():
+            return (value, True)  # skip
+    return (value, False)
+
+
+def _process_rust_ioc_batch(
+    raw: list[tuple[int, str, str]],
+    texts: list[str],
+) -> list[list[Any]]:
+    """Process Rust IOC batch results and apply sanitization.
+
+    Regroups raw (text_idx, value, ioc_type) tuples by text index,
+    applies sanitization per IOC, and returns list of IOC lists.
+    """
+    result: list[list[Any]] = [[] for _ in texts]
+    for text_idx, value, ioc_type in raw:
+        if 0 <= text_idx < len(result):
+            sanitized_value, should_skip = _sanitize_rust_ioc_value(ioc_type, value)
+            if not should_skip:
+                result[text_idx].append((sanitized_value, ioc_type))
+    return result
+
+
+def _merge_decoded_iocs(
+    result: list[list[Any]],
+    decoded_per_text: list[list[str]],
+    decoded_iocs: list[tuple[str, str]],
+) -> None:
+    """Merge deobfuscated candidates into results.
+
+    For deobfuscated candidates, we scan each one with the SIMD engine.
+    We do this as one batch scan (single GIL acquisition) and then
+    attribute results back to each text by re-scanning per-candidate.
+    """
+    # decoded_iocs is indexed by all_candidates order: text_idx maps to candidate count
+    offset = 0
+    for text_idx, candidates in enumerate(decoded_per_text):
+        n = len(candidates)
+        for j in range(n):
+            if offset + j < len(decoded_iocs):
+                ioc_type, value = decoded_iocs[offset + j]
+                result[text_idx].append((value, ioc_type))
+        offset += n
+
+
+# Backward compat alias for F273C tests that reference _batch_decode_candidates
+# (DEPRECATED — use extract_iocs_from_texts directly for production code)
+_BATCH_DECODE_CANDIDATES = _batch_decode_candidates
+
+
 def extract_iocs_from_texts(
     texts: list[str],
 ) -> list[list[Any]]:
@@ -647,80 +773,38 @@ def extract_iocs_from_texts(
         return []
 
     # Small batch: per-text SIMD path (avoids rayon overhead)
-    if len(texts) < 4:
-        total_bytes = sum(len(t) for t in texts)
-        if total_bytes < 16 * 1024:
-            return [extract_iocs_from_text(t) for t in texts]
-
-    # Large batch: Rust batch path — single GIL acquisition, rayon parallel
-    try:
+    if _is_batch_large_enough(texts):
         from hledac.universal.core.rust_backend import rust as _rust_backend
 
         if not _rust_backend.is_available or not hasattr(_rust_backend, "ioc"):
             return [extract_iocs_from_text(t) for t in texts]
 
         ioc = _rust_backend.ioc
+        decoded_per_text = _batch_decode_candidates(
+            texts, ioc, _is_deobfuscate_enabled()
+        )
         if not hasattr(ioc, "batch_extract_iocs_simd_indexed"):
             return [extract_iocs_from_text(t) for t in texts]
 
-        # ADVERSARY-003: batch deobfuscation — CyberChef-Pipeline in parallel
-        # Run deobfuscation + SIMD scan concurrently
-        decoded_per_text: list[list[str]] = []
-        if (hasattr(ioc, "batch_decode_ioc_candidates") and _is_deobfuscate_enabled()):
-            try:
-                decoded_results = ioc.batch_decode_ioc_candidates(texts, max_depth=3)
-                # Each result may be a DeobfuscateResult or a list
-                for r in decoded_results:
-                    if hasattr(r, "candidates"):
-                        decoded_per_text.append(r.candidates)
-                    elif isinstance(r, list):
-                        decoded_per_text.append(r)
-                    else:
-                        decoded_per_text.append([])
-            except Exception:  # noqa: BLE001
-                decoded_per_text = [[] for _ in texts]
-        else:
-            decoded_per_text = [[] for _ in texts]
-
-        # indexed returns (text_idx, ioc_value, ioc_type) — regroup by text
-        raw: list[tuple[int, str, str]] = ioc.batch_extract_iocs_simd_indexed(texts)
-        result: list[list[Any]] = [[] for _ in texts]
-        for text_idx, value, ioc_type in raw:
-            if 0 <= text_idx < len(result):
-                # Issue #3 P1: strip trailing punctuation from URLs (Python path already does this)
-                if ioc_type == "url":
-                    value = value.rstrip(".,;:!?)")
-                # Issue #2 P1: reject numeric TLDs (e.g. "123.45" where "45" is TLD)
-                elif ioc_type == "domain":
-                    tld = value.rsplit(".", 1)[-1].lower()
-                    if not tld.isalpha():
-                        continue
-                result[text_idx].append((value, ioc_type))
+        # Large batch: Rust batch path — single GIL acquisition, rayon parallel
+        result = _process_rust_ioc_batch(
+            ioc.batch_extract_iocs_simd_indexed(texts), texts
+        )
 
         # ADVERSARY-003: merge deobfuscated candidates into results
         # For deobfuscated candidates, we scan each one with the SIMD engine.
         # We do this as one batch scan (single GIL acquisition) and then
         # attribute results back to each text by re-scanning per-candidate.
         if decoded_per_text and any(decoded_per_text):
-            # Flatten all candidates
             all_candidates: list[str] = [
                 c for candidates in decoded_per_text for c in candidates
             ]
             if all_candidates:
-                # batch_extract_iocs_simd returns flat list (ioc_type, value)
                 decoded_iocs: list[tuple[str, str]] = ioc.batch_extract_iocs_simd(all_candidates)
-                # decoded_iocs is indexed by all_candidates order: text_idx maps to candidate count
-                offset = 0
-                for text_idx, candidates in enumerate(decoded_per_text):
-                    n = len(candidates)
-                    for j in range(n):
-                        if offset + j < len(decoded_iocs):
-                            ioc_type, value = decoded_iocs[offset + j]
-                            result[text_idx].append((value, ioc_type))
-                    offset += n
+                _merge_decoded_iocs(result, decoded_per_text, decoded_iocs)
 
         return result
-    except Exception:  # noqa: BLE001
+    else:
         return [extract_iocs_from_text(t) for t in texts]
 
 

@@ -319,17 +319,14 @@ class UniversalMonitoringCoordinator(UniversalCoordinator):
 
     async def _do_cleanup(self) -> None:
         """Cleanup monitoring subsystems."""
+        from hledac.universal.utils._patterns import safe_cleanup_component  # F320: DRY cleanup
         self._stop_background_collection()
-        if self._advanced_monitoring and hasattr(self._advanced_monitoring, 'cleanup'):
-            try:
-                await self._advanced_monitoring.cleanup()
-            except Exception as e:
-                logger.error(f'Error cleaning up AdvancedMonitoring: {e}')
-        if self._watchdog and hasattr(self._watchdog, 'cleanup'):
-            try:
-                await self._watchdog.cleanup()
-            except Exception as e:
-                logger.error(f'Error cleaning up Watchdog: {e}')
+        await safe_cleanup_component(
+            self._advanced_monitoring, 'AdvancedMonitoring', logger, _type='async'
+        )
+        await safe_cleanup_component(
+            self._watchdog, 'Watchdog', logger, _type='async'
+        )
         self._metrics_history.clear()
         self._benchmark_history.clear()
 

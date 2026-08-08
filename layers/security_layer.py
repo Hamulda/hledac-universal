@@ -583,18 +583,15 @@ class SecurityLayer:
 
     async def cleanup(self) -> None:
         """Cleanup resources - idempotent shutdown of all components."""
+        from hledac.universal.utils._patterns import safe_cleanup_component  # F320: DRY cleanup
         logger.info('🧹 Cleaning up SecurityLayer...')
-        pass  # asyncio.to_thread uses shared pool, no cleanup needed
-        if self._secure_destructor and hasattr(self._secure_destructor, 'cleanup'):
-            try:
-                await self._secure_destructor.cleanup()
-            except Exception as e:
-                logger.warning(f'⚠️ SecureDestructor cleanup error: {e}')
-        if self._mission_audit and hasattr(self._mission_audit, 'cleanup'):
-            try:
-                self._mission_audit.cleanup()
-            except Exception as e:
-                logger.warning(f'⚠️ MissionAudit cleanup error: {e}')
+        # asyncio.to_thread uses shared pool, no explicit cleanup needed
+        await safe_cleanup_component(
+            self._secure_destructor, 'SecureDestructor', logger, _type='async'
+        )
+        await safe_cleanup_component(
+            self._mission_audit, 'MissionAudit', logger, _type='sync'
+        )
         logger.info('✅ SecurityLayer cleanup complete')
 import time
 from dataclasses import dataclass, field

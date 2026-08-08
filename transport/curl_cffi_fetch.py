@@ -29,7 +29,7 @@ import threading
 import time
 import urllib.parse
 from collections import deque
-from typing import Any
+from typing import Any, Awaitable
 
 from hledac.universal.core.constants import M1_BOUNDS
 from hledac.universal.utils.locks import LazyAsyncioLock
@@ -1062,6 +1062,339 @@ def get_curl_cffi_runtime_status() -> dict[str, Any]:
 # === Fetch API (from original curl_cffi_fetch.py) ===
 
 
+# F350M-R: Extracted session creation helper for fetch_via_curl_cffi
+async def _create_curl_session(
+    url: str,
+    resolve: dict[str, str] | None,
+    profile: str,
+    timeout_s: float,
+) -> tuple[Any, str, dict[str, Any] | None]:
+    """Create or retrieve a curl_cffi session for the given URL and profile.
+
+    ISSUE-8.1 / F-03: DNS Rebinding Protection — resolve requires dedicated session.
+    curl_cffi does NOT support per-request resolve parameter; CURLOPT_RESOLVE
+    must be set at session creation time via curl_options.
+    F-03 Fix: Session is now cached by (host, frozenset of resolve bindings)
+    so repeated requests to the same (hostname, IP) reuse the TLS session.
+
+    Returns:
+        (session, used_profile, error_result)
+        If error_result is not None, caller should return it immediately.
+    """
+    if resolve:
+        try:
+            session, used_profile = await _get_or_create_resolved_session(
+                resolve, profile, timeout_s
+            )
+            _ja3_log(profile=profile, url=url, used_profile=used_profile)
+            return session, used_profile, None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            return None, profile, _make_error_result(
+                url,
+                error=f"resolve_session_error: {e}",
+                failure_stage="unknown",
+                network_error_kind="other",
+                selected_transport="curl_cffi",
+                tls_impersonate=profile,
+            )
+    else:
+        try:
+            ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(
+                url, profile
+            )
+            _ja3_log(profile=profile, url=url, used_profile=used_profile)
+            if not ok or session is None:
+                return None, used_profile, _make_error_result(
+                    url,
+                    error=f"session_creation_failed: {used_profile}",
+                    failure_stage="unknown",
+                    network_error_kind="other",
+                    selected_transport="curl_cffi",
+                    tls_impersonate=used_profile,
+                )
+            return session, used_profile, None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            return None, profile, _make_error_result(
+                url,
+                error=f"session_error: {e}",
+                failure_stage="unknown",
+                network_error_kind="other",
+                selected_transport="curl_cffi",
+                tls_impersonate=profile,
+            )
+
+
+# F350M-R: Extracted response processing helper for fetch_via_curl_cffi
+def _process_curl_response(
+    response: Any,
+    max_bytes: int,
+    url: str,
+    used_profile: str,
+) -> dict[str, Any]:
+    """Process curl_cffi response into result dict with WARC archival and WebKit telemetry.
+
+    Handles:
+    - Content truncation at max_bytes
+    - Content-Type parsing for charset hint
+    - WARC archival (fail-safe)
+    - WebKit HTTP/2 telemetry
+
+    Returns:
+        Result dict with success=True and all fields populated
+    """
+    # curl_cffi iter_content() returns a sync generator, not async iterator.
+    # Use response.content directly (already bytes) and truncate manually if needed.
+    _raw_content = response.content or b""
+    _truncated = len(_raw_content) > max_bytes
+    content_bytes = _raw_content[:max_bytes] if _truncated else _raw_content
+    if _truncated:
+        logger.debug(f"curl_cffi body truncated to {max_bytes} bytes for {url}")
+
+    content_type = ""
+    if response.headers:
+        content_type = response.headers.get("content-type", "")
+
+    http_charset_hint = parse_charset_from_content_type(content_type)
+
+    result = {
+        "url": url,
+        "final_url": url,
+        "content": content_bytes,
+        "status_code": response.status_code,
+        "content_type": content_type,
+        "http_charset_hint": http_charset_hint,
+        "headers": dict(response.headers) if response.headers else {},
+        "success": True,
+        "error": None,
+        "selected_transport": "curl_cffi",
+        "tls_impersonate": used_profile,
+        "failure_stage": None,
+        "network_error_kind": None,
+    }
+
+    # ISSUE [FINAL]-019-05: Archive successful HTTP response to WARC.
+    result = _archive_warc_response(result, url, content_bytes)
+
+    # [NEXUS]-018-01: Telemetry marker for Safari WebKit HTTP/2 WINDOW_UPDATE.
+    if _is_webkit_h2_profile(used_profile):
+        _parsed = urllib.parse.urlparse(url)
+        _host = _parsed.netloc or url
+        _log_webkit_window_update(_host, _WEBKIT_WINDOW_INCREMENT)
+        # [NEXUS]-018-01: Track Safari WebKit HTTP/2 profile usage
+        _increment_webkit_telemetry(success=True)
+
+    return result
+
+
+# F350M-R: Extracted WARC archival helper for fetch_via_curl_cffi
+def _archive_warc_response(
+    result: dict[str, Any],
+    url: str,
+    content_bytes: bytes,
+) -> dict[str, Any]:
+    """Archive response to WARC if enabled (fail-safe).
+
+    Modifies result dict in-place to add warc_record_id and warc_archived.
+    Returns the modified result dict.
+    """
+    _warc_archived = False
+    if ENV.get_bool('HLEDAC_WARC_ENABLED', default=False):
+        try:
+            from hledac.universal.evidence_log import archive_http_response_cached
+
+            _warc_ts = datetime.now(UTC)
+            _warc_prov = archive_http_response_cached(
+                url=url,
+                timestamp=_warc_ts,
+                http_response=content_bytes,
+                content_type="application/http;msgtype=response",
+            )
+            if _warc_prov is not None:
+                _warc_archived = True
+                result['warc_record_id'] = _warc_prov.record_id
+        except Exception:  # noqa: BLE001 — fail-safe; WARC archival never blocks fetching
+            pass
+    result['warc_archived'] = _warc_archived
+    return result
+
+
+# F350M-R: Extracted EADDRINUSE retry helper for fetch_via_curl_cffi
+async def _retry_on_eaddrinuse(
+    session: Any,
+    url: str,
+    headers: dict[str, str],
+    timeout_s: float,
+) -> Any:
+    """Retry HTTP request on EADDRINUSE with exponential backoff.
+
+    ISSUE-P6-001: EADDRINUSE retry envelope — resilience against TIME_WAIT / port exhaustion.
+    On Errno 48 (EADDRINUSE), retry with exponential backoff instead of failing immediately.
+
+    Returns:
+        Response object on success, raises OSError if not EADDRINUSE or retries exhausted.
+    """
+    for attempt in range(_MAX_EADDRINUSE_RETRIES):
+        try:
+            return await session.get(url, headers=headers, timeout=timeout_s)
+        except OSError as e:
+            errno = getattr(e, "errno", None)
+            if errno == _EADDRINUSE_ERRNO and attempt < _MAX_EADDRINUSE_RETRIES - 1:
+                backoff_s = _eaddrinese_backoff(attempt)
+                logger.debug(
+                    f"[ISSUE-P6-001] EADDRINUSE (Errno {_EADDRINUSE_ERRNO}) for {url} — "
+                    f"retrying after {backoff_s:.2f}s (attempt {attempt + 1}/{_MAX_EADDRINUSE_RETRIES})"
+                )
+                await asyncio.sleep(backoff_s)
+                continue
+            raise
+
+
+# F350M-R: Extracted JA3 ban handling helper for fetch_via_curl_cffi
+def _handle_ja3_ban(
+    status: int,
+    attempt: int,
+    url: str,
+) -> float | None:
+    """Check for JA3 ban status and compute backoff if retry needed.
+
+    F-02: When server returns 403/429 (JA3 ban), returns backoff seconds
+    for retry. Returns None if not a ban or retries exhausted.
+
+    Returns:
+        Backoff time in seconds, or None if no retry needed
+    """
+    if status in _JA3_BAN_STATUS_CODES and attempt < _MAX_JA3_RETRIES:
+        backoff_s = _ja3_ban_backoff(attempt)
+        logger.debug(
+            f"[F-02] JA3 ban (HTTP {status}) for {url} — "
+            f"retrying with rotated profile (attempt {attempt + 1}/{_MAX_JA3_RETRIES}) "
+            f"after {backoff_s:.1f}s backoff"
+        )
+        return backoff_s
+    return None
+
+
+# F350M-R: Extracted error classification helper for fetch_via_curl_cffi
+def _classify_curl_error(e: Exception) -> tuple[str, str]:
+    """Classify curl_cffi exception into failure_stage and network_error_kind.
+
+    Analyzes exception message to determine appropriate error classification
+    for telemetry and retry logic.
+
+    Returns:
+        (failure_stage, network_error_kind) tuple
+    """
+    error_str = str(e).lower()
+    if "timeout" in error_str:
+        return "response", "timeout"
+    elif "dns" in error_str or "name or service not known" in error_str:
+        return "resolve", "dns_failure"
+    elif "connection reset" in error_str:
+        return "connect", "connection_reset"
+    else:
+        return "unknown", "other"
+
+
+# F350M-R: Extracted TimeoutError handler for fetch_via_curl_cffi
+def _handle_timeout_error(
+    url: str,
+    used_profile: str,
+) -> dict[str, Any]:
+    """Build error result for TimeoutError."""
+    return _make_error_result(
+        url,
+        error="timeout",
+        failure_stage="response",
+        network_error_kind="timeout",
+        selected_transport="curl_cffi",
+        tls_impersonate=used_profile,
+    )
+
+
+# F350M-R: Extracted ConnectionRefusedError handler for fetch_via_curl_cffi
+def _handle_connection_refused(
+    url: str,
+    used_profile: str,
+) -> dict[str, Any]:
+    """Build error result for ConnectionRefusedError."""
+    return _make_error_result(
+        url,
+        error="connection_refused",
+        failure_stage="connect",
+        network_error_kind="connection_refused",
+        selected_transport="curl_cffi",
+        tls_impersonate=used_profile,
+    )
+
+
+# F350M-R: Extracted generic Exception handler for fetch_via_curl_cffi
+async def _fetch_with_ja3_retry(
+    url: str,
+    headers: dict[str, str] | None,
+    timeout_s: float,
+    max_bytes: int,
+    profile: str,
+    proxies: dict[str, str] | None,
+    http_version: Any,
+    *,
+    resolve: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Retry loop with JA3 rotation on 403/429 (JA3 ban).
+
+    F-02: attempt=0 uses provided profile (no rotation).
+    attempt>0 rotates to next JA3 profile via next_ja3_profile().
+
+    Returns final result after retries exhausted.
+    """
+    last_result: dict[str, Any] | None = None
+
+    for attempt in range(_MAX_JA3_RETRIES + 1):
+        # Rotate JA3 profile on retry attempts (not on first attempt)
+        _current_profile = next_ja3_profile() if attempt > 0 else profile
+
+        result, should_retry, backoff_s = await _execute_curl_fetch_attempt(
+            url=url,
+            headers=headers,
+            timeout_s=timeout_s,
+            max_bytes=max_bytes,
+            profile=_current_profile,
+            resolve=resolve,
+        )
+
+        if should_retry and backoff_s is not None:
+            last_result = result
+            try:
+                await asyncio.sleep(backoff_s)
+            except asyncio.CancelledError:
+                raise
+            continue  # retry with next JA3 profile
+
+        # Not retrying — return immediately
+        if result is not None:
+            return result
+
+        # result is None means a fatal error (error result returned)
+        # Retry anyway if attempts remain
+
+    # All JA3 retries exhausted — return last result if available
+    if last_result is not None:
+        return last_result
+
+    # Fallback: should not reach here, but return a sensible error
+    return _make_error_result(
+        url,
+        error="ja3_rotation_exhausted",
+        failure_stage="unknown",
+        network_error_kind="other",
+        selected_transport="curl_cffi",
+        tls_impersonate=profile,
+    )
+
+
 # F265C: blocking Alt-Svc pre-probe for first-fetch H3 priming.
 async def _blocking_altsvc_probe_for_url(url: str) -> Any:
     """Perform a blocking HEAD probe to prime the H3 LRU before first fetch.
@@ -1319,44 +1652,7 @@ async def fetch_via_curl_cffi(
     *,
     resolve: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """
-    Fetch URL via curl_cffi stealth lane.
-
-    ISSUE-8.1 FIX: DNS Rebinding Protection via pre-resolved IP binding.
-
-    When ``resolve`` dict is provided (hostname -> IP), curl's RESOLVE option
-    is used to bind the connection to the pre-validated IP before DNS lookup.
-    This eliminates the TOCTOU window between DNS validation and fetch:
-    1. _validate_fetch_target() resolves hostname to IP via async_getaddrinfo
-    2. resolved IPs are passed here via ``resolve`` dict
-    3. curl connects directly to the pre-validated IP — no DNS re-resolution
-
-    This prevents DNS rebinding attacks where a hostname might resolve to
-    a public IP during validation but switch to a private IP before fetch.
-
-    F-02 FIX: Dynamic JA3 rotation on HTTP 403/429.
-    When the server returns a 403 or 429 status (JA3 ban), the fetch is
-    retried with a fresh JA3 profile via next_ja3_profile(). Up to
-    _MAX_JA3_RETRIES retries are attempted with exponential backoff + jitter.
-    Non-retryable errors (timeouts, connection errors) fail immediately.
-
-    Args:
-        resolve: Dict of hostname -> IP address to pre-bind.
-                 Example: {"example.com": "1.2.3.4"}
-                 When provided, curl will connect to 1.2.3.4:443 for example.com
-                 instead of performing a fresh DNS lookup.
-
-    Returns FetchResult-compatible dict:
-        url, final_url, content (bytes), status_code, content_type,
-        headers, success, error, selected_transport, tls_impersonate,
-        failure_stage, network_error_kind
-
-    Failure stages: "resolve", "connect", "tls", "response", "read", "unknown"
-    Network error kinds: "timeout", "connection_refused", "dns_failure",
-                         "connection_reset", "too_many_redirects", "other"
-
-    CancelledError is re-raised.
-    """
+    """Fetch URL via curl_cffi stealth lane (see module docstring for details)."""
     available, avail_reason = is_curl_cffi_available()
     if not available:
         return _make_error_result(
@@ -1368,243 +1664,15 @@ async def fetch_via_curl_cffi(
             tls_impersonate=profile,
         )
 
-    # F-02: Retry loop with JA3 rotation on 403/429 (JA3 ban).
-    # attempt=0: use provided profile (no rotation)
-    # attempt>0: rotate to next JA3 profile via next_ja3_profile()
-    last_result: dict[str, Any] | None = None
-    for attempt in range(_MAX_JA3_RETRIES + 1):
-        # Rotate JA3 profile on retry attempts (not on first attempt)
-        _current_profile = next_ja3_profile() if attempt > 0 else profile
-
-        # ISSUE-8.1 / F-03: DNS Rebinding Protection — resolve requires dedicated session
-        # curl_cffi does NOT support per-request resolve parameter; CURLOPT_RESOLVE
-        # must be set at session creation time via curl_options.
-        # F-03 Fix: Session is now cached by (host, frozenset of resolve bindings)
-        # so repeated requests to the same (hostname, IP) reuse the TLS session.
-        if resolve:
-            try:
-                session, used_profile = await _get_or_create_resolved_session(
-                    resolve, _current_profile, timeout_s
-                )
-                _ja3_log(profile=_current_profile, url=url, used_profile=used_profile)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001
-                return _make_error_result(
-                    url,
-                    error=f"resolve_session_error: {e}",
-                    failure_stage="unknown",
-                    network_error_kind="other",
-                    selected_transport="curl_cffi",
-                    tls_impersonate=_current_profile,
-                )
-        else:
-            try:
-                ok, session, used_profile, _host = await async_get_curl_cffi_session_for_host(
-                    url, _current_profile
-                )
-                _ja3_log(profile=_current_profile, url=url, used_profile=used_profile)
-                if not ok or session is None:
-                    return _make_error_result(
-                        url,
-                        error=f"session_creation_failed: {used_profile}",
-                        failure_stage="unknown",
-                        network_error_kind="other",
-                        selected_transport="curl_cffi",
-                        tls_impersonate=used_profile,
-                    )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:  # noqa: BLE001
-                return _make_error_result(
-                    url,
-                    error=f"session_error: {e}",
-                    failure_stage="unknown",
-                    network_error_kind="other",
-                    selected_transport="curl_cffi",
-                    tls_impersonate=_current_profile,
-                )
-
-        try:
-            # Issue 10.2: JA3 consistency — inject User-Agent matching TLS profile
-            # when caller did not provide one. Callers passing custom headers keep
-            # full control (e.g., build_randomized_headers sets Sec-Ch-Ua, etc.).
-            _merged_headers: dict[str, str] = dict(headers) if headers else {}
-            if "User-Agent" not in _merged_headers:
-                _merged_headers["User-Agent"] = get_ua_for_profile(used_profile)
-            # ISSUE-8.1: DNS Rebinding Protection — resolve is now bound to session via curl_options
-            # No need to pass resolve per-request; it's already set on the session
-
-            # ISSUE-P6-001: EADDRINUSE retry envelope — resilience against TIME_WAIT / port exhaustion.
-            # On Errno 48 (EADDRINUSE), retry with exponential backoff instead of failing immediately.
-            response = None
-            for _eadrinuse_attempt in range(_MAX_EADDRINUSE_RETRIES):
-                try:
-                    response = await session.get(url, headers=_merged_headers, timeout=timeout_s)
-                    break  # success — exit retry loop
-                except OSError as _e:
-                    _eadrinuse_errno = getattr(_e, "errno", None)
-                    if _eadrinuse_errno == _EADDRINUSE_ERRNO and _eadrinuse_attempt < _MAX_EADDRINUSE_RETRIES - 1:
-                        _backoff_s = _eaddrinese_backoff(_eadrinuse_attempt)
-                        logger.debug(
-                            f"[ISSUE-P6-001] EADDRINUSE (Errno {_EADDRINUSE_ERRNO}) for {url} — "
-                            f"retrying after {_backoff_s:.2f}s (attempt {_eadrinuse_attempt + 1}/{_MAX_EADDRINUSE_RETRIES})"
-                        )
-                        try:
-                            await asyncio.sleep(_backoff_s)
-                        except asyncio.CancelledError:
-                            raise
-                        continue  # retry
-                    raise  # not EADDRINUSE, or last attempt — propagate
-
-            # Guard: response is always set when loop exits normally (break on success)
-            if response is None:
-                return _make_error_result(
-                    url,
-                    error="eaddrinese_exhausted",
-                    failure_stage="connect",
-                    network_error_kind="other",
-                    selected_transport="curl_cffi",
-                    tls_impersonate=used_profile,
-                )
-
-            # curl_cffi iter_content() returns a sync generator, not async iterator.
-            # Use response.content directly (already bytes) and truncate manually if needed.
-            _raw_content = response.content or b""
-            _truncated = len(_raw_content) > max_bytes
-            content_bytes = _raw_content[:max_bytes] if _truncated else _raw_content
-            if _truncated:
-                logger.debug(f"curl_cffi body truncated to {max_bytes} bytes for {url}")
-
-            content_type = ""
-            if response.headers:
-                content_type = response.headers.get("content-type", "")
-
-            http_charset_hint = parse_charset_from_content_type(content_type)
-
-            result = {
-                "url": url,
-                "final_url": url,
-                "content": content_bytes,
-                "status_code": response.status_code,
-                "content_type": content_type,
-                "http_charset_hint": http_charset_hint,
-                "headers": dict(response.headers) if response.headers else {},
-                "success": True,
-                "error": None,
-                "selected_transport": "curl_cffi",
-                "tls_impersonate": used_profile,
-                "failure_stage": None,
-                "network_error_kind": None,
-            }
-
-            # ISSUE [FINAL]-019-05: Archive successful HTTP response to WARC.
-            # Wire evidence_log.archive_http_response() into the primary HTTP fetch path.
-            # Archive after success, before any processing. WARC archival is completely
-            # fail-safe — errors are suppressed and never affect the fetch result.
-            _warc_archived = False
-            if ENV.get_bool('HLEDAC_WARC_ENABLED', default=False):
-                try:
-                    from hledac.universal.evidence_log import archive_http_response_cached
-
-                    _warc_ts = datetime.now(UTC)
-                    _warc_prov = archive_http_response_cached(
-                        url=url,
-                        timestamp=_warc_ts,
-                        http_response=content_bytes,
-                        content_type="application/http;msgtype=response",
-                    )
-                    if _warc_prov is not None:
-                        _warc_archived = True
-                        result['warc_record_id'] = _warc_prov.record_id
-                except Exception:  # noqa: BLE001 — fail-safe; WARC archival never blocks fetching
-                    pass
-            result['warc_archived'] = _warc_archived
-
-            # [NEXUS]-018-01: Telemetry marker for Safari WebKit HTTP/2 WINDOW_UPDATE.
-            # libcurl handles WINDOW_UPDATE frames automatically.
-            # This logs the pattern for telemetry purposes.
-            if _is_webkit_h2_profile(used_profile):
-                _parsed = urllib.parse.urlparse(url)
-                _host = _parsed.netloc or url
-                _log_webkit_window_update(_host, _WEBKIT_WINDOW_INCREMENT)
-                # [NEXUS]-018-01: Track Safari WebKit HTTP/2 profile usage
-                # Telemetry consumed by get_webkit_transport_telemetry().
-                _increment_webkit_telemetry(success=True)
-
-            # F-02: Check for JA3 ban — rotate profile on retry
-            status = int(response.status_code or 0)
-            if status in _JA3_BAN_STATUS_CODES and attempt < _MAX_JA3_RETRIES:
-                last_result = result
-                backoff_s = _ja3_ban_backoff(attempt)
-                logger.debug(
-                    f"[F-02] JA3 ban (HTTP {status}) for {url} — "
-                    f"retrying with rotated profile (attempt {attempt + 1}/{_MAX_JA3_RETRIES}) "
-                    f"after {backoff_s:.1f}s backoff"
-                )
-                try:
-                    await asyncio.sleep(backoff_s)
-                except asyncio.CancelledError:
-                    # Propagate cancellation immediately — do not silently swallow
-                    raise
-                continue  # retry with next JA3 profile
-            return result
-
-        except TimeoutError:
-            return _make_error_result(
-                url,
-                error="timeout",
-                failure_stage="response",
-                network_error_kind="timeout",
-                selected_transport="curl_cffi",
-                tls_impersonate=used_profile,
-            )
-        except ConnectionRefusedError:
-            return _make_error_result(
-                url,
-                error="connection_refused",
-                failure_stage="connect",
-                network_error_kind="connection_refused",
-                selected_transport="curl_cffi",
-                tls_impersonate=used_profile,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            error_str = str(e).lower()
-            if "timeout" in error_str:
-                network_kind = "timeout"
-                failure_stage = "response"
-            elif "dns" in error_str or "name or service not known" in error_str:
-                network_kind = "dns_failure"
-                failure_stage = "resolve"
-            elif "connection reset" in error_str:
-                network_kind = "connection_reset"
-                failure_stage = "connect"
-            else:
-                network_kind = "other"
-                failure_stage = "unknown"
-
-            return _make_error_result(
-                url,
-                error=str(e),
-                failure_stage=failure_stage,
-                network_error_kind=network_kind,
-                selected_transport="curl_cffi",
-                tls_impersonate=used_profile,
-            )
-
-    # All JA3 retries exhausted — return last result if available
-    if last_result is not None:
-        return last_result
-    # Fallback: should not reach here, but return a sensible error
-    return _make_error_result(
-        url,
-        error="ja3_rotation_exhausted",
-        failure_stage="unknown",
-        network_error_kind="other",
-        selected_transport="curl_cffi",
-        tls_impersonate=profile,
+    return await _fetch_with_ja3_retry(
+        url=url,
+        headers=headers,
+        timeout_s=timeout_s,
+        max_bytes=max_bytes,
+        profile=profile,
+        proxies=proxies,
+        http_version=http_version,
+        resolve=resolve,
     )
 
 
@@ -1854,3 +1922,93 @@ async def fetch_via_curl_cffi_cached(
         except Exception:  # noqa: BLE001
             pass
     return result
+async def _execute_curl_fetch_attempt(
+    url: str,
+    headers: dict[str, str] | None,
+    timeout_s: float,
+    max_bytes: int,
+    profile: str,
+    *,
+    resolve: dict[str, str] | None,
+) -> tuple[dict[str, Any] | None, bool, float | None]:
+    """Execute a single curl_cffi fetch attempt.
+
+    Returns:
+        (result, should_retry, backoff_s)
+        - result: The fetch result dict, or None on fatal error
+        - should_retry: True if JA3 ban detected and retry is warranted
+        - backoff_s: Seconds to wait before retry, or None if should_retry=False
+
+    Handles:
+        - Session creation
+        - User-Agent injection
+        - EADDRINUSE retry
+        - Response processing
+        - JA3 ban detection
+        - Error classification
+    """
+    session, used_profile, session_error = await _create_curl_session(
+        url, resolve, profile, timeout_s
+    )
+    if session_error is not None:
+        return (session_error, False, None)
+
+    try:
+        # Issue 10.2: JA3 consistency — inject User-Agent matching TLS profile
+        # when caller did not provide one. Callers passing custom headers keep
+        # full control (e.g., build_randomized_headers sets Sec-Ch-Ua, etc.).
+        _merged_headers: dict[str, str] = dict(headers) if headers else {}
+        if "User-Agent" not in _merged_headers:
+            _merged_headers["User-Agent"] = get_ua_for_profile(used_profile)
+        # ISSUE-8.1: DNS Rebinding Protection — resolve is now bound to session via curl_options
+
+        # ISSUE-P6-001: EADDRINUSE retry envelope
+        try:
+            response = await _retry_on_eaddrinuse(session, url, _merged_headers, timeout_s)
+        except OSError:
+            return (
+                _make_error_result(
+                    url,
+                    error="eaddrinese_exhausted",
+                    failure_stage="connect",
+                    network_error_kind="other",
+                    selected_transport="curl_cffi",
+                    tls_impersonate=used_profile,
+                ),
+                False,
+                None,
+            )
+
+        result = _process_curl_response(response, max_bytes, url, used_profile)
+
+        # F-02: Check for JA3 ban — signal retry needed
+        status = int(response.status_code or 0)
+        backoff_s = _handle_ja3_ban(status, 0, url)  # attempt tracking done by caller
+        if backoff_s is not None:
+            return (result, True, backoff_s)
+
+        return (result, False, None)
+
+    except TimeoutError:
+        return (_handle_timeout_error(url, used_profile), False, None)
+    except ConnectionRefusedError:
+        return (_handle_connection_refused(url, used_profile), False, None)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        return (_handle_generic_exception(url, used_profile, e), False, None)
+def _handle_generic_exception(
+    url: str,
+    used_profile: str,
+    e: Exception,
+) -> dict[str, Any]:
+    """Classify and build error result for generic exceptions."""
+    failure_stage, network_kind = _classify_curl_error(e)
+    return _make_error_result(
+        url,
+        error=str(e),
+        failure_stage=failure_stage,
+        network_error_kind=network_kind,
+        selected_transport="curl_cffi",
+        tls_impersonate=used_profile,
+    )

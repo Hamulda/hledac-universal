@@ -17,6 +17,7 @@ Based on research_privacy_enhancer concept from integration files.
 """
 import hashlib
 import logging
+import re
 import time
 from collections import deque
 from collections.abc import Callable
@@ -91,7 +92,17 @@ class PrivacyEnhancedResearch:
         ...     research_func=actual_research_function
         ... )
     """
-    PII_PATTERNS = [('\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b', '[EMAIL]'), ('\\b\\d{3}-\\d{2}-\\d{4}\\b', '[SSN]'), ('\\b\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}\\b', '[CARD]'), ('\\b\\d{3}-\\d{3}-\\d{4}\\b', '[PHONE]')]
+    # Pre-compiled PII patterns for O(1) reuse (performance optimization)
+    PII_PATTERNS: list[tuple[str, str]] = [
+        (r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', '[EMAIL]'),
+        (r'\b\d{3}-\d{2}-\d{4}\b', '[SSN]'),
+        (r'\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b', '[CARD]'),
+        (r'\b\d{3}-\d{3}-\d{4}\b', '[PHONE]'),
+    ]
+    # Compiled versions for O(1) regex match/sub
+    _PII_COMPILED: list[tuple[re.Pattern, str]] = [
+        (re.compile(p), r) for p, r in PII_PATTERNS
+    ]
     __slots__ = ('_active_sessions', '_audit_log', '_operation_counter', 'config')
 
     def __init__(self, config: PrivacyConfig | None=None) -> None:
@@ -144,10 +155,9 @@ class PrivacyEnhancedResearch:
 
     def _anonymize_query(self, query: str, operation_id: str) -> AnonymizedRequest:
         """Anonymize search query."""
-        import re
         anonymized = query
-        for pattern, replacement in self.PII_PATTERNS:
-            anonymized = re.sub(pattern, replacement, anonymized)
+        for pattern, replacement in self._PII_COMPILED:
+            anonymized = pattern.sub(replacement, anonymized)
         if self.config.level == PrivacyLevel.MAXIMUM:
             words = anonymized.split()
             hashed_words = []
@@ -161,17 +171,16 @@ class PrivacyEnhancedResearch:
 
     def _sanitize_results(self, data: Any) -> SanitizedResult:
         """Sanitize results to remove PII."""
-        import re
         sanitized_fields = []
         pii_detected = False
 
         def sanitize_value(value: str) -> str:
             nonlocal pii_detected
             original = value
-            for pattern, replacement in self.PII_PATTERNS:
-                if re.search(pattern, value):
+            for pattern, replacement in self._PII_COMPILED:
+                if pattern.search(value):
                     pii_detected = True
-                    value = re.sub(pattern, replacement, value)
+                    value = pattern.sub(replacement, value)
             if value != original:
                 sanitized_fields.append(f'string_field_{len(sanitized_fields)}')
             return value

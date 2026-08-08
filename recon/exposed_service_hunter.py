@@ -44,6 +44,7 @@ import httpx
 from hledac.universal.core.concurrency import ConcurrencyCategory, get_semaphore
 from hledac.universal.transport.session_pool import session_pool
 from hledac.universal.utils.async_helpers import parallel_ok
+from hledac.universal.utils._patterns import scan_parallel
 logger = logging.getLogger(__name__)
 
 class ServiceType(Enum):
@@ -438,7 +439,6 @@ class AzureBlobEnumerator:
         Returns:
             List of exposed Azure Blob containers
         """
-        findings = []
         target_clean = target.replace('.', '').replace('-', '').replace('_', '').lower()
         
         # Generate storage account names (3-24 chars, lowercase alphanumeric)
@@ -466,32 +466,19 @@ class AzureBlobEnumerator:
                         container_names.add(parts[0][:63])
         
         logger.info(f'Checking {len(account_names) * len(container_names)} potential Azure containers for {target}')
-        semaphore = asyncio.Semaphore(max_concurrent)
-        
-        async def check_container(account: str, container: str) -> ExposedService | None:
-            async with semaphore:
-                try:
-                    result = await self._check_container_exists(account, container)
-                    if result:
-                        logger.info(f'Found Azure container: {account}/{container}')
-                        return result
-                except Exception as e:
-                    logger.debug(f'Error checking Azure container {account}/{container}: {e}')
-                return None
         
         # Limit total combinations to prevent excessive requests
-        tasks = []
-        for account in list(account_names)[:10]:  # Limit accounts
-            for container in list(container_names)[:20]:  # Limit containers per account
-                tasks.append(check_container(account, container))
+        limited_accounts = list(account_names)[:10]
+        limited_containers = list(container_names)[:20]
         
-        results = await parallel_ok(*tasks, label='exposed_service_hunter:azure_enum')
-        
-        for result in results:
-            if result:
-                findings.append(result)
-        
-        return findings
+        return await scan_parallel(
+            check_args=[(a, c) for a in limited_accounts for c in limited_containers],
+            checker=lambda a, c: self._check_container_exists(a, c),
+            label='exposed_service_hunter:azure',
+            logger=logger,
+            log_success='Found Azure container: {0}/{1}',
+            semaphore=asyncio.Semaphore(max_concurrent),
+        )
 
     async def _check_container_exists(self, account_name: str, container_name: str) -> ExposedService | None:
         """Check if an Azure Blob container exists and is accessible."""
@@ -616,30 +603,16 @@ class DatabasePortScanner:
         Returns:
             List of exposed database services
         """
-        findings = []
         ports_to_check = ports or list(self.DATABASE_PORTS.keys())
         logger.info(f'Scanning {len(hosts)} hosts on {len(ports_to_check)} ports')
-        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
-        async def check_port(host: str, port: int) -> ExposedService | None:
-            async with semaphore:
-                try:
-                    result = await self._check_port(host, port)
-                    if result:
-                        logger.info(f'Found exposed database: {host}:{port}')
-                        return result
-                except Exception as e:
-                    logger.debug(f'Error scanning {host}:{port}: {e}')
-                return None
-        tasks = []
-        for host in hosts:
-            for port in ports_to_check:
-                tasks.append(check_port(host, port))
-        results = await parallel_ok(*tasks, label='exposed_service_hunter:410')
-        for result in results:
-            if result:
-                findings.append(result)
-        return findings
+        return await scan_parallel(
+            check_args=[(h, p) for h in hosts for p in ports_to_check],
+            checker=lambda h, p: self._check_port(h, p),
+            label='exposed_service_hunter:db_scan',
+            logger=logger,
+            log_success='Found exposed database: {host}:{port}',
+        )
 
     async def _check_port(self, host: str, port: int) -> ExposedService | None:
         """Check if a specific port is open and identify service."""
@@ -1171,26 +1144,18 @@ class GraphQLIntrospector:
         Returns:
             List of discovered GraphQL endpoints
         """
-        findings = []
         base_url = base_url.rstrip('/')
-        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
-        async def check_endpoint(endpoint: str) -> ExposedService | None:
-            async with semaphore:
-                try:
-                    result = await self._check_endpoint(f'{base_url}{endpoint}')
-                    if result:
-                        logger.info(f'Found GraphQL endpoint: {endpoint}')
-                        return result
-                except Exception as e:
-                    logger.debug(f'Error checking {endpoint}: {e}')
-                return None
-        tasks = [check_endpoint(ep) for ep in self.COMMON_ENDPOINTS]
-        results = await parallel_ok(*tasks, label='exposed_service_hunter:636')
-        for result in results:
-            if result:
-                findings.append(result)
-        return findings
+        async def check_with_base(endpoint: str) -> ExposedService | None:
+            return await self._check_endpoint(f'{base_url}{endpoint}')
+
+        return await scan_parallel(
+            check_args=[(ep,) for ep in self.COMMON_ENDPOINTS],
+            checker=check_with_base,
+            label='exposed_service_hunter:graphql',
+            logger=logger,
+            log_success='Found GraphQL endpoint: {0}',  # First positional arg
+        )
 
     async def _check_endpoint(self, url: str) -> ExposedService | None:
         """Check if a URL is a GraphQL endpoint with introspection enabled."""
@@ -1339,28 +1304,13 @@ class ContainerAPIExplorer:
 
     async def scan_docker_apis(self, hosts: list[str], max_concurrent: int=20) -> list[ExposedService]:
         """Scan for exposed Docker APIs."""
-        findings = []
-        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
-
-        async def check_host(host: str, port: int) -> ExposedService | None:
-            async with semaphore:
-                try:
-                    result = await self._check_docker_api(host, port)
-                    if result:
-                        logger.info(f'Found exposed Docker API: {host}:{port}')
-                        return result
-                except Exception as e:
-                    logger.debug(f'Error checking Docker API {host}:{port}: {e}')
-                return None
-        tasks = []
-        for host in hosts:
-            for port in self.DOCKER_PORTS:
-                tasks.append(check_host(host, port))
-        results = await parallel_ok(*tasks, label='exposed_service_hunter:928')
-        for result in results:
-            if result:
-                findings.append(result)
-        return findings
+        return await scan_parallel(
+            check_args=[(h, p) for h in hosts for p in self.DOCKER_PORTS],
+            checker=lambda h, p: self._check_docker_api(h, p),
+            label='exposed_service_hunter:docker',
+            logger=logger,
+            log_success='Found exposed Docker API: {host}:{port}',
+        )
 
     async def _check_docker_api(self, host: str, port: int) -> ExposedService | None:
         """Check if a Docker API is exposed."""
@@ -1383,28 +1333,13 @@ class ContainerAPIExplorer:
 
     async def scan_kubernetes_apis(self, hosts: list[str], max_concurrent: int=20) -> list[ExposedService]:
         """Scan for exposed Kubernetes APIs."""
-        findings = []
-        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
-
-        async def check_host(host: str, port: int) -> ExposedService | None:
-            async with semaphore:
-                try:
-                    result = await self._check_kubernetes_api(host, port)
-                    if result:
-                        logger.info(f'Found exposed Kubernetes API: {host}:{port}')
-                        return result
-                except Exception as e:
-                    logger.debug(f'Error checking K8s API {host}:{port}: {e}')
-                return None
-        tasks = []
-        for host in hosts:
-            for port in self.KUBERNETES_PORTS:
-                tasks.append(check_host(host, port))
-        results = await parallel_ok(*tasks, label='exposed_service_hunter:1011')
-        for result in results:
-            if result:
-                findings.append(result)
-        return findings
+        return await scan_parallel(
+            check_args=[(h, p) for h in hosts for p in self.KUBERNETES_PORTS],
+            checker=lambda h, p: self._check_kubernetes_api(h, p),
+            label='exposed_service_hunter:k8s',
+            logger=logger,
+            log_success='Found exposed Kubernetes API: {host}:{port}',
+        )
 
     async def _check_kubernetes_api(self, host: str, port: int) -> ExposedService | None:
         """Check if a Kubernetes API is exposed."""
@@ -1491,27 +1426,18 @@ class SwaggerEnumerator:
         Returns:
             List of ExposedService findings with extracted endpoint metadata
         """
-        findings: list[ExposedService] = []
         base_url = base_url.rstrip('/')
-        semaphore = get_semaphore(ConcurrencyCategory.SCRAPE_GENERAL)
 
-        async def _probe_path(path: str) -> ExposedService | None:
-            async with semaphore:
-                try:
-                    result = await self._check_swagger_path(f'{base_url}{path}')
-                    if result:
-                        logger.info(f'Found Swagger/OpenAPI spec: {path}')
-                        return result
-                except Exception as e:
-                    logger.debug(f'Error checking Swagger path {path}: {e}')
-                return None
+        async def check_with_base(path: str) -> ExposedService | None:
+            return await self._check_swagger_path(f'{base_url}{path}')
 
-        tasks = [_probe_path(p) for p in self.SWAGGER_PATHS]
-        results = await parallel_ok(*tasks, label='exposed_service_hunter:swagger_discover')
-        for result in results:
-            if result:
-                findings.append(result)
-        return findings
+        return await scan_parallel(
+            check_args=[(p,) for p in self.SWAGGER_PATHS],
+            checker=check_with_base,
+            label='exposed_service_hunter:swagger',
+            logger=logger,
+            log_success='Found Swagger/OpenAPI spec: {0}',
+        )
 
     async def _check_swagger_path(self, url: str) -> ExposedService | None:
         """Check if a URL serves a valid Swagger/OpenAPI specification."""

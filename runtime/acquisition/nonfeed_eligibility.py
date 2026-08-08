@@ -30,47 +30,54 @@ class MandatoryLaneTerminality:
     __slots__ = ()
 
 
-# ── Query indicator helpers ────────────────────────────────────────────────────────
+# ── Query indicator helpers (regex compiled at module level for O(1) reuse) ────────
+
+# PERFORMANCE: Compiled once at module level instead of O(N) per call
+_IP_RE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
+_DOMAIN_RE = re.compile(
+    r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b",
+    re.IGNORECASE,
+)
+_URL_RE = re.compile(r"https?://", re.IGNORECASE)
+_WALLET_RE = re.compile(
+    r"\b(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b"
+    r"|0x[a-fA-F0-9]{40}\b"
+    r"|[LM][a-km-zA-HJ-NP-Z1-9]{26,33}\b"
+)
+_HASH_RE = re.compile(r"\b[a-fA-F0-9]{64}\b|\b[a-fA-F0-9]{32}\b")
+_THREAT_RE = re.compile(
+    r"\b(ransomware|apt\d+|trojan|malware|backdoor|exploit|"
+    r"c2|cobalt strike|emotet|lockbit|conti|revil|rivolta)\b",
+    re.IGNORECASE,
+)
 
 
 def _has_domain_or_ip(query: str) -> bool:
     """Return True if query looks like it contains a domain or IP indicator."""
     if not query:
         return False
-    _ip_re = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
-    _domain_re = re.compile(
-        r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b",
-        re.IGNORECASE,
-    )
-    return bool(_ip_re.search(query) or _domain_re.search(query))
+    return bool(_IP_RE.search(query) or _DOMAIN_RE.search(query))
 
 
 def _has_url(query: str) -> bool:
     """Return True if query looks like a URL."""
     if not query:
         return False
-    return bool(re.search(r"https?://", query, re.IGNORECASE))
+    return bool(_URL_RE.search(query))
 
 
 def _has_crypto_wallet(query: str) -> bool:
     """Return True if query looks like a cryptocurrency wallet."""
     if not query:
         return False
-    _wallet_re = re.compile(
-        r"\b(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}\b"
-        r"|0x[a-fA-F0-9]{40}\b"
-        r"|[LM][a-km-zA-HJ-NP-Z1-9]{26,33}\b"
-    )
-    return bool(_wallet_re.search(query))
+    return bool(_WALLET_RE.search(query))
 
 
 def _has_crypto_hash(query: str) -> bool:
     """Return True if query looks like a crypto hash."""
     if not query:
         return False
-    # SHA256, MD5, etc.
-    _hash_re = re.compile(r"\b[a-fA-F0-9]{64}\b|\b[a-fA-F0-9]{32}\b")
-    return bool(_hash_re.search(query))
+    return bool(_HASH_RE.search(query))
 
 
 def _has_crypto_indicator(query: str) -> bool:
@@ -82,12 +89,7 @@ def _has_threat_indicator(query: str) -> bool:
     """Return True if query has threat indicator keywords."""
     if not query:
         return False
-    _threat_re = re.compile(
-        r"\b(ransomware|apt\d+|trojan|malware|backdoor|exploit|"
-        r"c2|cobalt strike|emotet|lockbit|conti|revil|rivolta)\b",
-        re.IGNORECASE,
-    )
-    return bool(_threat_re.search(query))
+    return bool(_THREAT_RE.search(query))
 
 
 # ── _build_nonfeed_lane_eligibility ─────────────────────────────────────────────────
@@ -110,12 +112,10 @@ def _build_nonfeed_lane_eligibility(
       - Bounded: O(len(query)) + O(1) per lane
       - Fail-safe: always returns valid dict with all lanes
     """
-    import re
-
     _raw_has_domain = _has_domain_or_ip(query)
     has_domain = getattr(plan, "has_domain", _raw_has_domain) if plan is not None else _raw_has_domain
     has_url = _has_url(query)
-    has_ip = bool(re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", query))
+    has_ip = bool(_IP_RE.search(query))
     has_fqdn = has_domain and not has_ip
     is_nonfeed_diagnostic = acquisition_profile == "nonfeed_diagnostic"
 

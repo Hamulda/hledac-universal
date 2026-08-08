@@ -25,6 +25,8 @@ from typing import Any, Optional
 
 import msgspec
 
+from hledac.universal.utils._patterns import module_singleton_creator
+
 logger = logging.getLogger(__name__)
 _MAX_BATCH_SIZE: int = 32
 _MAX_SEQ_LEN: int = 512
@@ -248,19 +250,17 @@ class MetalBufferPool:
         return buf is not None and buf._shared_buf is not None
 
 
-_buffer_pool: MetalBufferPool | None = None
-_pool_init_lock = threading.Lock()
+# Module-level singleton — one pool per process.
+# F330-DUP: Refactored to use module_singleton_creator from utils/_patterns.py
 
 
-def get_buffer_pool() -> MetalBufferPool:
-    """Get the singleton MetalBufferPool instance."""
-    global _buffer_pool
-    if _buffer_pool is None:
-        with _pool_init_lock:
-            if _buffer_pool is None:
-                pool = MetalBufferPool()
-                _buffer_pool = pool
-    return _buffer_pool
+def _create_buffer_pool() -> MetalBufferPool:
+    """Factory for MetalBufferPool singleton."""
+    return MetalBufferPool()
+
+
+# DRY: Double-checked locking singleton via module_singleton_creator
+get_buffer_pool = module_singleton_creator(factory=_create_buffer_pool)
 
 
 def init_metal_embedder_buffers(

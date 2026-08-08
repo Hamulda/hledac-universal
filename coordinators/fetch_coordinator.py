@@ -28,6 +28,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+import re
 from typing import Any
 
 from operator import attrgetter, itemgetter
@@ -36,6 +37,14 @@ import msgspec
 from hledac.universal.compat.msgspec_gc_compat import Struct
 import orjson
 from cachetools import TTLCache
+
+# -----------------------------------------------------------------------------
+# Claim extraction patterns (module-level for performance)
+# -----------------------------------------------------------------------------
+_IP_PATTERN = re.compile(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b')
+_DOMAIN_PATTERN = re.compile(r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b')
+_SHA256_PATTERN = re.compile(r'\b[a-fA-F0-9]{64}\b')
+_URL_PATTERN = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 
 from hledac.universal.core.capabilities import (
     AIOHTTP,
@@ -3097,114 +3106,104 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         Returns:
             List of contradiction dicts with severity, reason, conflicting_sources
         """
-        contradictions: list[dict[str, Any]] = []
-
         if not original_findings or not micro_sprint_evidence_ids:
-            return contradictions
+            return []
 
         try:
-            # Parse micro-sprint evidence IDs to extract protocol and content hints
-            # Evidence IDs are formatted as "protocol:entity:value" (e.g., "ct:example.com:subdomain")
-            ms_sources = set()
-            ms_values: dict[str, set[str]] = {}  # protocol -> set of values
-
-            for eid in micro_sprint_evidence_ids:
-                parts = eid.split(':', 2)
-                if len(parts) >= 2:
-                    protocol = parts[0]
-                    ms_sources.add(protocol)
-
-                    # Extract the value (third part if exists)
-                    if len(parts) >= 3:
-                        value = parts[2]
-                        if value not in ms_values.get(protocol, set()):
-                            ms_values.setdefault(protocol, set()).add(value)
-
-            # Check for factual contradictions in original findings
-            original_claims: dict[str, list[str]] = {}  # claim_type -> list of values
-
-            for finding in original_findings:
-                content = finding.get('content', '')
-                source = finding.get('source', 'unknown')
-
-                # Extract potential claims from content
-                # Simple heuristics for common IOC types
-                claims = self._extract_claims_from_content(content)
-                for claim_type, value in claims.items():
-                    if claim_type not in original_claims:
-                        original_claims[claim_type] = []
-                    original_claims[claim_type].append(value)
-
-            # Detect contradictions
-            for finding in original_findings:
-                content = finding.get('content', '')
-                source = finding.get('source', 'unknown')
-                confidence = finding.get('confidence', 0.5)
-
-                # Check for confidence contradictions
-                # If original confidence is high but micro-sprint found different results
-                if confidence > 0.7 and ms_sources:
-                    # Look for content differences
-                    ms_content_hints = set()
-                    for protocol_values in ms_values.values():
-                        ms_content_hints.update(protocol_values)
-
-                    for hint in ms_content_hints:
-                        if hint and hint != finding.get('finding_id', ''):
-                            # Check if hint is NOT in original content (contradiction)
-                            if hint.lower() not in content.lower()[:200]:
-                                contradictions.append({
-                                    'severity': 0.8,
-                                    'reason': 'micro_sprint_contradiction',
-                                    'original_source': source,
-                                    'micro_sprint_sources': list(ms_sources),
-                                    'description': f'Micro-sprint found new value "{hint[:50]}" not in original finding',
-                                    'entity_id': '',  # Will be filled by caller
-                                })
-
-            # Check for protocol-level conflicts
-            # e.g., CT log says one thing, passive DNS says another
-            if len(ms_sources) > 1:
-                # Multiple micro-sprint protocols disagree
-                protocol_values_flat = {v for vals in ms_values.values() for v in vals}
-                if len(protocol_values_flat) > 1:
-                    # Different protocols found different values
-                    for orig_finding in original_findings:
-                        orig_source = orig_finding.get('source', '')
-                        orig_confidence = orig_finding.get('confidence', 0.5)
-
-                        # If original source is authoritative (high confidence)
-                        # and micro-sprint found different values
-                        if orig_confidence > 0.6:
-                            contradictions.append({
-                                'severity': 0.7,
-                                'reason': 'protocol_conflict',
-                                'original_source': orig_source,
-                                'micro_sprint_sources': list(ms_sources),
-                                'description': f'Protocol conflict: {orig_source} vs {list(ms_sources)}',
-                                'entity_id': '',
-                            })
-
-            # Deduplicate by description
-            seen = set()
-            unique_contradictions = []
-            for c in contradictions:
-                desc = c.get('description', '')
-                if desc not in seen:
-                    seen.add(desc)
-                    unique_contradictions.append(c)
-
-            logger.debug(
-                '[META-015] Detected %d contradictions between original findings '
-                'and micro-sprint results',
-                len(unique_contradictions),
-            )
-
-            return unique_contradictions[:10]  # Cap at 10
-
+            ms_sources, ms_values = self._parse_micro_sprint_ids(micro_sprint_evidence_ids)
+            contradictions = self._detect_confidence_contradictions(original_findings, ms_sources, ms_values)
+            contradictions.extend(self._detect_protocol_conflicts(original_findings, ms_sources, ms_values))
+            unique = self._deduplicate_contradictions(contradictions)
+            logger.debug('[META-015] Detected %d contradictions', len(unique))
+            return unique[:10]
         except Exception as e:
             logger.debug('[META-015] Contradiction detection failed: %s', e)
             return []
+
+    def _parse_micro_sprint_ids(self, evidence_ids: list[str]) -> tuple[set[str], dict[str, set[str]]]:
+        """Parse micro-sprint evidence IDs into sources and values."""
+        sources: set[str] = set()
+        values: dict[str, set[str]] = {}
+        for eid in evidence_ids:
+            parts = eid.split(':', 2)
+            if len(parts) >= 2:
+                protocol = parts[0]
+                sources.add(protocol)
+                if len(parts) >= 3:
+                    value = parts[2]
+                    if value not in values.get(protocol, set()):
+                        values.setdefault(protocol, set()).add(value)
+        return sources, values
+
+    def _detect_confidence_contradictions(
+        self,
+        findings: list[dict[str, Any]],
+        ms_sources: set[str],
+        ms_values: dict[str, set[str]],
+    ) -> list[dict[str, Any]]:
+        """Detect contradictions based on confidence and content differences."""
+        contradictions: list[dict[str, Any]] = []
+        ms_content_hints = {v for vals in ms_values.values() for v in vals}
+
+        for finding in findings:
+            confidence = finding.get('confidence', 0.5)
+            if confidence <= 0.7 or not ms_sources:
+                continue
+
+            content = finding.get('content', '')[:200].lower()
+            source = finding.get('source', 'unknown')
+            finding_id = finding.get('finding_id', '')
+
+            for hint in ms_content_hints:
+                if hint and hint != finding_id and hint.lower() not in content:
+                    contradictions.append({
+                        'severity': 0.8,
+                        'reason': 'micro_sprint_contradiction',
+                        'original_source': source,
+                        'micro_sprint_sources': list(ms_sources),
+                        'description': f'Micro-sprint found new value "{hint[:50]}" not in original finding',
+                        'entity_id': '',
+                    })
+        return contradictions
+
+    def _detect_protocol_conflicts(
+        self,
+        findings: list[dict[str, Any]],
+        ms_sources: set[str],
+        ms_values: dict[str, set[str]],
+    ) -> list[dict[str, Any]]:
+        """Detect protocol-level conflicts between sources."""
+        contradictions: list[dict[str, Any]] = []
+        if len(ms_sources) <= 1:
+            return contradictions
+
+        protocol_values_flat = {v for vals in ms_values.values() for v in vals}
+        if len(protocol_values_flat) <= 1:
+            return contradictions
+
+        for finding in findings:
+            confidence = finding.get('confidence', 0.5)
+            if confidence > 0.6:
+                contradictions.append({
+                    'severity': 0.7,
+                    'reason': 'protocol_conflict',
+                    'original_source': finding.get('source', ''),
+                    'micro_sprint_sources': list(ms_sources),
+                    'description': f'Protocol conflict: {finding.get("source", "")} vs {list(ms_sources)}',
+                    'entity_id': '',
+                })
+        return contradictions
+
+    def _deduplicate_contradictions(self, contradictions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Deduplicate contradictions by description."""
+        seen: set[str] = set()
+        unique: list[dict[str, Any]] = []
+        for c in contradictions:
+            desc = c.get('description', '')
+            if desc not in seen:
+                seen.add(desc)
+                unique.append(c)
+        return unique
 
     def _compute_simple_entropy(self, contents: list[str]) -> float:
         """
@@ -3264,27 +3263,22 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
         content_lower = content.lower()
 
         # Extract IP addresses
-        import re as _re
-        ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
-        ips = _re.findall(ip_pattern, content)
+        ips = _IP_PATTERN.findall(content)
         if ips:
             claims['ip'] = ips[0]
 
         # Extract domain names (simple heuristic)
-        domain_pattern = r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b'
-        domains = _re.findall(domain_pattern, content_lower)
+        domains = _DOMAIN_PATTERN.findall(content_lower)
         if domains:
             claims['domain'] = domains[0]
 
         # Extract SHA256 hashes
-        sha256_pattern = r'\b[a-fA-F0-9]{64}\b'
-        sha256s = _re.findall(sha256_pattern, content)
+        sha256s = _SHA256_PATTERN.findall(content)
         if sha256s:
             claims['sha256'] = sha256s[0]
 
         # Extract URLs
-        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
-        urls = _re.findall(url_pattern, content)
+        urls = _URL_PATTERN.findall(content)
         if urls:
             claims['url'] = urls[0][:100]  # Truncate for comparison
 
@@ -3939,148 +3933,10 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                 if not self._running:
                     break
 
-                entity_id = request['entity_id']
-                entropy = request['entropy']
-                protocols = list(request.get('protocols', ['ct', 'passive_dns']))
-                reason = request.get('reason', 'high_entropy')
-                retry_count = request.get('_retry_count', 0)
-                previously_tried = list(request.get('_previously_tried', []))
-
-                # Filter out already-tried protocols
-                untried_protocols = [p for p in protocols if p not in previously_tried]
-                if not untried_protocols:
-                    logger.debug(
-                        '[UNIFIED-004] All protocols exhausted for %s (tried=%s) — giving up',
-                        entity_id, previously_tried,
-                    )
-                    continue
-
-                # [NEXUS]-018-02: IGD abort — skip micro-sprint if IGD below threshold
-                # Keys micro-sprint branches as "ms:<entity_id>" to avoid polluting
-                # ToT branch keys.
-                _ms_abort = False
-                try:
-                    if hasattr(self, '_orchestrator') and self._orchestrator is not None:
-                        igd = getattr(self._orchestrator, '_igd_policy', None)
-                        if igd is not None and callable(igd.should_abort):
-                            _ms_key = f'ms:{entity_id}'
-                            igd.register_branch(_ms_key)
-                            if igd.should_abort(_ms_key, depth=1):
-                                logger.info(
-                                    '[NEXUS]-018-02 IGD abort micro-sprint: entity=%s',
-                                    entity_id,
-                                )
-                                _ms_abort = True
-                except Exception:  # noqa: BLE001
-                    pass  # fail-soft — IGD abort is advisory, never blocks micro-sprint
-
-                if _ms_abort:
-                    continue
-
-                # Trigger micro-sprint with untried protocols only
-                result = await self.trigger_micro_sprint(
-                    entity_id=entity_id,
-                    entropy=entropy,
-                    alternative_protocols=untried_protocols,
-                    max_hops=2,
-                    timeout=30.0,
-                    reason=reason,
+                # Process the micro-sprint request
+                await self._process_micro_sprint_request(
+                    request, _MAX_RETRY_ROUNDS, _RETRY_BACKOFF_BASE
                 )
-
-                # [META]-015: Contradiction check — compare micro-sprint results with originals
-                # This is the CORE FIX for the missing comparison step.
-                # If micro-sprint finds conflicting data, we emit an EntropyAlert
-                # to trigger JTMS retraction of the contradictory source.
-                if result.evidence_ids:
-                    original_findings, original_entropy = await self._get_original_findings_for_entity(
-                        entity_id
-                    )
-                    if original_findings:
-                        contradictions = self._detect_micro_sprint_contradictions(
-                            original_findings,
-                            list(result.evidence_ids),
-                        )
-                        if contradictions:
-                            # [META]-015: Emit high-severity alert for contradiction
-                            # This bridges back to EntropyFetchBridge for JTMS retraction
-                            await self._emit_contradiction_alert(
-                                entity_id, contradictions, original_entropy,
-                            )
-
-                all_tried = previously_tried + list(result.protocols_tried)
-
-                if result.success:
-                    logger.info(
-                        '[UNIFIED-004] Micro-sprint improved entropy: entity=%s '
-                        'new_entropy=%.3f protocols=%s retries=%d',
-                        entity_id, result.new_entropy,
-                        result.protocols_tried, retry_count,
-                    )
-                    # [NEXUS]-018-02: Feed micro-sprint success back to IGD policy
-                    # so the next IGD check on the same entity sees real IOC density.
-                    if not _ms_abort:  # only if we didn't IGD-abort (path not expected here)
-                        try:
-                            if hasattr(self, '_orchestrator') and self._orchestrator is not None:
-                                igd = getattr(self._orchestrator, '_igd_policy', None)
-                                if igd is not None and callable(igd.report_iocs):
-                                    # report new_entropy as an IOC quality proxy
-                                    # (higher = better IOC yield)
-                                    igd.report_iocs(
-                                        f'ms:{entity_id}',
-                                        [result.new_entropy],
-                                    )
-                        except Exception:  # noqa: BLE001
-                            pass
-                    # Success — remove from pending tracking
-                    continue
-
-                # UNIFIED-004 iterative feedback: re-enqueue if retries remain
-                remaining_retries = _MAX_RETRY_ROUNDS - retry_count
-                if remaining_retries > 0 and len(untried_protocols) > len(result.protocols_tried):
-                    # Some protocols were not attempted (timeout or early exit)
-                    # Re-enqueue with remaining protocols and incremented retry count
-                    next_retry = retry_count + 1
-                    backoff_s = _RETRY_BACKOFF_BASE * (2 ** retry_count)
-
-                    logger.info(
-                        '[UNIFIED-004] Micro-sprint retry queued: entity=%s '
-                        'retry=%d/%d backoff=%.1fs protocols=%s',
-                        entity_id, next_retry, _MAX_RETRY_ROUNDS, backoff_s,
-                        untried_protocols,
-                    )
-
-                    # Build retry request with backoff delay
-                    retry_request = {
-                        'entity_id': entity_id,
-                        'entropy': entropy,  # original entropy for comparison
-                        'protocols': protocols,  # full list — filter happens above
-                        'reason': reason,
-                        '_retry_count': next_retry,
-                        '_previously_tried': all_tried,
-                        '_backoff_s': backoff_s,
-                    }
-
-                    # Delay before re-enqueue (exponential backoff)
-                    try:
-                        await asyncio.sleep(backoff_s)
-                    except asyncio.CancelledError:
-                        break
-
-                    # Re-enqueue (drop if full — prevent feedback loops from
-                    # saturating the queue)
-                    try:
-                        self._micro_sprint_queue.put_nowait(retry_request)
-                    except asyncio.QueueFull:
-                        logger.debug(
-                            '[UNIFIED-004] Retry queue full for %s — dropping',
-                            entity_id,
-                        )
-                else:
-                    logger.debug(
-                        '[UNIFIED-004] Micro-sprint exhausted: entity=%s '
-                        'tried=%s retries=%d',
-                        entity_id, all_tried, retry_count,
-                    )
 
             except asyncio.TimeoutError:
                 # Normal timeout, continue loop
@@ -4094,3 +3950,155 @@ def _put_task(task: object, pivot_queue: asyncio.Queue, pivot_stats: dict | None
                 continue
 
         logger.info('[UNIFIED-004] Micro-sprint worker loop stopped')
+
+    # ------------------------------------------------------------------
+    # Complexity-reduced helpers for _micro_sprint_worker_loop (25 → ~10)
+    # ------------------------------------------------------------------
+
+    async def _process_micro_sprint_request(
+        self, request: dict[str, Any], max_retry_rounds: int, backoff_base: float
+    ) -> None:
+        """Process a single micro-sprint request from the queue."""
+        entity_id = request['entity_id']
+        entropy = request['entropy']
+        protocols = list(request.get('protocols', ['ct', 'passive_dns']))
+        reason = request.get('reason', 'high_entropy')
+        retry_count = request.get('_retry_count', 0)
+        previously_tried = list(request.get('_previously_tried', []))
+
+        # Filter out already-tried protocols
+        untried_protocols = [p for p in protocols if p not in previously_tried]
+        if not untried_protocols:
+            logger.debug(
+                '[UNIFIED-004] All protocols exhausted for %s (tried=%s) — giving up',
+                entity_id, previously_tried,
+            )
+            return
+
+        # [NEXUS]-018-02: IGD abort check
+        if self._should_igd_abort(entity_id):
+            return
+
+        # Trigger micro-sprint with untried protocols only
+        result = await self.trigger_micro_sprint(
+            entity_id=entity_id,
+            entropy=entropy,
+            alternative_protocols=untried_protocols,
+            max_hops=2,
+            timeout=30.0,
+            reason=reason,
+        )
+
+        # [META]-015: Contradiction check
+        await self._check_micro_sprint_contradictions(entity_id, result)
+
+        all_tried = previously_tried + list(result.protocols_tried)
+
+        if result.success:
+            self._handle_micro_sprint_success(entity_id, result, retry_count)
+            return
+
+        # UNIFIED-004 iterative feedback: re-enqueue if retries remain
+        await self._requeue_micro_sprint_retry(
+            entity_id, entropy, protocols, reason, retry_count, all_tried,
+            untried_protocols, result, max_retry_rounds, backoff_base
+        )
+
+    def _should_igd_abort(self, entity_id: str) -> bool:
+        """
+        [NEXUS]-018-02: Check if IGD policy should abort this micro-sprint.
+        Keys micro-sprint branches as "ms:<entity_id>" to avoid polluting ToT branch keys.
+        """
+        try:
+            if not hasattr(self, '_orchestrator') or self._orchestrator is None:
+                return False
+            igd = getattr(self._orchestrator, '_igd_policy', None)
+            if igd is None or not callable(igd.should_abort):
+                return False
+            ms_key = f'ms:{entity_id}'
+            igd.register_branch(ms_key)
+            if igd.should_abort(ms_key, depth=1):
+                logger.info('[NEXUS]-018-02 IGD abort micro-sprint: entity=%s', entity_id)
+                return True
+        except Exception:  # noqa: BLE001
+            pass  # fail-soft — IGD abort is advisory, never blocks micro-sprint
+        return False
+
+    async def _check_micro_sprint_contradictions(self, entity_id: str, result: Any) -> None:
+        """
+        [META]-015: Contradiction check — compare micro-sprint results with originals.
+        If micro-sprint finds conflicting data, emit an EntropyAlert for JTMS retraction.
+        """
+        if not result.evidence_ids:
+            return
+        original_findings, original_entropy = await self._get_original_findings_for_entity(entity_id)
+        if not original_findings:
+            return
+        contradictions = self._detect_micro_sprint_contradictions(
+            original_findings,
+            list(result.evidence_ids),
+        )
+        if contradictions:
+            await self._emit_contradiction_alert(entity_id, contradictions, original_entropy)
+
+    def _handle_micro_sprint_success(self, entity_id: str, result: Any, retry_count: int) -> None:
+        """Handle successful micro-sprint with IGD feedback."""
+        logger.info(
+            '[UNIFIED-004] Micro-sprint improved entropy: entity=%s '
+            'new_entropy=%.3f protocols=%s retries=%d',
+            entity_id, result.new_entropy,
+            result.protocols_tried, retry_count,
+        )
+        # [NEXUS]-018-02: Feed micro-sprint success back to IGD policy
+        try:
+            if hasattr(self, '_orchestrator') and self._orchestrator is not None:
+                igd = getattr(self._orchestrator, '_igd_policy', None)
+                if igd is not None and callable(igd.report_iocs):
+                    igd.report_iocs(f'ms:{entity_id}', [result.new_entropy])
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _requeue_micro_sprint_retry(
+        self, entity_id: str, entropy: float, protocols: list[str], reason: str,
+        retry_count: int, all_tried: list[str], untried_protocols: list[str],
+        result: Any, max_retry_rounds: int, backoff_base: float
+    ) -> None:
+        """Re-enqueue micro-sprint with retry logic and exponential backoff."""
+        remaining_retries = max_retry_rounds - retry_count
+        if remaining_retries <= 0 or len(untried_protocols) <= len(result.protocols_tried):
+            logger.debug(
+                '[UNIFIED-004] Micro-sprint exhausted: entity=%s tried=%s retries=%d',
+                entity_id, all_tried, retry_count,
+            )
+            return
+
+        # Some protocols were not attempted (timeout or early exit)
+        next_retry = retry_count + 1
+        backoff_s = backoff_base * (2 ** retry_count)
+
+        logger.info(
+            '[UNIFIED-004] Micro-sprint retry queued: entity=%s retry=%d/%d backoff=%.1fs protocols=%s',
+            entity_id, next_retry, max_retry_rounds, backoff_s, untried_protocols,
+        )
+
+        retry_request = {
+            'entity_id': entity_id,
+            'entropy': entropy,
+            'protocols': protocols,
+            'reason': reason,
+            '_retry_count': next_retry,
+            '_previously_tried': all_tried,
+            '_backoff_s': backoff_s,
+        }
+
+        # Delay before re-enqueue (exponential backoff)
+        try:
+            await asyncio.sleep(backoff_s)
+        except asyncio.CancelledError:
+            return
+
+        # Re-enqueue (drop if full — prevent feedback loops from saturating the queue)
+        try:
+            self._micro_sprint_queue.put_nowait(retry_request)
+        except asyncio.QueueFull:
+            logger.debug('[UNIFIED-004] Retry queue full for %s — dropping', entity_id)

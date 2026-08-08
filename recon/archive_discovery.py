@@ -37,6 +37,11 @@ Enhanced with stealth_osint integration:
 
 Historical content discovery across multiple archival sources.
 """
+import orjson
+from zstandard import ZstdCompressor, ZstdDecompressor
+_zstd_compressor = ZstdCompressor()
+_zstd_decompressor = ZstdDecompressor()
+
 import asyncio
 import msgspec
 import hashlib
@@ -45,7 +50,7 @@ import msgspec.json as _json
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -530,8 +535,8 @@ class ArchiveResurrector:
         """Resurrect content from web archives."""
         min_quality = min_quality or self.min_quality
         self._resurrections_attempted += 1
-        request_id = hashlib.sha256(f'{url}:{datetime.now(UTC)}'.encode()).hexdigest()[:16]
-        request = ResurrectionRequest(request_id=request_id, url=url, target_date=target_date, min_quality=min_quality, extract_metadata=True, created_at=datetime.now(UTC))
+        request_id = hashlib.sha256(f'{url}:{datetime.now(timezone.utc)}'.encode()).hexdigest()[:16]
+        request = ResurrectionRequest(request_id=request_id, url=url, target_date=target_date, min_quality=min_quality, extract_metadata=True, created_at=datetime.now(timezone.utc))
         self._active_requests[request_id] = request
         logger.info(f'🕸️ Resurrecting: {url}')
         start_time = time.monotonic()
@@ -585,7 +590,7 @@ class ArchiveResurrector:
                     if len(lines) > 1:
                         for line in lines[1:]:
                             try:
-                                parts = json.loads(line)
+                                parts = _json.loads(line)
                                 if len(parts) >= 6:
                                     timestamp_str = parts[0]
                                     original_url = parts[1]
@@ -612,7 +617,7 @@ class ArchiveResurrector:
                 cache_full_url = f'{cache_url}{quote(url)}'
                 async with self._session.head(cache_full_url, follow_redirects=True) as resp:
                     if resp.status == 200:
-                        snapshot = Snapshot(snapshot_id=hashlib.sha256(f'cache:{engine}:{url}'.encode()).hexdigest()[:16], url=url, archived_url=cache_full_url, timestamp=datetime.now(UTC), source=ContentSource.SEARCH_CACHE, content_type=ContentType.HTML, status_code=200, content_length=0, available=True)
+                        snapshot = Snapshot(snapshot_id=hashlib.sha256(f'cache:{engine}:{url}'.encode()).hexdigest()[:16], url=url, archived_url=cache_full_url, timestamp=datetime.now(timezone.utc), source=ContentSource.SEARCH_CACHE, content_type=ContentType.HTML, status_code=200, content_length=0, available=True)
                         snapshots.append(snapshot)
             except Exception as e:
                 logger.debug(f'Cache check failed for {engine}: {e}')
@@ -627,7 +632,7 @@ class ArchiveResurrector:
             try:
                 tweet_id = self._extract_tweet_id(url)
                 if tweet_id:
-                    snapshot = Snapshot(snapshot_id=f'politwoops:{tweet_id}', url=url, archived_url=f"{self.SOCIAL_ARCHIVES['politwoops']}{tweet_id}", timestamp=datetime.now(UTC), source=ContentSource.SOCIAL_ARCHIVE, content_type=ContentType.HTML, status_code=200, content_length=0, available=True)
+                    snapshot = Snapshot(snapshot_id=f'politwoops:{tweet_id}', url=url, archived_url=f"{self.SOCIAL_ARCHIVES['politwoops']}{tweet_id}", timestamp=datetime.now(timezone.utc), source=ContentSource.SOCIAL_ARCHIVE, content_type=ContentType.HTML, status_code=200, content_length=0, available=True)
                     snapshots.append(snapshot)
             except Exception as e:
                 logger.debug(f'Politwoops check failed: {e}')
@@ -718,74 +723,121 @@ class ArchiveResurrector:
                 score -= 0.5
         return max(0.0, min(1.0, score))
 
+    def _extract_selectolax_metadata(self, parser) -> dict[str, Any]:
+        """Extract metadata from HTML using selectolax parser."""
+        metadata = {}
+        for tag in parser.css('title'):
+            text = tag.text(strip=True)
+            if text:
+                metadata['title'] = text
+                break
+        # Helper to extract first meta tag content
+        def _meta_content(selector):
+            for tag in parser.css(selector):
+                return tag.attributes.get('content', '')
+            return ''
+        metadata['og_title'] = _meta_content('meta[property="og:title"]')
+        metadata['author'] = _meta_content('meta[name="author"]')
+        date = _meta_content('meta[property="article:published_time"]')
+        if not date:
+            date = _meta_content('meta[name="publishedDate"]')
+        if not date:
+            date = _meta_content('meta[name="date"]')
+        if date:
+            metadata['date'] = date
+        metadata['description'] = _meta_content('meta[name="description"]')
+        return metadata
+
+    def _parse_selectolax(self, content: str) -> dict[str, Any] | None:
+        """Parse HTML metadata using selectolax parser."""
+        if not (SELECTOLAX_AVAILABLE and _SelectoLAXParser):
+            return None
+        try:
+            parser = _SelectoLAXParser(content)
+            return self._extract_selectolax_metadata(parser)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _parse_bs4(self, content: str) -> dict[str, Any] | None:
+        """Parse HTML metadata using BeautifulSoup."""
+        if not BS4_AVAILABLE:
+            return None
+        try:
+            soup = BeautifulSoup(content, 'html.parser')
+            metadata: dict[str, Any] = {}
+            title_tag = soup.find('title')
+            if title_tag:
+                metadata['title'] = title_tag.get_text(strip=True)
+            og_title = soup.find('meta', property='og:title')
+            if og_title:
+                metadata['og_title'] = og_title.get('content', '')
+            author = soup.find('meta', attrs={'name': 'author'})
+            if author:
+                metadata['author'] = author.get('content', '')
+            date_tags = [
+                soup.find('meta', property='article:published_time'),
+                soup.find('meta', attrs={'name': 'publishedDate'}),
+                soup.find('meta', attrs={'name': 'date'}),
+            ]
+            for tag in date_tags:
+                if tag:
+                    metadata['date'] = tag.get('content', '')
+                    break
+            desc = soup.find('meta', attrs={'name': 'description'})
+            if desc:
+                metadata['description'] = desc.get('content', '')
+            return metadata
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _parse_regex(self, content: str) -> dict[str, Any] | None:
+        """Parse HTML metadata using regex (fallback parser)."""
+        try:
+            metadata: dict[str, Any] = {}
+            title_match = re.search(
+                r'<title[^>]*>([^<]+)</title>', content, re.IGNORECASE
+            )
+            if title_match:
+                metadata['title'] = title_match.group(1).strip()
+            for match in re.finditer(
+                r'<meta\s+(?:property|name)=["\']author["\']\s+content=["\']([^"\']+)["\']',
+                content,
+                re.IGNORECASE,
+            ):
+                metadata['author'] = match.group(1)
+            for match in re.finditer(
+                r'<meta\s+property=["\']article:published_time["\']\s+content=["\']([^"\']+)["\']',
+                content,
+                re.IGNORECASE,
+            ):
+                metadata['date'] = match.group(1)
+            for match in re.finditer(
+                r'<meta\s+name=["\'](?:publishedDate|date)["\']\s+content=["\']([^"\']+)["\']',
+                content,
+                re.IGNORECASE,
+            ):
+                metadata.setdefault('date', match.group(1))
+            desc_match = re.search(
+                r'<meta\s+name=["\']description["\']\s+content=["\']([^"\']+)["\']',
+                content,
+                re.IGNORECASE,
+            )
+            if desc_match:
+                metadata['description'] = desc_match.group(1)
+            return metadata
+        except Exception:  # noqa: BLE001
+            return None
+
     def _extract_metadata_html(self, content: str) -> dict[str, Any]:
         """Extract metadata from HTML content.
 
-        Tier 2 migration: selectolax-first → bs4 fallback → regex/stdlib fallback.
+        Simple dispatcher: selectolax → bs4 → regex (first non-empty wins).
         """
-        metadata = {}
-        if SELECTOLAX_AVAILABLE and _SelectoLAXParser:
-            try:
-                parser = _SelectoLAXParser(content)
-                for tag in parser.css('title'):
-                    text = tag.text(strip=True)
-                    if text:
-                        metadata['title'] = text
-                        break
-                for tag in parser.css('meta[property="og:title"]'):
-                    metadata['og_title'] = tag.attributes.get('content', '')
-                for tag in parser.css('meta[name="author"]'):
-                    metadata['author'] = tag.attributes.get('content', '')
-                for tag in parser.css('meta[property="article:published_time"]'):
-                    metadata['date'] = tag.attributes.get('content', '')
-                for tag in parser.css('meta[name="publishedDate"]'):
-                    metadata.setdefault('date', tag.attributes.get('content', ''))
-                for tag in parser.css('meta[name="date"]'):
-                    metadata.setdefault('date', tag.attributes.get('content', ''))
-                for tag in parser.css('meta[name="description"]'):
-                    metadata['description'] = tag.attributes.get('content', '')
-                return metadata
-            except Exception:  # noqa: BLE001
-                pass
-        if BS4_AVAILABLE:
-            try:
-                soup = BeautifulSoup(content, 'html.parser')
-                title_tag = soup.find('title')
-                if title_tag:
-                    metadata['title'] = title_tag.get_text(strip=True)
-                og_title = soup.find('meta', property='og:title')
-                if og_title:
-                    metadata['og_title'] = og_title.get('content', '')
-                author = soup.find('meta', attrs={'name': 'author'})
-                if author:
-                    metadata['author'] = author.get('content', '')
-                date_tags = [soup.find('meta', property='article:published_time'), soup.find('meta', attrs={'name': 'publishedDate'}), soup.find('meta', attrs={'name': 'date'})]
-                for tag in date_tags:
-                    if tag:
-                        metadata['date'] = tag.get('content', '')
-                        break
-                desc = soup.find('meta', attrs={'name': 'description'})
-                if desc:
-                    metadata['description'] = desc.get('content', '')
-                return metadata
-            except Exception:  # noqa: BLE001
-                pass
-        try:
-            title_match = re.search('<title[^>]*>([^<]+)</title>', content, re.IGNORECASE)
-            if title_match:
-                metadata['title'] = title_match.group(1).strip()
-            for match in re.finditer('<meta\\s+(?:property|name)=["\\\']author["\\\']\\s+content=["\\\']([^"\\\']+)["\\\']', content, re.IGNORECASE):
-                metadata['author'] = match.group(1)
-            for match in re.finditer('<meta\\s+property=["\\\']article:published_time["\\\']\\s+content=["\\\']([^"\\\']+)["\\\']', content, re.IGNORECASE):
-                metadata['date'] = match.group(1)
-            for match in re.finditer('<meta\\s+name=["\\\'](?:publishedDate|date)["\\\']\\s+content=["\\\']([^"\\\']+)["\\\']', content, re.IGNORECASE):
-                metadata.setdefault('date', match.group(1))
-            desc_match = re.search('<meta\\s+name=["\\\']description["\\\']\\s+content=["\\\']([^"\\\']+)["\\\']', content, re.IGNORECASE)
-            if desc_match:
-                metadata['description'] = desc_match.group(1)
-        except Exception:  # noqa: BLE001
-            pass
-        return metadata
+        for parser in (self._parse_selectolax, self._parse_bs4, self._parse_regex):
+            result = parser(content)
+            if result:
+                return result
+        return {}
 
     def _select_best_content(self, results: list[dict[str, Any]]) -> dict[str, Any]:
         """Select best content from results"""
@@ -836,7 +888,7 @@ async def discover_from_wayback(url: str, limit: int=50) -> list[DiscoveredEndpo
     REMOVAL CONDITION: pokud by se měl tento wrapper odstranit,
     všechny call-sites přejdou přímo na WaybackCDX."""
     endpoints = []
-    async with WaybackCDX(cache_dir='/tmp/wayback_cdx') as client:
+    async with WaybackCDX(cache_dir=Path('/tmp/wayback_cdx')) as client:
         snapshots = await client.get_snapshots(url, limit=limit)
         for rec in snapshots:
             ts = rec.get('timestamp', '')
@@ -845,6 +897,9 @@ async def discover_from_wayback(url: str, limit: int=50) -> list[DiscoveredEndpo
             endpoints.append(endpoint)
     return endpoints
 import orjson
+from zstandard import ZstdCompressor, ZstdDecompressor
+_zstd_compressor = ZstdCompressor()
+_zstd_decompressor = ZstdDecompressor()
 import xxhash
 from hledac.universal.utils.async_helpers import parallel_ok
 
@@ -863,7 +918,7 @@ class WaybackCDX:
         self._last_req = 0.0
         self._session: httpx.AsyncClient | None = None
 
-    async def __aenter__(self) -> WaybackCDX:
+    async def __aenter__(self) -> "WaybackCDX":
         self._session = await httpx.AsyncClient()
         return self
 
@@ -883,7 +938,7 @@ class WaybackCDX:
         json_path = self._cache_dir / f'{key}.json'
         if zst_path.exists() and time.time() - zst_path.stat().st_mtime < self._CACHE_TTL:
             raw_bytes = await asyncio.to_thread(zst_path.read_bytes)
-            return orjson.loads(_zstd.decompress(raw_bytes))
+            return orjson.loads(_zstd_decompressor.decompress(raw_bytes))
         if json_path.exists() and time.time() - json_path.stat().st_mtime < self._CACHE_TTL:
             raw_bytes = await asyncio.to_thread(json_path.read_bytes)
             return orjson.loads(raw_bytes)
@@ -906,8 +961,7 @@ class WaybackCDX:
         headers, rows = (raw[0], raw[1:])
         result = [dict(zip(headers, row, strict=False)) for row in rows if len(row) > 3 and row[3].startswith('text/') or len(row) <= 3]
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        import orjson
-        zst_path.write_bytes(_zstd.compress(orjson.dumps(result)))
+        zst_path.write_bytes(_zstd_compressor.compress(orjson.dumps(result)))
         return result
 
     async def fetch_snapshot_text(self, url: str, timestamp: str) -> str:
@@ -1159,3 +1213,14 @@ async def wayback_cdx_lookup(url_or_host: str, limit: int=10, timeout_s: float=8
         original_url = rec.get('original', '')
         out.append({'title': f'Wayback capture {ts}', 'url': original_url, 'snippet': f"wayback status={rec.get('statuscode', '')} mimetype={rec.get('mimetype', '')}", 'backend': 'wayback', 'rank': i, 'provider': 'wayback_cdx', 'source': 'wayback', 'timestamp': ts})
     return out
+
+
+class WaybackCDX:
+    """Wayback Machine CDX API — low-level domain/URL snapshot discovery.
+    ZADARMO, bez API klíče. Unikátní zdroj: smazaný obsah (C2 configs,
+    leaked keys, expired phishing domains).
+    M1: pure aiohttp async, orjson, xxhash cache 24h."""
+    _CDX_URL = 'https://web.archive.org/cdx/search/cdx'
+    _RATE_S = 2.0
+    _CACHE_TTL = 86400
+    __slots__ = tuple(('_cache_dir', '_last_req', '_session'))

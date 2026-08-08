@@ -447,6 +447,76 @@ def extract_signals(findings: list[CanonicalFinding]) -> list[AssetSignal]:
     _stats['signals_extracted'] = len(signals)
     return signals
 
+# F240C: Correlation helpers
+def _group_signals_by_asset(signals: list[AssetSignal]) -> dict[str, Asset]:
+    """Group signals by asset_key with bounded capacity."""
+    asset_map: dict[str, Asset] = {}
+    for sig in signals:
+        if len(asset_map) >= MAX_ASSETS:
+            break
+        if sig.asset_key not in asset_map:
+            asset_map[sig.asset_key] = Asset(key=sig.asset_key)
+        asset = asset_map[sig.asset_key]
+        if len(asset.signals) < MAX_SIGNALS_PER_ASSET:
+            asset.signals.append(sig)
+    return asset_map
+
+def _correlate_asset_signals(asset: Asset) -> list[ExposureFinding]:
+    """Correlate signals for a single asset."""
+    findings: list[ExposureFinding] = []
+    if len(findings) >= MAX_FINDINGS:
+        return findings
+    if asset.has_bucket:
+        if finding := _make_open_bucket_finding(asset):
+            findings.append(finding)
+            _stats['open_buckets_found'] += 1
+    if asset.has_bucket and (asset.has_cert or asset.has_dns):
+        if finding := _make_exposed_host_finding(asset):
+            findings.append(finding)
+            _stats['exposed_hosts_found'] += 1
+    if asset.has_cert:
+        if finding := _make_cert_domain_finding(asset):
+            findings.append(finding)
+    for sig in asset.signals:
+        if sig.signal_type == SIGNAL_TYPE_JARM:
+            jarm_hash = sig.metadata.get('jarm_hash', '')
+            if any(jarm_hash.startswith(p) for p in _SUSPICIOUS_JARM_PREFIXES):
+                if finding := _make_suspicious_fp_finding(asset, sig):
+                    findings.append(finding)
+                    break
+    return findings
+
+def _build_jarm_clusters(asset_map: dict[str, Asset]) -> dict[str, list[str]]:
+    """Build JARM hash clusters for infrastructure correlation."""
+    jarm_groups: dict[str, list[str]] = {}
+    for asset_key, asset in asset_map.items():
+        for sig in asset.signals:
+            if sig.signal_type == SIGNAL_TYPE_JARM:
+                jarm_hash = sig.metadata.get('jarm_hash', '')
+                if jarm_hash and not any(jarm_hash.startswith(p) for p in _SUSPICIOUS_JARM_PREFIXES):
+                    jarm_groups.setdefault(jarm_hash, []).append(asset_key)
+    return jarm_groups
+
+def _emit_infra_clusters(jarm_groups: dict[str, list[str]], asset_map: dict[str, Asset]) -> list[ExposureFinding]:
+    """Emit infrastructure cluster findings from JARM groups."""
+    findings: list[ExposureFinding] = []
+    for jarm_hash, hosts in jarm_groups.items():
+        if len(hosts) < 2 or len(findings) >= MAX_FINDINGS:
+            continue
+        evidence = [sig.finding_id for host in hosts for sig in asset_map[host].signals if sig.signal_type == SIGNAL_TYPE_JARM]
+        findings.append(ExposureFinding(
+            corr_type=CORR_INFRA_CLUSTER,
+            asset_key=f'cluster:{jarm_hash[:16]}',
+            confidence=0.85,
+            summary=f'Infra cluster: {len(hosts)} hosts sharing JARM hash {jarm_hash[:16]}...',
+            evidence_pointers=evidence[:10],
+            signal_facets={SIGNAL_TYPE_JARM: 0.85},
+            suggested_pivots=[{'type': 'reverse_whois', 'query': jarm_hash[:16]}, {'type': 'jarm_lookup', 'query': jarm_hash}],
+            payload={'jarm_hash': jarm_hash, 'host_count': len(hosts), 'hosts': hosts[:20]}
+        ))
+        _stats['infra_clusters_found'] += 1
+    return findings
+
 def _correlate_signals(signals: list[AssetSignal]) -> list[ExposureFinding]:
     """
     Correlate signals into exposure findings.
@@ -462,63 +532,19 @@ def _correlate_signals(signals: list[AssetSignal]) -> list[ExposureFinding]:
       - MAX_SIGNALS_PER_ASSET=3: only keep first 3 signals per asset
       - MAX_FINDINGS=500: cap total findings produced
     """
-    findings: list[ExposureFinding] = []
-    asset_map: dict[str, Asset] = {}
-    for sig in signals:
-        if len(asset_map) >= MAX_ASSETS:
-            break
-        if sig.asset_key not in asset_map:
-            asset_map[sig.asset_key] = Asset(key=sig.asset_key)
-        asset = asset_map[sig.asset_key]
-        if len(asset.signals) < MAX_SIGNALS_PER_ASSET:
-            asset.signals.append(sig)
+    asset_map = _group_signals_by_asset(signals)
     _stats['assets_registered'] = len(asset_map)
-    for asset_key, asset in asset_map.items():
+
+    findings: list[ExposureFinding] = []
+    for asset in asset_map.values():
         if len(findings) >= MAX_FINDINGS:
             break
-        if asset.has_bucket:
-            finding = _make_open_bucket_finding(asset)
-            if finding:
-                findings.append(finding)
-                _stats['open_buckets_found'] += 1
-        if asset.has_bucket and (asset.has_cert or asset.has_dns):
-            finding = _make_exposed_host_finding(asset)
-            if finding:
-                findings.append(finding)
-                _stats['exposed_hosts_found'] += 1
-        if asset.has_cert:
-            finding = _make_cert_domain_finding(asset)
-            if finding:
-                findings.append(finding)
-        for sig in asset.signals:
-            if sig.signal_type == SIGNAL_TYPE_JARM:
-                jarm_hash = sig.metadata.get('jarm_hash', '')
-                if any((jarm_hash.startswith(p) for p in _SUSPICIOUS_JARM_PREFIXES)):
-                    finding = _make_suspicious_fp_finding(asset, sig)
-                    if finding:
-                        findings.append(finding)
-                        break
-    jarm_groups: dict[str, list[str]] = {}
-    for asset_key, asset in asset_map.items():
-        for sig in asset.signals:
-            if sig.signal_type == SIGNAL_TYPE_JARM:
-                jarm_hash = sig.metadata.get('jarm_hash', '')
-                if jarm_hash and (not any((jarm_hash.startswith(p) for p in _SUSPICIOUS_JARM_PREFIXES))):
-                    if jarm_hash not in jarm_groups:
-                        jarm_groups[jarm_hash] = []
-                    jarm_groups[jarm_hash].append(asset_key)
-    for jarm_hash, hosts in jarm_groups.items():
-        if len(hosts) < 2:
-            continue
-        if len(findings) >= MAX_FINDINGS:
-            break
-        evidence = []
-        for host in hosts:
-            for sig in asset_map[host].signals:
-                if sig.signal_type == SIGNAL_TYPE_JARM:
-                    evidence.append(sig.finding_id)
-        findings.append(ExposureFinding(corr_type=CORR_INFRA_CLUSTER, asset_key=f'cluster:{jarm_hash[:16]}', confidence=0.85, summary=f'Infra cluster: {len(hosts)} hosts sharing JARM hash {jarm_hash[:16]}...', evidence_pointers=evidence[:10], signal_facets={SIGNAL_TYPE_JARM: 0.85}, suggested_pivots=[{'type': 'reverse_whois', 'query': jarm_hash[:16]}, {'type': 'jarm_lookup', 'query': jarm_hash}], payload={'jarm_hash': jarm_hash, 'host_count': len(hosts), 'hosts': hosts[:20]}))
-        _stats['infra_clusters_found'] += 1
+        findings.extend(_correlate_asset_signals(asset))
+
+    # JARM infrastructure clustering
+    jarm_groups = _build_jarm_clusters(asset_map)
+    findings.extend(_emit_infra_clusters(jarm_groups, asset_map))
+
     _stats['correlations_run'] = len(asset_map)
     _stats['findings_produced'] = len(findings)
     return findings

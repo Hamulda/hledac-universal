@@ -22,6 +22,7 @@ import msgspec
 from datetime import UTC, datetime
 from typing import Any
 from hledac.universal.utils.async_helpers import parallel_ok
+from utils.async_task import safe_create_task
 from operator import attrgetter, itemgetter
 logger = logging.getLogger(__name__)
 MODULE_TIMEOUT = 60
@@ -676,6 +677,75 @@ class CorrelationResult(msgspec.Struct, frozen=True, gc=False):
     confidence_note: str = ''
     signal_quality: str = 'weak'
 
+def _normalize_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize finding dicts to consistent schema."""
+    normalized: list[dict[str, Any]] = []
+    for f in findings:
+        nf: dict[str, Any] = {
+            'type': f.get('type') or f.get('finding_type') or f.get('indicator_type', 'unknown'),
+            'severity': f.get('severity', 'medium'),
+            'confidence': float(f.get('confidence', 0.5)),
+            'description': f.get('description') or f.get('description_text', ''),
+            'source': f.get('source') or f.get('module') or f.get('tag') or f.get('tags', ['unknown']),
+        }
+        if isinstance(nf['source'], list):
+            nf['source'] = nf['source'][0] if nf['source'] else 'unknown'
+        normalized.append(nf)
+    return normalized
+
+
+def _calculate_risk_score(normalized: list[dict[str, Any]]) -> float:
+    """Calculate risk score from normalized findings."""
+    risk_score = 0.0
+    for f in normalized:
+        severity = f['severity'].lower()
+        weight = SEVERITY_WEIGHTS.get(severity, 0.25)
+        risk_score += weight * f['confidence']
+    return min(risk_score / max(len(normalized), 1), 1.0)
+
+
+def _group_themes(normalized: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Group normalized findings by theme key."""
+    themes: dict[str, list[dict[str, Any]]] = {}
+    for f in normalized:
+        theme_key = _derive_theme_key(f)
+        if theme_key not in themes:
+            themes[theme_key] = []
+        themes[theme_key].append(f)
+    return themes
+
+
+def _calculate_theme_weights(themes: dict[str, list[dict[str, Any]]]) -> dict[str, float]:
+    """Calculate weights for each theme based on severity and confidence."""
+    theme_weights: dict[str, float] = {}
+    for theme, theme_findings in themes.items():
+        weights = [SEVERITY_WEIGHTS.get(x['severity'].lower(), 0.25) * x['confidence'] for x in theme_findings]
+        theme_weights[theme] = sum(weights) / max(len(weights), 1)
+    return theme_weights
+
+
+def _determine_verdict(risk_score: float, thresholds: dict[str, float]) -> str:
+    """Determine verdict based on risk score and thresholds."""
+    if risk_score >= thresholds.get('suspicious', 0.7):
+        return 'HIGH_RISK'
+    elif risk_score >= thresholds.get('clean', 0.3):
+        return 'SUSPICIOUS'
+    return 'CLEAN'
+
+
+def _build_source_themes(normalized: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Build mapping from source to list of theme keys."""
+    source_themes: dict[str, list[str]] = {}
+    for f in normalized:
+        src = f['source']
+        tk = _derive_theme_key(f)
+        if src not in source_themes:
+            source_themes[src] = []
+        if tk not in source_themes[src]:
+            source_themes[src].append(tk)
+    return source_themes
+
+
 def correlate_findings(findings: list[dict[str, Any]], *, risk_thresholds: dict[str, float] | None=None, max_themes: int=10) -> CorrelationResult:
     """Correlate findings and produce grouped themes with risk scoring.
 
@@ -708,28 +778,13 @@ def correlate_findings(findings: list[dict[str, Any]], *, risk_thresholds: dict[
     if not findings:
         return CorrelationResult()
     thresholds = risk_thresholds or {'clean': 0.3, 'suspicious': 0.7}
-    normalized: list[dict[str, Any]] = []
-    for f in findings:
-        nf: dict[str, Any] = {'type': f.get('type') or f.get('finding_type') or f.get('indicator_type', 'unknown'), 'severity': f.get('severity', 'medium'), 'confidence': float(f.get('confidence', 0.5)), 'description': f.get('description') or f.get('description_text', ''), 'source': f.get('source') or f.get('module') or f.get('tag') or f.get('tags', ['unknown'])}
-        if isinstance(nf['source'], list):
-            nf['source'] = nf['source'][0] if nf['source'] else 'unknown'
-        normalized.append(nf)
-    risk_score = 0.0
-    for f in normalized:
-        severity = f['severity'].lower()
-        weight = SEVERITY_WEIGHTS.get(severity, 0.25)
-        risk_score += weight * f['confidence']
-    risk_score = min(risk_score / max(len(normalized), 1), 1.0)
-    themes: dict[str, list[dict[str, Any]]] = {}
-    for f in normalized:
-        theme_key = _derive_theme_key(f)
-        if theme_key not in themes:
-            themes[theme_key] = []
-        themes[theme_key].append(f)
-    theme_weights: dict[str, float] = {}
-    for theme, theme_findings in themes.items():
-        weights = [SEVERITY_WEIGHTS.get(x['severity'].lower(), 0.25) * x['confidence'] for x in theme_findings]
-        theme_weights[theme] = sum(weights) / max(len(weights), 1)
+
+    # Extract and orchestrate helper functions
+    normalized = _normalize_findings(findings)
+    risk_score = _calculate_risk_score(normalized)
+    themes = _group_themes(normalized)
+    theme_weights = _calculate_theme_weights(themes)
+
     buckets: dict[str, list[dict[str, Any]]] = {'critical': [], 'high': [], 'medium': [], 'low': []}
     for f in normalized:
         sev = f['severity'].lower()
@@ -738,19 +793,10 @@ def correlate_findings(findings: list[dict[str, Any]], *, risk_thresholds: dict[
     anomaly_count = _count_anomalies(normalized)
     sorted_themes = sorted(theme_weights.items(), key=lambda x: -x[1])
     top_themes = sorted_themes[:max_themes]
-    verdict = 'CLEAN'
-    if risk_score >= thresholds.get('suspicious', 0.7):
-        verdict = 'HIGH_RISK'
-    elif risk_score >= thresholds.get('clean', 0.3):
-        verdict = 'SUSPICIOUS'
-    source_themes: dict[str, list[str]] = {}
-    for f in normalized:
-        src = f['source']
-        tk = _derive_theme_key(f)
-        if src not in source_themes:
-            source_themes[src] = []
-        if tk not in source_themes[src]:
-            source_themes[src].append(tk)
+
+    verdict = _determine_verdict(risk_score, thresholds)
+    source_themes = _build_source_themes(normalized)
+
     all_entities, domain_counts, ioc_counts = _extract_entities(normalized)
     top_entities = sorted(all_entities, key=attrgetter("get")('_weight', 0), reverse=True)[:20]
     repeated_domains = [d for d, cnt in domain_counts.items() if cnt > 1]

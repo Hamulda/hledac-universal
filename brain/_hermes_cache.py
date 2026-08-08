@@ -22,6 +22,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Callable
 
 from hledac.universal.utils.async_helpers import safe_create_task
+from hledac.universal.utils.memory_tier import get_adaptive_cache_size, get_lora_cache_max, get_model_cache_max
 
 if TYPE_CHECKING:
     from hledac.universal.core.memory_pressure import MemoryPressureLevel
@@ -74,39 +75,10 @@ _LORA_CACHE_MAX = 2  # M1 8GB: max 2 LoRA adapters
 _MODEL_TTL_S = 600.0  # 10 minutes — idle model eviction threshold
 
 
-def _adaptive_cache_max_size() -> int:
-    """
-    Adaptive model cache size based on available RAM.
-
-    M1 8GB:  1 model   (strict — Hermes + ModernBERT + GLiNER = 3-4 GB)
-    M1 16GB: 2 models
-    M2/M3:   3-4 models
-    """
-    try:
-        import psutil
-
-        total_gb = psutil.virtual_memory().total / (1024**3)
-        if total_gb <= 9:
-            return 1  # M1 Air 8GB — strict budget
-        elif total_gb <= 17:
-            return 2
-        elif total_gb <= 33:
-            return 3
-        else:
-            return 4
-    except Exception:
-        return 2  # safe default
-
-
-def _get_model_cache_max() -> int:
-    """Runtime-adaptive model cache max — respects memory tier."""
-    return _adaptive_cache_max_size()
-
-
-def _get_lora_cache_max() -> int:
-    """LoRA cache max: half of model cache max, min 1."""
-    return max(1, _adaptive_cache_max_size() // 2)
-
+# Memory tier helpers imported from utils.memory_tier (canonical)
+# _adaptive_cache_max_size → get_adaptive_cache_size
+# _get_model_cache_max → get_model_cache_max
+# _get_lora_cache_max → get_lora_cache_max
 
 # ─── Memory-pressure helper (fail-open) ───────────────────────────────────────
 
@@ -214,8 +186,9 @@ class HermesModelCache:
         #   - recursive calls (pressure_check_loop → _evict_model_internal → on_evict hook)
         self._lock = threading.RLock()
         # Adaptive defaults — evaluated at instance creation (not module-load time)
-        self._max_size = max_size if max_size is not None else _get_model_cache_max()
-        self._lora_max_size = lora_max_size if lora_max_size is not None else _get_lora_cache_max()
+        # Uses canonical memory tier detection from utils.memory_tier
+        self._max_size = max_size if max_size is not None else get_model_cache_max()
+        self._lora_max_size = lora_max_size if lora_max_size is not None else get_lora_cache_max()
         self._pressure_check_interval_s = pressure_check_interval_s
         self._monitor_task: asyncio.Task | None = None
         self._on_evict_model = on_evict_model

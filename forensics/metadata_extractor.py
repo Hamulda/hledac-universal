@@ -58,6 +58,7 @@ import sqlite3
 import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from xml.etree import ElementTree as ET
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -82,6 +83,13 @@ def _get_mx() -> Any | None:
         except ImportError:
             _MLX_CORE = False
     return _MLX_CORE if _MLX_CORE is not False else None
+
+
+def _copy_if_missing(target: Any, attr: str, source_value: Any) -> None:
+    """Copy source_value to target.attr only if target.attr is falsy and source_value is truthy."""
+    if source_value and not getattr(target, attr, None):
+        setattr(target, attr, source_value)
+
 
 if TYPE_CHECKING:
     from hledac.universal.knowledge.duckdb_forensics_store import ForensicsMetadataStore
@@ -727,6 +735,93 @@ class UniversalMetadataExtractor:
                 entropy -= p * math.log2(p)
         return entropy
 
+    # -------------------------------------------------------------------------
+    # Extension-based extraction dispatch (Strategy Pattern)
+    # Maps extension groups to their extractor methods
+    # -------------------------------------------------------------------------
+    _IMAGE_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp'})
+    _AUDIO_EXTS = frozenset({'.mp3', '.flac', '.ogg', '.m4a', '.wav', '.wma'})
+    _VIDEO_EXTS = frozenset({'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv'})
+    _ARCHIVE_EXTS = frozenset({'.zip', '.tar', '.gz', '.bz2', '.7z', '.rar'})
+    _PPTX_EXTS = frozenset({'.pptx', '.odp'})
+    _EMAIL_EXTS = frozenset({'.eml', '.msg'})
+
+    def _merge_piexif_metadata(self, image: ImageMetadata, piexif_metadata: Any) -> None:
+        """Merge piexif metadata into image metadata (in-place)."""
+        if not piexif_metadata:
+            return
+        _copy_if_missing(image, 'exif', piexif_metadata.exif)
+        _copy_if_missing(image, 'gps', piexif_metadata.gps)
+        _copy_if_missing(image, 'camera_make', piexif_metadata.camera_make)
+        _copy_if_missing(image, 'camera_model', piexif_metadata.camera_model)
+        _copy_if_missing(image, 'lens', piexif_metadata.lens)
+        if piexif_metadata.focal_length is not None and image.focal_length is None:
+            image.focal_length = piexif_metadata.focal_length
+        if piexif_metadata.f_number is not None and image.f_number is None:
+            image.f_number = piexif_metadata.f_number
+        if piexif_metadata.iso is not None and image.iso is None:
+            image.iso = piexif_metadata.iso
+
+    def _merge_pdf_mupdf_metadata(self, pdf: PdfMetadata, mupdf_metadata: Any) -> None:
+        """Merge MuPDF metadata into PDF metadata (in-place)."""
+        if not mupdf_metadata:
+            return
+        if not pdf.pdf_version and mupdf_metadata.pdf_version:
+            pdf.pdf_version = mupdf_metadata.pdf_version
+        if not pdf.is_encrypted:
+            pdf.is_encrypted = mupdf_metadata.is_encrypted
+        if not pdf.permissions and mupdf_metadata.permissions:
+            pdf.permissions = mupdf_metadata.permissions
+        if not pdf.embedded_files and mupdf_metadata.embedded_files:
+            pdf.embedded_files = mupdf_metadata.embedded_files
+
+    async def _extract_image_metadata(self, file_path: str) -> ImageMetadata | None:
+        """Extract and merge all image metadata."""
+        image = await self._extract_image_exif(file_path)
+        if not image:
+            return None
+        piexif_metadata = await self._extract_image_piexif(file_path)
+        self._merge_piexif_metadata(image, piexif_metadata)
+        stego = await self._extract_steganography(file_path)
+        if stego:
+            image.steganalysis = stego
+        caption, tags = await self.extract_image_caption(file_path)
+        if caption:
+            image.caption = caption
+            image.tags = tags
+        return image
+
+    async def _extract_pdf_with_mupdf(self, file_path: str) -> PdfMetadata | None:
+        """Extract PDF with MuPDF merge."""
+        pdf = await self._extract_pdf_metadata(file_path)
+        if not pdf:
+            return None
+        mupdf_metadata = await self._extract_pdf_mupdf(file_path)
+        self._merge_pdf_mupdf_metadata(pdf, mupdf_metadata)
+        return pdf
+
+    def _classify_extension(self, ext: str) -> str:
+        """Classify extension into extraction group."""
+        if ext in self._IMAGE_EXTS:
+            return 'image'
+        if ext == '.pdf':
+            return 'pdf'
+        if ext == '.docx':
+            return 'docx'
+        if ext in self._AUDIO_EXTS and self.enable_audio:
+            return 'audio'
+        if ext in self._VIDEO_EXTS and self.enable_video:
+            return 'video'
+        if ext in self._ARCHIVE_EXTS:
+            return 'archive'
+        if ext in self._PPTX_EXTS:
+            return 'pptx'
+        if ext in {'.svg', '.dxf'}:
+            return 'cad'
+        if ext in self._EMAIL_EXTS:
+            return 'email'
+        return 'unknown'
+
     async def extract(self, file_path: str) -> MetadataResult:
         """Extract metadata from a single file.
 
@@ -754,59 +849,29 @@ class UniversalMetadataExtractor:
                 generic = await self._extract_generic_metadata(file_path)
                 ext = path.suffix.lower()
                 result = MetadataResult(file_path=file_path, success=True, generic=generic)
-                if ext in {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.gif', '.webp'}:
-                    result.image = await self._extract_image_exif(file_path)
-                    piexif_metadata = await self._extract_image_piexif(file_path)
-                    if piexif_metadata and result.image:
-                        if not result.image.exif and piexif_metadata.exif:
-                            result.image.exif = piexif_metadata.exif
-                        if not result.image.gps and piexif_metadata.gps:
-                            result.image.gps = piexif_metadata.gps
-                        if not result.image.camera_make and piexif_metadata.camera_make:
-                            result.image.camera_make = piexif_metadata.camera_make
-                        if not result.image.camera_model and piexif_metadata.camera_model:
-                            result.image.camera_model = piexif_metadata.camera_model
-                        if not result.image.lens and piexif_metadata.lens:
-                            result.image.lens = piexif_metadata.lens
-                        if piexif_metadata.focal_length is not None and result.image.focal_length is None:
-                            result.image.focal_length = piexif_metadata.focal_length
-                        if piexif_metadata.f_number is not None and result.image.f_number is None:
-                            result.image.f_number = piexif_metadata.f_number
-                        if piexif_metadata.iso is not None and result.image.iso is None:
-                            result.image.iso = piexif_metadata.iso
-                    result.steganalysis = await self._extract_steganography(file_path)
-                    caption, tags = await self.extract_image_caption(file_path)
-                    if caption and result.image:
-                        result.image.caption = caption
-                        result.image.tags = tags
-                elif ext == '.pdf':
-                    result.pdf = await self._extract_pdf_metadata(file_path)
-                    mupdf_metadata = await self._extract_pdf_mupdf(file_path)
-                    if mupdf_metadata and result.pdf:
-                        if not result.pdf.pdf_version and mupdf_metadata.pdf_version:
-                            result.pdf.pdf_version = mupdf_metadata.pdf_version
-                        if not result.pdf.is_encrypted:
-                            result.pdf.is_encrypted = mupdf_metadata.is_encrypted
-                        if not result.pdf.permissions and mupdf_metadata.permissions:
-                            result.pdf.permissions = mupdf_metadata.permissions
-                        if not result.pdf.embedded_files and mupdf_metadata.embedded_files:
-                            result.pdf.embedded_files = mupdf_metadata.embedded_files
-                elif ext == '.docx':
-                    result.docx = await self._extract_docx_metadata(file_path)
-                elif ext in {'.mp3', '.flac', '.ogg', '.m4a', '.wav', '.wma'} and self.enable_audio:
-                    result.audio = await self._extract_audio_metadata(file_path)
-                elif ext in {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv'} and self.enable_video:
-                    result.video = await self._extract_video_metadata(file_path)
-                elif ext in {'.zip', '.tar', '.gz', '.bz2', '.7z', '.rar'}:
-                    result.archive = await self._extract_archive_metadata(file_path)
-                elif ext in {'.pptx', '.odp'}:
-                    result.pptx = await self._extract_pptx_metadata(file_path)
-                elif ext == '.svg':
-                    result.cad = await self._extract_svg_metadata(file_path)
-                elif ext == '.dxf':
-                    result.cad = await self._extract_dxf_metadata(file_path)
-                elif ext in {'.eml', '.msg'}:
-                    result.email = await self._extract_email_metadata(file_path)
+
+                # Strategy dispatch by extension group
+                ext_type = self._classify_extension(ext)
+                match ext_type:
+                    case 'image':
+                        result.image = await self._extract_image_metadata(file_path)
+                    case 'pdf':
+                        result.pdf = await self._extract_pdf_with_mupdf(file_path)
+                    case 'docx':
+                        result.docx = await self._extract_docx_metadata(file_path)
+                    case 'audio':
+                        result.audio = await self._extract_audio_metadata(file_path)
+                    case 'video':
+                        result.video = await self._extract_video_metadata(file_path)
+                    case 'archive':
+                        result.archive = await self._extract_archive_metadata(file_path)
+                    case 'pptx':
+                        result.pptx = await self._extract_pptx_metadata(file_path)
+                    case 'cad':
+                        result.cad = await (self._extract_svg_metadata if ext == '.svg' else self._extract_dxf_metadata)(file_path)
+                    case 'email':
+                        result.email = await self._extract_email_metadata(file_path)
+
                 result.timeline = self._build_timeline(result)
                 result.attribution = self._build_attribution(result)
                 result.scrubbing = self._detect_scrubbing(result)
@@ -869,6 +934,38 @@ class UniversalMetadataExtractor:
             pass
         return GenericMetadata(file_name=path.name, file_path=str(path.absolute()), file_size=stat.st_size, file_extension=path.suffix.lower(), mime_type=mime_type, created=datetime.fromtimestamp(stat.st_ctime), modified=datetime.fromtimestamp(stat.st_mtime), accessed=datetime.fromtimestamp(stat.st_atime), permissions=stat.st_mode, owner=owner, group=group, inode=stat.st_ino, device_id=stat.st_dev, hard_links=stat.st_nlink, blocks=getattr(stat, 'st_blocks', None), block_size=getattr(stat, 'st_blksize', None), md5_hash=hashes.get('md5'), sha256_hash=hashes.get('sha256'), sha1_hash=hashes.get('sha1'), entropy=entropy)
 
+    def _parse_exif_tag(self, tag: str, value: Any, metadata: ImageMetadata) -> None:
+        """Parse a single EXIF tag into metadata."""
+        try:
+            if tag == 'FocalLength' and (fl := metadata.focal_length) is None:
+                metadata.focal_length = _exif_to_float(value)
+            elif tag == 'ExposureTime':
+                metadata.exposure_time = str(value)
+            elif tag == 'FNumber' and metadata.f_number is None:
+                metadata.f_number = _exif_to_float(value)
+            elif tag == 'ISOSpeedRatings' and metadata.iso is None:
+                metadata.iso = int(_exif_to_float(value))
+            elif tag == 'Flash':
+                metadata.flash = bool(int(value)) if not isinstance(value, bool) else value
+            elif tag == 'Orientation' and metadata.orientation is None:
+                metadata.orientation = int(value)
+        except (ValueError, TypeError):  # noqa: BLE001
+            pass
+
+    def _extract_exif_to_metadata(self, exif_data: dict, metadata: ImageMetadata) -> None:
+        """Extract all EXIF data to metadata."""
+        from PIL.ExifTags import GPSTAGS
+        metadata.camera_make = exif_data.get('Make')
+        metadata.camera_model = exif_data.get('Model')
+        metadata.lens = exif_data.get('LensModel')
+        for tag in ('FocalLength', 'ExposureTime', 'FNumber', 'ISOSpeedRatings', 'Flash', 'Orientation'):
+            if tag in exif_data:
+                self._parse_exif_tag(tag, exif_data[tag], metadata)
+        if self.enable_gps:
+            if gps_info := exif_data.get(34853) or exif_data.get('GPSInfo'):
+                gps_data = {GPSTAGS.get(key, key): gps_info[key] for key in gps_info}
+                metadata.gps = self._parse_gps_data(gps_data)
+
     async def _extract_image_exif(self, file_path: str) -> ImageMetadata | None:
         """Extract EXIF metadata from image.
 
@@ -883,63 +980,15 @@ class UniversalMetadataExtractor:
         if pil_mod is None:
             return None
         Image = pil_mod.Image
-        from PIL.ExifTags import GPSTAGS, TAGS
+        from PIL.ExifTags import TAGS
         try:
             with Image.open(file_path) as img:
                 metadata = ImageMetadata(width=img.width, height=img.height, format=img.format, mode=img.mode)
                 if not self.enable_exif:
                     return metadata
-                exif = img._getexif()
-                if exif:
-                    exif_data = {}
-                    for tag_id, value in exif.items():
-                        tag = TAGS.get(tag_id, tag_id)
-                        if isinstance(value, tuple):
-                            exif_data[tag] = value
-                        else:
-                            exif_data[tag] = value
-                    metadata.camera_make = exif_data.get('Make')
-                    metadata.camera_model = exif_data.get('Model')
-                    metadata.lens = exif_data.get('LensModel')
-                    if 'FocalLength' in exif_data:
-                        try:
-                            fl = exif_data['FocalLength']
-                            metadata.focal_length = _exif_to_float(fl)
-                        except (ValueError, TypeError):  # noqa: BLE001
-                            pass
-                    if 'ExposureTime' in exif_data:
-                        metadata.exposure_time = str(exif_data['ExposureTime'])
-                    if 'FNumber' in exif_data:
-                        try:
-                            fn = exif_data['FNumber']
-                            metadata.f_number = _exif_to_float(fn)
-                        except (ValueError, TypeError):  # noqa: BLE001
-                            pass
-                    if 'ISOSpeedRatings' in exif_data:
-                        try:
-                            iso = exif_data['ISOSpeedRatings']
-                            metadata.iso = int(_exif_to_float(iso))
-                        except (ValueError, TypeError):  # noqa: BLE001
-                            pass
-                    if 'Flash' in exif_data:
-                        flash = exif_data['Flash']
-                        try:
-                            metadata.flash = bool(int(flash)) if not isinstance(flash, bool) else flash
-                        except (ValueError, TypeError):  # noqa: BLE001
-                            pass
-                    if 'Orientation' in exif_data:
-                        try:
-                            metadata.orientation = int(exif_data['Orientation'])
-                        except ValueError:  # noqa: BLE001
-                            pass
-                    if self.enable_gps:
-                        gps_info = exif.get(34853) or exif.get('GPSInfo')
-                        if gps_info:
-                            gps_data = {}
-                            for key in gps_info:
-                                decode = GPSTAGS.get(key, key)
-                                gps_data[decode] = gps_info[key]
-                            metadata.gps = self._parse_gps_data(gps_data)
+                if exif := img._getexif():
+                    exif_data = {TAGS.get(tag_id, tag_id): value for tag_id, value in exif.items()}
+                    self._extract_exif_to_metadata(exif_data, metadata)
                 return metadata
         except Exception:
             return None
@@ -1035,7 +1084,7 @@ class UniversalMetadataExtractor:
             return None
         try:
             with open(file_path, 'rb') as f:
-                reader = pypdf.PdfReader(f)
+                reader = pypdf_mod.PdfReader(f)
                 info = reader.metadata
                 metadata = PDFMetadata(num_pages=len(reader.pages), is_encrypted=reader.is_encrypted)
                 if info:
@@ -1077,10 +1126,10 @@ class UniversalMetadataExtractor:
             if file_size > 5 * 1024 * 1024:
                 with open(file_path, 'rb') as f:
                     data = f.read()[:5 * 1024 * 1024]
-                with fitz.open(file_path, stream=data) as doc:
+                with fitz_mod.open(file_path, stream=data) as doc:
                     metadata = PDFMetadata(num_pages=len(doc))
                     return metadata
-            with fitz.open(file_path) as doc:
+            with fitz_mod.open(file_path) as doc:
                 metadata = PDFMetadata(num_pages=len(doc), pdf_version=doc.pdf_version() if hasattr(doc, 'pdf_version') else None)
                 info = doc.metadata
                 if info:
@@ -1112,61 +1161,65 @@ class UniversalMetadataExtractor:
         except Exception:
             return None
 
+    def _extract_zeroth_ifd(self, exif_dict, piexif_mod) -> dict:
+        """Extract 0th IFD metadata."""
+        zeroth = exif_dict.get('0th', {})
+        return {
+            'camera_make': zeroth.get(piexif_mod.ImageIFD.Make),
+            'camera_model': zeroth.get(piexif_mod.ImageIFD.Model),
+            'software': zeroth.get(piexif_mod.ImageIFD.Software),
+            'orientation': zeroth.get(piexif_mod.ImageIFD.Orientation),
+        }
+
+    def _extract_exif_ifd(self, exif_ifd, piexif_mod):
+        """Extract Exif IFD metadata."""
+        result = {}
+        def safe_int(val):
+            try: return int(_exif_to_float(val))
+            except: return None
+        def safe_bool(val):
+            try: return bool(int(val)) if not isinstance(val, bool) else val
+            except: return None
+        mappings = [
+            ('focal_length', piexif_mod.ExifIFD.FocalLength, _exif_to_float),
+            ('exposure_time', piexif_mod.ExifIFD.ExposureTime, str),
+            ('f_number', piexif_mod.ExifIFD.FNumber, _exif_to_float),
+            ('iso', piexif_mod.ExifIFD.ISOSpeedRatings, safe_int),
+            ('flash', piexif_mod.ExifIFD.Flash, safe_bool),
+            ('lens', piexif_mod.ExifIFD.LensModel, None),
+        ]
+        for key, ifd_tag, converter in mappings:
+            if ifd_tag in exif_ifd:
+                result[key] = converter(exif_ifd[ifd_tag]) if converter else exif_ifd[ifd_tag]
+        return result
+
     async def _extract_image_piexif(self, file_path: str) -> ImageMetadata | None:
-        """Extract EXIF metadata using piexif for enhanced accuracy.
-
-        piexif provides more accurate EXIF parsing than PIL for certain
-        camera makes and provides direct access to GPS IFD.
-
-        Args:
-            file_path: Path to image file
-
-        Returns:
-            ImageMetadata object or None
-        """
+        """Extract EXIF metadata using piexif for enhanced accuracy."""
         from hledac.universal.core.capabilities import CAPS, PIEXIF
         piexif_mod = CAPS.require(PIEXIF)
         if piexif_mod is None:
             return None
         try:
             exif_dict = piexif.load(file_path)
-            if not exif_dict or not any((exif_dict.get(ifd) for ifd in exif_dict)):
+            if not exif_dict or not any(exif_dict.get(ifd) for ifd in exif_dict):
                 return None
             metadata = ImageMetadata()
-            zeroth = exif_dict.get('0th', {})
-            if zeroth:
-                metadata.camera_make = zeroth.get(piexif.ImageIFD.Make)
-                metadata.camera_model = zeroth.get(piexif.ImageIFD.Model)
-                metadata.software = zeroth.get(piexif.ImageIFD.Software)
-                metadata.orientation = zeroth.get(piexif.ImageIFD.Orientation)
-            exif_ifd = exif_dict.get('Exif', {})
-            if exif_ifd:
-                if piexif.ExifIFD.FocalLength in exif_ifd:
-                    fl = exif_ifd[piexif.ExifIFD.FocalLength]
-                    metadata.focal_length = _exif_to_float(fl)
-                if piexif.ExifIFD.ExposureTime in exif_ifd:
-                    metadata.exposure_time = str(exif_ifd[piexif.ExifIFD.ExposureTime])
-                if piexif.ExifIFD.FNumber in exif_ifd:
-                    metadata.f_number = _exif_to_float(exif_ifd[piexif.ExifIFD.FNumber])
-                if piexif.ExifIFD.ISOSpeedRatings in exif_ifd:
-                    try:
-                        metadata.iso = int(_exif_to_float(exif_ifd[piexif.ExifIFD.ISOSpeedRatings]))
-                    except (ValueError, TypeError):  # noqa: BLE001
-                        pass
-                if piexif.ExifIFD.Flash in exif_ifd:
-                    flash = exif_ifd[piexif.ExifIFD.Flash]
-                    try:
-                        metadata.flash = bool(int(flash)) if not isinstance(flash, bool) else flash
-                    except (ValueError, TypeError):  # noqa: BLE001
-                        pass
-                metadata.lens = exif_ifd.get(piexif.ExifIFD.LensModel)
-            gps_ifd = exif_dict.get('GPS', {})
-            if gps_ifd:
+            zeroth_data = self._extract_zeroth_ifd(exif_dict, piexif_mod)
+            metadata.camera_make = zeroth_data.get('camera_make')
+            metadata.camera_model = zeroth_data.get('camera_model')
+            metadata.software = zeroth_data.get('software')
+            metadata.orientation = zeroth_data.get('orientation')
+            exif_data = self._extract_exif_ifd(exif_dict.get('Exif', {}), piexif_mod)
+            metadata.focal_length = exif_data.get('focal_length')
+            metadata.exposure_time = exif_data.get('exposure_time')
+            metadata.f_number = exif_data.get('f_number')
+            metadata.iso = exif_data.get('iso')
+            metadata.flash = exif_data.get('flash')
+            metadata.lens = exif_data.get('lens')
+            if gps_ifd := exif_dict.get('GPS', {}):
                 metadata.gps = self._parse_piexif_gps(gps_ifd)
-            metadata.exif = {}
-            for ifd_name, ifd_data in exif_dict.items():
-                if ifd_data:
-                    metadata.exif[ifd_name] = {k: v for k, v in ifd_data.items() if isinstance(v, (str, int, float, tuple, bytes))}
+            metadata.exif = {k: {kk: vv for kk, vv in v.items() if isinstance(vv, (str, int, float, tuple, bytes))}
+                          for k, v in exif_dict.items() if v}
             return metadata
         except Exception:
             return None
@@ -1282,7 +1335,7 @@ class UniversalMetadataExtractor:
             prompt = 'Describe this image in detail. What are the main objects, scene, text, and activities visible?'
             caption = mlx_vlm_mod.generate(model, processor, img_bytes, prompt=prompt)
             tag_prompt = 'List 5-10 comma-separated keywords that describe this image:'
-            tags_text = generate(model, processor, img_bytes, prompt=tag_prompt)
+            tags_text = mlx_vlm_mod.generate(model, processor, img_bytes, prompt=tag_prompt)
             tags = [t.strip() for t in tags_text.split(',') if t.strip()]
             try:
                 mx = _get_mx()
@@ -1341,7 +1394,7 @@ class UniversalMetadataExtractor:
         if docx_mod is None:
             return None
         try:
-            doc = docx.Document(file_path)
+            doc = docx_mod.Document(file_path)
             props = doc.core_properties
             return DocxMetadata(title=props.title, author=props.author, subject=props.subject, keywords=props.keywords, category=props.category, comments=props.comments, created=props.created, modified=props.modified, last_modified_by=props.last_modified_by, revision=props.revision, company=props.company, manager=props.manager, template=props.template, total_editing_time=props.total_editing_time)
         except Exception:
@@ -1500,84 +1553,116 @@ class UniversalMetadataExtractor:
         """
         import zipfile
         from xml.etree import ElementTree as ET
-        Path(file_path).suffix.lower()
         metadata = PPTXMetadata()
         try:
             with zipfile.ZipFile(file_path, 'r') as zf:
                 if 'docProps/core.xml' in zf.namelist():
-                    core_xml = zf.read('docProps/core.xml')
-                    root = ET.fromstring(core_xml)
-                    ns = {'dc': 'http://purl.org/dc/elements/1.1/', 'cp': 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties'}
-                    metadata.title = root.find('.//dc:title', ns).text if root.find('.//dc:title', ns) is not None else None
-                    metadata.author = root.find('.//dc:creator', ns).text if root.find('.//dc:creator', ns) is not None else None
-                    subject_el = root.find('.//dc:subject', ns)
-                    if subject_el is not None:
-                        metadata.subject = subject_el.text
+                    self._parse_pptx_core_xml(zf.read('docProps/core.xml'), metadata)
                 if 'docProps/app.xml' in zf.namelist():
-                    app_xml = zf.read('docProps/app.xml')
-                    root = ET.fromstring(app_xml)
-                    ns = {'xp': 'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'}
-                    company_el = root.find('.//xp:Company', ns)
-                    if company_el is not None:
-                        metadata.company = company_el.text
-                    template_el = root.find('.//xp:Template', ns)
-                    if template_el is not None:
-                        metadata.template_path = template_el.text
-                    last_mod_el = root.find('.//xp:LastModifiedBy', ns)
-                    if last_mod_el is not None:
-                        metadata.last_modified_by = last_mod_el.text
+                    self._parse_pptx_app_xml(zf.read('docProps/app.xml'), metadata)
                 if 'ppt/presentation.xml' in zf.namelist():
-                    pres_xml = zf.read('ppt/presentation.xml')
-                    root = ET.fromstring(pres_xml)
-                    slides = root.findall('.//{http://schemas.openxmlformats.org/presentationml/2006/main}sldId')
-                    metadata.slide_count = len(slides) if slides else 0
-                for name in zf.namelist():
-                    if name.startswith('ppt/notesSlides/') and name.endswith('.xml'):
-                        if len(metadata.speaker_notes) >= MAX_SPEAKER_NOTES:
-                            break
-                        try:
-                            notes_xml = zf.read(name)
-                            root = ET.fromstring(notes_xml)
-                            texts = []
-                            for elem in root.iter():
-                                if elem.text and elem.text.strip():
-                                    texts.append(elem.text.strip())
-                            if texts:
-                                metadata.speaker_notes.append(' '.join(texts[:5]))
-                        except Exception:  # noqa: BLE001
-                            pass
-                for name in zf.namelist():
-                    if len(metadata.hidden_slides) >= MAX_HIDDEN_SLIDES:
-                        break
-                    if name == 'ppt/presentation.xml':
-                        try:
-                            pres_xml = zf.read(name)
-                            root = ET.fromstring(pres_xml)
-                            ns = {'p': 'http://schemas.openxmlformats.org/presentationml/2006/main', 'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
-                            for sld in root.findall('.//p:sld', ns):
-                                show = sld.get('show')
-                                if show == '0':
-                                    idx = sld.get('id')
-                                    metadata.hidden_slides.append({'id': idx, 'hidden': True})
-                        except Exception:  # noqa: BLE001
-                            pass
+                    self._parse_pptx_presentation(zf.read('ppt/presentation.xml'), metadata)
+                    self._extract_pptx_hidden_slides(zf, metadata)
+                self._extract_pptx_speaker_notes(zf, metadata)
                 _extract_macro_urls(zf, metadata)
-                for name in zf.namelist():
-                    if len(metadata.embedded_fonts) >= MAX_EMBEDDED_FONTS:
-                        break
-                    if name.startswith('ppt/font/') and name.endswith('.xml'):
-                        try:
-                            font_xml = zf.read(name)
-                            root = ET.fromstring(font_xml)
-                            font_name = root.get('name')
-                            if font_name:
-                                metadata.embedded_fonts.append({'name': font_name, 'file': name})
-                        except Exception:  # noqa: BLE001
-                            pass
+                self._extract_pptx_fonts(zf, metadata)
                 metadata.internal_paths = [n for n in zf.namelist() if n.startswith('ppt/')][:MAX_INTERNAL_PATHS]
         except Exception:  # noqa: BLE001
             pass
         return metadata
+
+    def _parse_pptx_core_xml(self, core_xml: bytes, metadata: PPTXMetadata) -> None:
+        """Parse docProps/core.xml for title, author, subject."""
+        try:
+            root = ET.fromstring(core_xml)
+            ns = {'dc': 'http://purl.org/dc/elements/1.1/', 'cp': 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties'}
+            metadata.title = root.find('.//dc:title', ns).text if root.find('.//dc:title', ns) is not None else None
+            metadata.author = root.find('.//dc:creator', ns).text if root.find('.//dc:creator', ns) is not None else None
+            subject_el = root.find('.//dc:subject', ns)
+            if subject_el is not None:
+                metadata.subject = subject_el.text
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _parse_pptx_app_xml(self, app_xml: bytes, metadata: PPTXMetadata) -> None:
+        """Parse docProps/app.xml for company, template, last_modified_by."""
+        try:
+            root = ET.fromstring(app_xml)
+            ns = {'xp': 'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'}
+            company_el = root.find('.//xp:Company', ns)
+            if company_el is not None:
+                metadata.company = company_el.text
+            template_el = root.find('.//xp:Template', ns)
+            if template_el is not None:
+                metadata.template_path = template_el.text
+            last_mod_el = root.find('.//xp:LastModifiedBy', ns)
+            if last_mod_el is not None:
+                metadata.last_modified_by = last_mod_el.text
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _parse_pptx_presentation(self, pres_xml: bytes, metadata: PPTXMetadata) -> None:
+        """Parse ppt/presentation.xml for slide count."""
+        try:
+            root = ET.fromstring(pres_xml)
+            slides = root.findall('.//{http://schemas.openxmlformats.org/presentationml/2006/main}sldId')
+            metadata.slide_count = len(slides) if slides else 0
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _extract_pptx_speaker_notes(self, zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
+        """Extract speaker notes from notesSlides."""
+        try:
+            for name in zf.namelist():
+                if name.startswith('ppt/notesSlides/') and name.endswith('.xml'):
+                    if len(metadata.speaker_notes) >= MAX_SPEAKER_NOTES:
+                        break
+                    try:
+                        notes_xml = zf.read(name)
+                        root = ET.fromstring(notes_xml)
+                        texts = []
+                        for elem in root.iter():
+                            if elem.text and elem.text.strip():
+                                texts.append(elem.text.strip())
+                        if texts:
+                            metadata.speaker_notes.append(' '.join(texts[:5]))
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _extract_pptx_hidden_slides(self, zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
+        """Extract hidden slides from ppt/presentation.xml."""
+        try:
+            if 'ppt/presentation.xml' in zf.namelist():
+                pres_xml = zf.read('ppt/presentation.xml')
+                root = ET.fromstring(pres_xml)
+                ns = {'p': 'http://schemas.openxmlformats.org/presentationml/2006/main', 'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'}
+                for sld in root.findall('.//p:sld', ns):
+                    show = sld.get('show')
+                    if show == '0':
+                        idx = sld.get('id')
+                        metadata.hidden_slides.append({'id': idx, 'hidden': True})
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _extract_pptx_fonts(self, zf: zipfile.ZipFile, metadata: PPTXMetadata) -> None:
+        """Extract embedded fonts from ppt/font/."""
+        try:
+            for name in zf.namelist():
+                if len(metadata.embedded_fonts) >= MAX_EMBEDDED_FONTS:
+                    break
+                if name.startswith('ppt/font/') and name.endswith('.xml'):
+                    try:
+                        font_xml = zf.read(name)
+                        root = ET.fromstring(font_xml)
+                        font_name = root.get('name')
+                        if font_name:
+                            metadata.embedded_fonts.append({'name': font_name, 'file': name})
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
 
     async def _extract_svg_metadata(self, file_path: str) -> CADMetadata | None:
         """Extract metadata from SVG vector graphics.
@@ -1654,6 +1739,52 @@ class UniversalMetadataExtractor:
             pass
         return metadata
 
+    def _parse_eml_headers(self, msg, metadata: EmailMetadata) -> None:
+        """Parse EML headers into metadata."""
+        import re
+        from email.parser import Parser
+        metadata.from_addr = msg.get('From')
+        metadata.reply_to = msg.get('Reply-To')
+        metadata.subject = msg.get('Subject')
+        metadata.date = msg.get('Date')
+        if msg_id := msg.get('Message-ID'):
+            if match := re.search('@([^>]+)', msg_id):
+                metadata.message_id_domain = match.group(1)
+        for header in msg.keys():
+            header_lower = header.lower()
+            if header_lower == 'x-originating-ip':
+                metadata.originating_ip = msg.get(header)
+            elif header_lower == 'dkim-signature':
+                if match := re.search('d=([^;\\s]+)', msg.get(header) or ''):
+                    metadata.dkim_domain = match.group(1)
+            elif header_lower == 'authentication-results':
+                auth = msg.get(header, '').lower()
+                if 'spf=pass' in auth:
+                    metadata.spf_result = 'pass'
+                elif 'spf=fail' in auth:
+                    metadata.spf_result = 'fail'
+
+    def _parse_received_chain(self, msg) -> list[dict]:
+        """Parse received headers chain."""
+        received_headers = []
+        for i in range(MAX_RECEIVED_HEADERS):
+            received = msg.get(f'Received-{i}' if i > 0 else 'Received')
+            if received:
+                received_headers.append({'header': received, 'index': i})
+            else:
+                break
+        return received_headers
+
+    def _count_attachments(self, msg) -> tuple[bool, int]:
+        """Count attachments from multipart message."""
+        count = 0
+        has_attachments = False
+        for part in msg.walk():
+            if 'attachment' in part.get('Content-Disposition', '').lower():
+                has_attachments = True
+                count += 1
+        return has_attachments, count
+
     async def _extract_email_metadata(self, file_path: str) -> EmailMetadata | None:
         """Extract metadata from email files (EML/MSG).
 
@@ -1663,7 +1794,6 @@ class UniversalMetadataExtractor:
         Returns:
             EmailMetadata object or None
         """
-        import re
         from email.parser import Parser
         ext = Path(file_path).suffix.lower()
         metadata = EmailMetadata()
@@ -1672,106 +1802,64 @@ class UniversalMetadataExtractor:
                 with open(file_path, encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                 msg = Parser().parsestr(content)
-                metadata.from_addr = msg.get('From')
-                metadata.reply_to = msg.get('Reply-To')
-                metadata.subject = msg.get('Subject')
-                metadata.date = msg.get('Date')
-                msg_id = msg.get('Message-ID')
-                if msg_id:
-                    match = re.search('@([^>]+)', msg_id)
-                    if match:
-                        metadata.message_id_domain = match.group(1)
-                for header in msg.keys():
-                    if header.lower() == 'x-originating-ip':
-                        metadata.originating_ip = msg.get(header)
-                    elif header.lower() == 'dkim-signature':
-                        match = re.search('d=([^;\\s]+)', msg.get(header))
-                        if match:
-                            metadata.dkim_domain = match.group(1)
-                    elif header.lower() == 'authentication-results':
-                        if 'spf=pass' in msg.get(header, '').lower():
-                            metadata.spf_result = 'pass'
-                        elif 'spf=fail' in msg.get(header, '').lower():
-                            metadata.spf_result = 'fail'
-                received_headers = []
-                for i in range(MAX_RECEIVED_HEADERS):
-                    received = msg.get(f'Received-{i}' if i > 0 else 'Received')
-                    if received:
-                        received_headers.append({'header': received, 'index': i})
-                    else:
-                        break
-                metadata.received_chain = received_headers
-                all_headers = dict(msg.items())
-                metadata.headers = dict(list(all_headers.items())[:MAX_EMAIL_HEADERS])
+                self._parse_eml_headers(msg, metadata)
+                metadata.received_chain = self._parse_received_chain(msg)
+                metadata.headers = dict(list(dict(msg.items()).items())[:MAX_EMAIL_HEADERS])
                 if msg.is_multipart():
-                    for part in msg.walk():
-                        content_disposition = part.get('Content-Disposition', '')
-                        if 'attachment' in content_disposition:
-                            metadata.has_attachments = True
-                            metadata.attachment_count += 1
+                    metadata.has_attachments, metadata.attachment_count = self._count_attachments(msg)
             elif ext == '.msg':
-                try:
-                    import olefile
-                    if olefile.isOleFile(file_path):
-                        ole = olefile.OleFileIO(file_path)
-                        if ole.exists('__substg1.0_0042001F'):
-                            metadata.subject = ole.openstream('__substg1.0_0042001F').read().decode('utf-16-le', errors='ignore').rstrip('\x00')
-                        if ole.exists('__substg1.0_0C1F001F'):
-                            metadata.from_addr = ole.openstream('__substg1.0_0C1F001F').read().decode('utf-16-le', errors='ignore').rstrip('\x00')
-                        ole.close()
-                except ImportError:  # noqa: BLE001
-                    pass
+                self._extract_msg_metadata(file_path, metadata)
         except Exception:  # noqa: BLE001
             pass
         return metadata
 
+    def _extract_msg_metadata(self, file_path: str, metadata: EmailMetadata) -> None:
+        """Extract metadata from MSG (Outlook) files."""
+        try:
+            import olefile
+            if olefile.isOleFile(file_path):
+                ole = olefile.OleFileIO(file_path)
+                if ole.exists('__substg1.0_0042001F'):
+                    metadata.subject = ole.openstream('__substg1.0_0042001F').read().decode('utf-16-le', errors='ignore').rstrip('\x00')
+                if ole.exists('__substg1.0_0C1F001F'):
+                    metadata.from_addr = ole.openstream('__substg1.0_0C1F001F').read().decode('utf-16-le', errors='ignore').rstrip('\x00')
+                ole.close()
+        except ImportError:  # noqa: BLE001
+            pass
+
+    def _add_timeline_event(self, events, timestamp, event_type, source):
+        """Add a timeline event if timestamp is valid."""
+        if timestamp:
+            events.append(TimelineEvent(timestamp=timestamp, event_type=event_type, source=source))
+
+    def _parse_exif_datetime(self, exif, key, event_type):
+        """Parse EXIF datetime field and return TimelineEvent or None."""
+        if key in exif:
+            try:
+                dt = datetime.strptime(exif[key], '%Y:%m:%d %H:%M:%S')
+                return TimelineEvent(timestamp=dt, event_type=event_type, source='exif')
+            except ValueError:
+                return None
+        return None
+
     def _build_timeline(self, result: MetadataResult) -> list[TimelineEvent]:
-        """Build timeline from all extracted metadata.
-
-        Args:
-            result: MetadataResult with extracted data
-
-        Returns:
-            List of TimelineEvent objects
-        """
+        """Build timeline from all extracted metadata."""
         events = []
         if result.generic:
-            if result.generic.created:
-                events.append(TimelineEvent(timestamp=result.generic.created, event_type='created', source='filesystem'))
-            if result.generic.modified:
-                events.append(TimelineEvent(timestamp=result.generic.modified, event_type='modified', source='filesystem'))
-            if result.generic.accessed:
-                events.append(TimelineEvent(timestamp=result.generic.accessed, event_type='accessed', source='filesystem'))
+            self._add_timeline_event(events, result.generic.created, 'created', 'filesystem')
+            self._add_timeline_event(events, result.generic.modified, 'modified', 'filesystem')
+            self._add_timeline_event(events, result.generic.accessed, 'accessed', 'filesystem')
         if result.image and result.image.exif:
             exif = result.image.exif
-            if 'DateTime' in exif:
-                try:
-                    dt = datetime.strptime(exif['DateTime'], '%Y:%m:%d %H:%M:%S')
-                    events.append(TimelineEvent(timestamp=dt, event_type='captured', source='exif'))
-                except ValueError:  # noqa: BLE001
-                    pass
-            if 'DateTimeOriginal' in exif:
-                try:
-                    dt = datetime.strptime(exif['DateTimeOriginal'], '%Y:%m:%d %H:%M:%S')
-                    events.append(TimelineEvent(timestamp=dt, event_type='captured_original', source='exif'))
-                except ValueError:  # noqa: BLE001
-                    pass
-            if 'DateTimeDigitized' in exif:
-                try:
-                    dt = datetime.strptime(exif['DateTimeDigitized'], '%Y:%m:%d %H:%M:%S')
-                    events.append(TimelineEvent(timestamp=dt, event_type='digitized', source='exif'))
-                except ValueError:  # noqa: BLE001
-                    pass
+            for key, event_type in [('DateTime', 'captured'), ('DateTimeOriginal', 'captured_original'), ('DateTimeDigitized', 'digitized')]:
+                if event := self._parse_exif_datetime(exif, key, event_type):
+                    events.append(event)
         if result.pdf:
-            if result.pdf.creation_date:
-                events.append(TimelineEvent(timestamp=result.pdf.creation_date, event_type='created', source='pdf_metadata'))
-            if result.pdf.modification_date:
-                events.append(TimelineEvent(timestamp=result.pdf.modification_date, event_type='modified', source='pdf_metadata'))
+            self._add_timeline_event(events, result.pdf.creation_date, 'created', 'pdf_metadata')
+            self._add_timeline_event(events, result.pdf.modification_date, 'modified', 'pdf_metadata')
         if result.docx:
-            if result.docx.created:
-                events.append(TimelineEvent(timestamp=result.docx.created, event_type='created', source='docx_core_properties'))
-            if result.docx.modified:
-                events.append(TimelineEvent(timestamp=result.docx.modified, event_type='modified', source='docx_core_properties'))
+            self._add_timeline_event(events, result.docx.created, 'created', 'docx_core_properties')
+            self._add_timeline_event(events, result.docx.modified, 'modified', 'docx_core_properties')
         events.sort(key=attrgetter("timestamp") or datetime.min)
         return events
 
@@ -1805,34 +1893,28 @@ class UniversalMetadataExtractor:
             attr.software = result.video.container_format
         return attr
 
+    def _check_image_scrubbing(self, result, indicators, missing):
+        """Check for image metadata scrubbing."""
+        if not result.image.exif:
+            indicators.append('No EXIF data found in image')
+            missing.append('EXIF')
+        else:
+            for field in ['Make', 'Model', 'DateTime']:
+                if field not in result.image.exif:
+                    missing.append(f'EXIF:{field}')
+
+    def _compute_confidence(self, missing, indicators, suspicious):
+        """Compute scrubbing confidence score."""
+        return min((len(missing) * 0.1 + len(indicators) * 0.15 + len(suspicious) * 0.1), 1.0)
+
     def _detect_scrubbing(self, result: MetadataResult) -> ScrubbingAnalysis:
-        """Detect potential metadata scrubbing.
-
-        Args:
-            result: MetadataResult with extracted data
-
-        Returns:
-            ScrubbingAnalysis object
-        """
-        indicators = []
-        missing = []
-        suspicious = []
-        confidence = 0.0
+        """Detect potential metadata scrubbing."""
+        indicators, missing, suspicious = [], [], []
         if result.image:
-            if not result.image.exif:
-                indicators.append('No EXIF data found in image')
-                missing.append('EXIF')
-            else:
-                expected = ['Make', 'Model', 'DateTime']
-                for field in expected:
-                    if field not in result.image.exif:
-                        missing.append(f'EXIF:{field}')
-            if result.image.gps is None and self.enable_gps:
-                pass
-        if result.pdf:
-            if not any([result.pdf.author, result.pdf.creator, result.pdf.producer]):
-                indicators.append('No attribution metadata in PDF')
-                missing.extend(['Author', 'Creator', 'Producer'])
+            self._check_image_scrubbing(result, indicators, missing)
+        if result.pdf and not any([result.pdf.author, result.pdf.creator, result.pdf.producer]):
+            indicators.append('No attribution metadata in PDF')
+            missing.extend(['Author', 'Creator', 'Producer'])
         if result.docx:
             if not result.docx.author:
                 indicators.append('No author in DOCX')
@@ -1840,19 +1922,12 @@ class UniversalMetadataExtractor:
             if not result.docx.created:
                 indicators.append('No creation date in DOCX')
                 missing.append('Created')
-        if result.generic:
-            if result.generic.created and result.generic.modified:
-                if result.generic.created == result.generic.modified:
-                    suspicious.append('Creation and modification timestamps are identical')
-                    confidence += 0.2
-        if missing:
-            confidence += min(len(missing) * 0.1, 0.5)
-        if indicators:
-            confidence += min(len(indicators) * 0.15, 0.4)
-        if suspicious:
-            confidence += min(len(suspicious) * 0.1, 0.2)
-        confidence = min(confidence, 1.0)
-        return ScrubbingAnalysis(is_scrubbed=confidence > 0.5, confidence=confidence, indicators=indicators, missing_expected_fields=missing, suspicious_patterns=suspicious)
+        if result.generic and result.generic.created and result.generic.modified:
+            if result.generic.created == result.generic.modified:
+                suspicious.append('Creation and modification timestamps are identical')
+        confidence = self._compute_confidence(missing, indicators, suspicious)
+        return ScrubbingAnalysis(is_scrubbed=confidence > 0.5, confidence=confidence,
+            indicators=indicators, missing_expected_fields=missing, suspicious_patterns=suspicious)
 
     def _result_from_dict(self, data: dict[str, Any]) -> MetadataResult:
         """Reconstruct MetadataResult from dictionary.

@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from utils._patterns import LazyLockDescriptor  # F320-REFACTOR-2
 
 logger = logging.getLogger(__name__)
 
@@ -428,11 +429,8 @@ class ANEInferenceEngine:
         self._compile_lock: asyncio.Lock | None = None
         self._compiling: set[str] = set()
 
-    def _get_compile_lock(self) -> asyncio.Lock:
-        """Lazy asyncio.Lock (ISSUE-014 pattern)."""
-        if self._compile_lock is None:
-            self._compile_lock = asyncio.Lock()
-        return self._compile_lock
+    # F320-REFACTOR-2: lazy lock descriptor (ISSUE-014 compliant)
+    _get_compile_lock = LazyLockDescriptor("_compile_lock")
 
     async def ensure_loaded(self, model_key: str = "bge-small") -> bool:
         """Ensure a model is compiled and loaded for ANE inference.

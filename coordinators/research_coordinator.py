@@ -528,55 +528,113 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             logger.error(f'Crawling failed: {e}')
             return {'success': False, 'error': str(e), 'content': None}
 
+    # ----------------------------------------------------------------------
+    # Graph path analysis helpers (extracted to reduce cyclomatic complexity)
+    # ----------------------------------------------------------------------
+
+
+    def _check_graph_paths_enabled(self, entities: list[dict[str, Any]]) -> bool:
+        """Check if graph paths are enabled and prerequisites are met."""
+        if _os.environ.get('HLEDAC_ENABLE_GRAPH_PATHS', '0') != '1':
+            return False
+        if not entities or not self._evidence_analyzer:
+            return False
+        return True
+
+    def _get_centrality_scores(self, net_result: dict[str, Any]) -> list[str] | None:
+        """Extract and rank centrality scores, returning top 10 node keys."""
+        if not isinstance(net_result, dict):
+            return None
+        centrality: dict[str, float] = net_result.get('centrality') or {}
+        edges: list[dict[str, Any]] = net_result.get('edges') or []
+        if not centrality or not edges or len(centrality) < 2:
+            return None
+        ranked = sorted(centrality.items(), key=lambda kv: float(kv[1] or 0.0), reverse=True)[:10]
+        if len(ranked) < 2:
+            return None
+        return [str(n) for n, _ in ranked]
+
+    def _build_adjacency_list(self, top_nodes: list[str], edges: list[dict[str, Any]]) -> dict[str, list[str]]:
+        """Build undirected adjacency list from top nodes and edges."""
+        adj: dict[str, list[str]] = {n: [] for n in top_nodes}
+        for e in edges:
+            try:
+                src = str(e.get('src', ''))
+                dst = str(e.get('dst', ''))
+                if not src or not dst or src == dst:
+                    continue
+                if src in adj and dst not in adj[src]:
+                    adj[src].append(dst)
+                if dst in adj and src not in adj[dst]:
+                    adj[dst].append(src)
+            except Exception:
+                continue
+        return adj
+
+    async def _find_paths_for_targets(self, pathfinder: Any, start: str, targets: list[str], per_target_timeout: float) -> list[list[str]]:
+        """Find paths from start to each target with bounded timeout."""
+        paths: list[list[str]] = []
+        for tgt in targets:
+            try:
+                result = await safe_wait_for(
+                    pathfinder.find_paths(start_nodes=[start], target_nodes=[tgt], max_steps=50),
+                    timeout=per_target_timeout,
+                    label='research_coord_paths'
+                )
+                if result:
+                    paths.append(result)
+            except (TimeoutError, Exception) as e:
+                logger.debug(f'ResearchCoordinator: path find {start}→{tgt} failed: {e}')
+        return paths
+
+    def _create_path_findings(self, paths: list[list[str]], start: str, targets: list[str], ts_now: float, query: str, sprint_id: str, centrality: dict[str, float]) -> list[Any]:
+        """Create CanonicalFinding objects from paths."""
+        findings: list[Any] = []
+        try:
+            from hledac.universal.knowledge.duckdb_store import CanonicalFinding
+        except Exception as e:
+            logger.warning(f'ResearchCoordinator: CanonicalFinding unavailable, graph path ingest skipped: {e}')
+            return findings
+        for tgt, path in zip(targets, paths, strict=True):
+            if not path:
+                continue
+            fid_seed = f'{start}|{tgt}|{ts_now}'
+            fid = 'graph_path_' + hashlib.sha256(fid_seed.encode('utf-8')).hexdigest()[:16]
+            try:
+                findings.append(CanonicalFinding(finding_id=fid, query=query or '', source_type='graph_path_analysis', confidence=0.5, ts=ts_now, provenance=('graph_path_analysis', 'research_coordinator', start, tgt), payload_text=_msgspec_encode({'start': start, 'target': tgt, 'path': path, 'length': len(path), 'centrality': {'start': centrality.get(start, 0.0), 'target': centrality.get(tgt, 0.0)}, 'sprint_id': sprint_id}).decode()))
+            except Exception as e:
+                logger.debug(f'ResearchCoordinator: CanonicalFinding build failed: {e}')
+        return findings
+
+    def _ingest_findings(self, findings: list[Any]) -> None:
+        """Ingest findings into DuckDB store."""
+        try:
+            from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
+            store = DuckDBShadowStore()
+            asyncio.create_task(store.async_ingest_findings_batch(findings))
+        except Exception as e:
+            logger.warning(f'ResearchCoordinator: graph path ingest failed: {e}')
+
+    # ----------------------------------------------------------------------
+    # Main orchestrator
+    # ----------------------------------------------------------------------
+
     async def _run_graph_path_analysis(self, entities: list[dict[str, Any]], query: str, sprint_id: str='') -> list[dict[str, Any]]:
         """
         F264: Bounded quantum-inspired path analysis post evidence network.
-
-        Picks top-10 nodes by combined centrality (degree + betweenness)
-        from EvidenceNetworkAnalyzer output, builds an undirected adjacency
-        list, finds shortest paths between the top centrality node and the
-        remaining top nodes using QuantumInspiredPathFinder (quantum random
-        walk + Grover amplitude amplification).
-
-        Stores each path as a CanonicalFinding with source_type=
-        "graph_path_analysis" via DuckDBShadowStore.async_ingest_findings_batch
-        (the canonical write path).
-
-        M1 RAM bounded: QuantumInspiredPathFinder enforces MAX_QUANTUM_NODES
-        (4096) and MAX_QUANTUM_EDGES (50000). Per-path timeout = 60s / N
-        targets. Fail-soft: any exception → return []. Gate:
-        HLEDAC_ENABLE_GRAPH_PATHS=1.
+        See helper methods for detailed logic.
         """
-        if _os.environ.get('HLEDAC_ENABLE_GRAPH_PATHS', '0') != '1':
+        if not self._check_graph_paths_enabled(entities):
             return []
-        if not entities or not self._evidence_analyzer:
-            return []
+
         pathfinder: Any = None
         try:
             net_result = await self._evidence_analyzer.analyze_network(entities)
-            if not isinstance(net_result, dict):
+            top_nodes = self._get_centrality_scores(net_result)
+            if not top_nodes:
                 return []
-            centrality: dict[str, float] = net_result.get('centrality') or {}
             edges: list[dict[str, Any]] = net_result.get('edges') or []
-            if not centrality or not edges or len(centrality) < 2:
-                return []
-            ranked = sorted(centrality.items(), key=lambda kv: float(kv[1] or 0.0), reverse=True)[:10]
-            if len(ranked) < 2:
-                return []
-            top_nodes: list[str] = [str(n) for n, _ in ranked]
-            adj: dict[str, list[str]] = {n: [] for n in top_nodes}
-            for e in edges:
-                try:
-                    src = str(e.get('src', ''))
-                    dst = str(e.get('dst', ''))
-                    if not src or not dst or src == dst:
-                        continue
-                    if src in adj and dst not in adj[src]:
-                        adj[src].append(dst)
-                    if dst in adj and src not in adj[dst]:
-                        adj[dst].append(src)
-                except Exception:
-                    continue
+            adj = self._build_adjacency_list(top_nodes, edges)
             from hledac.universal.graph.quantum_pathfinder import create_quantum_pathfinder
             pathfinder = create_quantum_pathfinder()
             if pathfinder is None:
@@ -586,38 +644,11 @@ class UniversalResearchCoordinator(UniversalCoordinator):
             start = top_nodes[0]
             targets = top_nodes[1:]
             per_target_timeout = max(1.0, 60.0 / max(1, len(targets)))
-            findings: list[Any] = []
-            try:
-                from hledac.universal.knowledge.duckdb_store import CanonicalFinding
-            except Exception as e:
-                logger.warning(f'ResearchCoordinator: CanonicalFinding unavailable, graph path ingest skipped: {e}')
-                return []
-            for tgt in targets:
-                try:
-                    paths = await safe_wait_for(pathfinder.find_paths(start_nodes=[start], target_nodes=[tgt], max_steps=50), timeout=per_target_timeout, label='research_coord_paths')
-                except (TimeoutError, Exception) as e:
-                    logger.debug(f'ResearchCoordinator: path find {start}→{tgt} failed: {e}')
-                    continue
-                if not paths:
-                    continue
-                paths.sort(key=len)
-                path = paths[0]
-                if not path:
-                    continue
-                fid_seed = f'{start}|{tgt}|{ts_now}'
-                fid = 'graph_path_' + hashlib.sha256(fid_seed.encode('utf-8')).hexdigest()[:16]
-                try:
-                    findings.append(CanonicalFinding(finding_id=fid, query=query or '', source_type='graph_path_analysis', confidence=0.5, ts=ts_now, provenance=('graph_path_analysis', 'research_coordinator', start, tgt), payload_text=_msgspec_encode({'start': start, 'target': tgt, 'path': path, 'length': len(path), 'centrality': {'start': centrality.get(start, 0.0), 'target': centrality.get(tgt, 0.0)}, 'sprint_id': sprint_id}).decode()))
-                except Exception as e:
-                    logger.debug(f'ResearchCoordinator: CanonicalFinding build failed: {e}')
-                    continue
+            centrality: dict[str, float] = net_result.get('centrality') or {}
+            paths = await self._find_paths_for_targets(pathfinder, start, targets, per_target_timeout)
+            findings = self._create_path_findings(paths, start, targets, ts_now, query, sprint_id, centrality)
             if findings:
-                try:
-                    from hledac.universal.knowledge.duckdb_store import DuckDBShadowStore
-                    store = DuckDBShadowStore()
-                    await store.async_ingest_findings_batch(findings)
-                except Exception as e:
-                    logger.warning(f'ResearchCoordinator: graph path ingest failed: {e}')
+                self._ingest_findings(findings)
             return [{'agent': 'graph_path_analysis', 'start': f.provenance[2] if len(f.provenance) > 2 else '', 'target': f.provenance[3] if len(f.provenance) > 3 else '', 'path': _payload_data.get('path', []), 'length': _payload_data.get('length', 0), 'finding_id': f.finding_id} for f in findings for _payload_data in [msgspec.json.decode(f.payload_text.encode()) if f.payload_text else {}]]
         except Exception as e:
             logger.warning(f'ResearchCoordinator: graph path analysis failed: {e}')

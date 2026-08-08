@@ -425,6 +425,69 @@ async def _dump_elasticsearch_python(
 # Quick auth check helpers (Python-only, always available)
 # ---------------------------------------------------------------------------
 
+import re as _re
+
+# Compiled once at module level for O(1) reuse
+_VERSION_RE = _re.compile(r'"version"\s*:\s*"([^"]+)"')
+
+
+async def _tcp_auth_probe(
+    host: str,
+    port: int,
+    command: bytes,
+    auth_indicators: tuple[str, ...],
+    version_pattern: str | None = None,
+    timeout_s: float = 5.0,
+) -> dict[str, Any]:
+    """
+    Generic TCP auth probe helper.
+
+    Args:
+        host: Target host
+        port: Target port
+        command: Raw bytes command to send
+        auth_indicators: Strings that indicate auth is required
+        version_pattern: Optional regex pattern for version extraction (defaults to JSON "version")
+        timeout_s: Connection timeout
+
+    Returns:
+        dict with auth_required (bool|None), version (str|None), error (str|None)
+    """
+    result: dict[str, Any] = {"auth_required": None, "version": None}
+    try:
+        async with asyncio.timeout(timeout_s):
+            reader, writer = await asyncio.open_connection(host, port)
+
+        writer.write(command)
+        await writer.drain()
+
+        async with asyncio.timeout(5):
+            response = await reader.read(4096)
+        writer.close()
+        await writer.wait_closed()
+
+        response_str = response.decode("utf-8", errors="ignore")
+        response_lower = response_str.lower()
+
+        # Check for auth requirement
+        if any(ind.lower() in response_lower for ind in auth_indicators):
+            result["auth_required"] = True
+        else:
+            result["auth_required"] = False
+
+        # Extract version
+        if version_pattern:
+            version_match = _re.search(version_pattern, response_str)
+        else:
+            # Default: JSON "version" field
+            version_match = _VERSION_RE.search(response_str)
+        if version_match:
+            result["version"] = version_match.group(1)
+
+    except Exception as e:
+        result["error"] = str(e)
+    return result
+
 
 async def check_mongodb_auth(host: str, port: int = 27017, timeout_s: float = 5.0) -> dict[str, Any]:
     """
@@ -433,38 +496,17 @@ async def check_mongodb_auth(host: str, port: int = 27017, timeout_s: float = 5.
     Returns dict with auth_required (bool|None) and version (str|None).
     Uses raw TCP isMaster command — no Rust required.
     """
-    import re as _re
-
-    result: dict[str, Any] = {"auth_required": None, "version": None}
-    try:
-        async with asyncio.timeout(timeout_s):
-            reader, writer = await asyncio.open_connection(host, port)
-
-        is_master_cmd = (
-            b"=\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\xd4\x07\x00\x00"
-            b"\x00\x00\x00\x00admin.$cmd\x00\x00"
-            b"\x00\x00\x00\xff\xff\xff\xff\x13\x00\x00\x00\x10isMa"
-            b"ster\x00\x01\x00\x00\x00\x00"
-        )
-        writer.write(is_master_cmd)
-        await writer.drain()
-
-        async with asyncio.timeout(5):
-            response = await reader.read(1024)
-        writer.close()
-        await writer.wait_closed()
-
-        if b"unauthorized" in response.lower() or b"auth" in response.lower():
-            result["auth_required"] = True
-        else:
-            result["auth_required"] = False
-
-        version_match = _re.search(b'"version"\\s*:\\s*"([^"]+)"', response)
-        if version_match:
-            result["version"] = version_match.group(1).decode("utf-8", errors="ignore")
-    except Exception as e:
-        result["error"] = str(e)
-    return result
+    is_master_cmd = (
+        b"=\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\xd4\x07\x00\x00"
+        b"\x00\x00\x00\x00admin.$cmd\x00\x00"
+        b"\x00\x00\x00\xff\xff\xff\xff\x13\x00\x00\x00\x10isMa"
+        b"ster\x00\x01\x00\x00\x00\x00"
+    )
+    return await _tcp_auth_probe(
+        host, port, is_master_cmd,
+        auth_indicators=("unauthorized", "auth"),
+        timeout_s=timeout_s,
+    )
 
 
 async def check_redis_auth(host: str, port: int = 6379, timeout_s: float = 5.0) -> dict[str, Any]:
@@ -474,29 +516,9 @@ async def check_redis_auth(host: str, port: int = 6379, timeout_s: float = 5.0) 
     Returns dict with auth_required (bool|None) and version (str|None).
     Uses raw TCP INFO command — no Rust required.
     """
-    import re as _re
-
-    result: dict[str, Any] = {"auth_required": None, "version": None}
-    try:
-        async with asyncio.timeout(timeout_s):
-            reader, writer = await asyncio.open_connection(host, port)
-
-        writer.write(b"INFO\r\n")
-        await writer.drain()
-
-        async with asyncio.timeout(5):
-            response = await reader.read(2048)
-        writer.close()
-        await writer.wait_closed()
-
-        response_str = response.decode("utf-8", errors="ignore")
-        if "NOAUTH" in response_str or "authentication" in response_str.lower():
-            result["auth_required"] = True
-        elif "redis_version" in response_str:
-            result["auth_required"] = False
-            version_match = _re.search("redis_version:(\\S+)", response_str)
-            if version_match:
-                result["version"] = version_match.group(1)
-    except Exception as e:
-        result["error"] = str(e)
-    return result
+    return await _tcp_auth_probe(
+        host, port, b"INFO\r\n",
+        auth_indicators=("NOAUTH", "authentication"),
+        version_pattern=r"redis_version:(\S+)",
+        timeout_s=timeout_s,
+    )

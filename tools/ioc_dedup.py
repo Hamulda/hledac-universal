@@ -206,11 +206,26 @@ class _PythonIocDedupStore:
         self._entries.clear()
         self._total_seen = 0
         self._total_deduped = 0
-_global_manager: IocDedupManager | None = None
 
-def get_global_manager(persist_path: str | None=None) -> IocDedupManager:
+
+# ---------------------------------------------------------------------------
+# Singleton factory (F320: Refactored to use centralized pattern)
+# ---------------------------------------------------------------------------
+from hledac.universal.utils._patterns import module_singleton_getter
+
+
+def _make_global_manager(persist_path: str | None) -> IocDedupManager:
+    """Factory for IocDedupManager singleton."""
+    return IocDedupManager(persist_path=persist_path)
+
+
+# Module-level singleton getter with thread-safe double-checked locking
+_get_global_manager = module_singleton_getter(
+    singleton_name="_global_manager",
+    factory=lambda: _make_global_manager(None),
+)
+
+
+def get_global_manager(persist_path: str | None = None) -> IocDedupManager:
     """Get or create global IocDedupManager singleton."""
-    global _global_manager
-    if _global_manager is None:
-        _global_manager = IocDedupManager(persist_path=persist_path)
-    return _global_manager
+    return _get_global_manager()

@@ -87,6 +87,7 @@ def _build_lane_outcome(
 async def _accumulate_to_graph(
     findings: list,
     sprint_id_suffix: str,
+    graph_accumulator: Any | None = None,
 ) -> None:
     """Helper: accumulate findings to graph, fail-soft."""
     if findings and graph_accumulator is not None:
@@ -202,7 +203,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 rejection_reasons = tuple(rejections)
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
-                await _accumulate_to_graph(list(candidate_findings), f'wayback-{int(time.time())}')
+                await _accumulate_to_graph(list(candidate_findings), f'wayback-{int(time.time())}', graph_accumulator)
                 return _build_lane_outcome(AcquisitionLane.WAYBACK, plan, start, produced_items=len(result.change_events), candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=len(result.change_events), wayback_query=shaped_query_str, source_family='archive')
         except TimeoutError:
             return _build_lane_outcome(AcquisitionLane.WAYBACK, plan, start, timeout=True, error='timeout', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, wayback_raw_count=0, wayback_query=shaped_query_str, source_family='archive')
@@ -234,7 +235,7 @@ async def run_enabled_acquisition_lanes(snapshot, query: str, store, uma_state: 
                 rejection_reasons = tuple(rejections)
                 rejected_count = len(rejections)
                 sample_rejections = tuple(rejections[:MAX_SAMPLE_REJECTIONS])
-                await _accumulate_to_graph(list(candidate_findings), f'pdns-{int(time.time())}')
+                await _accumulate_to_graph(list(candidate_findings), f'pdns-{int(time.time())}', graph_accumulator)
                 return _build_lane_outcome(AcquisitionLane.PASSIVE_DNS, plan, start, error=pdns_error, produced_items=produced, candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=produced, passive_dns_query=shaped_query, source_family='passive_dns')
         except TimeoutError:
             return _build_lane_outcome(AcquisitionLane.PASSIVE_DNS, plan, start, timeout=True, error='timeout', candidate_findings=candidate_findings, rejection_reasons=rejection_reasons, rejected_count=rejected_count, sample_rejections=sample_rejections, passive_dns_raw_count=0, passive_dns_query=shaped_query, source_family='passive_dns')

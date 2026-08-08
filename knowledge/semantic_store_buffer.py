@@ -45,7 +45,7 @@ class SemanticStoreBuffer:
         """
         self._store = store
 
-    def buffer_findings(self, findings: list[Any]) -> None:
+    async def buffer_findings(self, findings: list[Any]) -> None:
         """
         Sprint 8SB: Buffer findings into SemanticStore for batch embedding.
 
@@ -71,7 +71,7 @@ class SemanticStoreBuffer:
                             if lbl:
                                 ioc_types.append(str(lbl))
                 ioc_types = list(set(ioc_types)) if ioc_types else []
-                self._store.add_text(
+                await self._store.add_text(
                     text=text,
                     source_type=getattr(f, "source_type", "unknown"),
                     finding_id=getattr(f, "finding_id", ""),

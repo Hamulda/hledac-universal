@@ -117,9 +117,9 @@ class _UnionFind:
 async def _bounded_gather_pairs(
     pairs: list[tuple[str, str]],
     threshold: float,
-    compute_fn,  # (str, str) -> IdentityMatch
+    compute_fn,  # (str, str) -> 'IdentityMatch'
     concurrency: int | None = None,
-) -> list[IdentityMatch]:
+) -> list['IdentityMatch']:
     """O(α(N)) parallel pairwise — ISSUE-005: bounded_parallel_map refactor.
     F1 FIX: concurrency=None → UMA-aware dynamic limit via ConcurrencyBudgetRegistry.
 
@@ -259,7 +259,7 @@ except ImportError:
     distance = None
 SKLEARN_AVAILABLE = True
 try:
-    from .relationship_discovery import Entity, Relationship, RelationshipType
+    from .relationship_discovery import Entity, Relationship, RelationshipType, EntityType
     RELATIONSHIP_AVAILABLE = True
 except ImportError:
     RELATIONSHIP_AVAILABLE = False
@@ -948,23 +948,15 @@ class IdentityStitchingEngine:
         overlap_ratio = len(intersection) / min_size if min_size > 0 else 0.0
         return (jaccard + overlap_ratio) / 2
 
-    def compute_match(self, profile_a: IdentityProfile, profile_b: IdentityProfile) -> IdentityMatch:
-        """
-        Compute match between two profiles.
-
-        Args:
-            profile_a: First profile
-            profile_b: Second profile
-
-        Returns:
-            IdentityMatch with scores and signals
-        """
-        cache_key = (profile_a.id, profile_b.id)
-        cached = self._match_cache.get(cache_key)
-        if cached is not None:
-            return cached
+    def _compute_username_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """Compute username similarity signal between two profiles."""
         signals: dict[str, float] = {}
         evidence: list[str] = []
+
         usernames_a = profile_a.get_all_usernames()
         usernames_b = profile_b.get_all_usernames()
         if usernames_a and usernames_b:
@@ -978,6 +970,17 @@ class IdentityStitchingEngine:
                     elif sim >= 0.8:
                         evidence.append(f'Similar usernames: {u1} ~ {u2} ({sim:.2f})')
             signals['username_similarity'] = max_username_sim
+        return signals, evidence
+
+    def _compute_email_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """Compute email matching signal between two profiles."""
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
         emails_a = set(profile_a.emails)
         emails_b = set(profile_b.emails)
         if emails_a & emails_b:
@@ -989,6 +992,17 @@ class IdentityStitchingEngine:
             if domains_a & domains_b:
                 signals['email_domain'] = 0.5
                 evidence.append(f'Shared email domains: {domains_a & domains_b}')
+        return signals, evidence
+
+    def _compute_alias_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """Compute alias matching signal between two profiles."""
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
         aliases_a = set(profile_a.aliases + [profile_a.primary_name])
         aliases_b = set(profile_b.aliases + [profile_b.primary_name])
         if aliases_a & aliases_b:
@@ -1002,7 +1016,17 @@ class IdentityStitchingEngine:
                     max_alias_sim = max(max_alias_sim, sim)
             if max_alias_sim > 0.7:
                 signals['alias_match'] = max_alias_sim
-        # ISSUE-007: Multi-dimensional stylometry signal
+        return signals, evidence
+
+    def _compute_stylometry_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """Compute stylometry (writing style) signal."""
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
         text_samples_a = profile_a.attributes.get('text_samples', []) if profile_a.attributes else []
         text_samples_b = profile_b.attributes.get('text_samples', []) if profile_b.attributes else []
         if text_samples_a and text_samples_b:
@@ -1010,17 +1034,48 @@ class IdentityStitchingEngine:
             if stylometry_score > 0.3:
                 signals['stylometry'] = stylometry_score
                 evidence.append(f'Writing style similarity: {stylometry_score:.2f}')
-        # ISSUE [ULTIMATE]-005: Unicode fingerprint attribution signal
+        return signals, evidence
+
+    def _compute_unicode_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """Compute Unicode fingerprint attribution signal."""
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
         if self.enable_unicode_attribution:
             unicode_score = self.compute_unicode_fingerprint_similarity(profile_a, profile_b)
-            if unicode_score > 0.1:  # Low threshold - any match is significant
+            if unicode_score > 0.1:
                 signals['unicode_fingerprint'] = unicode_score
                 evidence.append(f'Unicode fingerprint similarity: {unicode_score:.2f}')
-        # Also check legacy 'style_similarity' in attributes (backward compat)
+        return signals, evidence
+
+    def _compute_style_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """Compute legacy style similarity signal (backward compat)."""
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
         style_a = profile_a.attributes.get('style_similarity') if profile_a.attributes else None
         style_b = profile_b.attributes.get('style_similarity') if profile_b.attributes else None
         if style_a is not None and style_b is not None:
             signals['style_similarity'] = 1.0 - abs(float(style_a) - float(style_b))
+        return signals, evidence
+
+    def _compute_platform_signal(
+        self,
+        profile_a: IdentityProfile,
+        profile_b: IdentityProfile,
+    ) -> tuple[dict[str, float], list[str]]:
+        """Compute platform overlap signal with different usernames."""
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
         platforms_a = profile_a.get_platforms()
         platforms_b = profile_b.get_platforms()
         shared_platforms = platforms_a & platforms_b
@@ -1031,14 +1086,75 @@ class IdentityStitchingEngine:
                 if u1 and u2 and (u1.lower() != u2.lower()):
                     signals['username_similarity'] = signals.get('username_similarity', 0) * 0.5
                     evidence.append(f'Different usernames on {platform}: {u1} vs {u2}')
+        return signals, evidence
+
+    @staticmethod
+    def _aggregate_signals(signals: dict[str, float], weights: dict[str, float]) -> float:
+        """Aggregate weighted signals into final score."""
         total_weight = 0.0
         weighted_score = 0.0
         for signal, score in signals.items():
-            weight = self.signal_weights.get(signal, 0.5)
+            weight = weights.get(signal, 0.5)
             weighted_score += score * weight
             total_weight += weight
-        final_score = weighted_score / total_weight if total_weight > 0 else 0.0
-        match = IdentityMatch(profile_a=profile_a.id, profile_b=profile_b.id, match_score=final_score, match_signals=signals, evidence=evidence)
+        return weighted_score / total_weight if total_weight > 0 else 0.0
+
+    def compute_match(self, profile_a: IdentityProfile, profile_b: IdentityProfile) -> IdentityMatch:
+        """Compute match between two profiles."""
+        cache_key = (profile_a.id, profile_b.id)
+        cached = self._match_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Collect all signals using helper methods
+        signals: dict[str, float] = {}
+        evidence: list[str] = []
+
+        # Username similarity
+        s, e = self._compute_username_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # Email matching
+        s, e = self._compute_email_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # Alias matching
+        s, e = self._compute_alias_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # Stylometry
+        s, e = self._compute_stylometry_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # Unicode fingerprint
+        s, e = self._compute_unicode_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # Legacy style
+        s, e = self._compute_style_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # Platform overlap
+        s, e = self._compute_platform_signal(profile_a, profile_b)
+        signals.update(s)
+        evidence.extend(e)
+
+        # Aggregate into final score
+        final_score = self._aggregate_signals(signals, self.signal_weights)
+
+        match = IdentityMatch(
+            profile_a=profile_a.id,
+            profile_b=profile_b.id,
+            match_score=final_score,
+            match_signals=signals,
+            evidence=evidence,
+        )
         self._match_cache.put(cache_key, match)
         self._stats['matches_computed'] += 1
         return match

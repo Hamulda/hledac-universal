@@ -217,6 +217,135 @@ async def _whois_lookup_domain(domain: str) -> dict[str, Any] | None:
     except Exception:
         return None
 
+def _extract_and_cache_ips(ip_pairs: list[tuple[str, str]]) -> tuple[list[str], dict[str, str], int]:
+    """Stage 1: Extract IPs and check cache. Returns (ips_to_query, ip_to_finding, cache_hits)."""
+    ips_to_query: list[str] = []
+    ip_to_finding: dict[str, str] = {}
+    cache_hits = 0
+    for ip_str, fid in ip_pairs:
+        if cached := _cache_get(ip_str):
+            cache_hits += 1
+        else:
+            ips_to_query.append(ip_str)
+        ip_to_finding[ip_str] = fid
+    return ips_to_query, ip_to_finding, cache_hits
+
+
+async def _resolve_domains_and_check_cache(
+    domains: list[str],
+    ips_to_query: list[str],
+    ip_to_finding: dict[str, str]
+) -> tuple[dict[str, str], int]:
+    """Stage 2-3: Resolve domains and check cache for resolved IPs. Returns (resolved_ips, extra_cache_hits)."""
+    resolved_ips: dict[str, str] = {}
+    extra_cache_hits = 0
+    if not domains:
+        return resolved_ips, extra_cache_hits
+    try:
+        resolved_ips = await _resolve_domains_async(domains)
+        for domain, ip in resolved_ips.items():
+            if ip and not _is_private(ip):
+                if _cache_get(ip):
+                    extra_cache_hits += 1
+                else:
+                    ips_to_query.append(ip)
+                ip_to_finding[ip] = ip_to_finding.get(domain, '')
+    except Exception:  # noqa: BLE001
+        pass
+    return resolved_ips, extra_cache_hits
+
+
+def _check_whois_cache(unresolved_domains: list[str]) -> int:
+    """Check WHOIS cache for unresolved domains. Returns cache_hits."""
+    cache_hits = 0
+    for domain in unresolved_domains[:10]:
+        if _cache_get(f'whois:{domain}'):
+            cache_hits += 1
+    return cache_hits
+
+
+async def _query_and_cache_ips(ips_to_query: list[str]) -> dict[str, dict[str, Any]]:
+    """Stage 4: Query IPs via HTTP API and cache results."""
+    ip_results: dict[str, dict[str, Any]] = {}
+    if not ips_to_query:
+        return ip_results
+    ip_results = await _lookup_ip_batch_http(ips_to_query)
+    for ip, data in ip_results.items():
+        _cache_set(ip, data)
+    return ip_results
+
+
+def _build_ip_correlations(
+    ip_pairs: list[tuple[str, str]],
+    ip_results: dict[str, dict[str, Any]],
+    correlations: list[RIRCorrelation],
+    seen: set[str]
+) -> None:
+    """Stage 5a: Build correlations for direct IP findings."""
+    for ip_str, fid in ip_pairs:
+        if len(correlations) >= MAX_RIR_RESULTS:
+            return
+        key = f'ip:{ip_str}'
+        if key in seen:
+            continue
+        seen.add(key)
+        data = _cache_get(ip_str) or ip_results.get(ip_str)
+        if not data:
+            continue
+        correlations.append(RIRCorrelation(
+            ioc_value=ip_str, ioc_type='ip_address',
+            asn=data.get('asn', ''), org=data.get('org', ''),
+            netblock=data.get('netblock', ''), country=data.get('country', ''),
+            confidence=0.85, evidence_ids=(fid,)
+        ))
+
+
+async def _whois_lookup_or_cache(domain: str, ip: str) -> dict[str, Any] | None:
+    """Get WHOIS data for domain, using cache or performing lookup."""
+    if _is_private(ip):
+        return None
+    whois_key = f'whois:{domain}'
+    whois_data = _cache_get(whois_key)
+    if whois_data is not None:
+        return whois_data
+    try:
+        whois_data = await _whois_lookup_domain(domain)
+        if whois_data:
+            _cache_set(whois_key, whois_data)
+        return whois_data
+    except Exception:
+        return None
+
+
+async def _build_domain_correlations(
+    resolved_ips: dict[str, str],
+    ip_results: dict[str, dict[str, Any]],
+    domain_to_finding: dict[str, str],
+    correlations: list[RIRCorrelation],
+    seen: set[str]
+) -> None:
+    """Stage 5b: Build correlations for domain findings with WHOIS fallback."""
+    for domain, ip in resolved_ips.items():
+        if len(correlations) >= MAX_RIR_RESULTS:
+            return
+        key = f'domain:{domain}'
+        if key in seen:
+            continue
+        seen.add(key)
+        # Try IP data first, then WHOIS fallback
+        data = _cache_get(ip) or ip_results.get(ip)
+        if not data:
+            data = await _whois_lookup_or_cache(domain, ip)
+        if not data:
+            continue
+        correlations.append(RIRCorrelation(
+            ioc_value=domain, ioc_type='domain',
+            asn=data.get('asn', ''), org=data.get('org', ''),
+            netblock=data.get('netblock', ''), country=data.get('country', ''),
+            confidence=0.7, evidence_ids=(domain_to_finding.get(domain, ''),)
+        ))
+
+
 async def correlate_rir_signals(findings: list, _query: str='') -> RIRCorrelationResult:
     """
     Correlate RIR/ASN/WHOIS data for IP/domain findings.
@@ -237,92 +366,41 @@ async def correlate_rir_signals(findings: list, _query: str='') -> RIRCorrelatio
         RIRCorrelationResult with correlations tuple, queried_count, cache_hits, elapsed_ms
     """
     t0 = _time.perf_counter()
-    cache_hits = 0
+
+    # Stage 1: Extract and cache IPs
     ip_pairs = extract_ips_from_findings(findings)
-    ips_to_query: list[str] = []
-    ip_to_finding: dict[str, str] = {}
-    for ip_str, fid in ip_pairs:
-        cached = _cache_get(ip_str)
-        if cached is not None:
-            cache_hits += 1
-            ip_to_finding[ip_str] = fid
-        else:
-            ips_to_query.append(ip_str)
-            ip_to_finding[ip_str] = fid
+    ips_to_query, ip_to_finding, cache_hits = _extract_and_cache_ips(ip_pairs)
+
+    # Stage 2-3: Extract domains and resolve
     domain_pairs = extract_domains_from_findings(findings)
-    domains_to_resolve: list[str] = []
-    domain_to_finding: dict[str, str] = {}
-    for domain, fid in domain_pairs:
-        domain_to_finding[domain] = fid
-        if domain not in ips_to_query:
-            domains_to_resolve.append(domain)
-    resolved_ips: dict[str, str] = {}
-    if domains_to_resolve:
-        try:
-            resolved_ips = await _resolve_domains_async(domains_to_resolve)
-            for domain, ip in resolved_ips.items():
-                if ip and (not _is_private(ip)):
-                    cached = _cache_get(ip)
-                    if cached is not None:
-                        cache_hits += 1
-                    else:
-                        ips_to_query.append(ip)
-                    ip_to_finding[ip] = domain_to_finding.get(domain, '')
-            unresolved_domains = [d for d in domains_to_resolve if d not in resolved_ips]
-            if unresolved_domains:
-                for domain in unresolved_domains[:10]:
-                    cached = _cache_get(f'whois:{domain}')
-                    if cached is not None:
-                        cache_hits += 1
-        except Exception:  # noqa: BLE001
-            pass
+    domain_to_finding = dict(domain_pairs)
+    domains_to_resolve = [d for d in domain_pairs if d[0] not in ips_to_query]
+
+    resolved_ips, extra_cache_hits = await _resolve_domains_and_check_cache(
+        domains_to_resolve, ips_to_query, ip_to_finding
+    )
+    cache_hits += extra_cache_hits
+    cache_hits += _check_whois_cache([d for d in domains_to_resolve if d not in resolved_ips])
+
+    # Deduplicate and bound
     ips_to_query = list(dict.fromkeys(ips_to_query))[:MAX_RIR_LOOKUPS]
-    ip_results: dict[str, dict[str, Any]] = {}
-    if ips_to_query:
-        ip_results = await _lookup_ip_batch_http(ips_to_query)
-        for ip, data in ip_results.items():
-            _cache_set(ip, data)
+
+    # Stage 4: Query IPs
+    ip_results = await _query_and_cache_ips(ips_to_query)
+
+    # Stage 5: Build correlations
     correlations: list[RIRCorrelation] = []
     seen: set[str] = set()
-    for ip_str, fid in ip_pairs:
-        if len(correlations) >= MAX_RIR_RESULTS:
-            break
-        key = f'ip:{ip_str}'
-        if key in seen:
-            continue
-        seen.add(key)
-        cached = _cache_get(ip_str)
-        data = cached if cached else ip_results.get(ip_str)
-        if not data:
-            continue
-        corr = RIRCorrelation(ioc_value=ip_str, ioc_type='ip_address', asn=data.get('asn', ''), org=data.get('org', ''), netblock=data.get('netblock', ''), country=data.get('country', ''), confidence=0.85, evidence_ids=(fid,))
-        correlations.append(corr)
-    for domain, ip in resolved_ips.items():
-        if len(correlations) >= MAX_RIR_RESULTS:
-            break
-        key = f'domain:{domain}'
-        if key in seen:
-            continue
-        seen.add(key)
-        cached = _cache_get(ip)
-        data = cached if cached else ip_results.get(ip)
-        if not data:
-            whois_key = f'whois:{domain}'
-            whois_data = _cache_get(whois_key)
-            if whois_data is None and ip and (not _is_private(ip)):
-                try:
-                    whois_data = await _whois_lookup_domain(domain)
-                    if whois_data:
-                        _cache_set(whois_key, whois_data)
-                except Exception:
-                    whois_data = None
-            data = whois_data
-        if not data:
-            continue
-        corr = RIRCorrelation(ioc_value=domain, ioc_type='domain', asn=data.get('asn', ''), org=data.get('org', ''), netblock=data.get('netblock', ''), country=data.get('country', ''), confidence=0.7, evidence_ids=(domain_to_finding.get(domain, ''),))
-        correlations.append(corr)
+    _build_ip_correlations(ip_pairs, ip_results, correlations, seen)
+    await _build_domain_correlations(resolved_ips, ip_results, domain_to_finding, correlations, seen)
+
     elapsed_ms = (_time.perf_counter() - t0) * 1000
-    return RIRCorrelationResult(correlations=tuple(correlations), queried_count=len(ips_to_query) + len(resolved_ips), cache_hits=cache_hits, elapsed_ms=elapsed_ms)
+    return RIRCorrelationResult(
+        correlations=tuple(correlations),
+        queried_count=len(ips_to_query) + len(resolved_ips),
+        cache_hits=cache_hits,
+        elapsed_ms=elapsed_ms
+    )
 _rir_stats: dict[str, int] = {'lookups_performed': 0, 'cache_hits': 0, 'correlations_produced': 0}
 
 def get_rir_stats() -> dict[str, int]:

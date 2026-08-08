@@ -119,6 +119,11 @@ class RingMMap:
 
     __slots__ = ("_shm", "_buf", "_size", "_name", "_attached")
 
+    # F320-REFACTOR: Use canonical close() from _patterns
+    from hledac.universal.utils._patterns import make_close_method
+
+    close = make_close_method("_shm")
+
     def __init__(
         self,
         shm_name: str,
@@ -274,15 +279,6 @@ class RingMMap:
 
         struct.pack_into("<I", self._buf, 4, read_pos)
         return data
-
-    def close(self) -> None:
-        """Close the shared memory (caller must call unlink separately)."""
-        if self._shm is not None:
-            try:
-                self._shm.close()
-            except Exception:  # noqa: BLE001
-                pass
-            self._shm = None
 
     def unlink(self) -> None:
         """Unlink the shared memory object (destroy on cleanup)."""

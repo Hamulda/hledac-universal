@@ -255,152 +255,136 @@ def _parse_dns_wire_response(wire: bytes) -> dict[str, Any] | None:
     except Exception:
         return None
 
+
+def _build_dns_wire_query(domain: str) -> str:
+    """Build DNS wire format query encoded as base64url."""
+    import base64
+    import struct
+    txn_id = secrets.token_hex(2)
+    qname = b''.join(bytes([len(l)]) + l.encode('ascii') for l in domain.split('.')) + b'\x00'
+    dns_query = struct.pack('>HHHHH', txn_id, 256, 1, 0, 0) + qname + struct.pack('>HH', 1, 1)
+    return base64.urlsafe_b64encode(dns_query).rstrip(b'=').decode('ascii')
+
+
+async def _fetch_doh_json(
+    session: httpx.AsyncClient,
+    url: str,
+    timeout: httpx.Timeout,
+) -> dict[str, Any] | None:
+    """Fetch DoH JSON response."""
+    import orjson
+    resp = await session.get(url, headers={'Accept': 'application/dns-json'}, follow_redirects=True, timeout=timeout)
+    if resp.status_code >= 500:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        return orjson.loads(resp.text)
+    except Exception:
+        return None
+
+
+async def _fetch_doh_wire(
+    session: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str],
+    timeout: httpx.Timeout,
+) -> dict[str, Any] | None:
+    """Fetch DoH wire format response."""
+    resp = await session.get(url, headers=headers, follow_redirects=True, timeout=timeout)
+    if resp.status_code >= 500:
+        return None
+    if resp.status_code != 200:
+        return None
+    return _parse_dns_wire_response(resp.content)
+
+
+async def _doh_get_request(
+    domain: str,
+    endpoint: str,
+    session_provider: httpx.AsyncClient | None,
+    fetch_func: Callable[..., Any] | None,
+    timeout: httpx.Timeout,
+) -> dict[str, Any] | None:
+    """Execute DoH GET request."""
+    url = f'{endpoint}?name={domain}&type=A'
+    if fetch_func is not None:
+        result = await fetch_func(url, {'Accept': 'application/dns-json'})
+        return result if isinstance(result, dict) else None
+    if session_provider is not None:
+        return await _fetch_doh_json(session_provider, url, timeout)
+    from hledac.universal.transport.session_pool import session_pool
+    session = await session_pool.httpx()
+    return await _fetch_doh_json(session, url, timeout)
+
+
+async def _doh_post_request(
+    domain: str,
+    endpoint: str,
+    session_provider: httpx.AsyncClient | None,
+    fetch_func: Callable[..., Any] | None,
+    timeout: httpx.Timeout,
+) -> dict[str, Any] | None:
+    """Execute DoH POST request (RFC 8484 wire format)."""
+    encoded = _build_dns_wire_query(domain)
+    url = f'{endpoint}?dns={encoded}'
+    headers = {'Content-Type': 'application/dns-message', 'Accept': 'application/dns-message'}
+    if fetch_func is not None:
+        result = await fetch_func(url, headers)
+        return result if isinstance(result, dict) else None
+    if session_provider is not None:
+        return await _fetch_doh_wire(session_provider, url, headers, timeout)
+    from hledac.universal.transport.session_pool import session_pool
+    session = await session_pool.httpx()
+    return await _fetch_doh_wire(session, url, headers, timeout)
+
+
+def _extract_a_records(data: dict[str, Any]) -> list[str]:
+    """Extract A records (type=1) from DoH response."""
+    ips = []
+    for answer in data.get('Answer', []):
+        if answer.get('type') == 1:
+            ip = answer.get('data', '')
+            if ip:
+                ips.append(ip)
+    return ips
+
+
 async def resolve_doh(domain: str, provider: str='cloudflare', session_provider: httpx.AsyncClient | None=None, fetch_func: Callable[..., Any] | None=None) -> list[str]:
-    """
-    Resolve hostname via DNS-over-HTTPS (DoH).
-
-    Multi-provider fallback: cloudflare, google, opendns (GET) + quad9 (POST RFC 8484).
-    For quad9, the DNS query is encoded as RFC 8484 BASE64-URL wire format.
-
-    Args:
-        domain: Domain name to resolve (e.g. "example.com")
-        provider: DoH provider — "cloudflare" (default), "google", "opendns", or "quad9"
-        session_provider: Optional pre-configured httpx.AsyncClient.
-            When provided, takes precedence over internal ephemeral session.
-            Enables canonical transport seam (shared session, circuit breaker).
-        fetch_func: Optional async fetch(url, headers) -> bytes.
-            When provided along with session_provider, uses both for fetch.
-
-    Returns:
-        List of IP addresses (A records), or [] on failure.
-
-    Anti-patterns prevented:
-      - Non-blocking httpx
-      - Graceful degradation: [] return on any error
-      - Accept: application/dns-json header
-    """
-    global transport_policy
+    """Resolve hostname via DNS-over-HTTPS (DoH)."""
     if provider not in DOH_ENDPOINTS:
         logger.warning(f'Unknown DoH provider: {provider} — using cloudflare')
         provider = 'cloudflare'
-    timeout = httpx.Timeout(15.0)
-    ips: list[str] = []
-    circuit_decision = _try_domain_breaker_check(domain)
-    if circuit_decision is not None and (not circuit_decision.allowed):
-        logger.debug(f'DoH circuit breaker blocked {domain}: {circuit_decision.reason} (retry in {circuit_decision.retry_after_s:.1f}s)')
+    if _try_domain_breaker_check(domain) is not None and not _try_domain_breaker_check(domain).allowed:
+        logger.debug(f'DoH circuit breaker blocked {domain}')
         return []
-    if session_provider is not None or fetch_func is not None:
-        transport_policy = 'injected'
-    else:
-        transport_policy = 'local_fallback'
-    _providers_to_try = [provider]
+    timeout = httpx.Timeout(15.0)
+    providers = [provider]
     if len(DOH_PROVIDER_WEIGHTS) > 1:
-        _fallback = [_p for _p in DOH_PROVIDER_WEIGHTS if _p != provider]
-        if _fallback:
-            _providers_to_try.append(_fallback[0])
-    for _attempt_provider in _providers_to_try:
-        _attempt_endpoint = DOH_ENDPOINTS[_attempt_provider]
-        _use_post = _attempt_provider in _DOH_POST_PROVIDERS
+        fallback = next((p for p in DOH_PROVIDER_WEIGHTS if p != provider), None)
+        if fallback:
+            providers.append(fallback)
+    return await _try_doh_providers(domain, providers, session_provider, fetch_func, timeout)
+
+
+async def _try_doh_providers(domain: str, providers: list, session_provider, fetch_func, timeout) -> list[str]:
+    """Try each DoH provider until one returns IPs."""
+    for prov in providers:
         try:
-            if _use_post:
-                import base64
-                import struct
-                txn_id = secrets.token_hex(2)  # 16-bit TXN ID via crypto RNG
-                qname = b''
-                for label in domain.split('.'):
-                    qname += bytes([len(label)]) + label.encode('ascii')
-                qname += b'\x00'
-                dns_query = struct.pack('>HHHHH', txn_id, 256, 1, 0, 0) + qname + struct.pack('>HH', 1, 1)
-                encoded_query = base64.urlsafe_b64encode(dns_query).rstrip(b'=').decode('ascii')
-                post_headers = {'Content-Type': 'application/dns-message', 'Accept': 'application/dns-message'}
-                post_url = f'{_attempt_endpoint}?dns={encoded_query}'
-                if fetch_func is not None:
-                    result = await fetch_func(post_url, post_headers)
-                    data = result if isinstance(result, dict) else {}
-                elif session_provider is not None:
-                    resp = await session_provider.get(post_url, headers=post_headers, follow_redirects=True, timeout=timeout)
-                    if resp.status_code >= 500:
-                        logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status_code} for {domain}, retrying...')
-                        continue
-                    if resp.status_code != 200:
-                        logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
-                        return []
-                    raw = resp.content
-                    data = _parse_dns_wire_response(raw)
-                    if data is None:
-                        logger.warning(f'DoH {_attempt_provider} invalid wire format for {domain}')
-                        return []
-                else:
-                    from hledac.universal.transport.session_pool import session_pool
-                    session = await session_pool.httpx()
-                    resp = await session.get(post_url, headers=post_headers, follow_redirects=True, timeout=timeout)
-                    if resp.status_code >= 500:
-                        logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status_code} for {domain}, retrying...')
-                        continue
-                    if resp.status_code != 200:
-                        logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
-                        return []
-                    raw = resp.content
-                    data = _parse_dns_wire_response(raw)
-                    if data is None:
-                        logger.warning(f'DoH {_attempt_provider} invalid wire format for {domain}')
-                        return []
-            else:
-                _attempt_url = f'{_attempt_endpoint}?name={domain}&type=A'
-                get_headers = {'Accept': 'application/dns-json'}
-                if fetch_func is not None:
-                    result = await fetch_func(_attempt_url, get_headers)
-                    data = result if isinstance(result, dict) else {}
-                elif session_provider is not None:
-                    resp = await session_provider.get(_attempt_url, headers=get_headers, follow_redirects=True, timeout=timeout)
-                    if resp.status_code >= 500:
-                        logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status_code} for {domain}, retrying...')
-                        continue
-                    if resp.status_code != 200:
-                        logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
-                        return []
-                    text = resp.text
-                    import orjson
-                    try:
-                        data = orjson.loads(text)
-                    except (Exception,):
-                        logger.warning(f'DoH {_attempt_provider} invalid JSON for {domain}')
-                        return []
-                else:
-                    from hledac.universal.transport.session_pool import session_pool
-                    session = await session_pool.httpx()
-                    resp = await session.get(_attempt_url, headers=get_headers, follow_redirects=True, timeout=timeout)
-                    if resp.status_code >= 500:
-                        logger.warning(f'DoH {_attempt_provider} returned HTTP {resp.status_code} for {domain}, retrying...')
-                        continue
-                    if resp.status_code != 200:
-                        logger.warning(f'DoH {_attempt_provider} failed for {domain}: HTTP {resp.status_code}')
-                        return []
-                    text = resp.text
-                    import orjson
-                    try:
-                        data = orjson.loads(text)
-                    except (Exception,):
-                        logger.warning(f'DoH {_attempt_provider} invalid JSON for {domain}')
-                        return []
-            answers = data.get('Answer', []) if isinstance(data, dict) else []
-            for answer in answers:
-                if answer.get('type') == 1:
-                    ip = answer.get('data', '')
-                    if ip:
-                        ips.append(ip)
+            use_post = prov in _DOH_POST_PROVIDERS
+            request = _doh_post_request if use_post else _doh_get_request
+            data = await request(domain, DOH_ENDPOINTS[prov], session_provider, fetch_func, timeout)
+            if data is None:
+                continue
+            ips = _extract_a_records(data)
             if ips:
-                break
-            else:
-                logger.debug(f'DoH {_attempt_provider} returned no A records for {domain}')
-                break
+                return ips
         except TimeoutError:
-            logger.warning(f'DoH timeout for {domain} (provider={_attempt_provider})')
-            continue
+            logger.warning(f'DoH timeout for {domain}')
         except Exception as e:
-            logger.warning(f'DoH error for {domain} (provider={_attempt_provider}): {e}')
-            continue
-    return ips
+            logger.warning(f'DoH error for {domain}: {e}')
+    return []
+
 
 async def lookup_passive_dns(domain: str, session_provider: httpx.AsyncClient | None=None, fetch_func: Callable[..., Any] | None=None) -> list[str]:
     """

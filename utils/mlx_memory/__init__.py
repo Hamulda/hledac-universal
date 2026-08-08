@@ -167,6 +167,7 @@ from . import _core as _core_mlx_utils
 
 mlx_managed = _core_mlx_utils.mlx_managed
 mlx_cleanup_after = _core_mlx_utils.mlx_cleanup_after
+mlx_cleanup_decorator = _core_mlx_utils.mlx_cleanup_after  # Alias for backward compatibility
 get_mlx_memory_stats = _core_mlx_utils.get_mlx_memory_stats
 reset_metal_peak = _core_mlx_utils.reset_metal_peak
 
@@ -194,6 +195,8 @@ __all__ = [
     "set_cache_limit_with_debounce",
     "mlx_cleanup_sync",
     "mlx_cleanup_aggressive",
+    "mlx_cleanup_after",
+    "mlx_cleanup_decorator",  # Alias for mlx_cleanup_after (backward compatibility)
     "metal_reclaim",
     "safe_clear_metal_cache",
     # Metal limits

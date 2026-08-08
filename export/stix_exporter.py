@@ -662,56 +662,22 @@ def _cti_bundle_id(name: str) -> str:
     """Generate a deterministic bundle ID from report name."""
     return f"bundle--{_make_stix_id('cti-bundle', name)}"
 
-def render_cti_stix_bundle(findings: list[Any], identity_candidates: list[dict[str, Any]] | None=None, attribution_scores: dict[str, Any] | None=None, killchain_tags: dict[str, Any] | None=None, evidence_chains: list[dict[str, Any]] | None=None, max_objects: int=MAX_STIX_OBJECTS) -> dict[str, Any]:
+
+def _build_findings_objects(
+    findings: list[Any],
+    killchain_tags: dict[str, Any],
+    max_objects: int,
+) -> tuple[list[dict[str, Any]], list[str], list[str], dict[str, str]]:
     """
-    Render CTI findings + sidecar data as a STIX 2.1 threat-intel bundle.
-
-    Produces real STIX indicator / identity / observed-data / relationship / note / report
-    objects from Ghost Prime findings and derived intelligence.
-
-    Guardrails:
-      - No fake IOCs when findings list is empty
-      - No network access
-      - No model load
-      - Bounded to MAX_STIX_OBJECTS
-
-    Parameters
-    ----------
-    findings : list[CanonicalFinding | dict]
-        List of canonical findings with ioc_type, ioc_value, confidence, finding_id.
-    identity_candidates : list[dict] | None
-        F202B identity stitching candidates (IdentityCandidate dicts).
-    attribution_scores : dict | None
-        F203B attribution scores keyed by candidate_id.
-        Value is AttributionScore.to_dict() output.
-    killchain_tags : dict | None
-        F203C kill-chain tags keyed by finding_id.
-        Value is list of KillChainTag.to_dict() output.
-    evidence_chains : list[dict] | None
-        F203D evidence chains (EvidenceChain serialized dicts).
-    max_objects : int
-        Cap on total STIX objects (default MAX_STIX_OBJECTS=500).
-
-    Returns
-    -------
-    dict
-        STIX 2.1 bundle dict with type, id, spec_version, and objects.
+    Build indicator and observed-data objects from findings.
+    Returns (objects, indicator_refs, observed_refs, finding_to_stix_ref).
     """
-    if identity_candidates is None:
-        identity_candidates = []
-    if attribution_scores is None:
-        attribution_scores = {}
-    if killchain_tags is None:
-        killchain_tags = {}
-    if evidence_chains is None:
-        evidence_chains = []
-    created = _utc_now()
     objects: list[dict[str, Any]] = []
-    objects.append(_build_diagnostic_identity())
-    finding_ids_seen: set[str] = set()
     indicator_refs: list[str] = []
     observed_refs: list[str] = []
     finding_to_stix_ref: dict[str, str] = {}
+    finding_ids_seen: set[str] = set()
+
     for finding_raw in findings:
         if len(objects) >= max_objects:
             break
@@ -721,59 +687,179 @@ def render_cti_stix_bundle(findings: list[Any], identity_candidates: list[dict[s
         fid = _safe_str(finding.get('finding_id', ''))
         finding_ids_seen.add(fid)
         finding_kc_tags = killchain_tags.get(fid) if fid else None
-        ind = _ioc_to_indicator(finding, created, finding_kc_tags)
+
+        ind = _ioc_to_indicator(finding, _utc_now(), finding_kc_tags)
         if ind is not None:
             objects.append(ind)
             indicator_refs.append(ind['id'])
             if fid:
                 finding_to_stix_ref[fid] = ind['id']
         else:
-            obs = _finding_to_observed_data(finding, created)
+            obs = _finding_to_observed_data(finding, _utc_now())
             if obs and obs.get('objects'):
                 objects.append(obs)
                 observed_refs.append(obs['id'])
                 if fid:
                     finding_to_stix_ref[fid] = obs['id']
+
         if finding_kc_tags:
-            note = _build_killchain_note(fid, finding_kc_tags, indicator_refs[-1] if indicator_refs else None, created)
+            note = _build_killchain_note(fid, finding_kc_tags, indicator_refs[-1] if indicator_refs else None, _utc_now())
             if note and len(objects) < max_objects:
                 objects.append(note)
+
+    return objects, indicator_refs, observed_refs, finding_to_stix_ref
+
+
+def _build_identity_objects(
+    identity_candidates: list[dict[str, Any]],
+    attribution_scores: dict[str, Any],
+    max_objects: int,
+    existing_objects: list[dict[str, Any]],
+) -> list[str]:
+    """
+    Build identity objects from candidates.
+    Appends to existing_objects and returns identity_refs.
+    """
     identity_refs: list[str] = []
+
     for cand in identity_candidates:
-        if len(objects) >= max_objects:
+        if len(existing_objects) >= max_objects:
             break
         if not isinstance(cand, dict):
             cand = dict(cand) if hasattr(cand, '__dict__') else {}
-        identity_obj = _build_identity_object(cand, created)
-        objects.append(identity_obj)
+        identity_obj = _build_identity_object(cand, _utc_now())
+        existing_objects.append(identity_obj)
         identity_refs.append(identity_obj['id'])
         cand_id = _safe_str(cand.get('candidate_id', ''))
-        if cand_id in attribution_scores and len(objects) < max_objects:
+        if cand_id in attribution_scores and len(existing_objects) < max_objects:
             score = attribution_scores[cand_id]
             if isinstance(score, dict):
-                note = _build_attribution_note(cand_id, score, _make_stix_id('identity', _safe_str(cand.get('primary_name', '')), cand_id), created)
-                objects.append(note)
+                note = _build_attribution_note(
+                    cand_id,
+                    score,
+                    _make_stix_id('identity', _safe_str(cand.get('primary_name', '')), cand_id),
+                    _utc_now(),
+                )
+                existing_objects.append(note)
+
+    return identity_refs
+
+
+def _build_chain_objects(
+    evidence_chains: list[dict[str, Any]],
+    max_objects: int,
+    existing_objects: list[dict[str, Any]],
+) -> list[str]:
+    """
+    Build evidence chain objects.
+    Appends to existing_objects and returns chain_refs.
+    """
     chain_refs: list[str] = []
+
     for chain in evidence_chains:
-        if len(objects) >= max_objects:
+        if len(existing_objects) >= max_objects:
             break
         if not isinstance(chain, dict):
             chain = dict(chain) if hasattr(chain, '__dict__') else {}
-        chain_obj = _build_evidence_chain_object(chain, created)
-        objects.append(chain_obj)
+        chain_obj = _build_evidence_chain_object(chain, _utc_now())
+        existing_objects.append(chain_obj)
         chain_refs.append(chain_obj['id'])
+
+    return chain_refs
+
+
+def _build_relationships(
+    indicator_refs: list[str],
+    identity_refs: list[str],
+    max_objects: int,
+    existing_objects: list[dict[str, Any]],
+) -> None:
+    """Build relationship objects linking indicators to identities."""
     for ind_id in indicator_refs:
-        if len(objects) >= max_objects:
+        if len(existing_objects) >= max_objects:
             break
         for ident_id in identity_refs[:3]:
             rel_id = _make_stix_id('relationship', ind_id, ident_id)
-            objects.append({'type': 'relationship', 'spec_version': _STIX_SPEC_VERSION, 'id': f'relationship--{rel_id}', 'created': created, 'modified': created, 'source_ref': ind_id, 'target_ref': f'identity--{ident_id}', 'relationship_type': 'derived-from'})
+            existing_objects.append({
+                'type': 'relationship',
+                'spec_version': _STIX_SPEC_VERSION,
+                'id': f'relationship--{rel_id}',
+                'created': _utc_now(),
+                'modified': _utc_now(),
+                'source_ref': ind_id,
+                'target_ref': f'identity--{ident_id}',
+                'relationship_type': 'derived-from',
+            })
+
+
+def _build_bundle_report(
+    objects: list[dict[str, Any]],
+    finding_count: int,
+    identity_count: int,
+    chain_count: int,
+    max_objects: int,
+) -> dict[str, Any]:
+    """Build the final CTI report and bundle."""
     report_name = f"Ghost Prime CTI {datetime.now(UTC).strftime('%Y-%m-%d')}"
-    report = _build_cti_report(objects=objects, name=report_name, finding_count=len(finding_ids_seen), identity_count=len(identity_refs), chain_count=len(chain_refs), created=created)
+    report = _build_cti_report(
+        objects=objects,
+        name=report_name,
+        finding_count=finding_count,
+        identity_count=identity_count,
+        chain_count=chain_count,
+        created=_utc_now(),
+    )
     if len(objects) < max_objects:
         objects.append(report)
-    bundle: dict[str, Any] = {'type': _BUNDLE_TYPE, 'id': _cti_bundle_id(report_name), 'spec_version': _STIX_SPEC_VERSION, 'created': created, 'modified': created, 'objects': objects}
+    bundle: dict[str, Any] = {
+        'type': _BUNDLE_TYPE,
+        'id': _cti_bundle_id(report_name),
+        'spec_version': _STIX_SPEC_VERSION,
+        'created': _utc_now(),
+        'modified': _utc_now(),
+        'objects': objects,
+    }
     return bundle
+
+def render_cti_stix_bundle(findings: list[Any], identity_candidates: list[dict[str, Any]] | None=None, attribution_scores: dict[str, Any] | None=None, killchain_tags: dict[str, Any] | None=None, evidence_chains: list[dict[str, Any]] | None=None, max_objects: int=MAX_STIX_OBJECTS) -> dict[str, Any]:
+    """Render CTI findings + sidecar data as a STIX 2.1 threat-intel bundle."""
+    if identity_candidates is None:
+        identity_candidates = []
+    if attribution_scores is None:
+        attribution_scores = {}
+    if killchain_tags is None:
+        killchain_tags = {}
+    if evidence_chains is None:
+        evidence_chains = []
+
+    # Initialize bundle with diagnostic identity
+    objects: list[dict[str, Any]] = [_build_diagnostic_identity()]
+
+    # Build findings objects (indicators, observed-data, killchain notes)
+    finding_objects, indicator_refs, _, finding_to_stix_ref = _build_findings_objects(
+        findings, killchain_tags, max_objects
+    )
+    objects.extend(finding_objects)
+
+    # Build identity objects and get their refs
+    identity_refs = _build_identity_objects(
+        identity_candidates, attribution_scores, max_objects, objects
+    )
+
+    # Build evidence chain objects
+    chain_refs = _build_chain_objects(evidence_chains, max_objects, objects)
+
+    # Build relationships between indicators and identities
+    _build_relationships(indicator_refs, identity_refs, max_objects, objects)
+
+    # Build final bundle with report
+    return _build_bundle_report(
+        objects,
+        finding_count=len(finding_to_stix_ref),
+        identity_count=len(identity_refs),
+        chain_count=len(chain_refs),
+        max_objects=max_objects,
+    )
 
 def render_cti_stix_bundle_json(findings: list[Any], identity_candidates: list[dict[str, Any]] | None=None, attribution_scores: dict[str, Any] | None=None, killchain_tags: dict[str, Any] | None=None, evidence_chains: list[dict[str, Any]] | None=None, max_objects: int=MAX_STIX_OBJECTS) -> str:
     """

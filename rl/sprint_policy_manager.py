@@ -588,6 +588,79 @@ class SprintPolicyManager:
             log.info('[SprintPolicyManager] sprint=%d epistemic_bonus_mean=%.4f', self._state.sprint_sequence_number, _ebm)
         self._save()
 
+    # F240D: QMIX training guards and helpers
+    def _check_memory_guards(self) -> bool:
+        """Check 4-layer memory guards (UMA, RAM, cooldown, per-sprint cap)."""
+        # L1: UMA critical check
+        try:
+            from hledac.universal.utils.uma_budget import get_uma_budget
+            if get_uma_budget().is_critical():
+                log.debug('[SprintPolicyManager] Skipping QMIX — M1 UMA critical')
+                return False
+        except Exception:  # noqa: BLE001
+            pass
+        # L2: RAM gate
+        if not _RAM_GATE_DISABLED:
+            try:
+                import psutil
+                if psutil.virtual_memory().percent > _RAM_TRAIN_SKIP_PCT:
+                    log.warning('[SprintPolicyManager] QMIX skipped — RAM >%d%%', _RAM_TRAIN_SKIP_PCT)
+                    return False
+            except Exception:  # noqa: BLE001
+                pass
+        return True
+
+    def _update_history_fifos(self, loss: float, mean_q: float) -> None:
+        """Update loss and Q-value history FIFOs (max 100 entries)."""
+        loss_hist = list(getattr(self._state, 'loss_history', []))
+        loss_hist.append(loss)
+        self._state.loss_history = loss_hist[-100:]
+        q_hist = list(getattr(self._state, 'mean_q_value_history', []))
+        q_hist.append(mean_q)
+        self._state.mean_q_value_history = q_hist[-100:]
+
+    def _compute_mean_q_from_batch(self, batch: Any) -> float:
+        """Compute mean Q value from batch if not in loss result."""
+        if not hasattr(self._qmix_trainer, 'joint_model') or not hasattr(self._qmix_trainer, 'mixer'):
+            return 0.0
+        try:
+            import mlx.core as mx
+            states, actions = batch.get('states'), batch.get('actions')
+            if states is None or actions is None:
+                return 0.0
+            agent_nets = self._qmix_trainer.joint_model.get_agent_nets()
+            all_qs = mx.stack([net(states) for net in agent_nets], axis=1)
+            chosen = mx.take_along_axis(all_qs, mx.expand_dims(actions, -1), axis=2).squeeze(-1)
+            return float(mx.mean(self._qmix_trainer.mixer(chosen, states)).item())
+        except Exception:
+            return 0.0
+
+    def _update_q_cache(self, batch: Any) -> None:
+        """Update Q-value cache for fast retrieval."""
+        try:
+            import mlx.core as mx
+            import time as _time_module
+            cache_states = batch.get('states')
+            if cache_states is None or self._agents is None:
+                return
+            self._q_value_cache = {_aid: float(mx.mean(_agent.q_net(cache_states)).item()) for _aid, _agent in self._agents.items()}
+            self._q_cache_timestamp = _time_module.monotonic()
+        except Exception:
+            self._q_value_cache = {}
+            self._q_cache_timestamp = 0.0
+
+    def _clear_mlx_cache(self) -> None:
+        """Clear MLX cache per GHOST_INVARIANT I11."""
+        try:
+            import mlx.core as mx
+            import gc
+            mx.eval([])
+            gc.collect()
+            (mx.clear_cache if hasattr(mx, 'clear_cache') else mx.metal.clear_cache)()
+            gc.collect()
+        except Exception:  # noqa: BLE001
+            pass
+
     def _run_qmix_training(self) -> None:
         """Sample batch from replay buffer and run QMIX joint training step.
 
@@ -607,28 +680,13 @@ class SprintPolicyManager:
         """
         if self._qmix_trainer is None or self._replay_buffer is None:
             return
-        try:
-            from hledac.universal.utils.uma_budget import get_uma_budget
-            uma = get_uma_budget()
-            if uma.is_critical():
-                log.debug('[SprintPolicyManager] Skipping QMIX train_step — M1 UMA critical')
-                return
-        except Exception:  # noqa: BLE001
-            pass
-        if not _RAM_GATE_DISABLED:
-            try:
-                import psutil
-                if psutil.virtual_memory().percent > _RAM_TRAIN_SKIP_PCT:
-                    log.warning('[SprintPolicyManager] QMIX train_step skipped — RAM >%d%%', _RAM_TRAIN_SKIP_PCT)
-                    return
-            except Exception:  # noqa: BLE001
-                pass
+        if not self._check_memory_guards():
+            return
         import time
         now = time.monotonic()
-        if now - self._last_train_at < _TRAIN_COOLDOWN_S:
+        if now - self._last_train_at < _TRAIN_COOLDOWN_S or self._train_steps_this_sprint >= _MAX_TRAIN_STEPS_PER_SPRINT:
             return
-        if self._train_steps_this_sprint >= _MAX_TRAIN_STEPS_PER_SPRINT:
-            return
+
         _step_t0 = time.monotonic()
         try:
             batch = self._replay_buffer.sample(_TRAIN_BATCH_SIZE)
@@ -636,83 +694,40 @@ class SprintPolicyManager:
                 return
             _train = getattr(self._qmix_trainer, 'update', None) or getattr(self._qmix_trainer, 'train_step', None)
             if _train is None:
-                log.error('[SprintPolicyManager] No training method found on QMIXJointTrainer')
+                log.error('[SprintPolicyManager] No training method on QMIXJointTrainer')
                 return
+
             loss_result = _train(batch)
             if isinstance(loss_result, dict):
-                loss = float(loss_result.get('loss', 0.0))
-                mean_q = float(loss_result.get('mean_q', 0.0))
+                loss, mean_q = float(loss_result.get('loss', 0.0)), float(loss_result.get('mean_q', 0.0))
             else:
-                loss = float(loss_result)
-                mean_q = 0.0
-            if mean_q == 0.0 and hasattr(self._qmix_trainer, 'joint_model') and hasattr(self._qmix_trainer, 'mixer'):
-                try:
-                    import mlx.core as mx
-                    states = batch.get('states')
-                    actions = batch.get('actions')
-                    if states is not None and actions is not None:
-                        agent_nets = self._qmix_trainer.joint_model.get_agent_nets()
-                        all_qs = mx.stack([net(states) for net in agent_nets], axis=1)
-                        chosen = mx.take_along_axis(all_qs, mx.expand_dims(actions, -1), axis=2).squeeze(-1)
-                        q_total = self._qmix_trainer.mixer(chosen, states)
-                        mean_q = float(mx.mean(q_total).item())
-                except Exception:
-                    mean_q = 0.0
+                loss, mean_q = float(loss_result), 0.0
+            if mean_q == 0.0:
+                mean_q = self._compute_mean_q_from_batch(batch)
+
+            # Save weights and update state
             if hasattr(self._qmix_trainer, 'joint_model'):
                 self._state.qmix_weights = _serialize_weights(self._qmix_trainer.joint_model.parameters())
                 self._save_qmix_weights_binary(self._qmix_trainer.joint_model.parameters())
+
+            # Check for loss spike
+            if prev_loss := (getattr(self._state, 'loss_history', []) or [None])[-1]:
+                if prev_loss > 0.0 and loss > 2.5 * prev_loss:
+                    log.warning('[SprintPolicyManager] QMIX loss spike %.4f > 2.5x prev %.4f', loss, prev_loss)
+                    return
+
             self._state.last_train_sprint = self._state.sprint_sequence_number
             self._state.last_train_step = self._state.sprint_sequence_number
             self._state.cumulative_train_steps += 1
             self._state.last_loss = loss
-            _prev_loss_hist = list(getattr(self._state, 'loss_history', []))
-            if _prev_loss_hist:
-                _prev_loss = _prev_loss_hist[-1]
-                if _prev_loss > 0.0 and loss > 2.5 * _prev_loss:
-                    log.warning('[SprintPolicyManager] QMIX loss spike %.4f > 2.5x prev %.4f — skipping weight update (training_steps not incremented)', loss, _prev_loss)
-                    return
-            _loss_hist = list(getattr(self._state, 'loss_history', []))
-            _loss_hist.append(loss)
-            if len(_loss_hist) > 100:
-                _loss_hist = _loss_hist[-100:]
-            self._state.loss_history = _loss_hist
-            _q_hist = list(getattr(self._state, 'mean_q_value_history', []))
-            _q_hist.append(mean_q)
-            if len(_q_hist) > 100:
-                _q_hist = _q_hist[-100:]
-            self._state.mean_q_value_history = _q_hist
+            self._update_history_fifos(loss, mean_q)
             self._state.training_steps_completed = int(getattr(self._state, 'training_steps_completed', 0)) + 1
             self._state.last_train_step_sprint = int(self._state.sprint_sequence_number)
             self._last_train_at = now
             self._train_steps_this_sprint += 1
-            try:
-                import time as _time_module
-                import mlx.core as mx
-                cache_states = batch.get('states')
-                if cache_states is not None and self._agents is not None:
-                    self._q_value_cache = {}
-                    for _aid, _agent in self._agents.items():
-                        _q_vals = _agent.q_net(cache_states)
-                        _mean_q = float(mx.mean(_q_vals).item())
-                        self._q_value_cache[_aid] = _mean_q
-                    self._q_cache_timestamp = _time_module.monotonic()
-            except Exception:
-                self._q_value_cache = {}
-                self._q_cache_timestamp = 0.0
-            try:
-                import mlx.core as mx
-                mx.eval([])
-                import gc
-                gc.collect()
-                if hasattr(mx, 'clear_cache'):
-                    mx.clear_cache()
-                elif hasattr(mx.metal, 'clear_cache'):
-                    mx.metal.clear_cache()
-                gc.collect()
-            except Exception:  # noqa: BLE001
-                pass
-            _step_dt = time.monotonic() - _step_t0
-            log.info('[SprintPolicyManager] QMIX train_step %d: loss=%.4f mean_q=%.3f replay=%d cum_steps=%d step_dt=%.2fs', self._state.sprint_sequence_number, loss, mean_q, self._replay_buffer.size, self._state.cumulative_train_steps, _step_dt)
+            self._update_q_cache(batch)
+            self._clear_mlx_cache()
+            log.info('[SprintPolicyManager] QMIX train_step %d: loss=%.4f mean_q=%.3f replay=%d cum_steps=%d step_dt=%.2fs', self._state.sprint_sequence_number, loss, mean_q, self._replay_buffer.size, self._state.cumulative_train_steps, time.monotonic() - _step_t0)
         except Exception as e:
             log.debug('[SprintPolicyManager] QMIX training failed: %s', e)
 
@@ -801,22 +816,41 @@ class SprintPolicyManager:
         from rl.actions import ACTION_CONTINUE
         return ACTION_CONTINUE
 
+    def _compute_delta(self, ratio: float) -> float:
+        """Compute weight delta based on acceptance ratio."""
+        if ratio >= 0.7: return 1.1
+        if ratio >= 0.4: return 1.05
+        if ratio >= 0.15: return 1.0
+        return 0.95
+
+    def _update_source_weight(self, source_family, feed_url, accepted_count, total_count):
+        """Update source quality weight based on acceptance ratio."""
+        ratio = accepted_count / total_count if total_count > 0 else 0.0
+        src = source_family or feed_url or 'unknown'
+        cur = getattr(self, '_src_quality_weights', {}).get(src, 1.0)
+        new = max(0.3, min(2.5, cur * self._compute_delta(ratio)))
+        if not hasattr(self, '_src_quality_weights'):
+            self._src_quality_weights: dict[str, float] = {}
+        self._src_quality_weights[src] = new
+        if abs(new - cur) > 0.05:
+            log.debug('[F228A] src weight adaptation: %s (%d/%d=%.0f%%) %.3f → %.3f', src, accepted_count, total_count, ratio * 100, cur, new)
+        return src
+
+    def _accumulate_feedback(self, src_key, total_count, accepted_count):
+        """Accumulate pending feedback for a source."""
+        if len(self._pending_feedback) < 200 or src_key in self._pending_feedback:
+            if src_key not in self._pending_feedback:
+                self._pending_feedback[src_key] = {'fetched': 0, 'accepted': 0}
+            self._pending_feedback[src_key]['fetched'] += total_count
+            self._pending_feedback[src_key]['accepted'] += accepted_count
+
     def update_with_quality_decisions(self, decisions: list, feed_url: str='') -> None:
-        """
-        F228A: Receive per-source quality feedback from SprintScheduler.
-
-        Called after quality decisions are computed (per-feed acceptance/rejection).
-        Used to adapt source weights for next sprint's acquisition planning.
-
-        Args:
-            decisions: List of FindingQualityDecision (msgspec.Struct) or dict
-            feed_url: Feed URL for dict-based decisions without source_family
-        """
+        """F228A: Receive per-source quality feedback from SprintScheduler."""
         if not self._enabled:
             return
         try:
-            accepted_count = 0
-            total_count = 0
+            accepted_count, total_count = 0, 0
+            source_family = feed_url
             for decision in decisions:
                 if isinstance(decision, dict):
                     accepted = bool(decision.get('accepted', False))
@@ -827,30 +861,8 @@ class SprintPolicyManager:
                 total_count += 1
                 if accepted:
                     accepted_count += 1
-            _ratio = accepted_count / total_count if total_count > 0 else 0.0
-            if _ratio >= 0.7:
-                _delta = 1.1
-            elif _ratio >= 0.4:
-                _delta = 1.05
-            elif _ratio >= 0.15:
-                _delta = 1.0
-            else:
-                _delta = 0.95
-            _src = source_family or feed_url or 'unknown'
-            _cur = getattr(self, '_src_quality_weights', {}).get(_src, 1.0)
-            _new = max(0.3, min(2.5, _cur * _delta))
-            if not hasattr(self, '_src_quality_weights'):
-                self._src_quality_weights: dict[str, float] = {}
-            self._src_quality_weights[_src] = _new
-            _delta_abs = abs(_new - _cur)
-            if _delta_abs > 0.05:
-                log.debug('[F228A] src weight adaptation: %s (%d/%d=%.0f%%) %.3f → %.3f', _src, accepted_count, total_count, _ratio * 100, _cur, _new)
-            _src_key = source_family or feed_url or 'unknown'
-            if len(self._pending_feedback) < 200 or _src_key in self._pending_feedback:
-                if _src_key not in self._pending_feedback:
-                    self._pending_feedback[_src_key] = {'fetched': 0, 'accepted': 0}
-                self._pending_feedback[_src_key]['fetched'] += total_count
-                self._pending_feedback[_src_key]['accepted'] += accepted_count
+            src_key = self._update_source_weight(source_family, feed_url, accepted_count, total_count)
+            self._accumulate_feedback(src_key, total_count, accepted_count)
             if self._scheduler is not None:
                 try:
                     for _fk, _fv in self._pending_feedback.items():
@@ -859,7 +871,7 @@ class SprintPolicyManager:
                         self._scheduler._source_quality_feedback[_fk]['fetched'] += _fv['fetched']
                         self._scheduler._source_quality_feedback[_fk]['accepted'] += _fv['accepted']
                     self._pending_feedback.clear()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     pass
             log.debug('[SprintPolicyManager] quality feedback: src=%s total=%d accepted=%d', feed_url or 'unknown', total_count, accepted_count)
         except Exception as e:
